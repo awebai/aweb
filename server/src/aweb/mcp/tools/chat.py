@@ -500,7 +500,9 @@ async def chat_send(
         except ServiceError as exc:
             return json.dumps({"error": exc.detail})
 
-        msg_created_at = datetime.now(timezone.utc).replace(microsecond=0)
+        # sender_attested_at is signed sender intent; send_in_session assigns
+        # independent server receipt time for ordering, so they may disagree.
+        sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
         pre_message_id = uuid_mod.uuid4()
         to_value, to_current_did, to_stable_id = _recipient_signed_fields([target])
         from_value = (
@@ -515,7 +517,7 @@ async def chat_send(
             "from_did": (auth.did_key or "").strip(),
             "message_id": str(pre_message_id),
             "subject": "",
-            "timestamp": _signed_timestamp(msg_created_at),
+            "timestamp": _signed_timestamp(sender_attested_at),
             "to": to_value,
             "to_did": to_current_did,
             "type": "chat",
@@ -579,7 +581,7 @@ async def chat_send(
                     leaving=leaving,
                     hang_on=True,
                     message_id=str(pre_message_id),
-                    timestamp=_signed_timestamp(msg_created_at),
+                    timestamp=_signed_timestamp(sender_attested_at),
                     from_did=signed.from_did if signed else actor_did,
                     signature=signed.signature if signed else None,
                     signed_payload=signed.signed_payload if signed else None,
@@ -595,7 +597,7 @@ async def chat_send(
                     leaving=leaving,
                     wait_seconds=wait_seconds if wait else None,
                     message_id=str(pre_message_id),
-                    timestamp=_signed_timestamp(msg_created_at),
+                    timestamp=_signed_timestamp(sender_attested_at),
                     from_did=signed.from_did if signed else actor_did,
                     signature=signed.signature if signed else None,
                     signed_payload=signed.signed_payload if signed else None,
@@ -636,7 +638,6 @@ async def chat_send(
             message_version=message_version,
             encrypted_envelope=encrypted_envelope,
             encrypted_metadata=encrypted_metadata,
-            created_at=msg_created_at,
             message_id=pre_message_id,
         )
         if msg is None:
@@ -667,7 +668,9 @@ async def chat_send(
         except ServiceError as exc:
             return json.dumps({"error": exc.detail})
 
-        msg_created_at = datetime.now(timezone.utc).replace(microsecond=0)
+        # sender_attested_at is signed sender intent; send_in_session assigns
+        # independent server receipt time for ordering, so they may disagree.
+        sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
         pre_message_id = uuid_mod.uuid4()
         recipient_rows = await _session_recipient_rows(db_infra, session_id=sid, actor_dids=actor_dids)
         remote_recipients = [row for row in recipient_rows if row.get("delivery_origin")]
@@ -705,7 +708,7 @@ async def chat_send(
             "from_did": (auth.did_key or "").strip(),
             "message_id": str(pre_message_id),
             "subject": "",
-            "timestamp": _signed_timestamp(msg_created_at),
+            "timestamp": _signed_timestamp(sender_attested_at),
             "to": to_value,
             "to_did": to_current_did,
             "type": "chat",
@@ -760,7 +763,7 @@ async def chat_send(
                 hang_on=hang_on,
                 wait_seconds=wait_seconds if wait else None,
                 message_id=str(pre_message_id),
-                timestamp=_signed_timestamp(msg_created_at),
+                timestamp=_signed_timestamp(sender_attested_at),
                 from_did=signed.from_did if signed else session_actor_did,
                 signature=signed.signature if signed else None,
                 signed_payload=signed.signed_payload if signed else None,
@@ -802,7 +805,6 @@ async def chat_send(
             message_version=message_version,
             encrypted_envelope=encrypted_envelope,
             encrypted_metadata=encrypted_metadata,
-            created_at=msg_created_at,
             message_id=pre_message_id,
         )
         if msg is None:

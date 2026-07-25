@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1068,6 +1068,110 @@ describe("channel-core dispatchAgentEvent", () => {
         verified: "true",
       }),
     }));
+  });
+
+  test("persists a verified-head advance when the trust path makes no pin write", async () => {
+    const onAwakening = vi.fn();
+    const env: MessageEnvelope = {
+      from: "aweb.ai/ama",
+      from_did: vectors.did,
+      from_stable_id: vectors.stableID,
+      to: self.stableID,
+      to_did: self.did,
+      to_stable_id: self.stableID,
+      type: "chat",
+      subject: "",
+      body: "checkpoint-only persistence",
+      timestamp: "2025-01-01T00:00:00Z",
+      message_id: "chat-checkpoint-only",
+      conversation_id: "sess-checkpoint-only",
+    };
+    const signature = await signMessage(b64ToBytes(vectors.seed), env);
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: env.message_id,
+          conversation_id: env.conversation_id,
+          from_agent: "ama",
+          from_address: env.from,
+          to_address: env.to,
+          body: env.body,
+          timestamp: env.timestamp,
+          sender_leaving: false,
+          from_did: vectors.did,
+          from_stable_id: vectors.stableID,
+          to_did: self.did,
+          to_stable_id: self.stableID,
+          signature,
+          signing_key_id: vectors.did,
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const entryHash = "a".repeat(64);
+    const trust = new SenderTrustManager(
+      client as never,
+      {
+        verifyStableIdentity: async () => ({
+          outcome: "OK_VERIFIED",
+          currentDidKey: vectors.did,
+          verifiedHead: {
+            seq: 2,
+            entryHash,
+            stateHash: "b".repeat(64),
+            currentDidKey: vectors.did,
+            fetchedAt: Date.now(),
+          },
+        }),
+        resolveIdentity: async () => ({
+          did: vectors.did,
+          stableID: vectors.stableID,
+          address: env.from,
+          custody: "self",
+          identityScope: "global",
+        }),
+      } as never,
+      "default:aweb.ai",
+      self.did,
+      self.stableID,
+    );
+
+    // The sender's stable identity already has a pin, but the claimed address
+    // remains pinned to somebody else. The trust path therefore returns an
+    // identity mismatch without writing either pin; checkpoint advance is the
+    // only reason dispatch may consider the store dirty.
+    const pinStore = new PinStore();
+    pinStore.storePin(vectors.stableID, "aweb.ai/original-ama", "", "");
+    const senderPin = pinStore.pins.get(vectors.stableID)!;
+    senderPin.stable_id = vectors.stableID;
+    senderPin.did_key = vectors.did;
+    const addressOwner = "did:aw:address-owner";
+    pinStore.storePin(addressOwner, env.from, "", "");
+    const ownerPin = pinStore.pins.get(addressOwner)!;
+    ownerPin.stable_id = addressOwner;
+    ownerPin.did_key = "did:key:address-owner";
+
+    const pinStorePath = join(await mkdtemp(join(tmpdir(), "aw-checkpoint-only-")), "known_agents.yaml");
+    await dispatchAgentEvent(
+      { client: client as never, pinStore, pinStorePath, trust, self, onAwakening },
+      new Set(),
+      {
+        type: "chat_message",
+        session_id: env.conversation_id,
+        conversation_id: env.conversation_id,
+        message_id: env.message_id,
+      } satisfies AgentEvent,
+    );
+
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      meta: expect.objectContaining({ trust_status: "identity_mismatch" }),
+    }));
+    const reloaded = PinStore.fromYAML(await readFile(pinStorePath, "utf-8"));
+    expect(reloaded.pins.get(vectors.stableID)).toMatchObject({
+      log_seq: 2,
+      log_entry_hash: entryHash,
+    });
+    expect(reloaded.addresses.get(env.from)).toBe(addressOwner);
   });
 
   test("dispatches app events without hydration and de-dupes by event_id", async () => {
