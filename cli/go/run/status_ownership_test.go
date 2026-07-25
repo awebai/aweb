@@ -10,17 +10,82 @@ import (
 )
 
 // The status line has a single owner: the main loop. Background goroutines only
-// signal that a repaint is wanted. These tests pin the two properties that
-// ownership depends on, because both fail silently — a stale status line and a
-// data race are equally invisible to a passing suite (default-aaks).
+// signal that a repaint is wanted. These tests pin the properties that ownership
+// depends on, because each fails silently — a stale status line and a data race
+// are equally invisible to a passing suite (default-aaks).
 
-// A repaint request raised WHILE a render is in progress must survive to the
-// next select iteration. If it is dropped, the final state never repaints and
-// the status line is permanently stale — with no error and no failing test.
+// runLoopWithBus drives the real production wiring and returns the Loop so tests
+// can inspect what Run actually built. This matters: a test that supplies its own
+// statusDirty channel proves nothing about production, because the invariant IS
+// the capacity chosen at the allocation site. Obtaining the channel from a real
+// run is what makes an edit there turn these tests red.
+func runLoopWithBus(t *testing.T) *Loop {
+	t.Helper()
+
+	// Every stream attempt fails, so the bus loops setState(ConnReconnecting) ->
+	// stream error -> retry, emitting onStateChange transitions throughout.
+	bus := NewEventBus(EventBusConfig{
+		Stream: func(context.Context, time.Time) (awid.EventSource, error) {
+			return nil, &awid.APIError{StatusCode: 500, Body: "flapping"}
+		},
+	})
+
+	var out bytes.Buffer
+	loop := NewLoop(ClaudeProvider{}, &out)
+	loop.EventBus = bus
+	loop.Sleep = func(context.Context, time.Duration) error { return nil }
+	loop.Runner = func(_ context.Context, _ string, _ []string, onLine func(string), _ any) error {
+		onLine(`{"type":"result","duration_ms":1,"session_id":"sess-1"}`)
+		return nil
+	}
+	loop.Control = newFakeInputController()
+	loop.Dispatch = &fakeDispatcher{
+		decisions: []DispatchDecision{
+			{Mission: "mission", WaitSeconds: 1},
+			{Mission: "mission", WaitSeconds: 1},
+			{Mission: "mission", WaitSeconds: 1},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	t.Cleanup(cancel)
+	if err := loop.Run(ctx, LoopOptions{WaitSeconds: 1, MaxRuns: 3}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if loop.statusDirty == nil {
+		t.Fatal("Run did not allocate the repaint channel; the wiring under test never executed")
+	}
+	return loop
+}
+
+// The repaint channel must be buffered. With no buffer, markStatusDirty's
+// non-blocking send is dropped whenever the loop is not already parked in its
+// select — which is most of the time — so repaint requests vanish. Asserting the
+// capacity of the channel PRODUCTION allocated is what makes changing that
+// allocation a test failure rather than a silent behaviour change.
+func TestRunAllocatesBufferedRepaintChannel(t *testing.T) {
+	t.Parallel()
+
+	l := runLoopWithBus(t)
+
+	if got := cap(l.statusDirty); got != 1 {
+		t.Fatalf("production allocated a repaint channel with capacity %d, want 1: "+
+			"an unbuffered channel drops mid-render repaint requests", got)
+	}
+}
+
+// A repaint request raised WHILE a render is in progress must survive to the next
+// select iteration. If it is dropped, the final state never repaints and the
+// status line is permanently stale — with no error and no failing test. Exercised
+// on the channel production built, not a fixture, so an unbuffered allocation
+// fails here too.
 func TestStatusDirtySignalRaisedDuringRenderIsNotLost(t *testing.T) {
 	t.Parallel()
 
-	l := &Loop{statusDirty: make(chan struct{}, 1)}
+	l := runLoopWithBus(t)
+	// Start from a known-empty channel: the run above may have left a signal
+	// pending, and this test is about what happens to the NEXT one.
+	drainStatusDirty(l)
 
 	l.markStatusDirty()
 	// The consumer takes the signal and begins rendering.
@@ -46,7 +111,7 @@ func TestStatusDirtySignalRaisedDuringRenderIsNotLost(t *testing.T) {
 func TestMarkStatusDirtyNeverBlocks(t *testing.T) {
 	t.Parallel()
 
-	l := &Loop{statusDirty: make(chan struct{}, 1)}
+	l := runLoopWithBus(t)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -58,6 +123,16 @@ func TestMarkStatusDirtyNeverBlocks(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("markStatusDirty blocked; the event path must never stall on the renderer")
+	}
+}
+
+func drainStatusDirty(l *Loop) {
+	for {
+		select {
+		case <-l.statusDirty:
+		default:
+			return
+		}
 	}
 }
 
