@@ -439,6 +439,42 @@ describe("SenderTrustManager", () => {
     expect(store.addresses.get("acme.com/amy")).toBe(oldStableID);
   });
 
+  test("refuses invalid verified-head sequences before persisting checkpoints", () => {
+    const stableID = "did:aw:checkpoint";
+    const store = new PinStore();
+    store.storePin(stableID, "acme.com/alice", "", "");
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {} as never,
+      "backend:acme.com",
+      "",
+    ) as SenderTrustManager & {
+      persistVerifiedHeadCheckpoint(
+        target: PinStore,
+        id: string,
+        head: {
+          seq: number;
+          entryHash: string;
+          stateHash: string;
+          currentDidKey: string;
+          fetchedAt: number;
+        },
+      ): boolean;
+    };
+
+    for (const seq of [1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(trust.persistVerifiedHeadCheckpoint(store, stableID, {
+        seq,
+        entryHash: "a".repeat(64),
+        stateHash: "b".repeat(64),
+        currentDidKey: "did:key:zcheckpoint",
+        fetchedAt: 0,
+      })).toBe(false);
+    }
+
+    expect(store.pins.get(stableID)?.log_seq).toBeUndefined();
+  });
+
   test("surfaces stale verifier cache honestly instead of claiming identity mismatch", async () => {
     const { did } = await didFromSeed(17);
     const stableID = "did:aw:freshAlice";

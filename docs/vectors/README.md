@@ -36,6 +36,14 @@ These vectors exist to prevent subtle cross-language drift (Python ↔ Go) in:
     (`verifyDidKeyResolution`) verifiers to keep authorization, state-hash, and
     anchoring semantics aligned
 
+- `identity-log-raw-wire-v1.json`
+  - Carries complete JSON text rather than pre-decoded typed structures, so
+    decoder-level cases such as fractional and unsafe sequence numbers remain
+    expressible to every runtime
+  - TypeScript rejects both cases. Go rejects fractional JSON during typed
+    decoding; Go safe-range tightening above 2^53 is tracked separately, and
+    the known temporary divergence is recorded on that vector
+
 - `stable-id-v1.json`
   - `did:key` → stable ID derivation vectors
 

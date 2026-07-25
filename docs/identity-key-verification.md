@@ -257,5 +257,6 @@ Interoperability vectors live in [vectors/](vectors/README.md):
 - `vectors/stable-id-v1.json` (`did:key` -> `did:aw` derivation)
 - `vectors/identity-log-v1.json` (log entry hashing + signing)
 - `vectors/identity-log-negative-v1.json` (verifier authorization / state-hash / anchoring outcomes, shared Go↔TS)
+- `vectors/identity-log-raw-wire-v1.json` (decoder-level malformed sequence values that typed vector structures cannot represent)
 - `vectors/rotation-announcements-v1.json` (rotation announcement payload signing/chaining)
 - `vectors/dns-txt-v1.json` (canonical `_awid` DNS TXT records and optional `registry=` declaration)

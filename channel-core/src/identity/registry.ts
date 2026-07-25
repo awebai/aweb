@@ -79,6 +79,10 @@ export interface VerifiedLogHead {
   fetchedAt: number;
 }
 
+export function isValidDidLogSequence(seq: number): boolean {
+  return Number.isSafeInteger(seq) && seq >= 1;
+}
+
 interface AddressResponse {
   address_id: string;
   domain: string;
@@ -198,7 +202,7 @@ export class RegistryResolver {
    */
   seedVerifiedHead(stableID: string, head: VerifiedLogHead): void {
     const id = stableID.trim();
-    if (!id || !head || head.seq < 1 || !isLowerHex(head.entryHash.trim())) return;
+    if (!id || !head || !isValidDidLogSequence(head.seq) || !isLowerHex(head.entryHash.trim())) return;
     const existing = this.headCache.get(id);
     if (existing && existing.seq >= head.seq) return;
     this.headCache.set(id, head);
@@ -497,8 +501,8 @@ export function verifyDidKeyResolution(
   if (head.new_did_key !== resolution.current_did_key) {
     return { outcome: "HARD_ERROR", error: "log_head new_did_key mismatch" };
   }
-  if (head.seq < 1) {
-    return { outcome: "HARD_ERROR", error: "log_head seq must be >= 1" };
+  if (!isValidDidLogSequence(head.seq)) {
+    return { outcome: "HARD_ERROR", error: "log_head seq must be a positive safe integer" };
   }
   if (head.seq === 1) {
     if (head.operation !== "create" && head.operation !== "register_did") {
