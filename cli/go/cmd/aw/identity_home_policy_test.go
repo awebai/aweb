@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -37,12 +38,78 @@ func TestExternalIdentityHomePolicyDefaultsToDeny(t *testing.T) {
 	}
 }
 
+func TestIdentityHomeNeutralExemptionsAreExactlyVersionAndUpgrade(t *testing.T) {
+	if len(identityHomeNeutralCommandExemptions) != 2 {
+		t.Fatalf("identity-neutral exemption count=%d want 2", len(identityHomeNeutralCommandExemptions))
+	}
+	for _, cmd := range []*cobra.Command{versionCmd, upgradeCmd} {
+		if _, ok := identityHomeNeutralCommandExemptions[cmd]; !ok {
+			t.Fatalf("identity-neutral exemption missing command pointer %p (%s)", cmd, cmd.CommandPath())
+		}
+	}
+}
+
 func TestIdentityHomeAwareAllowlistNamesExistingRunnableCommands(t *testing.T) {
 	for path := range identityHomeAwareCommandPaths {
 		args := strings.Fields(strings.TrimPrefix(path, "aw "))
 		cmd, remaining, err := rootCmd.Find(args)
 		if err != nil || len(remaining) != 0 || cmd == nil || !cmd.Runnable() || cmd.CommandPath() != path {
 			t.Errorf("allowlist entry %q does not name one runnable command: cmd=%v remaining=%v err=%v", path, cmd, remaining, err)
+		}
+	}
+}
+
+func TestIdentityNeutralExemptionsDoNotAccessPrincipalOrInstanceIdentityState(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	identityHome := filepath.Join(root, "principal")
+	if err := os.MkdirAll(identityHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{
+		"identity.yaml":  "not: [valid identity yaml",
+		"signing.key":    "not a signing key",
+		"workspace.yaml": "not: [valid workspace yaml",
+	} {
+		if err := os.WriteFile(filepath.Join(identityHome, name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := fileDigestsForTest(t, identityHome)
+
+	for _, source := range []string{"flag", "environment"} {
+		for _, command := range []string{"version", "upgrade"} {
+			t.Run(source+"/"+command, func(t *testing.T) {
+				instance := filepath.Join(root, "neutral", source, command)
+				if err := os.MkdirAll(instance, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				args := []string{command}
+				env := append(testCommandEnv(filepath.Join(root, "user-home")), awconfig.IdentityHomeEnv+"=", "AW_NO_UPDATE_CHECK=1")
+				if source == "flag" {
+					args = append([]string{"--identity-home", identityHome}, args...)
+				} else {
+					env = append(env, awconfig.IdentityHomeEnv+"="+identityHome)
+				}
+				cmd := exec.CommandContext(ctx, bin, args...)
+				cmd.Dir = instance
+				cmd.Env = env
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("identity-neutral command accessed unusable principal state: %v\n%s", err, out)
+				}
+				if _, err := os.Lstat(filepath.Join(instance, ".aw")); !os.IsNotExist(err) {
+					t.Fatalf("identity-neutral command touched instance identity state: %v", err)
+				}
+				if after := fileDigestsForTest(t, identityHome); !reflect.DeepEqual(after, before) {
+					t.Fatal("identity-neutral command changed principal identity state")
+				}
+			})
 		}
 	}
 }

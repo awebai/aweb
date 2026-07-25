@@ -6,6 +6,19 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// identityHomeNeutralCommandExemptions is the complete pointer-identity set of
+// commands that never access principal state and therefore bypass admission.
+// Its exact population and real-binary behavior are guarded in tests.
+var identityHomeNeutralCommandExemptions = map[*cobra.Command]struct{}{
+	versionCmd: {},
+	upgradeCmd: {},
+}
+
+func isIdentityHomeNeutralCommand(cmd *cobra.Command) bool {
+	_, ok := identityHomeNeutralCommandExemptions[cmd]
+	return ok
+}
+
 // identityHomeAwareCommandPaths is intentionally a positive, exact allowlist.
 // Every entry has a production-binary regression against an external principal
 // and an empty instance. A newly added command is denied until equivalent

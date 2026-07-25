@@ -31,7 +31,7 @@ var rootCmd = &cobra.Command{
 	Short: "aweb CLI",
 	Long:  "aweb CLI\n\nSet AW_NO_UPDATE_CHECK=1 to disable automatic update checks.",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		if cmd == versionCmd || cmd == upgradeCmd {
+		if isIdentityHomeNeutralCommand(cmd) {
 			return nil
 		}
 		if !debugFlag && os.Getenv("AW_DEBUG") == "1" {
