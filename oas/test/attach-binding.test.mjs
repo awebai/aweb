@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { afterEach, test } from "node:test";
 
-const CAPABILITY_SOURCE = resolve(new URL("../capabilities/aweb-identity-attach", import.meta.url).pathname);
+const CAPABILITY_SOURCE = resolve(new URL("../.agents/capabilities/owned/aweb-identity-attach", import.meta.url).pathname);
 const temporaryDirectories = [];
 
 afterEach(() => {

@@ -1,1 +1,1 @@
-export * from "../capabilities/aweb-identity-attach/lib/principals.mjs";
+export * from "../.agents/capabilities/owned/aweb-identity-attach/lib/principals.mjs";
