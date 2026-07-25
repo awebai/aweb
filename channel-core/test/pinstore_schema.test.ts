@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { mkdtemp, rm, stat, writeFile, readFile, readdir, symlink, lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import yaml from "js-yaml";
 import { PinStore } from "../src/identity/pinstore.js";
 
 let dir: string;
@@ -134,6 +135,81 @@ describe("PinStore.fromYAML schema validation", () => {
 
   test("rejects a non-mapping root", () => {
     expect(() => PinStore.fromYAML("- a\n- b\n")).toThrow(/root must be a mapping/i);
+  });
+
+  test("preserves parsed unknown root and per-pin values across load-save-reload", async () => {
+    const path = join(dir, "known_agents.yaml");
+    const reloadedPath = join(dir, "known_agents-reloaded.yaml");
+    const source = [
+      "future_schema_version: 7",
+      "future_root:",
+      "  enabled: true",
+      "  nested:",
+      "    - alpha",
+      "    - weight: 2.5",
+      "    - null",
+      "future_sequence: [1, false, hello]",
+      "pins:",
+      "  did:aw:2Cbob:",
+      "    address: acme.com/bob",
+      "    handle: ''",
+      "    stable_id: did:aw:2Cbob",
+      "    did_key: did:key:zBob",
+      "    first_seen: 2026-02-22T10:00:00Z",
+      "    last_seen: 2026-02-22T11:00:00Z",
+      "    server: ''",
+      "    future_anti_rollback_anchor:",
+      "      seq: 4",
+      "      hashes: [abc, def]",
+      "    future_flags: [true, {mode: strict}]",
+      "    future_scalar: 42",
+      "addresses:",
+      "  acme.com/bob: did:aw:2Cbob",
+      "",
+    ].join("\n");
+    const original = yaml.load(source, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>;
+
+    const store = PinStore.fromYAML(source);
+    store.storePin("did:aw:2Cbob", "acme.com/bob", "updated", "");
+    await store.save(path);
+    const saved = await readFile(path, "utf-8");
+    await PinStore.fromYAML(saved).save(reloadedPath);
+    const roundTripped = yaml.load(await readFile(reloadedPath, "utf-8"), {
+      schema: yaml.JSON_SCHEMA,
+    }) as Record<string, unknown>;
+
+    expect(roundTripped.future_schema_version).toEqual(original.future_schema_version);
+    expect(roundTripped.future_root).toEqual(original.future_root);
+    expect(roundTripped.future_sequence).toEqual(original.future_sequence);
+    const originalPin = (original.pins as Record<string, Record<string, unknown>>)["did:aw:2Cbob"];
+    const roundTrippedPin = (
+      roundTripped.pins as Record<string, Record<string, unknown>>
+    )["did:aw:2Cbob"];
+    expect(roundTrippedPin.future_anti_rollback_anchor)
+      .toEqual(originalPin.future_anti_rollback_anchor);
+    expect(roundTrippedPin.future_flags).toEqual(originalPin.future_flags);
+    expect(roundTrippedPin.future_scalar).toEqual(originalPin.future_scalar);
+  });
+
+  test.each([
+    ["anchor", "future: &future\n  nested: true\n"],
+    ["alias", "future_base: &future [1, 2]\nfuture_alias: *future\n"],
+    ["merge key", "future:\n  <<: {nested: true}\n  own: 1\n"],
+  ])("rejects YAML %s syntax", (_name, extra) => {
+    const source = `pins: {}\naddresses: {}\n${extra}`;
+    expect(() => PinStore.fromYAML(source)).toThrow(/anchor|alias|merge/i);
+  });
+
+  test("preserves ordinary scalar values containing YAML graph tokens", () => {
+    const source = [
+      "future_text: 'literal &anchor *alias <<'",
+      "pins: {}",
+      "addresses: {}",
+      "",
+    ].join("\n");
+    const saved = PinStore.fromYAML(source).toYAML();
+    const parsed = yaml.load(saved, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>;
+    expect(parsed.future_text).toBe("literal &anchor *alias <<");
   });
 
   test("round-trips through toYAML", () => {

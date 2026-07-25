@@ -5,6 +5,21 @@ import yaml from "js-yaml";
 export type PinResult = "ok" | "new" | "mismatch" | "skipped";
 export type IdentityScope = "global" | "local";
 
+type UnknownFields = Map<string, unknown>;
+
+const ROOT_FIELDS = new Set(["pins", "addresses"]);
+const PIN_FIELDS = new Set([
+  "address",
+  "handle",
+  "stable_id",
+  "did_key",
+  "log_seq",
+  "log_entry_hash",
+  "first_seen",
+  "last_seen",
+  "server",
+]);
+
 export interface Pin {
   address: string;
   handle: string;
@@ -26,6 +41,8 @@ export interface Pin {
 export class PinStore {
   pins: Map<string, Pin> = new Map();
   addresses: Map<string, string> = new Map();
+  private unknownRootFields: UnknownFields = new Map();
+  private unknownPinFields: Map<string, UnknownFields> = new Map();
 
   /** Check whether a DID matches the stored pin for a global address. */
   checkPin(address: string, did: string, identityScope: IdentityScope): PinResult {
@@ -78,6 +95,7 @@ export class PinStore {
       const pin = this.pins.get(pinnedDID);
       if (pin?.address === address) {
         this.pins.delete(pinnedDID);
+        this.unknownPinFields.delete(pinnedDID);
       }
       removed = true;
     }
@@ -85,6 +103,7 @@ export class PinStore {
     for (const [pinKey, pin] of this.pins) {
       if (pin.address !== address) continue;
       this.pins.delete(pinKey);
+      this.unknownPinFields.delete(pinKey);
       if (this.addresses.get(address) === pinKey) {
         this.addresses.delete(address);
       }
@@ -117,13 +136,28 @@ export class PinStore {
 
   /** Serialize to YAML (compatible with Go's known_agents.yaml). */
   toYAML(): string {
-    const pinsObj: Record<string, Pin> = {};
-    for (const [k, v] of this.pins) pinsObj[k] = v;
+    const pinsObj = emptyRecord();
+    for (const [key, pin] of this.pins) {
+      const pinObj = recordFromUnknown(this.unknownPinFields.get(key));
+      pinObj.address = pin.address;
+      pinObj.handle = pin.handle;
+      if (pin.stable_id !== undefined) pinObj.stable_id = pin.stable_id;
+      if (pin.did_key !== undefined) pinObj.did_key = pin.did_key;
+      if (pin.log_seq !== undefined) pinObj.log_seq = pin.log_seq;
+      if (pin.log_entry_hash !== undefined) pinObj.log_entry_hash = pin.log_entry_hash;
+      pinObj.first_seen = pin.first_seen;
+      pinObj.last_seen = pin.last_seen;
+      pinObj.server = pin.server;
+      pinsObj[key] = pinObj;
+    }
 
-    const addrsObj: Record<string, string> = {};
-    for (const [k, v] of this.addresses) addrsObj[k] = v;
+    const addressesObj = emptyRecord();
+    for (const [key, value] of this.addresses) addressesObj[key] = value;
 
-    return yaml.dump({ pins: pinsObj, addresses: addrsObj });
+    const root = recordFromUnknown(this.unknownRootFields);
+    root.pins = pinsObj;
+    root.addresses = addressesObj;
+    return yaml.dump(root);
   }
 
   /**
@@ -134,17 +168,30 @@ export class PinStore {
    */
   static fromYAML(content: string): PinStore {
     let data: unknown;
+    let hasAnchor = false;
     try {
       // JSON_SCHEMA keeps values as plain JSON types (timestamps stay strings,
       // not Date objects) and rejects unsafe/custom YAML tags; duplicate keys
-      // still throw.
-      data = yaml.load(content, { schema: yaml.JSON_SCHEMA });
+      // still throw. Anchors are detected from parser events so quoted scalar
+      // text containing '&' is not confused with YAML graph syntax.
+      data = yaml.load(content, {
+        schema: yaml.JSON_SCHEMA,
+        listener(eventType, state) {
+          if (eventType === "close" && (state as unknown as { anchor?: string | null }).anchor) {
+            hasAnchor = true;
+          }
+        },
+      });
     } catch (error) {
       // Report the reason and location only; js-yaml's message embeds a snippet
       // of the offending file lines, which we do not want to surface.
       const ex = error as { reason?: string; mark?: { line?: number; column?: number } };
       const where = ex.mark ? ` at line ${(ex.mark.line ?? 0) + 1} column ${(ex.mark.column ?? 0) + 1}` : "";
       throw new Error(`pin store YAML is invalid${where}: ${ex.reason ?? "parse error"}`);
+    }
+
+    if (hasAnchor) {
+      throw new Error("pin store YAML must not use anchors or aliases");
     }
 
     const store = new PinStore();
@@ -159,6 +206,8 @@ export class PinStore {
       throw new Error("pin store root must be a mapping");
     }
     const root = data as Record<string, unknown>;
+    rejectMergeKeys(root);
+    store.unknownRootFields = collectUnknownFields(root, ROOT_FIELDS);
 
     if (root.pins !== undefined && root.pins !== null) {
       if (typeof root.pins !== "object" || Array.isArray(root.pins)) {
@@ -167,6 +216,8 @@ export class PinStore {
       for (const [key, value] of Object.entries(root.pins as Record<string, unknown>)) {
         if (!key) throw new Error("pin store has an empty pin key");
         store.pins.set(key, validatePin(key, value));
+        const unknown = collectUnknownFields(value as Record<string, unknown>, PIN_FIELDS);
+        if (unknown.size > 0) store.unknownPinFields.set(key, unknown);
       }
     }
 
@@ -192,6 +243,42 @@ export class PinStore {
     }
 
     return store;
+  }
+}
+
+function emptyRecord(): Record<string, unknown> {
+  return Object.create(null) as Record<string, unknown>;
+}
+
+function recordFromUnknown(fields: UnknownFields | undefined): Record<string, unknown> {
+  const record = emptyRecord();
+  for (const [key, value] of fields ?? []) record[key] = value;
+  return record;
+}
+
+function collectUnknownFields(
+  source: Record<string, unknown>,
+  knownFields: ReadonlySet<string>,
+): UnknownFields {
+  const unknown: UnknownFields = new Map();
+  for (const [key, value] of Object.entries(source)) {
+    if (!knownFields.has(key)) unknown.set(key, value);
+  }
+  return unknown;
+}
+
+function rejectMergeKeys(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) rejectMergeKeys(item);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "<<") {
+      throw new Error("pin store YAML must not use merge keys");
+    }
+    rejectMergeKeys(child);
   }
 }
 
