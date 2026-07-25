@@ -137,10 +137,10 @@ export class DeliveryStore {
     const entries = new Map<string, number>();
     const now = Date.now();
     for (const [key, value] of Object.entries(raw)) {
-      if (typeof value !== "string" && typeof value !== "number") {
-        return DeliveryStore.quarantine(path, `mark ${JSON.stringify(key)} has an invalid timestamp`);
-      }
-      const timestamp = typeof value === "number" ? value : Date.parse(value);
+      let timestamp: number;
+      if (typeof value === "number") timestamp = value;
+      else if (typeof value === "string") timestamp = Date.parse(value);
+      else timestamp = Number.NaN;
       if (!Number.isFinite(timestamp)) {
         return DeliveryStore.quarantine(path, `mark ${JSON.stringify(key)} has an invalid timestamp`);
       }

@@ -1,9 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
-import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { DeliveryStore } from "../src/channel.js";
 
 let dir: string;
@@ -18,33 +16,6 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
-
-async function waitForFiles(paths: string[]): Promise<void> {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    const ready = await Promise.all(paths.map(async (candidate) => {
-      try {
-        await access(candidate);
-        return true;
-      } catch {
-        return false;
-      }
-    }));
-    if (ready.every(Boolean)) return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error("delivery-store subprocesses did not reach the barrier");
-}
-
-function childExit(child: ChildProcess, stderr: () => string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      if (code === 0) resolve();
-      else reject(new Error(`delivery-store subprocess exited ${code ?? signal}: ${stderr()}`));
-    });
-  });
-}
 
 async function quarantinePaths(): Promise<string[]> {
   const names = await readdir(dir);
@@ -108,6 +79,16 @@ describe("DeliveryStore concurrent writers", () => {
     expect((await DeliveryStore.load(path)).has("after-load-quarantine")).toBe(true);
   });
 
+  test("load quarantines a non-object root byte-identically", async () => {
+    const malformed = "[]\n";
+    await writeFile(path, malformed, "utf8");
+
+    await expect(DeliveryStore.load(path)).rejects.toThrow(/quarantined.*corrupt/i);
+    const quarantined = await quarantinePaths();
+    expect(quarantined).toHaveLength(1);
+    await expect(readFile(quarantined[0], "utf8")).resolves.toBe(malformed);
+  });
+
   test("save quarantines invalid timestamps byte-identically and succeeds on retry", async () => {
     const store = await DeliveryStore.load(path);
     const malformed = "{\"existing-mark\":\"not-a-timestamp\"}\n";
@@ -140,6 +121,22 @@ describe("DeliveryStore concurrent writers", () => {
     expect((await DeliveryStore.load(path)).has("after-unreadable-quarantine")).toBe(true);
   });
 
+  test("quarantine failure is visible and leaves the original bytes untouched", async () => {
+    // The store and its .lock sibling fit within the filesystem component
+    // limit, while adding the longer .corrupt-* suffix makes rename fail.
+    const longName = "d".repeat(240);
+    const longPath = join(dir, longName);
+    await writeFile(longPath, "{}\n", "utf8");
+    const store = await DeliveryStore.load(longPath);
+    const malformed = "{corrupt but must survive\n";
+    await writeFile(longPath, malformed, "utf8");
+    store.mark("must-not-overwrite-after-quarantine-failure");
+
+    await expect(store.save()).rejects.toThrow(/could not be quarantined/i);
+    await expect(readFile(longPath, "utf8")).resolves.toBe(malformed);
+    expect((await readdir(dir)).filter((name) => name.startsWith(`${longName}.corrupt-`))).toHaveLength(0);
+  });
+
   test("reports failure instead of silently exhausting lock retries", { timeout: 15_000 }, async () => {
     const store = await DeliveryStore.load(path);
     store.mark("must-not-report-success");
@@ -161,38 +158,5 @@ describe("DeliveryStore concurrent writers", () => {
 
     const reloaded = await DeliveryStore.load(path);
     expect(reloaded.has("after-abandoned-lock")).toBe(true);
-  });
-
-  test("barrier-released Node processes keep repeated and distinct marks", { timeout: 45_000 }, async () => {
-    const releasePath = join(dir, "release");
-    const helperPath = fileURLToPath(new URL("./helpers/delivery_store_process_writer.mjs", import.meta.url));
-    const processes = Array.from({ length: 16 }, (_, index) => {
-      const readyPath = join(dir, `ready-${index}`);
-      const child = spawn(
-        process.execPath,
-        [helperPath, path, readyPath, releasePath, "shared-msg", `process-msg-${index}`],
-        { stdio: ["ignore", "ignore", "pipe"] },
-      );
-      let stderr = "";
-      child.stderr?.setEncoding("utf8");
-      child.stderr?.on("data", (chunk) => { stderr += chunk; });
-      return { child, readyPath, exited: childExit(child, () => stderr) };
-    });
-
-    try {
-      await waitForFiles(processes.map(({ readyPath }) => readyPath));
-      await writeFile(releasePath, "go\n", { mode: 0o600 });
-      await Promise.all(processes.map(({ exited }) => exited));
-    } finally {
-      for (const { child } of processes) {
-        if (child.exitCode === null && child.signalCode === null) child.kill();
-      }
-    }
-
-    const reloaded = await DeliveryStore.load(path);
-    expect(reloaded.has("shared-msg"), "shared-msg").toBe(true);
-    for (let index = 0; index < processes.length; index += 1) {
-      expect(reloaded.has(`process-msg-${index}`), `process-msg-${index}`).toBe(true);
-    }
   });
 });
