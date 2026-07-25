@@ -427,13 +427,18 @@ protocol question if a concrete **non-OAS** abuse case established one.
 
 Anything reasoning about grant strength must distinguish them:
 
-**Hosted (AC)** — verified in `ac/backend/src/aweb_cloud/services/spawn.py`:
-`max_uses` defaults to **1** and must be ≥ 1 (`:200-205`); expiry defaults to
-**24h** (`DEFAULT_EXPIRES_IN_SECONDS`, `:20`), minimum 60s and maximum 30 days
-(`MAX_EXPIRES_IN_SECONDS`, `:21`, enforced at `:207-216`); revocation exists
-(`revoked_at`, selected at `:410`); and consumption reads the row under
-`FOR UPDATE` inside the transaction (`:408-414`), so the use counter is
-race-safe.
+**Hosted (AC)** — verified in `ac/backend/src/aweb_cloud/services/spawn.py`, in
+the **`ac` repository** at commit `c5650ecf` (line numbers below are meaningless
+without that pin, since `ac` moves independently of this repo): `max_uses`
+defaults to **1** and must be ≥ 1 (`:200-205`); expiry defaults to **24h**
+(`DEFAULT_EXPIRES_IN_SECONDS`, `:20`), minimum 60s and maximum 30 days
+(`MAX_EXPIRES_IN_SECONDS`, `:21`, enforced at `:207-216`). Revocation is a real
+operation, not just a column: `UPDATE … SET revoked_at = NOW()` guarded by
+`revoked_at IS NULL` (`:372-379`), and consumption rejects a revoked or expired
+token with 410 and an exhausted one with 409 (`:420-423`). Race-safety is the
+whole sequence, not the `SELECT` alone: the row is read `FOR UPDATE` inside the
+transaction (`:408-414`), the limit is checked against it (`:422`), and the
+counter is incremented in the same transaction (`:530-537`).
 
 **Local controller / BYOIDT** — verified in `cli/go/awconfig/team_invites.go`:
 the `TeamInvite` record (`:15-24`) has exactly `invite_id`, `domain`,
@@ -490,16 +495,31 @@ which is the exception — we built it first, and that ordering is corrected her
    fatal outcome with rollback (`aaaa.2`).
 7. **Migrate the first durable resident** (`aaaa.19`), and not before.
 
-This numbering is the **intended work order**, not a dependency chain, and the
-distinction matters: steps 3 and 4 are independent of each other and either
-could run first without breaking anything. What the board records is narrower —
-five edges between still-open tasks: `.5` waits on `.4`; `.28` waits on both
-`.4` and `.5`; `.30` waits on `.29`; `.19` waits on `.30`. (`.4` and `.19` also
-carry satisfied edges to closed work.) Nothing on the board orders `.29` after
-`.28`, because nothing needs to. Step 6 is two tasks, `.2` for required-hook fatality and
-`.31` for per-instance settings. Step 1 is merged in our source and **still open
-as `.1`**, because what remains is upstream acceptance of PR 37, and the defect
-is unfixed for every consumer but us until that lands.
+This numbering is the **intended work order**, not a dependency chain: steps 3
+and 4 are independent, and either could run first without breaking anything.
+
+**The board is authoritative for dependencies, and this document deliberately
+does not mirror it.** Two earlier revisions enumerated the edges here, and both
+enumerations were wrong within the hour — which is this epic's recurring defect
+shape, a copy diverging from its source while both look authoritative, committed
+in the document that exists to name it. What is recorded below is the set of
+*ordering constraints the design requires*, which are stable; the board records
+them as edges, and `aw task dep list` is how you check them:
+
+- lifecycle policy precedes the minting authority that provisioning uses, which
+  in turn precedes any proof of the provisioned journey;
+- the crash-recovery proof waits until the ordinary journey passes — hardening
+  a path before it works is effort spent on a shape that may still change;
+- the Pi wake-and-reply proof waits on deterministic propagation, because
+  without it there is nothing to wake as;
+- resident migration waits on that proof;
+- the per-instance settings contract waits on propagation, so that only one
+  contract addition is in front of the upstream maintainer at a time.
+
+Step 6 is two tasks: `.2` for required-hook fatality, `.31` for per-instance
+settings. Step 1 is merged in our source and **still open as `.1`**, because
+what remains is upstream acceptance of PR 37, and the defect is unfixed for
+every consumer but us until that lands.
 
 **What is already delivered:** the two bounded safety results below — ordinary
 retire of an attached instance preserves the principal (`.17`), and the attach
