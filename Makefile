@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-channel test-oas test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-server test-awid test-cli test-channel test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
@@ -28,6 +28,8 @@ help:
 	@echo "  test-cli     Run CLI tests"
 	@echo "  test-channel Run channel tests"
 	@echo "  test-a2a     Run A2A conformance, gateway, AWID lookup, and CLI command gates"
+	@echo "  test-oas-proof-helpers Run attached-principal proof filesystem guard tests"
+	@echo "  test-oas-attached-principal-e2e Run the real local-stack attach/retire proof"
 	@echo "  test-e2e     Run the end-to-end user journey (requires Docker)"
 	@echo "  test-federation-e2e Run the OSS federation journey (requires Docker)"
 	@echo "  test-a2a-gateway-e2e Run the A2A gateway Docker journey against real aweb+awid"
@@ -81,6 +83,12 @@ test-channel:
 
 test-oas:
 	node --test oas/test/*.test.mjs
+
+test-oas-proof-helpers:
+	python3 scripts/e2e/test_oas_principal_proof.py
+
+test-oas-attached-principal-e2e: test-oas-proof-helpers
+	./scripts/e2e-oas-attached-principal-retire.sh
 
 test-a2a:
 	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./a2a ./a2agw ./awid -count=1
