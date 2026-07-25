@@ -244,6 +244,28 @@ and its `/state`/`/edit`/`/preview`, `/llms.txt`, `/skills/`, `/health`) are
 - Reserved built-in command **names and aliases** cannot be an `app.id` or a verb
   (install-time rejection; cli `default-aaai.2`).
 
+### Parsing and size bounds (fail-closed; `default-aajc.4`)
+
+- **Single JSON document.** A manifest (and a json-mode `--body-file`) must be
+  exactly one JSON document followed only by optional whitespace and EOF. A
+  valid object followed by a second document or trailing bytes is rejected — no
+  silent acceptance of the first of several documents.
+- **Unknown fields rejected (manifest).** Manifest decoding rejects unknown
+  object fields at every modeled level (`manifest_version`/`app`/`tools[]`/
+  `body`/`event_emitters[]`), so a misspelled security-sensitive field (e.g.
+  `auht` for `auth`) fails closed instead of silently defaulting. Arbitrary
+  keys inside `input_schema` (a free-form JSON Schema) are unaffected.
+- **Declared maxima are enforced by reading one extra byte.** Oversize input is
+  rejected with a clear error; no truncated artifact is ever installed, renamed,
+  hashed as provenance, or executed. Defaults: manifest document 10 MiB, plugin
+  executable 100 MiB, manifest-tool HTTP response body 10 MiB, `--body-file` /
+  stdin request body 10 MiB. The provenance digest covers the complete accepted
+  bytes.
+- **Atomic install.** A failed install or oversize update leaves the previous
+  executable intact and removes the temporary file; the executable is written to
+  a `.tmp` opened `O_EXCL` and renamed into place only after full, in-bounds
+  receipt.
+
 ## Explicitly NOT in this schema
 
 - **A2A Agent Card / publication semantics** (SoT §3.2) — separate contract; no

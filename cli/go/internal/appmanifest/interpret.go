@@ -1,10 +1,12 @@
 package appmanifest
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"sort"
 	"strconv"
@@ -12,6 +14,39 @@ import (
 
 	"github.com/awebai/aw/awid"
 )
+
+// DecodeSingleJSON decodes exactly one JSON document from data into v (numbers
+// as json.Number) and requires that only optional trailing whitespace follows.
+// A second document or any trailing non-whitespace bytes are rejected, so a
+// caller can never silently accept the first of several documents.
+func DecodeSingleJSON(data []byte, v any) error {
+	return decodeSingleJSON(data, v, false)
+}
+
+// DecodeSingleJSONStrict is DecodeSingleJSON that additionally rejects unknown
+// object fields, so a misspelled security-sensitive field fails closed instead
+// of silently defaulting.
+func DecodeSingleJSONStrict(data []byte, v any) error {
+	return decodeSingleJSON(data, v, true)
+}
+
+func decodeSingleJSON(data []byte, v any, disallowUnknown bool) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if disallowUnknown {
+		dec.DisallowUnknownFields()
+	}
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("unexpected trailing data after JSON document")
+		}
+		return fmt.Errorf("unexpected trailing data after JSON document: %w", err)
+	}
+	return nil
+}
 
 const SupportedManifestVersion = 1
 
@@ -504,28 +539,16 @@ func buildBody(tool *Tool, args map[string]any, properties map[string]map[string
 }
 
 func jsonModeRawBodyObject(rawBody []byte) (map[string]any, error) {
-	body := map[string]any{}
-	if rawBody == nil {
-		return body, nil
+	if rawBody == nil || len(strings.TrimSpace(string(rawBody))) == 0 {
+		return map[string]any{}, nil
 	}
-	if len(strings.TrimSpace(string(rawBody))) == 0 {
-		return body, nil
+	var raw any
+	if err := DecodeSingleJSON(rawBody, &raw); err != nil {
+		return nil, fmt.Errorf("--body-file for json-mode verbs must contain a single JSON object: %w", err)
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(rawBody)))
-	decoder.UseNumber()
-	if err := decoder.Decode(&body); err != nil {
-		return nil, fmt.Errorf("--body-file for json-mode verbs must contain a JSON object: %w", err)
-	}
-	if len(body) == 0 {
-		var raw any
-		decoder := json.NewDecoder(strings.NewReader(string(rawBody)))
-		decoder.UseNumber()
-		if err := decoder.Decode(&raw); err != nil {
-			return nil, fmt.Errorf("--body-file for json-mode verbs must contain a JSON object: %w", err)
-		}
-		if _, ok := raw.(map[string]any); !ok {
-			return nil, fmt.Errorf("--body-file for json-mode verbs must contain a JSON object")
-		}
+	body, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("--body-file for json-mode verbs must contain a JSON object")
 	}
 	return body, nil
 }
