@@ -1760,6 +1760,15 @@ func (l *Loop) markStatusDirty() {
 
 // connState reports the authoritative connection state, owned by the EventBus
 // and stored atomically there.
+//
+// DESIGN CONSTRAINT: conn is the ONLY EventBus-owned value that participates in
+// the rendered status line, and each render loads it exactly once and threads it
+// through as a parameter. That is why a single atomic is sufficient: one value
+// sampled once per line cannot be internally inconsistent. Adding a second
+// background-owned value to the render would break that — two atomics give two
+// consistent reads and one inconsistent LINE. If a second such value is ever
+// needed, pack them into one immutable struct swapped via atomic.Pointer so a
+// single load yields a consistent snapshot; do not add a second atomic.
 func (l *Loop) connState() ConnectionState {
 	if l.EventBus == nil {
 		return ConnDisconnected
