@@ -38,13 +38,13 @@ func TestInitGlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *
 	)
 
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": server.URL,
-				"aweb_url":       server.URL + "/api",
-				"registry_url":   server.URL,
+				"onboarding_url": serverURL,
+				"aweb_url":       serverURL + "/api",
+				"registry_url":   serverURL,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
 			var payload map[string]any
@@ -155,7 +155,7 @@ func TestInitGlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -305,13 +305,13 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 	}
 
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": server.URL,
-				"aweb_url":       server.URL,
-				"registry_url":   server.URL,
+				"onboarding_url": serverURL,
+				"aweb_url":       serverURL,
+				"registry_url":   serverURL,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
 			_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
@@ -381,7 +381,7 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 				Lifetime:     awid.LifetimeEphemeral,
 			})
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     server.URL,
+				"server_url":     serverURL,
 				"team_cert":      encoded,
 				"alias":          alias,
 				"team_id":        teamID,
@@ -436,7 +436,7 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
@@ -536,13 +536,13 @@ func TestInitSelfCustodialGlobalCLITreatsSameKeyAlreadyRegisteredAsSuccess(t *te
 	)
 
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": server.URL,
-				"aweb_url":       server.URL,
-				"registry_url":   server.URL,
+				"onboarding_url": serverURL,
+				"aweb_url":       serverURL,
+				"registry_url":   serverURL,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
 			_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
@@ -621,7 +621,7 @@ func TestInitSelfCustodialGlobalCLITreatsSameKeyAlreadyRegisteredAsSuccess(t *te
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -687,13 +687,13 @@ func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 	)
 
 	var server *httptest.Server
-	server = newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url": server.URL,
-				"aweb_url":       server.URL,
-				"registry_url":   server.URL,
+				"onboarding_url": serverURL,
+				"aweb_url":       serverURL,
+				"registry_url":   serverURL,
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/onboarding/check-username":
 			_ = json.NewEncoder(w).Encode(map[string]any{"available": true})
@@ -748,7 +748,7 @@ func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-	}))
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
