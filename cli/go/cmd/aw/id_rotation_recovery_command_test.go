@@ -193,6 +193,15 @@ func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 			if (pending != nil) != tc.wantPending {
 				t.Fatalf("pending=%+v, want present=%v", pending, tc.wantPending)
 			}
+			// A promoted operation owns its replacement at the active path. Every
+			// other preserved operation must retain both operation-owned key files.
+			if tc.wantPending && !tc.localPromoted {
+				for _, path := range []string{pending.PendingKey, awid.PublicKeyPath(pending.PendingKey)} {
+					if _, err := os.Stat(path); err != nil {
+						t.Fatalf("preserved operation key missing at %s: %v", path, err)
+					}
+				}
+			}
 			active, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(dir))
 			if err != nil {
 				t.Fatal(err)
