@@ -7,6 +7,15 @@ const messageIds = (count: number): string[] => (
 );
 
 describe("chat mark-read batching", () => {
+  test("rejects an empty presented set without making a request", async () => {
+    const client = { post: vi.fn().mockResolvedValue(undefined) };
+
+    await expect(markRead(client as never, "session-1", [])).rejects.toThrow(
+      "aweb: cannot mark chat read without presented message IDs",
+    );
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
   test("sends exactly 1000 presented IDs in one request", async () => {
     const client = { post: vi.fn().mockResolvedValue(undefined) };
     const ids = messageIds(1000);

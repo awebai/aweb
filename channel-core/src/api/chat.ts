@@ -98,6 +98,9 @@ export async function markRead(
   sessionId: string,
   messageIds: readonly string[],
 ): Promise<void> {
+  if (messageIds.length === 0) {
+    throw new Error("aweb: cannot mark chat read without presented message IDs");
+  }
   const path = `/v1/chat/sessions/${encodeURIComponent(sessionId)}/read`;
   // Chunks commit independently. On failure, confirmed earlier chunks stay read
   // and this error stops later chunks so they remain unread and retryable.
