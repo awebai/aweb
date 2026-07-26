@@ -67,6 +67,11 @@ func runIDRotateKeyRecover(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if out.Status == "no_pending" {
+		if err := validateResolvedIdentity(identity); err != nil {
+			return err
+		}
+	}
 	printOutput(out, formatIDRotationRecovery)
 	return nil
 }
@@ -99,6 +104,9 @@ func runIDRotateKeyStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if state == nil {
+		if err := validateResolvedIdentity(identity); err != nil {
+			return err
+		}
 		printOutput(idRotationRecoveryOutput{
 			Status: "no_pending", StableID: identity.StableID,
 			StatePath: pendingRotationStatePath(rotationDir, identity.StableID),
@@ -127,6 +135,9 @@ func prepareRotationIdentity(requireSigningKey bool) (*awconfig.ResolvedIdentity
 		return nil, "", "", fmt.Errorf("current identity is missing a did:aw stable identifier")
 	}
 	if requireSigningKey {
+		if err := validateResolvedIdentity(identity); err != nil {
+			return nil, "", "", err
+		}
 		signingKey, err := resolveIdentitySigningKey(identity)
 		if err != nil {
 			return nil, "", "", err

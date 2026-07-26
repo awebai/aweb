@@ -293,6 +293,43 @@ func TestAwIDRotateKeyWithPendingStateRecoversAndRequiresRerun(t *testing.T) {
 	}
 }
 
+func TestAwIDRotationRecoveryWithoutPendingStateStillRejectsIdentityKeyMismatch(t *testing.T) {
+	oldPub, oldPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPub, newPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := awid.ComputeDIDKey(oldPub)
+	stableID := awid.ComputeStableID(oldPub)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, dir, "acme.com/alice", oldDID, stableID, "https://registry.invalid", oldPriv)
+	if err := awid.SaveKeypairAt(
+		awconfig.WorktreeSigningKeyPath(dir),
+		awid.PublicKeyPath(awconfig.WorktreeSigningKeyPath(dir)),
+		newPub,
+		newPriv,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, action := range []string{"recover", "status"} {
+		cmd := exec.CommandContext(ctx, bin, "id", "rotate-key", action, "--json")
+		cmd.Env = testCommandEnv(dir)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "does not match .aw/signing.key") {
+			t.Fatalf("%s mismatch error=%v\n%s", action, err, out)
+		}
+	}
+}
+
 func TestAwIDRotateKeyStatusIsReadOnlyAndDistinguishesActiveOperation(t *testing.T) {
 	oldPub, oldPriv, err := awid.GenerateKeypair()
 	if err != nil {
