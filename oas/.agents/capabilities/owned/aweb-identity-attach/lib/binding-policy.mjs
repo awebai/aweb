@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, renameSync, unlinkSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 import { isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
 
 // User-configurable modes only. Durable provisioning remains internal receipt
@@ -274,14 +274,14 @@ export function loadCleanupCorroboration(corroborationHome, operationID, instanc
   if (!existsSync(legacyPath)) return null;
   const legacy = readCleanupCorroboration(legacyPath, operationID);
   try {
-    // Same-directory rename is the cutover commit: the record is never
-    // addressable under both the legacy and operation names at once.
-    renameSync(legacyPath, path);
-    return legacy.record;
+    // link(2) is the no-replace cutover claim. A concurrent destination winner
+    // yields EEXIST and must compare equal; authority is never overwritten.
+    linkSync(legacyPath, path);
   } catch (error) {
-    if (error?.code !== "ENOENT" || !existsSync(path)) throw error;
+    if (error?.code !== "EEXIST") throw error;
     const current = readCleanupCorroboration(path, operationID);
     if (JSON.stringify(current.encoded) !== JSON.stringify(legacy.encoded)) throw new Error("cleanup corroboration adoption found contradictory authority");
-    return current.record;
   }
+  try { unlinkSync(legacyPath); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  return legacy.record;
 }
