@@ -339,8 +339,10 @@ its rollback must be provably non-destructive.
 Two levels, named honestly, because conflating them would put a false claim in
 the documentation:
 
-**v1, admission lease.** Prevents a second session starting while one is live.
-`aw lock` is already a server-side TTL lease with `SELECT FOR UPDATE`
+**v1, admission lease.** When explicitly acquired, prevents a different
+per-session key from acquiring admission while the lease is live. It does
+**not automatically prevent concurrent starts today**: OAS has no session
+start/end hook, so no runtime caller acquires or releases it yet. `aw lock` is already a server-side TTL lease with `SELECT FOR UPDATE`
 (`server/src/aweb/routes/reservations.py:186-204`), but its conflict test
 compares `holder_agent_id`, so a copied identity does not conflict with itself.
 The holder must therefore be a per-session key that the server holds and checks;

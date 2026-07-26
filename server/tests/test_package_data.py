@@ -85,6 +85,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "007_agent_encryption_key_custody.sql",
         "008_app_registry_grants.sql",
         "009_app_events.sql",
+        "010_session_admission_leases.sql",
     ]
 
 

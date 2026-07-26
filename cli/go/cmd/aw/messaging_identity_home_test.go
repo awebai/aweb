@@ -26,6 +26,8 @@ import (
 type messagingSignedRequest struct {
 	authorization string
 	timestamp     string
+	method        string
+	path          string
 	body          []byte
 }
 
