@@ -59,12 +59,20 @@ func TestExternalIdentityHomeTaskAndWorkCommandsUseSelectedPrincipal(t *testing.
 			signedRequests = append(signedRequests, messagingSignedRequest{
 				authorization: r.Header.Get("Authorization"),
 				timestamp:     r.Header.Get("X-AWEB-Timestamp"),
+				method:        r.Method,
+				path:          r.URL.Path,
 				body:          body,
 			})
 			requestMu.Unlock()
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/session-leases":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "active", "team_id": "runtime:aweb.test", "principal_agent_id": "principal-agent", "session_id": "session-a", "generation": 1, "acquired_at": "2026-07-26T00:00:00Z", "expires_at": "2026-07-26T00:05:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/session-leases/release":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "released", "session_id": "session-a"})
+		case r.Method == http.MethodPost && (r.URL.Path == "/v1/session-leases" || r.URL.Path == "/v1/session-leases/renew" || r.URL.Path == "/v1/session-leases/takeover"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "active", "team_id": "runtime:aweb.test", "principal_agent_id": "principal-agent", "session_id": "session-a", "generation": 1, "acquired_at": "2026-07-26T00:00:00Z", "expires_at": "2026-07-26T00:05:00Z"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tasks":
 			_ = json.NewEncoder(w).Encode(task)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks":
@@ -117,10 +125,16 @@ func TestExternalIdentityHomeTaskAndWorkCommandsUseSelectedPrincipal(t *testing.
 
 	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
+	const sessionKey = "0123456789abcdef0123456789abcdef"
 	commands := []struct {
 		name string
 		args []string
 	}{
+		{name: "session-lease-status", args: []string{"session", "lease", "status"}},
+		{name: "session-lease-acquire", args: []string{"session", "lease", "acquire", "--session-id", "session-a", "--session-key", sessionKey}},
+		{name: "session-lease-renew", args: []string{"session", "lease", "renew", "--session-id", "session-a", "--session-key", sessionKey}},
+		{name: "session-lease-release", args: []string{"session", "lease", "release", "--session-id", "session-a", "--session-key", sessionKey}},
+		{name: "session-lease-takeover", args: []string{"session", "lease", "takeover", "--session-id", "session-a", "--session-key", sessionKey, "--reason", "operator test"}},
 		{name: "task-create", args: []string{"task", "create", "--title", "Principal task"}},
 		{name: "task-list", args: []string{"task", "list"}},
 		{name: "task-show", args: []string{"task", "show", "TASK-001"}},
@@ -158,4 +172,35 @@ func TestExternalIdentityHomeTaskAndWorkCommandsUseSelectedPrincipal(t *testing.
 	requests := append([]messagingSignedRequest(nil), signedRequests...)
 	requestMu.Unlock()
 	verifyMessagingRequestsForTest(t, requests, principalPub, shadowPub, principalDID, shadowDID)
+	wantLeaseBodies := map[string]map[string]any{
+		"/v1/session-leases":          {"session_id": "session-a", "session_key": sessionKey, "ttl_seconds": float64(300)},
+		"/v1/session-leases/renew":    {"session_id": "session-a", "session_key": sessionKey, "ttl_seconds": float64(300)},
+		"/v1/session-leases/release":  {"session_id": "session-a", "session_key": sessionKey},
+		"/v1/session-leases/takeover": {"session_id": "session-a", "session_key": sessionKey, "ttl_seconds": float64(300), "reason": "operator test"},
+	}
+	seen := make(map[string]bool)
+	for _, request := range requests {
+		want, ok := wantLeaseBodies[request.path]
+		if !ok || request.method != http.MethodPost {
+			continue
+		}
+		var got map[string]any
+		if err := json.Unmarshal(request.body, &got); err != nil {
+			t.Fatalf("decode %s request: %v", request.path, err)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("%s body = %#v, want %#v", request.path, got, want)
+		}
+		for key, value := range want {
+			if got[key] != value {
+				t.Fatalf("%s body[%s] = %#v, want %#v", request.path, key, got[key], value)
+			}
+		}
+		seen[request.path] = true
+	}
+	for path := range wantLeaseBodies {
+		if !seen[path] {
+			t.Fatalf("missing exact request assertion for %s", path)
+		}
+	}
 }
