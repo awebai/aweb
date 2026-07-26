@@ -60,7 +60,7 @@ help:
 build:
 	cd cli/go && $(MAKE) build
 
-test: test-server test-awid test-cli test-channel test-oas
+test: test-server test-awid test-cli test-channel test-oas test-oas-proof-helpers
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
