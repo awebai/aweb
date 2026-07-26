@@ -30,6 +30,13 @@ The local path proves these authorities before grant creation:
 3. the machine-wide controller key still has the declared controller DID;
 4. the authority carries both registry and aweb service routes.
 
+The cleanup graph therefore requires the declared external principal to remain
+active until workspace/identity soft deletion, and the controller key to remain
+available until certificate revocation. No universal retirement choke point
+exists, so this is declarative rather than enforced against intentional
+same-UID retirement; loss of either authority produces visible quarantine. A
+controller key alone cannot prove or perform aweb workspace deletion.
+
 Cleanup runs in this order and persists each completed step in the external
 operation record:
 
