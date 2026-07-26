@@ -9,7 +9,6 @@ import (
 	"time"
 
 	aweb "github.com/awebai/aw"
-	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
 
@@ -45,7 +44,7 @@ type doctorContactsResponse struct {
 }
 
 func (r *doctorRunner) runMessagingDoctorChecks() {
-	state := collectDoctorMessagingState(r.workingDir)
+	state := collectDoctorMessagingStateAt(r.workingDir, r.identityHome)
 	r.addMessagingLocalSignatureChecks(state)
 	networkIDs := []string{
 		doctorCheckMessagingInboxRead,
@@ -71,13 +70,17 @@ func (r *doctorRunner) runMessagingDoctorChecks() {
 }
 
 func collectDoctorMessagingState(workingDir string) *doctorMessagingState {
-	awebState := collectDoctorAwebState(workingDir)
+	return collectDoctorMessagingStateAt(workingDir, "")
+}
+
+func collectDoctorMessagingStateAt(workingDir, identityHome string) *doctorMessagingState {
+	awebState := collectDoctorAwebStateAt(workingDir, identityHome)
 	state := &doctorMessagingState{
 		awebState:  awebState,
 		signingKey: awebState.signingKey,
 		signingErr: awebState.signingKeyErr,
 	}
-	identityState := collectDoctorIdentityState(workingDir)
+	identityState := collectDoctorIdentityStateAt(workingDir, identityHome)
 	state.did = strings.TrimSpace(identityState.did)
 	state.stableID = strings.TrimSpace(identityState.stableID)
 	state.address = strings.TrimSpace(identityState.address)
@@ -101,8 +104,9 @@ func (r *doctorRunner) addMessagingLocalSignatureChecks(state *doctorMessagingSt
 			reason = "no_workspace_context"
 		}
 		detail := map[string]any{"reason": reason}
-		r.add(awebCheck(doctorCheckMessagingMailSignature, status, localPathTarget(awconfig.WorktreeSigningKeyPath(r.workingDir)), "Mail signature dry-run requires a local signing key.", "Restore .aw/signing.key before using signed messaging.", detail))
-		r.add(awebCheck(doctorCheckMessagingChatSignature, status, localPathTarget(awconfig.WorktreeSigningKeyPath(r.workingDir)), "Chat signature dry-run requires a local signing key.", "Restore .aw/signing.key before using signed messaging.", detail))
+		signingKeyPath := doctorIdentityStatePath(r.workingDir, r.identityHome, "signing.key")
+		r.add(awebCheck(doctorCheckMessagingMailSignature, status, localPathTarget(signingKeyPath), "Mail signature dry-run requires a local signing key.", "Restore .aw/signing.key before using signed messaging.", detail))
+		r.add(awebCheck(doctorCheckMessagingChatSignature, status, localPathTarget(signingKeyPath), "Chat signature dry-run requires a local signing key.", "Restore .aw/signing.key before using signed messaging.", detail))
 		return
 	}
 	did := strings.TrimSpace(state.did)

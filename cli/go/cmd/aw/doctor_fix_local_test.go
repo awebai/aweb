@@ -85,6 +85,10 @@ func TestAwDoctorLocalFixActiveTeamDryRunApplyAndNoop(t *testing.T) {
 		WorkspaceID: "ws-1",
 		CertPath:    "team-certs/backend__example.com.pem",
 	}})
+	teamStatePath := awconfig.TeamStatePath(tmp)
+	if err := os.WriteFile(teamStatePath, []byte("active_team: \"\"\nmemberships:\n  - team_id: backend:example.com\n    alias: mia\n    cert_path: team-certs/backend__example.com.pem\n    registry_url: https://registry.example.com\n    aweb_url: https://app.example.com/api\n"), 0o600); err != nil {
+		t.Fatalf("write incomplete teams.yaml: %v", err)
+	}
 	before, err := os.ReadFile(workspacePath)
 	if err != nil {
 		t.Fatalf("read workspace before dry-run: %v", err)
@@ -124,6 +128,10 @@ func TestAwDoctorLocalFixActiveTeamDryRunApplyAndNoop(t *testing.T) {
 	if teamState.ActiveTeam != "backend:example.com" {
 		t.Fatalf("active_team=%q", teamState.ActiveTeam)
 	}
+	membership := teamState.Membership("backend:example.com")
+	if membership == nil || membership.RegistryURL != "https://registry.example.com" || membership.AwebURL != "https://app.example.com/api" {
+		t.Fatalf("active-team fix discarded membership service metadata: %+v", teamState)
+	}
 
 	handler, ok := doctorFixHandlers[doctorCheckTeamsActiveTeam]
 	if !ok {
@@ -136,6 +144,24 @@ func TestAwDoctorLocalFixActiveTeamDryRunApplyAndNoop(t *testing.T) {
 	}
 	if planned.Status != doctorFixStatusNoop {
 		t.Fatalf("rerun plan status=%q, want noop: %#v", planned.Status, planned)
+	}
+
+	malformed := []byte("active_team: \"\"\nmemberships:\n  - team_id: backend:example.com\n    registry_url: https://registry.must-survive.example\n    aweb_url: [malformed\n")
+	if err := os.WriteFile(teamStatePath, malformed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err = runDoctorCLI(t, bin, tmp, "doctor", "--fix", doctorCheckTeamsActiveTeam, "--json")
+	if err != nil {
+		t.Fatalf("doctor malformed active_team fix failed: %v\n%s", err, out)
+	}
+	got = decodeDoctorOutput(t, out)
+	requireDoctorFixStatus(t, got, doctorFixStatusRefused)
+	afterMalformed, err := os.ReadFile(teamStatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterMalformed, malformed) {
+		t.Fatalf("doctor overwrote malformed existing teams.yaml\nbefore:\n%s\nafter:\n%s", malformed, afterMalformed)
 	}
 }
 

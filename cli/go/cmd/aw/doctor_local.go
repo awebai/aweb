@@ -45,7 +45,8 @@ const (
 )
 
 type doctorLocalState struct {
-	workingDir string
+	workingDir   string
+	identityHome string
 
 	workspacePath string
 	workspace     *awconfig.WorktreeWorkspace
@@ -73,6 +74,7 @@ type doctorWorkspaceYAML struct {
 	AgentType       string                          `yaml:"agent_type,omitempty"`
 	RepoID          string                          `yaml:"repo_id,omitempty"`
 	CanonicalOrigin string                          `yaml:"canonical_origin,omitempty"`
+	AwebTmuxTmpdir  string                          `yaml:"aweb_tmux_tmpdir,omitempty"`
 	Hostname        string                          `yaml:"hostname,omitempty"`
 	WorkspacePath   string                          `yaml:"workspace_path,omitempty"`
 	UpdatedAt       string                          `yaml:"updated_at,omitempty"`
@@ -104,12 +106,13 @@ type doctorTeamMembershipYAML struct {
 func (r *doctorRunner) runLocalChecks() {
 	state := doctorLocalState{
 		workingDir:     r.workingDir,
-		workspacePath:  awconfig.WorktreeWorkspacePath(r.workingDir),
-		signingKeyPath: awconfig.WorktreeSigningKeyPath(r.workingDir),
-		identityPath:   awconfig.WorktreeIdentityPath(r.workingDir),
+		identityHome:   r.identityHome,
+		workspacePath:  doctorIdentityStatePath(r.workingDir, r.identityHome, "workspace.yaml"),
+		signingKeyPath: doctorIdentityStatePath(r.workingDir, r.identityHome, "signing.key"),
+		identityPath:   doctorIdentityStatePath(r.workingDir, r.identityHome, "identity.yaml"),
 	}
 
-	workspace, workspacePath, err := loadDoctorWorkspaceFromDir(r.workingDir)
+	workspace, workspacePath, err := loadDoctorWorkspaceAt(r.workingDir, r.identityHome)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			r.add(localPathCheck(
@@ -146,7 +149,7 @@ func (r *doctorRunner) runLocalChecks() {
 
 	state.workspace = workspace
 	state.workspacePath = workspacePath
-	if teamState, err := loadDoctorTeamStateFromDir(r.workingDir); err == nil {
+	if teamState, err := loadDoctorTeamStateAt(r.workingDir, r.identityHome); err == nil {
 		state.teamState = teamState
 		state.membership = awconfig.ActiveMembershipFor(workspace, teamState)
 	}
@@ -209,7 +212,7 @@ func (r *doctorRunner) runWorkspaceChecks(state *doctorLocalState) {
 		activeTeam = strings.TrimSpace(state.teamState.ActiveTeam)
 	}
 	if activeTeam == "" {
-		check := localPathCheck(doctorCheckTeamsActiveTeam, doctorStatusFail, awconfig.TeamStatePath(state.workingDir), "teams.yaml active_team is missing.", "Recreate or repair .aw/teams.yaml.", nil)
+		check := localPathCheck(doctorCheckTeamsActiveTeam, doctorStatusFail, doctorIdentityStatePath(state.workingDir, state.identityHome, "teams.yaml"), "teams.yaml active_team is missing.", "Recreate or repair .aw/teams.yaml.", nil)
 		check.Fix = safeDoctorFixInfo(doctorCheckTeamsActiveTeam)
 		r.add(check)
 	} else {
@@ -273,7 +276,7 @@ func (r *doctorRunner) runWorkspaceChecks(state *doctorLocalState) {
 		))
 		return
 	}
-	state.certPath, err = awconfig.WorktreeStoredIdentityPath(state.workingDir, certPathValue)
+	state.certPath, err = resolveIdentityStoredPath(state.workingDir, state.identityHome, certPathValue)
 	if err != nil {
 		r.add(localCheck(doctorCheckWorkspaceCertPath, doctorStatusFail, localPathTarget(certPathValue), "Active membership cert_path is unsafe.", "Restore a contained, non-symlinked team certificate path.", map[string]any{"error": err.Error()}))
 		return
@@ -761,7 +764,17 @@ func (r *doctorRunner) runIdentityRegistryChecks(state *doctorLocalState) {
 }
 
 func loadDoctorWorkspaceFromDir(startDir string) (*awconfig.WorktreeWorkspace, string, error) {
-	path, err := awconfig.FindWorktreeWorkspacePath(startDir)
+	return loadDoctorWorkspaceAt(startDir, "")
+}
+
+func loadDoctorWorkspaceAt(startDir, identityHome string) (*awconfig.WorktreeWorkspace, string, error) {
+	path := ""
+	var err error
+	if strings.TrimSpace(identityHome) != "" {
+		path, err = awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "workspace.yaml")
+	} else {
+		path, err = awconfig.FindWorktreeWorkspacePath(startDir)
+	}
 	if err != nil {
 		return nil, "", err
 	}
@@ -773,7 +786,19 @@ func loadDoctorWorkspaceFromDir(startDir string) (*awconfig.WorktreeWorkspace, s
 }
 
 func loadDoctorTeamStateFromDir(workingDir string) (*awconfig.TeamState, error) {
-	data, err := os.ReadFile(awconfig.TeamStatePath(workingDir))
+	return loadDoctorTeamStateAt(workingDir, "")
+}
+
+func loadDoctorTeamStateAt(workingDir, identityHome string) (*awconfig.TeamState, error) {
+	path := awconfig.TeamStatePath(workingDir)
+	if strings.TrimSpace(identityHome) != "" {
+		var err error
+		path, err = awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "teams.yaml")
+		if err != nil {
+			return nil, err
+		}
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -830,6 +855,7 @@ func loadDoctorWorkspaceFrom(path string) (*awconfig.WorktreeWorkspace, error) {
 		AgentType:       strings.TrimSpace(raw.AgentType),
 		RepoID:          strings.TrimSpace(raw.RepoID),
 		CanonicalOrigin: strings.TrimSpace(raw.CanonicalOrigin),
+		AwebTmuxTmpdir:  strings.TrimSpace(raw.AwebTmuxTmpdir),
 		Hostname:        strings.TrimSpace(raw.Hostname),
 		WorkspacePath:   strings.TrimSpace(raw.WorkspacePath),
 		UpdatedAt:       strings.TrimSpace(raw.UpdatedAt),
