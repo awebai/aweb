@@ -23,6 +23,7 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	var registerCalls, connectCalls int
 	var workspaceDeleted, certificateRevoked bool
 	var workspaceDeleteCalls int
+	var authorityDID, controllerDID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.test/teams/backend/certificates":
@@ -87,6 +88,11 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-provisioned", "backend:acme.test", "oas-worker")
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/workspaces/workspace-provisioned":
 			workspaceDeleteCalls++
+			encodedCert := r.Header.Get("X-AWID-Team-Certificate")
+			authorityCert, err := awid.DecodeTeamCertificateHeader(encodedCert)
+			if err != nil || authorityCert.Alias != "provisioner" || authorityCert.MemberDIDKey != authorityDID {
+				t.Fatalf("workspace cleanup did not use declared authority: cert=%+v err=%v", authorityCert, err)
+			}
 			if workspaceDeleted {
 				http.NotFound(w, r)
 				return
@@ -113,6 +119,10 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 				"revoked_at": revokedAt,
 			}}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.test/teams/backend/certificates/revoke":
+			auth := strings.Fields(r.Header.Get("Authorization"))
+			if len(auth) < 2 || auth[0] != "DIDKey" || auth[1] != controllerDID {
+				t.Fatalf("certificate revoke auth=%q want controller %q", r.Header.Get("Authorization"), controllerDID)
+			}
 			certificateRevoked = true
 			hijacker, ok := w.(http.Hijacker)
 			if !ok {
@@ -144,7 +154,7 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 		t.Fatal(err)
 	}
 	writeTeamKeyForTest(t, root, "acme.test", "backend", controllerKey)
-	controllerDID := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
+	controllerDID = awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
 
 	authorityDir := filepath.Join(root, "authority")
 	instanceDir := filepath.Join(root, "instance")
@@ -158,7 +168,7 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorityDID := awid.ComputeDIDKey(authorityKey.Public().(ed25519.PublicKey))
+	authorityDID = awid.ComputeDIDKey(authorityKey.Public().(ed25519.PublicKey))
 	authorityStableID := awid.ComputeStableID(authorityKey.Public().(ed25519.PublicKey))
 	writeSelectionFixtureForTest(t, authorityDir, testSelectionFixture{
 		AwebURL: server.URL, TeamID: "backend:acme.test", Alias: "provisioner", WorkspaceID: "workspace-provisioner",

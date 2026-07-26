@@ -374,7 +374,11 @@ function recoverProvisionIntents(principalHome, cwd, { force = false } = {}) {
 
 function runLocalProvision(binding, authority, pendingReceipt) {
   const principalHome = resolvePrincipalHome();
-  recoverProvisionIntents(principalHome, authority.instanceHome);
+  const recovery = recoverProvisionIntents(principalHome, authority.instanceHome);
+  const quarantined = recovery.find((item) => item.outcome === "quarantined");
+  if (quarantined) {
+    throw new Error(`provision cleanup ${quarantined.operation_id} entered visible quarantine: ${quarantined.error}`);
+  }
   const instanceID = process.env.OAS_INSTANCE || "";
   const intent = createProvisionIntent(principalHome, {
     operationID: pendingReceipt.journal_operation,
@@ -483,10 +487,12 @@ function retire() {
   let recoveryWarning = null;
   try {
     if (process.env.OAS_HOME) {
-      recoverProvisionIntents(
+      const recovered = recoverProvisionIntents(
         resolvePrincipalHome(),
         requiredAbsoluteDirectory(process.env.OAS_HOME, "OAS_HOME"),
       );
+      const quarantined = recovered.find((item) => item.outcome === "quarantined");
+      if (quarantined) recoveryWarning = `aweb-identity-attach: cleanup ${quarantined.operation_id} entered visible quarantine: ${quarantined.error}`;
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

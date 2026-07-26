@@ -317,6 +317,8 @@ test("real OAS emits a local-controller authority statement with indefinite gran
     grant_cleanup_rule: "enumerate-and-remove-abandoned-grants",
     rule_enforcement: "declarative_no_universal_retirement_choke_point",
   });
+  assert.doesNotMatch(JSON.stringify(meta.capabilityMeta["aweb.identity-attach"]), /token|secret/i);
+  assert.doesNotMatch(readFileSync(join(spawned.home, "TASK.md"), "utf8"), /token|secret/i);
   const receipt = meta.capabilityMeta["aweb.identity-attach"].identity_binding;
   assert.equal(receipt.lifecycle, "provisioned");
   assert.equal(receipt.cleanup_owner, "instance");
