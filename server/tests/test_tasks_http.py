@@ -71,16 +71,19 @@ async def _insert_task(
     title: str,
     status: str = "open",
     updated_at=None,
+    parent_task_id=None,
+    assignee_alias=None,
 ) -> None:
     await aweb_db.execute(
         """
         INSERT INTO {{tables.tasks}} (
             task_id, team_id, task_number, root_task_seq, task_ref_suffix, title,
-            status, priority, task_type, created_at, updated_at
+            status, priority, task_type, created_at, updated_at,
+            parent_task_id, assignee_alias
         )
         VALUES (
             $1, $2, $3, $4, $5, $6,
-            $7, 2, 'task', $8, $9
+            $7, 2, 'task', $8, $9, $10, $11
         )
         """,
         task_id,
@@ -92,7 +95,149 @@ async def _insert_task(
         status,
         datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc),
         updated_at,
+        parent_task_id,
+        assignee_alias,
     )
+
+
+@pytest.mark.asyncio
+async def test_task_routes_filter_reparent_and_unassign(aweb_cloud_db, monkeypatch):
+    monkeypatch.setattr(tasks_routes, "get_team_identity", _fake_team_identity)
+    app = _build_tasks_app(aweb_cloud_db.aweb_db)
+    await _seed_team(aweb_cloud_db.aweb_db)
+
+    first_parent_id = uuid4()
+    second_parent_id = uuid4()
+    child_id = uuid4()
+    await _insert_task(
+        aweb_cloud_db.aweb_db,
+        task_id=first_parent_id,
+        task_number=1,
+        root_task_seq=1,
+        suffix="aaaa",
+        title="First parent",
+    )
+    await _insert_task(
+        aweb_cloud_db.aweb_db,
+        task_id=second_parent_id,
+        task_number=2,
+        root_task_seq=2,
+        suffix="aaab",
+        title="Second parent",
+    )
+    await _insert_task(
+        aweb_cloud_db.aweb_db,
+        task_id=child_id,
+        task_number=3,
+        root_task_seq=1,
+        suffix="aaaa.1",
+        title="Child",
+        parent_task_id=first_parent_id,
+        assignee_alias="alice",
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        listed = await client.get("/v1/tasks", params={"parent_task_id": "backend-aaaa"})
+        moved = await client.patch(
+            "/v1/tasks/backend-aaaa.1",
+            json={"parent_task_id": "backend-aaab", "assignee_alias": None},
+        )
+        cleared = await client.patch(
+            "/v1/tasks/backend-aaaa.1",
+            json={"parent_task_id": None},
+        )
+
+    assert listed.status_code == 200, listed.text
+    assert [task["task_id"] for task in listed.json()["tasks"]] == [str(child_id)]
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["parent_task_id"] == str(second_parent_id)
+    assert moved.json()["assignee_alias"] is None
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["parent_task_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_combined_reparent_and_claim_uses_new_hierarchy_apex(aweb_cloud_db, monkeypatch):
+    monkeypatch.setattr(tasks_routes, "get_team_identity", _fake_team_identity)
+    app = _build_tasks_app(aweb_cloud_db.aweb_db)
+    await _seed_team(aweb_cloud_db.aweb_db)
+
+    first_epic_id = uuid4()
+    second_epic_id = uuid4()
+    child_id = uuid4()
+    await _insert_task(
+        aweb_cloud_db.aweb_db,
+        task_id=first_epic_id,
+        task_number=1,
+        root_task_seq=1,
+        suffix="aaaa",
+        title="First epic",
+    )
+    await _insert_task(
+        aweb_cloud_db.aweb_db,
+        task_id=second_epic_id,
+        task_number=2,
+        root_task_seq=2,
+        suffix="aaab",
+        title="Second epic",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.tasks}} SET task_type = 'epic' WHERE task_id = ANY($1::uuid[])",
+        [first_epic_id, second_epic_id],
+    )
+    await _insert_task(
+        aweb_cloud_db.aweb_db,
+        task_id=child_id,
+        task_number=3,
+        root_task_seq=1,
+        suffix="aaaa.1",
+        title="Child",
+        parent_task_id=first_epic_id,
+    )
+
+    repo_id = uuid4()
+    workspace_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.repos}} (id, team_id, origin_url, canonical_origin, name, created_at)
+        VALUES ($1, $2, 'https://example.com/acme/backend.git', 'backend', 'backend', $3)
+        """,
+        repo_id,
+        TEAM_ID,
+        datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_id, agent_id, repo_id, alias, human_name,
+            role, hostname, workspace_path, created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, 'alice', 'Alice', 'developer', 'mac.local', '/tmp/backend', $5, $5)
+        """,
+        workspace_id,
+        TEAM_ID,
+        uuid4(),
+        repo_id,
+        datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc),
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.patch(
+            "/v1/tasks/backend-aaaa.1",
+            json={"parent_task_id": "backend-aaab", "status": "in_progress"},
+        )
+
+    assert response.status_code == 200, response.text
+    claim = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT apex_task_ref FROM {{tables.task_claims}} WHERE workspace_id = $1",
+        workspace_id,
+    )
+    workspace = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT focus_task_ref FROM {{tables.workspaces}} WHERE workspace_id = $1",
+        workspace_id,
+    )
+    assert claim["apex_task_ref"] == "backend-aaab"
+    assert workspace["focus_task_ref"] == "backend-aaab"
 
 
 @pytest.mark.asyncio

@@ -97,13 +97,23 @@ async def resolve_task_claim_apex(
     task_ref: str,
     max_depth: int = 20,
 ) -> Optional[str]:
-    """Walk native tasks parent_task_id chain to find the sticky focus apex.
+    """Walk native tasks parent_task_id chain to find the sticky focus apex."""
+    return await resolve_task_claim_apex_on(
+        db_infra.get_manager("aweb"), team_id, task_ref, max_depth=max_depth
+    )
+
+
+async def resolve_task_claim_apex_on(
+    aweb_db,
+    team_id: str,
+    task_ref: str,
+    max_depth: int = 20,
+) -> Optional[str]:
+    """Resolve the apex using one manager or transaction-visible connection.
 
     Prefer the highest epic ancestor when one exists. Otherwise fall back to
     the root task ref so non-epic task trees still have a stable apex.
     """
-    aweb_db = db_infra.get_manager("aweb")
-
     slug = team_slug(team_id)
 
     prefix = slug + "-"

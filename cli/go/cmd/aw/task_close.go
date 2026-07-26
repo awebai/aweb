@@ -54,6 +54,11 @@ func runTaskClose(cmd *cobra.Command, args []string) error {
 		}
 
 		resp, err := client.TaskUpdate(ctx, ref, req)
+		if err == nil && resp.RetriedAfterNotFound {
+			if verifyErr := verifyTaskUpdate(ctx, client, ref, req); verifyErr != nil {
+				err = fmt.Errorf("task %s still exists, but the retried close could not be verified: %w; inspect the task before retrying", ref, verifyErr)
+			}
+		}
 		cancel()
 		if err != nil {
 			result.Failures = append(result.Failures, taskCloseFailure{Ref: ref, Error: err.Error()})

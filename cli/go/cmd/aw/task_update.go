@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	aweb "github.com/awebai/aw"
@@ -25,7 +26,8 @@ func init() {
 	taskUpdateCmd.Flags().String("type", "", "Type (task, bug, feature, epic)")
 	taskUpdateCmd.Flags().String("priority", "", "Priority 0-4 (accepts P0-P4)")
 	taskUpdateCmd.Flags().String("labels", "", "Comma-separated labels")
-	taskUpdateCmd.Flags().String("assignee", "", "Assignee agent name")
+	taskUpdateCmd.Flags().String("assignee", "", "Assignee agent name (empty to unassign)")
+	taskUpdateCmd.Flags().String("parent", "", "Parent task ref (empty to make root)")
 	taskCmd.AddCommand(taskUpdateCmd)
 }
 
@@ -70,13 +72,19 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 		req.Labels = splitAndTrimLabels(v)
 		hasUpdate = true
 	}
-	if v, _ := cmd.Flags().GetString("assignee"); v != "" {
+	if cmd.Flags().Changed("assignee") {
+		v, _ := cmd.Flags().GetString("assignee")
 		req.AssigneeAlias = &v
+		hasUpdate = true
+	}
+	if cmd.Flags().Changed("parent") {
+		v, _ := cmd.Flags().GetString("parent")
+		req.ParentTaskID = &v
 		hasUpdate = true
 	}
 
 	if !hasUpdate {
-		return fmt.Errorf("no fields to update — use --status, --title, --description, --notes, --type, --priority, --labels, or --assignee")
+		return fmt.Errorf("no fields to update — use --status, --title, --description, --notes, --type, --priority, --labels, --assignee, or --parent")
 	}
 
 	client, _, err := resolveClientSelection()
@@ -95,6 +103,11 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 		}
 		return fmt.Errorf("updating task %s: %w", ref, err)
 	}
+	if resp.RetriedAfterNotFound {
+		if verifyErr := verifyTaskUpdate(ctx, client, ref, req); verifyErr != nil {
+			return fmt.Errorf("task %s still exists, but the retried update could not be verified: %w; inspect the task before retrying", ref, verifyErr)
+		}
+	}
 
 	printOutput(resp, func(v any) string {
 		r := v.(*aweb.TaskUpdateResponse)
@@ -107,5 +120,59 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 		}
 		return output
 	})
+	return nil
+}
+
+func verifyTaskUpdate(ctx context.Context, client *aweb.Client, ref string, req *aweb.TaskUpdateRequest) error {
+	task, err := client.TaskGet(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if req.Title != nil && task.Title != *req.Title {
+		return fmt.Errorf("title is %q, want %q", task.Title, *req.Title)
+	}
+	if req.Description != nil && task.Description != *req.Description {
+		return fmt.Errorf("description does not match")
+	}
+	if req.Notes != nil && task.Notes != *req.Notes {
+		return fmt.Errorf("notes do not match")
+	}
+
+	if req.Status != nil && task.Status != *req.Status {
+		return fmt.Errorf("status is %q, want %q", task.Status, *req.Status)
+	}
+	if req.TaskType != nil && task.TaskType != *req.TaskType {
+		return fmt.Errorf("type is %q, want %q", task.TaskType, *req.TaskType)
+	}
+	if req.Priority != nil && task.Priority != *req.Priority {
+		return fmt.Errorf("priority is %d, want %d", task.Priority, *req.Priority)
+	}
+	if req.Labels != nil && !slices.Equal(task.Labels, req.Labels) {
+		return fmt.Errorf("labels do not match")
+	}
+	if req.AssigneeAlias != nil {
+		if *req.AssigneeAlias == "" {
+			if task.AssigneeAlias != nil {
+				return fmt.Errorf("task remains assigned")
+			}
+		} else if task.AssigneeAlias == nil || *task.AssigneeAlias != *req.AssigneeAlias {
+			return fmt.Errorf("assignee does not match")
+		}
+	}
+	if req.ParentTaskID != nil {
+		if *req.ParentTaskID == "" {
+			if task.ParentTaskID != nil {
+				return fmt.Errorf("task remains parented")
+			}
+		} else {
+			parent, err := client.TaskGet(ctx, *req.ParentTaskID)
+			if err != nil {
+				return fmt.Errorf("resolving updated parent: %w", err)
+			}
+			if task.ParentTaskID == nil || *task.ParentTaskID != parent.TaskID {
+				return fmt.Errorf("parent does not match")
+			}
+		}
+	}
 	return nil
 }

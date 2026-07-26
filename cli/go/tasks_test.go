@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/awebai/aw/awid"
@@ -347,7 +348,7 @@ func TestTaskUpdate409ReturnsHeldError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(TaskHeldError{
-			Detail:          "task already held",
+			Detail:        "task already held",
 			AssigneeAlias: "agent-other",
 		})
 	}))
@@ -515,17 +516,52 @@ func TestTaskListQueryParams(t *testing.T) {
 	// All params.
 	priority := 1
 	_, err = c.TaskList(context.Background(), TaskListParams{
-		Status:          "open",
+		Status:        "open",
 		AssigneeAlias: "agent-1",
-		TaskType:        "feature",
-		Priority:        &priority,
-		Labels:          []string{"urgent", "backend"},
+		TaskType:      "feature",
+		Priority:      &priority,
+		Labels:        []string{"urgent", "backend"},
+		ParentTaskID:  "aw-root",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotQuery != "status=open&assignee_alias=agent-1&task_type=feature&priority=1&labels=urgent%2Cbackend" {
+	if gotQuery != "status=open&assignee_alias=agent-1&task_type=feature&priority=1&labels=urgent%2Cbackend&parent_task_id=aw-root" {
 		t.Fatalf("query=%s", gotQuery)
+	}
+}
+
+func TestTaskUpdateDirectCallerCannotReceiveRawAmbiguousNotFound(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tasks/aw-042":
+			http.Error(w, `{"detail":"Task not found"}`, http.StatusNotFound)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks/aw-042":
+			http.Error(w, `{"detail":"temporarily unavailable"}`, http.StatusServiceUnavailable)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := "closed"
+	_, err = client.TaskUpdate(context.Background(), "aw-042", &TaskUpdateRequest{Status: &status})
+	if err == nil {
+		t.Fatal("ambiguous direct update unexpectedly succeeded")
+	}
+	for _, want := range []string{"could not establish whether task aw-042 exists", "may have applied", "inspect the task"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
+	}
+	if strings.HasPrefix(err.Error(), "aweb: http 404") {
+		t.Fatalf("ambiguous update escaped as raw not-found: %v", err)
 	}
 }
 

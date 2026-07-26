@@ -2010,6 +2010,8 @@ Flags:
 Add a comment to a task
 
 Flags:
+- `--body string Comment body`
+- `--body-file string Read comment body from file`
 - `-h, --help help for add`
 
 ## `task comment list`
@@ -2098,6 +2100,7 @@ Flags:
 - `--assignee string Filter by assignee agent name`
 - `-h, --help help for list`
 - `--labels string Filter by labels (comma-separated)`
+- `--parent string Filter by parent task ref`
 - `--priority string Filter by priority 0-4 (accepts P0-P4)`
 - `--status string Filter by status (open, in_progress, closed, blocked)`
 - `--type string Filter by type (task, bug, feature, epic)`
@@ -2136,11 +2139,12 @@ Flags:
 Update a task
 
 Flags:
-- `--assignee string Assignee agent name`
+- `--assignee string Assignee agent name (empty to unassign)`
 - `--description string Description`
 - `-h, --help help for update`
 - `--labels string Comma-separated labels`
 - `--notes string Notes`
+- `--parent string Parent task ref (empty to make root)`
 - `--priority string Priority 0-4 (accepts P0-P4)`
 - `--status string Status (open, in_progress, closed)`
 - `--title string Title`

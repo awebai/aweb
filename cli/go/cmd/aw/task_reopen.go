@@ -33,13 +33,19 @@ func runTaskReopen(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	status := "open"
-	resp, err := client.TaskUpdate(ctx, ref, &aweb.TaskUpdateRequest{Status: &status})
+	req := &aweb.TaskUpdateRequest{Status: &status}
+	resp, err := client.TaskUpdate(ctx, ref, req)
 	if err != nil {
 		var held *aweb.TaskHeldError
 		if errors.As(err, &held) {
 			return fmt.Errorf("task %s is held by another agent: %s", ref, held.Detail)
 		}
 		return fmt.Errorf("reopening task %s: %w", ref, err)
+	}
+	if resp.RetriedAfterNotFound {
+		if verifyErr := verifyTaskUpdate(ctx, client, ref, req); verifyErr != nil {
+			return fmt.Errorf("task %s still exists, but the retried reopen could not be verified: %w; inspect the task before retrying", ref, verifyErr)
+		}
 	}
 
 	printOutput(resp, func(v any) string {
