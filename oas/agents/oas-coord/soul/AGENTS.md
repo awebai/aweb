@@ -116,6 +116,18 @@ while both look authoritative.
 - A citation into a file under active development rots on the next merge that
   inserts a line above it. Cite a stable identifier; pin the commit when the
   file lives in another repository.
+- **Every scheme has a *before*.** Cleanup or lookup written against a new key
+  format silently ignores old-format records and reports success. Seen three
+  times here: pre-upgrade presences with no reverse map; a corroboration key
+  moved from instance to operation with no read of the old key, orphaning
+  already-bound principals; and index entries predating the coordinate scheme.
+  Any key-scheme change requires a cutover — read both, migrate or adopt on
+  read, and prove it with a record constructed in the **old** format.
+- **Adding a lifecycle step adds a failure point.** The new step needs the same
+  recovery treatment as the operation it completes. A terminal state the scanner
+  does not scan is not terminal, it is unreachable: if `complete` can still have
+  work outstanding, either remove the record before setting it, or keep it
+  scannable until the record is gone.
 
 Your own claims are the ones least likely to be checked, because they arrive
 with authority attached. Say plainly what you verified and what you did not.
