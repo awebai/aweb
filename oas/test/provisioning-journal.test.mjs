@@ -16,6 +16,7 @@ import {
   markProvisionIntentComplete,
   markProvisionIntentQuarantined,
   retryProvisionIntentQuarantine,
+  removeProvisionCleanupCorroboration,
   markProvisionIntentHandedOff,
   markProvisionIntentPrepared,
   markProvisionIntentProvisioning,
@@ -141,8 +142,27 @@ test("handoff, cleanup, and corroboration remain durable outside the instance", 
   assert.deepEqual(listRecoverableProvisionIntents(root, {
     now: new Date("2026-07-26T00:00:01Z"), staleAfterMs: 0,
   }), [], "bound work is never scanner-owned");
-  writeProvisionCleanupCorroboration(root, "instance-a", receipt);
-  assert.deepEqual(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), "instance-a").receipt, receipt);
+  writeProvisionCleanupCorroboration(root, OPERATION_A, "instance-a", receipt);
+  assert.deepEqual(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), OPERATION_A).receipt, receipt);
+  const secondReceipt = {
+    ...receipt,
+    resource_identity: {
+      ...receipt.resource_identity,
+      operation_id: OPERATION_B,
+      reference: `operation:${OPERATION_B}`,
+    },
+    journal_operation: OPERATION_B,
+  };
+  writeProvisionCleanupCorroboration(root, OPERATION_B, "instance-a", secondReceipt);
+  assert.deepEqual(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), OPERATION_B).receipt, secondReceipt);
+  assert.throws(
+    () => writeProvisionCleanupCorroboration(root, OPERATION_A, "instance-b", receipt),
+    /already exists with different authority/,
+    "operation authority must remain immutable first-writer",
+  );
+  assert.equal(removeProvisionCleanupCorroboration(root, OPERATION_A), true);
+  assert.equal(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), OPERATION_A), null);
+  assert.deepEqual(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), OPERATION_B).receipt, secondReceipt);
   const cleaning = markProvisionIntentCleanupPending(root, OPERATION_A, "retire", start);
   assert.equal(cleaning.state, "cleanup-pending");
   assert.equal(cleaning.cleanup.attempts, 1);

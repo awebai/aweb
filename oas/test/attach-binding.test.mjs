@@ -153,7 +153,7 @@ function digestedCleanupCorroboration(instanceID, receipt) {
 
 function writeCleanupCorroboration(f, instanceID, receipt) {
   const record = digestedCleanupCorroboration(instanceID, receipt);
-  write(join(f.corroborationHome, `${instanceID}.json`), `${JSON.stringify(record, null, 2)}\n`);
+  write(join(f.corroborationHome, `${receipt.journal_operation}.json`), `${JSON.stringify(record, null, 2)}\n`);
 }
 
 function pathIsWithinOrEqual(root, candidate) {
@@ -530,7 +530,7 @@ test("real OAS emits a local-controller authority statement with indefinite gran
   assert.equal(journal.state, "bound");
   assert.equal(journal.instance_id, spawned.instance);
   assert.deepEqual(journal.resource, resource);
-  assert.deepEqual(JSON.parse(readFileSync(join(f.corroborationHome, `${spawned.instance}.json`), "utf8")).receipt, receipt);
+  assert.deepEqual(JSON.parse(readFileSync(join(f.corroborationHome, `${operationID}.json`), "utf8")).receipt, receipt);
 
   const authorityCalls = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse);
   assert.deepEqual(authorityCalls.slice(0, 3), [{
@@ -574,6 +574,7 @@ test("real OAS emits a local-controller authority statement with indefinite gran
   assert.equal(retirement.authority_scope, "local_same_uid_accident_guard");
   assert.equal(retirement.cleanup.status, "complete");
   assert.equal(JSON.parse(readFileSync(join(f.principalHome, ".provisioning", "intents", `${operationID}.json`), "utf8")).state, "complete");
+  assert.equal(existsSync(join(f.corroborationHome, `${operationID}.json`)), false, "terminal cleanup must release corroboration allocation");
   const cleanupCall = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse).at(-1);
   assert.deepEqual(cleanupCall, {
     argv: [
@@ -681,7 +682,7 @@ test("operator and later-spawn reconciliation clean durable pending local intent
   assert.equal(prepared.spawned.launched, false, "prepared orphan must be quiescent before operator cleanup");
   delete prepared.meta.capabilityMeta["aweb.identity-attach"].identity_binding;
   writeFileSync(join(prepared.spawned.home, "instance.json"), `${JSON.stringify(prepared.meta, null, 2)}\n`);
-  unlinkSync(join(f.corroborationHome, `${prepared.spawned.instance}.json`));
+  unlinkSync(join(f.corroborationHome, `${prepared.operation}.json`));
   assert.equal(JSON.parse(readFileSync(join(prepared.spawned.home, "instance.json"), "utf8")).capabilityMeta["aweb.identity-attach"].identity_binding, undefined);
   const preparedRecord = JSON.parse(readFileSync(prepared.path, "utf8"));
   preparedRecord.state = "prepared";
@@ -887,6 +888,33 @@ test("distinct production intents receive opaque carrier-safe operation identiti
   }
 });
 
+test("same local instance name gets operation-unique corroboration with terminal release", () => {
+  const first = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
+  const second = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
+  second.env.AWEB_PRINCIPAL_HOME = first.principalHome;
+  const spawnIn = (f) => parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "same-local-name", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  const firstSpawn = spawnIn(first);
+  const secondSpawn = spawnIn(second);
+  assert.equal(firstSpawn.instance, secondSpawn.instance, "independent developer roots must reproduce the local-name collision");
+  const receiptFor = (spawned) => JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8")).capabilityMeta["aweb.identity-attach"].identity_binding;
+  const firstReceipt = receiptFor(firstSpawn);
+  const secondReceipt = receiptFor(secondSpawn);
+  assert.notEqual(firstReceipt.journal_operation, secondReceipt.journal_operation);
+  assert.equal(existsSync(join(first.corroborationHome, `${firstReceipt.journal_operation}.json`)), true);
+  assert.equal(existsSync(join(first.corroborationHome, `${secondReceipt.journal_operation}.json`)), true);
+
+  const firstRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", firstSpawn.instance, "--json"], { cwd: first.repo, env: first.env, encoding: "utf8" }));
+  assert.equal(firstRetire.capabilityMeta["aweb.identity-attach"].retirement.action, "cleanup_complete");
+  assert.equal(existsSync(join(first.corroborationHome, `${firstReceipt.journal_operation}.json`)), false);
+  assert.equal(existsSync(join(first.corroborationHome, `${secondReceipt.journal_operation}.json`)), true, "first retire must not remove the other operation authority");
+
+  const secondRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", secondSpawn.instance, "--json"], { cwd: second.repo, env: second.env, encoding: "utf8" }));
+  assert.equal(secondRetire.capabilityMeta["aweb.identity-attach"].retirement.action, "cleanup_complete");
+  assert.equal(existsSync(join(first.corroborationHome, `${secondReceipt.journal_operation}.json`)), false);
+});
+
 test("local same-UID corroboration guards cleanup judgement against receipt-only mistakes", () => {
   function spawnedDisposable() {
     const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
@@ -901,7 +929,7 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
   }
 
   const forged = spawnedDisposable();
-  unlinkSync(join(forged.f.corroborationHome, `${forged.spawned.instance}.json`));
+  unlinkSync(join(forged.f.corroborationHome, `${forged.receipt.journal_operation}.json`));
   const forgedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", forged.spawned.instance, "--json"], {
     cwd: forged.f.repo, env: forged.f.env, encoding: "utf8",
   }));
@@ -921,7 +949,8 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
     },
     journal_operation: "oas-BBBBBBBBBBBBBBBBBBBBBQ",
   };
-  writeCleanupCorroboration(substituted.f, substituted.spawned.instance, otherReceipt);
+  const substitutedRecord = digestedCleanupCorroboration(substituted.spawned.instance, otherReceipt);
+  write(join(substituted.f.corroborationHome, `${substituted.receipt.journal_operation}.json`), `${JSON.stringify(substitutedRecord, null, 2)}\n`);
   const substitutedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", substituted.spawned.instance, "--json"], {
     cwd: substituted.f.repo, env: substituted.f.env, encoding: "utf8",
   }));
@@ -933,7 +962,7 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
 
   const invalidDigest = spawnedDisposable();
   writeCleanupCorroboration(invalidDigest.f, invalidDigest.spawned.instance, invalidDigest.receipt);
-  const invalidDigestPath = join(invalidDigest.f.corroborationHome, `${invalidDigest.spawned.instance}.json`);
+  const invalidDigestPath = join(invalidDigest.f.corroborationHome, `${invalidDigest.receipt.journal_operation}.json`);
   const invalidDigestRecord = JSON.parse(readFileSync(invalidDigestPath, "utf8"));
   invalidDigestRecord.digest = "0".repeat(64);
   writeFileSync(invalidDigestPath, `${JSON.stringify(invalidDigestRecord, null, 2)}\n`);
@@ -945,8 +974,8 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
   const linked = spawnedDisposable();
   const linkedTarget = join(linked.f.base, "untrusted-corroboration.json");
   write(linkedTarget, `${JSON.stringify(digestedCleanupCorroboration(linked.spawned.instance, linked.receipt), null, 2)}\n`);
-  unlinkSync(join(linked.f.corroborationHome, `${linked.spawned.instance}.json`));
-  symlinkSync(linkedTarget, join(linked.f.corroborationHome, `${linked.spawned.instance}.json`));
+  unlinkSync(join(linked.f.corroborationHome, `${linked.receipt.journal_operation}.json`));
+  symlinkSync(linkedTarget, join(linked.f.corroborationHome, `${linked.receipt.journal_operation}.json`));
   const linkedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", linked.spawned.instance, "--json"], {
     cwd: linked.f.repo, env: linked.f.env, encoding: "utf8",
   }));

@@ -230,10 +230,10 @@ export function cleanupCorroborationPayload({ schema_version: schemaVersion, cor
   return Buffer.from(JSON.stringify({ schema_version: schemaVersion, corroboration_class: corroborationClass, instance_id: instanceID, receipt }), "utf8");
 }
 
-export function loadCleanupCorroboration(corroborationHome, instanceID) {
+export function loadCleanupCorroboration(corroborationHome, operationID) {
   if (!canonicalAbsolutePath(corroborationHome)) throw new TypeError("cleanup corroboration home must be canonical and absolute");
-  if (!safeID(instanceID)) throw new TypeError("OAS_INSTANCE must be filesystem-safe");
-  const path = join(corroborationHome, `${instanceID}.json`);
+  if (!provisionOperationID(operationID)) throw new TypeError("cleanup corroboration operation id is invalid");
+  const path = join(corroborationHome, `${operationID}.json`);
   assertNoSymlink(path);
   if (!existsSync(path)) return null;
   const encoded = JSON.parse(readFileSync(path, "utf8"));
@@ -249,5 +249,7 @@ export function loadCleanupCorroboration(corroborationHome, instanceID) {
   };
   const digest = createHash("sha256").update(cleanupCorroborationPayload(record)).digest("hex");
   if (digest !== encoded.digest) throw new Error("cleanup corroboration digest is invalid");
-  return record;
+  const receipt = validateBindingReceipt(record.receipt);
+  if (receipt.journal_operation !== operationID) throw new Error("cleanup corroboration receipt operation does not match its key");
+  return { ...record, receipt };
 }
