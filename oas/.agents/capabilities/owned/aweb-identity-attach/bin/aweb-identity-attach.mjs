@@ -9,12 +9,25 @@ import {
   cleanupJudgement,
   loadCleanupCorroboration,
   pendingProvisionReceipt,
+  provisionedDisposableReceipt,
   validateBindingSettings,
 } from "../lib/binding-policy.mjs";
+import { localControllerMintingAuthorityReceipt } from "../lib/provisioning-authority.mjs";
 import {
-  hostedMintingAuthorityReceipt,
-  localControllerMintingAuthorityReceipt,
-} from "../lib/provisioning-authority.mjs";
+  createProvisionIntent,
+  listRecoverableProvisionIntents,
+  loadProvisionIntent,
+  markProvisionIntentAbandoned,
+  markProvisionIntentCleanupPending,
+  markProvisionIntentComplete,
+  markProvisionIntentHandedOff,
+  markProvisionIntentPrepared,
+  markProvisionIntentProvisioning,
+  markProvisionIntentQuarantined,
+  retryProvisionIntentQuarantine,
+  withProvisionIntentLock,
+  writeProvisionCleanupCorroboration,
+} from "../lib/provisioning-journal.mjs";
 import {
   assertPrincipalStoreContained,
   assertPrincipalStoreSafe,
@@ -232,6 +245,167 @@ function resolveLocalControllerDID(instanceHome, teamID) {
   ));
 }
 
+function parseLocalProvisionOutput(stdout, intent) {
+  let result;
+  try {
+    result = JSON.parse(stdout);
+  } catch {
+    throw new Error("aw id team provision-local returned invalid JSON");
+  }
+  const fields = [
+    "status", "operation_id", "team_id", "alias", "identity_home", "did_key", "certificate_id",
+    "agent_id", "workspace_id", "registry_url", "aweb_url",
+  ];
+  if (!exactFields(result, fields)
+      || result.status !== "provisioned"
+      || result.operation_id !== intent.operation_id
+      || result.team_id !== intent.team_id
+      || result.alias !== intent.alias
+      || result.identity_home !== intent.identity_home
+      || typeof result.did_key !== "string" || !result.did_key.startsWith("did:key:z")
+      || typeof result.certificate_id !== "string" || !result.certificate_id
+      || typeof result.agent_id !== "string" || !result.agent_id
+      || typeof result.workspace_id !== "string" || !result.workspace_id
+      || typeof result.registry_url !== "string" || !result.registry_url
+      || typeof result.aweb_url !== "string" || !result.aweb_url) {
+    throw new Error("aw id team provision-local returned a contradictory resource tuple");
+  }
+  return result;
+}
+
+function runProvisionCommandForIntent(intent, cwd) {
+  const creator = intent.authority.intended_creator;
+  return parseLocalProvisionOutput(execFileSync(
+    "aw",
+    [
+      "id", "team", "provision-local",
+      "--operation-id", intent.operation_id,
+      "--team-id", intent.team_id,
+      "--name", intent.alias,
+      "--authority-identity-home", intent.authority_home,
+      "--target-identity-home", intent.identity_home,
+      "--authority-address", creator.address,
+      "--authority-stable-id", creator.stable_id,
+      "--controller-did", intent.authority.controller_did,
+      "--json",
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 90000,
+      env: { ...process.env, AW_NO_UPDATE_CHECK: "1" },
+    },
+  ), intent);
+}
+
+function runCleanupCommandForIntent(intent, cwd) {
+  const creator = intent.authority.intended_creator;
+  return parseLocalCleanupOutput(execFileSync(
+    "aw",
+    [
+      "id", "team", "cleanup-local-provision",
+      "--operation-id", intent.operation_id,
+      "--team-id", intent.team_id,
+      "--name", intent.alias,
+      "--authority-identity-home", intent.authority_home,
+      "--target-identity-home", intent.identity_home,
+      "--authority-address", creator.address,
+      "--authority-stable-id", creator.stable_id,
+      "--controller-did", intent.authority.controller_did,
+      "--json",
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 90000,
+      env: { ...process.env, AW_NO_UPDATE_CHECK: "1" },
+    },
+  ), intent.operation_id);
+}
+
+function recoverProvisionIntents(principalHome, cwd, { force = false } = {}) {
+  const intents = listRecoverableProvisionIntents(principalHome, {
+    now: new Date(),
+    staleAfterMs: force ? 0 : 300000,
+  });
+  const recovered = [];
+  for (const candidate of intents) {
+    let result;
+    try {
+      result = withProvisionIntentLock(principalHome, candidate.operation_id, () => {
+        let intent = loadProvisionIntent(principalHome, candidate.operation_id);
+      if (intent.state === "allocated") {
+        markProvisionIntentAbandoned(principalHome, intent.operation_id, "stale-before-first-side-effect");
+        return { operation_id: intent.operation_id, outcome: "closed-without-side-effects" };
+      }
+      if (intent.state === "provisioning") {
+        const resource = runProvisionCommandForIntent(intent, cwd);
+        intent = markProvisionIntentPrepared(principalHome, intent.operation_id, resource);
+      }
+      if (intent.state === "prepared") {
+        intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, "orphaned-before-binding-handoff");
+      }
+      if (intent.state === "cleanup-pending") {
+        intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, "recovery-retry");
+        const cleanup = runCleanupCommandForIntent(intent, cwd);
+        markProvisionIntentComplete(principalHome, intent.operation_id);
+        return { operation_id: intent.operation_id, outcome: "cleanup-complete", cleanup };
+      }
+        return { operation_id: intent.operation_id, outcome: `left-${intent.state}` };
+      });
+    } catch (error) {
+      const failed = loadProvisionIntent(principalHome, candidate.operation_id);
+      if (failed.state === "cleanup-pending" && failed.cleanup.attempts >= 3) {
+        const message = error instanceof Error ? error.message : String(error);
+        result = withProvisionIntentLock(principalHome, failed.operation_id, () => {
+          markProvisionIntentQuarantined(principalHome, failed.operation_id, message);
+          return { operation_id: failed.operation_id, outcome: "quarantined", error: message.slice(0, 300) };
+        });
+      } else {
+        throw error;
+      }
+    }
+    recovered.push(result);
+  }
+  return recovered;
+}
+
+function runLocalProvision(binding, authority, pendingReceipt) {
+  const principalHome = resolvePrincipalHome();
+  recoverProvisionIntents(principalHome, authority.instanceHome);
+  const instanceID = process.env.OAS_INSTANCE || "";
+  const intent = createProvisionIntent(principalHome, {
+    operationID: pendingReceipt.journal_operation,
+    instanceID,
+    teamID: authority.declaration.team_id,
+    authorityHome: authority.store.credentials,
+    authority: localControllerMintingAuthorityReceipt({
+      principal: binding.minting_authority,
+      declarationPath: authority.declarationPath,
+      declaration: authority.declaration,
+      controllerDID: resolveLocalControllerDID(authority.instanceHome, authority.declaration.team_id),
+    }),
+  });
+  return withProvisionIntentLock(principalHome, intent.operation_id, () => {
+    markProvisionIntentProvisioning(principalHome, intent.operation_id);
+    const result = runProvisionCommandForIntent(intent, authority.instanceHome);
+    markProvisionIntentPrepared(principalHome, intent.operation_id, result);
+    const receipt = provisionedDisposableReceipt(pendingReceipt, { cleanupAuthority: "local-controller" });
+    writeProvisionCleanupCorroboration(principalHome, instanceID, receipt);
+    output({
+      meta: {
+        identity_binding: receipt,
+        minting_authority: intent.authority,
+        provisioning: result,
+      },
+      brief: `Identity: provisioned disposable ${result.alias}; local same-UID cleanup authority is an accident/confused-deputy control, not a boundary against intent.`,
+    });
+    markProvisionIntentHandedOff(principalHome, intent.operation_id);
+  });
+}
+
 function attach(binding) {
   const { soul, declaration, declarationPath, store } = resolveAndVerifyDeclaredPrincipal(binding.principal);
   const legacyBinding = validatePersistedAttachBinding({
@@ -263,7 +437,61 @@ function attach(binding) {
   });
 }
 
+function parseLocalCleanupOutput(stdout, operationID) {
+  let result;
+  try {
+    result = JSON.parse(stdout);
+  } catch {
+    throw new Error("aw id team cleanup-local-provision returned invalid JSON");
+  }
+  if (!exactFields(result, ["status", "operation_id", "grants", "workspace", "identity", "certificate", "credentials", "audit"])
+      || result.status !== "complete"
+      || result.operation_id !== operationID
+      || result.grants !== "physically-absent"
+      || result.workspace !== "soft-deleted"
+      || result.identity !== "soft-deleted"
+      || result.certificate !== "revoked"
+      || result.credentials !== "physically-absent"
+      || result.audit !== "intentionally-retained-operation-record") {
+    throw new Error("aw id team cleanup-local-provision returned a contradictory cleanup tuple");
+  }
+  return result;
+}
+
+function executeLocalCleanup(receipt, instanceID) {
+  const principalHome = resolvePrincipalHome();
+  const operationID = receipt.journal_operation;
+  return withProvisionIntentLock(principalHome, operationID, () => {
+    let intent = loadProvisionIntent(principalHome, operationID);
+    if (intent.instance_id !== instanceID || intent.authority.path !== "local-controller" || intent.resource?.operation_id !== operationID) {
+      throw new Error("cleanup journal does not corroborate this instance and provisioned resource");
+    }
+    if (intent.state === "complete") {
+      return {
+        status: "complete", operation_id: operationID, grants: "physically-absent", workspace: "soft-deleted",
+        identity: "soft-deleted", certificate: "revoked", credentials: "physically-absent", audit: "intentionally-retained-operation-record",
+      };
+    }
+    intent = markProvisionIntentCleanupPending(principalHome, operationID, "ordinary-retire");
+    const result = runCleanupCommandForIntent(intent, requiredAbsoluteDirectory(process.env.OAS_HOME, "OAS_HOME"));
+    markProvisionIntentComplete(principalHome, operationID);
+    return result;
+  });
+}
+
 function retire() {
+  let recoveryWarning = null;
+  try {
+    if (process.env.OAS_HOME) {
+      recoverProvisionIntents(
+        resolvePrincipalHome(),
+        requiredAbsoluteDirectory(process.env.OAS_HOME, "OAS_HOME"),
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    recoveryWarning = `aweb-identity-attach: another disposable cleanup remains pending: ${message.slice(0, 300)}`;
+  }
   let metadata;
   try {
     metadata = JSON.parse(process.env.OAS_META || "{}");
@@ -274,6 +502,7 @@ function retire() {
         identity_binding_evidence: { format: "unparseable", sha256: digest },
         retirement: { action: "preserve", cleanup_authorized: false, reason: "unparseable_instance_metadata" },
       },
+      ...(recoveryWarning ? { warning: recoveryWarning } : {}),
     });
     return;
   }
@@ -284,6 +513,7 @@ function retire() {
         identity_binding: legacy,
         retirement: { action: "preserve_principal", cleanup_owner: "external" },
       },
+      ...(recoveryWarning ? { warning: recoveryWarning } : {}),
     });
     return;
   } catch {
@@ -298,11 +528,34 @@ function retire() {
     corroboration = null;
   }
   const judgement = cleanupJudgement(metadata?.identity_binding, corroboration, instanceID);
+  if (judgement.cleanup_authorized && judgement.authority_scope === "local_same_uid_accident_guard") {
+    try {
+      const cleanup = executeLocalCleanup(metadata.identity_binding, instanceID);
+      output({
+        meta: {
+          identity_binding_evidence: metadata.identity_binding,
+          retirement: { ...judgement, action: "cleanup_complete", cleanup },
+        },
+        ...(recoveryWarning ? { warning: recoveryWarning } : {}),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      output({
+        meta: {
+          identity_binding_evidence: metadata.identity_binding,
+          retirement: { ...judgement, action: "cleanup_pending", cleanup_complete: false },
+        },
+        warning: `aweb-identity-attach: disposable cleanup remains durably pending: ${message.slice(0, 300)}`,
+      });
+    }
+    return;
+  }
   output({
     meta: {
       identity_binding_evidence: metadata?.identity_binding ?? null,
       retirement: judgement,
     },
+    ...(recoveryWarning ? { warning: recoveryWarning } : {}),
   });
 }
 
@@ -314,33 +567,27 @@ try {
     else if (binding.mode === "provision-durable") {
       throw new TypeError("provision-durable is declared but not executable; durable minting authority belongs to aaaa.39");
     } else {
+      if (binding.minting_authority_path === "hosted") {
+        throw new TypeError("hosted provision-disposable is refused before creation: no scoped non-ambient authority can clean a committed hosted member; an owner/admin API key must never be exposed to the same-UID model");
+      }
       const authority = resolveAndVerifyDeclaredPrincipal(binding.minting_authority, {
         requireCommittedAuthority: true,
         identityLabel: "minting authority credentials",
       });
-      const receipt = pendingProvisionReceipt(binding);
-      const authorityInput = {
-        principal: binding.minting_authority,
-        declarationPath: authority.declarationPath,
-        declaration: authority.declaration,
-      };
-      const authorityReceipt = binding.minting_authority_path === "hosted"
-        ? hostedMintingAuthorityReceipt(authorityInput)
-        : localControllerMintingAuthorityReceipt({
-            ...authorityInput,
-            controllerDID: resolveLocalControllerDID(authority.instanceHome, authority.declaration.team_id),
-          });
-      output({
-        meta: {
-          identity_binding: receipt,
-          minting_authority: authorityReceipt,
-        },
-        warning: `${binding.mode} is declared but provisioning execution is not installed; no identity was created`,
-        brief: `Identity binding policy: ${binding.mode}; provisioning is pending and no cleanup is authorized.`,
-      });
+      runLocalProvision(binding, authority, pendingProvisionReceipt(binding));
     }
   } else if (event === "retire") retire();
-  else throw new TypeError(`unsupported lifecycle event ${JSON.stringify(event)}`);
+  else if (event === "reconcile") {
+    const principalHome = resolvePrincipalHome();
+    if (process.argv[3] === "--retry-quarantine") {
+      if (!process.argv[4] || process.argv.length !== 5) throw new TypeError("reconcile --retry-quarantine requires exactly one operation id");
+      retryProvisionIntentQuarantine(principalHome, process.argv[4]);
+    } else if (process.argv.length !== 3) {
+      throw new TypeError("reconcile accepts only --retry-quarantine <operation-id>");
+    }
+    const recovered = recoverProvisionIntents(principalHome, realpathSync(process.cwd()), { force: true });
+    output({ status: "reconciled", operations: recovered });
+  } else throw new TypeError(`unsupported lifecycle event ${JSON.stringify(event)}`);
 } catch (error) {
   warning(error);
 }

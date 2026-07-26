@@ -1,15 +1,15 @@
 {
   "capability": "aweb.identity-attach",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "compatibility": {
     "oas": ">=0.18.0"
   },
   "layer": "messaging",
-  "description": "Decide explicit aweb principal binding, declared ephemeral minting authority, and cleanup authorization policy for an OAS instance.",
+  "description": "Bind existing principals or provision, reconcile, and clean disposable local-controller principals with explicit authority.",
   "requires": [
     {
       "command": "aw",
-      "why": "confirm that attached and declared minting-authority credentials agree with their selected declarations",
+      "why": "verify declared authority and provision, reconcile, and clean operation-scoped local principals",
       "install": "https://aweb.ai/docs"
     }
   ],

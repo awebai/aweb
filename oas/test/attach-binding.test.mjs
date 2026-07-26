@@ -13,6 +13,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -114,7 +115,7 @@ function fixture({
   const bin = join(base, "bin");
   const awLog = join(base, "aw-argv.jsonl");
   write(join(bin, "pi"), "#!/bin/sh\nexit 0\n", 0o755);
-  write(join(bin, "aw"), `#!/usr/bin/env node\nimport { appendFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_AW_LOG, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");\nconst argv = process.argv.slice(2);\nif (argv.includes("delete") || argv.includes("reset") || argv.includes("init") || argv.includes("invite") || argv.includes("join")) process.exit(93);\nif (argv.at(-2) === "whoami" && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ address: "example.test/throwaway", stable_id: "did:aw:2ThrowawayStableId123" }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("team") && argv.includes("list") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ active_team: "test-team:example.test", memberships: [{ team_id: "test-team:example.test", active: true }] }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("import-request") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ controller_did: "did:key:z6MkiLocalController123" }) + "\\n");\n  process.exit(0);\n}\nprocess.exit(92);\n`, 0o755);
+  write(join(bin, "aw"), `#!/usr/bin/env node\nimport { appendFileSync, readFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_AW_LOG, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");\nconst argv = process.argv.slice(2);\nif (argv.includes("delete") || argv.includes("reset") || argv.includes("init") || argv.includes("invite") || argv.includes("join")) process.exit(93);\nif (argv.at(-2) === "whoami" && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ address: "example.test/throwaway", stable_id: "did:aw:2ThrowawayStableId123" }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("team") && argv.includes("list") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ active_team: "test-team:example.test", memberships: [{ team_id: "test-team:example.test", active: true }] }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("import-request") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ controller_did: "did:key:z6MkiLocalController123" }) + "\\n");\n  process.exit(0);\n}\nconst flag = (name) => argv[argv.indexOf(name) + 1];\nif (argv.includes("cleanup-local-provision")) {\n  const operation = flag("--operation-id");\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "cleanup-pending") process.exit(95);\n  process.stdout.write(JSON.stringify({\n    status: "complete", operation_id: operation, grants: "physically-absent", workspace: "soft-deleted", identity: "soft-deleted",\n    certificate: "revoked", credentials: "physically-absent", audit: "intentionally-retained-operation-record",\n  }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("provision-local")) {\n  const operation = flag("--operation-id");\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "provisioning") process.exit(94);\n  process.stdout.write(JSON.stringify({\n    status: "provisioned", operation_id: operation, team_id: flag("--team-id"), alias: flag("--name"),\n    identity_home: flag("--target-identity-home"), did_key: "did:key:z6MkiProvisionedWorker",\n    certificate_id: "certificate-provisioned", agent_id: "agent-provisioned", workspace_id: "workspace-provisioned",\n    registry_url: "https://registry.example.test", aweb_url: "https://aweb.example.test",\n  }) + "\\n");\n  process.exit(0);\n}\nprocess.exit(92);\n`, 0o755);
 
   const corroborationHome = join(principalHome, ".corroboration", "cleanup");
   mkdirSync(corroborationHome, { recursive: true });
@@ -278,73 +279,18 @@ test("real OAS attach-existing v2 emits an externally owned bound receipt", () =
   assert.equal(receipt.resource_identity.reference, f.declarationPath);
 });
 
-for (const [mode, cleanupOwner] of [
-  ["provision-disposable", "instance"],
-]) {
-  test(`real OAS ${mode} emits a pending non-authorizing receipt without provisioning`, () => {
-    const f = fixture({ mode, schemaVersion: 2 });
-    const spawn = spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", mode, "--no-launch", "--json"], {
-      cwd: f.repo, env: f.env, encoding: "utf8",
-    });
-    const spawned = parseSuccess(spawn);
-    assert.equal(spawned.warnings.length, 1);
-    assert.match(spawned.warnings[0], /provisioning execution is not installed/);
-    const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
-    const receipt = meta.capabilityMeta["aweb.identity-attach"].identity_binding;
-    const operationID = receipt.journal_operation;
-    assert.match(operationID, /^oas-[A-Za-z0-9_-]{21}[AQgw]$/);
-    assert.ok(operationID.length <= 64);
-    assert.deepEqual(receipt, {
-      schema_version: 2,
-      mode,
-      lifecycle: "provision-pending",
-      cleanup_owner: cleanupOwner,
-      resource_identity: {
-        kind: "provision-operation",
-        operation_id: operationID,
-        stable_id: null,
-        reference: `operation:${operationID}`,
-        cleanup_authority: null,
-      },
-      journal_operation: operationID,
-    });
-    assert.deepEqual(meta.capabilityMeta["aweb.identity-attach"].minting_authority, {
-      schema_version: 2,
-      path: "hosted",
-      authority_class: "hosted-creator-agent",
-      creator: {
-        principal: "throwaway",
-        declaration_path: f.declarationPath,
-        address: "example.test/throwaway",
-        stable_id: "did:aw:2ThrowawayStableId123",
-        team_id: "test-team:example.test",
-      },
-      grant_listing_scope: "creator-agent-only",
-      grant_retirement_rule: "grants_terminal_before_creator_retirement",
-      known_id_recovery: "admin-revoke",
-      unreceived_id_residual: "server-expiry-bounded-self-terminating",
-      default_expiry_hours: 24,
-      maximum_expiry_days: 30,
-      rule_enforcement: "declarative_no_universal_retirement_choke_point",
-    });
-    const authorityCalls = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse);
-    assert.deepEqual(authorityCalls, [{
-      argv: ["--identity-home", f.credentials, "whoami", "--json"],
-      cwd: spawned.home,
-    }, {
-      argv: ["--identity-home", f.credentials, "id", "team", "list", "--json"],
-      cwd: spawned.home,
-    }]);
-    assert.equal(existsSync(join(spawned.home, ".aw")), false, "disposable instance credentials must not become minting authority");
-
-    const retire = spawnSync(process.execPath, [oasCli(), "retire", spawned.instance, "--json"], {
-      cwd: f.repo, env: f.env, encoding: "utf8",
-    });
-    const retired = parseSuccess(retire);
-    assert.equal(retired.capabilityMeta["aweb.identity-attach"].retirement.cleanup_authorized, false);
-    assert.equal(retired.capabilityMeta["aweb.identity-attach"].retirement.action, "preserve");
-  });
-}
+test("real OAS refuses hosted disposable provisioning before authority resolution or creation", () => {
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "hosted" });
+  const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "hosted-refused", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  assert.equal(spawned.warnings.length, 1);
+  assert.match(spawned.warnings[0], /hosted provision-disposable is refused before creation.*owner\/admin API key/);
+  const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+  assert.equal(meta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
+  assert.equal(existsSync(f.awLog), false, "hosted refusal must precede every aw side effect and authority read");
+  assert.equal(existsSync(join(f.principalHome, ".provisioning")), false);
+});
 
 test("real OAS emits a local-controller authority statement with indefinite grant semantics", () => {
   const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
@@ -371,8 +317,24 @@ test("real OAS emits a local-controller authority statement with indefinite gran
     grant_cleanup_rule: "enumerate-and-remove-abandoned-grants",
     rule_enforcement: "declarative_no_universal_retirement_choke_point",
   });
+  const receipt = meta.capabilityMeta["aweb.identity-attach"].identity_binding;
+  assert.equal(receipt.lifecycle, "provisioned");
+  assert.equal(receipt.cleanup_owner, "instance");
+  assert.equal(receipt.resource_identity.cleanup_authority, "local-controller");
+  const operationID = receipt.journal_operation;
+  assert.match(operationID, /^oas-[A-Za-z0-9_-]{21}[AQgw]$/);
+  const resource = meta.capabilityMeta["aweb.identity-attach"].provisioning;
+  assert.equal(resource.operation_id, operationID);
+  assert.equal(resource.identity_home, join(f.principalHome, ".provisioning", "identities", operationID));
+  assert.equal(resource.did_key, "did:key:z6MkiProvisionedWorker");
+  const journal = JSON.parse(readFileSync(join(f.principalHome, ".provisioning", "intents", `${operationID}.json`), "utf8"));
+  assert.equal(journal.state, "bound");
+  assert.equal(journal.instance_id, spawned.instance);
+  assert.deepEqual(journal.resource, resource);
+  assert.deepEqual(JSON.parse(readFileSync(join(f.corroborationHome, `${spawned.instance}.json`), "utf8")).receipt, receipt);
+
   const authorityCalls = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse);
-  assert.deepEqual(authorityCalls, [{
+  assert.deepEqual(authorityCalls.slice(0, 3), [{
     argv: ["--identity-home", f.credentials, "whoami", "--json"],
     cwd: spawned.home,
   }, {
@@ -388,6 +350,99 @@ test("real OAS emits a local-controller authority statement with indefinite gran
     ],
     cwd: spawned.home,
   }]);
+  assert.deepEqual(authorityCalls[3], {
+    argv: [
+      "id", "team", "provision-local",
+      "--operation-id", operationID,
+      "--team-id", "test-team:example.test",
+      "--name", operationID,
+      "--authority-identity-home", f.credentials,
+      "--target-identity-home", resource.identity_home,
+      "--authority-address", "example.test/throwaway",
+      "--authority-stable-id", "did:aw:2ThrowawayStableId123",
+      "--controller-did", "did:key:z6MkiLocalController123",
+      "--json",
+    ],
+    cwd: spawned.home,
+  });
+
+  const retired = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", spawned.instance, "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  assert.deepEqual(retired.warnings ?? [], []);
+  const retirement = retired.capabilityMeta["aweb.identity-attach"].retirement;
+  assert.equal(retirement.action, "cleanup_complete");
+  assert.equal(retirement.authority_scope, "local_same_uid_accident_guard");
+  assert.equal(retirement.cleanup.status, "complete");
+  assert.equal(JSON.parse(readFileSync(join(f.principalHome, ".provisioning", "intents", `${operationID}.json`), "utf8")).state, "complete");
+  const cleanupCall = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse).at(-1);
+  assert.deepEqual(cleanupCall, {
+    argv: [
+      "id", "team", "cleanup-local-provision",
+      "--operation-id", operationID,
+      "--team-id", "test-team:example.test",
+      "--name", operationID,
+      "--authority-identity-home", f.credentials,
+      "--target-identity-home", resource.identity_home,
+      "--authority-address", "example.test/throwaway",
+      "--authority-stable-id", "did:aw:2ThrowawayStableId123",
+      "--controller-did", "did:key:z6MkiLocalController123",
+      "--json",
+    ],
+    cwd: spawned.home,
+  });
+});
+
+test("operator and later-spawn reconciliation clean durable pending local intents", () => {
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
+  const spawnLocal = (purpose) => parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", purpose, "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  const makeCleanupPending = (spawned) => {
+    const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+    const operation = meta.capabilityMeta["aweb.identity-attach"].identity_binding.journal_operation;
+    const path = join(f.principalHome, ".provisioning", "intents", `${operation}.json`);
+    const journal = JSON.parse(readFileSync(path, "utf8"));
+    journal.state = "cleanup-pending";
+    journal.cleanup = { attempts: 1, last_error: "simulated interrupted retire" };
+    journal.revision += 1;
+    journal.updated_at = "2000-01-01T00:00:00.000Z";
+    writeFileSync(path, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+    return { operation, path };
+  };
+
+  const interrupted = spawnLocal("operator-recovery");
+  const interruptedMeta = JSON.parse(readFileSync(join(interrupted.home, "instance.json"), "utf8"));
+  const interruptedOperation = interruptedMeta.capabilityMeta["aweb.identity-attach"].identity_binding.journal_operation;
+  const interruptedPath = join(f.principalHome, ".provisioning", "intents", `${interruptedOperation}.json`);
+  const interruptedJournal = JSON.parse(readFileSync(interruptedPath, "utf8"));
+  interruptedJournal.state = "provisioning";
+  interruptedJournal.resource = null;
+  interruptedJournal.cleanup = { attempts: 0, last_error: null };
+  interruptedJournal.revision += 1;
+  interruptedJournal.updated_at = "2000-01-01T00:00:00.000Z";
+  writeFileSync(interruptedPath, `${JSON.stringify(interruptedJournal, null, 2)}\n`, { mode: 0o600 });
+  const operatorCallStart = readFileSync(f.awLog, "utf8").trim().split("\n").length;
+  const operator = spawnSync(process.execPath, [join(f.capability, "bin", "aweb-identity-attach.mjs"), "reconcile"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  });
+  assert.equal(operator.status, 0, operator.stderr);
+  assert.deepEqual(JSON.parse(operator.stdout).operations.map((item) => item.operation_id), [interruptedOperation]);
+  assert.equal(JSON.parse(readFileSync(interruptedPath, "utf8")).state, "complete");
+  const operatorCalls = readFileSync(f.awLog, "utf8").trim().split("\n").slice(operatorCallStart).map(JSON.parse);
+  assert.equal(operatorCalls[0].argv.includes("provision-local"), true);
+  assert.equal(operatorCalls[1].argv.includes("cleanup-local-provision"), true);
+
+  const second = makeCleanupPending(spawnLocal("later-spawn-recovery"));
+  const before = readFileSync(f.awLog, "utf8").trim().split("\n").length;
+  const third = spawnLocal("new-intent-after-recovery");
+  assert.equal(JSON.parse(readFileSync(second.path, "utf8")).state, "complete");
+  const newReceipt = JSON.parse(readFileSync(join(third.home, "instance.json"), "utf8")).capabilityMeta["aweb.identity-attach"].identity_binding;
+  assert.notEqual(newReceipt.journal_operation, second.operation, "new spawn must allocate its own disposable intent");
+  const newCalls = readFileSync(f.awLog, "utf8").trim().split("\n").slice(before).map(JSON.parse);
+  const cleanupIndex = newCalls.findIndex((call) => call.argv.includes("cleanup-local-provision") && call.argv.includes(second.operation));
+  const provisionIndex = newCalls.findIndex((call) => call.argv.includes("provision-local") && call.argv.includes(newReceipt.journal_operation));
+  assert.ok(cleanupIndex >= 0 && provisionIndex > cleanupIndex, "stale cleanup must finish before the new remote provision side effect");
 });
 
 test("real OAS refuses declared local-controller path without controller authority", () => {
@@ -430,7 +485,7 @@ test("real OAS provision-disposable rejects missing declared minting authority",
 });
 
 test("real OAS provision-disposable rejects an uncommitted minting authority declaration", () => {
-  const f = fixture({ mode: "provision-disposable", schemaVersion: 2 });
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
   writeFileSync(f.declarationPath, `${readFileSync(f.declarationPath, "utf8")}# unreviewed authority change\n`);
   const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "authority-uncommitted", "--no-launch", "--json"], {
     cwd: f.repo, env: f.env, encoding: "utf8",
@@ -443,7 +498,7 @@ test("real OAS provision-disposable rejects an uncommitted minting authority dec
 });
 
 test("real OAS provision-disposable rejects minting credentials that disagree with the declaration", () => {
-  const f = fixture({ mode: "provision-disposable", schemaVersion: 2 });
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
   writeFileSync(f.awPath, readFileSync(f.awPath, "utf8").replace(
     'stable_id: "did:aw:2ThrowawayStableId123"',
     'stable_id: "did:aw:2DifferentStableId456"',
@@ -463,7 +518,7 @@ test("real OAS provision-disposable rejects minting credentials that disagree wi
 });
 
 test("distinct production intents receive opaque carrier-safe operation identities", () => {
-  const f = fixture({ mode: "provision-disposable", schemaVersion: 2 });
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
   const receipts = [];
   const instances = [];
   for (const purpose of ["distinct-one", "distinct-two", "x".repeat(80)]) {
@@ -485,7 +540,7 @@ test("distinct production intents receive opaque carrier-safe operation identiti
 
 test("local same-UID corroboration guards cleanup judgement against receipt-only mistakes", () => {
   function spawnedDisposable() {
-    const f = fixture({ mode: "provision-disposable", schemaVersion: 2 });
+    const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
     const spawn = spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "cleanup-judgement", "--no-launch", "--json"], {
       cwd: f.repo, env: f.env, encoding: "utf8",
     });
@@ -493,13 +548,11 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
     const metaPath = join(spawned.home, "instance.json");
     const meta = JSON.parse(readFileSync(metaPath, "utf8"));
     const receipt = meta.capabilityMeta["aweb.identity-attach"].identity_binding;
-    receipt.lifecycle = "provisioned";
-    receipt.resource_identity.cleanup_authority = "local-controller";
-    writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
     return { f, spawned, receipt };
   }
 
   const forged = spawnedDisposable();
+  unlinkSync(join(forged.f.corroborationHome, `${forged.spawned.instance}.json`));
   const forgedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", forged.spawned.instance, "--json"], {
     cwd: forged.f.repo, env: forged.f.env, encoding: "utf8",
   }));
@@ -514,10 +567,10 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
     ...substituted.receipt,
     resource_identity: {
       ...substituted.receipt.resource_identity,
-      operation_id: "victim-operation",
-      reference: "operation:victim-operation",
+      operation_id: "oas-BBBBBBBBBBBBBBBBBBBBBQ",
+      reference: "operation:oas-BBBBBBBBBBBBBBBBBBBBBQ",
     },
-    journal_operation: "victim-operation",
+    journal_operation: "oas-BBBBBBBBBBBBBBBBBBBBBQ",
   };
   writeCleanupCorroboration(substituted.f, substituted.spawned.instance, otherReceipt);
   const substitutedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", substituted.spawned.instance, "--json"], {
@@ -543,6 +596,7 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
   const linked = spawnedDisposable();
   const linkedTarget = join(linked.f.base, "untrusted-corroboration.json");
   write(linkedTarget, `${JSON.stringify(digestedCleanupCorroboration(linked.spawned.instance, linked.receipt), null, 2)}\n`);
+  unlinkSync(join(linked.f.corroborationHome, `${linked.spawned.instance}.json`));
   symlinkSync(linkedTarget, join(linked.f.corroborationHome, `${linked.spawned.instance}.json`));
   const linkedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", linked.spawned.instance, "--json"], {
     cwd: linked.f.repo, env: linked.f.env, encoding: "utf8",
@@ -570,20 +624,14 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
   const ownedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", owned.spawned.instance, "--json"], {
     cwd: owned.f.repo, env: owned.f.env, encoding: "utf8",
   }));
-  assert.deepEqual(ownedRetire.capabilityMeta["aweb.identity-attach"].retirement, {
-    action: "authorize_cleanup",
-    cleanup_authorized: true,
-    reason: "corroborating_local_record_matches_disposable_resource",
-    authority_scope: "local_same_uid_accident_guard",
-  });
+  const ownedDecision = ownedRetire.capabilityMeta["aweb.identity-attach"].retirement;
+  assert.equal(ownedDecision.action, "cleanup_complete");
+  assert.equal(ownedDecision.cleanup_authorized, true);
+  assert.equal(ownedDecision.reason, "corroborating_local_record_matches_disposable_resource");
+  assert.equal(ownedDecision.authority_scope, "local_same_uid_accident_guard");
+  assert.equal(ownedDecision.cleanup.status, "complete");
   const ownedCalls = readFileSync(owned.f.awLog, "utf8").trim().split("\n").map(JSON.parse);
-  assert.deepEqual(ownedCalls, [{
-    argv: ["--identity-home", owned.f.credentials, "whoami", "--json"],
-    cwd: owned.spawned.home,
-  }, {
-    argv: ["--identity-home", owned.f.credentials, "id", "team", "list", "--json"],
-    cwd: owned.spawned.home,
-  }], "authorization judgement must not execute deletion");
+  assert.equal(ownedCalls.at(-1).argv.includes("cleanup-local-provision"), true, "authorized judgement must reach cleanup execution");
 });
 
 test("real OAS attach rejects a declaration for a different soul before invoking aw", () => {
@@ -636,7 +684,7 @@ test("real OAS attach fails visibly when aw reports a different stable identity"
 });
 
 test("real OAS provision-disposable rejects missing active-team evidence", () => {
-  const f = fixture({ mode: "provision-disposable", schemaVersion: 2 });
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
   writeFileSync(f.awPath, readFileSync(f.awPath, "utf8")
     .replace('active_team: "test-team:example.test"', 'active_team: ""')
     .replace('memberships: [{ team_id: "test-team:example.test", active: true }]', 'memberships: []'));
@@ -650,7 +698,7 @@ test("real OAS provision-disposable rejects missing active-team evidence", () =>
 });
 
 test("real OAS provision-disposable rejects a complete authority active in another team", () => {
-  const f = fixture({ mode: "provision-disposable", schemaVersion: 2 });
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
   writeFileSync(f.awPath, readFileSync(f.awPath, "utf8")
     .replace('active_team: "test-team:example.test"', 'active_team: "other-team:example.test"')
     .replace('team_id: "test-team:example.test"', 'team_id: "other-team:example.test"'));
