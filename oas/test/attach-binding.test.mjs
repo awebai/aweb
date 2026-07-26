@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { afterEach, test } from "node:test";
 
-import { cleanupAuthorityPayload } from "../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs";
+import { cleanupCorroborationPayload } from "../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs";
 
 const CAPABILITY_SOURCE = resolve(new URL("../.agents/capabilities/owned/aweb-identity-attach", import.meta.url).pathname);
 const temporaryDirectories = [];
@@ -107,8 +107,8 @@ function fixture({ mode = "attach", schemaVersion = 1, operationID = "operation-
   write(join(bin, "pi"), "#!/bin/sh\nexit 0\n", 0o755);
   write(join(bin, "aw"), `#!/usr/bin/env node\nimport { appendFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_AW_LOG, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");\nconst argv = process.argv.slice(2);\nif (argv.includes("delete") || argv.includes("reset") || argv.includes("init") || argv.includes("invite") || argv.includes("join")) process.exit(93);\nif (argv.at(-2) === "whoami" && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ address: "example.test/throwaway", stable_id: "did:aw:2ThrowawayStableId123", team_id: "test-team:example.test" }) + "\\n");\n  process.exit(0);\n}\nprocess.exit(92);\n`, 0o755);
 
-  const authorityHome = join(principalHome, ".authority", "cleanup");
-  mkdirSync(authorityHome, { recursive: true });
+  const corroborationHome = join(principalHome, ".corroboration", "cleanup");
+  mkdirSync(corroborationHome, { recursive: true });
   const env = {
     ...process.env,
     PATH: `${bin}:${process.env.PATH}`,
@@ -117,22 +117,22 @@ function fixture({ mode = "attach", schemaVersion = 1, operationID = "operation-
     FAKE_AW_LOG: awLog,
     PI_AGENTS_TMUX_SESSION: "oas-attach-test-no-session",
   };
-  return { base, repo, agentsRoot, capability, declarationPath, principalHome, principal, credentials, state, authorityHome, awLog, awPath: join(bin, "aw"), env };
+  return { base, repo, agentsRoot, capability, declarationPath, principalHome, principal, credentials, state, corroborationHome, awLog, awPath: join(bin, "aw"), env };
 }
 
-function signedCleanupAuthority(f, instanceID, receipt) {
+function signedCleanupCorroboration(f, instanceID, receipt) {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-  write(join(f.authorityHome, "authority.pub"), publicKey.export({ type: "spki", format: "pem" }));
-  const record = { schema_version: 1, instance_id: instanceID, receipt };
+  write(join(f.corroborationHome, "corroboration.pub"), publicKey.export({ type: "spki", format: "pem" }));
+  const record = { schema_version: 1, corroboration_class: "local-same-uid", instance_id: instanceID, receipt };
   return {
     ...record,
-    signature: sign(null, cleanupAuthorityPayload(record), privateKey).toString("base64"),
+    signature: sign(null, cleanupCorroborationPayload(record), privateKey).toString("base64"),
   };
 }
 
-function writeCleanupAuthority(f, instanceID, receipt) {
-  const record = signedCleanupAuthority(f, instanceID, receipt);
-  write(join(f.authorityHome, `${instanceID}.json`), `${JSON.stringify(record, null, 2)}\n`);
+function writeCleanupCorroboration(f, instanceID, receipt) {
+  const record = signedCleanupCorroboration(f, instanceID, receipt);
+  write(join(f.corroborationHome, `${instanceID}.json`), `${JSON.stringify(record, null, 2)}\n`);
 }
 
 function pathIsWithinOrEqual(root, candidate) {
@@ -306,7 +306,7 @@ for (const [mode, cleanupOwner] of [
   });
 }
 
-test("capability-owned evidence can authorize cleanup judgement but instance metadata alone cannot", () => {
+test("local same-UID corroboration guards cleanup judgement against receipt-only mistakes", () => {
   function spawnedDisposable() {
     const f = fixture({ mode: "provision-disposable", schemaVersion: 2, operationID: "owned-operation" });
     const spawn = spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "cleanup-judgement", "--no-launch", "--json"], {
@@ -328,7 +328,7 @@ test("capability-owned evidence can authorize cleanup judgement but instance met
   assert.deepEqual(forgedRetire.capabilityMeta["aweb.identity-attach"].retirement, {
     action: "preserve",
     cleanup_authorized: false,
-    reason: "capability_authority_missing_or_mismatched",
+    reason: "cleanup_corroboration_missing_or_mismatched",
   });
 
   const substituted = spawnedDisposable();
@@ -341,19 +341,19 @@ test("capability-owned evidence can authorize cleanup judgement but instance met
     },
     journal_operation: "victim-operation",
   };
-  writeCleanupAuthority(substituted.f, substituted.spawned.instance, otherReceipt);
+  writeCleanupCorroboration(substituted.f, substituted.spawned.instance, otherReceipt);
   const substitutedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", substituted.spawned.instance, "--json"], {
     cwd: substituted.f.repo, env: substituted.f.env, encoding: "utf8",
   }));
   assert.deepEqual(substitutedRetire.capabilityMeta["aweb.identity-attach"].retirement, {
     action: "preserve",
     cleanup_authorized: false,
-    reason: "capability_authority_missing_or_mismatched",
+    reason: "cleanup_corroboration_missing_or_mismatched",
   });
 
   const invalidSignature = spawnedDisposable();
-  writeCleanupAuthority(invalidSignature.f, invalidSignature.spawned.instance, invalidSignature.receipt);
-  const invalidSignaturePath = join(invalidSignature.f.authorityHome, `${invalidSignature.spawned.instance}.json`);
+  writeCleanupCorroboration(invalidSignature.f, invalidSignature.spawned.instance, invalidSignature.receipt);
+  const invalidSignaturePath = join(invalidSignature.f.corroborationHome, `${invalidSignature.spawned.instance}.json`);
   const invalidSignatureRecord = JSON.parse(readFileSync(invalidSignaturePath, "utf8"));
   invalidSignatureRecord.signature = Buffer.alloc(64).toString("base64");
   writeFileSync(invalidSignaturePath, `${JSON.stringify(invalidSignatureRecord, null, 2)}\n`);
@@ -363,9 +363,9 @@ test("capability-owned evidence can authorize cleanup judgement but instance met
   assert.equal(invalidSignatureRetire.capabilityMeta["aweb.identity-attach"].retirement.cleanup_authorized, false);
 
   const linked = spawnedDisposable();
-  const linkedTarget = join(linked.f.base, "untrusted-authority.json");
-  write(linkedTarget, `${JSON.stringify(signedCleanupAuthority(linked.f, linked.spawned.instance, linked.receipt), null, 2)}\n`);
-  symlinkSync(linkedTarget, join(linked.f.authorityHome, `${linked.spawned.instance}.json`));
+  const linkedTarget = join(linked.f.base, "untrusted-corroboration.json");
+  write(linkedTarget, `${JSON.stringify(signedCleanupCorroboration(linked.f, linked.spawned.instance, linked.receipt), null, 2)}\n`);
+  symlinkSync(linkedTarget, join(linked.f.corroborationHome, `${linked.spawned.instance}.json`));
   const linkedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", linked.spawned.instance, "--json"], {
     cwd: linked.f.repo, env: linked.f.env, encoding: "utf8",
   }));
@@ -383,7 +383,7 @@ test("capability-owned evidence can authorize cleanup judgement but instance met
   durableReceipt.resource_identity.stable_id = "did:aw:DurableOwned1";
   durableReceipt.resource_identity.reference = join(durable.principalHome, "declarations", "durable-owned.yaml");
   writeFileSync(durableMetaPath, `${JSON.stringify(durableMeta, null, 2)}\n`);
-  writeCleanupAuthority(durable, durableSpawned.instance, durableReceipt);
+  writeCleanupCorroboration(durable, durableSpawned.instance, durableReceipt);
   const durableRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", durableSpawned.instance, "--json"], {
     cwd: durable.repo, env: durable.env, encoding: "utf8",
   }));
@@ -394,14 +394,15 @@ test("capability-owned evidence can authorize cleanup judgement but instance met
   });
 
   const owned = spawnedDisposable();
-  writeCleanupAuthority(owned.f, owned.spawned.instance, owned.receipt);
+  writeCleanupCorroboration(owned.f, owned.spawned.instance, owned.receipt);
   const ownedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", owned.spawned.instance, "--json"], {
     cwd: owned.f.repo, env: owned.f.env, encoding: "utf8",
   }));
   assert.deepEqual(ownedRetire.capabilityMeta["aweb.identity-attach"].retirement, {
     action: "authorize_cleanup",
     cleanup_authorized: true,
-    reason: "capability_evidence_matches_disposable_resource",
+    reason: "corroborating_local_record_matches_disposable_resource",
+    authority_scope: "local_same_uid_accident_guard",
   });
   assert.equal(existsSync(owned.f.awLog), false, "authorization judgement must not execute deletion");
 });

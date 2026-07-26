@@ -132,7 +132,7 @@ export function attachmentReceipt({ declarationPath, stableID }) {
   });
 }
 
-export function cleanupJudgement(instanceReceipt, authorityRecord, instanceID) {
+export function cleanupJudgement(instanceReceipt, corroborationRecord, instanceID) {
   let receipt;
   try {
     receipt = validateBindingReceipt(instanceReceipt);
@@ -142,17 +142,23 @@ export function cleanupJudgement(instanceReceipt, authorityRecord, instanceID) {
   if (receipt.cleanup_owner !== "instance" || receipt.mode !== "provision-disposable" || receipt.lifecycle !== "provisioned") {
     return { action: "preserve", cleanup_authorized: false, reason: "instance_metadata_withholds_cleanup" };
   }
-  if (!cleanupAuthorityMatches(authorityRecord, receipt, instanceID)) {
-    return { action: "preserve", cleanup_authorized: false, reason: "capability_authority_missing_or_mismatched" };
+  if (!cleanupCorroborationMatches(corroborationRecord, receipt, instanceID)) {
+    return { action: "preserve", cleanup_authorized: false, reason: "cleanup_corroboration_missing_or_mismatched" };
   }
-  return { action: "authorize_cleanup", cleanup_authorized: true, reason: "capability_evidence_matches_disposable_resource" };
+  return {
+    action: "authorize_cleanup",
+    cleanup_authorized: true,
+    reason: "corroborating_local_record_matches_disposable_resource",
+    authority_scope: "local_same_uid_accident_guard",
+  };
 }
 
-function cleanupAuthorityMatches(authorityRecord, receipt, instanceID) {
-  if (!exactFields(authorityRecord, ["schema_version", "instance_id", "receipt"])
-      || authorityRecord.schema_version !== 1 || authorityRecord.instance_id !== instanceID) return false;
+function cleanupCorroborationMatches(corroborationRecord, receipt, instanceID) {
+  if (!exactFields(corroborationRecord, ["schema_version", "corroboration_class", "instance_id", "receipt"])
+      || corroborationRecord.schema_version !== 1 || corroborationRecord.corroboration_class !== "local-same-uid"
+      || corroborationRecord.instance_id !== instanceID) return false;
   try {
-    return JSON.stringify(validateBindingReceipt(authorityRecord.receipt)) === JSON.stringify(receipt);
+    return JSON.stringify(validateBindingReceipt(corroborationRecord.receipt)) === JSON.stringify(receipt);
   } catch {
     return false;
   }
@@ -164,31 +170,36 @@ function assertNoSymlink(path) {
   for (const component of relative(root, path).split(sep).filter(Boolean)) {
     current = join(current, component);
     if (!existsSync(current)) return;
-    if (lstatSync(current).isSymbolicLink()) throw new Error(`binding authority path contains a symbolic link: ${current}`);
+    if (lstatSync(current).isSymbolicLink()) throw new Error(`cleanup corroboration path contains a symbolic link: ${current}`);
   }
 }
 
-export function cleanupAuthorityPayload({ schema_version: schemaVersion, instance_id: instanceID, receipt }) {
-  return Buffer.from(JSON.stringify({ schema_version: schemaVersion, instance_id: instanceID, receipt }), "utf8");
+export function cleanupCorroborationPayload({ schema_version: schemaVersion, corroboration_class: corroborationClass, instance_id: instanceID, receipt }) {
+  return Buffer.from(JSON.stringify({ schema_version: schemaVersion, corroboration_class: corroborationClass, instance_id: instanceID, receipt }), "utf8");
 }
 
-export function loadCleanupAuthority(authorityHome, instanceID) {
-  if (!canonicalAbsolutePath(authorityHome)) throw new TypeError("binding authority home must be canonical and absolute");
+export function loadCleanupCorroboration(corroborationHome, instanceID) {
+  if (!canonicalAbsolutePath(corroborationHome)) throw new TypeError("cleanup corroboration home must be canonical and absolute");
   if (!SAFE_ID.test(instanceID)) throw new TypeError("OAS_INSTANCE must be filesystem-safe");
-  const path = join(authorityHome, `${instanceID}.json`);
-  const publicKeyPath = join(authorityHome, "authority.pub");
+  const path = join(corroborationHome, `${instanceID}.json`);
+  const publicKeyPath = join(corroborationHome, "corroboration.pub");
   assertNoSymlink(path);
   assertNoSymlink(publicKeyPath);
   if (!existsSync(path) || !existsSync(publicKeyPath)) return null;
   const encoded = JSON.parse(readFileSync(path, "utf8"));
-  if (!exactFields(encoded, ["schema_version", "instance_id", "receipt", "signature"]) || typeof encoded.signature !== "string") {
-    throw new TypeError("binding authority record has invalid signed fields");
+  if (!exactFields(encoded, ["schema_version", "corroboration_class", "instance_id", "receipt", "signature"]) || typeof encoded.signature !== "string") {
+    throw new TypeError("cleanup corroboration record has invalid signed fields");
   }
-  const record = { schema_version: encoded.schema_version, instance_id: encoded.instance_id, receipt: encoded.receipt };
+  const record = {
+    schema_version: encoded.schema_version,
+    corroboration_class: encoded.corroboration_class,
+    instance_id: encoded.instance_id,
+    receipt: encoded.receipt,
+  };
   const publicKey = createPublicKey(readFileSync(publicKeyPath, "utf8"));
   const signature = Buffer.from(encoded.signature, "base64");
-  if (!verify(null, cleanupAuthorityPayload(record), publicKey, signature)) {
-    throw new Error("binding authority signature is invalid");
+  if (!verify(null, cleanupCorroborationPayload(record), publicKey, signature)) {
+    throw new Error("cleanup corroboration signature is invalid");
   }
   return record;
 }

@@ -50,12 +50,13 @@ test("receipt validity matrix rejects contradictory combinations", () => {
   }), /requires a locatable did:aw declaration/);
 });
 
-test("mutable metadata can withhold cleanup but cannot grant it", () => {
-  const authority = { schema_version: 1, instance_id: "instance-1", receipt: disposableProvisioned };
+test("instance receipt alone cannot grant cleanup and may withhold it", () => {
+  const authority = { schema_version: 1, corroboration_class: "local-same-uid", instance_id: "instance-1", receipt: disposableProvisioned };
   assert.deepEqual(cleanupJudgement(disposableProvisioned, authority, "instance-1"), {
     action: "authorize_cleanup",
     cleanup_authorized: true,
-    reason: "capability_evidence_matches_disposable_resource",
+    reason: "corroborating_local_record_matches_disposable_resource",
+    authority_scope: "local_same_uid_accident_guard",
   });
 
   const durableReceipt = {
@@ -71,6 +72,7 @@ test("mutable metadata can withhold cleanup but cannot grant it", () => {
   };
   assert.deepEqual(cleanupJudgement(durableReceipt, {
     schema_version: 1,
+    corroboration_class: "local-same-uid",
     instance_id: "instance-1",
     receipt: durableReceipt,
   }, "instance-1"), {
@@ -84,9 +86,9 @@ test("mutable metadata can withhold cleanup but cannot grant it", () => {
     ["partial", { schema_version: 2, mode: "provision-disposable" }, authority, "instance-1", "missing_or_invalid_instance_receipt"],
     ["unknown version", { ...disposableProvisioned, schema_version: 99 }, authority, "instance-1", "missing_or_invalid_instance_receipt"],
     ["external owner withholds", durableReceipt, authority, "instance-1", "instance_metadata_withholds_cleanup"],
-    ["no authority", disposableProvisioned, null, "instance-1", "capability_authority_missing_or_mismatched"],
-    ["wrong instance", disposableProvisioned, authority, "instance-2", "capability_authority_missing_or_mismatched"],
-    ["target substitution", { ...disposableProvisioned, resource_identity: { ...disposableProvisioned.resource_identity, reference: "operation:other", operation_id: "other" }, journal_operation: "other" }, authority, "instance-1", "capability_authority_missing_or_mismatched"],
+    ["no authority", disposableProvisioned, null, "instance-1", "cleanup_corroboration_missing_or_mismatched"],
+    ["wrong instance", disposableProvisioned, authority, "instance-2", "cleanup_corroboration_missing_or_mismatched"],
+    ["target substitution", { ...disposableProvisioned, resource_identity: { ...disposableProvisioned.resource_identity, reference: "operation:other", operation_id: "other" }, journal_operation: "other" }, authority, "instance-1", "cleanup_corroboration_missing_or_mismatched"],
   ]) {
     const decision = cleanupJudgement(receipt, record, instanceID);
     assert.equal(decision.action, "preserve", name);

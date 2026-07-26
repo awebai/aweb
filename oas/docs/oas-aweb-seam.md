@@ -280,21 +280,31 @@ original meaning: external ownership and preservation. They are not silently
 reinterpreted as v2.
 
 Provision modes currently emit a pending policy receipt and an explicit warning;
-they create no identity. Execution, reconciliation, grant cleanup, and real
-deletion belong to `aaaa.33` after minting authority exists. A disposable
+they create no identity. Disposable execution, reconciliation, grant cleanup,
+and real deletion belong to `aaaa.33` after minting authority exists. That task
+must explicitly refuse durable provisioning; `aaaa.39` owns its later execution. A disposable
 principal is addressed meanwhile by `operation:<operation_id>`, so recovery has
 a stable collision-resistant lookup key even when no `did:aw` exists. The later
 execution layer must reconcile that operation reference with remote state.
 
-At retire, mutable `instance.json` metadata can only withhold cleanup authority.
-It cannot grant it. An `authorize_cleanup` judgement requires an exact match
-between a valid disposable/provisioned instance receipt and an Ed25519-signed,
-capability-owned record keyed by the OAS instance id, stored outside the instance
-home under the principal-store authority root. The public trust key and record
-are both symlink-checked at use. A missing record, invalid signature, wrong
-instance, target substitution, invalid record, or any disagreement
-produces preservation. This task emits the judgement only: it invokes no delete
-operation. The paired real-delete and forged-victim proof belongs to `aaaa.33`.
+At retire, a mutable `instance.json` receipt is never self-authorizing. An
+`authorize_cleanup` judgement requires a valid disposable/provisioned receipt
+plus exact corroboration keyed by the OAS instance id. Missing corroboration,
+wrong instance, target substitution, invalid record, or any disagreement
+produces preservation.
+
+The corroboration implemented here is explicitly labelled
+`local_same_uid_accident_guard`. Its Ed25519 signature and point-of-use symlink
+checks detect accidental corruption and confused-deputy target substitution;
+they are **not** an adversarial authority boundary. Hook and model share a UID,
+so an intentional model can replace both the local public key and signed record.
+No code, test, or verdict may call this local record unwritable, unforgeable, or
+tamper-proof. A real cross-principal boundary exists only where the destructive
+authority is absent from the machine and provenance comes from an authority the
+instance principal does not govern; wiring that remote authority belongs to
+`.5`/`.33` and is not implemented here. This task emits a labelled judgement
+only and invokes no delete operation. The paired real-delete and forged-victim
+proof belongs to `aaaa.33`, with the same per-path threat label.
 
 The settings are config-scoped `OAS_SETTINGS`, so they apply to every instance of
 the targeted soul; they are not a per-instance override. Concurrent use remains
@@ -428,11 +438,13 @@ always declared, never defaulted into:
 
 Provisioning and cleanup ownership are independent decisions. The decision
 layer records mode, lifecycle, resource identity, journal operation, and cleanup
-owner; it does not create or delete. Retire emits cleanup authorization only for
-an authentic disposable/provisioned tuple corroborated by capability-owned
-evidence. Execution consumes that judgement later. This is the invariant stated
-at the top of this document applied to creation as well as attachment, without
-claiming primitives that do not yet exist.
+owner; it does not create or delete. A receipt alone never authorizes cleanup.
+The current local corroboration can prevent accidental/confused-deputy mismatch,
+not same-UID intent; a later remote path must establish provenance through an
+authority the instance principal does not govern. Execution consumes the labelled
+judgement later. This is the invariant stated at the top of this document applied
+to creation as well as attachment, without claiming primitives or security
+boundaries that do not yet exist.
 
 Making attach a *peer* of provision rather than an exception is deliberate: an
 exception has a default that someone must remember, and a peer does not.

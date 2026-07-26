@@ -7,7 +7,7 @@ import { isAbsolute, join, normalize, resolve, sep } from "node:path";
 import {
   attachmentReceipt,
   cleanupJudgement,
-  loadCleanupAuthority,
+  loadCleanupCorroboration,
   pendingProvisionReceipt,
   validateBindingSettings,
 } from "../lib/binding-policy.mjs";
@@ -206,14 +206,14 @@ function retire() {
     // v2 judgements below preserve on every invalid or unattributable receipt.
   }
   const instanceID = process.env.OAS_INSTANCE || "";
-  const authorityHome = join(resolvePrincipalHome(), ".authority", "cleanup");
-  let authority = null;
+  const corroborationHome = join(resolvePrincipalHome(), ".corroboration", "cleanup");
+  let corroboration = null;
   try {
-    authority = loadCleanupAuthority(authorityHome, instanceID);
+    corroboration = loadCleanupCorroboration(corroborationHome, instanceID);
   } catch {
-    authority = null;
+    corroboration = null;
   }
-  const judgement = cleanupJudgement(metadata?.identity_binding, authority, instanceID);
+  const judgement = cleanupJudgement(metadata?.identity_binding, corroboration, instanceID);
   output({
     meta: {
       identity_binding_evidence: metadata?.identity_binding ?? null,
