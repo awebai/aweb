@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -200,7 +201,7 @@ test("malformed journals quarantine without aborting valid stale recovery", (t) 
   assert.match(report.error, /invalid/);
 });
 
-test("per-intent lock never takes over a live holder and rejects symlink substitution", (t) => {
+test("per-intent lock serializes stale takeover, never takes a live holder, and rejects symlinks", (t) => {
   const root = tempRoot(t, "aweb-provision-lock-");
   createProvisionIntent(root, {
     operationID: OPERATION_A, instanceID: "instance-a", teamID: "backend:acme.test", authority: AUTHORITY,
@@ -211,6 +212,18 @@ test("per-intent lock never takes over a live holder and rejects symlink substit
       now: new Date(Date.now() + 600_000), staleAfterMs: 1,
     }), /live holder/);
   });
+
+  const journalModule = new URL("../.agents/capabilities/owned/aweb-identity-attach/lib/provisioning-journal.mjs", import.meta.url).href;
+  const killed = spawnSync(process.execPath, ["--input-type=module", "--eval", [
+    `import { withProvisionIntentLock } from ${JSON.stringify(journalModule)};`,
+    `withProvisionIntentLock(${JSON.stringify(root)}, ${JSON.stringify(OPERATION_A)}, () => process.exit(0));`,
+  ].join("\n")], { encoding: "utf8" });
+  assert.equal(killed.status, 0, killed.stderr);
+  let reclaimed = false;
+  withProvisionIntentLock(root, OPERATION_A, () => { reclaimed = true; }, {
+    now: new Date(Date.now() + 600_000), staleAfterMs: 1,
+  });
+  assert.equal(reclaimed, true, "a killed holder is transactionally replaced after the stale threshold");
 
   const record = join(root, ".provisioning", "intents", `${OPERATION_A}.json`);
   const target = join(root, "substituted.json");

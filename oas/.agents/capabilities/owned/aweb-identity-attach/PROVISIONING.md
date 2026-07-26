@@ -104,9 +104,11 @@ cleaned; a later spawn allocates its own operation and principal.
   `oas aweb-identity reconcile --retry-quarantine <operation-id>`.
 - Automatic stale threshold: five minutes. The explicit command ignores the
   threshold only for scanner-owned states.
-- Ownership: one `O_EXCL` lock per operation. Lock records carry a random token,
-  PID, and acquisition time. Stale takeover re-reads the token and refuses any
-  live PID or changed lock, so it cannot unlink a concurrently replaced holder.
+- Ownership: one SQLite lock row per operation. Acquisition and stale takeover
+  run under `BEGIN IMMEDIATE`; takeover compare-and-swaps the observed random
+  token and refuses a live PID. No lock pathname is unlinked/recreated, so a
+  concurrent scanner cannot replace or remove a fresh holder. A process-kill
+  positive control leaves a row and proves transactional stale takeover.
 - Automatic states: stale `allocated`, `provisioning`, and `cleanup-pending`.
   `prepared` and `bound` are not inferred to mean launched and are never globally
   selected. Only

@@ -15,6 +15,7 @@ import {
   writeSync,
 } from "node:fs";
 import { isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { cleanupCorroborationPayload, validateBindingReceipt } from "./binding-policy.mjs";
 import { validateMintingAuthorityReceipt } from "./provisioning-authority.mjs";
@@ -380,19 +381,6 @@ export function listRecoverableProvisionIntents(home, { now = new Date(), staleA
   return intents.sort((left, right) => left.operation_id.localeCompare(right.operation_id));
 }
 
-function readProvisionLock(lockPath) {
-  assertNoSymlink(lockPath, "provision intent lock");
-  if (!lstatSync(lockPath).isFile()) throw new Error("provision intent lock must be a regular file");
-  const lock = JSON.parse(readFileSync(lockPath, "utf8"));
-  if (!exactFields(lock, ["schema_version", "token", "pid", "acquired_at"])
-      || lock.schema_version !== 1 || typeof lock.token !== "string" || lock.token.length === 0
-      || !Number.isInteger(lock.pid) || lock.pid <= 0
-      || typeof lock.acquired_at !== "string" || !Number.isFinite(Date.parse(lock.acquired_at))) {
-    throw new Error("provision intent lock record is invalid");
-  }
-  return lock;
-}
-
 function processIsAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -404,33 +392,62 @@ function processIsAlive(pid) {
   }
 }
 
+function openProvisionLockDatabase(home) {
+  const databasePath = join(paths(home).root, "locks.sqlite");
+  assertNoSymlink(databasePath, "provision lock database");
+  const database = new DatabaseSync(databasePath);
+  database.exec("PRAGMA busy_timeout = 5000; PRAGMA synchronous = FULL; PRAGMA journal_mode = DELETE;");
+  database.exec(`CREATE TABLE IF NOT EXISTS operation_locks (
+    operation_id TEXT PRIMARY KEY,
+    token TEXT NOT NULL,
+    pid INTEGER NOT NULL,
+    acquired_at TEXT NOT NULL
+  ) STRICT`);
+  return database;
+}
+
 export function withProvisionIntentLock(home, operation, callback, { now = new Date(), staleAfterMs = 300_000 } = {}) {
   if (typeof callback !== "function") throw new TypeError("provision lock callback is required");
-  const lockPath = join(paths(home).locks, `${validatedOperationID(operation)}.lock`);
-  const owner = { schema_version: 1, token: randomUUID(), pid: process.pid, acquired_at: timestamp(now) };
+  if (!Number.isFinite(staleAfterMs) || staleAfterMs < 0) throw new TypeError("staleAfterMs must be non-negative");
+  const operationID = validatedOperationID(operation);
+  const owner = { token: randomUUID(), pid: process.pid, acquiredAt: timestamp(now) };
+  const database = openProvisionLockDatabase(home);
   try {
-    writeNew(lockPath, owner);
-  } catch (error) {
-    if (error?.code !== "EEXIST") throw error;
-    const observed = readProvisionLock(lockPath);
-    const age = new Date(now).getTime() - Date.parse(observed.acquired_at);
-    if (processIsAlive(observed.pid)) throw new Error(`provision operation ${operation} has a live holder`);
-    if (age <= staleAfterMs) throw new Error(`provision operation ${operation} is already locked`);
-    const current = readProvisionLock(lockPath);
-    if (current.token !== observed.token || processIsAlive(current.pid)) {
-      throw new Error(`provision operation ${operation} lock changed during stale takeover`);
+    database.exec("BEGIN IMMEDIATE");
+    const observed = database.prepare("SELECT token, pid, acquired_at FROM operation_locks WHERE operation_id = ?").get(operationID);
+    if (observed) {
+      const age = new Date(now).getTime() - Date.parse(observed.acquired_at);
+      if (processIsAlive(observed.pid)) throw new Error(`provision operation ${operationID} has a live holder`);
+      if (age <= staleAfterMs) throw new Error(`provision operation ${operationID} is already locked`);
+      const changed = database.prepare(`UPDATE operation_locks
+        SET token = ?, pid = ?, acquired_at = ?
+        WHERE operation_id = ? AND token = ?`).run(owner.token, owner.pid, owner.acquiredAt, operationID, observed.token);
+      if (changed.changes !== 1) throw new Error(`provision operation ${operationID} lock changed during stale takeover`);
+    } else {
+      database.prepare("INSERT INTO operation_locks(operation_id, token, pid, acquired_at) VALUES (?, ?, ?, ?)")
+        .run(operationID, owner.token, owner.pid, owner.acquiredAt);
     }
-    unlinkSync(lockPath);
-    return withProvisionIntentLock(home, operation, callback, { now, staleAfterMs });
+    database.exec("COMMIT");
+  } catch (error) {
+    try { database.exec("ROLLBACK"); } catch {}
+    database.close();
+    throw error;
   }
+  database.close();
+
   try {
     return callback();
   } finally {
+    const release = openProvisionLockDatabase(home);
     try {
-      const current = readProvisionLock(lockPath);
-      if (current.token === owner.token) unlinkSync(lockPath);
+      release.exec("BEGIN IMMEDIATE");
+      release.prepare("DELETE FROM operation_locks WHERE operation_id = ? AND token = ?").run(operationID, owner.token);
+      release.exec("COMMIT");
     } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
+      try { release.exec("ROLLBACK"); } catch {}
+      throw error;
+    } finally {
+      release.close();
     }
   }
 }
