@@ -120,8 +120,9 @@ cleaned; a later spawn allocates its own operation and principal.
   writing hook stdout, not OAS accepting it. A `bound` identity with retained
   metadata still requires its matching retire judgement.
 - A malformed or unknown-version intent is moved, unchanged, to the external
-  quarantine directory with a report that grants no cleanup authority; other
-  valid stale work continues scanning.
+  quarantine directory with a report that grants no cleanup authority. The
+  trigger surfaces that quarantine as a warning while other valid stale work
+  continues scanning.
 - A cleanup still failing on the third persisted attempt moves to visible
   `quarantined`. Quarantine is a remediable non-success and is never reported as
   completed cleanup.

@@ -188,9 +188,14 @@ test("malformed journals quarantine without aborting valid stale recovery", (t) 
   markProvisionIntentProvisioning(root, OPERATION_A, start);
   writeFileSync(join(root, ".provisioning", "intents", `${OPERATION_B}.json`), '{"schema_version":999}\n', { mode: 0o600 });
 
+  const visibleQuarantines = [];
   assert.deepEqual(listRecoverableProvisionIntents(root, {
     now: new Date("2026-07-26T00:01:00Z"), staleAfterMs: 30_000,
+    onQuarantine: (report) => visibleQuarantines.push(report),
   }).map((intent) => intent.operation_id), [OPERATION_A]);
+  assert.equal(visibleQuarantines.length, 1);
+  assert.equal(visibleQuarantines[0].state, "quarantined");
+  assert.equal(visibleQuarantines[0].source_name, `${OPERATION_B}.json`);
   assert.equal(readdirSync(join(root, ".provisioning", "intents")).includes(`${OPERATION_B}.json`), false);
   const quarantined = readdirSync(join(root, ".provisioning", "quarantine"));
   assert.equal(quarantined.some((name) => name.startsWith(`${OPERATION_B}.json.`) && name.endsWith(".record")), true);

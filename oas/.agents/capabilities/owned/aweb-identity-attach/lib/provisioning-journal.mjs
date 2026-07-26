@@ -354,7 +354,7 @@ function quarantineMalformedIntent(home, entry, error, now) {
     if (renameError?.code === "ENOENT") return;
     throw renameError;
   }
-  writeNew(join(journalPaths.quarantine, `${basename}.report.json`), {
+  const report = {
     schema_version: 1,
     state: "quarantined",
     source_name: entry.name,
@@ -362,11 +362,14 @@ function quarantineMalformedIntent(home, entry, error, now) {
     cleanup_authority: "none-corrupt-record-not-trusted",
     error: String(error?.message || error).slice(0, 400),
     quarantined_at: timestamp(now),
-  });
+  };
+  writeNew(join(journalPaths.quarantine, `${basename}.report.json`), report);
+  return report;
 }
 
-export function listRecoverableProvisionIntents(home, { now = new Date(), staleAfterMs }) {
+export function listRecoverableProvisionIntents(home, { now = new Date(), staleAfterMs, onQuarantine = () => {} }) {
   if (!Number.isFinite(staleAfterMs) || staleAfterMs < 0) throw new TypeError("staleAfterMs must be non-negative");
+  if (typeof onQuarantine !== "function") throw new TypeError("onQuarantine must be a function");
   const cutoff = new Date(now).getTime() - staleAfterMs;
   const intents = [];
   for (const entry of readdirSync(paths(home).intents, { withFileTypes: true })) {
@@ -375,7 +378,8 @@ export function listRecoverableProvisionIntents(home, { now = new Date(), staleA
       const intent = loadProvisionIntent(home, entry.name.slice(0, -5));
       if (RECOVERABLE_STATES.has(intent.state) && Date.parse(intent.updated_at) <= cutoff) intents.push(intent);
     } catch (error) {
-      quarantineMalformedIntent(home, entry, error, now);
+      const report = quarantineMalformedIntent(home, entry, error, now);
+      if (report) onQuarantine(report);
     }
   }
   return intents.sort((left, right) => left.operation_id.localeCompare(right.operation_id));

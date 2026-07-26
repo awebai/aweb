@@ -501,6 +501,16 @@ test("operator and later-spawn reconciliation clean durable pending local intent
   assert.equal(cleanupBound.status, 0, cleanupBound.stderr);
   assert.equal(JSON.parse(readFileSync(bound.path, "utf8")).state, "complete");
   assert.equal(JSON.parse(readFileSync(unrelated.path, "utf8")).state, "bound");
+
+  const validAlongsideCorruption = makeCleanupPending(spawnLocal("valid-alongside-corrupt-journal"));
+  const corruptOperation = "oas-BBBBBBBBBBBBBBBBBBBBBQ";
+  writeFileSync(join(f.principalHome, ".provisioning", "intents", `${corruptOperation}.json`), '{"schema_version":999}\n', { mode: 0o600 });
+  const quarantiningSpawn = spawnLocal("surface-corrupt-journal-quarantine");
+  assert.equal(JSON.parse(readFileSync(validAlongsideCorruption.path, "utf8")).state, "complete", "corruption must not abort other stale cleanup");
+  assert.match(quarantiningSpawn.warnings[0], new RegExp(`${corruptOperation}.*visible quarantine`));
+  const quarantiningMeta = JSON.parse(readFileSync(join(quarantiningSpawn.home, "instance.json"), "utf8"));
+  assert.equal(quarantiningMeta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
+  assert.equal(readdirSync(join(f.principalHome, ".provisioning", "quarantine")).some((name) => name.startsWith(`${corruptOperation}.json.`)), true);
 });
 
 test("real OAS refuses declared local-controller path without controller authority", () => {

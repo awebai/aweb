@@ -335,10 +335,19 @@ function runCleanupCommandForIntent(intent, cwd) {
 }
 
 function recoverProvisionIntents(principalHome, cwd, { force = false, operationID = null, cleanupUnacknowledged = false } = {}) {
+  const malformed = [];
   const intents = operationID === null
-    ? listRecoverableProvisionIntents(principalHome, { now: new Date(), staleAfterMs: force ? 0 : 300000 })
+    ? listRecoverableProvisionIntents(principalHome, {
+        now: new Date(),
+        staleAfterMs: force ? 0 : 300000,
+        onQuarantine: (report) => malformed.push(report),
+      })
     : [loadProvisionIntent(principalHome, operationID)];
-  const recovered = [];
+  const recovered = malformed.map((report) => ({
+    operation_id: report.source_name.replace(/\.json$/, ""),
+    outcome: "quarantined",
+    error: report.error,
+  }));
   for (const candidate of intents) {
     let result;
     try {
