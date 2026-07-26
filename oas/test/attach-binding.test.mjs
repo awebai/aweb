@@ -244,7 +244,7 @@ test("native status returns needs-setup with one action for a repairable declara
   const report = JSON.parse(result.stdout);
   assert.equal(report.readiness, "needs_setup");
   assert.match(report.message, /missing\.yaml|no such file/i);
-  assert.equal(typeof report.next_action, "string");
+  assert.match(report.next_action, /^\$EDITOR /, "needs-setup must give exactly one executable setup command");
   assert.equal(Object.hasOwn(report, "next_actions"), false);
   assert.equal(report.identity_resources_created, false);
   assert.equal(report.instance_or_session_created, false);
@@ -325,7 +325,7 @@ test("spawn preflight refusal is structured, nonzero, and precedes identity crea
   assert.equal(refusal.nothing_created_by_capability, true);
   assert.equal(refusal.identity_resources_created, false);
   assert.equal(refusal.admission, "advisory-hook-failure-cannot-prevent-oas-launch");
-  assert.equal(typeof refusal.next_action, "string");
+  assert.equal(refusal.next_action, "oas aweb-identity status --soul developer --json");
   assert.equal(Object.hasOwn(refusal, "next_actions"), false);
   assert.equal(readdirSync(hookHome).length, 0);
   assert.equal(existsSync(join(f.principalHome, ".provisioning")), false);

@@ -88,8 +88,12 @@ class SpawnRefusal extends Error {
 
 function oneNextAction(issue, soul) {
   if (issue?.nextAction) return issue.nextAction;
-  const suffix = soul ? ` for soul ${soul}` : "";
-  return `Correct the declared aweb identity setup${suffix} before spawning.`;
+  if (soul) return `oas aweb-identity status --soul ${soul} --json`;
+  return "oas status --json";
+}
+
+function editConfigCommand(context) {
+  return `$EDITOR ${JSON.stringify(join(context, "oas-config.yaml"))}`;
 }
 
 function readinessReport({ readiness, message, nextAction, settingsSource }) {
@@ -362,7 +366,7 @@ function bindingReadiness(settings, { context, soul, settingsSource }) {
     const issue = new ReadinessIssue(
       "needs_setup",
       "a soul selection is required because spawn resolves settings per soul and agent type",
-      "Rerun this command with exactly one --soul <name> selection.",
+      "oas status --json",
     );
     return readinessReport({ readiness: issue.readiness, message: issue.message, nextAction: issue.nextAction, settingsSource });
   }
@@ -379,8 +383,8 @@ function bindingReadiness(settings, { context, soul, settingsSource }) {
         settings?.identity_binding == null
           ? "Do not spawn: no supported one-command identity setup exists yet."
           : settings?.identity_binding?.mode === "provision-durable"
-            ? "Use the temporary-worker journey; do not attempt durable resident setup."
-            : null,
+            ? "Do not spawn: durable resident setup is not available."
+            : editConfigCommand(context),
       );
     return readinessReport({
       readiness: issue.readiness,
@@ -838,7 +842,9 @@ try {
       identity_resources_created: false,
       admission: "advisory-hook-failure-cannot-prevent-oas-launch",
       message: error.message,
-      next_action: oneNextAction(error.issue, process.env.OAS_AGENT),
+      next_action: process.env.OAS_AGENT
+        ? `oas aweb-identity status --soul ${process.env.OAS_AGENT} --json`
+        : "oas status --json",
     };
     if (Object.hasOwn(process.env, "OAS_ROOT")) {
       // OAS 0.18 hooks are advisory. Preserve the specific refusal in its
