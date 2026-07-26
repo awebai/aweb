@@ -455,6 +455,70 @@ func TestOpenPresentsAndAcknowledgesACompleteMaximumUnreadSnapshot(t *testing.T)
 	}
 }
 
+// A mark-read that fails for a reason OTHER than the unread-snapshot overflow
+// is reported on the result. Open stays best-effort - it still returns the
+// messages it presented and a nil error - but the failure stops being
+// invisible, which it was while the server error was discarded.
+func TestOpenReportsAMarkReadFailureWithoutFailingTheCall(t *testing.T) {
+	deliveredIDsTestPath(t)
+
+	markReadCalls := 0
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{SessionID: "s1", Participants: []string{"alice", "bob"}},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatHistoryResponse{
+				Messages: []awid.ChatMessage{
+					{MessageID: "m1", FromAgent: "bob", Body: "hello", Timestamp: "2025-01-01T00:00:00Z"},
+					{MessageID: "m2", FromAgent: "bob", Body: "still here?", Timestamp: "2025-01-01T00:00:01Z"},
+				},
+			})
+		},
+		"POST /v1/chat/sessions/s1/read": func(w http.ResponseWriter, _ *http.Request) {
+			markReadCalls++
+			http.Error(w, "mark-read backend unavailable", http.StatusServiceUnavailable)
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Open(context.Background(), mustClient(t, server.URL), "bob")
+
+	// Best-effort contract intact: the call succeeds and still presents the
+	// messages it fetched.
+	if err != nil {
+		t.Fatalf("Open returned an error for a best-effort mark-read failure: %v", err)
+	}
+	if len(result.Messages) != 2 {
+		t.Fatalf("messages=%d, want the 2 presented despite the failed acknowledgement", len(result.Messages))
+	}
+	if result.MarkedRead != 0 {
+		t.Fatalf("marked_read=%d, want 0 when the acknowledgement failed", result.MarkedRead)
+	}
+
+	// The fixture reached the mark-read call rather than being turned away
+	// earlier, so the reported failure is the one this test is about. The retry
+	// means the endpoint is hit twice.
+	if markReadCalls != 2 {
+		t.Fatalf("mark_read_calls=%d, want 2 (initial attempt plus the single retry)", markReadCalls)
+	}
+
+	// The failure is observable, and it is NOT the overflow refusal.
+	if result.MarkReadError == "" {
+		t.Fatal("mark_read_error empty: a failed acknowledgement is still invisible to the caller")
+	}
+	if !strings.Contains(result.MarkReadError, "marking 2 message(s) read") {
+		t.Fatalf("mark_read_error=%q, want it to name the failed acknowledgement", result.MarkReadError)
+	}
+	if strings.Contains(result.MarkReadError, "refusing to acknowledge an incomplete snapshot") {
+		t.Fatalf("mark_read_error=%q collapsed into the overflow refusal", result.MarkReadError)
+	}
+}
+
 func TestOpenRefusesToAcknowledgeAnIncompleteUnreadSnapshot(t *testing.T) {
 	deliveredIDsDir := deliveredIDsTestPath(t)
 

@@ -57,12 +57,17 @@ type SendResult struct {
 
 // OpenResult is the result of opening unread messages for a conversation.
 type OpenResult struct {
-	SessionID      string  `json:"session_id"`
-	TargetAgent    string  `json:"target_agent"`
-	Messages       []Event `json:"messages"`
-	MarkedRead     int     `json:"marked_read"`
-	SenderWaiting  bool    `json:"sender_waiting"`
-	UnreadWasEmpty bool    `json:"unread_was_empty,omitempty"`
+	SessionID   string  `json:"session_id"`
+	TargetAgent string  `json:"target_agent"`
+	Messages    []Event `json:"messages"`
+	MarkedRead  int     `json:"marked_read"`
+	// MarkReadError carries why the acknowledgement failed, for the messages
+	// this result presented. Open still succeeds when it is set: the messages
+	// were delivered, they were just not acknowledged, so they will be
+	// presented again.
+	MarkReadError  string `json:"mark_read_error,omitempty"`
+	SenderWaiting  bool   `json:"sender_waiting"`
+	UnreadWasEmpty bool   `json:"unread_was_empty,omitempty"`
 }
 
 // HistoryResult is the result of fetching chat history.
