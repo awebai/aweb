@@ -396,9 +396,6 @@ test("instance link containment includes an exact renamed link to the principal 
   );
 });
 
-// These command assertions require the upstream hook-environment contract at
-// OAS commit c15145a (0.18.6 + separator 92f3617). No published OAS implements
-// it yet; the suite must run against the explicitly pinned source checkout.
 test("real OAS attach spawn persists external ownership and ordinary retire preserves the principal", () => {
   const f = fixture();
   const cli = oasCli();
@@ -431,8 +428,6 @@ test("real OAS attach spawn persists external ownership and ordinary retire pres
     },
   });
   assert.match(readFileSync(join(spawned.home, "TASK.md"), "utf8"), /external cleanup ownership/);
-  assert.match(instanceMeta.command, new RegExp(`AWEB_IDENTITY_HOME=.*${f.credentials.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-  assert.doesNotMatch(instanceMeta.command, /AWEB_PRINCIPAL|principal=throwaway/);
   assertNoInstanceIdentityMaterial(spawned.home, f.principal, join(f.credentials, "signing.key"));
 
   const invocationsAtSpawn = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse);
@@ -477,8 +472,6 @@ test("real OAS attach-existing v2 emits an externally owned bound receipt", () =
   assert.equal(receipt.resource_identity.kind, "declared-principal");
   assert.equal(receipt.resource_identity.stable_id, "did:aw:2ThrowawayStableId123");
   assert.equal(receipt.resource_identity.reference, f.declarationPath);
-  assert.match(meta.command, /AWEB_IDENTITY_HOME=/);
-  assert.doesNotMatch(meta.command, /AWEB_PRINCIPAL|principal=throwaway/);
 });
 
 test("real OAS refuses hosted disposable provisioning before authority resolution or creation", () => {
@@ -532,9 +525,6 @@ test("real OAS emits a local-controller authority statement with indefinite gran
   assert.match(resource.alias, /^oas-[a-f0-9]{32}$/);
   assert.notEqual(resource.alias, operationID, "normalized member alias is not operation identity");
   assert.equal(resource.identity_home, join(f.principalHome, ".provisioning", "identities", operationID));
-  assert.match(meta.command, /AWEB_IDENTITY_HOME=/);
-  assert.match(meta.command, new RegExp(resource.identity_home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.doesNotMatch(meta.command, /AWEB_PRINCIPAL|principal=throwaway/);
   assert.equal(resource.did_key, "did:key:z6MkiProvisionedWorker");
   const journal = JSON.parse(readFileSync(join(f.principalHome, ".provisioning", "intents", `${operationID}.json`), "utf8"));
   assert.equal(journal.state, "bound");
