@@ -325,10 +325,11 @@ function runCleanupCommandForIntent(intent, cwd) {
   ), intent.operation_id);
 }
 
-function recoverProvisionIntents(principalHome, cwd, { force = false } = {}) {
+function recoverProvisionIntents(principalHome, cwd, { force = false, includePrepared = false } = {}) {
   const intents = listRecoverableProvisionIntents(principalHome, {
     now: new Date(),
     staleAfterMs: force ? 0 : 300000,
+    includePrepared,
   });
   const recovered = [];
   for (const candidate of intents) {
@@ -585,13 +586,16 @@ try {
   } else if (event === "retire") retire();
   else if (event === "reconcile") {
     const principalHome = resolvePrincipalHome();
+    let includePrepared = false;
     if (process.argv[3] === "--retry-quarantine") {
       if (!process.argv[4] || process.argv.length !== 5) throw new TypeError("reconcile --retry-quarantine requires exactly one operation id");
       retryProvisionIntentQuarantine(principalHome, process.argv[4]);
+    } else if (process.argv[3] === "--include-prepared" && process.argv.length === 4) {
+      includePrepared = true;
     } else if (process.argv.length !== 3) {
-      throw new TypeError("reconcile accepts only --retry-quarantine <operation-id>");
+      throw new TypeError("reconcile accepts --include-prepared or --retry-quarantine <operation-id>");
     }
-    const recovered = recoverProvisionIntents(principalHome, realpathSync(process.cwd()), { force: true });
+    const recovered = recoverProvisionIntents(principalHome, realpathSync(process.cwd()), { force: true, includePrepared });
     output({ status: "reconciled", operations: recovered });
   } else throw new TypeError(`unsupported lifecycle event ${JSON.stringify(event)}`);
 } catch (error) {

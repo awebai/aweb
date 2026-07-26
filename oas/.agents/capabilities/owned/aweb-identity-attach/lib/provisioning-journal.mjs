@@ -328,13 +328,15 @@ export function writeProvisionCleanupCorroboration(home, instanceID, receipt) {
   return path;
 }
 
-export function listRecoverableProvisionIntents(home, { now = new Date(), staleAfterMs }) {
+export function listRecoverableProvisionIntents(home, { now = new Date(), staleAfterMs, includePrepared = false }) {
   if (!Number.isFinite(staleAfterMs) || staleAfterMs < 0) throw new TypeError("staleAfterMs must be non-negative");
+  if (typeof includePrepared !== "boolean") throw new TypeError("includePrepared must be boolean");
   const cutoff = new Date(now).getTime() - staleAfterMs;
+  const states = includePrepared ? new Set([...RECOVERABLE_STATES, "prepared"]) : RECOVERABLE_STATES;
   return readdirSync(paths(home).intents, { withFileTypes: true })
     .filter((entry) => entry.name.endsWith(".json"))
     .map((entry) => loadProvisionIntent(home, entry.name.slice(0, -5)))
-    .filter((intent) => RECOVERABLE_STATES.has(intent.state) && Date.parse(intent.updated_at) <= cutoff)
+    .filter((intent) => states.has(intent.state) && Date.parse(intent.updated_at) <= cutoff)
     .sort((left, right) => left.operation_id.localeCompare(right.operation_id));
 }
 

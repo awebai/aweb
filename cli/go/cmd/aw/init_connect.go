@@ -26,7 +26,7 @@ type connectOutput struct {
 	TeamID        string `json:"team_id"`
 	Alias         string `json:"alias"`
 	AwebURL       string `json:"aweb_url"`
-	AgentID       string `json:"agent_id,omitempty"`
+	AgentID       string `json:"-"`
 	WorkspaceID   string `json:"workspace_id,omitempty"`
 	StableID      string `json:"stable_id,omitempty"`
 	Address       string `json:"address,omitempty"`

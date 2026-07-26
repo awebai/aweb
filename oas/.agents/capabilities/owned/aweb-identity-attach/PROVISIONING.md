@@ -97,7 +97,10 @@ cleaned; a later spawn allocates its own operation and principal.
   threshold. A scanner never cleans another scanner's live operation.
 - Automatic states: stale `allocated`, `provisioning`, and `cleanup-pending`.
   `prepared` and `bound` are not inferred to mean launched and are not silently
-  transferred to another spawn.
+  transferred to another spawn. `reconcile --include-prepared` may clean a
+  `prepared` identity only after the operator confirms the original instance is
+  quiescent and did not retain the receipt; the journal cannot observe OAS
+  parsing its stdout. `bound` still requires its matching retire judgement.
 - A cleanup still failing on the third persisted attempt moves to visible
   `quarantined`. Quarantine is a remediable non-success and is never reported as
   completed cleanup.

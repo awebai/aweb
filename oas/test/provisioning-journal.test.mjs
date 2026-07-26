@@ -104,6 +104,9 @@ test("scanner owns stale incomplete work but never infers that prepared means la
   assert.deepEqual(listRecoverableProvisionIntents(root, {
     now: new Date("2026-07-26T00:00:31Z"), staleAfterMs: 30_000,
   }).map((intent) => intent.operation_id), [OPERATION_A]);
+  assert.deepEqual(listRecoverableProvisionIntents(root, {
+    now: new Date("2026-07-26T00:00:31Z"), staleAfterMs: 30_000, includePrepared: true,
+  }).map((intent) => intent.operation_id), [OPERATION_A, OPERATION_B], "explicit operator recovery may clean a prepared-but-unhanded identity");
 });
 
 test("handoff, cleanup, and corroboration remain durable outside the instance", (t) => {

@@ -100,7 +100,7 @@ var teamProvisionLocalCmd = &cobra.Command{
 	Short:  "Provision one local identity through explicit controller authority",
 	Hidden: true,
 	Args:   cobra.NoArgs,
-	RunE:  runTeamProvisionLocal,
+	RunE:   runTeamProvisionLocal,
 }
 
 var teamCleanupLocalProvisionCmd = &cobra.Command{
@@ -108,7 +108,7 @@ var teamCleanupLocalProvisionCmd = &cobra.Command{
 	Short:  "Reconcile and clean one explicitly provisioned local identity",
 	Hidden: true,
 	Args:   cobra.NoArgs,
-	RunE:  runTeamCleanupLocalProvision,
+	RunE:   runTeamCleanupLocalProvision,
 }
 
 func runTeamProvisionLocal(cmd *cobra.Command, args []string) error {
@@ -503,6 +503,13 @@ func cleanupLocalProvision(ctx context.Context, opts localProvisionOptions) (loc
 			if err := os.RemoveAll(filepath.Join(targetHome, entry.Name())); err != nil {
 				return localProvisionCleanupOutput{}, err
 			}
+		}
+		remaining, err := os.ReadDir(targetHome)
+		if err != nil {
+			return localProvisionCleanupOutput{}, err
+		}
+		if len(remaining) != 1 || remaining[0].Name() != filepath.Base(localProvisionTargetRecordPath(targetHome)) {
+			return localProvisionCleanupOutput{}, fmt.Errorf("provisioned credential tree still contains material after cleanup")
 		}
 		record.Cleanup.Credentials = "physically-absent"
 	}
