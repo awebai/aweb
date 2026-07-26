@@ -483,14 +483,28 @@ which is the exception — we built it first, and that ordering is corrected her
 3. **Clean external customer proof** (`aaaa.28`). A fresh workspace, two
    developers, duplicate local instance names — the ordinary
    provision-and-retire journey end to end.
-4. **A deterministic propagation mechanism** (`aaaa.29`) carrying the resolved
-   identity home into the launched process, plus the adapter output that uses
-   it. A validated hook environment map upstream is the *proposed* solution and
-   the smallest one we have found; the requirement is the deterministic
-   propagation, not that particular shape. Without some such mechanism there is
-   no attachment, only verification.
+4. **A working attached runtime**, which is three things and not one. A
+   pre-implementation review of what was originally scoped as a single step
+   found that propagation alone lands a variable on a runtime that ignores it,
+   to drive an agent that could not answer if it did:
+   - **Deterministic propagation** (`aaaa.29`) carrying the resolved identity
+     home into the launched process. A validated hook environment map upstream
+     is the *proposed* solution and the smallest one found; the requirement is
+     the deterministic propagation, not that shape.
+   - **Channel resolution at the selected principal** (`aaaa.35`).
+     `channel-core`'s `resolveConfig(workdir)` hardcodes
+     `join(workdir, ".aw", …)` for workspace, teams, identity and signing key
+     (`channel-core/src/config.ts:58-62`), so both Pi and Claude read the
+     disposable instance no matter what OAS places on the runtime.
+   - **Outbound messaging admitted** (`aaaa.36`). The external-home allowlist
+     holds exactly one messaging entry, `aw mail inbox`
+     (`cli/go/cmd/aw/identity_home_policy.go:35`) — no reply, no send, no chat.
+
+   Only `.29` needs anything from upstream; the other two are ours.
 5. **Throwaway Pi attach proof** (`aaaa.30`) — positive wake, reply, ordinary
-   retire.
+   retire. It waits on all three parts of step 4, and it may not claim a broken
+   binding *prevents* a model process: OAS continues after a failed hook, so
+   until `.2` lands a bad binding is refused and observable, not fail-closed.
 6. **Explicit per-instance capability settings** (`aaaa.31`) and required-hook
    fatal outcome with rollback (`aaaa.2`).
 7. **Migrate the first durable resident** (`aaaa.19`), and not before.
@@ -573,6 +587,16 @@ session could still resolve *some* identity from the environment or working
 directory it inherits. That is arguably worse than none, because it can appear
 to work. What does not exist is any mechanism that makes it the *declared*
 principal.
+
+**And propagation alone would not be that mechanism.** Two further gaps sit
+behind it, both found by scope review rather than by a failure, and both in our
+own code: the channel resolves its workspace, team state, identity and signing
+key from the working directory regardless of any identity home
+(`channel-core/src/config.ts:58-62`), and the outbound half of messaging is not
+admitted for an external home at all (`identity_home_policy.go:35` is the only
+messaging entry). An attached agent would read as the wrong identity, or sign
+validly as the wrong identity — which is the failure that looks like success —
+and could not reply in any case.
 
 `.17` exercises the real spawn/retire lifecycle through
 `oas spawn --no-launch`: kernel, hook dispatch, instance lifecycle and retire
