@@ -9,12 +9,17 @@ cd "$ROOT"
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/aweb-awid-site-docs.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
-MIRROR_DIR="$TMP/static"
+FIXTURE_ROOT="$TMP/repo"
+# Pin the public repository shape independently of the Makefile default. If the
+# fixture reused that setting, a wrong path would move the check and its control
+# together and leave both green.
+EXPECTED_MIRROR_DIR="$FIXTURE_ROOT/awid/site/static"
+mkdir -p "$FIXTURE_ROOT/docs" "$EXPECTED_MIRROR_DIR" \
+  "$FIXTURE_ROOT/server" "$FIXTURE_ROOT/awid"
+touch "$FIXTURE_ROOT/server/pyproject.toml" "$FIXTURE_ROOT/awid/pyproject.toml"
 
 make_for_fixture() {
-  make --no-print-directory "$@" \
-    AWID_SITE_DOC_SOURCE_DIR="$ROOT/docs" \
-    AWID_SITE_DOC_MIRROR_DIR="$MIRROR_DIR"
+  make --no-print-directory -C "$FIXTURE_ROOT" -f "$ROOT/Makefile" "$@"
 }
 
 doc_names=()
@@ -27,23 +32,28 @@ if [ "${#doc_names[@]}" -eq 0 ]; then
   exit 1
 fi
 
-make_for_fixture sync-awid-site-docs
+for name in "${doc_names[@]}"; do
+  cp "$ROOT/docs/$name" "$FIXTURE_ROOT/docs/$name"
+  cp "$ROOT/docs/$name" "$EXPECTED_MIRROR_DIR/$name"
+done
+
 if ! output="$(make_for_fixture check-awid-site-docs 2>&1)"; then
   printf 'FAIL: clean AWID site document mirrors did not pass:\n%s\n' "$output" >&2
   exit 1
 fi
 
 for name in "${doc_names[@]}"; do
-  printf '\nstale fixture\n' >>"$MIRROR_DIR/$name"
+  printf '\nstale fixture\n' >>"$EXPECTED_MIRROR_DIR/$name"
   if output="$(make_for_fixture check-awid-site-docs 2>&1)"; then
     printf 'FAIL: stale AWID site document mirror passed: %s\n%s\n' "$name" "$output" >&2
     exit 1
   fi
-  if ! grep -Fq "$MIRROR_DIR/$name differs from" <<<"$output"; then
+  expected="awid/site/static/$name differs from docs/$name"
+  if ! grep -Fq "$expected" <<<"$output"; then
     printf 'FAIL: stale AWID site document mirror failed for the wrong reason: %s\n%s\n' "$name" "$output" >&2
     exit 1
   fi
-  make_for_fixture sync-awid-site-docs
+  cp "$FIXTURE_ROOT/docs/$name" "$EXPECTED_MIRROR_DIR/$name"
   if ! output="$(make_for_fixture check-awid-site-docs 2>&1)"; then
     printf 'FAIL: restored AWID site document mirrors did not pass after seeding %s:\n%s\n' "$name" "$output" >&2
     exit 1
