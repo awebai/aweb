@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -8,8 +8,8 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   renameSync,
-  statSync,
   unlinkSync,
   writeFileSync,
   writeSync,
@@ -60,11 +60,12 @@ function paths(home) {
   const intents = join(root, "intents");
   const identities = join(root, "identities");
   const locks = join(root, "locks");
-  for (const path of [root, intents, identities, locks]) {
+  const quarantine = join(root, "quarantine");
+  for (const path of [root, intents, identities, locks, quarantine]) {
     assertNoSymlink(path, "provision journal path");
     mkdirSync(path, { recursive: true, mode: 0o700 });
   }
-  return { root, intents, identities, locks };
+  return { root, intents, identities, locks, quarantine };
 }
 
 function validatedOperationID(value) {
@@ -328,40 +329,104 @@ export function writeProvisionCleanupCorroboration(home, instanceID, receipt) {
   return path;
 }
 
-export function listRecoverableProvisionIntents(home, { now = new Date(), staleAfterMs, includePrepared = false }) {
+function quarantineMalformedIntent(home, entry, error, now) {
+  const journalPaths = paths(home);
+  const source = join(journalPaths.intents, entry.name);
+  let evidence;
+  try {
+    const info = lstatSync(source);
+    evidence = info.isSymbolicLink() ? `symlink:${readlinkSync(source)}` : readFileSync(source);
+  } catch (readError) {
+    if (readError?.code === "ENOENT") return;
+    throw readError;
+  }
+  const digest = createHash("sha256").update(evidence).digest("hex").slice(0, 16);
+  const basename = `${entry.name}.${digest}.${randomUUID()}`;
+  const record = join(journalPaths.quarantine, `${basename}.record`);
+  try {
+    renameSync(source, record);
+  } catch (renameError) {
+    if (renameError?.code === "ENOENT") return;
+    throw renameError;
+  }
+  writeNew(join(journalPaths.quarantine, `${basename}.report.json`), {
+    schema_version: 1,
+    state: "quarantined",
+    source_name: entry.name,
+    evidence_record: `${basename}.record`,
+    cleanup_authority: "none-corrupt-record-not-trusted",
+    error: String(error?.message || error).slice(0, 400),
+    quarantined_at: timestamp(now),
+  });
+}
+
+export function listRecoverableProvisionIntents(home, { now = new Date(), staleAfterMs }) {
   if (!Number.isFinite(staleAfterMs) || staleAfterMs < 0) throw new TypeError("staleAfterMs must be non-negative");
-  if (typeof includePrepared !== "boolean") throw new TypeError("includePrepared must be boolean");
   const cutoff = new Date(now).getTime() - staleAfterMs;
-  const states = includePrepared ? new Set([...RECOVERABLE_STATES, "prepared", "bound"]) : RECOVERABLE_STATES;
-  return readdirSync(paths(home).intents, { withFileTypes: true })
-    .filter((entry) => entry.name.endsWith(".json"))
-    .map((entry) => loadProvisionIntent(home, entry.name.slice(0, -5)))
-    .filter((intent) => states.has(intent.state) && Date.parse(intent.updated_at) <= cutoff)
-    .sort((left, right) => left.operation_id.localeCompare(right.operation_id));
+  const intents = [];
+  for (const entry of readdirSync(paths(home).intents, { withFileTypes: true })) {
+    if (!entry.name.endsWith(".json")) continue;
+    try {
+      const intent = loadProvisionIntent(home, entry.name.slice(0, -5));
+      if (RECOVERABLE_STATES.has(intent.state) && Date.parse(intent.updated_at) <= cutoff) intents.push(intent);
+    } catch (error) {
+      quarantineMalformedIntent(home, entry, error, now);
+    }
+  }
+  return intents.sort((left, right) => left.operation_id.localeCompare(right.operation_id));
+}
+
+function readProvisionLock(lockPath) {
+  assertNoSymlink(lockPath, "provision intent lock");
+  if (!lstatSync(lockPath).isFile()) throw new Error("provision intent lock must be a regular file");
+  const lock = JSON.parse(readFileSync(lockPath, "utf8"));
+  if (!exactFields(lock, ["schema_version", "token", "pid", "acquired_at"])
+      || lock.schema_version !== 1 || typeof lock.token !== "string" || lock.token.length === 0
+      || !Number.isInteger(lock.pid) || lock.pid <= 0
+      || typeof lock.acquired_at !== "string" || !Number.isFinite(Date.parse(lock.acquired_at))) {
+    throw new Error("provision intent lock record is invalid");
+  }
+  return lock;
+}
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "EPERM") return true;
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
 }
 
 export function withProvisionIntentLock(home, operation, callback, { now = new Date(), staleAfterMs = 300_000 } = {}) {
   if (typeof callback !== "function") throw new TypeError("provision lock callback is required");
   const lockPath = join(paths(home).locks, `${validatedOperationID(operation)}.lock`);
+  const owner = { schema_version: 1, token: randomUUID(), pid: process.pid, acquired_at: timestamp(now) };
   try {
-    const fd = openSync(lockPath, "wx", 0o600);
-    try {
-      writeSync(fd, `${timestamp(now)}\n`);
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
+    writeNew(lockPath, owner);
   } catch (error) {
     if (error?.code !== "EEXIST") throw error;
-    assertNoSymlink(lockPath, "provision intent lock");
-    const age = new Date(now).getTime() - statSync(lockPath).mtimeMs;
+    const observed = readProvisionLock(lockPath);
+    const age = new Date(now).getTime() - Date.parse(observed.acquired_at);
+    if (processIsAlive(observed.pid)) throw new Error(`provision operation ${operation} has a live holder`);
     if (age <= staleAfterMs) throw new Error(`provision operation ${operation} is already locked`);
+    const current = readProvisionLock(lockPath);
+    if (current.token !== observed.token || processIsAlive(current.pid)) {
+      throw new Error(`provision operation ${operation} lock changed during stale takeover`);
+    }
     unlinkSync(lockPath);
     return withProvisionIntentLock(home, operation, callback, { now, staleAfterMs });
   }
   try {
     return callback();
   } finally {
-    try { unlinkSync(lockPath); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+    try {
+      const current = readProvisionLock(lockPath);
+      if (current.token === owner.token) unlinkSync(lockPath);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
   }
 }

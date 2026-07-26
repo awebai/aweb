@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -105,8 +105,8 @@ test("scanner owns stale incomplete work but never infers that prepared means la
     now: new Date("2026-07-26T00:00:31Z"), staleAfterMs: 30_000,
   }).map((intent) => intent.operation_id), [OPERATION_A]);
   assert.deepEqual(listRecoverableProvisionIntents(root, {
-    now: new Date("2026-07-26T00:00:31Z"), staleAfterMs: 30_000, includePrepared: true,
-  }).map((intent) => intent.operation_id), [OPERATION_A, OPERATION_B], "explicit operator recovery may clean a prepared-but-unhanded identity");
+    now: new Date("2026-07-26T00:00:31Z"), staleAfterMs: 30_000,
+  }).map((intent) => intent.operation_id), [OPERATION_A], "scanners never infer that prepared work is abandoned");
 });
 
 test("handoff, cleanup, and corroboration remain durable outside the instance", (t) => {
@@ -134,8 +134,8 @@ test("handoff, cleanup, and corroboration remain durable outside the instance", 
   }, start);
   assert.equal(markProvisionIntentHandedOff(root, OPERATION_A, start).state, "bound");
   assert.deepEqual(listRecoverableProvisionIntents(root, {
-    now: new Date("2026-07-26T00:00:01Z"), staleAfterMs: 0, includePrepared: true,
-  }).map((intent) => intent.operation_id), [OPERATION_A]);
+    now: new Date("2026-07-26T00:00:01Z"), staleAfterMs: 0,
+  }), [], "bound work is never scanner-owned");
   writeProvisionCleanupCorroboration(root, "instance-a", receipt);
   assert.deepEqual(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), "instance-a").receipt, receipt);
   const cleaning = markProvisionIntentCleanupPending(root, OPERATION_A, "retire", start);
@@ -175,14 +175,39 @@ test("failed recoverable cleanup reaches visible remediable quarantine", (t) => 
   assert.equal(retried.cleanup.last_error, "operator retry requested");
 });
 
-test("per-intent lock excludes a concurrent scanner and rejects symlink substitution", (t) => {
+test("malformed journals quarantine without aborting valid stale recovery", (t) => {
+  const root = tempRoot(t, "aweb-provision-corrupt-");
+  const start = new Date("2026-07-26T00:00:00Z");
+  createProvisionIntent(root, {
+    operationID: OPERATION_A, instanceID: "instance-a", teamID: "backend:acme.test", authority: AUTHORITY,
+    authorityHome: join(root, "authority"), now: start,
+  });
+  markProvisionIntentProvisioning(root, OPERATION_A, start);
+  writeFileSync(join(root, ".provisioning", "intents", `${OPERATION_B}.json`), '{"schema_version":999}\n', { mode: 0o600 });
+
+  assert.deepEqual(listRecoverableProvisionIntents(root, {
+    now: new Date("2026-07-26T00:01:00Z"), staleAfterMs: 30_000,
+  }).map((intent) => intent.operation_id), [OPERATION_A]);
+  assert.equal(readdirSync(join(root, ".provisioning", "intents")).includes(`${OPERATION_B}.json`), false);
+  const quarantined = readdirSync(join(root, ".provisioning", "quarantine"));
+  assert.equal(quarantined.some((name) => name.startsWith(`${OPERATION_B}.json.`) && name.endsWith(".record")), true);
+  const reportName = quarantined.find((name) => name.startsWith(`${OPERATION_B}.json.`) && name.endsWith(".report.json"));
+  const report = JSON.parse(readFileSync(join(root, ".provisioning", "quarantine", reportName), "utf8"));
+  assert.equal(report.state, "quarantined");
+  assert.equal(report.cleanup_authority, "none-corrupt-record-not-trusted");
+  assert.match(report.error, /invalid/);
+});
+
+test("per-intent lock never takes over a live holder and rejects symlink substitution", (t) => {
   const root = tempRoot(t, "aweb-provision-lock-");
   createProvisionIntent(root, {
     operationID: OPERATION_A, instanceID: "instance-a", teamID: "backend:acme.test", authority: AUTHORITY,
     authorityHome: join(root, "authority"), now: new Date("2026-07-26T00:00:00Z"),
   });
   withProvisionIntentLock(root, OPERATION_A, () => {
-    assert.throws(() => withProvisionIntentLock(root, OPERATION_A, () => {}), /already locked/);
+    assert.throws(() => withProvisionIntentLock(root, OPERATION_A, () => {}, {
+      now: new Date(Date.now() + 600_000), staleAfterMs: 1,
+    }), /live holder/);
   });
 
   const record = join(root, ".provisioning", "intents", `${OPERATION_A}.json`);

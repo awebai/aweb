@@ -23,6 +23,7 @@ import { afterEach, test } from "node:test";
 import { cleanupCorroborationPayload } from "../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs";
 
 const CAPABILITY_SOURCE = resolve(new URL("../.agents/capabilities/owned/aweb-identity-attach", import.meta.url).pathname);
+const RECONCILE_WRAPPER = resolve(new URL("../../scripts/oas-aweb-provision-reconcile.sh", import.meta.url).pathname);
 const temporaryDirectories = [];
 
 afterEach(() => {
@@ -425,8 +426,8 @@ test("operator and later-spawn reconciliation clean durable pending local intent
   interruptedJournal.updated_at = "2000-01-01T00:00:00.000Z";
   writeFileSync(interruptedPath, `${JSON.stringify(interruptedJournal, null, 2)}\n`, { mode: 0o600 });
   const operatorCallStart = readFileSync(f.awLog, "utf8").trim().split("\n").length;
-  const operator = spawnSync(process.execPath, [join(f.capability, "bin", "aweb-identity-attach.mjs"), "reconcile"], {
-    cwd: f.repo, env: f.env, encoding: "utf8",
+  const operator = spawnSync(RECONCILE_WRAPPER, [], {
+    cwd: f.repo, env: { ...f.env, AWEB_IDENTITY_ATTACH_CAPABILITY: f.capability }, encoding: "utf8",
   });
   assert.equal(operator.status, 0, operator.stderr);
   assert.deepEqual(JSON.parse(operator.stdout).operations.map((item) => item.operation_id), [interruptedOperation]);
@@ -445,6 +446,35 @@ test("operator and later-spawn reconciliation clean durable pending local intent
   const cleanupIndex = newCalls.findIndex((call) => call.argv.includes("cleanup-local-provision") && call.argv.includes(second.operation));
   const provisionIndex = newCalls.findIndex((call) => call.argv.includes("provision-local") && call.argv.includes(newReceipt.journal_operation));
   assert.ok(cleanupIndex >= 0 && provisionIndex > cleanupIndex, "stale cleanup must finish before the new remote provision side effect");
+
+  const journalFor = (spawned) => {
+    const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+    const operation = meta.capabilityMeta["aweb.identity-attach"].identity_binding.journal_operation;
+    return { operation, path: join(f.principalHome, ".provisioning", "intents", `${operation}.json`) };
+  };
+  const prepared = journalFor(spawnLocal("operator-confirmed-prepared"));
+  const preparedRecord = JSON.parse(readFileSync(prepared.path, "utf8"));
+  preparedRecord.state = "prepared";
+  preparedRecord.updated_at = "2000-01-01T00:00:00.000Z";
+  preparedRecord.revision += 1;
+  writeFileSync(prepared.path, `${JSON.stringify(preparedRecord, null, 2)}\n`, { mode: 0o600 });
+  const bound = journalFor(spawnLocal("operator-confirmed-bound"));
+  const unrelated = journalFor(spawnLocal("unrelated-live-binding"));
+
+  const cleanupPrepared = spawnSync(RECONCILE_WRAPPER, ["--cleanup-unacknowledged", prepared.operation], {
+    cwd: f.repo, env: { ...f.env, AWEB_IDENTITY_ATTACH_CAPABILITY: f.capability }, encoding: "utf8",
+  });
+  assert.equal(cleanupPrepared.status, 0, cleanupPrepared.stderr);
+  assert.equal(JSON.parse(readFileSync(prepared.path, "utf8")).state, "complete");
+  assert.equal(JSON.parse(readFileSync(bound.path, "utf8")).state, "bound");
+  assert.equal(JSON.parse(readFileSync(unrelated.path, "utf8")).state, "bound", "exact operator cleanup must not select unrelated live bindings");
+
+  const cleanupBound = spawnSync(RECONCILE_WRAPPER, ["--cleanup-unacknowledged", bound.operation], {
+    cwd: f.repo, env: { ...f.env, AWEB_IDENTITY_ATTACH_CAPABILITY: f.capability }, encoding: "utf8",
+  });
+  assert.equal(cleanupBound.status, 0, cleanupBound.stderr);
+  assert.equal(JSON.parse(readFileSync(bound.path, "utf8")).state, "complete");
+  assert.equal(JSON.parse(readFileSync(unrelated.path, "utf8")).state, "bound");
 });
 
 test("real OAS refuses declared local-controller path without controller authority", () => {

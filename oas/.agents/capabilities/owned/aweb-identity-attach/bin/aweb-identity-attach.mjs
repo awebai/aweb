@@ -325,36 +325,41 @@ function runCleanupCommandForIntent(intent, cwd) {
   ), intent.operation_id);
 }
 
-function recoverProvisionIntents(principalHome, cwd, { force = false, includePrepared = false } = {}) {
-  const intents = listRecoverableProvisionIntents(principalHome, {
-    now: new Date(),
-    staleAfterMs: force ? 0 : 300000,
-    includePrepared,
-  });
+function recoverProvisionIntents(principalHome, cwd, { force = false, operationID = null, cleanupUnacknowledged = false } = {}) {
+  const intents = operationID === null
+    ? listRecoverableProvisionIntents(principalHome, { now: new Date(), staleAfterMs: force ? 0 : 300000 })
+    : [loadProvisionIntent(principalHome, operationID)];
   const recovered = [];
   for (const candidate of intents) {
     let result;
     try {
       result = withProvisionIntentLock(principalHome, candidate.operation_id, () => {
         let intent = loadProvisionIntent(principalHome, candidate.operation_id);
-      if (intent.state === "allocated") {
-        markProvisionIntentAbandoned(principalHome, intent.operation_id, "stale-before-first-side-effect");
-        return { operation_id: intent.operation_id, outcome: "closed-without-side-effects" };
-      }
-      if (intent.state === "provisioning") {
-        const resource = runProvisionCommandForIntent(intent, cwd);
-        intent = markProvisionIntentPrepared(principalHome, intent.operation_id, resource);
-      }
-      if (intent.state === "prepared" || (includePrepared && intent.state === "bound")) {
-        const reason = intent.state === "prepared" ? "orphaned-before-binding-handoff" : "operator-confirmed-unacknowledged-binding";
-        intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, reason);
-      }
-      if (intent.state === "cleanup-pending") {
-        intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, "recovery-retry");
-        const cleanup = runCleanupCommandForIntent(intent, cwd);
-        markProvisionIntentComplete(principalHome, intent.operation_id);
-        return { operation_id: intent.operation_id, outcome: "cleanup-complete", cleanup };
-      }
+        let recoveredProvisioning = false;
+        if (cleanupUnacknowledged && !["prepared", "bound"].includes(intent.state)) {
+          throw new Error(`operator-confirmed cleanup requires prepared or bound state, found ${intent.state}`);
+        }
+        if (intent.state === "allocated") {
+          markProvisionIntentAbandoned(principalHome, intent.operation_id, "stale-before-first-side-effect");
+          return { operation_id: intent.operation_id, outcome: "closed-without-side-effects" };
+        }
+        if (intent.state === "provisioning") {
+          const resource = runProvisionCommandForIntent(intent, cwd);
+          intent = markProvisionIntentPrepared(principalHome, intent.operation_id, resource);
+          recoveredProvisioning = true;
+        }
+        if (recoveredProvisioning || (cleanupUnacknowledged && ["prepared", "bound"].includes(intent.state))) {
+          const reason = recoveredProvisioning
+            ? "orphaned-provisioning-reconciled"
+            : intent.state === "prepared" ? "operator-confirmed-unacknowledged-preparation" : "operator-confirmed-unacknowledged-binding";
+          intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, reason);
+        }
+        if (intent.state === "cleanup-pending") {
+          intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, "recovery-retry");
+          const cleanup = runCleanupCommandForIntent(intent, cwd);
+          markProvisionIntentComplete(principalHome, intent.operation_id);
+          return { operation_id: intent.operation_id, outcome: "cleanup-complete", cleanup };
+        }
         return { operation_id: intent.operation_id, outcome: `left-${intent.state}` };
       });
     } catch (error) {
@@ -587,16 +592,24 @@ try {
   } else if (event === "retire") retire();
   else if (event === "reconcile") {
     const principalHome = resolvePrincipalHome();
-    let includePrepared = false;
+    let operationID = null;
+    let cleanupUnacknowledged = false;
     if (process.argv[3] === "--retry-quarantine") {
       if (!process.argv[4] || process.argv.length !== 5) throw new TypeError("reconcile --retry-quarantine requires exactly one operation id");
-      retryProvisionIntentQuarantine(principalHome, process.argv[4]);
-    } else if (process.argv[3] === "--include-prepared" && process.argv.length === 4) {
-      includePrepared = true;
+      operationID = process.argv[4];
+      retryProvisionIntentQuarantine(principalHome, operationID);
+    } else if (process.argv[3] === "--cleanup-unacknowledged") {
+      if (!process.argv[4] || process.argv.length !== 5) throw new TypeError("reconcile --cleanup-unacknowledged requires exactly one operation id");
+      operationID = process.argv[4];
+      cleanupUnacknowledged = true;
     } else if (process.argv.length !== 3) {
-      throw new TypeError("reconcile accepts --include-prepared or --retry-quarantine <operation-id>");
+      throw new TypeError("reconcile accepts --cleanup-unacknowledged <operation-id> or --retry-quarantine <operation-id>");
     }
-    const recovered = recoverProvisionIntents(principalHome, realpathSync(process.cwd()), { force: true, includePrepared });
+    const recovered = recoverProvisionIntents(principalHome, realpathSync(process.cwd()), {
+      force: true,
+      operationID,
+      cleanupUnacknowledged,
+    });
     output({ status: "reconciled", operations: recovered });
   } else throw new TypeError(`unsupported lifecycle event ${JSON.stringify(event)}`);
 } catch (error) {
