@@ -94,11 +94,11 @@ function hydrateAddressesFromSignedPayload(msg: ChatMessage): void {
 export async function markRead(
   client: APIClient,
   sessionId: string,
-  upToMessageId: string,
+  messageIds: readonly string[],
 ): Promise<void> {
   await client.post(
     `/v1/chat/sessions/${encodeURIComponent(sessionId)}/read`,
-    { up_to_message_id: upToMessageId },
+    { message_ids: messageIds },
   );
 }
 

@@ -345,8 +345,8 @@ func TestOpen(t *testing.T) {
 		"POST /v1/chat/sessions/s1/read": func(w http.ResponseWriter, r *http.Request) {
 			var req awid.ChatMarkReadRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			if req.UpToMessageID != "m2" {
-				t.Errorf("up_to_message_id=%s", req.UpToMessageID)
+			if got := strings.Join(req.MessageIDs, ","); got != "m1,m2" {
+				t.Errorf("message_ids=%s", got)
 			}
 			jsonResponse(w, awid.ChatMarkReadResponse{
 				Success:        true,
@@ -421,14 +421,11 @@ func TestOpenPresentsAndAcknowledgesACompleteMaximumUnreadSnapshot(t *testing.T)
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode mark-read: %v", err)
 			}
-			markedThrough = req.UpToMessageID
+			markedThrough = req.MessageIDs[len(req.MessageIDs)-1]
 			marked := 0
-			for _, message := range messages {
-				unread[message.MessageID] = false
+			for _, messageID := range req.MessageIDs {
+				unread[messageID] = false
 				marked++
-				if message.MessageID == req.UpToMessageID {
-					break
-				}
 			}
 			jsonResponse(w, awid.ChatMarkReadResponse{Success: true, MessagesMarked: marked})
 		},
@@ -504,11 +501,8 @@ func TestOpenRefusesToAcknowledgeAnIncompleteUnreadSnapshot(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode mark-read: %v", err)
 			}
-			for _, message := range messages {
-				unread[message.MessageID] = false
-				if message.MessageID == req.UpToMessageID {
-					break
-				}
+			for _, messageID := range req.MessageIDs {
+				unread[messageID] = false
 			}
 			jsonResponse(w, awid.ChatMarkReadResponse{Success: true})
 		},
@@ -690,8 +684,8 @@ func TestOpenRetriesMarkReadOnce(t *testing.T) {
 			}
 			var req awid.ChatMarkReadRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			if req.UpToMessageID != "retry-m1" {
-				t.Errorf("up_to_message_id=%s", req.UpToMessageID)
+			if got := strings.Join(req.MessageIDs, ","); got != "retry-m1" {
+				t.Errorf("message_ids=%s", got)
 			}
 			jsonResponse(w, awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})
 		},
@@ -6060,7 +6054,7 @@ func TestSendWithReplyMarksRead(t *testing.T) {
 			markReadCalled = true
 			var req awid.ChatMarkReadRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			markReadUpTo = req.UpToMessageID
+			markReadUpTo = strings.Join(req.MessageIDs, ",")
 			jsonResponse(w, awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})
 		},
 	})
@@ -6111,7 +6105,7 @@ func TestListenMarksRead(t *testing.T) {
 			markReadCalled = true
 			var req awid.ChatMarkReadRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			markReadUpTo = req.UpToMessageID
+			markReadUpTo = strings.Join(req.MessageIDs, ",")
 			jsonResponse(w, awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})
 		},
 	})
@@ -6175,8 +6169,8 @@ func TestSendRetriesMarkReadOnceAfterReply(t *testing.T) {
 			}
 			var req awid.ChatMarkReadRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
-			if req.UpToMessageID != "msg-reply-1" {
-				t.Errorf("up_to_message_id=%s", req.UpToMessageID)
+			if got := strings.Join(req.MessageIDs, ","); got != "msg-reply-1" {
+				t.Errorf("message_ids=%s", got)
 			}
 			jsonResponse(w, awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})
 		},

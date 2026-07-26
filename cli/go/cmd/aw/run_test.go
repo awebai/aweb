@@ -1164,7 +1164,7 @@ func TestNativeRunRetriesSameWakeAfterIncompleteChatHistory(t *testing.T) {
 			var req awid.ChatMarkReadRequest
 			_ = json.NewDecoder(r.Body).Decode(&req)
 			stateMu.Lock()
-			markedReadUpTo = req.UpToMessageID
+			markedReadUpTo = strings.Join(req.MessageIDs, ",")
 			stateMu.Unlock()
 			_ = json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true})
 		default:
@@ -1228,8 +1228,12 @@ func TestNativeRunRetriesSameWakeAfterIncompleteChatHistory(t *testing.T) {
 	if strings.Contains(prompts[1], messages[maxChatMessagesPerWake].Body) {
 		t.Fatalf("retried context exceeded bounded batch: %q", prompts[1])
 	}
-	if gotMarkedReadUpTo != messages[maxChatMessagesPerWake-1].MessageID {
-		t.Fatalf("marked through %q, want %q", gotMarkedReadUpTo, messages[maxChatMessagesPerWake-1].MessageID)
+	wantMarkedIDs := make([]string, 0, maxChatMessagesPerWake)
+	for _, message := range messages[:maxChatMessagesPerWake] {
+		wantMarkedIDs = append(wantMarkedIDs, message.MessageID)
+	}
+	if gotMarkedReadUpTo != strings.Join(wantMarkedIDs, ",") {
+		t.Fatalf("marked IDs %q, want %q", gotMarkedReadUpTo, strings.Join(wantMarkedIDs, ","))
 	}
 	delivered, err := chat.LoadDeliveredIDsForDir(deliveredDir)
 	if err != nil {

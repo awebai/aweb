@@ -546,6 +546,16 @@ CREATE TABLE chat_read_receipts (
     PRIMARY KEY (session_id, did)
 );
 
+-- Exact unread truth. chat_read_receipts is latest-receipt event metadata only.
+CREATE TABLE chat_message_reads (
+    session_id      UUID NOT NULL,
+    did             TEXT NOT NULL,
+    message_id      UUID NOT NULL,
+    agent_id        UUID REFERENCES agents(agent_id),
+    read_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (session_id, did, message_id)
+);
+
 -- Contacts (per-agent address book for team_and_contacts delivery)
 CREATE TABLE contacts (
     contact_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),

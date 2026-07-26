@@ -1802,12 +1802,12 @@ async def history(
 class MarkReadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    up_to_message_id: str = Field(..., min_length=1)
+    message_ids: list[str] = Field(..., min_length=1, max_length=1000)
 
-    @field_validator("up_to_message_id")
+    @field_validator("message_ids")
     @classmethod
-    def _validate_message_id(cls, v: str) -> str:
-        return _parse_uuid(v, field="up_to_message_id")
+    def _validate_message_ids(cls, values: list[str]) -> list[str]:
+        return [_parse_uuid(value, field="message_ids") for value in values]
 
 
 @router.post("/sessions/{session_id}/read")
@@ -1841,7 +1841,7 @@ async def mark_read(
         session_id=session_uuid,
         participant_did=actor_did,
         participant_agent_id=actor_agent_id,
-        up_to_message_id=payload.up_to_message_id,
+        message_ids=payload.message_ids,
     )
     if int(result["messages_marked"] or 0) > 0:
         await publish_chat_session_signal(
@@ -1849,7 +1849,7 @@ async def mark_read(
             session_id=str(session_uuid),
             signal_type="read_receipt",
             agent_id=actor_did,
-            message_id=payload.up_to_message_id,
+            message_id=payload.message_ids[-1],
         )
 
     return {"success": True, "messages_marked": result["messages_marked"]}

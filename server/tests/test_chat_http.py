@@ -5257,7 +5257,7 @@ async def test_chat_history_and_read_accept_alternate_session_participant_did(aw
         history = await client.get(f"/v1/chat/sessions/{session_id}/messages")
         read = await client.post(
             f"/v1/chat/sessions/{session_id}/read",
-            json={"up_to_message_id": str(message_id)},
+            json={"message_ids": [str(message_id)]},
         )
 
     assert history.status_code == 200, history.text

@@ -653,7 +653,7 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).not.toHaveBeenCalled();
   });
 
-  test("marks chat read after channel delivery succeeds", async () => {
+  test("marks every presented chat ID read after channel delivery succeeds", async () => {
     const onAwakening = vi.fn();
     const client = {
       get: vi.fn().mockResolvedValue({
@@ -664,6 +664,14 @@ describe("channel-core dispatchAgentEvent", () => {
           from_address: "acme.com/alice",
           body: "hello",
           timestamp: "2025-01-01T00:00:00Z",
+          sender_leaving: false,
+        }, {
+          message_id: "chat-2",
+          conversation_id: "sess-1",
+          from_agent: "bob",
+          from_address: "acme.com/bob",
+          body: "follow-up",
+          timestamp: "2025-01-01T00:00:01Z",
           sender_leaving: false,
         }],
       }),
@@ -683,7 +691,7 @@ describe("channel-core dispatchAgentEvent", () => {
         type: "chat_message",
         session_id: "sess-1",
         conversation_id: "sess-1",
-        message_id: "chat-1",
+        message_id: "chat-2",
       } satisfies AgentEvent,
     );
 
@@ -691,7 +699,11 @@ describe("channel-core dispatchAgentEvent", () => {
       kind: "chat",
       content: "hello",
     }));
-    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-1/read", { up_to_message_id: "chat-1" });
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "chat",
+      content: "follow-up",
+    }));
+    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-1/read", { message_ids: ["chat-1", "chat-2"] });
   });
 
   test("decrypts encrypted chat locally before channel delivery", async () => {
@@ -743,7 +755,7 @@ describe("channel-core dispatchAgentEvent", () => {
       kind: "chat",
       content: "decrypted chat body",
     }));
-    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-e2ee/read", { up_to_message_id: "chat-e2ee" });
+    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-e2ee/read", { message_ids: ["chat-e2ee"] });
   });
 
   test("does not mark encrypted chat read when local decrypt fails", async () => {
@@ -918,8 +930,8 @@ describe("channel-core dispatchAgentEvent", () => {
 
     expect(onAwakening).toHaveBeenCalledTimes(1);
     expect(client.post).toHaveBeenCalledTimes(2);
-    expect(client.post).toHaveBeenNthCalledWith(1, "/v1/chat/sessions/sess-retry/read", { up_to_message_id: "chat-retry" });
-    expect(client.post).toHaveBeenNthCalledWith(2, "/v1/chat/sessions/sess-retry/read", { up_to_message_id: "chat-retry" });
+    expect(client.post).toHaveBeenNthCalledWith(1, "/v1/chat/sessions/sess-retry/read", { message_ids: ["chat-retry"] });
+    expect(client.post).toHaveBeenNthCalledWith(2, "/v1/chat/sessions/sess-retry/read", { message_ids: ["chat-retry"] });
   });
 
   test("mail trust uses signed-payload did:key when envelope carries stable did:aw", async () => {
@@ -1192,7 +1204,7 @@ describe("channel-core dispatchAgentEvent", () => {
         verified: "true",
       }),
     }));
-    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-stable/read", { up_to_message_id: "chat-stable-envelope" });
+    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-stable/read", { message_ids: ["chat-stable-envelope"] });
   });
 
   test("chat live dispatch accepts legacy stored-route recipient did:aw when it is this receiver", async () => {
