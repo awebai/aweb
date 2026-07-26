@@ -41,6 +41,20 @@ func TestExternalIdentityHomeDoctorIdentityAndRegistry(t *testing.T) {
 	principalStableID := awid.ComputeStableID(principalPub)
 	writeStandaloneSelfCustodyIdentity(t, principalDir, "external.aweb.ai/principal", principalDID, principalStableID, "https://registry.external.example", principalKey)
 	writeWorkspaceBindingForTest(t, principalDir, workspaceBinding("https://aweb.external.example", "default:external.aweb.ai", "principal", "principal-workspace"))
+	principalIdentity, err := awconfig.ResolveIdentityFromHome(instance, identityHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principalEncryption, _, err := createLocalEncryptionKeyRecord(principalIdentity, principalKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveEncryptionKeyStateTo(filepath.Join(identityHome, "encryption.yaml"), &awconfig.EncryptionKeyState{
+		ActiveKeyID: principalEncryption.KeyID,
+		Keys:        []awconfig.EncryptionKeyRecord{*principalEncryption},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	runDoctor := func(category string) doctorOutput {
 		t.Helper()
@@ -89,8 +103,18 @@ func TestExternalIdentityHomeDoctorIdentityAndRegistry(t *testing.T) {
 			t.Fatalf("identity doctor inspected wrong signing key: %+v", signing)
 		}
 		encryption := findCheck(out, doctorCheckIdentityEncryptionState)
-		if encryption.Target == nil || encryption.Target.ID != filepath.Join(identityHome, "encryption.yaml") {
+		if encryption.Status != doctorStatusOK || encryption.Target == nil || encryption.Target.ID != filepath.Join(identityHome, "encryption.yaml") {
 			t.Fatalf("identity doctor inspected wrong encryption state path: %+v", encryption)
+		}
+		private := findCheck(out, doctorCheckIdentityEncryptionPrivate)
+		privatePath, _ := resolveIdentityStoredPath(instance, identityHome, principalEncryption.PrivateKeyPath)
+		if private.Status != doctorStatusOK || private.Target == nil || private.Target.ID != privatePath {
+			t.Fatalf("identity doctor inspected wrong encryption private key: %+v", private)
+		}
+		assertion := findCheck(out, doctorCheckIdentityEncryptionAssertion)
+		assertionPath, _ := resolveIdentityStoredPath(instance, identityHome, principalEncryption.AssertionPath)
+		if assertion.Status != doctorStatusOK || assertion.Target == nil || assertion.Target.ID != assertionPath {
+			t.Fatalf("identity doctor inspected wrong encryption assertion: %+v", assertion)
 		}
 	}
 	assertRegistry := func(out doctorOutput) {
@@ -148,6 +172,20 @@ func TestExternalIdentityHomeDoctorIdentityAndRegistry(t *testing.T) {
 		CreatedAt:     "2026-07-26T00:00:00Z",
 	})
 	writeWorkspaceBindingForTest(t, instance, workspaceBinding("https://shadow.invalid", "shadow:local", "shadow", "shadow-workspace"))
+	shadowIdentity, err := awconfig.ResolveIdentity(instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shadowEncryption, _, err := createLocalEncryptionKeyRecord(shadowIdentity, shadowKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveEncryptionKeyStateTo(awconfig.WorktreeEncryptionStatePath(instance), &awconfig.EncryptionKeyState{
+		ActiveKeyID: shadowEncryption.KeyID,
+		Keys:        []awconfig.EncryptionKeyRecord{*shadowEncryption},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	shadowBefore := fileDigestsForTest(t, filepath.Join(instance, ".aw"))
 	shadowIdentityOutput := runDoctor("identity")
 	assertIdentity(shadowIdentityOutput)
@@ -158,7 +196,7 @@ func TestExternalIdentityHomeDoctorIdentityAndRegistry(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(data), "shadow.local") || strings.Contains(string(data), shadowDID) || strings.Contains(string(data), "shadow-workspace") {
+		if strings.Contains(string(data), "shadow.local") || strings.Contains(string(data), shadowDID) || strings.Contains(string(data), "shadow-workspace") || strings.Contains(string(data), shadowEncryption.KeyID) {
 			t.Fatalf("doctor %s leaked disposable shadow state: %s", category, data)
 		}
 	}
