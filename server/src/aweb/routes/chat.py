@@ -1802,6 +1802,16 @@ async def history(
 class MarkReadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_range_watermark_payload(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "up_to_message_id" in data:
+            raise ValueError(
+                "up_to_message_id is no longer supported; upgrade the client and "
+                "send message_ids with every presented message ID"
+            )
+        return data
+
     message_ids: list[str] = Field(..., min_length=1, max_length=1000)
 
     @field_validator("message_ids")
