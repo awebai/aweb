@@ -692,7 +692,17 @@ resident unable to distinguish a real regression from an environment artifact.
 **What is not:** fail-closed admission, which is impossible while hook failure
 is advisory. Until required hooks land, any attach is an **attended development
 experiment against controlled throwaway principals** — not a supported release
-and not valid for durable production principals. Returning deliberately broken
+and not valid for durable production principals.
+
+The interim surface is deliberately honest: the experimental/internal
+`aweb.identity-attach` package exposes the native, active/trust-gated
+`oas aweb-identity status --soul <name> --json` command. It validates the exact
+soul-resolved settings plus spawn's non-mutating principal/authority preflight
+and returns `ready`, `needs_setup` with one action, or `experimental` with
+nothing created. Missing configuration and the unavailable durable-resident
+journey are never reported healthy. The output explicitly says its admission
+authority is advisory and cannot prevent OAS from launching; `.2` remains the
+only owner of required-hook failure and rollback. Returning deliberately broken
 launch arguments so the command dies in the window was considered and rejected
 as a dishonest hack.
 

@@ -2,11 +2,13 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
 
+// User-configurable modes only. Durable provisioning remains internal receipt
+// vocabulary until aaaa.39 delivers a production authority path.
 export const bindingModes = Object.freeze([
   "provision-disposable",
-  "provision-durable",
   "attach-existing",
 ]);
+const receiptModes = Object.freeze([...bindingModes, "provision-durable"]);
 
 const MODE_CLEANUP_OWNER = Object.freeze({
   "provision-disposable": "instance",
@@ -46,6 +48,9 @@ export function validateBindingSettings(value) {
     return { ...value, legacy: true };
   }
   if (value.schema_version !== 2) throw new TypeError("identity_binding.schema_version must be 1 or 2");
+  if (value.mode === "provision-durable") {
+    throw new TypeError("durable resident provisioning is experimental and not configurable until aaaa.39");
+  }
   if (!bindingModes.includes(value.mode)) throw new TypeError(`identity_binding.mode must be one of ${bindingModes.join(", ")}`);
   if (value.mode === "attach-existing") {
     if (!exactFields(value, ["schema_version", "mode", "principal"]) || !safeID(value.principal)) {
@@ -59,8 +64,6 @@ export function validateBindingSettings(value) {
     if (!["hosted", "local-controller"].includes(value.minting_authority_path)) {
       throw new TypeError("minting_authority_path must be hosted or local-controller");
     }
-  } else if (!exactFields(value, ["schema_version", "mode"])) {
-    throw new TypeError("provision-durable does not accept an ephemeral minting_authority");
   }
   return { ...value, legacy: false };
 }
@@ -108,7 +111,7 @@ export function provisionedDisposableReceipt(pendingReceipt, { cleanupAuthority 
 
 export function validateBindingReceipt(receipt) {
   const fields = ["schema_version", "mode", "lifecycle", "cleanup_owner", "resource_identity", "journal_operation"];
-  if (!exactFields(receipt, fields) || receipt.schema_version !== 2 || !bindingModes.includes(receipt.mode)) {
+  if (!exactFields(receipt, fields) || receipt.schema_version !== 2 || !receiptModes.includes(receipt.mode)) {
     throw new TypeError("identity binding receipt has invalid schema or fields");
   }
   if (receipt.cleanup_owner !== cleanupOwnerForMode(receipt.mode)) {
