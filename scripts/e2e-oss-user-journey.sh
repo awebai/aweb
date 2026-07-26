@@ -25,6 +25,9 @@
 #   AWID_E2E_PORT    awid port  (default: 8110)
 #   AWEB_E2E_REDIS   redis port (default: 6399)
 #   AWEB_E2E_PG      postgres port (default: 5452)
+#   AWEB_E2E_SEED_ERIN_CONTROLLER_KEY_LEAK
+#                      test-only mutation: seed the production-resolved Erin
+#                      controller-key path immediately before its real assertion
 
 set -euo pipefail
 
@@ -1069,6 +1072,17 @@ case "$TEAM_KEY_PATH" in
     ;;
 esac
 if [[ -n "$erin_controller_key_path" ]]; then
+  if [[ "${AWEB_E2E_SEED_ERIN_CONTROLLER_KEY_LEAK:-0}" == "1" ]]; then
+    mkdir -p "$(dirname "$erin_controller_key_path")"
+    printf 'simulated-production-leak' >"$erin_controller_key_path"
+    echo "  SEED: simulated post-fetch controller-key leak at the production-resolved path"
+  fi
+
+  # Observe fetch-cert's real result before the negative control writes to the
+  # same path. Reversing this order would erase a production leak before it can
+  # fail the assertion.
+  assert_path_missing "erin remote home has no controller team key" "$erin_controller_key_path"
+
   mkdir -p "$(dirname "$erin_controller_key_path")"
   printf 'negative-control' >"$erin_controller_key_path"
   if path_is_missing "$erin_controller_key_path"; then
@@ -1079,7 +1093,7 @@ if [[ -n "$erin_controller_key_path" ]]; then
     pass=$((pass + 1))
   fi
   rm -f "$erin_controller_key_path"
-  assert_path_missing "erin remote home has no controller team key" "$erin_controller_key_path"
+  assert_path_missing "seeded controller-key negative control cleaned up" "$erin_controller_key_path"
 fi
 
 run_success "erin init" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" init --url "$AWEB_URL"

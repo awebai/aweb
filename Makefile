@@ -38,7 +38,7 @@ help:
 	@echo "  test-a2a     Run A2A conformance, gateway, AWID lookup, and CLI command gates"
 	@echo "  test-oas-proof-helpers Run attached-principal proof filesystem guard tests"
 	@echo "  test-oas-attached-principal-e2e Run the real local-stack attach/retire proof"
-	@echo "  test-e2e     Run the end-to-end user journey (requires Docker)"
+	@echo "  test-e2e     Run the end-to-end user journey and its mutation guard (requires Docker)"
 	@echo "  test-federation-e2e Run the OSS federation journey (requires Docker)"
 	@echo "  test-a2a-gateway-e2e Run the A2A gateway Docker journey against real aweb+awid"
 	@echo "  check-a2a-copy-guardrails Block premature A2A trust/E2EE copy"
@@ -130,6 +130,7 @@ test-a2a:
 
 test-e2e:
 	./scripts/e2e-oss-user-journey.sh
+	./scripts/test-e2e-controller-key-absence-guard.sh
 
 test-federation-e2e:
 	./scripts/e2e-oss-federation.sh
