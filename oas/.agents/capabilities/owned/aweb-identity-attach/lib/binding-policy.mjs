@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, readFileSync, unlinkSync } from "node:fs";
 import { isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
 
 // User-configurable modes only. Durable provisioning remains internal receipt
@@ -230,12 +230,8 @@ export function cleanupCorroborationPayload({ schema_version: schemaVersion, cor
   return Buffer.from(JSON.stringify({ schema_version: schemaVersion, corroboration_class: corroborationClass, instance_id: instanceID, receipt }), "utf8");
 }
 
-export function loadCleanupCorroboration(corroborationHome, instanceID) {
-  if (!canonicalAbsolutePath(corroborationHome)) throw new TypeError("cleanup corroboration home must be canonical and absolute");
-  if (!safeID(instanceID)) throw new TypeError("OAS_INSTANCE must be filesystem-safe");
-  const path = join(corroborationHome, `${instanceID}.json`);
+function readCleanupCorroboration(path, operationID) {
   assertNoSymlink(path);
-  if (!existsSync(path)) return null;
   const encoded = JSON.parse(readFileSync(path, "utf8"));
   if (!exactFields(encoded, ["schema_version", "corroboration_class", "instance_id", "receipt", "digest"])
       || encoded.corroboration_class !== "local-same-uid" || typeof encoded.digest !== "string") {
@@ -249,5 +245,43 @@ export function loadCleanupCorroboration(corroborationHome, instanceID) {
   };
   const digest = createHash("sha256").update(cleanupCorroborationPayload(record)).digest("hex");
   if (digest !== encoded.digest) throw new Error("cleanup corroboration digest is invalid");
-  return record;
+  const receipt = validateBindingReceipt(record.receipt);
+  if (receipt.journal_operation !== operationID) throw new Error("cleanup corroboration receipt operation does not match its key");
+  return { record: { ...record, receipt }, encoded };
+}
+
+export function loadCleanupCorroboration(corroborationHome, operationID, instanceID = null) {
+  if (!canonicalAbsolutePath(corroborationHome)) throw new TypeError("cleanup corroboration home must be canonical and absolute");
+  if (!provisionOperationID(operationID)) throw new TypeError("cleanup corroboration operation id is invalid");
+  const path = join(corroborationHome, `${operationID}.json`);
+  if (existsSync(path)) {
+    const current = readCleanupCorroboration(path, operationID);
+    // Bounded migration for the instance-id → operation-id transition only.
+    // Delete once no store can contain merged-main instance-keyed records.
+    if (instanceID !== null && safeID(instanceID)) {
+      const legacyPath = join(corroborationHome, `${instanceID}.json`);
+      if (existsSync(legacyPath)) {
+        const legacy = readCleanupCorroboration(legacyPath, operationID);
+        if (JSON.stringify(legacy.encoded) !== JSON.stringify(current.encoded)) throw new Error("legacy cleanup corroboration contradicts operation-keyed authority");
+        unlinkSync(legacyPath);
+      }
+    }
+    return current.record;
+  }
+  if (instanceID === null) return null;
+  if (!safeID(instanceID)) throw new TypeError("OAS_INSTANCE must be filesystem-safe");
+  const legacyPath = join(corroborationHome, `${instanceID}.json`);
+  if (!existsSync(legacyPath)) return null;
+  const legacy = readCleanupCorroboration(legacyPath, operationID);
+  try {
+    // link(2) is the no-replace cutover claim. A concurrent destination winner
+    // yields EEXIST and must compare equal; authority is never overwritten.
+    linkSync(legacyPath, path);
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    const current = readCleanupCorroboration(path, operationID);
+    if (JSON.stringify(current.encoded) !== JSON.stringify(legacy.encoded)) throw new Error("cleanup corroboration adoption found contradictory authority");
+  }
+  try { unlinkSync(legacyPath); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  return legacy.record;
 }

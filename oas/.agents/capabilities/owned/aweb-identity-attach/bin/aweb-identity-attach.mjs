@@ -26,6 +26,7 @@ import {
   markProvisionIntentProvisioning,
   markProvisionIntentQuarantined,
   retryProvisionIntentQuarantine,
+  removeProvisionCleanupCorroboration,
   withProvisionIntentLock,
   writeProvisionCleanupCorroboration,
 } from "../lib/provisioning-journal.mjs";
@@ -572,8 +573,18 @@ function recoverProvisionIntents(principalHome, cwd, {
         if (intent.state === "cleanup-pending") {
           if (!cleanupAttemptStarted) intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, "recovery-retry");
           const cleanup = runCleanupCommandForIntent(intent, cwd);
+          removeProvisionCleanupCorroboration(principalHome, intent.operation_id);
           markProvisionIntentComplete(principalHome, intent.operation_id);
           return { operation_id: intent.operation_id, outcome: "cleanup-complete", cleanup };
+        }
+        if (intent.state === "complete") {
+          const corroborationHome = join(principalHome, ".corroboration", "cleanup");
+          // Complete journals from before .48 may still have an instance-keyed
+          // record. Adopt it using the journal's validated instance id, then
+          // release the operation key in this exact reconciliation.
+          loadCleanupCorroboration(corroborationHome, intent.operation_id, intent.instance_id);
+          removeProvisionCleanupCorroboration(principalHome, intent.operation_id);
+          return { operation_id: intent.operation_id, outcome: "cleanup-authority-released" };
         }
         return { operation_id: intent.operation_id, outcome: `left-${intent.state}` };
       });
@@ -619,7 +630,7 @@ function runLocalProvision(binding, authority, controllerDID, pendingReceipt) {
     const result = runProvisionCommandForIntent(intent, authority.instanceHome);
     markProvisionIntentPrepared(principalHome, intent.operation_id, result);
     const receipt = provisionedDisposableReceipt(pendingReceipt, { cleanupAuthority: "local-controller" });
-    writeProvisionCleanupCorroboration(principalHome, instanceID, receipt);
+    writeProvisionCleanupCorroboration(principalHome, intent.operation_id, instanceID, receipt);
     output({
       meta: {
         identity_binding: receipt,
@@ -693,6 +704,7 @@ function executeLocalCleanup(receipt, instanceID) {
       throw new Error("cleanup journal does not corroborate this instance and provisioned resource");
     }
     if (intent.state === "complete") {
+      removeProvisionCleanupCorroboration(principalHome, operationID);
       return {
         status: "complete", operation_id: operationID, grants: "physically-absent", workspace: "soft-deleted",
         identity: "soft-deleted", certificate: "revoked", credentials: "physically-absent", audit: "intentionally-retained-operation-record",
@@ -700,6 +712,7 @@ function executeLocalCleanup(receipt, instanceID) {
     }
     intent = markProvisionIntentCleanupPending(principalHome, operationID, "ordinary-retire");
     const result = runCleanupCommandForIntent(intent, requiredAbsoluteDirectory(process.env.OAS_HOME, "OAS_HOME"));
+    removeProvisionCleanupCorroboration(principalHome, operationID);
     markProvisionIntentComplete(principalHome, operationID);
     return result;
   });
@@ -751,7 +764,7 @@ function retire() {
   const corroborationHome = join(resolvePrincipalHome(), ".corroboration", "cleanup");
   let corroboration = null;
   try {
-    corroboration = loadCleanupCorroboration(corroborationHome, instanceID);
+    corroboration = loadCleanupCorroboration(corroborationHome, metadata?.identity_binding?.journal_operation, instanceID);
   } catch {
     corroboration = null;
   }

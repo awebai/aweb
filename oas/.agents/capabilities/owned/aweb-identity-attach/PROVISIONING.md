@@ -31,6 +31,18 @@ deterministic lowercase 128-bit SHA-256 projection of the operation, because
 aliases are normalized while operation identity is not. An instance name,
 purpose, or user alias is never used as operation identity.
 
+Local same-UID cleanup corroboration is also keyed by that operation id, never
+by the locally chosen OAS instance name. The immutable first-writer record still
+contains and checks the exact instance id and receipt, preserving accidental
+cross-developer cleanup refusal even when two roots choose the same name.
+Cleanup removes only that operation's corroboration record immediately before
+persisting terminal `complete`; failed/pending cleanup retains it for retry, and
+exact reconciliation releases records left beside older complete journals. The
+bounded instance-key → operation-key cutover adopts a valid merged-main legacy
+record on read and deletes its old name; this dual-read exists only for that
+transition and is not a general versioned loader. Thus neither other operations
+nor the local-name namespace are permanently allocated.
+
 ## Cleanup authority and order
 
 The local path proves these authorities before grant creation:
