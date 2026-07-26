@@ -1,0 +1,20 @@
+{
+  "capability": "aweb.tasks",
+  "version": "0.1.0",
+  "compatibility": {
+    "oas": ">=0.18.0"
+  },
+  "layer": "tasks",
+  "description": "Tasks layer via aweb: shared task state, work discovery, ownership, status, and team roster.",
+  "requires": [
+    {
+      "command": "aw",
+      "why": "shared task queue, work discovery, ownership, status, and team roster",
+      "install": "https://aweb.ai/docs"
+    }
+  ],
+  "skills": [
+    "skills/aweb-coordination"
+  ],
+  "inject": "injects/aweb-tasks.md"
+}

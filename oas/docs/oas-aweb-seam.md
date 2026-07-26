@@ -274,6 +274,38 @@ the targeted soul to the same principal; it is not a per-instance override.
 Concurrent use remains unfenced until the admission lease lands. That limitation
 is accepted for this walking skeleton and is not solved by attach cleanup.
 
+### Tasks layer binding
+
+The owned `aweb.tasks` capability under
+`oas/.agents/capabilities/owned/aweb-tasks` binds OAS's exclusive `tasks`
+layer to aweb. It is intentionally separate from the
+`aweb.identity-attach` messaging capability because one manifest may own only
+one fundamental layer. When selected, aweb is authoritative for the shared
+task queue, work discovery, ownership, status, and roster; task-like and
+roster features from the messaging layer or another integration stay off.
+Conversation still belongs to the messaging layer.
+
+```yaml
+capabilities:
+  layers:
+    tasks:
+      capability: aweb.tasks
+      global:
+        enabled: true
+```
+
+The capability contributes the `aweb-coordination` skill and an instruction
+block naming `aw task`, `aw work`, and `aw workspace status`. The skill copy is
+guarded byte-for-byte against the canonical repository skill so this new
+distribution cannot silently drift.
+
+Binding does not bypass attached-principal admission. All runnable `aw task`
+commands and `aw work ready|active|blocked` are admitted only after a
+production-binary regression routes their authenticated requests through the
+selected external identity home, verifies the external principal's signature,
+and proves zero traffic reaches a complete divergent instance shadow. With no
+external identity home, the pre-existing command path is unchanged.
+
 Provisioning recovers by **reconciliation, not replay**. An earlier revision of
 this document specified a write-ahead journal keyed by a stable idempotency key,
 with replay producing no duplicate. No production path delivers that: neither
