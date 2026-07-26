@@ -51,8 +51,12 @@ export function validateBindingSettings(value) {
     if (!exactFields(value, ["schema_version", "mode", "principal"]) || !safeID(value.principal)) {
       throw new TypeError("attach-existing requires exactly schema_version, mode, and principal");
     }
+  } else if (value.mode === "provision-disposable") {
+    if (!exactFields(value, ["schema_version", "mode", "minting_authority"]) || !safeID(value.minting_authority)) {
+      throw new TypeError("provision-disposable requires exactly schema_version, mode, and a minting_authority principal basename");
+    }
   } else if (!exactFields(value, ["schema_version", "mode"])) {
-    throw new TypeError(`${value.mode} requires exactly schema_version and mode`);
+    throw new TypeError("provision-durable does not accept an ephemeral minting_authority");
   }
   return { ...value, legacy: false };
 }

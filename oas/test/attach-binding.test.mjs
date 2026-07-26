@@ -68,7 +68,11 @@ function parseSuccess(result) {
   return document.result;
 }
 
-function fixture({ mode = "attach", schemaVersion = 1 } = {}) {
+function fixture({
+  mode = "attach",
+  schemaVersion = 1,
+  mintingAuthority = mode === "provision-disposable" ? "throwaway" : undefined,
+} = {}) {
   const base = temporaryDirectory();
   const repo = join(base, "repo");
   gitRepo(repo);
@@ -82,7 +86,9 @@ function fixture({ mode = "attach", schemaVersion = 1 } = {}) {
   cpSync(CAPABILITY_SOURCE, capability, { recursive: true });
   const bindingSetting = mode === "attach" || mode === "attach-existing"
     ? `            principal: throwaway\n`
-    : "";
+    : mintingAuthority == null
+      ? ""
+      : `            minting_authority: ${mintingAuthority}\n`;
   write(join(repo, "oas-config.yaml"), `capabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global:\n        enabled: true\n        settings:\n          identity_binding:\n            schema_version: ${schemaVersion}\n            mode: ${mode}\n${bindingSetting}`);
   const declarationPath = join(repo, "oas", "agents", "developer", "principals", "throwaway.yaml");
   write(declarationPath, [
@@ -94,6 +100,8 @@ function fixture({ mode = "attach", schemaVersion = 1 } = {}) {
     "soul_version: 1.2.3",
     "",
   ].join("\n"));
+  execFileSync("git", ["-C", repo, "add", "."]);
+  execFileSync("git", ["-C", repo, "commit", "-qm", "configure identity capability"]);
 
   const principalHome = join(base, "principal-store");
   const principal = join(principalHome, "test-team", "example.test", "2ThrowawayStableId123");
@@ -268,7 +276,6 @@ test("real OAS attach-existing v2 emits an externally owned bound receipt", () =
 
 for (const [mode, cleanupOwner] of [
   ["provision-disposable", "instance"],
-  ["provision-durable", "external"],
 ]) {
   test(`real OAS ${mode} emits a pending non-authorizing receipt without provisioning`, () => {
     const f = fixture({ mode, schemaVersion: 2 });
@@ -297,7 +304,24 @@ for (const [mode, cleanupOwner] of [
       },
       journal_operation: operationID,
     });
-    assert.equal(existsSync(f.awLog), false, "decision layer must not invoke provisioning");
+    assert.deepEqual(meta.capabilityMeta["aweb.identity-attach"].minting_authority, {
+      schema_version: 1,
+      kind: "external-declared-principal",
+      principal: "throwaway",
+      declaration_path: f.declarationPath,
+      address: "example.test/throwaway",
+      stable_id: "did:aw:2ThrowawayStableId123",
+      team_id: "test-team:example.test",
+      grant_retirement_rule: "grants_terminal_before_authority_retirement",
+      rule_enforcement: "declarative_no_universal_retirement_choke_point",
+      creator_loss_recovery: "known_invite_id_admin_revocation_only",
+    });
+    const authorityCalls = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse);
+    assert.deepEqual(authorityCalls, [{
+      argv: ["--identity-home", f.credentials, "whoami", "--json"],
+      cwd: spawned.home,
+    }]);
+    assert.equal(existsSync(join(spawned.home, ".aw")), false, "disposable instance credentials must not become minting authority");
 
     const retire = spawnSync(process.execPath, [oasCli(), "retire", spawned.instance, "--json"], {
       cwd: f.repo, env: f.env, encoding: "utf8",
@@ -307,6 +331,63 @@ for (const [mode, cleanupOwner] of [
     assert.equal(retired.capabilityMeta["aweb.identity-attach"].retirement.action, "preserve");
   });
 }
+
+test("real OAS refuses provision-durable before ephemeral authority resolution", () => {
+  const f = fixture({ mode: "provision-durable", schemaVersion: 2 });
+  const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "durable-refused", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  assert.equal(spawned.warnings.length, 1);
+  assert.match(spawned.warnings[0], /provision-durable.*not executable/);
+  const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+  assert.equal(meta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
+  assert.equal(existsSync(f.awLog), false, "durable refusal must precede ephemeral authority resolution");
+});
+
+test("real OAS provision-disposable rejects missing declared minting authority", () => {
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthority: null });
+  const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "authority-missing", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  assert.equal(spawned.warnings.length, 1);
+  assert.match(spawned.warnings[0], /minting_authority/);
+  const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+  assert.equal(meta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
+  assert.equal(existsSync(f.awLog), false);
+});
+
+test("real OAS provision-disposable rejects an uncommitted minting authority declaration", () => {
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2 });
+  writeFileSync(f.declarationPath, `${readFileSync(f.declarationPath, "utf8")}# unreviewed authority change\n`);
+  const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "authority-uncommitted", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  assert.equal(spawned.warnings.length, 1);
+  assert.match(spawned.warnings[0], /minting authority declaration must be committed and unmodified/);
+  const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+  assert.equal(meta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
+  assert.equal(existsSync(f.awLog), false);
+});
+
+test("real OAS provision-disposable rejects minting credentials that disagree with the declaration", () => {
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2 });
+  writeFileSync(f.awPath, readFileSync(f.awPath, "utf8").replace(
+    'stable_id: "did:aw:2ThrowawayStableId123"',
+    'stable_id: "did:aw:2DifferentStableId456"',
+  ));
+  const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "authority-mismatch", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  assert.equal(spawned.warnings.length, 1);
+  assert.match(spawned.warnings[0], /stable_id.*does not match declaration/);
+  const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+  assert.equal(meta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
+  const calls = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse);
+  assert.deepEqual(calls, [{
+    argv: ["--identity-home", f.credentials, "whoami", "--json"],
+    cwd: spawned.home,
+  }]);
+});
 
 test("distinct production intents receive opaque carrier-safe operation identities", () => {
   const f = fixture({ mode: "provision-disposable", schemaVersion: 2 });
@@ -411,29 +492,6 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
     reason: "required_remote_authority_corroboration_unavailable",
   });
 
-  const durable = fixture({ mode: "provision-durable", schemaVersion: 2 });
-  const durableSpawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "durable-judgement", "--no-launch", "--json"], {
-    cwd: durable.repo, env: durable.env, encoding: "utf8",
-  }));
-  const durableMetaPath = join(durableSpawned.home, "instance.json");
-  const durableMeta = JSON.parse(readFileSync(durableMetaPath, "utf8"));
-  const durableReceipt = durableMeta.capabilityMeta["aweb.identity-attach"].identity_binding;
-  durableReceipt.lifecycle = "provisioned";
-  durableReceipt.resource_identity.kind = "declared-principal";
-  durableReceipt.resource_identity.stable_id = "did:aw:DurableOwned1";
-  durableReceipt.resource_identity.reference = join(durable.principalHome, "declarations", "durable-owned.yaml");
-  durableReceipt.resource_identity.cleanup_authority = "none";
-  writeFileSync(durableMetaPath, `${JSON.stringify(durableMeta, null, 2)}\n`);
-  writeCleanupCorroboration(durable, durableSpawned.instance, durableReceipt);
-  const durableRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", durableSpawned.instance, "--json"], {
-    cwd: durable.repo, env: durable.env, encoding: "utf8",
-  }));
-  assert.deepEqual(durableRetire.capabilityMeta["aweb.identity-attach"].retirement, {
-    action: "preserve",
-    cleanup_authorized: false,
-    reason: "instance_metadata_withholds_cleanup",
-  });
-
   const owned = spawnedDisposable();
   writeCleanupCorroboration(owned.f, owned.spawned.instance, owned.receipt);
   const ownedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", owned.spawned.instance, "--json"], {
@@ -445,7 +503,11 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
     reason: "corroborating_local_record_matches_disposable_resource",
     authority_scope: "local_same_uid_accident_guard",
   });
-  assert.equal(existsSync(owned.f.awLog), false, "authorization judgement must not execute deletion");
+  const ownedCalls = readFileSync(owned.f.awLog, "utf8").trim().split("\n").map(JSON.parse);
+  assert.deepEqual(ownedCalls, [{
+    argv: ["--identity-home", owned.f.credentials, "whoami", "--json"],
+    cwd: owned.spawned.home,
+  }], "authorization judgement must not execute deletion");
 });
 
 test("real OAS attach rejects a declaration for a different soul before invoking aw", () => {
