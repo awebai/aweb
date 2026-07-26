@@ -46,6 +46,29 @@ func TestCompareAndSetPinStoreAcceptsCurrentPrecondition(t *testing.T) {
 	}
 }
 
+func TestCompareAndSetPinStoreFailsClosedWhenLockCannotBeCreated(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocker, []byte("unchanged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(blocker, "known_agents.yaml")
+	err := compareAndSetPinStore(
+		path,
+		pinStoreYAML(t, awid.NewPinStore()),
+		pinStoreYAML(t, pinStoreWithAddress("did:key:zAlice", "acme.com/alice")),
+	)
+	if err == nil || !strings.Contains(err.Error(), "lock trust pin store") {
+		t.Fatalf("lock failure must visibly refuse the mutation, got %v", err)
+	}
+	content, readErr := os.ReadFile(blocker)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(content) != "unchanged" {
+		t.Fatalf("lock failure damaged the existing path: %q", content)
+	}
+}
+
 func TestCompareAndSetPinStoreRefusesStalePreconditionWithoutOverwrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "known_agents.yaml")
 	expected := awid.NewPinStore()

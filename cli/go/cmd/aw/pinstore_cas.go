@@ -85,7 +85,7 @@ func compareAndSetPinStore(path string, expectedYAML, desiredYAML []byte) error 
 		return fmt.Errorf("invalid desired pin store: %w", err)
 	}
 
-	lock, err := awconfig.LockExclusive(path + ".lock")
+	lock, err := lockPinStoreForCAS(path)
 	if err != nil {
 		return fmt.Errorf("lock trust pin store: %w", err)
 	}
@@ -102,4 +102,11 @@ func compareAndSetPinStore(path string, expectedYAML, desiredYAML []byte) error 
 		return fmt.Errorf("commit trust pin store: %w", err)
 	}
 	return nil
+}
+
+func lockPinStoreForCAS(path string) (io.Closer, error) {
+	if err := pinStoreCASPreLockHook(); err != nil {
+		return nil, err
+	}
+	return awconfig.LockExclusive(path + ".lock")
 }

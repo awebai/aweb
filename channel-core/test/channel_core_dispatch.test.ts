@@ -222,13 +222,25 @@ describe("channel-core dispatchAgentEvent", () => {
       }),
       post: vi.fn().mockResolvedValue(undefined),
     };
+    let trustAttempt = 0;
     const storingTrust = {
-      normalizeTrust: vi.fn()
-        .mockResolvedValueOnce({ status: "verified", stored: true })
-        .mockResolvedValueOnce({ status: "verified", stored: false }),
+      normalizeTrust: vi.fn(async (store: PinStore) => {
+        trustAttempt += 1;
+        if (trustAttempt === 1) {
+          store.storePin("did:key:zAlice", "acme.com/alice", "", "");
+          return { status: "verified", stored: true };
+        }
+        return { status: "verified", stored: false };
+      }),
     } as unknown as SenderTrustManager;
+    const expectedYAMLs: string[] = [];
+    const desiredYAMLs: string[] = [];
     const pinStoreWriter = {
-      compareAndSet: vi.fn(async () => { throw new Error("aw binary missing"); }),
+      compareAndSet: vi.fn(async (_path: string, expectedYAML: string, desiredYAML: string) => {
+        expectedYAMLs.push(expectedYAML);
+        desiredYAMLs.push(desiredYAML);
+        throw new Error("aw binary missing");
+      }),
     };
 
     await expect(dispatchAgentEvent(
@@ -246,22 +258,59 @@ describe("channel-core dispatchAgentEvent", () => {
     )).rejects.toThrow(/aw binary missing/);
 
     expect(pinStoreWriter.compareAndSet).toHaveBeenCalledTimes(2);
+    expect(expectedYAMLs).toHaveLength(2);
+    expect(expectedYAMLs[1]).toBe(expectedYAMLs[0]);
+    for (const expectedYAML of expectedYAMLs) {
+      const expected = PinStore.fromYAML(expectedYAML);
+      expect(expected.pins.size).toBe(0);
+      expect(expected.addresses.size).toBe(0);
+    }
+    expect(desiredYAMLs).toHaveLength(2);
+    expect(desiredYAMLs[1]).toBe(desiredYAMLs[0]);
+    for (const desiredYAML of desiredYAMLs) {
+      const desired = PinStore.fromYAML(desiredYAML);
+      expect(desired.addresses.get("acme.com/alice")).toBe("did:key:zAlice");
+      expect(desired.pins.get("did:key:zAlice")?.address).toBe("acme.com/alice");
+    }
     expect(onAwakening).not.toHaveBeenCalled();
     expect(client.post).not.toHaveBeenCalled();
   });
 
-  test("serializes trust decisions that share a pin store", async () => {
-    let releaseFirst: (() => void) | undefined;
-    let entered = 0;
+  test("serializes trust decisions through pin persistence", async () => {
+    let trustAttempt = 0;
     const trustGate = {
-      normalizeTrust: vi.fn(async () => {
-        entered += 1;
-        if (entered === 1) {
-          await new Promise<void>((resolve) => { releaseFirst = resolve; });
+      normalizeTrust: vi.fn(async (store: PinStore) => {
+        trustAttempt += 1;
+        if (trustAttempt === 1) {
+          store.storePin("did:key:zAlice", "acme.com/alice", "", "");
+        } else {
+          store.storePin("did:key:zBob", "acme.com/bob", "", "");
         }
-        return { status: "verified", stored: false };
+        return { status: "verified", stored: true };
       }),
     } as unknown as SenderTrustManager;
+    let signalCommitEntered!: () => void;
+    const commitEntered = new Promise<void>((resolve) => { signalCommitEntered = resolve; });
+    let releaseCommit!: () => void;
+    const commitRelease = new Promise<void>((resolve) => { releaseCommit = resolve; });
+    let firstDesiredYAML = "";
+    const pinStoreWriter = {
+      compareAndSet: vi.fn(async (_path: string, expectedYAML: string, desiredYAML: string) => {
+        if (!firstDesiredYAML) {
+          expect(PinStore.fromYAML(expectedYAML).pins.size).toBe(0);
+          firstDesiredYAML = desiredYAML;
+          signalCommitEntered();
+          await commitRelease;
+          return;
+        }
+        expect(expectedYAML).toBe(firstDesiredYAML);
+        const expected = PinStore.fromYAML(expectedYAML);
+        expect(expected.addresses.get("acme.com/alice")).toBe("did:key:zAlice");
+        const desired = PinStore.fromYAML(desiredYAML);
+        expect(desired.addresses.get("acme.com/alice")).toBe("did:key:zAlice");
+        expect(desired.addresses.get("acme.com/bob")).toBe("did:key:zBob");
+      }),
+    };
     const message = (id: string) => ({
       message_id: id,
       from_agent_id: "agent-1",
@@ -279,9 +328,12 @@ describe("channel-core dispatchAgentEvent", () => {
         .mockResolvedValueOnce({ messages: [message("mail-serialize-2")] }),
       post: vi.fn().mockResolvedValue(undefined),
     };
+    const pinStore = new PinStore();
+    const runExclusive = vi.spyOn(pinStore, "runExclusive");
     const options = {
       client: client as never,
-      pinStore: new PinStore(),
+      pinStore,
+      pinStoreWriter,
       trust: trustGate,
       self,
       onAwakening: vi.fn(),
@@ -292,16 +344,20 @@ describe("channel-core dispatchAgentEvent", () => {
       new Set(),
       { type: "mail_message", message_id: "mail-serialize-1" } satisfies AgentEvent,
     );
+    await commitEntered;
     const second = dispatchAgentEvent(
       options,
       new Set(),
       { type: "mail_message", message_id: "mail-serialize-2" } satisfies AgentEvent,
     );
-    await vi.waitFor(() => expect(trustGate.normalizeTrust).toHaveBeenCalledTimes(1));
-    releaseFirst?.();
+    await vi.waitFor(() => expect(runExclusive).toHaveBeenCalledTimes(2));
+    expect(trustGate.normalizeTrust).toHaveBeenCalledTimes(1);
+
+    releaseCommit();
     await Promise.all([first, second]);
 
     expect(trustGate.normalizeTrust).toHaveBeenCalledTimes(2);
+    expect(pinStoreWriter.compareAndSet).toHaveBeenCalledTimes(2);
   });
 
   test("reloads after a CAS conflict so a later mutation can proceed", async () => {
@@ -329,11 +385,19 @@ describe("channel-core dispatchAgentEvent", () => {
     } as unknown as SenderTrustManager;
     let writeAttempt = 0;
     const pinStoreWriter = {
-      compareAndSet: vi.fn(async (_path: string, _expectedYAML: string, desiredYAML: string) => {
+      compareAndSet: vi.fn(async (_path: string, expectedYAML: string, desiredYAML: string) => {
         writeAttempt += 1;
         if (writeAttempt === 1) {
           throw new PinStoreCASConflictError("trust pin store changed since it was read");
         }
+        const expected = PinStore.fromYAML(expectedYAML);
+        expect(expected.toYAML()).toBe(durable.toYAML());
+        expect(expected.addresses.get("acme.com/bob")).toBe("did:key:zBob");
+        expect(expected.addresses.has("acme.com/alice")).toBe(false);
+        const desired = PinStore.fromYAML(desiredYAML);
+        expect(desired.addresses.get("acme.com/bob")).toBe("did:key:zBob");
+        expect(desired.addresses.get("acme.com/carol")).toBe("did:key:zCarol");
+        expect(desired.addresses.has("acme.com/alice")).toBe(false);
         await writeFile(pinStorePath, desiredYAML, "utf-8");
       }),
     };

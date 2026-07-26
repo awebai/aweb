@@ -54,7 +54,7 @@ func TestFirstContactPinThatCannotPersistIsNotVerified(t *testing.T) {
 	}
 }
 
-func TestClientCASPersisterRefusesAStaleSnapshot(t *testing.T) {
+func TestClientCASPersisterAdvancesThenRefusesAStaleSnapshot(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "known_agents.yaml")
 	c, _ := newPinClient(t, path)
 	current := NewPinStore()
@@ -77,17 +77,23 @@ func TestClientCASPersisterRefusesAStaleSnapshot(t *testing.T) {
 	if status := c.CheckTOFUPin(context.Background(), Verified, "alice@example.com", "did:key:zAlice", "", nil, nil); status != Verified {
 		t.Fatalf("first status=%q, want verified", status)
 	}
+	if status := c.CheckTOFUPin(context.Background(), Verified, "carol@example.com", "did:key:zCarol", "", nil, nil); status != Verified {
+		t.Fatalf("second status=%q, want verified after advancing the successful baseline", status)
+	}
 	// A different process commits Bob after this client's baseline was read.
 	current.StorePin("did:key:zBob", "bob@example.com", "", "")
 
-	status := c.CheckTOFUPin(context.Background(), Verified, "carol@example.com", "did:key:zCarol", "", nil, nil)
+	status := c.CheckTOFUPin(context.Background(), Verified, "dave@example.com", "did:key:zDave", "", nil, nil)
 	if status != VerificationStale {
 		t.Fatalf("stale continuity decision status=%q, want %q", status, VerificationStale)
 	}
 	if current.CheckPin("bob@example.com", "did:key:zBob", LifetimePersistent) != PinOK {
 		t.Fatal("stale writer erased the other process's pin")
 	}
-	if current.CheckPin("carol@example.com", "did:key:zCarol", LifetimePersistent) != PinNew {
+	if current.CheckPin("carol@example.com", "did:key:zCarol", LifetimePersistent) != PinOK {
+		t.Fatal("second successful mutation was not committed")
+	}
+	if current.CheckPin("dave@example.com", "did:key:zDave", LifetimePersistent) != PinNew {
 		t.Fatal("stale writer's desired mutation reached the durable store")
 	}
 }
