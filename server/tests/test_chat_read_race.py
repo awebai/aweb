@@ -15,6 +15,7 @@ from aweb.messaging.chat import (
     mark_messages_read,
     send_in_session,
 )
+from aweb.service_errors import ValidationError
 
 
 class _DbShim:
@@ -217,6 +218,49 @@ async def test_mark_read_records_only_the_presented_message_ids(aweb_cloud_db):
         message_ids=presented_ids,
     )
     assert retry["messages_marked"] == 0
+
+
+@pytest.mark.asyncio
+async def test_mark_read_batch_limit_accepts_1000_and_rejects_1001(aweb_cloud_db):
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
+    session_id = await ensure_session(
+        db,
+        team_id="backend:read-race.example",
+        participant_rows=[alice, bob],
+        created_by="alice",
+    )
+    rows = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        INSERT INTO {{tables.chat_messages}}
+            (session_id, from_did, from_alias, body)
+        SELECT $1, $2, 'alice', 'batch boundary'
+        FROM generate_series(1, 1000)
+        RETURNING message_id
+        """,
+        session_id,
+        alice["did_aw"],
+    )
+    message_ids = [str(row["message_id"]) for row in rows]
+    assert len(message_ids) == 1000
+
+    accepted = await mark_messages_read(
+        db,
+        session_id=session_id,
+        participant_did=bob["did_aw"],
+        participant_agent_id=str(bob["agent_id"]),
+        message_ids=message_ids,
+    )
+    assert accepted["messages_marked"] == 1000
+
+    with pytest.raises(ValidationError, match="message_ids cannot exceed 1000 items"):
+        await mark_messages_read(
+            db,
+            session_id=session_id,
+            participant_did=bob["did_aw"],
+            participant_agent_id=str(bob["agent_id"]),
+            message_ids=[*message_ids, message_ids[0]],
+        )
 
 
 @pytest.mark.asyncio

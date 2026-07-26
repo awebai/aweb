@@ -653,6 +653,33 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).not.toHaveBeenCalled();
   });
 
+  test("does not call mark-read when chat history presents no messages", async () => {
+    const onAwakening = vi.fn();
+    const client = {
+      get: vi.fn().mockResolvedValue({ messages: [] }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening,
+      },
+      new Set(),
+      {
+        type: "chat_message",
+        session_id: "sess-empty",
+        conversation_id: "sess-empty",
+      } satisfies AgentEvent,
+    );
+
+    expect(onAwakening).not.toHaveBeenCalled();
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
   test("marks every presented chat ID read after channel delivery succeeds", async () => {
     const onAwakening = vi.fn();
     const client = {
