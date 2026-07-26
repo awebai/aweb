@@ -1,10 +1,19 @@
 # Disposable provisioning execution contract
 
+> **EXPERIMENTAL / INTERNAL.** Run
+> `oas aweb-identity status --soul <name> --json` before spawn. The native,
+> active/trust-gated command asks `oas doctor --json` for the same soul-resolved
+> settings that spawn consumes, then runs spawn's non-mutating identity and
+> authority preflight. Its result is `ready`, `needs_setup` with one
+> `next_action`, or `experimental` with no identity/instance/session creation.
+> This verdict is advisory: OAS 0.18 hooks are not required and can still launch
+> after hook failure. Only `aaaa.2` can provide fail-closed admission/rollback.
+
 This capability executes `provision-disposable` only through declared
 `local-controller` authority in this release.
 
-- `provision-durable` is refused because no production mint-and-handoff path
-  exists (`aaaa.39`).
+- Durable resident provisioning is not in the exposed configurable-mode list
+  and is refused because no production mint-and-handoff path exists (`aaaa.39`).
 - hosted `provision-disposable` is refused before authority resolution or any
   create call. The current cleanup API requires a team owner/admin API key;
   putting that key in the same-UID hook would also give it to the model. A

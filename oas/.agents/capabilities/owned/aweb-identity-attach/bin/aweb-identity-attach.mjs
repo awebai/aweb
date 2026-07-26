@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 
 import {
@@ -54,14 +54,83 @@ function requiredAbsoluteDirectory(value, name) {
   return path;
 }
 
-function parseBindingSettings() {
+function parseSettingsJSON(encoded, source) {
   let settings;
   try {
-    settings = JSON.parse(process.env.OAS_SETTINGS || "{}");
+    settings = JSON.parse(encoded || "{}");
   } catch {
-    throw new TypeError("OAS_SETTINGS must be valid JSON");
+    throw new TypeError(`${source} must be valid JSON`);
   }
-  return validateBindingSettings(settings?.identity_binding);
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    throw new TypeError(`${source} must contain a settings object`);
+  }
+  return settings;
+}
+
+function parseBindingSettings() {
+  return validateBindingSettings(parseSettingsJSON(process.env.OAS_SETTINGS, "OAS_SETTINGS")?.identity_binding);
+}
+
+class ReadinessIssue extends Error {
+  constructor(readiness, message, nextAction) {
+    super(message);
+    this.readiness = readiness;
+    this.nextAction = nextAction;
+  }
+}
+
+class SpawnRefusal extends Error {
+  constructor(issue) {
+    super(issue.message);
+    this.issue = issue;
+  }
+}
+
+function oneNextAction(issue, soul) {
+  if (issue?.nextAction) return issue.nextAction;
+  const suffix = soul ? ` for soul ${soul}` : "";
+  return `Correct the declared aweb identity setup${suffix} before spawning.`;
+}
+
+function readinessReport({ readiness, message, nextAction, settingsSource }) {
+  return {
+    schema_version: 1,
+    capability: "aweb.identity-attach",
+    readiness,
+    release_stage: "experimental-internal",
+    settings_source: settingsSource,
+    identity_resources_created: false,
+    instance_or_session_created: false,
+    admission: "advisory-status-cannot-prevent-oas-launch",
+    message,
+    next_action: nextAction,
+  };
+}
+
+function commandSoul() {
+  const index = process.argv.indexOf("--soul");
+  if (index < 0) return null;
+  const soul = process.argv[index + 1];
+  if (!soul || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(soul)) throw new TypeError("status --soul requires a filesystem-safe soul name");
+  return soul;
+}
+
+function resolvedStatusSettings(context, soul) {
+  const doctorArgs = ["doctor", context, ...(soul ? ["--soul", soul] : []), "--json"];
+  const testRoot = process.env.OAS_TEST_ROOT;
+  const command = testRoot ? process.execPath : "oas";
+  const args = testRoot ? [join(testRoot, "bin", "oas.mjs"), ...doctorArgs] : doctorArgs;
+  const document = parseSettingsJSON(execFileSync(command, args, {
+    cwd: context, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 45000,
+  }), "oas doctor --json output");
+  const capability = Array.isArray(document.capabilities)
+    ? document.capabilities.find((item) => item?.id === "aweb.identity-attach")
+    : null;
+  if (!capability) throw new ReadinessIssue("experimental", "aweb identity capability is not active for this selection", "Activate the internal capability only in a controlled development configuration.");
+  return {
+    settings: capability.settings || {},
+    source: `resolved-oas-config${soul ? `:soul=${soul}` : ":global"}`,
+  };
 }
 
 function exactFields(value, required, optional = []) {
@@ -175,10 +244,13 @@ function assertCommittedMintingAuthority(context, declarationPath) {
 function resolveAndVerifyDeclaredPrincipal(principal, {
   requireCommittedAuthority = false,
   identityLabel = "attached identity",
+  instanceHome: requestedInstanceHome = process.env.OAS_HOME,
+  context: requestedContext = process.env.OAS_CONTEXT,
+  soul: requestedSoul = process.env.OAS_AGENT,
 } = {}) {
-  const instanceHome = requiredAbsoluteDirectory(process.env.OAS_HOME, "OAS_HOME");
-  const context = requiredAbsoluteDirectory(process.env.OAS_CONTEXT, "OAS_CONTEXT");
-  const soul = process.env.OAS_AGENT;
+  const instanceHome = requiredAbsoluteDirectory(requestedInstanceHome, "OAS_HOME");
+  const context = requiredAbsoluteDirectory(requestedContext, "OAS_CONTEXT");
+  const soul = requestedSoul;
   if (!soul || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(soul)) {
     throw new TypeError("OAS_AGENT must be a filesystem-safe soul name");
   }
@@ -244,6 +316,110 @@ function resolveLocalControllerDID(instanceHome, teamID) {
       env: { ...process.env, AW_NO_UPDATE_CHECK: "1" },
     },
   ));
+}
+
+function preflightBinding(binding, {
+  instanceHome = process.env.OAS_HOME,
+  context = process.env.OAS_CONTEXT,
+  soul = process.env.OAS_AGENT,
+} = {}) {
+  if (binding.mode === "attach" || binding.mode === "attach-existing") {
+    return {
+      binding,
+      principal: resolveAndVerifyDeclaredPrincipal(binding.principal, { instanceHome, context, soul }),
+    };
+  }
+  if (binding.mode === "provision-durable") {
+    throw new ReadinessIssue(
+      "experimental",
+      "provision-durable is declared but not executable; durable minting authority belongs to aaaa.39",
+      "Use the temporary-worker journey; do not attempt durable resident setup.",
+    );
+  }
+  if (binding.minting_authority_path === "hosted") {
+    throw new ReadinessIssue(
+      "experimental",
+      "hosted provision-disposable is refused before creation: no scoped non-ambient authority can clean a committed hosted member; an owner/admin API key must never be exposed to the same-UID model",
+      "Use only the controlled local-team development journey.",
+    );
+  }
+  const authority = resolveAndVerifyDeclaredPrincipal(binding.minting_authority, {
+    requireCommittedAuthority: true,
+    identityLabel: "minting authority credentials",
+    instanceHome,
+    context,
+    soul,
+  });
+  return {
+    binding,
+    authority,
+    controllerDID: resolveLocalControllerDID(authority.instanceHome, authority.declaration.team_id),
+  };
+}
+
+function bindingReadiness(settings, { context, soul, settingsSource }) {
+  if (!soul) {
+    const issue = new ReadinessIssue(
+      "needs_setup",
+      "a soul selection is required because spawn resolves settings per soul and agent type",
+      "Rerun this command with exactly one --soul <name> selection.",
+    );
+    return readinessReport({ readiness: issue.readiness, message: issue.message, nextAction: issue.nextAction, settingsSource });
+  }
+  let binding;
+  try {
+    binding = validateBindingSettings(settings?.identity_binding);
+    preflightBinding(binding, { instanceHome: context, context, soul });
+  } catch (error) {
+    const issue = error instanceof ReadinessIssue
+      ? error
+      : new ReadinessIssue(
+        settings?.identity_binding == null || settings?.identity_binding?.mode === "provision-durable" ? "experimental" : "needs_setup",
+        error instanceof Error ? error.message : String(error),
+        settings?.identity_binding == null
+          ? "Do not spawn: no supported one-command identity setup exists yet."
+          : settings?.identity_binding?.mode === "provision-durable"
+            ? "Use the temporary-worker journey; do not attempt durable resident setup."
+            : null,
+      );
+    return readinessReport({
+      readiness: issue.readiness,
+      message: issue.message,
+      nextAction: oneNextAction(issue, soul),
+      settingsSource,
+    });
+  }
+  return readinessReport({
+    readiness: "ready",
+    message: "selected settings and declared authority passed the same non-mutating preflight used by spawn",
+    nextAction: null,
+    settingsSource,
+  });
+}
+
+function status() {
+  const allowed = new Set(["status", "--soul", "--json"]);
+  for (let index = 2; index < process.argv.length; index += 1) {
+    const value = process.argv[index];
+    if (!allowed.has(value) && process.argv[index - 1] !== "--soul") throw new TypeError(`unsupported status argument ${JSON.stringify(value)}`);
+  }
+  const context = requiredAbsoluteDirectory(realpathSync(process.cwd()), "status context");
+  const soul = commandSoul();
+  let resolved;
+  try {
+    resolved = resolvedStatusSettings(context, soul);
+  } catch (error) {
+    const issue = error instanceof ReadinessIssue
+      ? error
+      : new ReadinessIssue("experimental", error instanceof Error ? error.message : String(error), "Repair OAS configuration resolution before spawning.");
+    const report = readinessReport({ readiness: issue.readiness, message: issue.message, nextAction: oneNextAction(issue, soul), settingsSource: "unresolved-oas-config" });
+    output(report);
+    process.exitCode = 1;
+    return;
+  }
+  const report = bindingReadiness(resolved.settings, { context, soul, settingsSource: resolved.source });
+  output(report);
+  if (report.readiness !== "ready") process.exitCode = 1;
 }
 
 function parseLocalProvisionOutput(stdout, intent) {
@@ -405,7 +581,7 @@ function recoverProvisionIntents(principalHome, cwd, {
   return recovered;
 }
 
-function runLocalProvision(binding, authority, pendingReceipt) {
+function runLocalProvision(binding, authority, controllerDID, pendingReceipt) {
   const principalHome = resolvePrincipalHome();
   const recovery = recoverProvisionIntents(principalHome, authority.instanceHome);
   const quarantined = recovery.find((item) => item.outcome === "quarantined");
@@ -422,7 +598,7 @@ function runLocalProvision(binding, authority, pendingReceipt) {
       principal: binding.minting_authority,
       declarationPath: authority.declarationPath,
       declaration: authority.declaration,
-      controllerDID: resolveLocalControllerDID(authority.instanceHome, authority.declaration.team_id),
+      controllerDID,
     }),
   });
   return withProvisionIntentLock(principalHome, intent.operation_id, () => {
@@ -443,8 +619,8 @@ function runLocalProvision(binding, authority, pendingReceipt) {
   });
 }
 
-function attach(binding) {
-  const { soul, declaration, declarationPath, store } = resolveAndVerifyDeclaredPrincipal(binding.principal);
+function attach(binding, verifiedPrincipal = null) {
+  const { soul, declaration, declarationPath, store } = verifiedPrincipal || resolveAndVerifyDeclaredPrincipal(binding.principal);
   const legacyBinding = validatePersistedAttachBinding({
     schema_version: 1,
     mode: "attach",
@@ -600,21 +776,28 @@ function retire() {
 
 const event = process.env.OAS_EVENT || process.argv[2];
 try {
-  if (event === "spawn") {
-    const binding = parseBindingSettings();
-    if (binding.mode === "attach" || binding.mode === "attach-existing") attach(binding);
-    else if (binding.mode === "provision-durable") {
-      throw new TypeError("provision-durable is declared but not executable; durable minting authority belongs to aaaa.39");
-    } else {
-      if (binding.minting_authority_path === "hosted") {
-        throw new TypeError("hosted provision-disposable is refused before creation: no scoped non-ambient authority can clean a committed hosted member; an owner/admin API key must never be exposed to the same-UID model");
-      }
-      const authority = resolveAndVerifyDeclaredPrincipal(binding.minting_authority, {
-        requireCommittedAuthority: true,
-        identityLabel: "minting authority credentials",
-      });
-      runLocalProvision(binding, authority, pendingProvisionReceipt(binding));
+  if (event === "status") status();
+  else if (event === "spawn") {
+    let binding;
+    let preflight;
+    try {
+      binding = parseBindingSettings();
+      preflight = preflightBinding(binding);
+    } catch (error) {
+      const durableUnavailable = error instanceof Error && /durable resident provisioning/.test(error.message);
+      const issue = error instanceof ReadinessIssue
+        ? error
+        : new ReadinessIssue(
+          durableUnavailable ? "experimental" : "needs_setup",
+          durableUnavailable
+            ? "provision-durable is declared but not executable; durable minting authority belongs to aaaa.39"
+            : error instanceof Error ? error.message : String(error),
+          null,
+        );
+      throw new SpawnRefusal(issue);
     }
+    if (binding.mode === "attach" || binding.mode === "attach-existing") attach(binding, preflight.principal);
+    else runLocalProvision(binding, preflight.authority, preflight.controllerDID, pendingProvisionReceipt(binding));
   } else if (event === "retire") retire();
   else if (event === "reconcile") {
     const principalHome = resolvePrincipalHome();
@@ -645,6 +828,30 @@ try {
     if (recovered.some((item) => item.outcome === "quarantined")) process.exitCode = 1;
   } else throw new TypeError(`unsupported lifecycle event ${JSON.stringify(event)}`);
 } catch (error) {
-  warning(error);
-  if (event === "reconcile") process.exitCode = 1;
+  if (event === "spawn" && error instanceof SpawnRefusal) {
+    const refusal = {
+      schema_version: 1,
+      status: "unservable",
+      readiness: error.issue.readiness,
+      release_stage: "experimental-internal",
+      nothing_created_by_capability: true,
+      identity_resources_created: false,
+      admission: "advisory-hook-failure-cannot-prevent-oas-launch",
+      message: error.message,
+      next_action: oneNextAction(error.issue, process.env.OAS_AGENT),
+    };
+    if (Object.hasOwn(process.env, "OAS_ROOT")) {
+      // OAS 0.18 hooks are advisory. Preserve the specific refusal in its
+      // structured warning instead of letting execSync replace it with a
+      // truncated command path. Required-hook nonzero admission belongs to .2.
+      output({ ...refusal, warning: `aweb-identity-attach: ${error.message}; NOTHING CREATED by this capability; next action: ${refusal.next_action}` });
+    } else {
+      output(refusal);
+      process.stderr.write(`aweb-identity-attach: ${error.message.slice(0, 110)}; NOTHING CREATED by this capability; OAS hook admission remains advisory\n`);
+      process.exitCode = 1;
+    }
+  } else {
+    warning(error);
+    if (event === "reconcile" || event === "status") process.exitCode = 1;
+  }
 }
