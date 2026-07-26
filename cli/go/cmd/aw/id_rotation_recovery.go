@@ -11,6 +11,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/crashtest"
 	"github.com/awebai/aw/internal/pathpreflight"
 	"gopkg.in/yaml.v3"
 )
@@ -115,6 +116,8 @@ func removePendingRotationStateOwned(rotationDir, stableID, operationID string) 
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	// Crash-test observation only; owned state removal is the transaction end.
+	crashtest.Checkpoint("after-pending-state-removal", path)
 	return nil
 }
 
@@ -137,13 +140,19 @@ func preflightRotationFile(path string) error {
 }
 
 func cleanupPendingRotationKeypair(keyPath string) error {
-	for _, path := range []string{keyPath, awid.PublicKeyPath(keyPath)} {
+	for index, path := range []string{keyPath, awid.PublicKeyPath(keyPath)} {
 		if err := preflightRotationFile(path); err != nil {
 			return err
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
+		// Crash-test observation only; each removal exposes a distinct recovery state.
+		point := "after-pending-private-removal"
+		if index == 1 {
+			point = "after-pending-public-removal"
+		}
+		crashtest.Checkpoint(point, path)
 	}
 	return nil
 }
@@ -234,12 +243,15 @@ func promotePendingRotationKeypair(activeKeyPath string, pendingKeyPath string, 
 	if err := os.Rename(pendingKeyPath, activeKeyPath); err != nil {
 		return "", err
 	}
+	// Crash-test observation only; the active key pair is intentionally split here.
+	crashtest.Checkpoint("after-active-private-rename", activeKeyPath)
 	if err := os.Rename(awid.PublicKeyPath(pendingKeyPath), awid.PublicKeyPath(activeKeyPath)); err != nil {
 		if recoverErr := ensurePublicKeyMatchesPrivate(activeKeyPath); recoverErr == nil {
 			return activeKeyPath, nil
 		}
 		return "", err
 	}
+	crashtest.Checkpoint("after-active-public-rename", awid.PublicKeyPath(activeKeyPath))
 	return activeKeyPath, nil
 }
 

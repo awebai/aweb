@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/awebai/aw/internal/crashtest"
 	"github.com/awebai/aw/internal/pathpreflight"
 )
 
@@ -35,7 +36,13 @@ func SaveKeypairAt(keyPath, pubPath string, pub ed25519.PublicKey, priv ed25519.
 	if err := writePrivateKey(keyPath, priv); err != nil {
 		return err
 	}
-	return writePublicKey(pubPath, pub)
+	// Crash-test observation only; inert without the inherited pipe capability.
+	crashtest.Checkpoint("after-keypair-private-commit", keyPath)
+	if err := writePublicKey(pubPath, pub); err != nil {
+		return err
+	}
+	crashtest.Checkpoint("after-keypair-public-commit", pubPath)
+	return nil
 }
 
 // SaveSigningKey writes only the private signing key PEM to the given path.
@@ -136,7 +143,13 @@ func ArchiveKey(keysDir, oldDID string, pub ed25519.PublicKey, priv ed25519.Priv
 	if err := writePrivateKey(keyPath, priv); err != nil {
 		return err
 	}
-	return writePublicKey(pubPath, pub)
+	// Crash-test observation only; archive files form a separate durable pair.
+	crashtest.Checkpoint("after-keypair-private-commit", keyPath)
+	if err := writePublicKey(pubPath, pub); err != nil {
+		return err
+	}
+	crashtest.Checkpoint("after-keypair-public-commit", pubPath)
+	return nil
 }
 
 func writePrivateKey(path string, priv ed25519.PrivateKey) error {

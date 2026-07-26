@@ -12,6 +12,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/crashtest"
 	"github.com/spf13/cobra"
 )
 
@@ -303,6 +304,8 @@ func finalizePendingRotation(identity *awconfig.ResolvedIdentity, rotationDir st
 	if err := awconfig.SaveWorktreeIdentityTo(identity.IdentityPath, local); err != nil {
 		return fmt.Errorf("update local identity state: %w", err)
 	}
+	// Crash-test observation only; active key files and identity now agree.
+	crashtest.Checkpoint("after-identity-state-commit", identity.IdentityPath)
 	if err := cleanupPendingRotationKeypair(state.PendingKey); err != nil {
 		return fmt.Errorf("clean pending rotation key material: %w", err)
 	}

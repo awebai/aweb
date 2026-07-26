@@ -11,6 +11,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/crashtest"
 	"github.com/spf13/cobra"
 )
 
@@ -94,6 +95,8 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Crash-test observation only; inert without the inherited pipe capability.
+	crashtest.Checkpoint("after-key-generation")
 	oldDID := strings.TrimSpace(identity.DID)
 	newDID := awid.ComputeDIDKey(newPub)
 	if oldDID == newDID {
@@ -115,6 +118,8 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 	if err := savePendingRotationState(rotationDir, pendingState); err != nil {
 		return err
 	}
+	// Crash-test observation only; the state rename is now visible to recovery.
+	crashtest.Checkpoint("after-pending-state-commit")
 	if _, err := savePendingRotationKeypair(rotationDir, operationID, newPub, newPriv); err != nil {
 		_ = cleanupPendingRotationKeypair(pendingKeyPath)
 		_ = removePendingRotationStateOwned(rotationDir, identity.StableID, operationID)
@@ -159,7 +164,6 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 			nil,
 		)
 	}
-
 	if err := finalizePendingRotation(identity, rotationDir, pendingState); err != nil {
 		return rotationFinalizeError(rotationDir, identity.StableID, "failed to finalize the applied rotation", err)
 	}
