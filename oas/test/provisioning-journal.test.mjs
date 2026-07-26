@@ -244,6 +244,27 @@ test("per-intent lock serializes stale takeover, never takes a live holder, and 
     operation_id TEXT PRIMARY KEY, token TEXT NOT NULL, pid INTEGER NOT NULL, acquired_at TEXT NOT NULL
   ) STRICT`);
   legacyDatabase.close();
+  const journalModule = new URL("../.agents/capabilities/owned/aweb-identity-attach/lib/provisioning-journal.mjs", import.meta.url).href;
+  const runWorker = (worker) => new Promise((resolveWorker) => {
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", worker], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => resolveWorker({ status, stderr }));
+  });
+  const migrationWorker = [
+    `import { withProvisionIntentLock } from ${JSON.stringify(journalModule)};`,
+    `try {`,
+    `  withProvisionIntentLock(${JSON.stringify(root)}, ${JSON.stringify(OPERATION_A)}, () => {`,
+    `    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);`,
+    `  });`,
+    `} catch (error) {`,
+    `  if (!/live holder|already locked/.test(error.message)) throw error;`,
+    `}`,
+  ].join("\n");
+  const migrationContenders = await Promise.all(Array.from({ length: 24 }, () => runWorker(migrationWorker)));
+  assert.equal(migrationContenders.every((result) => result.status === 0), true, migrationContenders.map((result) => result.stderr).join("\n"));
+
   withProvisionIntentLock(root, OPERATION_A, () => {
     assert.throws(() => withProvisionIntentLock(root, OPERATION_A, () => {}, {
       now: new Date(Date.now() + 600_000), staleAfterMs: 1,
@@ -253,7 +274,6 @@ test("per-intent lock serializes stale takeover, never takes a live holder, and 
   assert.equal(migratedDatabase.prepare("PRAGMA table_info(operation_locks)").all().some((column) => column.name === "process_identity"), true);
   migratedDatabase.close();
 
-  const journalModule = new URL("../.agents/capabilities/owned/aweb-identity-attach/lib/provisioning-journal.mjs", import.meta.url).href;
   const killed = spawnSync(process.execPath, ["--input-type=module", "--eval", [
     `import { withProvisionIntentLock } from ${JSON.stringify(journalModule)};`,
     `withProvisionIntentLock(${JSON.stringify(root)}, ${JSON.stringify(OPERATION_A)}, () => process.exit(0));`,
@@ -298,14 +318,7 @@ test("per-intent lock serializes stale takeover, never takes a live holder, and 
     `  if (!/live holder|already locked/.test(error.message)) throw error;`,
     `}`,
   ].join("\n");
-  const runWorker = () => new Promise((resolveWorker) => {
-    const child = spawn(process.execPath, ["--input-type=module", "--eval", worker], { stdio: ["ignore", "pipe", "pipe"] });
-    let stderr = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("close", (status) => resolveWorker({ status, stderr }));
-  });
-  const contenders = await Promise.all([runWorker(), runWorker()]);
+  const contenders = await Promise.all([runWorker(worker), runWorker(worker)]);
   assert.deepEqual(contenders.map((result) => result.status), [0, 0], contenders.map((result) => result.stderr).join("\n"));
   assert.equal(readFileSync(winners, "utf8").trim().split("\n").length, 1, "exactly one concurrent stale reclaimer may enter");
 

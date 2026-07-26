@@ -113,8 +113,9 @@ cleaned; a later spawn allocates its own operation and principal.
   run under `BEGIN IMMEDIATE`; takeover compare-and-swaps the observed random
   token and refuses only the same host-boot/process-birth identity, not a reused
   PID. No lock pathname is unlinked/recreated, so a concurrent scanner cannot
-  replace or remove a fresh holder. Process-kill and prior-boot PID-reuse
-  positive controls prove transactional stale takeover.
+  replace or remove a fresh holder. Legacy lock-schema migration uses the same
+  serialized transaction. Process-kill, prior-boot PID-reuse, two-reclaimer,
+  and 24-process concurrent migration controls prove the takeover path.
 - Automatic states: stale `allocated`, `provisioning`, and `cleanup-pending`.
   `prepared` and `bound` are not inferred to mean launched and are never globally
   selected. Only
