@@ -64,24 +64,19 @@ class _ConnectFailingRegistryClient:
 class _FakeRedisPipeline:
     def __init__(self, redis) -> None:
         self.redis = redis
-        self.ops: list[tuple[str, tuple]] = []
+        self.ops: list[tuple[str, tuple, dict]] = []
 
-    def exists(self, key):
-        self.ops.append(("exists", (key,)))
-        return self
+    def __getattr__(self, name):
+        def enqueue(*args, **kwargs):
+            self.ops.append((name, args, kwargs))
+            return self
 
-    def hgetall(self, key):
-        self.ops.append(("hgetall", (key,)))
-        return self
-
-    def srem(self, key, value):
-        self.ops.append(("srem", (key, value)))
-        return self
+        return enqueue
 
     async def execute(self):
         results = []
-        for op, args in self.ops:
-            results.append(await getattr(self.redis, op)(*args))
+        for op, args, kwargs in self.ops:
+            results.append(await getattr(self.redis, op)(*args, **kwargs))
         self.ops.clear()
         return results
 
@@ -129,7 +124,7 @@ class _FakeRedis:
     def pubsub(self):
         return _FakePubSub(self)
 
-    def pipeline(self):
+    def pipeline(self, transaction=True):
         return _FakeRedisPipeline(self)
 
     async def publish(self, channel, message):
