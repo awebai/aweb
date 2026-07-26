@@ -114,7 +114,15 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 			}}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.test/teams/backend/certificates/revoke":
 			certificateRevoked = true
-			w.WriteHeader(http.StatusNoContent)
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("test server does not support hijacking")
+			}
+			conn, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = conn.Close()
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -279,6 +287,17 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	cleanupRetry.Env = append(testCommandEnv(root), "AWID_REGISTRY_URL="+server.URL)
 	cleanupRetry.Dir = instanceDir
 	cleanupOutput, cleanupErr = cleanupRetry.CombinedOutput()
+	if cleanupErr == nil {
+		t.Fatalf("second cleanup should lose the committed certificate-revoke response:\n%s", cleanupOutput)
+	}
+	if !certificateRevoked {
+		t.Fatal("certificate revoke did not commit before response loss")
+	}
+
+	cleanupFinal := exec.CommandContext(ctx, bin, cleanupArgs...)
+	cleanupFinal.Env = append(testCommandEnv(root), "AWID_REGISTRY_URL="+server.URL)
+	cleanupFinal.Dir = instanceDir
+	cleanupOutput, cleanupErr = cleanupFinal.CombinedOutput()
 	if cleanupErr != nil {
 		t.Fatalf("cleanup reconciliation failed: %v\n%s", cleanupErr, cleanupOutput)
 	}
