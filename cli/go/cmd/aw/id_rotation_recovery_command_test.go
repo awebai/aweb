@@ -117,8 +117,12 @@ func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 		wantPending         bool
 		wantActiveNew       bool
 		localPromoted       bool
+		splitPromoted       bool
+		plainRecovery       bool
 	}{
 		{name: "applied", registryState: "new", wantStatus: "finalized", wantActiveNew: true},
+		{name: "applied after split active-key promotion", registryState: "new", wantStatus: "finalized", wantActiveNew: true, splitPromoted: true},
+		{name: "plain rotate recovers split active-key promotion", registryState: "new", wantStatus: "finalized", wantActiveNew: true, splitPromoted: true, plainRecovery: true},
 		{name: "not applied", registryState: "old", wantStatus: "rolled_back"},
 		{name: "old key from another identity", registryState: "old", responseDIDAW: &wrongDIDAW, overrideResponseDID: true, wantStatus: "unknown_preserved", wantPending: true},
 		{name: "new key from another identity", registryState: "new", responseDIDAW: &wrongDIDAW, overrideResponseDID: true, wantStatus: "unknown_preserved", wantPending: true},
@@ -181,10 +185,22 @@ func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if tc.splitPromoted {
+				if err := os.Rename(pendingKey, awconfig.WorktreeSigningKeyPath(dir)); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-			out := runRotationRecoveryCommand(t, ctx, bin, dir, "recover")
+			action := []string{"recover"}
+			if tc.plainRecovery {
+				action = nil
+			}
+			out := runRotationRecoveryCommand(t, ctx, bin, dir, action...)
 			if out.Status != tc.wantStatus {
 				t.Fatalf("recover status=%q, want %q", out.Status, tc.wantStatus)
+			}
+			if out.RerunRequired != tc.plainRecovery {
+				t.Fatalf("recover rerun_required=%v, want %v", out.RerunRequired, tc.plainRecovery)
 			}
 			pending, err := loadPendingRotationState(rotationDir, stableID)
 			if err != nil {
@@ -213,6 +229,13 @@ func TestAwIDRotateKeyRecoverReconcilesAuthoritativeState(t *testing.T) {
 			}
 			if gotActive != wantActive {
 				t.Fatalf("active did=%q, want %q", gotActive, wantActive)
+			}
+			activePublic, err := awid.LoadPublicKey(awid.PublicKeyPath(awconfig.WorktreeSigningKeyPath(dir)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !active.Public().(ed25519.PublicKey).Equal(activePublic) {
+				t.Fatal("active signing private/public key files do not match after recovery")
 			}
 			if !tc.wantPending {
 				repeated := runRotationRecoveryCommand(t, ctx, bin, dir, "recover")
@@ -267,6 +290,70 @@ func TestAwIDRotateKeyWithPendingStateRecoversAndRequiresRerun(t *testing.T) {
 	}
 	if _, calls := fixture.snapshot(); calls != 0 {
 		t.Fatalf("rotation PUT calls=%d, want 0", calls)
+	}
+}
+
+func TestAwIDRotationRecoveryWithoutPendingStateStillRejectsIdentityKeyMismatch(t *testing.T) {
+	oldPub, oldPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPub, newPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDID := awid.ComputeDIDKey(oldPub)
+	stableID := awid.ComputeStableID(oldPub)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeStandaloneSelfCustodyIdentity(t, dir, "acme.com/alice", oldDID, stableID, "https://registry.invalid", oldPriv)
+	if err := awid.SaveKeypairAt(
+		awconfig.WorktreeSigningKeyPath(dir),
+		awid.PublicKeyPath(awconfig.WorktreeSigningKeyPath(dir)),
+		newPub,
+		newPriv,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	actions := []struct {
+		name string
+		args []string
+	}{
+		{name: "recover", args: []string{"recover"}},
+		{name: "status", args: []string{"status"}},
+		{name: "plain"},
+	}
+	for _, action := range actions {
+		args := append([]string{"id", "rotate-key"}, action.args...)
+		args = append(args, "--json")
+		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd.Env = testCommandEnv(dir)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "does not match .aw/signing.key") {
+			t.Fatalf("%s mismatch error=%v\n%s", action.name, err, out)
+		}
+	}
+	rotationDir := filepath.Join(dir, ".aw", "rotation")
+	pending, err := loadPendingRotationState(rotationDir, stableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending != nil {
+		t.Fatalf("ordinary mismatched identity created pending operation: %+v", pending)
+	}
+	entries, err := os.ReadDir(filepath.Join(rotationDir, "pending"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".lock") {
+			t.Fatalf("ordinary mismatched identity created pending file: %s", entry.Name())
+		}
 	}
 }
 

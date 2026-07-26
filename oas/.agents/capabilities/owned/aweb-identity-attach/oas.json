@@ -1,11 +1,11 @@
 {
   "capability": "aweb.identity-attach",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "compatibility": {
     "oas": ">=0.18.0"
   },
   "layer": "messaging",
-  "description": "Attach an OAS instance to an externally owned aweb principal.",
+  "description": "Decide explicit aweb principal binding and cleanup authorization policy for an OAS instance.",
   "requires": [
     {
       "command": "aw",

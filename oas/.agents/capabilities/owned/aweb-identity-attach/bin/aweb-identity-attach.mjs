@@ -1,12 +1,21 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { isAbsolute, join, normalize, resolve, sep } from "node:path";
 
 import {
+  attachmentReceipt,
+  cleanupJudgement,
+  loadCleanupCorroboration,
+  pendingProvisionReceipt,
+  validateBindingSettings,
+} from "../lib/binding-policy.mjs";
+import {
   assertPrincipalStoreContained,
   assertPrincipalStoreSafe,
   loadPrincipalDeclaration,
+  resolvePrincipalHome,
   resolvePrincipalStore,
   validatePrincipalDeclaration,
 } from "../lib/principals.mjs";
@@ -27,27 +36,14 @@ function requiredAbsoluteDirectory(value, name) {
   return path;
 }
 
-function parseAttachSettings() {
+function parseBindingSettings() {
   let settings;
   try {
     settings = JSON.parse(process.env.OAS_SETTINGS || "{}");
   } catch {
     throw new TypeError("OAS_SETTINGS must be valid JSON");
   }
-  const binding = settings?.identity_binding;
-  if (!binding || typeof binding !== "object" || Array.isArray(binding)) {
-    throw new TypeError("identity_binding settings are required");
-  }
-  const fields = Object.keys(binding).sort();
-  if (fields.join(",") !== "mode,principal,schema_version") {
-    throw new TypeError("identity_binding must contain exactly schema_version, mode, and principal");
-  }
-  if (binding.schema_version !== 1) throw new TypeError("identity_binding.schema_version must be 1");
-  if (binding.mode !== "attach") throw new TypeError("only attach mode is supported by this capability");
-  if (typeof binding.principal !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(binding.principal)) {
-    throw new TypeError("identity_binding.principal must be a declaration basename");
-  }
-  return binding;
+  return validateBindingSettings(settings?.identity_binding);
 }
 
 function exactFields(value, required, optional = []) {
@@ -117,8 +113,7 @@ function parseWhoami(stdout) {
   return identity;
 }
 
-function attach() {
-  const binding = parseAttachSettings();
+function attach(binding) {
   const instanceHome = requiredAbsoluteDirectory(process.env.OAS_HOME, "OAS_HOME");
   const context = requiredAbsoluteDirectory(process.env.OAS_CONTEXT, "OAS_CONTEXT");
   const soul = process.env.OAS_AGENT;
@@ -155,7 +150,7 @@ function attach() {
     throw new Error(`attached identity team_id ${JSON.stringify(whoami.team_id)} does not match declaration ${JSON.stringify(declaration.team_id)}`);
   }
 
-  const identityBinding = validatePersistedAttachBinding({
+  const legacyBinding = validatePersistedAttachBinding({
     schema_version: 1,
     mode: "attach",
     cleanup_owner: "external",
@@ -168,9 +163,19 @@ function attach() {
     ...(declaration.soul_version === undefined ? {} : { soul_version: declaration.soul_version }),
     store,
   });
+  if (binding.legacy) {
+    output({
+      meta: { identity_binding: legacyBinding },
+      brief: `Identity: attached to ${declaration.address} (${declaration.stable_id}); external cleanup ownership preserves the principal when this instance retires.`,
+    });
+    return;
+  }
   output({
-    meta: { identity_binding: identityBinding },
-    brief: `Identity: attached to ${declaration.address} (${declaration.stable_id}); external cleanup ownership preserves the principal when this instance retires.`,
+    meta: {
+      identity_binding: attachmentReceipt({ declarationPath, stableID: declaration.stable_id }),
+      attachment: legacyBinding,
+    },
+    brief: `Identity: attached-existing ${declaration.address} (${declaration.stable_id}); external cleanup ownership preserves the principal when this instance retires.`,
   });
 }
 
@@ -179,26 +184,58 @@ function retire() {
   try {
     metadata = JSON.parse(process.env.OAS_META || "{}");
   } catch {
-    throw new TypeError("persisted OAS_META is invalid; no principal cleanup was attempted");
+    const digest = createHash("sha256").update(process.env.OAS_META || "").digest("hex");
+    output({
+      meta: {
+        identity_binding_evidence: { format: "unparseable", sha256: digest },
+        retirement: { action: "preserve", cleanup_authorized: false, reason: "unparseable_instance_metadata" },
+      },
+    });
+    return;
   }
-  let binding;
   try {
-    binding = validatePersistedAttachBinding(metadata?.identity_binding);
+    const legacy = validatePersistedAttachBinding(metadata?.identity_binding);
+    output({
+      meta: {
+        identity_binding: legacy,
+        retirement: { action: "preserve_principal", cleanup_owner: "external" },
+      },
+    });
+    return;
   } catch {
-    throw new Error("persisted external attach binding is missing or malformed; no principal cleanup was attempted");
+    // v2 judgements below preserve on every invalid or unattributable receipt.
   }
+  const instanceID = process.env.OAS_INSTANCE || "";
+  const corroborationHome = join(resolvePrincipalHome(), ".corroboration", "cleanup");
+  let corroboration = null;
+  try {
+    corroboration = loadCleanupCorroboration(corroborationHome, instanceID);
+  } catch {
+    corroboration = null;
+  }
+  const judgement = cleanupJudgement(metadata?.identity_binding, corroboration, instanceID);
   output({
     meta: {
-      identity_binding: binding,
-      retirement: { action: "preserve_principal", cleanup_owner: "external" },
+      identity_binding_evidence: metadata?.identity_binding ?? null,
+      retirement: judgement,
     },
   });
 }
 
 const event = process.env.OAS_EVENT || process.argv[2];
 try {
-  if (event === "spawn") attach();
-  else if (event === "retire") retire();
+  if (event === "spawn") {
+    const binding = parseBindingSettings();
+    if (binding.mode === "attach" || binding.mode === "attach-existing") attach(binding);
+    else {
+      const receipt = pendingProvisionReceipt(binding);
+      output({
+        meta: { identity_binding: receipt },
+        warning: `${binding.mode} is declared but provisioning execution is not installed; no identity was created`,
+        brief: `Identity binding policy: ${binding.mode}; provisioning is pending and no cleanup is authorized.`,
+      });
+    }
+  } else if (event === "retire") retire();
   else throw new TypeError(`unsupported lifecycle event ${JSON.stringify(event)}`);
 } catch (error) {
   warning(error);
