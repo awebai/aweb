@@ -604,7 +604,14 @@ test("native status and reconciliation commands enforce active capability and ex
   assert.match(inactive.stderr, /not active/);
   const inactiveStatus = statusCommand(["--soul", "developer", "--json"], inactiveRepo, { ...process.env, PI_AGENT_HOME: "", OAS_HOME: "" });
   assert.equal(inactiveStatus.status, 1);
-  assert.match(inactiveStatus.stderr, /not active/);
+  // JSON capability-command refusals use the structured stdout envelope;
+  // non-JSON reconcile reports the same active gate on stderr.
+  assert.equal(inactiveStatus.stderr, "");
+  const inactiveFailure = JSON.parse(inactiveStatus.stdout);
+  assert.equal(inactiveFailure.schemaVersion, 1);
+  assert.equal(inactiveFailure.ok, false);
+  assert.equal(inactiveFailure.error.code, "E_CAPABILITY_INACTIVE");
+  assert.match(inactiveFailure.error.message, /not active/);
 
   const untrustedRepo = join(temporaryDirectory(), "untrusted");
   gitRepo(untrustedRepo);
@@ -618,7 +625,12 @@ test("native status and reconciliation commands enforce active capability and ex
   assert.match(untrusted.stderr, /blocked.*oas trust/i);
   const untrustedStatus = statusCommand(["--soul", "developer", "--json"], untrustedRepo, { ...process.env, PI_AGENT_HOME: "", OAS_HOME: "" });
   assert.equal(untrustedStatus.status, 1);
-  assert.match(untrustedStatus.stderr, /blocked.*oas trust/i);
+  assert.equal(untrustedStatus.stderr, "");
+  const untrustedFailure = JSON.parse(untrustedStatus.stdout);
+  assert.equal(untrustedFailure.schemaVersion, 1);
+  assert.equal(untrustedFailure.ok, false);
+  assert.equal(untrustedFailure.error.code, "E_CAPABILITY_BLOCKED");
+  assert.match(untrustedFailure.error.message, /blocked.*oas trust/i);
 });
 
 test("operator and later-spawn reconciliation clean durable pending local intents", () => {
