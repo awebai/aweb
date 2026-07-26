@@ -915,6 +915,26 @@ test("same local instance name gets operation-unique corroboration with terminal
   assert.equal(existsSync(join(first.corroborationHome, `${secondReceipt.journal_operation}.json`)), false);
 });
 
+test("exact reconcile releases corroboration left beside a complete journal", () => {
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
+  const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "complete-record-recovery", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  const receipt = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8")).capabilityMeta["aweb.identity-attach"].identity_binding;
+  const operation = receipt.journal_operation;
+  const journalPath = join(f.principalHome, ".provisioning", "intents", `${operation}.json`);
+  const journal = JSON.parse(readFileSync(journalPath, "utf8"));
+  journal.state = "complete";
+  journal.revision += 1;
+  writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+  assert.equal(existsSync(join(f.corroborationHome, `${operation}.json`)), true);
+
+  const reconciled = reconcileCommand(["--operation", operation], f.repo, f.env);
+  assert.equal(reconciled.status, 0, reconciled.stderr);
+  assert.equal(JSON.parse(reconciled.stdout).operations[0].outcome, "cleanup-authority-released");
+  assert.equal(existsSync(join(f.corroborationHome, `${operation}.json`)), false);
+});
+
 test("local same-UID corroboration guards cleanup judgement against receipt-only mistakes", () => {
   function spawnedDisposable() {
     const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });

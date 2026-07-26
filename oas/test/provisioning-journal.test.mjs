@@ -23,7 +23,7 @@ import {
   withProvisionIntentLock,
   writeProvisionCleanupCorroboration,
 } from "../.agents/capabilities/owned/aweb-identity-attach/lib/provisioning-journal.mjs";
-import { loadCleanupCorroboration } from "../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs";
+import { cleanupCorroborationPayload, loadCleanupCorroboration } from "../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs";
 
 const OPERATION_A = "oas-AAAAAAAAAAAAAAAAAAAAAA";
 const OPERATION_B = "oas-BBBBBBBBBBBBBBBBBBBBBQ";
@@ -163,6 +163,17 @@ test("handoff, cleanup, and corroboration remain durable outside the instance", 
   assert.equal(removeProvisionCleanupCorroboration(root, OPERATION_A), true);
   assert.equal(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), OPERATION_A), null);
   assert.deepEqual(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), OPERATION_B).receipt, secondReceipt);
+
+  const legacyRecord = { schema_version: 1, corroboration_class: "local-same-uid", instance_id: "legacy-instance", receipt };
+  const legacyEncoded = {
+    ...legacyRecord,
+    digest: createHash("sha256").update(cleanupCorroborationPayload(legacyRecord)).digest("hex"),
+  };
+  const corroborationHome = join(root, ".corroboration", "cleanup");
+  writeFileSync(join(corroborationHome, "legacy-instance.json"), `${JSON.stringify(legacyEncoded, null, 2)}\n`, { mode: 0o600 });
+  assert.deepEqual(loadCleanupCorroboration(corroborationHome, OPERATION_A, "legacy-instance").receipt, receipt);
+  assert.equal(existsSync(join(corroborationHome, `${OPERATION_A}.json`)), true, "legacy record must be adopted under operation key");
+  assert.equal(existsSync(join(corroborationHome, "legacy-instance.json")), false, "adoption must shrink legacy population");
   const cleaning = markProvisionIntentCleanupPending(root, OPERATION_A, "retire", start);
   assert.equal(cleaning.state, "cleanup-pending");
   assert.equal(cleaning.cleanup.attempts, 1);

@@ -573,9 +573,13 @@ function recoverProvisionIntents(principalHome, cwd, {
         if (intent.state === "cleanup-pending") {
           if (!cleanupAttemptStarted) intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, "recovery-retry");
           const cleanup = runCleanupCommandForIntent(intent, cwd);
-          markProvisionIntentComplete(principalHome, intent.operation_id);
           removeProvisionCleanupCorroboration(principalHome, intent.operation_id);
+          markProvisionIntentComplete(principalHome, intent.operation_id);
           return { operation_id: intent.operation_id, outcome: "cleanup-complete", cleanup };
+        }
+        if (intent.state === "complete") {
+          removeProvisionCleanupCorroboration(principalHome, intent.operation_id);
+          return { operation_id: intent.operation_id, outcome: "cleanup-authority-released" };
         }
         return { operation_id: intent.operation_id, outcome: `left-${intent.state}` };
       });
@@ -703,8 +707,8 @@ function executeLocalCleanup(receipt, instanceID) {
     }
     intent = markProvisionIntentCleanupPending(principalHome, operationID, "ordinary-retire");
     const result = runCleanupCommandForIntent(intent, requiredAbsoluteDirectory(process.env.OAS_HOME, "OAS_HOME"));
-    markProvisionIntentComplete(principalHome, operationID);
     removeProvisionCleanupCorroboration(principalHome, operationID);
+    markProvisionIntentComplete(principalHome, operationID);
     return result;
   });
 }
@@ -755,7 +759,7 @@ function retire() {
   const corroborationHome = join(resolvePrincipalHome(), ".corroboration", "cleanup");
   let corroboration = null;
   try {
-    corroboration = loadCleanupCorroboration(corroborationHome, metadata?.identity_binding?.journal_operation);
+    corroboration = loadCleanupCorroboration(corroborationHome, metadata?.identity_binding?.journal_operation, instanceID);
   } catch {
     corroboration = null;
   }
