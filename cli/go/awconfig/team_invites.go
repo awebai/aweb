@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -20,6 +22,7 @@ type TeamInvite struct {
 	Secret      string `json:"secret" yaml:"secret"`
 	RegistryURL string `json:"registry_url,omitempty" yaml:"registry_url,omitempty"`
 	AwebURL     string `json:"aweb_url,omitempty" yaml:"aweb_url,omitempty"`
+	OperationID string `json:"operation_id,omitempty" yaml:"operation_id,omitempty"`
 	CreatedAt   string `json:"created_at" yaml:"created_at"`
 }
 
@@ -64,6 +67,9 @@ func SaveTeamInvite(invite *TeamInvite) error {
 	if invite == nil {
 		return errors.New("nil invite")
 	}
+	if invite.OperationID != "" && !provisionOperationIDPattern.MatchString(invite.OperationID) {
+		return fmt.Errorf("invalid operation ID: %q", invite.OperationID)
+	}
 	path, err := teamInvitePath(invite.InviteID)
 	if err != nil {
 		return err
@@ -81,6 +87,13 @@ func LoadTeamInvite(inviteID string) (*TeamInvite, error) {
 	path, err := teamInvitePath(inviteID)
 	if err != nil {
 		return nil, err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("team invite must be a regular file, not a symbolic link: %s", path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -103,6 +116,44 @@ func DeleteTeamInvite(inviteID string) error {
 		return err
 	}
 	return nil
+}
+
+var provisionOperationIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
+// ListTeamInvitesByOperation returns every local grant attributed to one
+// provision intent. Operation IDs are stored outside the bearer token so a
+// scanner can identify abandoned grants without exposing their secrets.
+func ListTeamInvitesByOperation(operationID string) ([]*TeamInvite, error) {
+	if !provisionOperationIDPattern.MatchString(operationID) {
+		return nil, fmt.Errorf("invalid operation ID: %q", operationID)
+	}
+	dir, err := DefaultTeamInvitesDir()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	matches := make([]*TeamInvite, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		inviteID := strings.TrimSuffix(entry.Name(), ".json")
+		invite, err := LoadTeamInvite(inviteID)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(invite.OperationID) == operationID {
+			matches = append(matches, invite)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool { return matches[i].InviteID < matches[j].InviteID })
+	return matches, nil
 }
 
 // EncodeInviteToken encodes an invite into a shareable base64url token.

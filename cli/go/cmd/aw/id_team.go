@@ -1227,6 +1227,10 @@ func runTeamLeave(cmd *cobra.Command, args []string) error {
 }
 
 func createTeamInviteToken(domain, team, registryURL, awebURL string, ephemeral bool) (string, string, error) {
+	return createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL, ephemeral, "")
+}
+
+func createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL string, ephemeral bool, operationID string) (string, string, error) {
 	domain = awconfig.NormalizeDomain(domain)
 	team = strings.ToLower(strings.TrimSpace(team))
 	registryURL = strings.TrimSpace(registryURL)
@@ -1261,6 +1265,7 @@ func createTeamInviteToken(domain, team, registryURL, awebURL string, ephemeral 
 		Secret:      secret,
 		RegistryURL: registryURL,
 		AwebURL:     awebURL,
+		OperationID: operationID,
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := awconfig.SaveTeamInvite(invite); err != nil {
@@ -3361,19 +3366,19 @@ func resolveTeamMemberEnrollment(ctx context.Context, opts teamMemberEnrollmentR
 		if opts.NoAddress {
 			return teamMemberEnrollmentPlan{}, usageError("--no-address requires --global")
 		}
-		teamState, err := loadOptionalTeamState(opts.WorkingDir)
+		teamState, err := loadOptionalTeamState(opts.WorkingDir, opts.IdentityHome)
 		if err != nil {
 			return teamMemberEnrollmentPlan{}, err
 		}
 		if teamState != nil && len(teamState.Memberships) > 0 {
 			return teamMemberEnrollmentPlan{}, usageError("local identities can only enroll in one team; use --first-agent-global/--global to reuse a global identity across teams, or use a fresh workspace for local")
 		}
-		if identity, err := awconfig.ResolveIdentity(opts.WorkingDir); err == nil && strings.TrimSpace(identity.IdentityScope) == awid.IdentityModeGlobal {
+		if identity, err := resolveTeamAcceptIdentity(opts.WorkingDir, opts.IdentityHome); err == nil && strings.TrimSpace(identity.IdentityScope) == awid.IdentityModeGlobal {
 			return teamMemberEnrollmentPlan{}, usageError("this workspace already has a global identity; use --global/--first-agent-global to reuse it, or use a fresh workspace for local")
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return teamMemberEnrollmentPlan{}, err
 		}
-		memberDIDKey, err := resolveOrGenerateMemberDIDKey(opts.WorkingDir, opts.AllowLocalMint)
+		memberDIDKey, err := resolveOrGenerateMemberDIDKeyAt(opts.WorkingDir, opts.IdentityHome, opts.AllowLocalMint)
 		if err != nil {
 			return teamMemberEnrollmentPlan{}, err
 		}
@@ -3549,15 +3554,33 @@ func validateMemberAddressForCertificate(
 }
 
 func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, error) {
-	// Try to load existing identity
+	return resolveOrGenerateMemberDIDKeyAt(workingDir, "", ephemeral)
+}
+
+func resolveOrGenerateMemberDIDKeyAt(workingDir, identityHome string, ephemeral bool) (string, error) {
+	// Try to load existing identity.
 	identityPath := awconfig.WorktreeIdentityPath(workingDir)
+	if strings.TrimSpace(identityHome) != "" {
+		path, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "identity.yaml")
+		if err != nil {
+			return "", err
+		}
+		identityPath = path
+	}
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
 	if err == nil && strings.TrimSpace(identity.DID) != "" {
 		return strings.TrimSpace(identity.DID), nil
 	}
 
-	// Try to load existing signing key
+	// Try to load existing signing key.
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	if strings.TrimSpace(identityHome) != "" {
+		path, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "signing.key")
+		if err != nil {
+			return "", err
+		}
+		signingKeyPath = path
+	}
 	signingKey, err := awid.LoadSigningKey(signingKeyPath)
 	if err == nil {
 		return awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)), nil
@@ -3572,10 +3595,12 @@ func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, e
 	if err != nil {
 		return "", err
 	}
-	if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
-		return "", err
+	if strings.TrimSpace(identityHome) == "" {
+		if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
+			return "", err
+		}
 	}
-	if err := awid.SaveSigningKey(signingKeyPath, priv); err != nil {
+	if err := awid.SaveSigningKeyExclusive(signingKeyPath, priv); err != nil {
 		return "", err
 	}
 	return awid.ComputeDIDKey(pub), nil

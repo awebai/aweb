@@ -122,7 +122,7 @@ async def test_agent_deleted_cascade_releases_claims_events_and_presence(aweb_cl
         and event.alias == "alice"
         for event in published_team
     )
-    assert [str(workspace_id)] in cleared_workspaces
+    assert {str(workspace_id), str(agent_id)} in [set(ids) for ids in cleared_workspaces]
 
 
 @pytest.mark.asyncio

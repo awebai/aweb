@@ -770,7 +770,7 @@ server handler's behaviour with a no-launch OAS wiring regression. So the
 conclusion would survive a launched session; the demonstration, as run, did not
 include one.
 
-So the established results are bounded **safety** results, and are exactly two:
+So the established results are bounded **safety** results, and are exactly three:
 
 - ordinary `oas retire` of an attached instance neither altered nor deleted the
   principal, and leaked no material into the instance (`.17`). The harness
@@ -792,8 +792,22 @@ So the established results are bounded **safety** results, and are exactly two:
   is `SELECT`-only (`server/src/aweb/routes/agents.py:541-582`). Merged at
   `affe23ac`; `2aec5f3e` added **headers** to the already-observed
   method/URI/body surface.
+- local-controller disposable cleanup is exercised against a fresh loopback
+  AWID and aweb stack in the same committed harness. A forged instance-side
+  victim receipt and an independently forged execution operation both leave the
+  throwaway victim active; ordinary retire then revokes its real AWID
+  certificate, soft-deletes its real aweb agent/workspace rows, and removes its
+  local grants and credential material. Seeded PostgreSQL task-claim/reservation
+  and Redis presence controls are removed; the external journals are terminal;
+  and pre-cleanup credential snapshots find no name/digest/symlink/inode copies
+  in either instance or the controlled repository. The second throwaway identity
+  is removed through the native, active/trust-gated, exact-operation OAS command.
+  Removing the target operation comparison makes the forged execution cleanup
+  revoke/delete the real victim and turns the owning-authority assertion red.
+  This is a local same-UID accident/confused-deputy result, not hostile-model
+  resistance (`.33`).
 
-Neither establishes the absence of *every* harm — not provision-mode paths, not
+None establishes the absence of *every* harm — not unsupported provision paths, not
 future code, not a route nobody has tested. Do not restate these as "cannot harm
 a principal". That it can *use* one is unproven, and stays unproven until some
 mechanism propagates the resolved identity home into the launched process

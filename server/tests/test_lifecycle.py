@@ -158,7 +158,7 @@ async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db,
     assert len(result.failed_event_intents) == 1
     assert result.failed_event_intents[0].event_kind == "workspace_task_unclaimed"
     assert result.presence_cleanup_status == "cleared"
-    assert [str(workspace_id)] in cleared_workspaces
+    assert {str(workspace_id), str(agent_id)} in [set(ids) for ids in cleared_workspaces]
 
     claim_count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",

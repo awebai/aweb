@@ -119,6 +119,10 @@ class _FakeRedisPipeline:
         self.redis = redis
         self.actions = []
 
+    def hgetall(self, key):
+        self.actions.append(("hgetall", key))
+        return self
+
     def delete(self, key):
         self.actions.append(("delete", key))
         return self
@@ -129,36 +133,70 @@ class _FakeRedisPipeline:
 
     async def execute(self):
         self.redis.pipeline_actions.extend(self.actions)
-        return [1 for _ in self.actions]
+        return [self.redis.presence.get(action[1], {}) if action[0] == "hgetall" else 1 for action in self.actions]
 
 
 class _FakeRedis:
     def __init__(self):
         self.published = []
         self.pipeline_actions = []
+        self.presence = {}
+        self.cleaned_presence_ids = []
 
     async def publish(self, channel, message):
         self.published.append((channel, json.loads(message)))
         return 1
 
-    def pipeline(self):
+    async def exists(self, key):
+        return int(key in self.presence)
+
+    async def scan_iter(self, match):
+        if False:
+            yield match
+
+    async def sismember(self, key, member):
+        return False
+
+    async def get(self, key):
+        return None
+
+    async def hset(self, key, mapping):
+        self.presence[key] = dict(mapping)
+        return len(mapping)
+
+    def pipeline(self, transaction=True):
         return _FakeRedisPipeline(self)
+
+    async def eval(self, script, number_of_keys, *args):
+        assert number_of_keys == 2
+        primary_key, coordinates_key, workspace_id, all_index_key = args
+        self.cleaned_presence_ids.append(workspace_id)
+        self.presence.pop(primary_key, None)
+        self.presence.pop(coordinates_key, None)
+        self.pipeline_actions.extend([
+            ("srem", all_index_key, workspace_id),
+            ("delete", primary_key),
+            ("delete", coordinates_key),
+        ])
+        return 1
 
 
 @pytest.mark.asyncio
-async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud_db):
+async def test_delete_workspace_recovers_post_commit_presence_failure(aweb_cloud_db, monkeypatch):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
+    _, _, target_did_key = _make_keypair()
     team_id = "backend:acme.com"
     workspace_id = uuid4()
     agent_id = uuid4()
+    authority_agent_id = uuid4()
 
     cert = _make_certificate(
         team_sk,
         team_did_key,
         agent_did_key,
         team_id=team_id,
-        alias="bob",
+        alias="provisioner",
         identity_scope="local",
     )
     headers = _signed_request(agent_sk, agent_did_key, team_id)
@@ -182,8 +220,19 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
         """,
         agent_id,
         team_id,
-        agent_did_key,
+        target_did_key,
         "bob",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, $3, $4, 'local', 'developer')
+        """,
+        authority_agent_id,
+        team_id,
+        agent_did_key,
+        "provisioner",
     )
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -213,13 +262,29 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
     )
 
     redis = _FakeRedis()
+    from aweb import lifecycle
+
+    original_clear = lifecycle.clear_workspace_presence
+    clear_calls = 0
+
+    async def _fail_after_sql_once(redis_client, workspace_ids):
+        nonlocal clear_calls
+        clear_calls += 1
+        if clear_calls == 1:
+            raise ConnectionError("simulated Redis failure after SQL commit")
+        return await original_clear(redis_client, workspace_ids)
+
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _fail_after_sql_once)
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=redis)
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
+        failed = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
         resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
 
+    assert failed.status_code == 503, failed.text
+    assert failed.json()["detail"]["code"] == "post_commit_cleanup_pending"
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["workspace_id"] == str(workspace_id)
@@ -270,6 +335,7 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
     )
     assert ("delete", f"presence:{workspace_id}") in redis.pipeline_actions
     assert ("srem", "idx:all_workspaces", str(workspace_id)) in redis.pipeline_actions
+    assert set(redis.cleaned_presence_ids) == {str(workspace_id), str(agent_id)}
 
 
 @pytest.mark.asyncio
