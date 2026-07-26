@@ -11,6 +11,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/crashtest"
 	"github.com/awebai/aw/internal/pathpreflight"
 	"gopkg.in/yaml.v3"
 )
@@ -115,6 +116,8 @@ func removePendingRotationStateOwned(rotationDir, stableID, operationID string) 
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	// Crash-test observation only; owned state removal is the transaction end.
+	crashtest.Checkpoint("after-pending-state-removal", path)
 	return nil
 }
 
@@ -136,10 +139,49 @@ func preflightRotationFile(path string) error {
 	return pathpreflight.PreflightFile(path, "rotation recovery file", pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
 
-func cleanupPendingRotationKeypair(keyPath string) error {
-	for _, path := range []string{keyPath, awid.PublicKeyPath(keyPath)} {
+func cleanupPendingRotationKeypair(keyPath, expectedDID string) error {
+	for index, path := range []string{keyPath, awid.PublicKeyPath(keyPath)} {
 		if err := preflightRotationFile(path); err != nil {
 			return err
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		// Crash-test observation only; each removal exposes a distinct recovery state.
+		point := "after-pending-private-removal"
+		if index == 1 {
+			point = "after-pending-public-removal"
+		}
+		crashtest.Checkpoint(point, path)
+	}
+	return cleanupMatchingRotationPrivateTemps(filepath.Dir(keyPath), expectedDID)
+}
+
+func cleanupMatchingRotationPrivateTemps(dir, expectedDID string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !strings.HasPrefix(entry.Name(), ".tmp.") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		if err := preflightRotationFile(path); err != nil {
+			return err
+		}
+		key, err := awid.LoadSigningKey(path)
+		if err != nil {
+			continue
+		}
+		// Atomic temp names do not encode their destination. Bind residue to this
+		// operation by key identity; preserve every unknown or foreign temp.
+		did := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+		if strings.TrimSpace(did) != strings.TrimSpace(expectedDID) {
+			continue
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
@@ -234,12 +276,15 @@ func promotePendingRotationKeypair(activeKeyPath string, pendingKeyPath string, 
 	if err := os.Rename(pendingKeyPath, activeKeyPath); err != nil {
 		return "", err
 	}
+	// Crash-test observation only; the active key pair is intentionally split here.
+	crashtest.Checkpoint("after-active-private-rename", activeKeyPath)
 	if err := os.Rename(awid.PublicKeyPath(pendingKeyPath), awid.PublicKeyPath(activeKeyPath)); err != nil {
 		if recoverErr := ensurePublicKeyMatchesPrivate(activeKeyPath); recoverErr == nil {
 			return activeKeyPath, nil
 		}
 		return "", err
 	}
+	crashtest.Checkpoint("after-active-public-rename", awid.PublicKeyPath(activeKeyPath))
 	return activeKeyPath, nil
 }
 
@@ -277,6 +322,12 @@ func loadRotationSigningKey(activeKeyPath string, pending *pendingRotationState)
 	}
 	if strings.TrimSpace(awid.ComputeDIDKey(activePriv.Public().(ed25519.PublicKey))) != strings.TrimSpace(pending.NewDID) {
 		return nil, false, fmt.Errorf("load pending rotation key: %w", err)
+	}
+	// A crash may have moved the pending private key onto the active path but
+	// not its public sibling. Repair the pair before cleanup removes the only
+	// remaining copy of the replacement public key.
+	if err := ensurePublicKeyMatchesPrivate(activeKeyPath); err != nil {
+		return nil, false, fmt.Errorf("repair promoted signing key pair: %w", err)
 	}
 	return activePriv, true, nil
 }

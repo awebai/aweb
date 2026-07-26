@@ -3,6 +3,8 @@ package awid
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/awebai/aw/internal/crashtest"
 )
 
 // atomicWriteFile writes data to path using temp-file-and-rename
@@ -20,6 +22,14 @@ func AtomicWriteFile(path string, data []byte) error {
 // atomicWriteFileMode writes data to path using temp-file-and-rename.
 // The temp file is chmod'd to mode before any data is written.
 func atomicWriteFileMode(path string, data []byte, mode os.FileMode) error {
+	return atomicWriteFileModeAtCheckpoint(path, data, mode, "")
+}
+
+func atomicWritePrivateKeyFile(path string, data []byte) error {
+	return atomicWriteFileModeAtCheckpoint(path, data, 0o600, "after-private-key-temp-sync")
+}
+
+func atomicWriteFileModeAtCheckpoint(path string, data []byte, mode os.FileMode, checkpoint string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -46,6 +56,10 @@ func atomicWriteFileMode(path string, data []byte, mode os.FileMode) error {
 	}
 	if err := tmp.Close(); err != nil {
 		return err
+	}
+	if checkpoint != "" {
+		// Crash-test observation only; the synced secret temp is not yet renamed.
+		crashtest.Checkpoint(checkpoint, path)
 	}
 
 	return os.Rename(tmpName, path)

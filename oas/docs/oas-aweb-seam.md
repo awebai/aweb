@@ -313,6 +313,25 @@ the targeted soul; they are not a per-instance override. Concurrent use remains
 unfenced until the admission lease lands. Hook failure remains advisory: a
 warning or non-zero exit is observable, not enforcement, and must not be called
 fail-closed.
+Provisioning recovers by **reconciliation, not replay**. An earlier revision of
+this document specified a write-ahead journal keyed by a stable idempotency key,
+with replay producing no duplicate. No production path delivers that: neither
+invite accept carries an idempotency key, the hosted helper creates
+`max_uses: 1`, and AC checks the use count before any reconciliation, so
+replaying a consumed token returns 409 rather than a second copy of the answer.
+The requirement is instead that a crash never leaves a resource nobody owns and
+nobody can find, and that recovery determines **from remote state** whether the
+operation completed and adopts the result if it did.
+
+Two bounds on that, both established by scope review rather than by failure. No
+capability-side state can mean *launched* — OAS exposes a pre-launch hook and no
+post-launch acknowledgement — so the honest boundary is *provisioning completed
+and binding handed to OAS*. And on the hosted path the **earliest** crash point
+is not currently recoverable at all: the create-invite call carries no operation
+marker, AC generates both id and token server-side, and list-invites never
+returns the full token, so a lost response leaves a grant we cannot identify,
+recover or safely revoke (`aaaa.40`). Attach journals no cleanup authority, and
+its rollback must be provably non-destructive.
 
 ## Single-runner control
 
@@ -448,6 +467,27 @@ judgement later. This is the invariant stated at the top of this document applie
 to creation as well as attachment, without claiming primitives or security
 boundaries that do not yet exist.
 
+**The layers are separate, and the earlier text conflated them.** `aaaa.4` is
+the decision layer: it produces a *judgement* — preserve, or cleanup authorized
+— and it creates and deletes nothing. `aaaa.33` is the execution layer that acts
+on that judgement. So no single component both records a created resource and
+deletes it, and any description saying otherwise describes a shape we
+deliberately abandoned.
+
+**A judgement is only as strong as what backs it, and it must say which.** A
+receipt is never self-authorizing and corroboration is always required — that
+much is universal. What corroboration *buys* is not. Nothing stored where the
+model can write is an authority anchor, whatever cryptography is layered over
+it: hook and model share a UID, so a locally verified record establishes
+*internal consistency*, not provenance. Where the authority a destructive step
+needs is **absent from the machine**, refusing to act without it is a real
+security boundary — and there, corroboration must come from the remote authority
+itself, since it is the party that holds the authority. Where the authority is
+**locally exercisable**, corroboration prevents accident and confused-deputy
+mistakes and cannot prevent intent. The judgement must therefore carry its
+assurance level, so a caller cannot mistake the second for the first; where
+remote corroboration is required and unavailable, the judgement is **preserve**.
+
 Making attach a *peer* of provision rather than an exception is deliberate: an
 exception has a default that someone must remember, and a peer does not.
 
@@ -523,13 +563,16 @@ which is the exception — we built it first, and that ordering is corrected her
    capability-contributed launch arguments. Written and merged in our source;
    **not finished** — it is open upstream as OAS-Framework PR 37, and until that
    merges the defect stands for every consumer but us.
-2. **Lifecycle policy in the capability** (`aaaa.4`). The three binding modes,
-   receipt validity matrix, cleanup ownership, operation naming, and labelled
-   authorization judgement only. It creates and deletes nothing. Minting
-   authority is `.5`; disposable execution and cleanup are `.33`; durable
-   execution is `.39`.
-3. **Clean external customer proof** (`aaaa.28`). After `.5` and `.33`, a fresh
-   workspace, two developers, duplicate local instance names — the ordinary
+2. **Lifecycle policy, split into decision and execution.** `aaaa.4` is the
+   decision layer — the three binding modes, the receipt schema and validity
+   matrix, and a judgement that carries its own assurance level. It creates and
+   deletes nothing. `aaaa.33` is the execution layer that acts on that
+   judgement, and it waits on `aaaa.5` for minting authority and on `aaaa.40`
+   for whether a hosted grant can be reconciled after a lost response.
+   `provision-durable` has no production path today and must be **refused**
+   rather than half-executed; `aaaa.39` owns delivering it later.
+3. **Clean external customer proof** (`aaaa.28`). A fresh workspace, two
+   developers, duplicate local instance names — the ordinary
    provision-and-retire journey end to end.
 4. **A working attached runtime**, which is three things and not one. A
    pre-implementation review of what was originally scoped as a single step
