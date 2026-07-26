@@ -11,6 +11,15 @@
       "expected_status": "verified"
     },
     {
+      "name": "padded-signature",
+      "signed_payload": "{\"body\":\"world\",\"from\":\"alice\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"from_stable_id\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"message_id\":\"msg-001\",\"subject\":\"hello\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"to\":\"bob\",\"to_did\":\"\",\"type\":\"mail\"}",
+      "signature": "37ZbXgoIMkmO4dsFhe720VQQojGuG6UmB5jfbctiNZOC9+ibj23Bbx8GxIlfLBJ75xGkeuJOUjrbm0BAlAFvCQ==",
+      "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "signing_key_id": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "expected_status": "failed",
+      "note": "The SAME valid signature as the first vector, carrying the padding RawStdEncoding omits. Strict decoders reject it before verification, so the status is failed. WHAT THIS CATCHES (measured 2026-07-26, both runtimes): a decoder lenient about the ALPHABET decodes it to the correct 64 bytes and returns VERIFIED \u2014 Go's StdEncoding or trimming the padding, Node's Buffer.from, and atob once the unpadded-alphabet check is removed. This is the class where leniency is the difference between rejecting and ACCEPTING a signature the other runtime refuses, which is why it is worth a shared vector. WHAT THIS DOES NOT CATCH, stated so it is not assumed: a decoder that decodes leniently but SWALLOWS the error and returns empty or partial bytes. Measured \u2014 dropping Go's decode-error check and swapping TypeScript to the empty-on-malformed variant both leave this vector GREEN, because the partial decode then fails verification and the status is failed either way. No status-only vector can discriminate that shape, because ed25519 verification degrades to false rather than erroring. It is covered instead by the throw-before-verify guards added in default-aanl: verifier-call counting in TypeScript and the base64.CorruptInputError assertion in Go."
+    },
+    {
       "name": "valid-signature-with-omitted-signing-key-id",
       "signed_payload": "{\"body\":\"world\",\"from\":\"alice\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"from_stable_id\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"message_id\":\"msg-001\",\"subject\":\"hello\",\"timestamp\":\"2025-01-01T00:00:00Z\",\"to\":\"bob\",\"to_did\":\"\",\"type\":\"mail\"}",
       "signature": "37ZbXgoIMkmO4dsFhe720VQQojGuG6UmB5jfbctiNZOC9+ibj23Bbx8GxIlfLBJ75xGkeuJOUjrbm0BAlAFvCQ",
