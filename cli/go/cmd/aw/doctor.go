@@ -130,10 +130,12 @@ type doctorCheck struct {
 	Target        *doctorTarget   `json:"target,omitempty"`
 	Authoritative bool            `json:"authoritative"`
 	Message       string          `json:"message"`
-	Detail        map[string]any  `json:"detail,omitempty"`
-	NextStep      string          `json:"next_step,omitempty"`
-	Fix           *doctorFixInfo  `json:"fix,omitempty"`
-	Handoff       *doctorHandoff  `json:"handoff,omitempty"`
+	// Detail is available in ordinary doctor output, but is omitted from
+	// shareable support bundles because its dynamic keys cannot be allowlisted.
+	Detail   map[string]any `json:"detail,omitempty"`
+	NextStep string         `json:"next_step,omitempty"`
+	Fix      *doctorFixInfo `json:"fix,omitempty"`
+	Handoff  *doctorHandoff `json:"handoff,omitempty"`
 }
 
 type doctorTarget struct {
@@ -270,6 +272,12 @@ func runDoctorSupportBundle(cmd *cobra.Command, opts doctorRunOptions) error {
 	if err := validateDoctorModeFlags(); err != nil {
 		return err
 	}
+	workingDir, _ := os.Getwd()
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	opts.IdentityHome = externalIdentityHomeRoot(home)
 	out, knownSecrets, err := buildDoctorSupportBundle(opts)
 	if err != nil {
 		return err
@@ -279,8 +287,12 @@ func runDoctorSupportBundle(cmd *cobra.Command, opts doctorRunOptions) error {
 		return err
 	}
 	if jsonFlag {
-		printOutput(out, formatDoctorOutput)
-		return nil
+		data, err := marshalDoctorSupportBundleView(out, knownSecrets)
+		if err != nil {
+			return err
+		}
+		_, err = cmd.OutOrStdout().Write(data)
+		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Wrote doctor support bundle to %s\n", outputPath)
 	return nil
@@ -295,6 +307,10 @@ func writeDoctorSupportBundleFile(outputPath string, out doctorOutput, knownSecr
 }
 
 func marshalDoctorSupportBundle(out doctorOutput, knownSecrets []doctorKnownSecret) ([]byte, error) {
+	return marshalDoctorSupportBundleView(omitDoctorSupportBundleDynamicDetails(out), knownSecrets)
+}
+
+func marshalDoctorSupportBundleView(out doctorOutput, knownSecrets []doctorKnownSecret) ([]byte, error) {
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return nil, err
