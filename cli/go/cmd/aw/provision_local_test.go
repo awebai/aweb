@@ -417,7 +417,7 @@ func TestProvisionedCertificateIdentityUsesExplicitHomeForEncryption(t *testing.
 		t.Fatal(err)
 	}
 
-	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHome)
+	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, explicitEncryptionKeyIdentityHome(identityHome))
 	if err != nil {
 		t.Fatal(err)
 	}

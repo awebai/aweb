@@ -356,7 +356,7 @@ func resolveIdentityForEncryptionKeyForDir(workingDir string, identityHome encry
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-		return resolveActiveCertificateIdentityAtHomeForEncryptionKey(workingDir, identityHomes[0])
+		return resolveActiveCertificateIdentityAtHomeForEncryptionKey(workingDir, identityHomeRoot)
 	} else if home, err := identityHomeForDir(workingDir); err != nil {
 		return nil, err
 	} else if home.External() {

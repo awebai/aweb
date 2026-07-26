@@ -307,7 +307,7 @@ func provisionLocalTeamMember(ctx context.Context, opts localProvisionOptions) (
 			IdentityHome: targetHome,
 			Name:         alias,
 			Scope:        awid.IdentityModeLocal,
-		}, teamInviteStoreOptions{IdentityHome: targetHome, SetActive: true})
+		}, teamInviteStoreOptions{IdentityHome: explicitEncryptionKeyIdentityHome(targetHome), SetActive: true})
 		if err != nil {
 			return localProvisionOutput{}, fmt.Errorf("accept local provision grant %s: %w", inviteID, err)
 		}
@@ -576,7 +576,7 @@ func recoverAcceptedLocalProvision(
 		Domain:      domain,
 		TeamName:    team,
 	}
-	if err := recordAcceptedTeamMembership(workingDir, accepted.Output, cert, registryURL, awebURL, recordMembershipOptions{IdentityHome: targetHome, SetActive: true}); err != nil {
+	if err := recordAcceptedTeamMembership(workingDir, accepted.Output, cert, registryURL, awebURL, recordMembershipOptions{IdentityHome: explicitEncryptionKeyIdentityHome(targetHome), SetActive: true}); err != nil {
 		return nil, false, err
 	}
 	matches, err := awconfig.ListTeamInvitesByOperation(operationID)
