@@ -631,13 +631,26 @@ the gone-workspace route is unreachable by construction (`.24`). This is *not*
 non-destruction in full — see *What is NOT yet proven*.
 
 Plus the *mechanism* those proofs guard, built since: identity resolution with
-default-deny admission (`.11`, `.22`, `.23`, `.36` — 29 commands admitted, each
-routed before it was admitted, never the reverse); the binding decision layer,
-whose judgement carries its own assurance level so a caller cannot mistake local
-accident-resistance for a security boundary (`.4`); minting authority declared
-and verified per path, hosted and local having opposite failure modes (`.5`);
-and the runtime's own resolution — channel config at the selected principal
-(`.35`) and outbound messaging admitted (`.36`).
+default-deny admission (`.11`, `.22`, `.23`, `.34`, `.36`, `.10` — each command
+routed through the selected principal *before* it was admitted, never the
+reverse, and each admission proven load-bearing by removing it and requiring its
+own test to fail); the binding decision layer, whose judgement carries its own
+assurance level so a caller cannot mistake local accident-resistance for a
+security boundary (`.4`); minting authority declared and verified per path,
+hosted and local having opposite failure modes (`.5`); the runtime's own
+resolution — channel config at the selected principal (`.35`) and outbound
+messaging admitted (`.36`); and the exclusive **tasks** layer bound to aweb
+(`.10`), which completes the three bindings the founding scope named — identity,
+messaging, and tasks/work.
+
+Two supporting results are worth naming because they protect the rest.
+Diagnostics are rooted at the selected principal with an **enforced** export
+allowlist (`.34`): a support bundle is the one artifact designed to leave the
+machine, and a documented allowlist turned out to export an unknown field
+verbatim until enforcement was made structural. And the suites are hermetic with
+respect to the identity environment (`.37`) — the variable this epic exists to
+set was one that our own tests could not tolerate, which would have made a
+resident unable to distinguish a real regression from an environment artifact.
 
 **What is not:** fail-closed admission, which is impossible while hook failure
 is advisory. Until required hooks land, any attach is an **attended development
