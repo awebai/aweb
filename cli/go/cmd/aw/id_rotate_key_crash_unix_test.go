@@ -141,6 +141,33 @@ func TestAwIDRotationRecoveryRepairsPublicKeyBeforePendingPublicCleanup(t *testi
 		wantState: true, wantPendingPublic: true, wantActivePrivateNew: true,
 		wantArchivePrivate: true, wantArchivePublic: true, wantRegistryNew: true,
 	})
+	activePath := awconfig.WorktreeSigningKeyPath(dir)
+	activePrivate, err := awid.LoadSigningKey(activePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeTemp := filepath.Join(filepath.Dir(activePath), ".tmp.owned-active-rotation")
+	if err := awid.SaveSigningKey(activeTemp, activePrivate); err != nil {
+		t.Fatal(err)
+	}
+	archivePrivate, _ := archivedRotationKeyPaths(activePath, oldDID)
+	archiveOldPrivate, err := awid.LoadSigningKey(archivePrivate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archiveTemp := filepath.Join(filepath.Dir(archivePrivate), ".tmp.owned-archive-rotation")
+	if err := awid.SaveSigningKey(archiveTemp, archiveOldPrivate); err != nil {
+		t.Fatal(err)
+	}
+	activeTempBytes := readFileForCrashTest(t, activeTemp)
+	archiveTempBytes := readFileForCrashTest(t, archiveTemp)
+	if got, want := pathSigningKeyDID(activeTemp), crashRegistryProposedDID(fixture); got != want {
+		t.Fatalf("promoted-key temp did=%q, want operation new DID %q", got, want)
+	}
+	if got := pathSigningKeyDID(archiveTemp); got != oldDID {
+		t.Fatalf("archived-key temp did=%q, want operation old DID %q", got, oldDID)
+	}
+
 	killRotationCommandAtCheckpoint(t, ctx, bin, dir, "after-pending-public-removal", "/rotation/pending/", "recover")
 
 	rotationDir := filepath.Join(dir, ".aw", "rotation")
@@ -153,9 +180,14 @@ func TestAwIDRotationRecoveryRepairsPublicKeyBeforePendingPublicCleanup(t *testi
 	}
 	assertCrashPathExists(t, pending.PendingKey, false)
 	assertCrashPathExists(t, awid.PublicKeyPath(pending.PendingKey), false)
-	activePath := awconfig.WorktreeSigningKeyPath(dir)
 	assertSigningKeyDID(t, activePath, pending.NewDID)
 	assertPublicKeyDID(t, awid.PublicKeyPath(activePath), pending.NewDID)
+	if got := readFileForCrashTest(t, activeTemp); !bytes.Equal(got, activeTempBytes) {
+		t.Fatal("recovery changed promoted-key temp before its cleanup phase")
+	}
+	if got := readFileForCrashTest(t, archiveTemp); !bytes.Equal(got, archiveTempBytes) {
+		t.Fatal("recovery changed archived-key temp before its cleanup phase")
+	}
 	if identity := loadIdentityForTest(t, dir); identity.DID != pending.NewDID {
 		t.Fatalf("identity did=%q, want %q", identity.DID, pending.NewDID)
 	}
@@ -166,6 +198,8 @@ func TestAwIDRotationRecoveryRepairsPublicKeyBeforePendingPublicCleanup(t *testi
 		t.Fatalf("second recovery status=%q, want finalized", recovered.Status)
 	}
 	assertCompletedRotation(t, dir, stableID, oldDID, fixture, registryState, foreign)
+	assertCrashPathExists(t, activeTemp, false)
+	assertCrashPathExists(t, archiveTemp, false)
 }
 
 func TestAwIDRotationRecoveryRemovesOwnedPrivateKeyTempResidue(t *testing.T) {
