@@ -375,7 +375,7 @@ func TestOpen(t *testing.T) {
 }
 
 func TestOpenRefusesToAcknowledgeAnIncompleteUnreadSnapshot(t *testing.T) {
-	deliveredIDsTestPath(t)
+	deliveredIDsDir := deliveredIDsTestPath(t)
 
 	const backlogSize = 1001
 	messages := make([]awid.ChatMessage, backlogSize)
@@ -437,6 +437,13 @@ func TestOpenRefusesToAcknowledgeAnIncompleteUnreadSnapshot(t *testing.T) {
 	}
 	if markReadCalls != 0 {
 		t.Fatalf("mark_read_calls=%d, want 0", markReadCalls)
+	}
+	deliveredIDs, err := LoadDeliveredIDsForDir(deliveredIDsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveredIDs) != 0 {
+		t.Fatalf("cached delivered ids=%d, want 0 for refused snapshot", len(deliveredIDs))
 	}
 	for messageID, stillUnread := range unread {
 		if !stillUnread {
