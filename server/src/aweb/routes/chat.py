@@ -57,6 +57,7 @@ from aweb.messaging.address_auth import (
 )
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
+    MAX_CHAT_MARK_READ_IDS,
     ensure_session,
     find_session_between,
     get_agent_by_alias,
@@ -1812,7 +1813,7 @@ class MarkReadRequest(BaseModel):
             )
         return data
 
-    message_ids: list[str] = Field(..., min_length=1, max_length=1000)
+    message_ids: list[str] = Field(..., min_length=1, max_length=MAX_CHAT_MARK_READ_IDS)
 
     @field_validator("message_ids")
     @classmethod

@@ -16,6 +16,7 @@ from aweb.messaging.conversations import (
 logger = logging.getLogger(__name__)
 
 HANG_ON_EXTENSION_SECONDS = 300
+MAX_CHAT_MARK_READ_IDS = 1000
 
 
 def _uuid_or_none(value: str | UUID | None) -> UUID | None:
@@ -720,9 +721,11 @@ async def mark_messages_read(
 ) -> dict[str, Any]:
     aweb_db = db.get_manager("aweb")
     participant_agent_uuid = _uuid_or_none(participant_agent_id)
-    requested_ids = list(dict.fromkeys(UUID(message_id) for message_id in message_ids))
-    if not requested_ids:
+    if not message_ids:
         raise ValidationError("message_ids is required")
+    if len(message_ids) > MAX_CHAT_MARK_READ_IDS:
+        raise ValidationError(f"message_ids cannot exceed {MAX_CHAT_MARK_READ_IDS} items")
+    requested_ids = list(dict.fromkeys(UUID(message_id) for message_id in message_ids))
 
     is_participant = await aweb_db.fetch_one(
         """
