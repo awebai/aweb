@@ -21,6 +21,8 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	var registeredCert *awid.TeamCertificate
 	var connectWorkspacePath string
 	var registerCalls, connectCalls int
+	var workspaceDeleted, certificateRevoked bool
+	var workspaceDeleteCalls int
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.test/teams/backend/certificates":
@@ -83,6 +85,36 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-provisioned", "backend:acme.test", "oas-worker")
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/workspaces/workspace-provisioned":
+			workspaceDeleteCalls++
+			if workspaceDeleted {
+				http.NotFound(w, r)
+				return
+			}
+			workspaceDeleted = true
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("test server does not support hijacking")
+			}
+			conn, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = conn.Close()
+		case registeredCert != nil && r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.test/teams/backend/certificates":
+			revokedAt := ""
+			if certificateRevoked {
+				revokedAt = "2026-07-26T00:00:00Z"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"certificates": []map[string]any{{
+				"certificate_id": registeredCert.CertificateID, "team_id": registeredCert.Team,
+				"member_did_key": registeredCert.MemberDIDKey, "alias": registeredCert.Alias,
+				"identity_scope": registeredCert.IdentityScope, "issued_at": registeredCert.IssuedAt,
+				"revoked_at": revokedAt,
+			}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.test/teams/backend/certificates/revoke":
+			certificateRevoked = true
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -205,6 +237,67 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	}
 	if retried.CertificateID != got.CertificateID || retried.WorkspaceID != got.WorkspaceID || registerCalls != 1 || connectCalls != 1 {
 		t.Fatalf("retry=%+v register_calls=%d connect_calls=%d", retried, registerCalls, connectCalls)
+	}
+
+	// Local-path threat label: accident/confused-deputy only. A forged instance
+	// receipt for another operation cannot target this throwaway principal unless
+	// the operation-specific execution record corroborates it. The authorized
+	// half immediately below proves the delete route is live rather than inert.
+	forgedArgs := []string{"id", "team", "cleanup-local-provision",
+		"--operation-id", "oas-BBBBBBBBBBBBBBBBBBBBBQ", "--team-id", "backend:acme.test", "--name", "oas-worker",
+		"--authority-identity-home", filepath.Join(authorityDir, ".aw"), "--target-identity-home", targetHome,
+		"--authority-address", "acme.test/provisioner", "--authority-stable-id", authorityStableID,
+		"--controller-did", controllerDID, "--json"}
+	forged := exec.CommandContext(ctx, bin, forgedArgs...)
+	forged.Env = append(testCommandEnv(root), "AWID_REGISTRY_URL="+server.URL)
+	forged.Dir = instanceDir
+	forgedOutput, forgedErr := forged.CombinedOutput()
+	if forgedErr == nil || !strings.Contains(string(forgedOutput), "target record contradicts the requested operation") {
+		t.Fatalf("forged cleanup attribution: err=%v\n%s", forgedErr, forgedOutput)
+	}
+	if workspaceDeleted || certificateRevoked {
+		t.Fatal("forged operation reached destructive cleanup")
+	}
+
+	cleanupArgs := []string{"id", "team", "cleanup-local-provision",
+		"--operation-id", "oas-AAAAAAAAAAAAAAAAAAAAAA", "--team-id", "backend:acme.test", "--name", "oas-worker",
+		"--authority-identity-home", filepath.Join(authorityDir, ".aw"), "--target-identity-home", targetHome,
+		"--authority-address", "acme.test/provisioner", "--authority-stable-id", authorityStableID,
+		"--controller-did", controllerDID, "--json"}
+	cleanup := exec.CommandContext(ctx, bin, cleanupArgs...)
+	cleanup.Env = append(testCommandEnv(root), "AWID_REGISTRY_URL="+server.URL)
+	cleanup.Dir = instanceDir
+	cleanupOutput, cleanupErr := cleanup.CombinedOutput()
+	if cleanupErr == nil {
+		t.Fatalf("first cleanup should lose the committed workspace-delete response:\n%s", cleanupOutput)
+	}
+	if !workspaceDeleted || certificateRevoked {
+		t.Fatalf("workspace_deleted=%v certificate_revoked=%v", workspaceDeleted, certificateRevoked)
+	}
+
+	cleanupRetry := exec.CommandContext(ctx, bin, cleanupArgs...)
+	cleanupRetry.Env = append(testCommandEnv(root), "AWID_REGISTRY_URL="+server.URL)
+	cleanupRetry.Dir = instanceDir
+	cleanupOutput, cleanupErr = cleanupRetry.CombinedOutput()
+	if cleanupErr != nil {
+		t.Fatalf("cleanup reconciliation failed: %v\n%s", cleanupErr, cleanupOutput)
+	}
+	var cleaned map[string]any
+	if err := json.Unmarshal(extractJSON(t, cleanupOutput), &cleaned); err != nil {
+		t.Fatal(err)
+	}
+	if cleaned["status"] != "complete" || cleaned["workspace"] != "soft-deleted" || cleaned["identity"] != "soft-deleted" || cleaned["certificate"] != "revoked" || cleaned["credentials"] != "physically-absent" {
+		t.Fatalf("cleanup=%v", cleaned)
+	}
+	if workspaceDeleteCalls != 2 || !certificateRevoked {
+		t.Fatalf("workspace_delete_calls=%d certificate_revoked=%v", workspaceDeleteCalls, certificateRevoked)
+	}
+	entries, err := os.ReadDir(targetHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "provision-operation.json" {
+		t.Fatalf("retained target entries=%v", entries)
 	}
 }
 

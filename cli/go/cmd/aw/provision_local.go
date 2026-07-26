@@ -28,6 +28,15 @@ var (
 	provisionLocalAuthorityAddress  string
 	provisionLocalAuthorityStableID string
 	provisionLocalControllerDID     string
+
+	cleanupLocalOperationID       string
+	cleanupLocalTeamID            string
+	cleanupLocalAlias             string
+	cleanupLocalAuthorityHome     string
+	cleanupLocalTargetHome        string
+	cleanupLocalAuthorityAddress  string
+	cleanupLocalAuthorityStableID string
+	cleanupLocalControllerDID     string
 )
 
 var localProvisionOperationPattern = regexp.MustCompile(`^oas-[A-Za-z0-9_-]{21}[AQgw]$`)
@@ -46,13 +55,32 @@ type localProvisionOutput struct {
 	AwebURL       string `json:"aweb_url"`
 }
 
+type localProvisionCleanup struct {
+	Grants      string `json:"grants"`
+	Workspace   string `json:"workspace"`
+	Certificate string `json:"certificate"`
+	Credentials string `json:"credentials"`
+}
+
 type localProvisionTargetRecord struct {
-	SchemaVersion int                   `json:"schema_version"`
-	OperationID   string                `json:"operation_id"`
-	TeamID        string                `json:"team_id"`
-	Alias         string                `json:"alias"`
-	Status        string                `json:"status"`
-	Result        *localProvisionOutput `json:"result,omitempty"`
+	SchemaVersion int                    `json:"schema_version"`
+	OperationID   string                 `json:"operation_id"`
+	TeamID        string                 `json:"team_id"`
+	Alias         string                 `json:"alias"`
+	Status        string                 `json:"status"`
+	Result        *localProvisionOutput  `json:"result,omitempty"`
+	Cleanup       *localProvisionCleanup `json:"cleanup,omitempty"`
+}
+
+type localProvisionCleanupOutput struct {
+	Status      string `json:"status"`
+	OperationID string `json:"operation_id"`
+	Grants      string `json:"grants"`
+	Workspace   string `json:"workspace"`
+	Identity    string `json:"identity"`
+	Certificate string `json:"certificate"`
+	Credentials string `json:"credentials"`
+	Audit       string `json:"audit"`
 }
 
 type localProvisionOptions struct {
@@ -72,6 +100,13 @@ var teamProvisionLocalCmd = &cobra.Command{
 	Short: "Provision one local identity through explicit controller authority",
 	Args:  cobra.NoArgs,
 	RunE:  runTeamProvisionLocal,
+}
+
+var teamCleanupLocalProvisionCmd = &cobra.Command{
+	Use:   "cleanup-local-provision",
+	Short: "Reconcile and clean one explicitly provisioned local identity",
+	Args:  cobra.NoArgs,
+	RunE:  runTeamCleanupLocalProvision,
 }
 
 func runTeamProvisionLocal(cmd *cobra.Command, args []string) error {
@@ -98,6 +133,34 @@ func runTeamProvisionLocal(cmd *cobra.Command, args []string) error {
 	printOutput(out, func(value any) string {
 		result := value.(localProvisionOutput)
 		return fmt.Sprintf("Provisioned local identity %s in %s", result.Alias, result.TeamID)
+	})
+	return nil
+}
+
+func runTeamCleanupLocalProvision(cmd *cobra.Command, args []string) error {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(cmd.Context(), 90*time.Second)
+	defer cancel()
+	out, err := cleanupLocalProvision(ctx, localProvisionOptions{
+		WorkingDir:       workingDir,
+		OperationID:      cleanupLocalOperationID,
+		TeamID:           cleanupLocalTeamID,
+		Alias:            cleanupLocalAlias,
+		AuthorityHome:    cleanupLocalAuthorityHome,
+		TargetHome:       cleanupLocalTargetHome,
+		AuthorityAddress: cleanupLocalAuthorityAddress,
+		AuthorityStable:  cleanupLocalAuthorityStableID,
+		ControllerDID:    cleanupLocalControllerDID,
+	})
+	if err != nil {
+		return err
+	}
+	printOutput(out, func(value any) string {
+		result := value.(localProvisionCleanupOutput)
+		return fmt.Sprintf("Cleaned local provision operation %s", result.OperationID)
 	})
 	return nil
 }
@@ -191,6 +254,9 @@ func provisionLocalTeamMember(ctx context.Context, opts localProvisionOptions) (
 	if err != nil {
 		return localProvisionOutput{}, err
 	}
+	if targetRecord.Status == "complete" {
+		return localProvisionOutput{}, fmt.Errorf("local provision operation %s is already cleaned", operationID)
+	}
 	if targetRecord.Status == "provisioned" {
 		if targetRecord.Result == nil {
 			return localProvisionOutput{}, fmt.Errorf("completed local provision target is missing its resource tuple")
@@ -279,10 +345,179 @@ func provisionLocalTeamMember(ctx context.Context, opts localProvisionOptions) (
 		Alias:         alias,
 		Status:        "provisioned",
 		Result:        &result,
+		Cleanup: &localProvisionCleanup{
+			Grants: "pending", Workspace: "pending", Certificate: "pending", Credentials: "pending",
+		},
 	}); err != nil {
 		return localProvisionOutput{}, err
 	}
 	return result, nil
+}
+
+func cleanupLocalProvision(ctx context.Context, opts localProvisionOptions) (localProvisionCleanupOutput, error) {
+	operation := strings.TrimSpace(opts.OperationID)
+	if !localProvisionOperationPattern.MatchString(operation) {
+		return localProvisionCleanupOutput{}, usageError("--operation-id must be an opaque oas provision identifier")
+	}
+	domain, team, err := awid.ParseTeamID(strings.TrimSpace(opts.TeamID))
+	if err != nil {
+		return localProvisionCleanupOutput{}, usageError("invalid --team-id: %v", err)
+	}
+	teamID := awid.BuildTeamID(domain, team)
+	alias, err := normalizeIDCreateName(strings.TrimSpace(opts.Alias))
+	if err != nil {
+		return localProvisionCleanupOutput{}, err
+	}
+	authorityHome, err := strictProvisionIdentityHome(opts.AuthorityHome, "authority identity home")
+	if err != nil {
+		return localProvisionCleanupOutput{}, err
+	}
+	targetHome, err := strictProvisionIdentityHome(opts.TargetHome, "target identity home")
+	if err != nil {
+		return localProvisionCleanupOutput{}, err
+	}
+	if err := requireExternalProvisionHome(opts.WorkingDir, authorityHome, "authority identity home"); err != nil {
+		return localProvisionCleanupOutput{}, err
+	}
+	if err := requireExternalProvisionHome(opts.WorkingDir, targetHome, "target identity home"); err != nil {
+		return localProvisionCleanupOutput{}, err
+	}
+	record, err := ensureLocalProvisionTargetRecord(targetHome, operation, teamID, alias)
+	if err != nil {
+		return localProvisionCleanupOutput{}, err
+	}
+	if record.Status == "pending" || record.Result == nil || record.Cleanup == nil {
+		return localProvisionCleanupOutput{}, fmt.Errorf("local provision operation %s has no completed resource to clean", operation)
+	}
+	if record.Status == "complete" {
+		return cleanupOutputForRecord(*record), nil
+	}
+	if err := verifyCompletedLocalProvision(targetHome, *record.Result); err != nil {
+		return localProvisionCleanupOutput{}, err
+	}
+
+	identity, err := awconfig.ResolveIdentityFromHome(opts.WorkingDir, authorityHome)
+	if err != nil {
+		return localProvisionCleanupOutput{}, fmt.Errorf("resolve cleanup authority: %w", err)
+	}
+	if identity.Address != strings.TrimSpace(opts.AuthorityAddress) || identity.StableID != strings.TrimSpace(opts.AuthorityStable) {
+		return localProvisionCleanupOutput{}, fmt.Errorf("declared cleanup authority changed before cleanup")
+	}
+	client, selection, err := resolveClientSelectionAtIdentityHomeWithTeamOverride(
+		opts.WorkingDir, teamID, awconfig.IdentityHome{Root: authorityHome, Source: awconfig.IdentityHomeFlag},
+	)
+	if err != nil {
+		return localProvisionCleanupOutput{}, fmt.Errorf("recheck cleanup authority: %w", err)
+	}
+	if selection.TeamID != teamID || selectionAddress(selection) != identity.Address || selection.StableID != identity.StableID {
+		return localProvisionCleanupOutput{}, fmt.Errorf("declared cleanup authority selection changed before cleanup")
+	}
+	teamKey, err := awconfig.LoadTeamKey(domain, team)
+	if err != nil {
+		return localProvisionCleanupOutput{}, err
+	}
+	if awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)) != strings.TrimSpace(opts.ControllerDID) {
+		return localProvisionCleanupOutput{}, fmt.Errorf("local controller authority changed before cleanup")
+	}
+
+	if record.Cleanup.Grants != "physically-absent" {
+		matches, err := awconfig.ListTeamInvitesByOperation(operation)
+		if err != nil {
+			return localProvisionCleanupOutput{}, err
+		}
+		for _, invite := range matches {
+			if err := awconfig.DeleteTeamInvite(invite.InviteID); err != nil {
+				return localProvisionCleanupOutput{}, err
+			}
+		}
+		record.Cleanup.Grants = "physically-absent"
+		record.Status = "cleaning"
+		if err := writeLocalProvisionTargetRecord(targetHome, *record); err != nil {
+			return localProvisionCleanupOutput{}, err
+		}
+	}
+
+	if record.Cleanup.Workspace != "soft-deleted" {
+		deleted, err := client.WorkspaceDelete(ctx, record.Result.WorkspaceID)
+		if err != nil {
+			if status, ok := awid.HTTPStatusCode(err); !ok || status != 404 {
+				return localProvisionCleanupOutput{}, fmt.Errorf("soft-delete provisioned workspace: %w", err)
+			}
+		} else if deleted != nil && deleted.WorkspaceID != record.Result.WorkspaceID {
+			return localProvisionCleanupOutput{}, fmt.Errorf("workspace cleanup response does not match provisioned resource")
+		}
+		record.Cleanup.Workspace = "soft-deleted"
+		record.Status = "cleaning"
+		if err := writeLocalProvisionTargetRecord(targetHome, *record); err != nil {
+			return localProvisionCleanupOutput{}, err
+		}
+	}
+
+	if record.Cleanup.Certificate != "revoked" {
+		registry, err := newConfiguredRegistryClient(nil, record.Result.AwebURL)
+		if err != nil {
+			return localProvisionCleanupOutput{}, err
+		}
+		if err := registry.SetFallbackRegistryURL(record.Result.RegistryURL); err != nil {
+			return localProvisionCleanupOutput{}, err
+		}
+		certificates, err := registry.ListCertificates(ctx, record.Result.RegistryURL, domain, team, false)
+		if err != nil {
+			return localProvisionCleanupOutput{}, fmt.Errorf("list provisioned certificate for cleanup: %w", err)
+		}
+		var certificate *awid.RegistryCertificate
+		for index := range certificates {
+			if certificates[index].CertificateID == record.Result.CertificateID {
+				certificate = &certificates[index]
+				break
+			}
+		}
+		if certificate != nil {
+			if certificate.TeamID != teamID || certificate.Alias != alias || certificate.MemberDIDKey != record.Result.DIDKey {
+				return localProvisionCleanupOutput{}, fmt.Errorf("registry certificate does not match provisioned cleanup tuple")
+			}
+			if strings.TrimSpace(certificate.RevokedAt) == "" {
+				if err := registry.RevokeCertificate(ctx, record.Result.RegistryURL, domain, team, record.Result.CertificateID, teamKey); err != nil {
+					return localProvisionCleanupOutput{}, fmt.Errorf("revoke provisioned certificate: %w", err)
+				}
+			}
+		}
+		record.Cleanup.Certificate = "revoked"
+		record.Status = "cleaning"
+		if err := writeLocalProvisionTargetRecord(targetHome, *record); err != nil {
+			return localProvisionCleanupOutput{}, err
+		}
+	}
+
+	if record.Cleanup.Credentials != "physically-absent" {
+		entries, err := os.ReadDir(targetHome)
+		if err != nil {
+			return localProvisionCleanupOutput{}, err
+		}
+		for _, entry := range entries {
+			if entry.Name() == filepath.Base(localProvisionTargetRecordPath(targetHome)) {
+				continue
+			}
+			if err := os.RemoveAll(filepath.Join(targetHome, entry.Name())); err != nil {
+				return localProvisionCleanupOutput{}, err
+			}
+		}
+		record.Cleanup.Credentials = "physically-absent"
+	}
+	record.Status = "complete"
+	if err := writeLocalProvisionTargetRecord(targetHome, *record); err != nil {
+		return localProvisionCleanupOutput{}, err
+	}
+	return cleanupOutputForRecord(*record), nil
+}
+
+func cleanupOutputForRecord(record localProvisionTargetRecord) localProvisionCleanupOutput {
+	return localProvisionCleanupOutput{
+		Status: "complete", OperationID: record.OperationID,
+		Grants: record.Cleanup.Grants, Workspace: record.Cleanup.Workspace, Identity: "soft-deleted",
+		Certificate: record.Cleanup.Certificate, Credentials: record.Cleanup.Credentials,
+		Audit: "intentionally-retained-operation-record",
+	}
 }
 
 func recoverAcceptedLocalProvision(
@@ -379,11 +614,20 @@ func ensureLocalProvisionTargetRecord(targetHome, operationID, teamID, alias str
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, fmt.Errorf("parse local provision target record: trailing JSON content")
 	}
-	if record.SchemaVersion != 1 || record.OperationID != operationID || record.TeamID != teamID || record.Alias != alias || (record.Status != "pending" && record.Status != "provisioned") {
+	if record.SchemaVersion != 1 || record.OperationID != operationID || record.TeamID != teamID || record.Alias != alias ||
+		(record.Status != "pending" && record.Status != "provisioned" && record.Status != "cleaning" && record.Status != "complete") {
 		return nil, fmt.Errorf("local provision target record contradicts the requested operation")
 	}
-	if (record.Status == "pending") != (record.Result == nil) {
-		return nil, fmt.Errorf("local provision target record has a contradictory status")
+	if record.Status == "pending" {
+		if record.Result != nil || record.Cleanup != nil {
+			return nil, fmt.Errorf("local provision target record has a contradictory pending status")
+		}
+	} else if record.Result == nil || record.Cleanup == nil ||
+		(record.Cleanup.Grants != "physically-absent" && record.Cleanup.Grants != "pending") ||
+		(record.Cleanup.Workspace != "pending" && record.Cleanup.Workspace != "soft-deleted") ||
+		(record.Cleanup.Certificate != "pending" && record.Cleanup.Certificate != "revoked") ||
+		(record.Cleanup.Credentials != "pending" && record.Cleanup.Credentials != "physically-absent") {
+		return nil, fmt.Errorf("local provision target record has contradictory cleanup state")
 	}
 	return &record, nil
 }
@@ -491,4 +735,14 @@ func init() {
 	teamProvisionLocalCmd.Flags().StringVar(&provisionLocalAuthorityStableID, "authority-stable-id", "", "Expected declared authority stable identity")
 	teamProvisionLocalCmd.Flags().StringVar(&provisionLocalControllerDID, "controller-did", "", "Expected local controller DID")
 	teamCmd.AddCommand(teamProvisionLocalCmd)
+
+	teamCleanupLocalProvisionCmd.Flags().StringVar(&cleanupLocalOperationID, "operation-id", "", "Opaque provision operation identifier")
+	teamCleanupLocalProvisionCmd.Flags().StringVar(&cleanupLocalTeamID, "team-id", "", "Canonical team id")
+	teamCleanupLocalProvisionCmd.Flags().StringVar(&cleanupLocalAlias, "name", "", "Explicit provisioned member name")
+	teamCleanupLocalProvisionCmd.Flags().StringVar(&cleanupLocalAuthorityHome, "authority-identity-home", "", "Declared authority identity home")
+	teamCleanupLocalProvisionCmd.Flags().StringVar(&cleanupLocalTargetHome, "target-identity-home", "", "External target identity home")
+	teamCleanupLocalProvisionCmd.Flags().StringVar(&cleanupLocalAuthorityAddress, "authority-address", "", "Expected declared authority address")
+	teamCleanupLocalProvisionCmd.Flags().StringVar(&cleanupLocalAuthorityStableID, "authority-stable-id", "", "Expected declared authority stable identity")
+	teamCleanupLocalProvisionCmd.Flags().StringVar(&cleanupLocalControllerDID, "controller-did", "", "Expected local controller DID")
+	teamCmd.AddCommand(teamCleanupLocalProvisionCmd)
 }
