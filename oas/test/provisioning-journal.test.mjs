@@ -16,13 +16,14 @@ import {
   markProvisionIntentComplete,
   markProvisionIntentQuarantined,
   retryProvisionIntentQuarantine,
+  removeProvisionCleanupCorroboration,
   markProvisionIntentHandedOff,
   markProvisionIntentPrepared,
   markProvisionIntentProvisioning,
   withProvisionIntentLock,
   writeProvisionCleanupCorroboration,
 } from "../.agents/capabilities/owned/aweb-identity-attach/lib/provisioning-journal.mjs";
-import { loadCleanupCorroboration } from "../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs";
+import { cleanupCorroborationPayload, loadCleanupCorroboration } from "../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs";
 
 const OPERATION_A = "oas-AAAAAAAAAAAAAAAAAAAAAA";
 const OPERATION_B = "oas-BBBBBBBBBBBBBBBBBBBBBQ";
@@ -80,6 +81,63 @@ test("provision intent is durable before side effects and contains no bearer sec
     authorityHome: join(root, "authority"),
     now: new Date("2026-07-26T00:00:01Z"),
   }), /already belongs to instance/);
+});
+
+test("concurrent legacy adoption refuses a contradictory destination winner without overwrite", async (t) => {
+  const root = tempRoot(t, "aweb-corroboration-adoption-race-");
+  createProvisionIntent(root, {
+    operationID: OPERATION_A, instanceID: "legacy-instance", teamID: "backend:acme.test", authority: AUTHORITY,
+    authorityHome: join(root, "authority"), now: new Date("2026-07-26T00:00:00Z"),
+  });
+  const receipt = {
+    schema_version: 2, mode: "provision-disposable", lifecycle: "provisioned", cleanup_owner: "instance",
+    resource_identity: { kind: "provision-operation", operation_id: OPERATION_A, stable_id: null, reference: `operation:${OPERATION_A}`, cleanup_authority: "local-controller" },
+    journal_operation: OPERATION_A,
+  };
+  const encode = (instanceID) => {
+    const record = { schema_version: 1, corroboration_class: "local-same-uid", instance_id: instanceID, receipt };
+    return `${JSON.stringify({ ...record, digest: createHash("sha256").update(cleanupCorroborationPayload(record)).digest("hex") }, null, 2)}\n`;
+  };
+  const directory = join(root, ".corroboration", "cleanup");
+  mkdirSync(directory, { recursive: true });
+  const legacyPath = join(directory, "legacy-instance.json");
+  const operationPath = join(directory, `${OPERATION_A}.json`);
+  const legacyBytes = encode("legacy-instance");
+  const winnerBytes = encode("destination-winner");
+  writeFileSync(legacyPath, legacyBytes, { mode: 0o600 });
+  const barrier = join(root, "race-go");
+  const loaderReady = join(root, "loader-ready");
+  const writerReady = join(root, "writer-ready");
+  const moduleURL = new URL("../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs", import.meta.url).href;
+  const loader = spawn(process.execPath, ["--input-type=module", "--eval", [
+    `import { existsSync, writeFileSync } from "node:fs";`,
+    `import { loadCleanupCorroboration } from ${JSON.stringify(moduleURL)};`,
+    `writeFileSync(${JSON.stringify(loaderReady)}, "ready");`,
+    `while (!existsSync(${JSON.stringify(barrier)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);`,
+    `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);`,
+    `try { loadCleanupCorroboration(${JSON.stringify(directory)}, ${JSON.stringify(OPERATION_A)}, "legacy-instance"); process.exit(0); }`,
+    `catch (error) { if (/contradict/.test(error.message)) process.exit(42); throw error; }`,
+  ].join("\n")]);
+  const writer = spawn(process.execPath, ["--input-type=module", "--eval", [
+    `import { existsSync, writeFileSync } from "node:fs";`,
+    `writeFileSync(${JSON.stringify(writerReady)}, "ready");`,
+    `while (!existsSync(${JSON.stringify(barrier)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);`,
+    `writeFileSync(${JSON.stringify(operationPath)}, ${JSON.stringify(winnerBytes)}, { flag: "wx", mode: 0o600 });`,
+  ].join("\n")]);
+  for (let attempt = 0; attempt < 200 && (!existsSync(loaderReady) || !existsSync(writerReady)); attempt += 1) {
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 5));
+  }
+  assert.equal(existsSync(loaderReady) && existsSync(writerReady), true);
+  writeFileSync(barrier, "go");
+  const exited = (child) => new Promise((resolveExit, rejectExit) => {
+    child.on("error", rejectExit);
+    child.on("close", resolveExit);
+  });
+  const [loaderStatus, writerStatus] = await Promise.all([exited(loader), exited(writer)]);
+  assert.equal(writerStatus, 0);
+  assert.equal(loaderStatus, 42);
+  assert.equal(readFileSync(operationPath, "utf8"), winnerBytes, "destination first-writer must not be overwritten");
+  assert.equal(readFileSync(legacyPath, "utf8"), legacyBytes, "contradictory legacy evidence must be retained");
 });
 
 test("scanner owns stale incomplete work but never infers that prepared means launched", (t) => {
@@ -141,8 +199,38 @@ test("handoff, cleanup, and corroboration remain durable outside the instance", 
   assert.deepEqual(listRecoverableProvisionIntents(root, {
     now: new Date("2026-07-26T00:00:01Z"), staleAfterMs: 0,
   }), [], "bound work is never scanner-owned");
-  writeProvisionCleanupCorroboration(root, "instance-a", receipt);
-  assert.deepEqual(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), "instance-a").receipt, receipt);
+  writeProvisionCleanupCorroboration(root, OPERATION_A, "instance-a", receipt);
+  assert.deepEqual(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), OPERATION_A).receipt, receipt);
+  const secondReceipt = {
+    ...receipt,
+    resource_identity: {
+      ...receipt.resource_identity,
+      operation_id: OPERATION_B,
+      reference: `operation:${OPERATION_B}`,
+    },
+    journal_operation: OPERATION_B,
+  };
+  writeProvisionCleanupCorroboration(root, OPERATION_B, "instance-a", secondReceipt);
+  assert.deepEqual(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), OPERATION_B).receipt, secondReceipt);
+  assert.throws(
+    () => writeProvisionCleanupCorroboration(root, OPERATION_A, "instance-b", receipt),
+    /already exists with different authority/,
+    "operation authority must remain immutable first-writer",
+  );
+  assert.equal(removeProvisionCleanupCorroboration(root, OPERATION_A), true);
+  assert.equal(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), OPERATION_A), null);
+  assert.deepEqual(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), OPERATION_B).receipt, secondReceipt);
+
+  const legacyRecord = { schema_version: 1, corroboration_class: "local-same-uid", instance_id: "legacy-instance", receipt };
+  const legacyEncoded = {
+    ...legacyRecord,
+    digest: createHash("sha256").update(cleanupCorroborationPayload(legacyRecord)).digest("hex"),
+  };
+  const corroborationHome = join(root, ".corroboration", "cleanup");
+  writeFileSync(join(corroborationHome, "legacy-instance.json"), `${JSON.stringify(legacyEncoded, null, 2)}\n`, { mode: 0o600 });
+  assert.deepEqual(loadCleanupCorroboration(corroborationHome, OPERATION_A, "legacy-instance").receipt, receipt);
+  assert.equal(existsSync(join(corroborationHome, `${OPERATION_A}.json`)), true, "legacy record must be adopted under operation key");
+  assert.equal(existsSync(join(corroborationHome, "legacy-instance.json")), false, "adoption must shrink legacy population");
   const cleaning = markProvisionIntentCleanupPending(root, OPERATION_A, "retire", start);
   assert.equal(cleaning.state, "cleanup-pending");
   assert.equal(cleaning.cleanup.attempts, 1);

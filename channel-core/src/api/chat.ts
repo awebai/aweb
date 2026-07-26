@@ -91,15 +91,32 @@ function hydrateAddressesFromSignedPayload(msg: ChatMessage): void {
   }
 }
 
+const CHAT_MARK_READ_BATCH_SIZE = 1000;
+
 export async function markRead(
   client: APIClient,
   sessionId: string,
-  upToMessageId: string,
+  messageIds: readonly string[],
 ): Promise<void> {
-  await client.post(
-    `/v1/chat/sessions/${encodeURIComponent(sessionId)}/read`,
-    { up_to_message_id: upToMessageId },
-  );
+  if (messageIds.length === 0) {
+    throw new Error("aweb: cannot mark chat read without presented message IDs");
+  }
+  const path = `/v1/chat/sessions/${encodeURIComponent(sessionId)}/read`;
+  // Chunks commit independently. On failure, confirmed earlier chunks stay read
+  // and this error stops later chunks so they remain unread and retryable.
+  for (let start = 0; start < messageIds.length; start += CHAT_MARK_READ_BATCH_SIZE) {
+    const chunk = messageIds.slice(start, start + CHAT_MARK_READ_BATCH_SIZE);
+    try {
+      await client.post(path, { message_ids: chunk });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `aweb: marked ${start} of ${messageIds.length} presented chat messages; `
+        + `next mark-read chunk failed: ${detail}`,
+        { cause: error },
+      );
+    }
+  }
 }
 
 async function verifyChatMessage(msg: ChatMessage): Promise<VerificationStatus> {

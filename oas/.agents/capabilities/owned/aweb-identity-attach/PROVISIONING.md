@@ -1,5 +1,14 @@
 # Disposable provisioning execution contract
 
+> **EXPERIMENTAL / INTERNAL.** Run
+> `oas aweb-identity status --soul <name> --json` before spawn. The native,
+> active/trust-gated command asks `oas doctor --json` for the same soul-resolved
+> settings that spawn consumes, then runs spawn's non-mutating identity and
+> authority preflight. Its result is `ready`, `needs_setup` with one
+> `next_action`, or `experimental` with no identity/instance/session creation.
+> This verdict is advisory: OAS 0.18 hooks are not required and can still launch
+> after hook failure. Only `aaaa.2` can provide fail-closed admission/rollback.
+
 This capability executes `provision-disposable` only through declared
 `local-controller` authority in this release. After resolving and verifying the
 selected principal, its spawn hook contributes exactly one runtime environment
@@ -8,8 +17,8 @@ the principal selector into the launch environment. This is data minimization,
 not selector secrecy: settings and identity metadata remain model-readable, and
 the resolved identity is necessarily observable through `whoami`.
 
-- `provision-durable` is refused because no production mint-and-handoff path
-  exists (`aaaa.39`).
+- Durable resident provisioning is not in the exposed configurable-mode list
+  and is refused because no production mint-and-handoff path exists (`aaaa.39`).
 - hosted `provision-disposable` is refused before authority resolution or any
   create call. The current cleanup API requires a team owner/admin API key;
   putting that key in the same-UID hook would also give it to the model. A
@@ -26,6 +35,18 @@ to the journal before the first remote call. The native
 deterministic lowercase 128-bit SHA-256 projection of the operation, because
 aliases are normalized while operation identity is not. An instance name,
 purpose, or user alias is never used as operation identity.
+
+Local same-UID cleanup corroboration is also keyed by that operation id, never
+by the locally chosen OAS instance name. The immutable first-writer record still
+contains and checks the exact instance id and receipt, preserving accidental
+cross-developer cleanup refusal even when two roots choose the same name.
+Cleanup removes only that operation's corroboration record immediately before
+persisting terminal `complete`; failed/pending cleanup retains it for retry, and
+exact reconciliation releases records left beside older complete journals. The
+bounded instance-key → operation-key cutover adopts a valid merged-main legacy
+record on read and deletes its old name; this dual-read exists only for that
+transition and is not a general versioned loader. Thus neither other operations
+nor the local-name namespace are permanently allocated.
 
 ## Cleanup authority and order
 

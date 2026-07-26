@@ -8,13 +8,22 @@ Epic: `aweb-oas-aaaa`
 Binds OAS to aweb identity, messaging, and tasks. Remote host dispatch is out
 of scope.
 
-**This document has one author.** Propose changes on the epic task and the owner
-makes them. This is not ceremony: two people editing one normative document in
-parallel is how it started contradicting itself once already, and how a
-correction landing in main can silently revert another correction still on a
-branch. The rule was previously enforced by remembering to tell each new agent,
-which failed the first time an agent arrived who had not been told — so it is
-written here instead, where anyone about to edit will see it.
+**Who edits this document.** The **normative** parts — the invariant, the three
+entities, the verb boundary, decisions, the plan, and any statement of what is
+proven — have one author, the owner named above; propose changes on the epic
+task. **Descriptive** sections recording what a merged change actually does may
+be written by whoever built it, in the same reviewed commit.
+
+That split is a correction. The earlier rule said *one author, full stop*, and
+it was violated twice by developers documenting their own work accurately and in
+this document's voice — which is a reasonable thing to do, so the rule was
+wrong rather than the developers. A rule that good-faith actors break by
+behaving sensibly does not survive, and reverting correct content to enforce it
+would be pure waste. What the original rule was actually protecting is narrower:
+two people editing the same *normative* claim in parallel is how this document
+started contradicting itself, and how a correction landing in main can silently
+revert another still on a branch. That risk lives in the normative sections, not
+in a paragraph describing a command someone just shipped.
 
 Every claim about external behaviour in this document was verified against
 running code at a stated version, and cites the source so a reader can re-check
@@ -692,7 +701,17 @@ resident unable to distinguish a real regression from an environment artifact.
 **What is not:** fail-closed admission, which is impossible while hook failure
 is advisory. Until required hooks land, any attach is an **attended development
 experiment against controlled throwaway principals** — not a supported release
-and not valid for durable production principals. Returning deliberately broken
+and not valid for durable production principals.
+
+The interim surface is deliberately honest: the experimental/internal
+`aweb.identity-attach` package exposes the native, active/trust-gated
+`oas aweb-identity status --soul <name> --json` command. It validates the exact
+soul-resolved settings plus spawn's non-mutating principal/authority preflight
+and returns `ready`, `needs_setup` with one action, or `experimental` with
+nothing created. Missing configuration and the unavailable durable-resident
+journey are never reported healthy. The output explicitly says its admission
+authority is advisory and cannot prevent OAS from launching; `.2` remains the
+only owner of required-hook failure and rollback. Returning deliberately broken
 launch arguments so the command dies in the window was considered and rejected
 as a dishonest hack.
 

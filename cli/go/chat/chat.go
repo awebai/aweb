@@ -944,11 +944,20 @@ func buildMessages(messages []awid.ChatMessage) []Event {
 	return events
 }
 
-func markReadBestEffort(ctx context.Context, client *awid.Client, sessionID, messageID string) bool {
-	if client == nil || sessionID == "" || strings.TrimSpace(messageID) == "" {
+func markReadBestEffort(ctx context.Context, client *awid.Client, sessionID string, messageIDs []string) bool {
+	if client == nil || sessionID == "" {
 		return false
 	}
-	req := &awid.ChatMarkReadRequest{UpToMessageID: messageID}
+	presentedIDs := make([]string, 0, len(messageIDs))
+	for _, messageID := range messageIDs {
+		if messageID = strings.TrimSpace(messageID); messageID != "" {
+			presentedIDs = append(presentedIDs, messageID)
+		}
+	}
+	if len(presentedIDs) == 0 {
+		return false
+	}
+	req := &awid.ChatMarkReadRequest{MessageIDs: presentedIDs}
 	if _, err := client.ChatMarkRead(ctx, sessionID, req); err == nil {
 		return true
 	}
@@ -963,19 +972,17 @@ func markReadBestEffort(ctx context.Context, client *awid.Client, sessionID, mes
 	return err == nil
 }
 
-// markLastRead marks the last received message as read (best-effort).
-// This prevents the notify hook from showing messages that were already
-// delivered via SSE during send-and-wait or listen.
-func markLastRead(ctx context.Context, client *awid.Client, sessionID string, events []Event) {
-	if sessionID == "" {
-		return
-	}
-	for i := len(events) - 1; i >= 0; i-- {
-		if events[i].Type == "message" && events[i].MessageID != "" {
-			_ = markReadBestEffort(ctx, client, sessionID, events[i].MessageID)
-			return
+// markPresentedRead marks every received message presented by the wait result as
+// read (best-effort). This prevents the notify hook from showing messages that
+// were already delivered via SSE during send-and-wait or listen.
+func markPresentedRead(ctx context.Context, client *awid.Client, sessionID string, events []Event) {
+	messageIDs := make([]string, 0, len(events))
+	for _, event := range events {
+		if event.Type == "message" && event.MessageID != "" {
+			messageIDs = append(messageIDs, event.MessageID)
 		}
 	}
+	_ = markReadBestEffort(ctx, client, sessionID, messageIDs)
 }
 
 // streamOpener opens an SSE stream for a chat session.
@@ -1318,7 +1325,7 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 		return nil, err
 	}
 
-	markLastRead(ctx, client, resp.SessionID, waitResult.Events)
+	markPresentedRead(ctx, client, resp.SessionID, waitResult.Events)
 
 	result.Status = waitResult.Status
 	result.Reply = waitResult.Reply
@@ -1343,7 +1350,7 @@ func Listen(ctx context.Context, client *awid.Client, targetAlias string, waitSe
 		return nil, err
 	}
 
-	markLastRead(ctx, client, sessionID, result.Events)
+	markPresentedRead(ctx, client, sessionID, result.Events)
 
 	result.TargetAgent = targetAlias
 	return result, nil
@@ -1386,8 +1393,11 @@ func Open(ctx context.Context, client *awid.Client, targetAlias string) (*OpenRe
 		_ = SaveDeliveredIDs(ids)
 	}
 
-	lastMessageID := messagesResp.Messages[len(messagesResp.Messages)-1].MessageID
-	if markReadBestEffort(ctx, client, sessionID, lastMessageID) {
+	presentedIDs := make([]string, 0, len(messagesResp.Messages))
+	for _, message := range messagesResp.Messages {
+		presentedIDs = append(presentedIDs, message.MessageID)
+	}
+	if markReadBestEffort(ctx, client, sessionID, presentedIDs) {
 		result.MarkedRead = len(messagesResp.Messages)
 	}
 	if len(result.Messages) == 0 {

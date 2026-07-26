@@ -313,10 +313,12 @@ export function retryProvisionIntentQuarantine(home, operation, now = new Date()
   return next;
 }
 
-export function writeProvisionCleanupCorroboration(home, instanceID, receipt) {
+export function writeProvisionCleanupCorroboration(home, operationID, instanceID, receipt) {
   canonicalRoot(home);
+  const operation = validatedOperationID(operationID);
   if (typeof instanceID !== "string" || !SAFE_ID.test(instanceID)) throw new TypeError("corroboration instance id must be filesystem-safe");
-  validateBindingReceipt(receipt);
+  const validatedReceipt = validateBindingReceipt(receipt);
+  if (validatedReceipt.journal_operation !== operation) throw new Error("cleanup corroboration receipt operation does not match its key");
   const directory = join(home, ".corroboration", "cleanup");
   assertNoSymlink(directory, "cleanup corroboration path");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -325,7 +327,7 @@ export function writeProvisionCleanupCorroboration(home, instanceID, receipt) {
     ...record,
     digest: createHash("sha256").update(cleanupCorroborationPayload(record)).digest("hex"),
   };
-  const path = join(directory, `${instanceID}.json`);
+  const path = join(directory, `${operation}.json`);
   if (existsSync(path)) {
     assertNoSymlink(path, "cleanup corroboration record");
     const existing = JSON.parse(readFileSync(path, "utf8"));
@@ -334,6 +336,18 @@ export function writeProvisionCleanupCorroboration(home, instanceID, receipt) {
   }
   writeNew(path, encoded);
   return path;
+}
+
+export function removeProvisionCleanupCorroboration(home, operationID) {
+  canonicalRoot(home);
+  const operation = validatedOperationID(operationID);
+  const directory = join(home, ".corroboration", "cleanup");
+  assertNoSymlink(directory, "cleanup corroboration path");
+  const path = join(directory, `${operation}.json`);
+  if (!existsSync(path)) return false;
+  assertNoSymlink(path, "cleanup corroboration record");
+  unlinkSync(path);
+  return true;
 }
 
 function quarantineEvidence(source) {

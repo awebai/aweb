@@ -533,7 +533,7 @@ func TestResolveChatWakeMarksReadAfterDelivery(t *testing.T) {
 			markedReadSessionID = parts[4]
 			var req awid.ChatMarkReadRequest
 			json.NewDecoder(r.Body).Decode(&req)
-			markedReadUpTo = req.UpToMessageID
+			markedReadUpTo = strings.Join(req.MessageIDs, ",")
 			json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})
 		default:
 			http.NotFound(w, r)
@@ -592,7 +592,7 @@ func TestResolveChatWakePresentsAndAcknowledgesWholeIncomingBatch(t *testing.T) 
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
 			var req awid.ChatMarkReadRequest
 			json.NewDecoder(r.Body).Decode(&req)
-			markedReadUpTo = req.UpToMessageID
+			markedReadUpTo = strings.Join(req.MessageIDs, ",")
 			json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true, MessagesMarked: 2})
 		default:
 			http.NotFound(w, r)
@@ -628,8 +628,8 @@ func TestResolveChatWakePresentsAndAcknowledgesWholeIncomingBatch(t *testing.T) 
 	if err := result.AfterDelivery(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if markedReadUpTo != "incoming-2" {
-		t.Fatalf("marked read up to %q, want incoming-2", markedReadUpTo)
+	if markedReadUpTo != "incoming-1,incoming-2" {
+		t.Fatalf("marked IDs %q, want incoming-1,incoming-2", markedReadUpTo)
 	}
 	delivered, err := chat.LoadDeliveredIDsForDir(deliveredDir)
 	if err != nil {
@@ -678,12 +678,13 @@ func TestResolveChatWakeBoundsBatchAndLeavesRemainderRetryable(t *testing.T) {
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
 			var req awid.ChatMarkReadRequest
 			json.NewDecoder(r.Body).Decode(&req)
-			for i := range messages {
-				if messages[i].MessageID == req.UpToMessageID {
-					acked = i
-					break
+			for offset, messageID := range req.MessageIDs {
+				want := messages[acked+1+offset].MessageID
+				if messageID != want {
+					t.Fatalf("message_ids[%d]=%q, want %q", offset, messageID, want)
 				}
 			}
+			acked += len(req.MessageIDs)
 			json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true})
 		default:
 			http.NotFound(w, r)
@@ -780,7 +781,7 @@ func TestResolveChatWakePendingDoesNotAckOmittedOlderPrefix(t *testing.T) {
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/read"):
 			var req awid.ChatMarkReadRequest
 			json.NewDecoder(r.Body).Decode(&req)
-			markedReadUpTo = req.UpToMessageID
+			markedReadUpTo = strings.Join(req.MessageIDs, ",")
 			json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true})
 		default:
 			http.NotFound(w, r)
@@ -811,8 +812,12 @@ func TestResolveChatWakePendingDoesNotAckOmittedOlderPrefix(t *testing.T) {
 	if err := resolved.AfterDelivery(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if markedReadUpTo != messages[expectedBatchLimit-1].MessageID {
-		t.Fatalf("marked through %q, want %q", markedReadUpTo, messages[expectedBatchLimit-1].MessageID)
+	wantMarkedIDs := make([]string, 0, expectedBatchLimit)
+	for _, message := range messages[:expectedBatchLimit] {
+		wantMarkedIDs = append(wantMarkedIDs, message.MessageID)
+	}
+	if markedReadUpTo != strings.Join(wantMarkedIDs, ",") {
+		t.Fatalf("marked IDs %q, want %q", markedReadUpTo, strings.Join(wantMarkedIDs, ","))
 	}
 }
 

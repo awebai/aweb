@@ -146,8 +146,8 @@ func TestAwChatReadBySessionMessageIDJSON(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode body: %v", err)
 			}
-			if req.UpToMessageID != "chat-1" {
-				t.Fatalf("up_to_message_id=%q, want chat-1", req.UpToMessageID)
+			if got := strings.Join(req.MessageIDs, ","); got != "chat-1" {
+				t.Fatalf("message_ids=%q, want chat-1", got)
 			}
 			sawRead = true
 			_ = json.NewEncoder(w).Encode(awid.ChatMarkReadResponse{Success: true, MessagesMarked: 1})

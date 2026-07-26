@@ -251,8 +251,8 @@
     },
     {
       "name": "non-string-address-key",
-      "divergence": "DIVERGENCE (measured, not aspirational). Go rejects non-string mapping keys (the aajc.9a strictness); js-yaml coerces them to their string form and TypeScript accepts. Recorded per runtime so the difference is visible rather than hidden. Not reachable through our own write path - aw is the sole writer and never emits a non-string key - so it requires a hand-edit, a third-party tool, or a crafted file. Tightening TypeScript is tracked separately; the naive fix is wrong because non-string scalar VALUES are legitimate here (Pin.log_seq is a number, and unknown-field preservation accepts arbitrary nested values), so any tightening must distinguish keys from values.",
-      "yaml": "pins:\n  did:key:zA:\n    address: acme.com/alice\n    first_seen: \"2026-01-01T00:00:00Z\"\n    last_seen: \"2026-01-01T00:00:00Z\"\naddresses:\n  777: did:key:zA\n",
+      "divergence": "DIVERGENCE (measured, not aspirational). Go rejects non-string mapping keys (the aajc.9a strictness); js-yaml coerces them to their string form and TypeScript accepts. Recorded per runtime so the difference is visible rather than hidden. Not reachable through our own write path - aw is the sole writer and never emits a non-string key - so it requires a hand-edit, a third-party tool, or a crafted file. Tightening TypeScript is tracked separately; the naive fix is wrong because non-string scalar VALUES are legitimate here (Pin.log_seq is a number, and unknown-field preservation accepts arbitrary nested values), so any tightening must distinguish keys from values. The pin's address is the numeric key itself so that the forward and reverse indexes agree once the key is coerced: both runtimes now check index consistency in both directions, and an inconsistent fixture would be rejected for THAT reason first, leaving the key-type divergence unmeasured while the case still appeared to cover it.",
+      "yaml": "pins:\n  did:key:zA:\n    address: \"777\"\n    first_seen: \"2026-01-01T00:00:00Z\"\n    last_seen: \"2026-01-01T00:00:00Z\"\naddresses:\n  777: did:key:zA\n",
       "expected": {
         "go": {
           "outcome": "reject",
@@ -264,6 +264,23 @@
           "outcome": "accept",
           "pins": 1,
           "addresses": 1
+        }
+      }
+    },
+    {
+      "name": "same-identity-pinned-at-two-addresses",
+      "note": "The state an upgrade-on-first-sight migration leaves behind when it declines: one agent reachable at two addresses, pinned under its stable id at one and its did:key at the other. A stable id is one key and a pin carries one address, so these cannot be merged; migrating anyway overwrote the pin holding the other address and produced a store both loaders refuse (default-aanw). Both runtimes must accept this document and agree on it, which is what makes declining safe.",
+      "yaml": "pins:\n  did:aw:S:\n    address: acme.com/bob\n    stable_id: did:aw:S\n    did_key: did:key:zD\n    first_seen: \"2026-01-01T00:00:00Z\"\n    last_seen: \"2026-01-01T00:00:00Z\"\n  did:key:zD:\n    address: acme.com/alice\n    first_seen: \"2026-01-01T00:00:00Z\"\n    last_seen: \"2026-01-01T00:00:00Z\"\naddresses:\n  acme.com/alice: did:key:zD\n  acme.com/bob: did:aw:S\n",
+      "expected": {
+        "go": {
+          "outcome": "accept",
+          "pins": 2,
+          "addresses": 2
+        },
+        "typescript": {
+          "outcome": "accept",
+          "pins": 2,
+          "addresses": 2
         }
       }
     }

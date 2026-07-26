@@ -563,7 +563,7 @@ describe("dispatchEvent", () => {
         }),
       },
     });
-    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-1/read", { up_to_message_id: "chat-msg-windowed" });
+    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-1/read", { message_ids: ["chat-msg-windowed"] });
   });
 
   test("retries chat mark-read without duplicate notification when prior read failed", async () => {
@@ -605,8 +605,8 @@ describe("dispatchEvent", () => {
 
     expect(notification).toHaveBeenCalledTimes(1);
     expect(client.post).toHaveBeenCalledTimes(2);
-    expect(client.post).toHaveBeenNthCalledWith(1, "/v1/chat/sessions/sess-read-retry/read", { up_to_message_id: "chat-read-retry" });
-    expect(client.post).toHaveBeenNthCalledWith(2, "/v1/chat/sessions/sess-read-retry/read", { up_to_message_id: "chat-read-retry" });
+    expect(client.post).toHaveBeenNthCalledWith(1, "/v1/chat/sessions/sess-read-retry/read", { message_ids: ["chat-read-retry"] });
+    expect(client.post).toHaveBeenNthCalledWith(2, "/v1/chat/sessions/sess-read-retry/read", { message_ids: ["chat-read-retry"] });
   });
 
   test("skips self-authored mail by concrete address", async () => {

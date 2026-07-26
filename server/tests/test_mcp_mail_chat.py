@@ -2702,7 +2702,7 @@ async def test_mcp_chat_history_and_read_accept_alternate_session_participant_di
         await chat_tools.chat_read(
             DBInfra(aweb_cloud_db.aweb_db),
             session_id=str(session_id),
-            up_to_message_id=str(message_id),
+            message_ids=[str(message_id)],
         )
     )
     assert read["messages_marked"] == 1

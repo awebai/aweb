@@ -56,6 +56,12 @@ function reconcileCommand(args, cwd, env) {
   });
 }
 
+function statusCommand(args, cwd, env) {
+  return spawnSync(process.execPath, [oasCli(), "aweb-identity", "status", ...args], {
+    cwd, env, encoding: "utf8",
+  });
+}
+
 function gitRepo(directory) {
   mkdirSync(directory, { recursive: true });
   execFileSync("git", ["init", "-q", directory]);
@@ -80,9 +86,10 @@ function fixture({
   schemaVersion = 1,
   mintingAuthority = mode === "provision-disposable" ? "throwaway" : undefined,
   mintingAuthorityPath = mode === "provision-disposable" ? "hosted" : undefined,
+  repoName = "repo",
 } = {}) {
   const base = temporaryDirectory();
-  const repo = join(base, "repo");
+  const repo = join(base, repoName);
   gitRepo(repo);
   const agentsRoot = join(base, "agents");
   const soul = join(agentsRoot, "developer", "soul");
@@ -146,7 +153,7 @@ function digestedCleanupCorroboration(instanceID, receipt) {
 
 function writeCleanupCorroboration(f, instanceID, receipt) {
   const record = digestedCleanupCorroboration(instanceID, receipt);
-  write(join(f.corroborationHome, `${instanceID}.json`), `${JSON.stringify(record, null, 2)}\n`);
+  write(join(f.corroborationHome, `${receipt.journal_operation}.json`), `${JSON.stringify(record, null, 2)}\n`);
 }
 
 function pathIsWithinOrEqual(root, candidate) {
@@ -182,11 +189,193 @@ function assertNoInstanceIdentityMaterial(instanceHome, principal, credentialFil
   }
 }
 
-test("attach capability identity is explicit and cannot collide with upstream destructive oas.aweb", () => {
+test("attach capability is explicitly internal and exposes native status", () => {
   const manifest = JSON.parse(readFileSync(join(CAPABILITY_SOURCE, "oas.json"), "utf8"));
   assert.equal(manifest.capability, "aweb.identity-attach");
   assert.notEqual(manifest.capability, "oas.aweb");
   assert.equal(manifest.layer, "messaging");
+  assert.match(manifest.description, /EXPERIMENTAL.*INTERNAL/i);
+  assert.equal(manifest.inject, "injects/aweb-identity-attach.md");
+  assert.equal(manifest.commands.status, "bin/aweb-identity-attach.mjs status");
+  assert.match(readFileSync(join(CAPABILITY_SOURCE, manifest.inject), "utf8"), /advisory.*cannot prevent OAS from launching/i);
+});
+
+test("native status reports an unconfigured capability as experimental without creating anything", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  write(join(f.repo, "oas-config.yaml"), "capabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global: true\n");
+  const before = readdirSync(join(f.agentsRoot, "developer", "instances"));
+  const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  assert.equal(result.status, 1, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.deepEqual(Object.keys(report).sort(), [
+    "admission", "capability", "identity_resources_created", "instance_or_session_created",
+    "message", "next_action", "readiness", "release_stage", "schema_version", "settings_source",
+  ]);
+  assert.equal(report.readiness, "experimental");
+  assert.equal(report.release_stage, "experimental-internal");
+  assert.equal(report.identity_resources_created, false);
+  assert.equal(report.instance_or_session_created, false);
+  assert.equal(report.admission, "advisory-status-cannot-prevent-oas-launch");
+  assert.match(report.message, /identity_binding settings are required/);
+  assert.equal(typeof report.next_action, "string");
+  assert.equal(report.next_action.length > 0, true);
+  assert.equal(Array.isArray(report.next_action), false, "the result must give exactly one next action");
+  assert.deepEqual(readdirSync(join(f.agentsRoot, "developer", "instances")), before);
+});
+
+test("production spawn surfaces preflight refusal without claiming fail-closed OAS admission", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  write(join(f.repo, "oas-config.yaml"), "capabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global: true\n");
+  const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "unservable-is-advisory", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  assert.equal(existsSync(spawned.home), true, "current advisory OAS still creates the instance scaffold");
+  assert.match(spawned.warnings[0], /identity_binding settings are required.*NOTHING CREATED by this capability/i);
+  const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+  assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
+  assert.equal(existsSync(join(f.principalHome, ".provisioning")), false);
+});
+
+test("native status returns needs-setup with one action for a repairable declaration", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  const configPath = join(f.repo, "oas-config.yaml");
+  writeFileSync(configPath, readFileSync(configPath, "utf8").replace("principal: throwaway", "principal: missing"));
+  const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  assert.equal(result.status, 1, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.readiness, "needs_setup");
+  assert.match(report.message, /missing\.yaml|no such file/i);
+  assert.match(report.next_action, /^\$EDITOR /, "needs-setup must give exactly one executable setup command");
+  assert.equal(Object.hasOwn(report, "next_actions"), false);
+  assert.equal(report.identity_resources_created, false);
+  assert.equal(report.instance_or_session_created, false);
+});
+
+test("needs-setup command shell-quotes an adversarial config path as one exact argument", () => {
+  const repoName = "repo$(touch${IFS}next-action-injected)'quoted";
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2, repoName });
+  const configPath = join(f.repo, "oas-config.yaml");
+  writeFileSync(configPath, readFileSync(configPath, "utf8").replace("principal: throwaway", "principal: missing"));
+  const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  assert.equal(result.status, 1, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.readiness, "needs_setup");
+
+  const editor = join(f.base, "record-editor");
+  const editorLog = join(f.base, "editor-argv.json");
+  write(editor, `#!/bin/sh\nnode -e 'require("fs").writeFileSync(process.env.EDITOR_LOG, JSON.stringify(process.argv.slice(1)))' "$@"\n`, 0o755);
+  const executed = spawnSync("/bin/sh", ["-c", report.next_action], {
+    cwd: f.base,
+    env: { ...f.env, EDITOR: editor, EDITOR_LOG: editorLog },
+    encoding: "utf8",
+  });
+  assert.equal(executed.status, 0, executed.stderr);
+  assert.equal(existsSync(join(f.base, "next-action-injected")), false);
+  assert.deepEqual(JSON.parse(readFileSync(editorLog, "utf8")), [configPath]);
+});
+
+test("native status classifies durable resident configuration as unavailable experimental", () => {
+  const f = fixture({ mode: "provision-durable", schemaVersion: 2 });
+  const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  assert.equal(result.status, 1, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.readiness, "experimental");
+  assert.match(report.message, /durable resident provisioning.*not configurable|provision-durable.*not executable/i);
+  assert.match(report.next_action, /temporary-worker|do not spawn/i);
+  assert.equal(existsSync(f.awLog) ? readFileSync(f.awLog, "utf8") : "", "", "unavailable durable mode must not resolve ephemeral authority");
+});
+
+test("native status preflights local temporary-worker authority without creating an intent", () => {
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
+  const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).readiness, "ready");
+  assert.equal(existsSync(join(f.principalHome, ".provisioning")), false);
+  const calls = readFileSync(f.awLog, "utf8").trim().split("\n").map((line) => JSON.parse(line).argv);
+  assert.equal(calls.some((argv) => argv.includes("import-request")), true);
+  assert.equal(calls.some((argv) => argv.includes("provision-local")), false);
+});
+
+test("native status and spawn consume the same soul-resolved settings", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  write(join(f.repo, "oas-config.yaml"), `capabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global:\n        enabled: true\n        settings: {}\n      souls:\n        developer:\n          enabled: true\n          settings:\n            identity_binding:\n              schema_version: 2\n              mode: attach-existing\n              principal: throwaway\n`);
+  const before = readdirSync(join(f.agentsRoot, "developer", "instances"));
+  const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.readiness, "ready");
+  assert.equal(report.release_stage, "experimental-internal");
+  assert.equal(report.settings_source, "resolved-oas-config:soul=developer");
+  assert.equal(report.identity_resources_created, false);
+  assert.equal(report.instance_or_session_created, false);
+  assert.equal(report.next_action, null);
+  assert.deepEqual(readdirSync(join(f.agentsRoot, "developer", "instances")), before);
+
+  const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "status-settings-parity", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  assert.equal(JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8")).capabilityMeta["aweb.identity-attach"].identity_binding.mode, "attach-existing");
+});
+
+test("native status and spawn consume the same agent-type-resolved settings", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  write(join(f.agentsRoot, "developer", "soul", "soul.yaml"), `name: developer\nkind: persistent\ntype: developers\nrepo: ${f.repo}\nwork: checkout\nruntime: pi\n`);
+  write(join(f.repo, "oas-config.yaml"), `agent-types:\n  developers:\n    description: Internal developers\ncapabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global:\n        enabled: true\n        settings: {}\n      agent-types:\n        developers:\n          enabled: true\n          settings:\n            identity_binding:\n              schema_version: 2\n              mode: attach-existing\n              principal: throwaway\n`);
+  const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).readiness, "ready");
+  const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "status-agent-type-parity", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  assert.equal(JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8")).capabilityMeta["aweb.identity-attach"].identity_binding.mode, "attach-existing");
+});
+
+test("spawn preflight refusal is structured, nonzero, and precedes identity creation", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  const hookHome = join(f.base, "preflight-home");
+  mkdirSync(hookHome);
+  const result = spawnSync(process.execPath, [join(f.capability, "bin", "aweb-identity-attach.mjs"), "spawn"], {
+    cwd: hookHome,
+    env: {
+      ...f.env,
+      OAS_EVENT: "spawn", OAS_HOME: hookHome, OAS_CONTEXT: f.repo, OAS_AGENT: "developer",
+      OAS_INSTANCE: "never-created", OAS_SETTINGS: "{}",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  const refusal = JSON.parse(result.stdout);
+  assert.equal(refusal.status, "unservable");
+  assert.equal(refusal.nothing_created_by_capability, true);
+  assert.equal(refusal.identity_resources_created, false);
+  assert.equal(refusal.admission, "advisory-hook-failure-cannot-prevent-oas-launch");
+  assert.equal(refusal.next_action, "oas aweb-identity status --soul 'developer' --json");
+  assert.equal(Object.hasOwn(refusal, "next_actions"), false);
+  assert.equal(readdirSync(hookHome).length, 0);
+  assert.equal(existsSync(join(f.principalHome, ".provisioning")), false);
+});
+
+test("standalone refusal rejects an unsafe ambient soul before constructing its action", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  const hookHome = join(f.base, "unsafe-soul-home");
+  mkdirSync(hookHome);
+  const marker = join(f.base, "unsafe-soul-action");
+  const result = spawnSync(process.execPath, [join(f.capability, "bin", "aweb-identity-attach.mjs"), "spawn"], {
+    cwd: hookHome,
+    env: {
+      ...f.env,
+      OAS_EVENT: "spawn", OAS_HOME: hookHome, OAS_CONTEXT: f.repo,
+      OAS_AGENT: `developer; touch ${marker}`, OAS_INSTANCE: "never-created", OAS_SETTINGS: "{}",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  const refusal = JSON.parse(result.stdout);
+  assert.match(refusal.message, /OAS_AGENT.*filesystem-safe/);
+  assert.equal(refusal.next_action, "oas status --json");
+  const executed = spawnSync("/bin/sh", ["-c", refusal.next_action], { cwd: f.repo, env: f.env, encoding: "utf8" });
+  assert.equal(executed.status, 0, executed.stderr);
+  assert.equal(existsSync(marker), false);
 });
 
 test("instance link containment includes an exact renamed link to the principal root", () => {
@@ -351,7 +540,7 @@ test("real OAS emits a local-controller authority statement with indefinite gran
   assert.equal(journal.state, "bound");
   assert.equal(journal.instance_id, spawned.instance);
   assert.deepEqual(journal.resource, resource);
-  assert.deepEqual(JSON.parse(readFileSync(join(f.corroborationHome, `${spawned.instance}.json`), "utf8")).receipt, receipt);
+  assert.deepEqual(JSON.parse(readFileSync(join(f.corroborationHome, `${operationID}.json`), "utf8")).receipt, receipt);
 
   const authorityCalls = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse);
   assert.deepEqual(authorityCalls.slice(0, 3), [{
@@ -395,6 +584,7 @@ test("real OAS emits a local-controller authority statement with indefinite gran
   assert.equal(retirement.authority_scope, "local_same_uid_accident_guard");
   assert.equal(retirement.cleanup.status, "complete");
   assert.equal(JSON.parse(readFileSync(join(f.principalHome, ".provisioning", "intents", `${operationID}.json`), "utf8")).state, "complete");
+  assert.equal(existsSync(join(f.corroborationHome, `${operationID}.json`)), false, "terminal cleanup must release corroboration allocation");
   const cleanupCall = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse).at(-1);
   assert.deepEqual(cleanupCall, {
     argv: [
@@ -413,7 +603,7 @@ test("real OAS emits a local-controller authority statement with indefinite gran
   });
 });
 
-test("native reconciliation command enforces active capability and executable trust", () => {
+test("native status and reconciliation commands enforce active capability and executable trust", () => {
   const inactiveRoot = temporaryDirectory();
   const inactiveRepo = join(inactiveRoot, "inactive");
   gitRepo(inactiveRepo);
@@ -422,6 +612,9 @@ test("native reconciliation command enforces active capability and executable tr
   const inactive = reconcileCommand([], inactiveRepo, { ...process.env, PI_AGENT_HOME: "", OAS_HOME: "" });
   assert.equal(inactive.status, 1);
   assert.match(inactive.stderr, /not active/);
+  const inactiveStatus = statusCommand(["--soul", "developer", "--json"], inactiveRepo, { ...process.env, PI_AGENT_HOME: "", OAS_HOME: "" });
+  assert.equal(inactiveStatus.status, 1);
+  assert.match(inactiveStatus.stderr, /not active/);
 
   const untrustedRepo = join(temporaryDirectory(), "untrusted");
   gitRepo(untrustedRepo);
@@ -433,6 +626,9 @@ test("native reconciliation command enforces active capability and executable tr
   const untrusted = reconcileCommand([], untrustedRepo, { ...process.env, PI_AGENT_HOME: "", OAS_HOME: "" });
   assert.equal(untrusted.status, 1);
   assert.match(untrusted.stderr, /blocked.*oas trust/i);
+  const untrustedStatus = statusCommand(["--soul", "developer", "--json"], untrustedRepo, { ...process.env, PI_AGENT_HOME: "", OAS_HOME: "" });
+  assert.equal(untrustedStatus.status, 1);
+  assert.match(untrustedStatus.stderr, /blocked.*oas trust/i);
 });
 
 test("operator and later-spawn reconciliation clean durable pending local intents", () => {
@@ -496,7 +692,7 @@ test("operator and later-spawn reconciliation clean durable pending local intent
   assert.equal(prepared.spawned.launched, false, "prepared orphan must be quiescent before operator cleanup");
   delete prepared.meta.capabilityMeta["aweb.identity-attach"].identity_binding;
   writeFileSync(join(prepared.spawned.home, "instance.json"), `${JSON.stringify(prepared.meta, null, 2)}\n`);
-  unlinkSync(join(f.corroborationHome, `${prepared.spawned.instance}.json`));
+  unlinkSync(join(f.corroborationHome, `${prepared.operation}.json`));
   assert.equal(JSON.parse(readFileSync(join(prepared.spawned.home, "instance.json"), "utf8")).capabilityMeta["aweb.identity-attach"].identity_binding, undefined);
   const preparedRecord = JSON.parse(readFileSync(prepared.path, "utf8"));
   preparedRecord.state = "prepared";
@@ -702,6 +898,60 @@ test("distinct production intents receive opaque carrier-safe operation identiti
   }
 });
 
+test("same local instance name gets operation-unique corroboration with terminal release", () => {
+  const first = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
+  const second = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
+  second.env.AWEB_PRINCIPAL_HOME = first.principalHome;
+  const spawnIn = (f) => parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "same-local-name", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  const firstSpawn = spawnIn(first);
+  const secondSpawn = spawnIn(second);
+  assert.equal(firstSpawn.instance, secondSpawn.instance, "independent developer roots must reproduce the local-name collision");
+  const receiptFor = (spawned) => JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8")).capabilityMeta["aweb.identity-attach"].identity_binding;
+  const firstReceipt = receiptFor(firstSpawn);
+  const secondReceipt = receiptFor(secondSpawn);
+  assert.notEqual(firstReceipt.journal_operation, secondReceipt.journal_operation);
+  assert.equal(existsSync(join(first.corroborationHome, `${firstReceipt.journal_operation}.json`)), true);
+  assert.equal(existsSync(join(first.corroborationHome, `${secondReceipt.journal_operation}.json`)), true);
+
+  const firstRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", firstSpawn.instance, "--json"], { cwd: first.repo, env: first.env, encoding: "utf8" }));
+  assert.equal(firstRetire.capabilityMeta["aweb.identity-attach"].retirement.action, "cleanup_complete");
+  assert.equal(existsSync(join(first.corroborationHome, `${firstReceipt.journal_operation}.json`)), false);
+  assert.equal(existsSync(join(first.corroborationHome, `${secondReceipt.journal_operation}.json`)), true, "first retire must not remove the other operation authority");
+
+  const secondRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", secondSpawn.instance, "--json"], { cwd: second.repo, env: second.env, encoding: "utf8" }));
+  assert.equal(secondRetire.capabilityMeta["aweb.identity-attach"].retirement.action, "cleanup_complete");
+  assert.equal(existsSync(join(first.corroborationHome, `${secondReceipt.journal_operation}.json`)), false);
+});
+
+test("exact reconcile releases corroboration left beside a complete journal", () => {
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
+  const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "complete-record-recovery", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  const receipt = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8")).capabilityMeta["aweb.identity-attach"].identity_binding;
+  const operation = receipt.journal_operation;
+  const journalPath = join(f.principalHome, ".provisioning", "intents", `${operation}.json`);
+  const journal = JSON.parse(readFileSync(journalPath, "utf8"));
+  journal.state = "complete";
+  journal.revision += 1;
+  writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+  const operationRecord = join(f.corroborationHome, `${operation}.json`);
+  const legacyRecord = join(f.corroborationHome, `${spawned.instance}.json`);
+  const mergedMainBytes = readFileSync(operationRecord);
+  unlinkSync(operationRecord);
+  writeFileSync(legacyRecord, mergedMainBytes, { mode: 0o600 });
+  assert.equal(existsSync(operationRecord), false);
+  assert.equal(existsSync(legacyRecord), true);
+
+  const reconciled = reconcileCommand(["--operation", operation], f.repo, f.env);
+  assert.equal(reconciled.status, 0, reconciled.stderr);
+  assert.equal(JSON.parse(reconciled.stdout).operations[0].outcome, "cleanup-authority-released");
+  assert.equal(existsSync(operationRecord), false);
+  assert.equal(existsSync(legacyRecord), false);
+});
+
 test("local same-UID corroboration guards cleanup judgement against receipt-only mistakes", () => {
   function spawnedDisposable() {
     const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
@@ -716,7 +966,7 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
   }
 
   const forged = spawnedDisposable();
-  unlinkSync(join(forged.f.corroborationHome, `${forged.spawned.instance}.json`));
+  unlinkSync(join(forged.f.corroborationHome, `${forged.receipt.journal_operation}.json`));
   const forgedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", forged.spawned.instance, "--json"], {
     cwd: forged.f.repo, env: forged.f.env, encoding: "utf8",
   }));
@@ -736,7 +986,8 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
     },
     journal_operation: "oas-BBBBBBBBBBBBBBBBBBBBBQ",
   };
-  writeCleanupCorroboration(substituted.f, substituted.spawned.instance, otherReceipt);
+  const substitutedRecord = digestedCleanupCorroboration(substituted.spawned.instance, otherReceipt);
+  write(join(substituted.f.corroborationHome, `${substituted.receipt.journal_operation}.json`), `${JSON.stringify(substitutedRecord, null, 2)}\n`);
   const substitutedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", substituted.spawned.instance, "--json"], {
     cwd: substituted.f.repo, env: substituted.f.env, encoding: "utf8",
   }));
@@ -748,7 +999,7 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
 
   const invalidDigest = spawnedDisposable();
   writeCleanupCorroboration(invalidDigest.f, invalidDigest.spawned.instance, invalidDigest.receipt);
-  const invalidDigestPath = join(invalidDigest.f.corroborationHome, `${invalidDigest.spawned.instance}.json`);
+  const invalidDigestPath = join(invalidDigest.f.corroborationHome, `${invalidDigest.receipt.journal_operation}.json`);
   const invalidDigestRecord = JSON.parse(readFileSync(invalidDigestPath, "utf8"));
   invalidDigestRecord.digest = "0".repeat(64);
   writeFileSync(invalidDigestPath, `${JSON.stringify(invalidDigestRecord, null, 2)}\n`);
@@ -760,8 +1011,8 @@ test("local same-UID corroboration guards cleanup judgement against receipt-only
   const linked = spawnedDisposable();
   const linkedTarget = join(linked.f.base, "untrusted-corroboration.json");
   write(linkedTarget, `${JSON.stringify(digestedCleanupCorroboration(linked.spawned.instance, linked.receipt), null, 2)}\n`);
-  unlinkSync(join(linked.f.corroborationHome, `${linked.spawned.instance}.json`));
-  symlinkSync(linkedTarget, join(linked.f.corroborationHome, `${linked.spawned.instance}.json`));
+  unlinkSync(join(linked.f.corroborationHome, `${linked.receipt.journal_operation}.json`));
+  symlinkSync(linkedTarget, join(linked.f.corroborationHome, `${linked.receipt.journal_operation}.json`));
   const linkedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", linked.spawned.instance, "--json"], {
     cwd: linked.f.repo, env: linked.f.env, encoding: "utf8",
   }));

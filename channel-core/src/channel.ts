@@ -536,13 +536,13 @@ async function dispatchChatEvent(
 ): Promise<void> {
   if (!event.session_id) return;
   const messages = await fetchHistory(options.client, event.session_id, true, CHAT_FETCH_LIMIT, event.message_id);
-  let lastMessageId: string | undefined;
+  const presentedMessageIds: string[] = [];
   for (const msg of messages) {
     if (isSelfSender(msg.from_agent, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
     const conversationID = msg.conversation_id || event.conversation_id || event.session_id;
     const key = dispatchKey("chat", conversationID, msg.message_id);
     if (dispatched.has(key) || options.deliveryStore?.has(key)) {
-      lastMessageId = msg.message_id;
+      presentedMessageIds.push(msg.message_id);
       continue;
     }
 
@@ -586,9 +586,11 @@ async function dispatchChatEvent(
       deliveryIntent: event.sender_waiting ? "steer" : "wake",
     });
     await persistDeliveryMark(options.deliveryStore, dispatched, key);
-    lastMessageId = msg.message_id;
+    presentedMessageIds.push(msg.message_id);
   }
-  if (lastMessageId) await markRead(options.client, event.session_id, lastMessageId);
+  if (presentedMessageIds.length > 0) {
+    await markRead(options.client, event.session_id, presentedMessageIds);
+  }
 }
 
 async function commitPinStore(

@@ -30,7 +30,7 @@ const disposableProvisioned = {
 };
 
 test("binding modes are an exact declared vocabulary with independent cleanup ownership", () => {
-  assert.deepEqual(bindingModes, ["provision-disposable", "provision-durable", "attach-existing"]);
+  assert.deepEqual(bindingModes, ["provision-disposable", "attach-existing"], "unimplemented durable provisioning must not be exposed as a peer option");
   assert.equal(cleanupOwnerForMode("provision-disposable"), "instance");
   assert.equal(cleanupOwnerForMode("provision-durable"), "external");
   assert.equal(cleanupOwnerForMode("attach-existing"), "external");
@@ -49,8 +49,8 @@ test("binding modes are an exact declared vocabulary with independent cleanup ow
   assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-disposable", minting_authority: 123, minting_authority_path: "hosted" }), /minting_authority/);
   assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-disposable", minting_authority: "provisioner", minting_authority_path: "automatic" }), /minting_authority_path/);
   assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-disposable", minting_authority: "provisioner", minting_authority_path: "hosted", operation_id: "shared" }), /requires exactly.*minting_authority/);
-  assert.equal(validateBindingSettings({ schema_version: 2, mode: "provision-durable" }).mode, "provision-durable");
-  assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-durable", minting_authority: "provisioner" }), /does not accept an ephemeral minting_authority/);
+  assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-durable" }), /experimental.*not configurable/i);
+  assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-durable", minting_authority: "provisioner" }), /experimental.*not configurable/i);
   assert.throws(() => validateBindingSettings({ schema_version: 1, mode: "attach", principal: 123 }), /legacy identity_binding/);
   assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "attach-existing", principal: 123 }), /attach-existing requires/);
   const firstIntent = pendingProvisionReceipt({ schema_version: 2, mode: "provision-disposable", minting_authority: "provisioner", minting_authority_path: "hosted" });
@@ -76,8 +76,7 @@ test("receipt validity matrix rejects contradictory combinations", () => {
     },
   });
   assert.throws(() => provisionedDisposableReceipt(pendingDisposable, { cleanupAuthority: "remote-authority" }), /local-controller cleanup authority/);
-  const pendingDurable = pendingProvisionReceipt({ schema_version: 2, mode: "provision-durable" });
-  assert.equal(pendingDurable.cleanup_owner, "external");
+  assert.throws(() => pendingProvisionReceipt({ schema_version: 2, mode: "provision-durable" }), /experimental.*not configurable/i);
   assert.throws(() => validateBindingReceipt({ ...disposableProvisioned, cleanup_owner: "external" }), /contradicts mode/);
   assert.throws(() => validateBindingReceipt({ ...disposableProvisioned, lifecycle: "bound" }), /contradictory lifecycle/);
   assert.throws(() => validateBindingReceipt({ ...disposableProvisioned, journal_operation: "other" }), /does not match/);
