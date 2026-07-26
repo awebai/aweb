@@ -345,8 +345,9 @@ function recoverProvisionIntents(principalHome, cwd, { force = false, includePre
         const resource = runProvisionCommandForIntent(intent, cwd);
         intent = markProvisionIntentPrepared(principalHome, intent.operation_id, resource);
       }
-      if (intent.state === "prepared") {
-        intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, "orphaned-before-binding-handoff");
+      if (intent.state === "prepared" || (includePrepared && intent.state === "bound")) {
+        const reason = intent.state === "prepared" ? "orphaned-before-binding-handoff" : "operator-confirmed-unacknowledged-binding";
+        intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, reason);
       }
       if (intent.state === "cleanup-pending") {
         intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, "recovery-retry");

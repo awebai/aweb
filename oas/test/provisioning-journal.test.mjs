@@ -133,6 +133,9 @@ test("handoff, cleanup, and corroboration remain durable outside the instance", 
     agent_id: "agent-a", workspace_id: "workspace-a", registry_url: "https://registry.test", aweb_url: "https://aweb.test",
   }, start);
   assert.equal(markProvisionIntentHandedOff(root, OPERATION_A, start).state, "bound");
+  assert.deepEqual(listRecoverableProvisionIntents(root, {
+    now: new Date("2026-07-26T00:00:01Z"), staleAfterMs: 0, includePrepared: true,
+  }).map((intent) => intent.operation_id), [OPERATION_A]);
   writeProvisionCleanupCorroboration(root, "instance-a", receipt);
   assert.deepEqual(loadCleanupCorroboration(join(root, ".corroboration", "cleanup"), "instance-a").receipt, receipt);
   const cleaning = markProvisionIntentCleanupPending(root, OPERATION_A, "retire", start);

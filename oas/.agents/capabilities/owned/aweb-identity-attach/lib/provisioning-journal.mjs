@@ -332,7 +332,7 @@ export function listRecoverableProvisionIntents(home, { now = new Date(), staleA
   if (!Number.isFinite(staleAfterMs) || staleAfterMs < 0) throw new TypeError("staleAfterMs must be non-negative");
   if (typeof includePrepared !== "boolean") throw new TypeError("includePrepared must be boolean");
   const cutoff = new Date(now).getTime() - staleAfterMs;
-  const states = includePrepared ? new Set([...RECOVERABLE_STATES, "prepared"]) : RECOVERABLE_STATES;
+  const states = includePrepared ? new Set([...RECOVERABLE_STATES, "prepared", "bound"]) : RECOVERABLE_STATES;
   return readdirSync(paths(home).intents, { withFileTypes: true })
     .filter((entry) => entry.name.endsWith(".json"))
     .map((entry) => loadProvisionIntent(home, entry.name.slice(0, -5)))
