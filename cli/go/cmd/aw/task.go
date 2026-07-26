@@ -29,8 +29,8 @@ func priorityIcon(p int) string {
 
 func formatTaskLine(t aweb.TaskSummary) string {
 	icon := priorityIcon(t.Priority)
-	return fmt.Sprintf("%s %s [%s P%d] [%s] - %s",
-		icon, t.TaskRef, icon, t.Priority, t.TaskType, t.Title)
+	return fmt.Sprintf("%s %s [%s P%d] [%s] [%s] - %s",
+		icon, t.TaskRef, icon, t.Priority, t.TaskType, t.Status, t.Title)
 }
 
 func formatTaskDetail(t *aweb.Task) string {

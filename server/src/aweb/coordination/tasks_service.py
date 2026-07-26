@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from awid.team_ids import team_slug
-from ..claims import claim_focus_task_ref, resolve_task_claim_apex
+from ..claims import claim_focus_task_ref, resolve_task_claim_apex_on
 from ..service_errors import ConflictError, NotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -401,6 +401,7 @@ async def list_tasks(
     priority: int | None = None,
     labels: list[str] | None = None,
     q: str | None = None,
+    parent_task_id: str | None = None,
 ) -> list[dict[str, Any]]:
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
@@ -436,6 +437,13 @@ async def list_tasks(
     if labels:
         conditions.append(f"labels @> ${idx}")
         params.append(labels)
+        idx += 1
+    if parent_task_id is not None:
+        resolved_parent_task_id = await resolve_task_ref(
+            db, team_id=team_id, ref=parent_task_id,
+        )
+        conditions.append(f"parent_task_id = ${idx}")
+        params.append(resolved_parent_task_id)
         idx += 1
     if q is not None:
         q_escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -826,15 +834,36 @@ async def update_task(
     task_type: str | None = None,
     labels: list[str] | None = None,
     assignee_alias: str | None | object = _UNSET,
+    parent_task_id: str | None | object = _UNSET,
 ) -> dict[str, Any]:
     task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
     slug = _get_team_slug(team_id)
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
     resolved_assignee_alias: str | None | object = _UNSET
+    resolved_parent_task_id: UUID | None | object = _UNSET
     claim_preacquired = False
 
+    if parent_task_id is not _UNSET:
+        if parent_task_id:
+            try:
+                resolved_parent_task_id = await resolve_task_ref(
+                    db, team_id=team_id, ref=str(parent_task_id),
+                )
+            except NotFoundError as exc:
+                raise ValidationError("Parent task not found in this team") from exc
+        else:
+            resolved_parent_task_id = None
+
     async with aweb_db.transaction() as tx:
+        if resolved_parent_task_id is not _UNSET:
+            # Parent mutations form one integrity domain per team. Serialize
+            # check-and-write so concurrent valid snapshots cannot commit a cycle.
+            await tx.fetch_value(
+                "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                f"task-parent-hierarchy:{team_id}",
+            )
+
         current = await tx.fetch_one(
             """
             SELECT task_id, status, assignee_alias, task_ref_suffix
@@ -875,6 +904,43 @@ async def update_task(
             sets.append(f"labels = ${idx}")
             params.append(labels)
             idx += 1
+        if resolved_parent_task_id is not _UNSET:
+            if resolved_parent_task_id is not None:
+                if resolved_parent_task_id == task_id:
+                    raise ValidationError("Parent relationship would create a cycle")
+                cycle = await tx.fetch_one(
+                    """
+                    WITH RECURSIVE descendants AS (
+                        SELECT task_id
+                        FROM {{tables.tasks}}
+                        WHERE parent_task_id = $1 AND team_id = $2 AND deleted_at IS NULL
+                        UNION ALL
+                        SELECT t.task_id
+                        FROM {{tables.tasks}} t
+                        JOIN descendants d ON t.parent_task_id = d.task_id
+                        WHERE t.team_id = $2 AND t.deleted_at IS NULL
+                    )
+                    SELECT 1 FROM descendants WHERE task_id = $3
+                    """,
+                    task_id,
+                    team_id,
+                    resolved_parent_task_id,
+                )
+                if cycle:
+                    raise ValidationError("Parent relationship would create a cycle")
+            if status == "in_progress":
+                # Claim apex resolution below must observe a parent changed by
+                # the same request; the transaction rolls this back on error.
+                await tx.execute(
+                    "UPDATE {{tables.tasks}} SET parent_task_id = $2 WHERE task_id = $1",
+                    task_id,
+                    resolved_parent_task_id,
+                )
+            else:
+                sets.append(f"parent_task_id = ${idx}")
+                params.append(resolved_parent_task_id)
+                idx += 1
+
         if assignee_alias is not _UNSET:
             resolved_assignee_alias = (
                 await _resolve_assignee_alias(
@@ -894,7 +960,7 @@ async def update_task(
         if status is not None:
             if status == "in_progress":
                 task_ref = format_task_ref(slug, current["task_ref_suffix"])
-                apex_task_ref = await resolve_task_claim_apex(db, team_id, task_ref)
+                apex_task_ref = await resolve_task_claim_apex_on(tx, team_id, task_ref)
                 workspace = await tx.fetch_one(
                     """
                     SELECT workspace_id, alias, human_name

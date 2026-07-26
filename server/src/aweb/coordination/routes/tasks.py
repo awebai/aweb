@@ -54,6 +54,7 @@ class UpdateTaskRequest(BaseModel):
     task_type: Optional[Literal["task", "bug", "feature", "epic", "chore"]] = None
     labels: Optional[list[str]] = None
     assignee_alias: Optional[str] = None
+    parent_task_id: Optional[str] = None
 
 
 class AddDependencyRequest(BaseModel):
@@ -139,6 +140,7 @@ async def list_tasks_unified(
     priority: Optional[int] = Query(None, ge=0, le=4),
     labels: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
+    parent_task_id: Optional[str] = Query(None),
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> dict[str, Any]:
     identity = await get_team_identity(request, db_infra)
@@ -153,6 +155,7 @@ async def list_tasks_unified(
         priority=priority,
         labels=label_list,
         q=q,
+        parent_task_id=parent_task_id,
     )
 
     return {"tasks": tasks}
@@ -224,6 +227,8 @@ async def update_task_route(
         kwargs["labels"] = payload.labels
     if "assignee_alias" in payload.model_fields_set:
         kwargs["assignee_alias"] = payload.assignee_alias
+    if "parent_task_id" in payload.model_fields_set:
+        kwargs["parent_task_id"] = payload.parent_task_id
 
     result = await update_task(
         db_infra,

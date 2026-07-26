@@ -22,6 +22,7 @@ func init() {
 	taskListCmd.Flags().String("priority", "", "Filter by priority 0-4 (accepts P0-P4)")
 	taskListCmd.Flags().String("labels", "", "Filter by labels (comma-separated)")
 	taskListCmd.Flags().String("assignee", "", "Filter by assignee agent name")
+	taskListCmd.Flags().String("parent", "", "Filter by parent task ref")
 	taskCmd.AddCommand(taskListCmd)
 }
 
@@ -58,6 +59,9 @@ func runTaskList(cmd *cobra.Command, args []string) error {
 	}
 	if v, _ := cmd.Flags().GetString("assignee"); v != "" {
 		params.AssigneeAlias = v
+	}
+	if v, _ := cmd.Flags().GetString("parent"); v != "" {
+		params.ParentTaskID = v
 	}
 
 	var resp *aweb.TaskListResponse

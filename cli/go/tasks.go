@@ -3,6 +3,7 @@ package aweb
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -52,6 +53,7 @@ type TaskSummary struct {
 	TaskType       string   `json:"task_type"`
 	AssigneeAlias  *string  `json:"assignee_alias"`
 	CreatedByAlias *string  `json:"created_by_alias"`
+	ParentTaskID   *string  `json:"parent_task_id"`
 	Labels         []string `json:"labels,omitempty"`
 	CreatedAt      string   `json:"created_at"`
 	UpdatedAt      string   `json:"updated_at"`
@@ -79,6 +81,7 @@ type TaskUpdateRequest struct {
 	Priority      *int     `json:"priority,omitempty"`
 	Labels        []string `json:"labels,omitempty"`
 	AssigneeAlias *string  `json:"assignee_alias,omitempty"`
+	ParentTaskID  *string  `json:"parent_task_id,omitempty"`
 }
 
 type TaskListParams struct {
@@ -87,6 +90,7 @@ type TaskListParams struct {
 	TaskType      string
 	Priority      *int
 	Labels        []string
+	ParentTaskID  string
 }
 
 type TaskAddDepRequest struct {
@@ -126,7 +130,8 @@ type ActiveTaskListResponse struct {
 // returned when closing a parent task triggers cascade-close of children.
 type TaskUpdateResponse struct {
 	Task
-	AutoClosed []TaskSummary `json:"auto_closed,omitempty"`
+	AutoClosed           []TaskSummary `json:"auto_closed,omitempty"`
+	RetriedAfterNotFound bool          `json:"-"`
 }
 
 // TaskHeldError is returned when a task status transition to in_progress
@@ -180,6 +185,9 @@ func (c *Client) TaskList(ctx context.Context, params TaskListParams) (*TaskList
 		path += sep + "labels=" + urlQueryEscape(strings.Join(params.Labels, ","))
 		sep = "&"
 	}
+	if params.ParentTaskID != "" {
+		path += sep + "parent_task_id=" + urlQueryEscape(params.ParentTaskID)
+	}
 	var out TaskListResponse
 	if err := c.Get(ctx, path, &out); err != nil {
 		return nil, err
@@ -224,6 +232,29 @@ func (c *Client) TaskGet(ctx context.Context, ref string) (*Task, error) {
 // returned as a *TaskHeldError. When closing a parent task, the response
 // may include AutoClosed listing cascade-closed children.
 func (c *Client) TaskUpdate(ctx context.Context, ref string, req *TaskUpdateRequest) (*TaskUpdateResponse, error) {
+	out, err := c.taskUpdateOnce(ctx, ref, req)
+	status, notFound := awid.HTTPStatusCode(err)
+	if !notFound || status != http.StatusNotFound {
+		return out, err
+	}
+
+	_, getErr := c.TaskGet(ctx, ref)
+	if getErr == nil {
+		out, retryErr := c.taskUpdateOnce(ctx, ref, req)
+		if retryErr != nil {
+			return nil, fmt.Errorf("task %s still exists, but its update endpoint is temporarily unavailable: %w; the update may have applied, so inspect the task before retrying", ref, retryErr)
+		}
+		out.RetriedAfterNotFound = true
+		return out, nil
+	}
+	getStatus, definitive := awid.HTTPStatusCode(getErr)
+	if definitive && getStatus == http.StatusNotFound {
+		return nil, err
+	}
+	return nil, fmt.Errorf("task update returned not found, but could not establish whether task %s exists: %w; the update may have applied, so inspect the task before retrying", ref, getErr)
+}
+
+func (c *Client) taskUpdateOnce(ctx context.Context, ref string, req *TaskUpdateRequest) (*TaskUpdateResponse, error) {
 	resp, err := c.DoRaw(ctx, http.MethodPatch, "/v1/tasks/"+urlPathEscape(ref), "application/json", req)
 	if err != nil {
 		return nil, err
