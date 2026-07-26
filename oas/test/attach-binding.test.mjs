@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -17,6 +18,8 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { afterEach, test } from "node:test";
+
+import { cleanupAuthorityPayload } from "../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs";
 
 const CAPABILITY_SOURCE = resolve(new URL("../.agents/capabilities/owned/aweb-identity-attach", import.meta.url).pathname);
 const temporaryDirectories = [];
@@ -65,7 +68,7 @@ function parseSuccess(result) {
   return document.result;
 }
 
-function fixture({ mode = "attach" } = {}) {
+function fixture({ mode = "attach", schemaVersion = 1, operationID = "operation-1" } = {}) {
   const base = temporaryDirectory();
   const repo = join(base, "repo");
   gitRepo(repo);
@@ -77,7 +80,10 @@ function fixture({ mode = "attach" } = {}) {
 
   const capability = join(repo, ".agents", "capabilities", "owned", "aweb-identity-attach");
   cpSync(CAPABILITY_SOURCE, capability, { recursive: true });
-  write(join(repo, "oas-config.yaml"), `capabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global:\n        enabled: true\n        settings:\n          identity_binding:\n            schema_version: 1\n            mode: ${mode}\n            principal: throwaway\n`);
+  const bindingSetting = mode === "attach" || mode === "attach-existing"
+    ? `            principal: throwaway\n`
+    : `            operation_id: ${operationID}\n`;
+  write(join(repo, "oas-config.yaml"), `capabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global:\n        enabled: true\n        settings:\n          identity_binding:\n            schema_version: ${schemaVersion}\n            mode: ${mode}\n${bindingSetting}`);
   const declarationPath = join(repo, "oas", "agents", "developer", "principals", "throwaway.yaml");
   write(declarationPath, [
     "schema_version: 1",
@@ -101,6 +107,8 @@ function fixture({ mode = "attach" } = {}) {
   write(join(bin, "pi"), "#!/bin/sh\nexit 0\n", 0o755);
   write(join(bin, "aw"), `#!/usr/bin/env node\nimport { appendFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_AW_LOG, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");\nconst argv = process.argv.slice(2);\nif (argv.includes("delete") || argv.includes("reset") || argv.includes("init") || argv.includes("invite") || argv.includes("join")) process.exit(93);\nif (argv.at(-2) === "whoami" && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ address: "example.test/throwaway", stable_id: "did:aw:2ThrowawayStableId123", team_id: "test-team:example.test" }) + "\\n");\n  process.exit(0);\n}\nprocess.exit(92);\n`, 0o755);
 
+  const authorityHome = join(principalHome, ".authority", "cleanup");
+  mkdirSync(authorityHome, { recursive: true });
   const env = {
     ...process.env,
     PATH: `${bin}:${process.env.PATH}`,
@@ -109,7 +117,22 @@ function fixture({ mode = "attach" } = {}) {
     FAKE_AW_LOG: awLog,
     PI_AGENTS_TMUX_SESSION: "oas-attach-test-no-session",
   };
-  return { base, repo, agentsRoot, capability, declarationPath, principalHome, principal, credentials, state, awLog, awPath: join(bin, "aw"), env };
+  return { base, repo, agentsRoot, capability, declarationPath, principalHome, principal, credentials, state, authorityHome, awLog, awPath: join(bin, "aw"), env };
+}
+
+function signedCleanupAuthority(f, instanceID, receipt) {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  write(join(f.authorityHome, "authority.pub"), publicKey.export({ type: "spki", format: "pem" }));
+  const record = { schema_version: 1, instance_id: instanceID, receipt };
+  return {
+    ...record,
+    signature: sign(null, cleanupAuthorityPayload(record), privateKey).toString("base64"),
+  };
+}
+
+function writeCleanupAuthority(f, instanceID, receipt) {
+  const record = signedCleanupAuthority(f, instanceID, receipt);
+  write(join(f.authorityHome, `${instanceID}.json`), `${JSON.stringify(record, null, 2)}\n`);
 }
 
 function pathIsWithinOrEqual(root, candidate) {
@@ -225,6 +248,162 @@ test("real OAS attach spawn persists external ownership and ordinary retire pres
   assert.equal(readFileSync(f.awLog, "utf8").trim().split("\n").length, 1, "retire must not invoke aw");
   assert.equal(readFileSync(join(f.credentials, "signing.key"), "utf8"), "principal-secret-that-must-never-enter-instance\n");
   assert.equal(readFileSync(join(f.state, "state.json"), "utf8"), "{\"durable\":true}\n");
+});
+
+test("real OAS attach-existing v2 emits an externally owned bound receipt", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  const spawn = spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "attach-v2", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  });
+  const spawned = parseSuccess(spawn);
+  assert.deepEqual(spawned.warnings ?? [], []);
+  const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+  const receipt = meta.capabilityMeta["aweb.identity-attach"].identity_binding;
+  assert.equal(receipt.schema_version, 2);
+  assert.equal(receipt.mode, "attach-existing");
+  assert.equal(receipt.lifecycle, "bound");
+  assert.equal(receipt.cleanup_owner, "external");
+  assert.equal(receipt.resource_identity.kind, "declared-principal");
+  assert.equal(receipt.resource_identity.stable_id, "did:aw:2ThrowawayStableId123");
+  assert.equal(receipt.resource_identity.reference, f.declarationPath);
+});
+
+for (const [mode, cleanupOwner] of [
+  ["provision-disposable", "instance"],
+  ["provision-durable", "external"],
+]) {
+  test(`real OAS ${mode} emits a pending non-authorizing receipt without provisioning`, () => {
+    const f = fixture({ mode, schemaVersion: 2, operationID: `${mode}-operation` });
+    const spawn = spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", mode, "--no-launch", "--json"], {
+      cwd: f.repo, env: f.env, encoding: "utf8",
+    });
+    const spawned = parseSuccess(spawn);
+    assert.equal(spawned.warnings.length, 1);
+    assert.match(spawned.warnings[0], /provisioning execution is not installed/);
+    const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+    const receipt = meta.capabilityMeta["aweb.identity-attach"].identity_binding;
+    assert.deepEqual(receipt, {
+      schema_version: 2,
+      mode,
+      lifecycle: "provision-pending",
+      cleanup_owner: cleanupOwner,
+      resource_identity: {
+        kind: "provision-operation",
+        operation_id: `${mode}-operation`,
+        stable_id: null,
+        reference: `operation:${mode}-operation`,
+      },
+      journal_operation: `${mode}-operation`,
+    });
+    assert.equal(existsSync(f.awLog), false, "decision layer must not invoke provisioning");
+
+    const retire = spawnSync(process.execPath, [oasCli(), "retire", spawned.instance, "--json"], {
+      cwd: f.repo, env: f.env, encoding: "utf8",
+    });
+    const retired = parseSuccess(retire);
+    assert.equal(retired.capabilityMeta["aweb.identity-attach"].retirement.cleanup_authorized, false);
+    assert.equal(retired.capabilityMeta["aweb.identity-attach"].retirement.action, "preserve");
+  });
+}
+
+test("capability-owned evidence can authorize cleanup judgement but instance metadata alone cannot", () => {
+  function spawnedDisposable() {
+    const f = fixture({ mode: "provision-disposable", schemaVersion: 2, operationID: "owned-operation" });
+    const spawn = spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "cleanup-judgement", "--no-launch", "--json"], {
+      cwd: f.repo, env: f.env, encoding: "utf8",
+    });
+    const spawned = parseSuccess(spawn);
+    const metaPath = join(spawned.home, "instance.json");
+    const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+    const receipt = meta.capabilityMeta["aweb.identity-attach"].identity_binding;
+    receipt.lifecycle = "provisioned";
+    writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
+    return { f, spawned, receipt };
+  }
+
+  const forged = spawnedDisposable();
+  const forgedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", forged.spawned.instance, "--json"], {
+    cwd: forged.f.repo, env: forged.f.env, encoding: "utf8",
+  }));
+  assert.deepEqual(forgedRetire.capabilityMeta["aweb.identity-attach"].retirement, {
+    action: "preserve",
+    cleanup_authorized: false,
+    reason: "capability_authority_missing_or_mismatched",
+  });
+
+  const substituted = spawnedDisposable();
+  const otherReceipt = {
+    ...substituted.receipt,
+    resource_identity: {
+      ...substituted.receipt.resource_identity,
+      operation_id: "victim-operation",
+      reference: "operation:victim-operation",
+    },
+    journal_operation: "victim-operation",
+  };
+  writeCleanupAuthority(substituted.f, substituted.spawned.instance, otherReceipt);
+  const substitutedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", substituted.spawned.instance, "--json"], {
+    cwd: substituted.f.repo, env: substituted.f.env, encoding: "utf8",
+  }));
+  assert.deepEqual(substitutedRetire.capabilityMeta["aweb.identity-attach"].retirement, {
+    action: "preserve",
+    cleanup_authorized: false,
+    reason: "capability_authority_missing_or_mismatched",
+  });
+
+  const invalidSignature = spawnedDisposable();
+  writeCleanupAuthority(invalidSignature.f, invalidSignature.spawned.instance, invalidSignature.receipt);
+  const invalidSignaturePath = join(invalidSignature.f.authorityHome, `${invalidSignature.spawned.instance}.json`);
+  const invalidSignatureRecord = JSON.parse(readFileSync(invalidSignaturePath, "utf8"));
+  invalidSignatureRecord.signature = Buffer.alloc(64).toString("base64");
+  writeFileSync(invalidSignaturePath, `${JSON.stringify(invalidSignatureRecord, null, 2)}\n`);
+  const invalidSignatureRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", invalidSignature.spawned.instance, "--json"], {
+    cwd: invalidSignature.f.repo, env: invalidSignature.f.env, encoding: "utf8",
+  }));
+  assert.equal(invalidSignatureRetire.capabilityMeta["aweb.identity-attach"].retirement.cleanup_authorized, false);
+
+  const linked = spawnedDisposable();
+  const linkedTarget = join(linked.f.base, "untrusted-authority.json");
+  write(linkedTarget, `${JSON.stringify(signedCleanupAuthority(linked.f, linked.spawned.instance, linked.receipt), null, 2)}\n`);
+  symlinkSync(linkedTarget, join(linked.f.authorityHome, `${linked.spawned.instance}.json`));
+  const linkedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", linked.spawned.instance, "--json"], {
+    cwd: linked.f.repo, env: linked.f.env, encoding: "utf8",
+  }));
+  assert.equal(linkedRetire.capabilityMeta["aweb.identity-attach"].retirement.cleanup_authorized, false);
+
+  const durable = fixture({ mode: "provision-durable", schemaVersion: 2, operationID: "durable-owned" });
+  const durableSpawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "durable-judgement", "--no-launch", "--json"], {
+    cwd: durable.repo, env: durable.env, encoding: "utf8",
+  }));
+  const durableMetaPath = join(durableSpawned.home, "instance.json");
+  const durableMeta = JSON.parse(readFileSync(durableMetaPath, "utf8"));
+  const durableReceipt = durableMeta.capabilityMeta["aweb.identity-attach"].identity_binding;
+  durableReceipt.lifecycle = "provisioned";
+  durableReceipt.resource_identity.kind = "declared-principal";
+  durableReceipt.resource_identity.stable_id = "did:aw:DurableOwned1";
+  durableReceipt.resource_identity.reference = join(durable.principalHome, "declarations", "durable-owned.yaml");
+  writeFileSync(durableMetaPath, `${JSON.stringify(durableMeta, null, 2)}\n`);
+  writeCleanupAuthority(durable, durableSpawned.instance, durableReceipt);
+  const durableRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", durableSpawned.instance, "--json"], {
+    cwd: durable.repo, env: durable.env, encoding: "utf8",
+  }));
+  assert.deepEqual(durableRetire.capabilityMeta["aweb.identity-attach"].retirement, {
+    action: "preserve",
+    cleanup_authorized: false,
+    reason: "instance_metadata_withholds_cleanup",
+  });
+
+  const owned = spawnedDisposable();
+  writeCleanupAuthority(owned.f, owned.spawned.instance, owned.receipt);
+  const ownedRetire = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", owned.spawned.instance, "--json"], {
+    cwd: owned.f.repo, env: owned.f.env, encoding: "utf8",
+  }));
+  assert.deepEqual(ownedRetire.capabilityMeta["aweb.identity-attach"].retirement, {
+    action: "authorize_cleanup",
+    cleanup_authorized: true,
+    reason: "capability_evidence_matches_disposable_resource",
+  });
+  assert.equal(existsSync(owned.f.awLog), false, "authorization judgement must not execute deletion");
 });
 
 test("real OAS attach rejects a declaration for a different soul before invoking aw", () => {
@@ -365,12 +544,39 @@ for (const malformed of [
       cwd: f.repo, env: f.env, encoding: "utf8",
     });
     const retired = parseSuccess(retire);
-    assert.equal(retired.warnings.length, 1);
-    assert.match(retired.warnings[0], /no principal cleanup was attempted/);
-    assert.equal(retired.capabilityMeta?.["aweb.identity-attach"], undefined);
+    assert.deepEqual(retired.warnings ?? [], []);
+    const decision = retired.capabilityMeta["aweb.identity-attach"];
+    assert.equal(decision.retirement.action, "preserve");
+    assert.equal(decision.retirement.cleanup_authorized, false);
+    assert.equal(decision.retirement.reason, "missing_or_invalid_instance_receipt");
+    assert.deepEqual(decision.identity_binding_evidence, capabilityMeta.identity_binding, "rejection must preserve malformed evidence");
     assert.equal(readFileSync(f.awLog, "utf8").trim().split("\n").length, 1, "retire must not invoke aw");
   });
 }
+
+test("production retire entry preserves on unparseable instance metadata", () => {
+  const f = fixture();
+  const result = spawnSync(process.execPath, [join(f.capability, "bin", "aweb-identity-attach.mjs"), "retire"], {
+    cwd: f.repo,
+    env: { ...f.env, OAS_EVENT: "retire", OAS_INSTANCE: "unparseable-1", OAS_META: "{" },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    meta: {
+      identity_binding_evidence: {
+        format: "unparseable",
+        sha256: createHash("sha256").update("{").digest("hex"),
+      },
+      retirement: {
+        action: "preserve",
+        cleanup_authorized: false,
+        reason: "unparseable_instance_metadata",
+      },
+    },
+  });
+  assert.equal(existsSync(f.awLog), false);
+});
 
 test("real OAS spawn rejects a non-attach binding without minting or cleanup authority", () => {
   const f = fixture({ mode: "provision" });
@@ -381,7 +587,7 @@ test("real OAS spawn rejects a non-attach binding without minting or cleanup aut
   });
   const spawned = parseSuccess(result);
   assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /only attach mode is supported/);
+  assert.match(spawned.warnings[0], /legacy identity_binding v1 must declare mode attach/);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
   assert.equal(existsSync(f.awLog), false);
@@ -395,8 +601,11 @@ test("real OAS spawn rejects a non-attach binding without minting or cleanup aut
   });
   const retired = parseSuccess(retire);
   assert.equal(existsSync(spawned.home), false);
-  assert.equal(retired.warnings.length, 1);
-  assert.match(retired.warnings[0], /no principal cleanup was attempted/);
-  assert.equal(retired.capabilityMeta?.["aweb.identity-attach"], undefined);
+  assert.deepEqual(retired.warnings ?? [], []);
+  assert.deepEqual(retired.capabilityMeta["aweb.identity-attach"].retirement, {
+    action: "preserve",
+    cleanup_authorized: false,
+    reason: "missing_or_invalid_instance_receipt",
+  });
   assert.equal(existsSync(f.awLog), false, "missing binding metadata must grant no cleanup authority");
 });
