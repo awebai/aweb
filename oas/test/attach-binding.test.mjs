@@ -515,7 +515,9 @@ test("operator and later-spawn reconciliation clean durable pending local intent
   assert.match(quarantiningSpawn.warnings[0], new RegExp(`${corruptOperation}.*visible quarantine`));
   const quarantiningMeta = JSON.parse(readFileSync(join(quarantiningSpawn.home, "instance.json"), "utf8"));
   assert.equal(quarantiningMeta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
-  assert.equal(readdirSync(join(f.principalHome, ".provisioning", "quarantine")).some((name) => name.startsWith(`${corruptOperation}.json.`)), true);
+  const quarantinePath = join(f.principalHome, ".provisioning", "quarantine");
+  assert.equal(readdirSync(quarantinePath).some((name) => name.endsWith(".report.json")
+    && JSON.parse(readFileSync(join(quarantinePath, name), "utf8")).source_name === `${corruptOperation}.json`), true);
 
   const exactCorruptModes = [
     ["--operation", "oas-CCCCCCCCCCCCCCCCCCCCCA"],
