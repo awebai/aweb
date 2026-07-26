@@ -465,7 +465,11 @@ export function listRecoverableProvisionIntents(home, {
 function hostBootIdentity() {
   try {
     if (process.platform === "linux") return readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
-    if (process.platform === "darwin") return execFileSync("sysctl", ["-n", "kern.boottime"], { encoding: "utf8" }).trim();
+    if (process.platform === "darwin") {
+      const boot = execFileSync("sysctl", ["-n", "kern.boottime"], { encoding: "utf8" });
+      const numeric = boot.match(/sec\s*=\s*(\d+),\s*usec\s*=\s*(\d+)/);
+      if (numeric) return `darwin-boot:${numeric[1]}:${numeric[2]}`;
+    }
   } catch {}
   return `boot-minute:${Math.floor((Date.now() / 1000 - uptime()) / 60)}`;
 }
@@ -481,7 +485,10 @@ function processBirthIdentity(pid) {
       return startTicks ? `${HOST_BOOT_IDENTITY}:linux-ticks:${startTicks}` : null;
     }
     if (process.platform === "darwin") {
-      const started = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" }).trim();
+      const started = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+        encoding: "utf8",
+        env: { ...process.env, TZ: "UTC", LC_ALL: "C", LANG: "C" },
+      }).trim();
       return started ? `${HOST_BOOT_IDENTITY}:darwin-start:${started}` : null;
     }
     process.kill(pid, 0);

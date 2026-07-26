@@ -445,19 +445,53 @@ async def clear_workspace_presence(
     if not workspace_ids:
         return 0
 
-    # Delete presence keys
+    # Read index coordinates before deleting the primary hashes. Lifecycle
+    # cleanup must remove every index production presence created, not only the
+    # global set.
+    pipe = redis.pipeline()
+    for ws_id in workspace_ids:
+        pipe.hgetall(_presence_key(ws_id))
+    presence_rows = await pipe.execute()
+
     pipe = redis.pipeline()
     for ws_id in workspace_ids:
         pipe.delete(_presence_key(ws_id))
     results = await pipe.execute()
     deleted_count = sum(1 for r in results if r)
 
-    # Remove from all secondary indexes (lazy cleanup handles misses)
-    # We remove from all possible indexes to ensure cleanup
+    def text(value) -> str:
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value or "")
+
     all_idx_key = _all_workspaces_index_key()
     pipe = redis.pipeline()
-    for ws_id in workspace_ids:
+    alias_entries: list[tuple[str, str]] = []
+    for ws_id, row in zip(workspace_ids, presence_rows):
+        decoded = {text(key): text(value) for key, value in (row or {}).items()}
+        team_id = decoded.get("team_id", "")
+        alias = decoded.get("alias", "")
+        repo_id = decoded.get("repo_id", "")
+        current_branch = decoded.get("current_branch", "")
         pipe.srem(all_idx_key, ws_id)
+        if team_id:
+            pipe.srem(_team_workspaces_index_key(team_id), ws_id)
+            alias_entries.append((_alias_index_key(team_id, alias), ws_id))
+        if repo_id:
+            pipe.srem(_repo_workspaces_index_key(repo_id), ws_id)
+            if current_branch:
+                pipe.srem(_branch_workspaces_index_key(repo_id, current_branch), ws_id)
     await pipe.execute()
+
+    # Alias indices are scalar mappings. Compare-and-delete so a concurrently
+    # reconnected workspace that legitimately reused the alias is never erased.
+    compare_delete = """
+        if redis.call('get', KEYS[1]) == ARGV[1] then
+            return redis.call('del', KEYS[1])
+        end
+        return 0
+    """
+    for key, ws_id in alias_entries:
+        await redis.eval(compare_delete, 1, key, ws_id)
 
     return deleted_count

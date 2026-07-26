@@ -124,6 +124,14 @@ else:
 PY
 }
 
+url_component() {
+  python3 - "$1" <<'PY'
+import sys
+from urllib.parse import quote
+print(quote(sys.argv[1], safe=""))
+PY
+}
+
 binding_operation() {
   python3 - "$1" <<'PY'
 import json, sys
@@ -299,32 +307,42 @@ scan_provisioned_material() {
 seed_provision_lifecycle_artifacts() {
   local operation="$1"
   local intent="$PRINCIPAL_HOME/.provisioning/intents/$operation.json"
-  local alias agent workspace
+  local alias agent workspace encoded_team encoded_alias
   alias="$(json_value "$intent" resource.alias)"
   agent="$(json_value "$intent" resource.agent_id)"
   workspace="$(json_value "$intent" resource.workspace_id)"
   docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -v ON_ERROR_STOP=1 -q -c \
     "INSERT INTO aweb.task_claims(team_id, workspace_id, alias, task_ref) VALUES ('$TEAM_ID', '$workspace', '$alias', 'proof-$operation');
      INSERT INTO aweb.reservations(team_id, resource_key, holder_alias, holder_agent_id) VALUES ('$TEAM_ID', 'proof:$operation', '$alias', '$agent');"
-  docker exec "$REDIS_CONTAINER" redis-cli HSET "presence:$workspace" workspace_id "$workspace" alias "$alias" team_id "$TEAM_ID" >/dev/null
+  encoded_team="$(url_component "$TEAM_ID")"
+  encoded_alias="$(url_component "$alias")"
+  docker exec "$REDIS_CONTAINER" redis-cli HSET "presence:$workspace" workspace_id "$workspace" alias "$alias" team_id "$TEAM_ID" repo_id "" current_branch "" >/dev/null
   docker exec "$REDIS_CONTAINER" redis-cli SADD idx:all_workspaces "$workspace" >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli SADD "idx:team_workspaces:$TEAM_ID" "$workspace" >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli SET "idx:alias:$encoded_team:$encoded_alias" "$workspace" >/dev/null
   [[ "$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$workspace';")" == "1" ]] \
     || fail "task-claim positive control was not created for $operation"
   [[ "$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT COUNT(*) FROM aweb.reservations WHERE holder_agent_id = '$agent';")" == "1" ]] \
     || fail "reservation positive control was not created for $operation"
   [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence:$workspace")" == "1" ]] \
     || fail "presence positive control was not created for $operation"
+  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER "idx:team_workspaces:$TEAM_ID" "$workspace")" == "1" ]] \
+    || fail "team presence index positive control was not created for $operation"
+  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli GET "idx:alias:$encoded_team:$encoded_alias")" == "$workspace" ]] \
+    || fail "alias presence index positive control was not created for $operation"
 }
 
 capture_provision_resource() {
   local phase="$1" operation="$2" expected="$3"
   local intent="$PRINCIPAL_HOME/.provisioning/intents/$operation.json"
-  local alias certificate agent workspace target
+  local alias certificate agent workspace target encoded_team encoded_alias
   alias="$(json_value "$intent" resource.alias)"
   certificate="$(json_value "$intent" resource.certificate_id)"
   agent="$(json_value "$intent" resource.agent_id)"
   workspace="$(json_value "$intent" resource.workspace_id)"
   target="$(json_value "$intent" resource.identity_home)"
+  encoded_team="$(url_component "$TEAM_ID")"
+  encoded_alias="$(url_component "$alias")"
 
   run_observer_aw id team members --team-id "$TEAM_ID" --registry "$AWID_URL" \
     --include-revoked --json > "$EVIDENCE/$phase-members.raw.json"
@@ -364,6 +382,10 @@ PY
       || fail "$phase retained workspace presence"
     [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER idx:all_workspaces "$workspace")" == "0" ]] \
       || fail "$phase retained the global presence index"
+    [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER "idx:team_workspaces:$TEAM_ID" "$workspace")" == "0" ]] \
+      || fail "$phase retained the team presence index"
+    [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "idx:alias:$encoded_team:$encoded_alias")" == "0" ]] \
+      || fail "$phase retained the alias presence index"
     [[ "$(json_value "$intent" state)" == "complete" ]] || fail "$phase external journal is not terminal complete"
   fi
 }
@@ -712,7 +734,7 @@ document = {
         "authorized_retire_deleted_victim": True,
         "attacker_operation": attacker_operation,
         "native_manifest_command_deleted_unacknowledged_attacker": True,
-        "positive_lifecycle_controls_removed": ["PostgreSQL task claim", "PostgreSQL reservation", "Redis workspace presence", "Redis global presence index"],
+        "positive_lifecycle_controls_removed": ["PostgreSQL task claim", "PostgreSQL reservation", "Redis workspace presence", "Redis global presence index", "Redis team presence index", "Redis alias presence index"],
         "not_created_by_no_launch_provision": ["aweb API key", "message", "delivery record"],
         "provisioned_material_copy_hardlink_symlink_scan_passed": True,
         "external_journals_terminal_complete": True,

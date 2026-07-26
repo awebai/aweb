@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -273,6 +273,43 @@ test("per-intent lock serializes stale takeover, never takes a live holder, and 
   const migratedDatabase = new DatabaseSync(join(root, ".provisioning", "locks.sqlite"));
   assert.equal(migratedDatabase.prepare("PRAGMA table_info(operation_locks)").all().some((column) => column.name === "process_identity"), true);
   migratedDatabase.close();
+
+  const holderReady = join(root, "cross-timezone-holder-ready");
+  const timezoneHolder = [
+    `import { writeFileSync } from "node:fs";`,
+    `import { withProvisionIntentLock } from ${JSON.stringify(journalModule)};`,
+    `withProvisionIntentLock(${JSON.stringify(root)}, ${JSON.stringify(OPERATION_A)}, () => {`,
+    `  writeFileSync(${JSON.stringify(holderReady)}, "ready");`,
+    `  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);`,
+    `});`,
+  ].join("\n");
+  const holder = spawn(process.execPath, ["--input-type=module", "--eval", timezoneHolder], {
+    env: { ...process.env, TZ: "UTC" }, stdio: ["ignore", "pipe", "pipe"],
+  });
+  for (let attempt = 0; attempt < 100 && !existsSync(holderReady); attempt += 1) {
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+  }
+  assert.equal(existsSync(holderReady), true, "cross-timezone holder did not acquire its real lock");
+  const timezoneContender = [
+    `import { withProvisionIntentLock } from ${JSON.stringify(journalModule)};`,
+    `try {`,
+    `  withProvisionIntentLock(${JSON.stringify(root)}, ${JSON.stringify(OPERATION_A)}, () => console.log("ENTERED"),`,
+    `    { now: new Date(Date.now() + 600000), staleAfterMs: 1 });`,
+    `} catch (error) {`,
+    `  if (!/live holder/.test(error.message)) throw error;`,
+    `  console.log("BLOCKED");`,
+    `}`,
+  ].join("\n");
+  const timezoneResult = spawnSync(process.execPath, ["--input-type=module", "--eval", timezoneContender], {
+    env: { ...process.env, TZ: "America/Los_Angeles" }, encoding: "utf8",
+  });
+  assert.equal(timezoneResult.status, 0, timezoneResult.stderr);
+  assert.match(timezoneResult.stdout, /BLOCKED/);
+  assert.doesNotMatch(timezoneResult.stdout, /ENTERED/);
+  await new Promise((resolveHolder, rejectHolder) => {
+    holder.on("error", rejectHolder);
+    holder.on("close", (status) => status === 0 ? resolveHolder() : rejectHolder(new Error(`holder exited ${status}`)));
+  });
 
   const killed = spawnSync(process.execPath, ["--input-type=module", "--eval", [
     `import { withProvisionIntentLock } from ${JSON.stringify(journalModule)};`,

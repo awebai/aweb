@@ -62,7 +62,7 @@ forbidden.
 | aweb workspace row | exact-team persistent authority calling workspace delete | **soft-deleted** |
 | aweb local agent/identity row | local-workspace lifecycle cascade | **soft-deleted** |
 | Task claims and reservations created during runtime | aweb PostgreSQL lifecycle cascade; proof seeds positive rows | **physically absent** |
-| Workspace presence created during runtime | aweb Redis presence key/global index; proof seeds positive entries | **physically absent** |
+| Workspace presence created during runtime | aweb Redis primary key plus global, team, and alias indices; proof seeds production-shaped positive entries | **physically absent** |
 | aweb API keys | local certificate connect creates none; AWID certificate above is the authorization grant | **not created** |
 | Messages/delivery records | no model session or message is created by this no-launch provisioning proof; historical messages are audit, not member authorization | **not created / not applicable to the provision operation** |
 | Hosted organization membership | not created on the local-controller path | **physically absent / not applicable** |
@@ -113,9 +113,11 @@ cleaned; a later spawn allocates its own operation and principal.
   run under `BEGIN IMMEDIATE`; takeover compare-and-swaps the observed random
   token and refuses only the same host-boot/process-birth identity, not a reused
   PID. No lock pathname is unlinked/recreated, so a concurrent scanner cannot
-  replace or remove a fresh holder. Legacy lock-schema migration uses the same
-  serialized transaction. Process-kill, prior-boot PID-reuse, two-reclaimer,
-  and 24-process concurrent migration controls prove the takeover path.
+  replace or remove a fresh holder. macOS boot time is parsed numerically and
+  process birth is read under forced UTC/C locale, so caller timezone cannot
+  change ownership. Legacy lock-schema migration uses the same serialized
+  transaction. Process-kill, prior-boot PID-reuse, cross-timezone live-holder,
+  two-reclaimer, and 24-process concurrent migration controls prove the path.
 - Automatic states: stale `allocated`, `provisioning`, and `cleanup-pending`.
   `prepared` and `bound` are not inferred to mean launched and are never globally
   selected. Only
