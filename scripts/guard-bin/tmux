@@ -23,7 +23,8 @@ clean_path=
 old_ifs=$IFS
 IFS=:
 for dir in $PATH; do
-  [ "$dir" = "$self_dir" ] && continue
+  canonical_dir=$(CDPATH= cd -- "${dir:-.}" 2>/dev/null && pwd -P) || canonical_dir=
+  [ "$canonical_dir" = "$self_dir" ] && continue
   if [ -z "$clean_path" ]; then
     clean_path=$dir
   else
