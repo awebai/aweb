@@ -347,6 +347,51 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	}
 }
 
+func TestProvisionedCertificateIdentityUsesExplicitHomeForEncryption(t *testing.T) {
+	root := t.TempDir()
+	workingDir := filepath.Join(root, "instance")
+	identityHome := filepath.Join(root, "principal")
+	if err := os.MkdirAll(workingDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, principalKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(identityHome, "signing.key"), principalKey); err != nil {
+		t.Fatal(err)
+	}
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team: "backend:acme.test", MemberDIDKey: awid.ComputeDIDKey(principalKey.Public().(ed25519.PublicKey)),
+		Alias: "provisioned", Lifetime: awid.LifetimeEphemeral,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath, err := saveAcceptedTeamCertificate(workingDir, identityHome, "backend:acme.test", cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamStateToIdentityHome(identityHome, &awconfig.TeamState{
+		ActiveTeam:  "backend:acme.test",
+		Memberships: []awconfig.TeamMembership{{TeamID: "backend:acme.test", Alias: "provisioned", CertPath: certPath, RegistryURL: "https://registry.test"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.SigningKeyPath != filepath.Join(identityHome, "signing.key") || !identity.ExternalIdentityHome {
+		t.Fatalf("identity=%+v", identity)
+	}
+}
+
 func TestLocalProvisionEnrollmentUsesExplicitIdentityHome(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)

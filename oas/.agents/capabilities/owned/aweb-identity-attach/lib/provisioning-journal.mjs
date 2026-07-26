@@ -73,6 +73,10 @@ function validatedOperationID(value) {
   return value;
 }
 
+function aliasForOperation(operation) {
+  return `oas-${createHash("sha256").update(validatedOperationID(operation)).digest("hex").slice(0, 32)}`;
+}
+
 function timestamp(value) {
   const date = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(date.getTime())) throw new TypeError("journal timestamp is invalid");
@@ -109,7 +113,7 @@ function validateIntent(intent) {
       || intent.mode !== "provision-disposable"
       || typeof intent.authority_home !== "string" || !isAbsolute(intent.authority_home) || normalize(resolve(intent.authority_home)) !== intent.authority_home
       || typeof intent.team_id !== "string" || !TEAM_ID.test(intent.team_id)
-      || intent.alias !== intent.operation_id
+      || intent.alias !== aliasForOperation(intent.operation_id)
       || typeof intent.identity_home !== "string" || !isAbsolute(intent.identity_home)
       || !["allocated", "provisioning", "prepared", "bound", "cleanup-pending", "complete", "quarantined"].includes(intent.state)
       || !exactFields(intent.cleanup, ["attempts", "last_error"])
@@ -174,7 +178,7 @@ export function createProvisionIntent(home, { operationID, instanceID, teamID, a
     authority,
     authority_home: authorityHome,
     team_id: teamID,
-    alias: operation,
+    alias: aliasForOperation(operation),
     identity_home: join(journalPaths.identities, operation),
     state: "allocated",
     resource: null,

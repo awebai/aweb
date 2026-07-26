@@ -253,7 +253,7 @@ function parseLocalProvisionOutput(stdout, intent) {
     throw new Error("aw id team provision-local returned invalid JSON");
   }
   const fields = [
-    "status", "operation_id", "team_id", "alias", "identity_home", "did_key", "certificate_id",
+    "status", "operation_id", "team_id", "alias", "name", "identity_home", "did_key", "certificate_id",
     "agent_id", "workspace_id", "registry_url", "aweb_url",
   ];
   if (!exactFields(result, fields)
@@ -261,6 +261,7 @@ function parseLocalProvisionOutput(stdout, intent) {
       || result.operation_id !== intent.operation_id
       || result.team_id !== intent.team_id
       || result.alias !== intent.alias
+      || result.name !== intent.alias
       || result.identity_home !== intent.identity_home
       || typeof result.did_key !== "string" || !result.did_key.startsWith("did:key:z")
       || typeof result.certificate_id !== "string" || !result.certificate_id
@@ -270,33 +271,41 @@ function parseLocalProvisionOutput(stdout, intent) {
       || typeof result.aweb_url !== "string" || !result.aweb_url) {
     throw new Error("aw id team provision-local returned a contradictory resource tuple");
   }
-  return result;
+  const { name: _normalizedName, ...resource } = result;
+  return resource;
 }
 
 function runProvisionCommandForIntent(intent, cwd) {
   const creator = intent.authority.intended_creator;
-  return parseLocalProvisionOutput(execFileSync(
-    "aw",
-    [
-      "id", "team", "provision-local",
-      "--operation-id", intent.operation_id,
-      "--team-id", intent.team_id,
-      "--name", intent.alias,
-      "--authority-identity-home", intent.authority_home,
-      "--target-identity-home", intent.identity_home,
-      "--authority-address", creator.address,
-      "--authority-stable-id", creator.stable_id,
-      "--controller-did", intent.authority.controller_did,
-      "--json",
-    ],
-    {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 90000,
-      env: { ...process.env, AW_NO_UPDATE_CHECK: "1" },
-    },
-  ), intent);
+  let stdout;
+  try {
+    stdout = execFileSync(
+      "aw",
+      [
+        "id", "team", "provision-local",
+        "--operation-id", intent.operation_id,
+        "--team-id", intent.team_id,
+        "--name", intent.alias,
+        "--authority-identity-home", intent.authority_home,
+        "--target-identity-home", intent.identity_home,
+        "--authority-address", creator.address,
+        "--authority-stable-id", creator.stable_id,
+        "--controller-did", intent.authority.controller_did,
+        "--json",
+      ],
+      {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 90000,
+        env: { ...process.env, AW_NO_UPDATE_CHECK: "1" },
+      },
+    );
+  } catch (error) {
+    const detail = typeof error?.stderr === "string" ? error.stderr.trim() : "";
+    throw new Error(`aw id team provision-local failed: ${detail || error.message}`);
+  }
+  return parseLocalProvisionOutput(stdout, intent);
 }
 
 function runCleanupCommandForIntent(intent, cwd) {

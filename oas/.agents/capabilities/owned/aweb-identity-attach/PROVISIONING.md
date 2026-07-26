@@ -16,9 +16,11 @@ This capability executes `provision-disposable` only through declared
   by that UID.
 
 The opaque 128-bit operation id is allocated by the decision layer and written
-to the journal before the first remote call. It is also the explicit member
-alias and the native `TeamInvite.operation_id`; an instance name, purpose, or
-user alias is never used as operation identity.
+to the journal before the first remote call. The native
+`TeamInvite.operation_id` carries it unchanged. The member alias is a separate,
+deterministic lowercase 128-bit SHA-256 projection of the operation, because
+aliases are normalized while operation identity is not. An instance name,
+purpose, or user alias is never used as operation identity.
 
 ## Cleanup authority and order
 
@@ -94,24 +96,46 @@ cleaned; a later spawn allocates its own operation and principal.
 
 ## Scanner and quarantine contract
 
-- Triggers: a later local provisioning spawn, every retire hook, and the
-  operator-visible `aweb-identity-attach.mjs reconcile` command. After fixing
-  the reported authority/service problem, an operator retries a quarantined
-  operation with `reconcile --retry-quarantine <operation-id>`.
+- Triggers: a later local provisioning spawn, every retire hook, and the native
+  operator command `oas aweb-identity reconcile`. The OAS dispatcher requires
+  this capability to be active and executable-trusted; direct bin invocation is
+  not the operator contract. After fixing the reported authority/service
+  problem, an operator retries exactly one quarantined operation with
+  `oas aweb-identity reconcile --retry-quarantine <operation-id>`.
 - Automatic stale threshold: five minutes. The explicit command ignores the
-  threshold.
-- Ownership: one `O_EXCL` lock per operation, with a five-minute stale-lock
-  threshold. A scanner never cleans another scanner's live operation.
+  threshold only for scanner-owned states.
+- Ownership: one `O_EXCL` lock per operation. Lock records carry a random token,
+  PID, and acquisition time. Stale takeover re-reads the token and refuses any
+  live PID or changed lock, so it cannot unlink a concurrently replaced holder.
 - Automatic states: stale `allocated`, `provisioning`, and `cleanup-pending`.
-  `prepared` and `bound` are not inferred to mean launched and are not silently
-  transferred to another spawn. `reconcile --include-prepared` may clean a
-  `prepared` or `bound` identity only after the operator confirms the original
-  instance is quiescent and its metadata did not retain the receipt; the journal
-  can observe writing hook stdout, not OAS accepting it. A `bound` identity with
-  retained metadata still requires its matching retire judgement.
+  `prepared` and `bound` are not inferred to mean launched and are never globally
+  selected. Only
+  `oas aweb-identity reconcile --cleanup-unacknowledged <operation-id>` can clean
+  one such identity, after the operator confirms that exact original instance is
+  quiescent and its metadata did not retain the receipt. The journal can observe
+  writing hook stdout, not OAS accepting it. A `bound` identity with retained
+  metadata still requires its matching retire judgement.
+- A malformed or unknown-version intent is moved, unchanged, to the external
+  quarantine directory with a report that grants no cleanup authority; other
+  valid stale work continues scanning.
 - A cleanup still failing on the third persisted attempt moves to visible
   `quarantined`. Quarantine is a remediable non-success and is never reported as
   completed cleanup.
+
+## Real lifecycle proof
+
+`scripts/e2e-oas-attached-principal-retire.sh` uses the repository's guarded,
+no-tmux loopback Docker stack. In addition to attached-principal preservation,
+it provisions two throwaway local identities through real OAS hooks, AWID, aweb,
+and PostgreSQL. It retargets one instance-side receipt at the other operation,
+proves the exact corroboration refusal leaves both real rows and certificates
+active, then proves ordinary authorized retire and the native exact-operation
+command produce AWID revocation, aweb agent/workspace soft deletion, local grant
+absence, and credential-tree absence at their owning authorities. This is
+explicitly local same-UID accident/confused-deputy evidence, not hostile-model
+resistance. Removing the operation comparison in the target audit makes the
+forged execution cleanup reach real deletion and turns the owning-authority
+post-forgery active assertion red.
 
 The in-scope failure model is process kill and host restart. Power loss with
 unflushed writes, disk loss, and Byzantine remote behavior are out of scope.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +24,7 @@ import { loadCleanupCorroboration } from "../.agents/capabilities/owned/aweb-ide
 
 const OPERATION_A = "oas-AAAAAAAAAAAAAAAAAAAAAA";
 const OPERATION_B = "oas-BBBBBBBBBBBBBBBBBBBBBQ";
+const operationAlias = (operation) => `oas-${createHash("sha256").update(operation).digest("hex").slice(0, 32)}`;
 const AUTHORITY = Object.freeze({
   schema_version: 2,
   path: "local-controller",
@@ -61,7 +63,7 @@ test("provision intent is durable before side effects and contains no bearer sec
     now: new Date("2026-07-26T00:00:00Z"),
   });
   assert.equal(intent.state, "allocated");
-  assert.equal(intent.alias, OPERATION_A);
+  assert.equal(intent.alias, operationAlias(OPERATION_A));
   assert.equal(intent.identity_home, join(root, ".provisioning", "identities", OPERATION_A));
   assert.equal(intent.authority.controller_did, AUTHORITY.controller_did);
   assert.equal(statSync(join(root, ".provisioning", "intents", `${OPERATION_A}.json`)).mode & 0o777, 0o600);
@@ -88,7 +90,7 @@ test("scanner owns stale incomplete work but never infers that prepared means la
     status: "provisioned",
     operation_id: OPERATION_B,
     team_id: "backend:acme.test",
-    alias: OPERATION_B,
+    alias: operationAlias(OPERATION_B),
     identity_home: join(root, ".provisioning", "identities", OPERATION_B),
     did_key: "did:key:z6MkiWorker",
     certificate_id: "certificate-b",
@@ -161,7 +163,7 @@ test("failed recoverable cleanup reaches visible remediable quarantine", (t) => 
   });
   markProvisionIntentProvisioning(root, OPERATION_A, start);
   markProvisionIntentPrepared(root, OPERATION_A, {
-    status: "provisioned", operation_id: OPERATION_A, team_id: "backend:acme.test", alias: OPERATION_A,
+    status: "provisioned", operation_id: OPERATION_A, team_id: "backend:acme.test", alias: operationAlias(OPERATION_A),
     identity_home: join(root, ".provisioning", "identities", OPERATION_A), did_key: "did:key:z6MkiWorker",
     certificate_id: "certificate-a", agent_id: "agent-a", workspace_id: "workspace-a",
     registry_url: "https://registry.test", aweb_url: "https://aweb.test",

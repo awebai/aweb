@@ -23,7 +23,6 @@ import { afterEach, test } from "node:test";
 import { cleanupCorroborationPayload } from "../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs";
 
 const CAPABILITY_SOURCE = resolve(new URL("../.agents/capabilities/owned/aweb-identity-attach", import.meta.url).pathname);
-const RECONCILE_WRAPPER = resolve(new URL("../../scripts/oas-aweb-provision-reconcile.sh", import.meta.url).pathname);
 const temporaryDirectories = [];
 
 afterEach(() => {
@@ -49,6 +48,12 @@ function oasCli() {
   const cli = join(root, "bin", "oas.mjs");
   assert.equal(existsSync(cli), true, `real OAS CLI not found at ${cli}`);
   return cli;
+}
+
+function reconcileCommand(args, cwd, env) {
+  return spawnSync(process.execPath, [oasCli(), "aweb-identity", "reconcile", ...args], {
+    cwd, env, encoding: "utf8",
+  });
 }
 
 function gitRepo(directory) {
@@ -116,7 +121,7 @@ function fixture({
   const bin = join(base, "bin");
   const awLog = join(base, "aw-argv.jsonl");
   write(join(bin, "pi"), "#!/bin/sh\nexit 0\n", 0o755);
-  write(join(bin, "aw"), `#!/usr/bin/env node\nimport { appendFileSync, readFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_AW_LOG, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");\nconst argv = process.argv.slice(2);\nif (argv.includes("delete") || argv.includes("reset") || argv.includes("init") || argv.includes("invite") || argv.includes("join")) process.exit(93);\nif (argv.at(-2) === "whoami" && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ address: "example.test/throwaway", stable_id: "did:aw:2ThrowawayStableId123" }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("team") && argv.includes("list") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ active_team: "test-team:example.test", memberships: [{ team_id: "test-team:example.test", active: true }] }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("import-request") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ controller_did: "did:key:z6MkiLocalController123" }) + "\\n");\n  process.exit(0);\n}\nconst flag = (name) => argv[argv.indexOf(name) + 1];\nif (argv.includes("cleanup-local-provision")) {\n  const operation = flag("--operation-id");\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "cleanup-pending") process.exit(95);\n  process.stdout.write(JSON.stringify({\n    status: "complete", operation_id: operation, grants: "physically-absent", workspace: "soft-deleted", identity: "soft-deleted",\n    certificate: "revoked", credentials: "physically-absent", audit: "intentionally-retained-operation-record",\n  }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("provision-local")) {\n  const operation = flag("--operation-id");\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "provisioning") process.exit(94);\n  process.stdout.write(JSON.stringify({\n    status: "provisioned", operation_id: operation, team_id: flag("--team-id"), alias: flag("--name"),\n    identity_home: flag("--target-identity-home"), did_key: "did:key:z6MkiProvisionedWorker",\n    certificate_id: "certificate-provisioned", agent_id: "agent-provisioned", workspace_id: "workspace-provisioned",\n    registry_url: "https://registry.example.test", aweb_url: "https://aweb.example.test",\n  }) + "\\n");\n  process.exit(0);\n}\nprocess.exit(92);\n`, 0o755);
+  write(join(bin, "aw"), `#!/usr/bin/env node\nimport { appendFileSync, readFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_AW_LOG, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");\nconst argv = process.argv.slice(2);\nif (argv.includes("delete") || argv.includes("reset") || argv.includes("init") || argv.includes("invite") || argv.includes("join")) process.exit(93);\nif (argv.at(-2) === "whoami" && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ address: "example.test/throwaway", stable_id: "did:aw:2ThrowawayStableId123" }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("team") && argv.includes("list") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ active_team: "test-team:example.test", memberships: [{ team_id: "test-team:example.test", active: true }] }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("import-request") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ controller_did: "did:key:z6MkiLocalController123" }) + "\\n");\n  process.exit(0);\n}\nconst flag = (name) => argv[argv.indexOf(name) + 1];\nif (argv.includes("cleanup-local-provision")) {\n  const operation = flag("--operation-id");\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "cleanup-pending") process.exit(95);\n  process.stdout.write(JSON.stringify({\n    status: "complete", operation_id: operation, grants: "physically-absent", workspace: "soft-deleted", identity: "soft-deleted",\n    certificate: "revoked", credentials: "physically-absent", audit: "intentionally-retained-operation-record",\n  }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("provision-local")) {\n  const operation = flag("--operation-id");\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "provisioning") process.exit(94);\n  process.stdout.write(JSON.stringify({\n    status: "provisioned", operation_id: operation, team_id: flag("--team-id"), alias: flag("--name"), name: flag("--name"),\n    identity_home: flag("--target-identity-home"), did_key: "did:key:z6MkiProvisionedWorker",\n    certificate_id: "certificate-provisioned", agent_id: "agent-provisioned", workspace_id: "workspace-provisioned",\n    registry_url: "https://registry.example.test", aweb_url: "https://aweb.example.test",\n  }) + "\\n");\n  process.exit(0);\n}\nprocess.exit(92);\n`, 0o755);
 
   const corroborationHome = join(principalHome, ".corroboration", "cleanup");
   mkdirSync(corroborationHome, { recursive: true });
@@ -396,6 +401,28 @@ test("real OAS emits a local-controller authority statement with indefinite gran
   });
 });
 
+test("native reconciliation command enforces active capability and executable trust", () => {
+  const inactiveRoot = temporaryDirectory();
+  const inactiveRepo = join(inactiveRoot, "inactive");
+  gitRepo(inactiveRepo);
+  cpSync(CAPABILITY_SOURCE, join(inactiveRepo, ".agents", "capabilities", "owned", "aweb-identity-attach"), { recursive: true });
+  write(join(inactiveRepo, "oas-config.yaml"), "capabilities:\n  layers:\n    messaging: none\n");
+  const inactive = reconcileCommand([], inactiveRepo, { ...process.env, PI_AGENT_HOME: "", OAS_HOME: "" });
+  assert.equal(inactive.status, 1);
+  assert.match(inactive.stderr, /not active/);
+
+  const untrustedRepo = join(temporaryDirectory(), "untrusted");
+  gitRepo(untrustedRepo);
+  const installed = spawnSync(process.execPath, [oasCli(), "install", CAPABILITY_SOURCE, "--dir", untrustedRepo], {
+    cwd: untrustedRepo, env: process.env, encoding: "utf8",
+  });
+  assert.equal(installed.status, 0, installed.stderr);
+  write(join(untrustedRepo, "oas-config.yaml"), "capabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global: true\n");
+  const untrusted = reconcileCommand([], untrustedRepo, { ...process.env, PI_AGENT_HOME: "", OAS_HOME: "" });
+  assert.equal(untrusted.status, 1);
+  assert.match(untrusted.stderr, /blocked.*oas trust/i);
+});
+
 test("operator and later-spawn reconciliation clean durable pending local intents", () => {
   const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
   const spawnLocal = (purpose) => parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", purpose, "--no-launch", "--json"], {
@@ -426,9 +453,7 @@ test("operator and later-spawn reconciliation clean durable pending local intent
   interruptedJournal.updated_at = "2000-01-01T00:00:00.000Z";
   writeFileSync(interruptedPath, `${JSON.stringify(interruptedJournal, null, 2)}\n`, { mode: 0o600 });
   const operatorCallStart = readFileSync(f.awLog, "utf8").trim().split("\n").length;
-  const operator = spawnSync(RECONCILE_WRAPPER, [], {
-    cwd: f.repo, env: { ...f.env, AWEB_IDENTITY_ATTACH_CAPABILITY: f.capability }, encoding: "utf8",
-  });
+  const operator = reconcileCommand([], f.repo, f.env);
   assert.equal(operator.status, 0, operator.stderr);
   assert.deepEqual(JSON.parse(operator.stdout).operations.map((item) => item.operation_id), [interruptedOperation]);
   assert.equal(JSON.parse(readFileSync(interruptedPath, "utf8")).state, "complete");
@@ -461,17 +486,13 @@ test("operator and later-spawn reconciliation clean durable pending local intent
   const bound = journalFor(spawnLocal("operator-confirmed-bound"));
   const unrelated = journalFor(spawnLocal("unrelated-live-binding"));
 
-  const cleanupPrepared = spawnSync(RECONCILE_WRAPPER, ["--cleanup-unacknowledged", prepared.operation], {
-    cwd: f.repo, env: { ...f.env, AWEB_IDENTITY_ATTACH_CAPABILITY: f.capability }, encoding: "utf8",
-  });
+  const cleanupPrepared = reconcileCommand(["--cleanup-unacknowledged", prepared.operation], f.repo, f.env);
   assert.equal(cleanupPrepared.status, 0, cleanupPrepared.stderr);
   assert.equal(JSON.parse(readFileSync(prepared.path, "utf8")).state, "complete");
   assert.equal(JSON.parse(readFileSync(bound.path, "utf8")).state, "bound");
   assert.equal(JSON.parse(readFileSync(unrelated.path, "utf8")).state, "bound", "exact operator cleanup must not select unrelated live bindings");
 
-  const cleanupBound = spawnSync(RECONCILE_WRAPPER, ["--cleanup-unacknowledged", bound.operation], {
-    cwd: f.repo, env: { ...f.env, AWEB_IDENTITY_ATTACH_CAPABILITY: f.capability }, encoding: "utf8",
-  });
+  const cleanupBound = reconcileCommand(["--cleanup-unacknowledged", bound.operation], f.repo, f.env);
   assert.equal(cleanupBound.status, 0, cleanupBound.stderr);
   assert.equal(JSON.parse(readFileSync(bound.path, "utf8")).state, "complete");
   assert.equal(JSON.parse(readFileSync(unrelated.path, "utf8")).state, "bound");

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Prove, on a fresh local tmpfs-backed stack, that ordinary OAS retirement of
-# an externally attached principal cannot alter or delete that principal.
+# Prove, on a fresh local tmpfs-backed stack, both that ordinary OAS retirement
+# preserves an externally attached principal and that local disposable
+# provisioning refuses a forged victim while authorized cleanup actually
+# revokes/deletes every owned resource.
 #
 # Requirements: Docker Compose, Go, Python 3, curl, and an OAS source install.
 # OAS_TEST_ROOT selects that install. OAS_PROOF_{AWID,AWEB,POSTGRES}_PORT and
@@ -104,6 +106,14 @@ if isinstance(value, (dict, list)):
     print(json.dumps(value, sort_keys=True))
 else:
     print(value)
+PY
+}
+
+binding_operation() {
+  python3 - "$1" <<'PY'
+import json, sys
+meta = json.load(open(sys.argv[1], encoding="utf-8"))
+print(meta["capabilityMeta"]["aweb.identity-attach"]["identity_binding"]["journal_operation"])
 PY
 }
 
@@ -256,6 +266,59 @@ scan_instance() {
   local phase="$1"
   python3 "$PROOF_HELPER" scan-instance --principal-snapshot "$EVIDENCE/principal-pre.json" --instance "$INSTANCE_HOME"
   echo "  instance contains no principal material at $phase"
+}
+
+capture_provision_resource() {
+  local phase="$1" operation="$2" expected="$3"
+  local intent="$PRINCIPAL_HOME/.provisioning/intents/$operation.json"
+  local alias certificate agent workspace target
+  alias="$(json_value "$intent" resource.alias)"
+  certificate="$(json_value "$intent" resource.certificate_id)"
+  agent="$(json_value "$intent" resource.agent_id)"
+  workspace="$(json_value "$intent" resource.workspace_id)"
+  target="$(json_value "$intent" resource.identity_home)"
+
+  run_observer_aw id team members --team-id "$TEAM_ID" --registry "$AWID_URL" \
+    --include-revoked --json > "$EVIDENCE/$phase-members.raw.json"
+  normalize_json "$EVIDENCE/$phase-members.raw.json" "$EVIDENCE/$phase-members.json"
+  python3 - "$EVIDENCE/$phase-members.json" "$alias" "$certificate" "$expected" <<'PY'
+import json, sys
+path, alias, certificate, expected = sys.argv[1:]
+document = json.load(open(path, encoding="utf-8"))
+rows = [row for row in document["members"] if row["alias"] == alias and row["certificate_id"] == certificate]
+assert len(rows) == 1, rows
+revoked = bool(rows[0].get("revoked_at"))
+assert revoked == (expected == "deleted"), rows[0]
+PY
+
+  local agent_row workspace_row
+  agent_row="$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -F '|' -c \
+    "SELECT status, deleted_at IS NOT NULL FROM aweb.agents WHERE agent_id = '$agent';")"
+  workspace_row="$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -F '|' -c \
+    "SELECT deleted_at IS NOT NULL FROM aweb.workspaces WHERE workspace_id = '$workspace';")"
+  if [[ "$expected" == "active" ]]; then
+    [[ "$agent_row" == "active|f" ]] || fail "$phase agent is not active at owning aweb authority: $agent_row"
+    [[ "$workspace_row" == "f" ]] || fail "$phase workspace is not active at owning aweb authority: $workspace_row"
+  else
+    [[ "$agent_row" == "deleted|t" ]] || fail "$phase agent is not soft-deleted at owning aweb authority: $agent_row"
+    [[ "$workspace_row" == "t" ]] || fail "$phase workspace is not soft-deleted at owning aweb authority: $workspace_row"
+    [[ -f "$target/provision-operation.json" ]] || fail "$phase retained operation audit is missing"
+    [[ "$(find "$target" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" == "1" ]] \
+      || fail "$phase credential tree retains material beyond the operation audit"
+    if [[ -d "$PROOF_HOME/.config/aw/team-invites" ]] && grep -R -F -q "$operation" "$PROOF_HOME/.config/aw/team-invites"; then
+      fail "$phase still has a usable local invite grant for $operation"
+    fi
+  fi
+}
+
+run_reconcile() {
+  (
+    cd "$FIXTURE_REPO"
+    env -u OAS_EVENT -u OAS_META -u OAS_SETTINGS -u AWEB_IDENTITY_HOME \
+      HOME="$PROOF_HOME" AW_CONFIG_PATH="$CONFIG_PATH" AWID_REGISTRY_URL="$AWID_URL" AWID_SKIP_DNS_VERIFY=1 \
+      AWEB_PRINCIPAL_HOME="$PRINCIPAL_HOME" PATH="$PROOF_BIN:$CLI_DIR:$PATH" \
+      node "$OAS_CLI" aweb-identity reconcile "$@"
+  )
 }
 
 echo "=== Build the real aw CLI ==="
@@ -436,6 +499,113 @@ assert_principal_unchanged after-gone-workspace-sweep
 capture_registry after-cleanup
 compare_registry_to_pre after-cleanup
 
+echo "=== Provision two disposable identities on the real stack ==="
+cat > "$FIXTURE_REPO/oas-config.yaml" <<'EOF'
+capabilities:
+  layers:
+    messaging:
+      capability: aweb.identity-attach
+      global:
+        enabled: true
+        settings:
+          identity_binding:
+            schema_version: 2
+            mode: provision-disposable
+            minting_authority: resident
+            minting_authority_path: local-controller
+EOF
+(
+  cd "$FIXTURE_REPO"
+  git add oas-config.yaml
+  git commit -qm "exercise local disposable provisioning"
+)
+run_oas_in "$FIXTURE_REPO" spawn proof-resident --purpose real-delete-victim --no-launch --json > "$EVIDENCE/provision-victim-spawn.json"
+VICTIM_HOME="$(json_value "$EVIDENCE/provision-victim-spawn.json" home)"
+VICTIM_INSTANCE="$(json_value "$EVIDENCE/provision-victim-spawn.json" instance)"
+VICTIM_OPERATION="$(binding_operation "$VICTIM_HOME/instance.json")"
+run_oas_in "$FIXTURE_REPO" spawn proof-resident --purpose forged-receipt-carrier --no-launch --json > "$EVIDENCE/provision-attacker-spawn.json"
+ATTACKER_HOME="$(json_value "$EVIDENCE/provision-attacker-spawn.json" home)"
+ATTACKER_INSTANCE="$(json_value "$EVIDENCE/provision-attacker-spawn.json" instance)"
+ATTACKER_OPERATION="$(binding_operation "$ATTACKER_HOME/instance.json")"
+capture_provision_resource victim-before-forgery "$VICTIM_OPERATION" active
+capture_provision_resource attacker-before-forgery "$ATTACKER_OPERATION" active
+
+VICTIM_INTENT="$PRINCIPAL_HOME/.provisioning/intents/$VICTIM_OPERATION.json"
+ATTACKER_INTENT="$PRINCIPAL_HOME/.provisioning/intents/$ATTACKER_OPERATION.json"
+VICTIM_ALIAS="$(json_value "$VICTIM_INTENT" alias)"
+VICTIM_TARGET="$(json_value "$VICTIM_INTENT" identity_home)"
+AUTHORITY_HOME="$(json_value "$VICTIM_INTENT" authority_home)"
+AUTHORITY_ADDRESS="$(json_value "$VICTIM_INTENT" authority.intended_creator.address)"
+AUTHORITY_STABLE="$(json_value "$VICTIM_INTENT" authority.intended_creator.stable_id)"
+CONTROLLER_DID="$(json_value "$VICTIM_INTENT" authority.controller_did)"
+set +e
+(
+  cd "$ATTACKER_HOME"
+  env -u AWEB_IDENTITY_HOME HOME="$PROOF_HOME" AW_CONFIG_PATH="$CONFIG_PATH" \
+    AWID_REGISTRY_URL="$AWID_URL" AWID_SKIP_DNS_VERIFY=1 \
+    "$AW_BIN" id team cleanup-local-provision \
+      --operation-id "$ATTACKER_OPERATION" --team-id "$TEAM_ID" --name "$VICTIM_ALIAS" \
+      --authority-identity-home "$AUTHORITY_HOME" --target-identity-home "$VICTIM_TARGET" \
+      --authority-address "$AUTHORITY_ADDRESS" --authority-stable-id "$AUTHORITY_STABLE" \
+      --controller-did "$CONTROLLER_DID" --json
+) > "$EVIDENCE/forged-execution-cleanup.txt" 2>&1
+FORGED_EXECUTION_STATUS=$?
+set -e
+# Query the owning authorities before checking the local error. Under the guard
+# mutation this is the deliberately destructive red assertion.
+capture_provision_resource victim-after-forged-execution "$VICTIM_OPERATION" active
+[[ "$FORGED_EXECUTION_STATUS" -ne 0 ]] || fail "forged execution cleanup unexpectedly succeeded"
+grep -q "target record contradicts the requested operation" "$EVIDENCE/forged-execution-cleanup.txt" \
+  || fail "forged execution cleanup was refused by the wrong boundary"
+
+# The instance-side receipt is not cleanup authority. Retarget the attacker's
+# valid receipt to the independently provisioned victim while leaving the
+# capability corroboration operation-specific.
+python3 - "$ATTACKER_HOME/instance.json" "$VICTIM_HOME/instance.json" <<'PY'
+import json, sys
+attacker_path, victim_path = sys.argv[1:]
+attacker = json.load(open(attacker_path, encoding="utf-8"))
+victim = json.load(open(victim_path, encoding="utf-8"))
+attacker["capabilityMeta"]["aweb.identity-attach"]["identity_binding"] = victim["capabilityMeta"]["aweb.identity-attach"]["identity_binding"]
+with open(attacker_path, "w", encoding="utf-8") as stream:
+    json.dump(attacker, stream, indent=2, sort_keys=True)
+    stream.write("\n")
+PY
+
+echo "=== Refuse the forged victim, then execute authorized cleanup ==="
+run_oas_in "$FIXTURE_REPO" retire "$ATTACKER_INSTANCE" --json > "$EVIDENCE/forged-retire.json"
+capture_provision_resource victim-after-forged-retire "$VICTIM_OPERATION" active
+capture_provision_resource attacker-after-forged-retire "$ATTACKER_OPERATION" active
+python3 - "$EVIDENCE/forged-retire.json" <<'PY'
+import json, sys
+document = json.load(open(sys.argv[1], encoding="utf-8"))
+if document.get("schemaVersion") == 1:
+    document = document["result"]
+retirement = document["capabilityMeta"]["aweb.identity-attach"]["retirement"]
+assert retirement["action"] == "preserve", retirement
+assert retirement["cleanup_authorized"] is False, retirement
+assert retirement["reason"] == "cleanup_corroboration_missing_or_mismatched", retirement
+PY
+
+run_oas_in "$FIXTURE_REPO" retire "$VICTIM_INSTANCE" --json > "$EVIDENCE/authorized-retire.json"
+python3 - "$EVIDENCE/authorized-retire.json" <<'PY'
+import json, sys
+document = json.load(open(sys.argv[1], encoding="utf-8"))
+if document.get("schemaVersion") == 1:
+    document = document["result"]
+assert document.get("warnings", []) == [], document
+retirement = document["capabilityMeta"]["aweb.identity-attach"]["retirement"]
+assert retirement["action"] == "cleanup_complete", retirement
+assert retirement["cleanup"]["status"] == "complete", retirement
+PY
+capture_provision_resource victim-after-authorized-retire "$VICTIM_OPERATION" deleted
+
+# The forged carrier's ordinary instance is gone, so its genuinely owned bound
+# identity is an operator-confirmed unacknowledged handoff. Exercise the
+# committed exact-operation wrapper rather than a documented incantation.
+run_reconcile --cleanup-unacknowledged "$ATTACKER_OPERATION" > "$EVIDENCE/operator-reconcile.json"
+capture_provision_resource attacker-after-operator-reconcile "$ATTACKER_OPERATION" deleted
+
 echo "=== Write proof report ==="
 SOURCE_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 OAS_SHA="$(git -C "$OAS_ROOT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
@@ -444,15 +614,15 @@ ADDRESS_SHA="$(file_sha256 "$EVIDENCE/registry-pre-address.json")"
 RESOLVE_SHA="$(file_sha256 "$EVIDENCE/registry-pre-resolve.json")"
 VERIFY_SHA="$(file_sha256 "$EVIDENCE/registry-pre-verify.json")"
 mkdir -p "$(dirname "$REPORT")"
-python3 - "$REPORT" "$SOURCE_SHA" "$OAS_SHA" "$ADDRESS" "$DID_AW" "$TEAM_ID" "$SNAPSHOT_SHA" "$ADDRESS_SHA" "$RESOLVE_SHA" "$VERIFY_SHA" "$EVIDENCE/registry-pre-address.json" "$EVIDENCE/registry-pre-resolve.json" "$EVIDENCE/registry-pre-verify.json" <<'PY'
+python3 - "$REPORT" "$SOURCE_SHA" "$OAS_SHA" "$ADDRESS" "$DID_AW" "$TEAM_ID" "$SNAPSHOT_SHA" "$ADDRESS_SHA" "$RESOLVE_SHA" "$VERIFY_SHA" "$EVIDENCE/registry-pre-address.json" "$EVIDENCE/registry-pre-resolve.json" "$EVIDENCE/registry-pre-verify.json" "$VICTIM_OPERATION" "$ATTACKER_OPERATION" <<'PY'
 import json, sys
 (report, source, oas_source, address, stable, team, snapshot_sha, address_sha, resolve_sha, verify_sha,
- address_path, resolve_path, verify_path) = sys.argv[1:]
+ address_path, resolve_path, verify_path, victim_operation, attacker_operation) = sys.argv[1:]
 address_observation = json.load(open(address_path, encoding="utf-8"))
 resolve_observation = json.load(open(resolve_path, encoding="utf-8"))
 verify_observation = json.load(open(verify_path, encoding="utf-8"))
 document = {
-    "schema": "aweb.oas-attached-principal-retire-proof.v1",
+    "schema": "aweb.oas-principal-lifecycle-proof.v2",
     "source_sha": source,
     "oas_kernel_sha": oas_source,
     "stack": {"loopback_only": True, "postgres_tmpfs_verified": True},
@@ -467,6 +637,19 @@ document = {
         "cleanup_owner": "external",
         "receipt": "preserve_principal",
         "instance_removed": True,
+    },
+    "provision_cleanup_observation": {
+        "authority_path": "local-controller",
+        "threat_demonstrated": "local-same-uid-accident-and-confused-deputy",
+        "victim_operation": victim_operation,
+        "forged_execution_refused_by": "target operation-record mismatch",
+        "forged_receipt_refused_by": "cleanup_corroboration_missing_or_mismatched",
+        "victim_remained_active_after_both_forged_paths": True,
+        "operation-guard-mutation_reaches_real_deletion_and_turns_owning-authority_assertion_red": True,
+        "authorized_retire_deleted_victim": True,
+        "attacker_operation": attacker_operation,
+        "committed_operator_wrapper_deleted_unacknowledged_attacker": True,
+        "owning_authorities_queried": ["AWID certificate roster", "aweb PostgreSQL lifecycle state", "local credential and invite stores"],
     },
     "independent_observations": {
         "registry_address_unchanged": True,
@@ -488,6 +671,7 @@ document = {
         "OAS_SETTINGS binding is config-scoped",
         "v1 has no admission lease or concurrent-use fencing",
         "attach itself performs no registry resolution or DID-log verification",
+        "local cleanup corroboration is same-UID accident/confused-deputy evidence, not hostile-model resistance",
     ],
 }
 with open(report, "w", encoding="utf-8") as stream:
