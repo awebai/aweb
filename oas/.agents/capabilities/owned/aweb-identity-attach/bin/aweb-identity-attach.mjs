@@ -578,6 +578,11 @@ function recoverProvisionIntents(principalHome, cwd, {
           return { operation_id: intent.operation_id, outcome: "cleanup-complete", cleanup };
         }
         if (intent.state === "complete") {
+          const corroborationHome = join(principalHome, ".corroboration", "cleanup");
+          // Complete journals from before .48 may still have an instance-keyed
+          // record. Adopt it using the journal's validated instance id, then
+          // release the operation key in this exact reconciliation.
+          loadCleanupCorroboration(corroborationHome, intent.operation_id, intent.instance_id);
           removeProvisionCleanupCorroboration(principalHome, intent.operation_id);
           return { operation_id: intent.operation_id, outcome: "cleanup-authority-released" };
         }

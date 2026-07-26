@@ -927,12 +927,19 @@ test("exact reconcile releases corroboration left beside a complete journal", ()
   journal.state = "complete";
   journal.revision += 1;
   writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
-  assert.equal(existsSync(join(f.corroborationHome, `${operation}.json`)), true);
+  const operationRecord = join(f.corroborationHome, `${operation}.json`);
+  const legacyRecord = join(f.corroborationHome, `${spawned.instance}.json`);
+  const mergedMainBytes = readFileSync(operationRecord);
+  unlinkSync(operationRecord);
+  writeFileSync(legacyRecord, mergedMainBytes, { mode: 0o600 });
+  assert.equal(existsSync(operationRecord), false);
+  assert.equal(existsSync(legacyRecord), true);
 
   const reconciled = reconcileCommand(["--operation", operation], f.repo, f.env);
   assert.equal(reconciled.status, 0, reconciled.stderr);
   assert.equal(JSON.parse(reconciled.stdout).operations[0].outcome, "cleanup-authority-released");
-  assert.equal(existsSync(join(f.corroborationHome, `${operation}.json`)), false);
+  assert.equal(existsSync(operationRecord), false);
+  assert.equal(existsSync(legacyRecord), false);
 });
 
 test("local same-UID corroboration guards cleanup judgement against receipt-only mistakes", () => {
