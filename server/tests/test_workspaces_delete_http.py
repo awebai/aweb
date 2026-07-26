@@ -119,6 +119,10 @@ class _FakeRedisPipeline:
         self.redis = redis
         self.actions = []
 
+    def hgetall(self, key):
+        self.actions.append(("hgetall", key))
+        return self
+
     def delete(self, key):
         self.actions.append(("delete", key))
         return self
@@ -129,13 +133,14 @@ class _FakeRedisPipeline:
 
     async def execute(self):
         self.redis.pipeline_actions.extend(self.actions)
-        return [1 for _ in self.actions]
+        return [self.redis.presence.get(action[1], {}) if action[0] == "hgetall" else 1 for action in self.actions]
 
 
 class _FakeRedis:
     def __init__(self):
         self.published = []
         self.pipeline_actions = []
+        self.presence = {}
 
     async def publish(self, channel, message):
         self.published.append((channel, json.loads(message)))
@@ -143,6 +148,9 @@ class _FakeRedis:
 
     def pipeline(self):
         return _FakeRedisPipeline(self)
+
+    async def eval(self, script, number_of_keys, key, expected):
+        return 0
 
 
 @pytest.mark.asyncio
