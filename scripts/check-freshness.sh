@@ -6,9 +6,10 @@
 #   1. Intentionally committed GENERATED artifacts are regenerated and must not
 #      drift from their source (uv locks, cli reference, resource packs,
 #      reserved app ids, the claude-channel and pi bundles).
-#   2. Repository paths REFERENCED IN DOCUMENTATION exist (check-doc-paths.sh).
-#   3. Every lock/reference/dist check passes a clean fixture and rejects the
-#      stale artifact it claims to detect (test-freshness-negative-fixtures.sh).
+#   2. Public AWID site document mirrors exactly match their canonical docs.
+#   3. Repository paths REFERENCED IN DOCUMENTATION exist (check-doc-paths.sh).
+#   4. Every lock/reference/dist/mirror check passes a clean fixture and rejects
+#      the stale artifact it claims to detect (test-freshness-negative-fixtures.sh).
 #
 # WHAT IT CANNOT CHECK, and therefore what still requires human review: whether
 # documentation PROSE is true. A path can resolve while the sentence around it
@@ -75,10 +76,20 @@ else
   status=1
 fi
 
-# 5. Negative controls for every non-documentation check above. Each self-test
-#    first accepts the clean artifact, then seeds the exact stale artifact and
-#    requires a diagnostic failure. Both directions matter: an always-red gate
-#    is no more trustworthy than an always-green one.
+# 5. Public docs served by the AWID site are tracked mirrors of their canonical
+#    docs. This is a comparison gate, not a release-time repair step.
+section "AWID public site document mirrors"
+if make --no-print-directory check-awid-site-docs; then
+  echo "public AWID site documents match their canonical sources"
+else
+  echo "FAIL: public AWID site document drift — sync the configured mirrors and commit them"
+  status=1
+fi
+
+# 6. Negative controls for every generated-artifact and mirror check above. Each
+#    self-test first accepts the clean artifact, then seeds the exact stale
+#    artifact and requires a diagnostic failure. Both directions matter: an
+#    always-red gate is no more trustworthy than an always-green one.
 section "freshness negative fixtures (clean pass + stale fail)"
 if scripts/test-freshness-negative-fixtures.sh; then
   echo "freshness checks pass clean fixtures and reject stale fixtures"
@@ -87,7 +98,7 @@ else
   status=1
 fi
 
-# 6. Documentation path references. Deleted code must not be described as live;
+# 7. Documentation path references. Deleted code must not be described as live;
 #    default-aajc.6 removed the channel shadow modules while the architecture
 #    map still documented them as existing. The self-test proves this check can
 #    still FAIL, so it cannot decay into an always-green no-op.
