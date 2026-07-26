@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,67 @@ func resetMailSendGlobalsForLiveRosterTest(t *testing.T) {
 	mailSendLegacyPlaintext = false
 	mailSendPlaintext = true
 	jsonFlag = false
+}
+
+func TestAliasFallbackReadsWorkspaceFromExternalIdentityHome(t *testing.T) {
+	root := t.TempDir()
+	instance := filepath.Join(root, "instance")
+	identityHome := filepath.Join(root, "principal")
+	externalWorkspace := workspaceBinding("https://aweb.invalid", "backend:demo", "principal", "ws-principal")
+	externalWorkspace.Memberships = append(externalWorkspace.Memberships, awconfig.WorktreeMembership{
+		TeamID: "ops:demo", Alias: "principal-ops", CertPath: awconfig.TeamCertificateRelativePath("ops:demo"),
+	})
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(identityHome, "workspace.yaml"), &externalWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	shadowWorkspace := workspaceBinding("https://aweb.invalid", "backend:demo", "shadow", "ws-shadow")
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(instance, ".aw", "workspace.yaml"), &shadowWorkspace); err != nil {
+		t.Fatal(err)
+	}
+
+	if !shouldSearchOtherLocalTeamsForAlias(&awconfig.Selection{
+		WorkingDir: instance, IdentityHome: identityHome,
+		WorkspacePath: filepath.Join(identityHome, "workspace.yaml"),
+		TeamID:        "backend:demo",
+	}, "reviewer") {
+		t.Fatal("external multi-team workspace did not enable alias fallback")
+	}
+}
+
+func TestLiveRosterAliasFallbackReadsExternalTeamState(t *testing.T) {
+	root := t.TempDir()
+	instance := filepath.Join(root, "instance")
+	identityHome := filepath.Join(root, "principal")
+	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/namespaces/demo/teams/backend/members/grace" {
+			t.Fatalf("unexpected registry path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(awid.TeamMemberReference{
+			TeamID: "backend:demo", MemberDIDKey: "did:key:grace", Alias: "grace", IdentityScope: awid.IdentityModeLocal,
+		})
+	}))
+	if err := awconfig.SaveTeamStateToIdentityHome(identityHome, &awconfig.TeamState{
+		ActiveTeam:  "backend:demo",
+		Memberships: []awconfig.TeamMembership{{TeamID: "backend:demo", Alias: "principal", CertPath: awconfig.TeamCertificateRelativePath("backend:demo"), RegistryURL: registryServer.URL}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamState(instance, &awconfig.TeamState{
+		ActiveTeam:  "backend:demo",
+		Memberships: []awconfig.TeamMembership{{TeamID: "backend:demo", Alias: "shadow", CertPath: awconfig.TeamCertificateRelativePath("backend:demo"), RegistryURL: "http://127.0.0.1:1"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	target, found, err := resolveLiveTeamMemberAliasTarget(context.Background(), &awconfig.Selection{
+		WorkingDir: instance, IdentityHome: identityHome, TeamID: "backend:demo",
+	}, "grace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || target.DIDKey != "did:key:grace" {
+		t.Fatalf("target=%+v found=%v", target, found)
+	}
 }
 
 func TestMailSendBareAliasFallsBackToLiveTeamRoster(t *testing.T) {

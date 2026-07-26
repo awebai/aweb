@@ -287,7 +287,11 @@ func resolveClientSelectionAtIdentityHomeWithTeamOverride(workingDir, teamIDOver
 }
 
 func resolveClientForSelection(workingDir string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
-	return resolveClientForSelectionAtIdentityHome(workingDir, "", sel)
+	identityHome := ""
+	if sel != nil {
+		identityHome = strings.TrimSpace(sel.IdentityHome)
+	}
+	return resolveClientForSelectionAtIdentityHome(workingDir, identityHome, sel)
 }
 
 func resolveClientForSelectionAtIdentityHome(workingDir, identityHome string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
@@ -327,7 +331,7 @@ func resolveIdentityMessagingClientSelectionForDir(workingDir string) (*aweb.Cli
 		return nil, nil, err
 	}
 
-	if err := checkIdentityMismatch(workingDir, sel); err != nil {
+	if err := checkIdentityMismatchAtIdentityHome(workingDir, strings.TrimSpace(sel.IdentityHome), sel); err != nil {
 		return nil, nil, err
 	}
 
@@ -420,7 +424,7 @@ func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias strin
 		return c, sel, nil
 	}
 
-	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(sel.WorkingDir)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(sel.WorkspacePath)
 	if err != nil || workspace == nil {
 		if err != nil {
 			debugLog("load workspace for alias fallback: %v", err)
@@ -476,7 +480,7 @@ func shouldSearchOtherLocalTeamsForAlias(sel *awconfig.Selection, targetAlias st
 	if strings.Contains(targetAlias, "/") || strings.Contains(targetAlias, "~") || strings.HasPrefix(targetAlias, "did:") {
 		return false
 	}
-	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(sel.WorkingDir)
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(sel.WorkspacePath)
 	if err != nil || workspace == nil {
 		return false
 	}
@@ -544,7 +548,14 @@ func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selecti
 		return liveTeamMemberAliasTarget{}, false, err
 	}
 	registryURL := ""
-	if state, stateErr := awconfig.LoadTeamState(sel.WorkingDir); stateErr != nil {
+	var state *awconfig.TeamState
+	var stateErr error
+	if strings.TrimSpace(sel.IdentityHome) != "" {
+		state, stateErr = awconfig.LoadTeamStateFromIdentityHome(sel.IdentityHome)
+	} else {
+		state, stateErr = awconfig.LoadTeamState(sel.WorkingDir)
+	}
+	if stateErr != nil {
 		debugLog("load team state for alias fallback registry %s: %v", strings.TrimSpace(sel.TeamID), stateErr)
 	} else if state != nil {
 		if membership := state.Membership(sel.TeamID); membership != nil {

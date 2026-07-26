@@ -281,6 +281,52 @@ func TestE2EEAssertionIdentityUsesMatchingIdentityStableID(t *testing.T) {
 	}
 }
 
+func TestE2EEAssertionIdentityUsesExternalIdentityHome(t *testing.T) {
+	t.Parallel()
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := filepath.Join(root, "instance")
+	principal := filepath.Join(root, "principal")
+	principalPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shadowPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principalDID := awid.ComputeDIDKey(principalPub)
+	principalStableID := awid.ComputeStableID(principalPub)
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(principal, "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:      principalDID,
+		StableID: principalStableID,
+		Custody:  awid.CustodySelf,
+		Lifetime: awid.LifetimePersistent,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(instance, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:      awid.ComputeDIDKey(shadowPub),
+		StableID: awid.ComputeStableID(shadowPub),
+		Custody:  awid.CustodySelf,
+		Lifetime: awid.LifetimePersistent,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	identity := e2eeAssertionIdentityForSelection(&awconfig.Selection{
+		WorkingDir:   instance,
+		IdentityHome: principal,
+		DID:          principalDID,
+	})
+	if identity.DID != principalDID || identity.StableID != principalStableID {
+		t.Fatalf("identity=(%q,%q), want external (%q,%q)", identity.DID, identity.StableID, principalDID, principalStableID)
+	}
+}
+
 func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 	t.Parallel()
 
