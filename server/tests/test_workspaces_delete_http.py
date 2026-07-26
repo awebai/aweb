@@ -146,11 +146,18 @@ class _FakeRedis:
         self.published.append((channel, json.loads(message)))
         return 1
 
-    def pipeline(self):
+    def pipeline(self, transaction=True):
         return _FakeRedisPipeline(self)
 
-    async def eval(self, script, number_of_keys, key, expected):
-        return 0
+    async def eval(self, script, number_of_keys, *args):
+        assert number_of_keys == 2
+        primary_key, coordinates_key, workspace_id, all_index_key = args
+        self.pipeline_actions.extend([
+            ("srem", all_index_key, workspace_id),
+            ("delete", primary_key),
+            ("delete", coordinates_key),
+        ])
+        return 1
 
 
 @pytest.mark.asyncio

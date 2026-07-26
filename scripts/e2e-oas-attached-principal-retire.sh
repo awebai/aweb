@@ -307,7 +307,7 @@ scan_provisioned_material() {
 seed_provision_lifecycle_artifacts() {
   local operation="$1"
   local intent="$PRINCIPAL_HOME/.provisioning/intents/$operation.json"
-  local alias agent workspace encoded_team encoded_alias
+  local alias agent workspace encoded_team encoded_alias index_ttl coordinates_ttl
   alias="$(json_value "$intent" resource.alias)"
   agent="$(json_value "$intent" resource.agent_id)"
   workspace="$(json_value "$intent" resource.workspace_id)"
@@ -317,10 +317,16 @@ seed_provision_lifecycle_artifacts() {
   encoded_team="$(url_component "$TEAM_ID")"
   encoded_alias="$(url_component "$alias")"
   docker exec "$REDIS_CONTAINER" redis-cli HSET "presence:$workspace" workspace_id "$workspace" alias "$alias" team_id "$TEAM_ID" repo_id "" current_branch "" >/dev/null
-  docker exec "$REDIS_CONTAINER" redis-cli HSET "presence_coordinates:$workspace" alias "$alias" team_id "$TEAM_ID" repo_id "" current_branch "" >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli HSET "presence_coordinates:$workspace" \
+    "set:idx:all_workspaces" 1 \
+    "set:idx:team_workspaces:$TEAM_ID" 1 \
+    "alias:idx:alias:$encoded_team:$encoded_alias" "$workspace" >/dev/null
   docker exec "$REDIS_CONTAINER" redis-cli SADD idx:all_workspaces "$workspace" >/dev/null
   docker exec "$REDIS_CONTAINER" redis-cli SADD "idx:team_workspaces:$TEAM_ID" "$workspace" >/dev/null
-  docker exec "$REDIS_CONTAINER" redis-cli SET "idx:alias:$encoded_team:$encoded_alias" "$workspace" >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli SET "idx:alias:$encoded_team:$encoded_alias" "$workspace" EX 3600 >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli EXPIRE idx:all_workspaces 3600 >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli EXPIRE "idx:team_workspaces:$TEAM_ID" 3600 >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli EXPIRE "presence_coordinates:$workspace" 3660 >/dev/null
   [[ "$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$workspace';")" == "1" ]] \
     || fail "task-claim positive control was not created for $operation"
   [[ "$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT COUNT(*) FROM aweb.reservations WHERE holder_agent_id = '$agent';")" == "1" ]] \
@@ -336,6 +342,10 @@ seed_provision_lifecycle_artifacts() {
     || fail "primary presence did not expire before lifecycle cleanup for $operation"
   [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence_coordinates:$workspace")" == "1" ]] \
     || fail "durable presence coordinates were not retained after primary expiry for $operation"
+  index_ttl="$(docker exec "$REDIS_CONTAINER" redis-cli TTL "idx:team_workspaces:$TEAM_ID")"
+  coordinates_ttl="$(docker exec "$REDIS_CONTAINER" redis-cli TTL "presence_coordinates:$workspace")"
+  (( coordinates_ttl > index_ttl )) \
+    || fail "presence cleanup coordinates do not strictly outlive their index for $operation"
   [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER idx:all_workspaces "$workspace")" == "1" ]] \
     || fail "global presence index did not outlive primary for $operation"
   [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER "idx:team_workspaces:$TEAM_ID" "$workspace")" == "1" ]] \
