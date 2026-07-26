@@ -8,6 +8,14 @@ Epic: `aweb-oas-aaaa`
 Binds OAS to aweb identity, messaging, and tasks. Remote host dispatch is out
 of scope.
 
+**This document has one author.** Propose changes on the epic task and the owner
+makes them. This is not ceremony: two people editing one normative document in
+parallel is how it started contradicting itself once already, and how a
+correction landing in main can silently revert another correction still on a
+branch. The rule was previously enforced by remembering to tell each new agent,
+which failed the first time an agent arrived who had not been told — so it is
+written here instead, where anyone about to edit will see it.
+
 Every claim about external behaviour in this document was verified against
 running code at a stated version, and cites the source so a reader can re-check
 rather than trust. Versions: OAS 0.18.1, aw CLI 1.32.10, Claude Code 2.1.219.
@@ -273,6 +281,38 @@ The v1 input is config-scoped `OAS_SETTINGS`, so it attaches every instance of
 the targeted soul to the same principal; it is not a per-instance override.
 Concurrent use remains unfenced until the admission lease lands. That limitation
 is accepted for this walking skeleton and is not solved by attach cleanup.
+
+### Tasks layer binding
+
+The owned `aweb.tasks` capability under
+`oas/.agents/capabilities/owned/aweb-tasks` binds OAS's exclusive `tasks`
+layer to aweb. It is intentionally separate from the
+`aweb.identity-attach` messaging capability because one manifest may own only
+one fundamental layer. When selected, aweb is authoritative for the shared
+task queue, work discovery, ownership, status, and roster; task-like and
+roster features from the messaging layer or another integration stay off.
+Conversation still belongs to the messaging layer.
+
+```yaml
+capabilities:
+  layers:
+    tasks:
+      capability: aweb.tasks
+      global:
+        enabled: true
+```
+
+The capability contributes the `aweb-coordination` skill and an instruction
+block naming `aw task`, `aw work`, and `aw workspace status`. The skill copy is
+guarded byte-for-byte against the canonical repository skill so this new
+distribution cannot silently drift.
+
+Binding does not bypass attached-principal admission. All runnable `aw task`
+commands and `aw work ready|active|blocked` are admitted only after a
+production-binary regression routes their authenticated requests through the
+selected external identity home, verifies the external principal's signature,
+and proves zero traffic reaches a complete divergent instance shadow. With no
+external identity home, the pre-existing command path is unchanged.
 
 Provisioning recovers by **reconciliation, not replay**. An earlier revision of
 this document specified a write-ahead journal keyed by a stable idempotency key,
@@ -591,13 +631,26 @@ the gone-workspace route is unreachable by construction (`.24`). This is *not*
 non-destruction in full — see *What is NOT yet proven*.
 
 Plus the *mechanism* those proofs guard, built since: identity resolution with
-default-deny admission (`.11`, `.22`, `.23`, `.36` — 29 commands admitted, each
-routed before it was admitted, never the reverse); the binding decision layer,
-whose judgement carries its own assurance level so a caller cannot mistake local
-accident-resistance for a security boundary (`.4`); minting authority declared
-and verified per path, hosted and local having opposite failure modes (`.5`);
-and the runtime's own resolution — channel config at the selected principal
-(`.35`) and outbound messaging admitted (`.36`).
+default-deny admission (`.11`, `.22`, `.23`, `.34`, `.36`, `.10` — each command
+routed through the selected principal *before* it was admitted, never the
+reverse, and each admission proven load-bearing by removing it and requiring its
+own test to fail); the binding decision layer, whose judgement carries its own
+assurance level so a caller cannot mistake local accident-resistance for a
+security boundary (`.4`); minting authority declared and verified per path,
+hosted and local having opposite failure modes (`.5`); the runtime's own
+resolution — channel config at the selected principal (`.35`) and outbound
+messaging admitted (`.36`); and the exclusive **tasks** layer bound to aweb
+(`.10`), which completes the three bindings the founding scope named — identity,
+messaging, and tasks/work.
+
+Two supporting results are worth naming because they protect the rest.
+Diagnostics are rooted at the selected principal with an **enforced** export
+allowlist (`.34`): a support bundle is the one artifact designed to leave the
+machine, and a documented allowlist turned out to export an unknown field
+verbatim until enforcement was made structural. And the suites are hermetic with
+respect to the identity environment (`.37`) — the variable this epic exists to
+set was one that our own tests could not tolerate, which would have made a
+resident unable to distinguish a real regression from an environment artifact.
 
 **What is not:** fail-closed admission, which is impossible while hook failure
 is advisory. Until required hooks land, any attach is an **attended development
