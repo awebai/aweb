@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -15,6 +16,7 @@ import {
 } from "node:fs";
 import { isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
 
+import { cleanupCorroborationPayload, validateBindingReceipt } from "./binding-policy.mjs";
 import { validateMintingAuthorityReceipt } from "./provisioning-authority.mjs";
 
 const OPERATION_ID = /^oas-[A-Za-z0-9_-]{21}[AQgw]$/;
@@ -22,7 +24,7 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const TEAM_ID = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
 const RECOVERABLE_STATES = new Set(["allocated", "provisioning", "cleanup-pending"]);
 const INTENT_FIELDS = [
-  "schema_version", "operation_id", "instance_id", "mode", "authority", "team_id", "alias",
+  "schema_version", "operation_id", "instance_id", "mode", "authority", "authority_home", "team_id", "alias",
   "identity_home", "state", "resource", "cleanup", "revision", "created_at", "updated_at",
 ];
 const RESOURCE_FIELDS = [
@@ -104,10 +106,11 @@ function validateIntent(intent) {
       || !OPERATION_ID.test(intent.operation_id)
       || typeof intent.instance_id !== "string" || !SAFE_ID.test(intent.instance_id)
       || intent.mode !== "provision-disposable"
+      || typeof intent.authority_home !== "string" || !isAbsolute(intent.authority_home) || normalize(resolve(intent.authority_home)) !== intent.authority_home
       || typeof intent.team_id !== "string" || !TEAM_ID.test(intent.team_id)
       || intent.alias !== intent.operation_id
       || typeof intent.identity_home !== "string" || !isAbsolute(intent.identity_home)
-      || !["allocated", "provisioning", "prepared", "cleanup-pending", "complete", "quarantined"].includes(intent.state)
+      || !["allocated", "provisioning", "prepared", "bound", "cleanup-pending", "complete", "quarantined"].includes(intent.state)
       || !exactFields(intent.cleanup, ["attempts", "last_error"])
       || !Number.isInteger(intent.cleanup.attempts) || intent.cleanup.attempts < 0
       || (intent.cleanup.last_error !== null && typeof intent.cleanup.last_error !== "string")
@@ -120,7 +123,7 @@ function validateIntent(intent) {
   if (authority.path !== "local-controller" || authority.intended_creator.team_id !== intent.team_id) {
     throw new TypeError("provision intent authority contradicts its team or path");
   }
-  if (intent.state === "prepared") validateResource(intent.resource, intent);
+  if (["prepared", "bound"].includes(intent.state)) validateResource(intent.resource, intent);
   else if (intent.resource !== null && !["cleanup-pending", "complete", "quarantined"].includes(intent.state)) {
     throw new TypeError("provision intent resource is present before preparation");
   } else if (intent.resource !== null) validateResource(intent.resource, intent);
@@ -146,10 +149,14 @@ function replace(path, value) {
   renameSync(temp, path);
 }
 
-export function createProvisionIntent(home, { operationID, instanceID, teamID, authority, now = new Date() }) {
+export function createProvisionIntent(home, { operationID, instanceID, teamID, authority, authorityHome, now = new Date() }) {
   const operation = validatedOperationID(operationID);
   if (typeof instanceID !== "string" || !SAFE_ID.test(instanceID)) throw new TypeError("provision instance id must be filesystem-safe");
   validateMintingAuthorityReceipt(authority);
+  if (typeof authorityHome !== "string" || !isAbsolute(authorityHome) || normalize(resolve(authorityHome)) !== authorityHome) {
+    throw new TypeError("provision authority home must be canonical and absolute");
+  }
+  assertNoSymlink(authorityHome, "provision authority home");
   const journalPaths = paths(home);
   const path = join(journalPaths.intents, `${operation}.json`);
   if (existsSync(path)) {
@@ -164,6 +171,7 @@ export function createProvisionIntent(home, { operationID, instanceID, teamID, a
     instance_id: instanceID,
     mode: "provision-disposable",
     authority,
+    authority_home: authorityHome,
     team_id: teamID,
     alias: operation,
     identity_home: join(journalPaths.identities, operation),
@@ -210,6 +218,114 @@ export function markProvisionIntentPrepared(home, operation, resource, now = new
   if (intent.state !== "provisioning") throw new Error(`cannot prepare binding from ${intent.state}`);
   validateResource(resource, intent);
   return transition(home, operation, "prepared", now, resource);
+}
+
+export function markProvisionIntentHandedOff(home, operation, now = new Date()) {
+  const intent = loadProvisionIntent(home, operation);
+  if (intent.state !== "prepared") throw new Error(`cannot record binding handoff from ${intent.state}`);
+  return transition(home, operation, "bound", now);
+}
+
+export function markProvisionIntentCleanupPending(home, operation, reason, now = new Date()) {
+  const intent = loadProvisionIntent(home, operation);
+  if (!["prepared", "bound", "cleanup-pending"].includes(intent.state)) {
+    throw new Error(`cannot begin cleanup from ${intent.state}`);
+  }
+  if (typeof reason !== "string" || reason.length === 0) throw new TypeError("cleanup reason is required");
+  const next = validateIntent({
+    ...intent,
+    state: "cleanup-pending",
+    cleanup: { attempts: intent.cleanup.attempts + 1, last_error: reason.slice(0, 400) },
+    revision: intent.revision + 1,
+    updated_at: timestamp(now),
+  });
+  replace(intentPath(home, operation), next);
+  return next;
+}
+
+export function markProvisionIntentAbandoned(home, operation, reason, now = new Date()) {
+  const intent = loadProvisionIntent(home, operation);
+  if (intent.state !== "allocated" || intent.resource !== null) throw new Error(`cannot abandon provision intent from ${intent.state}`);
+  if (typeof reason !== "string" || reason.length === 0) throw new TypeError("abandon reason is required");
+  const next = {
+    ...intent,
+    state: "complete",
+    cleanup: { attempts: intent.cleanup.attempts, last_error: reason.slice(0, 400) },
+    revision: intent.revision + 1,
+    updated_at: timestamp(now),
+  };
+  validateIntent(next);
+  replace(intentPath(home, operation), next);
+  return next;
+}
+
+export function markProvisionIntentComplete(home, operation, now = new Date()) {
+  const intent = loadProvisionIntent(home, operation);
+  if (intent.state !== "cleanup-pending") throw new Error(`cannot complete cleanup from ${intent.state}`);
+  const next = {
+    ...intent,
+    state: "complete",
+    cleanup: { ...intent.cleanup, last_error: null },
+    revision: intent.revision + 1,
+    updated_at: timestamp(now),
+  };
+  validateIntent(next);
+  replace(intentPath(home, operation), next);
+  return next;
+}
+
+export function markProvisionIntentQuarantined(home, operation, reason, now = new Date()) {
+  const intent = loadProvisionIntent(home, operation);
+  if (intent.state !== "cleanup-pending") throw new Error(`cannot quarantine cleanup from ${intent.state}`);
+  if (typeof reason !== "string" || reason.length === 0) throw new TypeError("quarantine reason is required");
+  const next = {
+    ...intent,
+    state: "quarantined",
+    cleanup: { ...intent.cleanup, last_error: reason.slice(0, 400) },
+    revision: intent.revision + 1,
+    updated_at: timestamp(now),
+  };
+  validateIntent(next);
+  replace(intentPath(home, operation), next);
+  return next;
+}
+
+export function retryProvisionIntentQuarantine(home, operation, now = new Date()) {
+  const intent = loadProvisionIntent(home, operation);
+  if (intent.state !== "quarantined") throw new Error(`cannot retry quarantine from ${intent.state}`);
+  const next = {
+    ...intent,
+    state: "cleanup-pending",
+    cleanup: { ...intent.cleanup, last_error: "operator retry requested" },
+    revision: intent.revision + 1,
+    updated_at: timestamp(now),
+  };
+  validateIntent(next);
+  replace(intentPath(home, operation), next);
+  return next;
+}
+
+export function writeProvisionCleanupCorroboration(home, instanceID, receipt) {
+  canonicalRoot(home);
+  if (typeof instanceID !== "string" || !SAFE_ID.test(instanceID)) throw new TypeError("corroboration instance id must be filesystem-safe");
+  validateBindingReceipt(receipt);
+  const directory = join(home, ".corroboration", "cleanup");
+  assertNoSymlink(directory, "cleanup corroboration path");
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const record = { schema_version: 1, corroboration_class: "local-same-uid", instance_id: instanceID, receipt };
+  const encoded = {
+    ...record,
+    digest: createHash("sha256").update(cleanupCorroborationPayload(record)).digest("hex"),
+  };
+  const path = join(directory, `${instanceID}.json`);
+  if (existsSync(path)) {
+    assertNoSymlink(path, "cleanup corroboration record");
+    const existing = JSON.parse(readFileSync(path, "utf8"));
+    if (JSON.stringify(existing) !== JSON.stringify(encoded)) throw new Error("cleanup corroboration already exists with different authority");
+    return path;
+  }
+  writeNew(path, encoded);
+  return path;
 }
 
 export function listRecoverableProvisionIntents(home, { now = new Date(), staleAfterMs }) {

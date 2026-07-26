@@ -88,6 +88,24 @@ export function pendingProvisionReceipt(settings) {
   });
 }
 
+export function provisionedDisposableReceipt(pendingReceipt, { cleanupAuthority }) {
+  const pending = validateBindingReceipt(pendingReceipt);
+  if (pending.mode !== "provision-disposable" || pending.lifecycle !== "provision-pending") {
+    throw new TypeError("provisioned disposable receipt requires a pending disposable intent");
+  }
+  if (cleanupAuthority !== "local-controller") {
+    throw new TypeError("this execution path requires local-controller cleanup authority");
+  }
+  return validateBindingReceipt({
+    ...pending,
+    lifecycle: "provisioned",
+    resource_identity: {
+      ...pending.resource_identity,
+      cleanup_authority: cleanupAuthority,
+    },
+  });
+}
+
 export function validateBindingReceipt(receipt) {
   const fields = ["schema_version", "mode", "lifecycle", "cleanup_owner", "resource_identity", "journal_operation"];
   if (!exactFields(receipt, fields) || receipt.schema_version !== 2 || !bindingModes.includes(receipt.mode)) {

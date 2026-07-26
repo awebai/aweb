@@ -6,6 +6,7 @@ import {
   cleanupJudgement,
   cleanupOwnerForMode,
   pendingProvisionReceipt,
+  provisionedDisposableReceipt,
   validateBindingReceipt,
   validateBindingSettings,
 } from "../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs";
@@ -63,6 +64,18 @@ test("binding modes are an exact declared vocabulary with independent cleanup ow
 
 test("receipt validity matrix rejects contradictory combinations", () => {
   assert.equal(validateBindingReceipt(disposableProvisioned), disposableProvisioned);
+  const pendingDisposable = pendingProvisionReceipt({
+    schema_version: 2, mode: "provision-disposable", minting_authority: "provisioner", minting_authority_path: "local-controller",
+  });
+  assert.deepEqual(provisionedDisposableReceipt(pendingDisposable, { cleanupAuthority: "local-controller" }), {
+    ...pendingDisposable,
+    lifecycle: "provisioned",
+    resource_identity: {
+      ...pendingDisposable.resource_identity,
+      cleanup_authority: "local-controller",
+    },
+  });
+  assert.throws(() => provisionedDisposableReceipt(pendingDisposable, { cleanupAuthority: "remote-authority" }), /local-controller cleanup authority/);
   const pendingDurable = pendingProvisionReceipt({ schema_version: 2, mode: "provision-durable" });
   assert.equal(pendingDurable.cleanup_owner, "external");
   assert.throws(() => validateBindingReceipt({ ...disposableProvisioned, cleanup_owner: "external" }), /contradicts mode/);
