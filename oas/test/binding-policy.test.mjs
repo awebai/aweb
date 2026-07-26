@@ -35,12 +35,25 @@ test("binding modes are an exact declared vocabulary with independent cleanup ow
   assert.equal(cleanupOwnerForMode("attach-existing"), "external");
   assert.throws(() => validateBindingSettings({ schema_version: 2 }), /mode must be one of/);
   assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "none" }), /mode must be one of/);
-  assert.deepEqual(validateBindingSettings({ schema_version: 2, mode: "provision-disposable" }).mode, "provision-disposable");
-  assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-disposable", operation_id: "shared" }), /exactly schema_version and mode/);
+  assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-disposable" }), /minting_authority/);
+  for (const mintingAuthorityPath of ["hosted", "local-controller"]) {
+    assert.equal(validateBindingSettings({
+      schema_version: 2,
+      mode: "provision-disposable",
+      minting_authority: "provisioner",
+      minting_authority_path: mintingAuthorityPath,
+    }).minting_authority_path, mintingAuthorityPath);
+  }
+  assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-disposable", minting_authority: "provisioner" }), /minting_authority_path/);
+  assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-disposable", minting_authority: 123, minting_authority_path: "hosted" }), /minting_authority/);
+  assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-disposable", minting_authority: "provisioner", minting_authority_path: "automatic" }), /minting_authority_path/);
+  assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-disposable", minting_authority: "provisioner", minting_authority_path: "hosted", operation_id: "shared" }), /requires exactly.*minting_authority/);
+  assert.equal(validateBindingSettings({ schema_version: 2, mode: "provision-durable" }).mode, "provision-durable");
+  assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-durable", minting_authority: "provisioner" }), /does not accept an ephemeral minting_authority/);
   assert.throws(() => validateBindingSettings({ schema_version: 1, mode: "attach", principal: 123 }), /legacy identity_binding/);
   assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "attach-existing", principal: 123 }), /attach-existing requires/);
-  const firstIntent = pendingProvisionReceipt({ schema_version: 2, mode: "provision-disposable" });
-  const secondIntent = pendingProvisionReceipt({ schema_version: 2, mode: "provision-disposable" });
+  const firstIntent = pendingProvisionReceipt({ schema_version: 2, mode: "provision-disposable", minting_authority: "provisioner", minting_authority_path: "hosted" });
+  const secondIntent = pendingProvisionReceipt({ schema_version: 2, mode: "provision-disposable", minting_authority: "provisioner", minting_authority_path: "hosted" });
   assert.notEqual(firstIntent.journal_operation, secondIntent.journal_operation);
   for (const intent of [firstIntent, secondIntent]) {
     assert.match(intent.journal_operation, /^oas-[A-Za-z0-9_-]{21}[AQgw]$/);

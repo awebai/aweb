@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 
 import {
   attachmentReceipt,
@@ -11,6 +11,10 @@ import {
   pendingProvisionReceipt,
   validateBindingSettings,
 } from "../lib/binding-policy.mjs";
+import {
+  hostedMintingAuthorityReceipt,
+  localControllerMintingAuthorityReceipt,
+} from "../lib/provisioning-authority.mjs";
 import {
   assertPrincipalStoreContained,
   assertPrincipalStoreSafe,
@@ -113,7 +117,51 @@ function parseWhoami(stdout) {
   return identity;
 }
 
-function attach(binding) {
+function parseActiveTeam(stdout, expectedTeamID) {
+  let state;
+  try {
+    state = JSON.parse(stdout);
+  } catch {
+    throw new Error("aw id team list returned invalid JSON");
+  }
+  const membership = Array.isArray(state?.memberships)
+    ? state.memberships.find((item) => item?.team_id === expectedTeamID && item?.active === true)
+    : undefined;
+  if (state?.active_team !== expectedTeamID || !membership) {
+    throw new Error(`declared principal active team does not match declaration ${JSON.stringify(expectedTeamID)}`);
+  }
+}
+
+function parseControllerDID(stdout) {
+  let authority;
+  try {
+    authority = JSON.parse(stdout);
+  } catch {
+    throw new Error("aw id team import-request returned invalid JSON");
+  }
+  if (typeof authority?.controller_did !== "string" || !/^did:key:z[A-Za-z0-9]+$/.test(authority.controller_did)) {
+    throw new Error("local-controller authority did not return a valid controller_did");
+  }
+  return authority.controller_did;
+}
+
+function assertCommittedMintingAuthority(context, declarationPath) {
+  const path = relative(context, declarationPath);
+  if (!path || path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path)) {
+    throw new Error("minting authority declaration must be committed inside OAS_CONTEXT");
+  }
+  try {
+    execFileSync("git", ["-C", context, "ls-files", "--error-unmatch", "--", path], { stdio: "ignore" });
+    execFileSync("git", ["-C", context, "diff", "--quiet", "HEAD", "--", path], { stdio: "ignore" });
+  } catch {
+    throw new Error("minting authority declaration must be committed and unmodified");
+  }
+}
+
+function resolveAndVerifyDeclaredPrincipal(principal, {
+  requireCommittedAuthority = false,
+  identityLabel = "attached identity",
+} = {}) {
   const instanceHome = requiredAbsoluteDirectory(process.env.OAS_HOME, "OAS_HOME");
   const context = requiredAbsoluteDirectory(process.env.OAS_CONTEXT, "OAS_CONTEXT");
   const soul = process.env.OAS_AGENT;
@@ -121,7 +169,8 @@ function attach(binding) {
     throw new TypeError("OAS_AGENT must be a filesystem-safe soul name");
   }
 
-  const declarationFile = join(context, "oas", "agents", soul, "principals", `${binding.principal}.yaml`);
+  const declarationFile = join(context, "oas", "agents", soul, "principals", `${principal}.yaml`);
+  if (requireCommittedAuthority) assertCommittedMintingAuthority(context, declarationFile);
   const { declaration, path: declarationPath } = loadPrincipalDeclaration(declarationFile);
   if (declaration.soul !== soul) {
     throw new Error(`principal declaration soul ${JSON.stringify(declaration.soul)} does not match OAS_AGENT ${JSON.stringify(soul)}`);
@@ -141,15 +190,50 @@ function attach(binding) {
     },
   ));
   if (whoami.address !== declaration.address) {
-    throw new Error(`attached identity address ${JSON.stringify(whoami.address)} does not match declaration ${JSON.stringify(declaration.address)}`);
+    throw new Error(`${identityLabel} address ${JSON.stringify(whoami.address)} does not match declaration ${JSON.stringify(declaration.address)}`);
   }
   if (whoami.stable_id !== declaration.stable_id) {
-    throw new Error(`attached identity stable_id ${JSON.stringify(whoami.stable_id)} does not match declaration ${JSON.stringify(declaration.stable_id)}`);
+    throw new Error(`${identityLabel} stable_id ${JSON.stringify(whoami.stable_id)} does not match declaration ${JSON.stringify(declaration.stable_id)}`);
   }
-  if (whoami.team_id !== undefined && whoami.team_id !== declaration.team_id) {
-    throw new Error(`attached identity team_id ${JSON.stringify(whoami.team_id)} does not match declaration ${JSON.stringify(declaration.team_id)}`);
-  }
+  parseActiveTeam(execFileSync(
+    "aw",
+    ["--identity-home", store.credentials, "id", "team", "list", "--json"],
+    {
+      cwd: instanceHome,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 45000,
+      env: { ...process.env, AW_NO_UPDATE_CHECK: "1" },
+    },
+  ), declaration.team_id);
+  return { instanceHome, soul, declaration, declarationPath, store };
+}
 
+function resolveLocalControllerDID(instanceHome, teamID) {
+  const separator = teamID.indexOf(":");
+  const team = teamID.slice(0, separator);
+  const namespace = teamID.slice(separator + 1);
+  return parseControllerDID(execFileSync(
+    "aw",
+    [
+      "id", "team", "import-request",
+      "--team", team,
+      "--namespace", namespace,
+      "--timestamp", "2000-01-01T00:00:00Z",
+      "--json",
+    ],
+    {
+      cwd: instanceHome,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 45000,
+      env: { ...process.env, AW_NO_UPDATE_CHECK: "1" },
+    },
+  ));
+}
+
+function attach(binding) {
+  const { soul, declaration, declarationPath, store } = resolveAndVerifyDeclaredPrincipal(binding.principal);
   const legacyBinding = validatePersistedAttachBinding({
     schema_version: 1,
     mode: "attach",
@@ -227,10 +311,30 @@ try {
   if (event === "spawn") {
     const binding = parseBindingSettings();
     if (binding.mode === "attach" || binding.mode === "attach-existing") attach(binding);
-    else {
+    else if (binding.mode === "provision-durable") {
+      throw new TypeError("provision-durable is declared but not executable; durable minting authority belongs to aaaa.39");
+    } else {
+      const authority = resolveAndVerifyDeclaredPrincipal(binding.minting_authority, {
+        requireCommittedAuthority: true,
+        identityLabel: "minting authority credentials",
+      });
       const receipt = pendingProvisionReceipt(binding);
+      const authorityInput = {
+        principal: binding.minting_authority,
+        declarationPath: authority.declarationPath,
+        declaration: authority.declaration,
+      };
+      const authorityReceipt = binding.minting_authority_path === "hosted"
+        ? hostedMintingAuthorityReceipt(authorityInput)
+        : localControllerMintingAuthorityReceipt({
+            ...authorityInput,
+            controllerDID: resolveLocalControllerDID(authority.instanceHome, authority.declaration.team_id),
+          });
       output({
-        meta: { identity_binding: receipt },
+        meta: {
+          identity_binding: receipt,
+          minting_authority: authorityReceipt,
+        },
         warning: `${binding.mode} is declared but provisioning execution is not installed; no identity was created`,
         brief: `Identity binding policy: ${binding.mode}; provisioning is pending and no cleanup is authorized.`,
       });
