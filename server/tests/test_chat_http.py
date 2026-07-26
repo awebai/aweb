@@ -521,6 +521,125 @@ async def test_chat_first_contact_to_external_address_requires_signed_payload(aw
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("omitted", "expected_detail"),
+    [
+        ("from_did", "from_did is required for federated chat delivery"),
+        (
+            "message_id",
+            "message_id, timestamp, and session_id are required for federated chat delivery",
+        ),
+    ],
+)
+async def test_chat_first_contact_to_external_address_requires_sender_attestation(
+    aweb_cloud_db,
+    omitted: str,
+    expected_detail: str,
+):
+    """Each field _require_remote_chat_signature demands is refused by name.
+
+    The request is otherwise a well-formed signed first contact, so dropping one
+    field leaves that field's own raise as the next thing that can object. The
+    detail is asserted rather than the status because dropping either field
+    still yields 422 further down; only the message distinguishes which check
+    made the decision.
+    """
+    alice_sk, _, alice_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team-1')
+        """
+    )
+    alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, role, inbound_mode)
+        VALUES ('backend:acme.com', 'alice', $1, 'did:aw:alice', 'acme.com/alice', 'global', 'developer', 'open')
+        RETURNING agent_id
+        """,
+        alice_did_key,
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-remote-chat",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key="did:key:bob",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://remote.example"),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://local.example"
+    remote_requests = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        remote_requests.append(request)
+        return httpx.Response(500, json={"detail": "incomplete chat must never reach the wire"})
+
+    app.state.federation_chat_transport = httpx.MockTransport(_remote_handler)
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    session_id = str(uuid4())
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "hello remote chat",
+            "conversation_id": session_id,
+            "from": "acme.com/alice",
+            "from_did": alice_did_key,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": "did:key:bob",
+            "to_stable_id": "did:aw:bob",
+            "type": "chat",
+            "wait_seconds": 30,
+        }
+    ).decode()
+    body = {
+        "session_id": session_id,
+        "to_addresses": ["otherco.com/bob"],
+        "message": "hello remote chat",
+        "wait_seconds": 30,
+        "from_did": alice_did_key,
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signature": sign_message(alice_sk, signed_payload.encode()),
+        "signed_payload": signed_payload,
+    }
+    del body[omitted]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post("/v1/chat/sessions", json=body)
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == expected_detail
+    assert remote_requests == []
+    session_count = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.chat_sessions}} WHERE session_id = $1",
+        UUID(session_id),
+    )
+    assert session_count == 0
+
+
+@pytest.mark.asyncio
 async def test_chat_to_external_address_remote_failure_does_not_create_contact(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(

@@ -49,15 +49,20 @@ audit_package() {
   return $status
 }
 
+# Provenance and advisories fail for different reasons and need different
+# remedies, so they are tracked apart: reporting a missing workspace install as
+# "a dependency has an advisory" sends the reader hunting for a CVE that does
+# not exist.
 run_audits() {
-  local status=0
-  node "$ROOT/scripts/check-node-build-provenance.mjs" || status=1
+  provenance_ok=1
+  advisory_found=0
+  node "$ROOT/scripts/check-node-build-provenance.mjs" || provenance_ok=0
   # Authoritative: these production dependencies are what get bundled/shipped.
-  audit_package "channel-core" "AUTHORITATIVE - deps here are inlined into both bundles" || status=1
+  audit_package "channel-core" "AUTHORITATIVE - deps here are inlined into both bundles" || advisory_found=1
   # Weak by construction (see header), but a regression here is still real.
-  audit_package "channel" "weak: runtime deps arrive via a file: link, not audited here" || status=1
-  audit_package "pi-extension" "weak: same file: link structure as channel" || status=1
-  return $status
+  audit_package "channel" "weak: runtime deps arrive via a file: link, not audited here" || advisory_found=1
+  audit_package "pi-extension" "weak: same file: link structure as channel" || advisory_found=1
+  [ "$provenance_ok" -eq 1 ] && [ "$advisory_found" -eq 0 ]
 }
 
 # A gate is only worth its ability to FAIL. Rather than a synthetic fixture that
@@ -119,6 +124,13 @@ if run_audits; then
   printf '\nNode production dependencies have no advisories at or above %s.\n' "$AUDIT_LEVEL"
   exit 0
 fi
-printf '\nFAIL: a Node production dependency has an advisory at or above %s.\n' "$AUDIT_LEVEL"
-printf 'Patch it, or record a narrowly scoped exception with call-path evidence.\n'
+if [ "$provenance_ok" -eq 0 ]; then
+  printf '\nFAIL: the build-provenance check did not pass. This is NOT an advisory\n'
+  printf 'finding. It usually means the workspace dependencies are not installed:\n'
+  printf '  (cd channel-core && npm ci) && (cd channel && npm ci) && (cd pi-extension && npm ci)\n'
+fi
+if [ "$advisory_found" -eq 1 ]; then
+  printf '\nFAIL: a Node production dependency has an advisory at or above %s.\n' "$AUDIT_LEVEL"
+  printf 'Patch it, or record a narrowly scoped exception with call-path evidence.\n'
+fi
 exit 1

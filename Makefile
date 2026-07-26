@@ -1,4 +1,5 @@
-.PHONY: help clean test test-server test-awid test-cli test-channel test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-server test-awid test-cli test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+	freshness check-go-vulnerability-audit check-node-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
@@ -35,6 +36,12 @@ help:
 	@echo "  test-awid    Run awid service tests"
 	@echo "  test-cli     Run CLI tests"
 	@echo "  test-channel Run channel tests"
+	@echo "  test-channel-core Run channel-core tests"
+	@echo "  test-channel-core-process-guard Run the multi-process DeliveryStore guard (release path)"
+	@echo "  test-pi-extension Run pi-extension tests"
+	@echo "  freshness    Regenerate committed artifacts and fail on drift"
+	@echo "  check-node-audit Audit Node dependencies for known vulnerabilities"
+	@echo "  check-go-vulnerability-audit Audit Go dependencies (pinned toolchain)"
 	@echo "  test-a2a     Run A2A conformance, gateway, AWID lookup, and CLI command gates"
 	@echo "  test-oas-proof-helpers Run attached-principal proof filesystem guard tests"
 	@echo "  test-oas-attached-principal-e2e Run the real local-stack attach/retire proof"
@@ -68,14 +75,31 @@ help:
 build:
 	cd cli/go && $(MAKE) build
 
-test: test-server test-awid test-cli test-channel test-oas test-oas-proof-helpers
+test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
-# fail on drift. This is the single command maintainers run before release, and
-# the freshness CI job runs it on every push.
+# fail on drift. Runs as part of release-all-check.
 freshness:
 	bash scripts/check-freshness.sh
+
+# Both audits describe what a release SHIPS, so they hang off the release path
+# rather than `make test`. The Go audit pins itself to the toolchain in
+# cli/go/go.mod and refuses to run under any other, which would red `make test`
+# on every machine with a newer Go; and both consult an advisory database that
+# moves without any repo change, so neither belongs in a suite expected to be
+# deterministic.
+#
+# These run AT RELEASE ONLY. Nothing runs them on a schedule. An advisory
+# published between two releases is not seen until the next release, and the
+# deferral deadlines in .github/go-vulnerability-exceptions.json are only
+# checked when one of these runs. Accepted deliberately on 2026-07-26; see
+# default-aaoa.
+check-go-vulnerability-audit:
+	bash scripts/check-go-vulnerability-audit.sh
+
+check-node-audit:
+	bash scripts/check-node-audit.sh
 
 list-awid-site-docs:
 	@for name in $(AWID_SITE_DOC_NAMES); do printf '%s\n' "$$name"; done
@@ -112,6 +136,22 @@ test-cli:
 
 test-channel:
 	cd channel && npm test
+
+# channel-core holds the identity, trust, pinstore and signature-decode logic
+# that channel and pi-extension are both built from, so its suite gates them.
+test-channel-core:
+	cd channel-core && npm test
+
+# The multi-process DeliveryStore guard spawns 16 real subprocesses, enough to
+# blow unrelated timing deadlines elsewhere on a shared machine (default-aadj),
+# and it leaks all 16 if its parent dies mid-run (default-aaod). So it is kept
+# off `make test`, which agents run constantly and interrupt freely, and runs
+# from the release path instead.
+test-channel-core-process-guard:
+	cd channel-core && npm run test:process-guard
+
+test-pi-extension:
+	cd pi-extension && npm test
 
 test-oas:
 	node --test oas/test/*.test.mjs
@@ -377,6 +417,20 @@ release-all-check:
 	@echo "=== Building artifacts ==="
 	$(MAKE) release-server-check
 	$(MAKE) release-channel-check
+	@echo ""
+	@echo "=== Checking generated-artifact freshness ==="
+	$(MAKE) freshness
+	@echo ""
+# ORDER MATTERS: the audits run AFTER release-channel-check because that target
+# is what runs `npm ci` in channel-core and channel. Moved earlier,
+# check-node-audit fails on a fresh checkout - its build-provenance step cannot
+# resolve the channel-core module before it is installed.
+	@echo "=== Running the multi-process DeliveryStore guard ==="
+	$(MAKE) test-channel-core-process-guard
+	@echo ""
+	@echo "=== Running vulnerability audits ==="
+	$(MAKE) check-node-audit
+	$(MAKE) check-go-vulnerability-audit
 	@echo ""
 	@echo "=== All checks passed ==="
 
