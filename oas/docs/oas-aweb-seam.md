@@ -244,8 +244,8 @@ capabilities:
         enabled: true
         settings:
           identity_binding:
-            schema_version: 2
-            mode: attach-existing
+            schema_version: 1
+            mode: attach
             principal: <declaration-basename>
 ```
 
@@ -257,62 +257,23 @@ resolve the registry record, walk the DID log, call `aw id verify`, or verify
 rotation history. Independent proof observations may do those things, but must
 not attribute them to this hook.
 
-OAS persists the resulting non-secret v2 receipt at
-`instance.json.capabilityMeta["aweb.identity-attach"].identity_binding`. The
-receipt has exactly `schema_version`, `mode`, `lifecycle`, `cleanup_owner`,
-`resource_identity`, and `journal_operation`. It does not create an instance
-`.aw` directory or a second binding file.
+OAS persists the resulting non-secret reference at
+`instance.json.capabilityMeta["aweb.identity-attach"].identity_binding`,
+including `cleanup_owner: external`. It does not create an instance `.aw`
+directory or a second binding file.
 
-The v2 validity matrix is explicit:
+At the production `retire` hook, only a persisted v1 attach binding with
+external cleanup ownership produces an explicit `preserve_principal` receipt.
+The hook invokes no `aw` or principal filesystem cleanup operation. Missing or
+malformed metadata grants no cleanup authority. Modes other than `attach` are
+rejected in this slice rather than falling through to the pre-existing
+per-instance mint behavior.
 
-| Mode | Lifecycle in this decision layer | Cleanup owner | Resource identity |
-|---|---|---|---|
-| `attach-existing` | `bound` | `external` | canonical declaration plus required `did:aw` |
-| `provision-disposable` | `provision-pending` | `instance` | stable operation reference; `did:aw` may be absent |
-| `provision-durable` | `provision-pending` | `external` | stable operation reference; a later `provisioned` receipt requires a `did:aw` and canonical external declaration |
+The v1 input is config-scoped `OAS_SETTINGS`, so it attaches every instance of
+the targeted soul to the same principal; it is not a per-instance override.
+Concurrent use remains unfenced until the admission lease lands. That limitation
+is accepted for this walking skeleton and is not solved by attach cleanup.
 
-Contradictory combinations are invalid, never interpreted. Missing, partial,
-unknown-version, unparseable, or contradictory instance metadata grants **no
-cleanup authorization** and produces a preserve judgement in every mode.
-Rejection retains the observed non-secret evidence in the retirement result.
-The existing v1 `mode: attach` settings and receipt remain accepted with their
-original meaning: external ownership and preservation. They are not silently
-reinterpreted as v2.
-
-Provision modes currently emit a pending policy receipt and an explicit warning;
-they create no identity. Disposable execution, reconciliation, grant cleanup,
-and real deletion belong to `aaaa.33` after minting authority exists. That task
-must explicitly refuse durable provisioning; `aaaa.39` owns its later execution.
-A pending principal is addressed by `operation:oas-<instance-id>`: replaying the
-hook for one OAS instance retains the operation, while two distinct production
-spawns receive distinct identifiers. This avoids treating one config-scoped
-literal as a soul-global identity. The later execution layer must reconcile that
-operation reference with remote state.
-
-At retire, a mutable `instance.json` receipt is never self-authorizing. An
-`authorize_cleanup` judgement requires a valid disposable/provisioned receipt
-plus exact corroboration keyed by the OAS instance id. Missing corroboration,
-wrong instance, target substitution, invalid record, or any disagreement
-produces preservation.
-
-The corroboration implemented here is explicitly labelled
-`local_same_uid_accident_guard`. Its digest and point-of-use symlink checks
-detect accidental corruption and confused-deputy target substitution; they are
-**not** an adversarial authority boundary. Hook and model share a UID, so an
-intentional model can replace both the local record and its digest.
-No code, test, or verdict may call this local record unwritable, unforgeable, or
-tamper-proof. A real cross-principal boundary exists only where the destructive
-authority is absent from the machine and provenance comes from an authority the
-instance principal does not govern; wiring that remote authority belongs to
-`.5`/`.33` and is not implemented here. This task emits a labelled judgement
-only and invokes no delete operation. The paired real-delete and forged-victim
-proof belongs to `aaaa.33`, with the same per-path threat label.
-
-The settings are config-scoped `OAS_SETTINGS`, so they apply to every instance of
-the targeted soul; they are not a per-instance override. Concurrent use remains
-unfenced until the admission lease lands. Hook failure remains advisory: a
-warning or non-zero exit is observable, not enforcement, and must not be called
-fail-closed.
 Provisioning recovers by **reconciliation, not replay**. An earlier revision of
 this document specified a write-ahead journal keyed by a stable idempotency key,
 with replay producing no duplicate. No production path delivers that: neither
@@ -450,22 +411,19 @@ it is. The four lifetimes are distinct and none of them implies another:
 The capability therefore supports three explicit binding modes, and the mode is
 always declared, never defaulted into:
 
-- **provision-disposable** — request an identity for this instance; cleanup
-  ownership is `instance`.
-- **provision-durable** — request an identity intended to outlive the instance;
-  cleanup ownership is `external`.
-- **attach-existing** — bind an already-provisioned principal; cleanup ownership
-  is `external`.
+- **provision-disposable** — mint an identity for this instance; the instance
+  owns cleanup; retire deletes it.
+- **provision-durable** — create an identity intended to outlive the instance;
+  the instance does **not** own cleanup; retire preserves it.
+- **attach-existing** — bind an already-provisioned principal; cleanup owner is
+  external; retire preserves it.
 
-Provisioning and cleanup ownership are independent decisions. The decision
-layer records mode, lifecycle, resource identity, journal operation, and cleanup
-owner; it does not create or delete. A receipt alone never authorizes cleanup.
-The current local corroboration can prevent accidental/confused-deputy mismatch,
-not same-UID intent; a later remote path must establish provenance through an
-authority the instance principal does not govern. Execution consumes the labelled
-judgement later. This is the invariant stated at the top of this document applied
-to creation as well as attachment, without claiming primitives or security
-boundaries that do not yet exist.
+At binding time the capability records **what it created, that resource's
+lifecycle, and who owns cleanup**. Retire consumes that record and may delete
+only identities that are both **disposable** and **OAS-owned**. This is the
+invariant stated at the top of this document — lifetime and cleanup ownership
+are an explicit recorded decision, never incidental and never inferred — applied
+to creation as well as to attachment.
 
 **The layers are separate, and the earlier text conflated them.** `aaaa.4` is
 the decision layer: it produces a *judgement* — preserve, or cleanup authorized
@@ -640,12 +598,9 @@ launch arguments so the command dies in the window was considered and rejected
 as a dishonest hack.
 
 **No longer deferred**, because the reframe put the provisioned worker on the
-mainstream path: binding policy and the cleanup trust boundary are step 2
-(`.4`), declared minting authority is `.5`, and provisioning execution,
-reconciliation, grant cleanup, and durable cleanup recovery are `.33`. A local
-journal key is not remote idempotency: recovery must reconcile the operation
-reference against remote state and adopt a committed result. An earlier revision
-of this list deferred provisioning, which was correct when attach was the
+mainstream path: the write-ahead provision journal is part of step 2 (`.4`), and
+the declared minting authority is `.5`, which step 3 waits on. An earlier
+revision of this list deferred both, which was correct when attach was the
 primary case and is wrong now.
 
 **Deferred, deliberately:** the provision crash-recovery proof (`.18`) until the
