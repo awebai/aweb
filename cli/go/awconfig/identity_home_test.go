@@ -92,6 +92,33 @@ func TestWorktreePathAPIsHonorExplicitDirectoryDespiteAwIdentityHome(t *testing.
 	}
 }
 
+// An upward-traversing path is refused for traversing, not merely for landing
+// outside the root. This one rejoins INSIDE the root, so a containment check
+// that only compares the joined path against the root accepts it: relative to
+// the root the result is plainly "inner.key". Only a check on the relative path
+// itself catches it, which is what keeps this from being restated as one.
+func TestIdentityHomePathRejectsUpwardTraversalThatRejoinsInsideRoot(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := IdentityHome{Root: root, Source: IdentityHomeFlag}
+	traversing := filepath.Join("a", "..", "..", filepath.Base(root), "inner.key")
+
+	// The fixture reaches the traversal check rather than being turned away
+	// earlier: the same target named without traversal is accepted.
+	if _, err := IdentityHomePath(home, "inner.key"); err != nil {
+		t.Fatalf("plain target rejected before the traversal check could be reached: %v", err)
+	}
+	got, err := IdentityHomePath(home, traversing)
+	if err == nil {
+		t.Fatalf("upward-traversing path %q accepted, resolved to %q", traversing, got)
+	}
+	if !strings.Contains(err.Error(), "escapes identity home") {
+		t.Fatalf("rejected for the wrong reason: %v", err)
+	}
+}
+
 func TestIdentityHomeStoredPathSupportsKnownLegacyPrefixAndRejectsEscapes(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
