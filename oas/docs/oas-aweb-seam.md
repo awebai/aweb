@@ -553,6 +553,41 @@ construction*. Note also that the index is partial on `WHERE deleted_at IS NULL`
 or accept invitations, mutate remote membership, or wait for interactive login.
 Onboarding belongs in an explicit, trusted, idempotent setup step.
 
+## What "done" means: two customer journeys
+
+A UX review by `atext.aweb.ai/developer-frontend`, conducted against the running
+code rather than this document, returned a verdict worth stating at the top:
+**this is a strong internal safety substrate and it is not yet a customer path,
+and it must not be presented as one.** The decisive evidence was not the number
+of caveats but that *OAS reports a configuration healthy and launches an
+instance when the selected capability cannot produce a bound identity* — doctor
+shows empty settings without error, provisioning failures become warnings, and
+hook failure is advisory, so the model launches unbound while every surface says
+healthy.
+
+The components below are means. **Done is these two journeys**, and neither
+part of the system is customer-ready until its journey passes end to end:
+
+1. **The ordinary worker** (`aaaa.44`). An organization publishes a config; a
+   developer clones, runs `oas install`, runs `oas doctor` and gets either
+   *Ready* or **exactly one** setup action, spawns a worker, sees its aweb
+   address, exchanges a real message, retires it, and no disposable state
+   remains. **No identity jargon and no YAML editing anywhere in that path.**
+2. **The resident** (`aaaa.45`). A durable principal is created or selected
+   explicitly, comes back as *the same stable identity* across a session
+   restart, answers a message, **retains what it learned across sessions**, and
+   survives instance retirement.
+
+Three consequences the review made explicit and this document adopts. The mode
+names — `provision-disposable`, `provision-durable`, `attach-existing` — are
+**internal receipt vocabulary and bad first-run UX**; a customer expresses
+intent, and the capability records the mode. **Exhaustive caveats belong in this
+record, not on the user surface**, which needs one result: *Ready*, *Needs setup
+— one command*, or *Experimental, nothing was launched*. And **learning is part
+of being a resident**: a durable identity that accumulates nothing across
+sessions is a stable address, not an actor — with publication to the shared
+Library deliberate, never automatic.
+
 ## Ordered plan
 
 The **ordinary provisioned worker is the mainstream path**; the durable resident
