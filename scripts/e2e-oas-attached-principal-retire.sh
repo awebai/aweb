@@ -896,6 +896,16 @@ seed_provision_lifecycle_artifacts "$ATTACKER_OPERATION"
 run_reconcile --cleanup-unacknowledged "$ATTACKER_OPERATION" > "$EVIDENCE/operator-reconcile.json"
 capture_provision_resource attacker-after-operator-reconcile "$ATTACKER_OPERATION" deleted
 
+# Developer B also completes an unmodified ordinary retire; the interrupted
+# duplicate-name handoff above proves reconciliation, not the clean path.
+run_oas_with_agents "$DEVELOPER_B_AGENTS_ROOT" "$FIXTURE_REPO" spawn proof-worker --purpose developer-b-clean-retire --no-launch --json > "$EVIDENCE/developer-b-clean-spawn.json"
+DEVELOPER_B_CLEAN_HOME="$(json_value "$EVIDENCE/developer-b-clean-spawn.json" home)"
+DEVELOPER_B_CLEAN_INSTANCE="$(json_value "$EVIDENCE/developer-b-clean-spawn.json" instance)"
+DEVELOPER_B_CLEAN_OPERATION="$(binding_operation "$DEVELOPER_B_CLEAN_HOME/instance.json")"
+seed_provision_lifecycle_artifacts "$DEVELOPER_B_CLEAN_OPERATION"
+run_oas_with_agents "$DEVELOPER_B_AGENTS_ROOT" "$FIXTURE_REPO" retire "$DEVELOPER_B_CLEAN_INSTANCE" --json > "$EVIDENCE/developer-b-clean-retire.json"
+capture_provision_resource developer-b-after-clean-retire "$DEVELOPER_B_CLEAN_OPERATION" deleted
+
 echo "=== Surface terminal quarantine and prove explicit remediation ==="
 run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT" "$FIXTURE_REPO" spawn proof-worker --purpose quarantine-is-not-success --no-launch --json > "$EVIDENCE/quarantine-spawn.json"
 QUARANTINE_HOME="$(json_value "$EVIDENCE/quarantine-spawn.json" home)"
@@ -962,6 +972,7 @@ document = {
         "durable_refused_before_create": True,
         "duplicate_local_instance_names_both_succeeded": True,
         "duplicate_names_produced_distinct_operations_and_aliases": True,
+        "both_developers_completed_an_ordinary_retire": True,
     },
     "provision_cleanup_observation": {
         "authority_path": "local-controller",
