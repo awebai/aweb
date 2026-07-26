@@ -19,6 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
 from aweb.e2ee_messages import E2EEEnvelopeError, validate_e2ee_message_envelope
+from aweb.messaging.signatures import (
+    MessageSignatureShapeError,
+    validate_ed25519_message_signature,
+)
 
 FEDERATION_ENVELOPE_VERSION = 1
 FEDERATION_TIMESTAMP_SKEW_SECONDS = 300
@@ -155,6 +159,10 @@ def verify_federation_envelope(
     if not model.signed_payload:
         raise FederationEnvelopeError("Federation signed_payload is required")
     _enforce_signed_payload_binding(model)
+    try:
+        validate_ed25519_message_signature(signature)
+    except MessageSignatureShapeError as exc:
+        raise FederationEnvelopeError(str(exc)) from exc
     try:
         verify_did_key_signature(
             did_key=model.sender_current_did_key,

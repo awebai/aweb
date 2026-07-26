@@ -66,6 +66,10 @@ from aweb.messaging.messages import (
     resolve_agent_by_did,
     utc_iso as _utc_iso,
 )
+from aweb.messaging.signatures import (
+    MessageSignatureShapeError,
+    validate_ed25519_message_signature,
+)
 from aweb.messaging.verification import (
     message_verification_status,
     require_conversation_not_legacy_bound,
@@ -390,6 +394,7 @@ def _parse_signed_timestamp(value: str) -> datetime:
 
 def _validate_signed_mail_payload(
     *,
+    signature: str,
     signed_payload: str | None,
     recipient: dict | None,
     to_agent_id: str | None,
@@ -488,6 +493,10 @@ def _validate_signed_mail_payload(
             raise HTTPException(status_code=422, detail="signed_payload conversation_id must match")
     elif signed_conversation_id:
         raise HTTPException(status_code=422, detail="signed_payload conversation_id must match")
+    try:
+        validate_ed25519_message_signature(signature)
+    except MessageSignatureShapeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _external_recipient_from_address(address: str, resolution) -> dict:
@@ -1024,6 +1033,7 @@ async def _send_mail_conversation_continuation(
                     detail="message_id and timestamp are required when signature is provided",
                 )
             _validate_signed_mail_payload(
+                signature=payload.signature,
                 signed_payload=payload.signed_payload,
                 recipient=recipient,
                 to_agent_id=payload.to_agent_id,
@@ -1516,6 +1526,7 @@ async def send_message(
                 detail="message_id and timestamp are required when signature is provided",
             )
         _validate_signed_mail_payload(
+            signature=payload.signature,
             signed_payload=payload.signed_payload,
             recipient=recipient,
             to_agent_id=to_agent_id,
