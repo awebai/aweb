@@ -375,10 +375,13 @@ func resolveActiveCertificateIdentityAtHomeForEncryptionKey(workingDir, identity
 	if identityScope != awid.IdentityModeGlobal && identityScope != awid.IdentityModeLocal {
 		identityScope = awid.IdentityModeLocal
 	}
+	canonicalWorkingDir := filepath.Clean(strings.TrimSpace(workingDir))
+	canonicalIdentityHome := filepath.Clean(strings.TrimSpace(identityHome))
+	externalIdentityHome := canonicalIdentityHome != filepath.Join(canonicalWorkingDir, ".aw")
 	resolved := &awconfig.ResolvedIdentity{
-		WorkingDir:           strings.TrimSpace(workingDir),
-		IdentityHome:         strings.TrimSpace(identityHome),
-		ExternalIdentityHome: true,
+		WorkingDir:           canonicalWorkingDir,
+		IdentityHome:         canonicalIdentityHome,
+		ExternalIdentityHome: externalIdentityHome,
 		SigningKeyPath:       signingKeyPath,
 		DID:                  didKey,
 		StableID:             strings.TrimSpace(cert.MemberDIDAW),

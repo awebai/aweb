@@ -333,6 +333,8 @@ test("real OAS emits a local-controller authority statement with indefinite gran
   assert.match(operationID, /^oas-[A-Za-z0-9_-]{21}[AQgw]$/);
   const resource = meta.capabilityMeta["aweb.identity-attach"].provisioning;
   assert.equal(resource.operation_id, operationID);
+  assert.match(resource.alias, /^oas-[a-f0-9]{32}$/);
+  assert.notEqual(resource.alias, operationID, "normalized member alias is not operation identity");
   assert.equal(resource.identity_home, join(f.principalHome, ".provisioning", "identities", operationID));
   assert.equal(resource.did_key, "did:key:z6MkiProvisionedWorker");
   const journal = JSON.parse(readFileSync(join(f.principalHome, ".provisioning", "intents", `${operationID}.json`), "utf8"));
@@ -363,7 +365,7 @@ test("real OAS emits a local-controller authority statement with indefinite gran
       "id", "team", "provision-local",
       "--operation-id", operationID,
       "--team-id", "test-team:example.test",
-      "--name", operationID,
+      "--name", resource.alias,
       "--authority-identity-home", f.credentials,
       "--target-identity-home", resource.identity_home,
       "--authority-address", "example.test/throwaway",
@@ -389,7 +391,7 @@ test("real OAS emits a local-controller authority statement with indefinite gran
       "id", "team", "cleanup-local-provision",
       "--operation-id", operationID,
       "--team-id", "test-team:example.test",
-      "--name", operationID,
+      "--name", resource.alias,
       "--authority-identity-home", f.credentials,
       "--target-identity-home", resource.identity_home,
       "--authority-address", "example.test/throwaway",
