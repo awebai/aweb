@@ -533,3 +533,64 @@ func TestResolveToleratesMissingTeamCertificate(t *testing.T) {
 		t.Fatalf("team_id=%q want %q", sel.TeamID, teamID)
 	}
 }
+
+func TestResolveRejectsTeamCertificatePathEscapingBehindIdentityHomePrefix(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	teamID := "backend:aweb.ai"
+	outside := filepath.Join(tmp, "outside", "planted.pem")
+	if err := os.MkdirAll(filepath.Dir(outside), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveTeamCertificate(outside, teamCertificateForSelectionTest(teamID, "aweb.ai/planted")); err != nil {
+		t.Fatal(err)
+	}
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, teamID, &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
+		Memberships: []WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "member",
+			WorkspaceID: "agent-member",
+			CertPath:    ".aw/../outside/planted.pem",
+			JoinedAt:    "2026-04-21T00:00:00Z",
+		}},
+	})
+
+	_, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
+	if err == nil {
+		t.Fatal("expected an escape behind the identity-home prefix to be rejected")
+	}
+	if !strings.Contains(err.Error(), "escapes identity home") {
+		t.Fatalf("error=%q want it to name the identity-home escape", err)
+	}
+}
+
+// Selection tolerates a certificate that has not been fetched yet, but an
+// unresolvable cert_path is a different condition: it designates no file, so
+// which certificate the membership means cannot be determined. That fails
+// closed, as the identity-home branch has always done for the same value.
+func TestResolveRejectsUnusableTeamCertificatePath(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	teamID := "backend:aweb.ai"
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, teamID, &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
+		Memberships: []WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "member",
+			WorkspaceID: "agent-member",
+			CertPath:    ".aw/",
+			JoinedAt:    "2026-04-21T00:00:00Z",
+		}},
+	})
+
+	_, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
+	if err == nil {
+		t.Fatal("expected a cert_path designating no file to be rejected")
+	}
+	if !strings.Contains(err.Error(), "must be a relative forward-slash path") {
+		t.Fatalf("error=%q want it to name the unusable path", err)
+	}
+}
