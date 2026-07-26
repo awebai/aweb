@@ -3,7 +3,32 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
-import { isDirectExecution, resolveRegistryFallbackURL } from "../src/index.js";
+import { loadChannelConfig, isDirectExecution, resolveRegistryFallbackURL } from "../src/index.js";
+import { createShadowedPrincipalFixture } from "../../channel-core/test/helpers/config_fixture.js";
+
+describe("loadChannelConfig", () => {
+  const originalIdentityHome = process.env.AWEB_IDENTITY_HOME;
+
+  afterEach(() => {
+    if (originalIdentityHome === undefined) {
+      delete process.env.AWEB_IDENTITY_HOME;
+    } else {
+      process.env.AWEB_IDENTITY_HOME = originalIdentityHome;
+    }
+  });
+
+  test("Claude loads the external principal instead of a valid working-directory shadow", async () => {
+    const { external, shadow, workdir } = await createShadowedPrincipalFixture();
+    process.env.AWEB_IDENTITY_HOME = external.identityHome;
+
+    const config = await loadChannelConfig(workdir);
+
+    expect(config.alias).toBe(external.alias);
+    expect(config.did).toBe(external.did);
+    expect(config.signingKey).toEqual(external.seed);
+    expect(config.did).not.toBe(shadow.did);
+  });
+});
 
 describe("isDirectExecution", () => {
   const originalArgv1 = process.argv[1];

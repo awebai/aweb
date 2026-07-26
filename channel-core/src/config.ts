@@ -1,5 +1,6 @@
+import { lstatSync, type Stats } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import yaml from "js-yaml";
@@ -55,12 +56,30 @@ interface IdentityConfig {
   registry_url?: string;
 }
 
-export async function resolveConfig(workdir: string): Promise<AgentConfig> {
-  const workspacePath = join(workdir, ".aw", "workspace.yaml");
-  const teamsPath = join(workdir, ".aw", "teams.yaml");
-  const identityPath = join(workdir, ".aw", "identity.yaml");
-  const signingKeyPath = join(workdir, ".aw", "signing.key");
+interface IdentityHomeSelection {
+  root: string;
+  external: boolean;
+}
 
+function selectIdentityHome(workdir: string): IdentityHomeSelection {
+  const configuredHome = (process.env.AWEB_IDENTITY_HOME || "").trim();
+  if (!configuredHome) return { root: join(workdir, ".aw"), external: false };
+  if (!isAbsolute(configuredHome)) {
+    throw new Error("AWEB_IDENTITY_HOME must be an absolute path");
+  }
+  const root = normalize(configuredHome);
+  preflightDirectory(root, "identity home");
+  return { root, external: true };
+}
+
+export async function resolveConfig(workdir: string): Promise<AgentConfig> {
+  const identityHome = selectIdentityHome(workdir);
+  const workspacePath = join(identityHome.root, "workspace.yaml");
+  const teamsPath = join(identityHome.root, "teams.yaml");
+  const identityPath = join(identityHome.root, "identity.yaml");
+  const signingKeyPath = join(identityHome.root, "signing.key");
+
+  if (identityHome.external) preflightFile(workspacePath, "workspace config");
   const workspace = await readYAML<WorkspaceConfig>(workspacePath);
   if (!workspace) {
     throw new Error("current directory is not initialized for aw; run `aw init` or `aw run` first");
@@ -74,6 +93,7 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
     );
   }
 
+  if (identityHome.external) preflightFile(teamsPath, "team state");
   const teamState = await readYAML<TeamStateConfig>(teamsPath);
   if (!teamState) {
     throw new Error("worktree team state is missing .aw/teams.yaml; run `aw init` or `aw id team add` first");
@@ -88,8 +108,10 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
     throw new Error("worktree workspace binding is missing aweb_url, active_team, or the active membership alias");
   }
 
+  if (identityHome.external) preflightFile(signingKeyPath, "signing key");
   const signingKey = await loadSigningKey(signingKeyPath);
-  const certificate = await loadConfiguredTeamCertificate(workdir, teamID, certPath);
+  const certificate = await loadConfiguredTeamCertificate(identityHome, teamID, certPath);
+  if (identityHome.external) preflightFile(identityPath, "identity config");
   const identity = await readYAML<IdentityConfig>(identityPath);
   const did = computeDIDKey(ed.getPublicKey(signingKey));
   const identityStableID = (identity?.stable_id || "").trim();
@@ -124,19 +146,27 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
   };
 }
 
-async function loadConfiguredTeamCertificate(workdir: string, activeTeam: string, certPath: string): Promise<TeamCertificate> {
+async function loadConfiguredTeamCertificate(
+  identityHome: IdentityHomeSelection,
+  activeTeam: string,
+  certPath: string,
+): Promise<TeamCertificate> {
+  const path = identityHome.external
+    ? resolveExternalCertificatePath(identityHome.root, certPath)
+    : join(identityHome.root, certPath);
   try {
-    return await loadTeamCertificate(join(workdir, ".aw", certPath));
+    return await loadTeamCertificate(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
     }
-    return loadActiveTeamCertificate(workdir, activeTeam);
+    return loadActiveTeamCertificate(identityHome, activeTeam);
   }
 }
 
-async function loadActiveTeamCertificate(workdir: string, activeTeam: string): Promise<TeamCertificate> {
-  const certsDir = join(workdir, ".aw", "team-certs");
+async function loadActiveTeamCertificate(identityHome: IdentityHomeSelection, activeTeam: string): Promise<TeamCertificate> {
+  const certsDir = join(identityHome.root, "team-certs");
+  if (identityHome.external) preflightDirectory(certsDir, "team certificate directory");
   let files: string[];
   try {
     files = await readdir(certsDir);
@@ -150,12 +180,66 @@ async function loadActiveTeamCertificate(workdir: string, activeTeam: string): P
   }
   for (const file of files) {
     if (!file.endsWith(".pem")) continue;
-    const cert = await loadTeamCertificate(join(certsDir, file));
+    const path = join(certsDir, file);
+    if (identityHome.external) preflightFile(path, "team certificate");
+    const cert = await loadTeamCertificate(path);
     if ((cert.team_id || "").trim() === activeTeam) {
       return cert;
     }
   }
   throw new Error(`No team certificate found for active team ${activeTeam} in ${certsDir}`);
+}
+
+function resolveExternalCertificatePath(identityHome: string, storedPath: string): string {
+  let certificatePath = storedPath.trim();
+  if (certificatePath.startsWith(".aw/")) certificatePath = certificatePath.slice(4);
+  if (!certificatePath || isAbsolute(certificatePath) || certificatePath.includes("\\")) {
+    throw new Error(`certificate path must be relative to AWEB_IDENTITY_HOME: ${JSON.stringify(storedPath)}`);
+  }
+
+  const path = resolve(identityHome, certificatePath);
+  const rel = relative(identityHome, path);
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`certificate path escapes AWEB_IDENTITY_HOME: ${JSON.stringify(storedPath)}`);
+  }
+  preflightFile(path, "team certificate");
+  return path;
+}
+
+function preflightDirectory(path: string, label: string): void {
+  const root = parse(path).root;
+  const parts = relative(root, path).split(sep).filter(Boolean);
+  let current = root;
+  for (let index = 0; index < parts.length; index += 1) {
+    current = join(current, parts[index]);
+    const stat = lstatIfExists(current);
+    if (!stat) return;
+    if (stat.isSymbolicLink()) {
+      const kind = index === parts.length - 1 ? "" : " parent";
+      throw new Error(`${label}${kind} ${current} must not be a symlink`);
+    }
+    if (!stat.isDirectory()) {
+      const kind = index === parts.length - 1 ? "" : " parent";
+      throw new Error(`${label}${kind} ${current} must be a directory`);
+    }
+  }
+}
+
+function preflightFile(path: string, label: string): void {
+  preflightDirectory(dirname(path), label);
+  const stat = lstatIfExists(path);
+  if (!stat) return;
+  if (stat.isSymbolicLink()) throw new Error(`${label} ${path} must not be a symlink`);
+  if (!stat.isFile()) throw new Error(`${label} ${path} must be a regular file`);
+}
+
+function lstatIfExists(path: string): Stats | undefined {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
 }
 
 async function readYAML<T>(path: string): Promise<T | null> {

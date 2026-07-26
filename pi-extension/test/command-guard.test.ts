@@ -1,7 +1,30 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import awebPiExtension, { tmuxCommandGuardReason } from "../src/index.js";
+import awebPiExtension, { loadChannelConfig, tmuxCommandGuardReason } from "../src/index.js";
+import { createShadowedPrincipalFixture } from "../../channel-core/test/helpers/config_fixture.js";
+
+const originalIdentityHome = process.env.AWEB_IDENTITY_HOME;
+
+afterEach(() => {
+  if (originalIdentityHome === undefined) {
+    delete process.env.AWEB_IDENTITY_HOME;
+  } else {
+    process.env.AWEB_IDENTITY_HOME = originalIdentityHome;
+  }
+});
+
+test("Pi loads the external principal instead of a valid working-directory shadow", async () => {
+  const { external, shadow, workdir } = await createShadowedPrincipalFixture();
+  process.env.AWEB_IDENTITY_HOME = external.identityHome;
+
+  const config = await loadChannelConfig(workdir);
+
+  assert.equal(config.alias, external.alias);
+  assert.equal(config.did, external.did);
+  assert.deepEqual(config.signingKey, external.seed);
+  assert.notEqual(config.did, shadow.did);
+});
 
 test("tmux command guard detects direct and inline-trap teardown", () => {
   const blocked = [
