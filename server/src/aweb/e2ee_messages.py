@@ -15,6 +15,10 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from awid.e2ee_keys import encryption_key_id, validate_encryption_key_assertion
 from awid.signing import VerifyResult, canonical_json_bytes, sign_message, verify_signature
+from aweb.messaging.signatures import (
+    MessageSignatureShapeError,
+    validate_ed25519_message_signature,
+)
 
 
 E2EE_MESSAGE_VERSION = 2
@@ -1001,6 +1005,11 @@ def validate_e2ee_message_envelope(
     if key_wraps_hash != _non_empty(crypto.get("key_wraps_hash")):
         raise E2EEEnvelopeError("key_wraps hash mismatch")
 
+    signature = _non_empty(envelope.get("signature"))
+    try:
+        validate_ed25519_message_signature(signature)
+    except MessageSignatureShapeError as exc:
+        raise E2EEEnvelopeError(str(exc)) from exc
     payload = canonical_json_bytes(
         _envelope_map(
             envelope,
@@ -1009,7 +1018,7 @@ def validate_e2ee_message_envelope(
             include_ciphertext_hash=True,
         )
     )
-    if verify_signature(sender_did, payload, _non_empty(envelope.get("signature"))) != VerifyResult.VERIFIED:
+    if verify_signature(sender_did, payload, signature) != VerifyResult.VERIFIED:
         raise E2EEEnvelopeError("invalid encrypted envelope signature")
 
 

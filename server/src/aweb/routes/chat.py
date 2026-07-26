@@ -71,6 +71,10 @@ from aweb.messaging.conversations import close_conversation
 from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts, upsert_successful_identity_contact
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import authorize_message_delivery, utc_iso as _utc_iso
+from aweb.messaging.signatures import (
+    MessageSignatureShapeError,
+    validate_ed25519_message_signature,
+)
 from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.messaging.waiting import (
     get_waiting_agents,
@@ -123,6 +127,7 @@ def _parse_signed_timestamp(value: str) -> datetime:
 
 def _validate_signed_chat_payload(
     *,
+    signature: str,
     signed_payload: str | None,
     recipient_rows: list[dict[str, Any]] | None = None,
     requested_to_aliases: list[str] | None = None,
@@ -236,6 +241,10 @@ def _validate_signed_chat_payload(
         raise HTTPException(status_code=422, detail="signed_payload sender_leaving must match the chat message")
     if bool(payload.get("hang_on")) != hang_on:
         raise HTTPException(status_code=422, detail="signed_payload hang_on must match the chat message")
+    try:
+        validate_ed25519_message_signature(signature)
+    except MessageSignatureShapeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 async def _record_successful_chat_contacts(
@@ -1253,6 +1262,7 @@ async def create_or_send(
             if from_did not in set(_actor_dids(auth)):
                 raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
             _validate_signed_chat_payload(
+                signature=str(payload.signature),
                 signed_payload=payload.signed_payload,
                 recipient_rows=target_rows,
                 requested_to_aliases=payload.to_aliases,
@@ -1407,6 +1417,7 @@ async def create_or_send(
                 detail="message_id and timestamp are required when signature is provided",
             )
         _validate_signed_chat_payload(
+            signature=payload.signature,
             signed_payload=payload.signed_payload,
             recipient_rows=target_rows,
             requested_to_aliases=payload.to_aliases,
@@ -2327,6 +2338,7 @@ async def send_message(
                 detail="message_id and timestamp are required when signature is provided",
             )
         _validate_signed_chat_payload(
+            signature=payload.signature,
             signed_payload=payload.signed_payload,
             recipient_rows=recipient_rows,
             from_alias=auth.alias,

@@ -2561,7 +2561,7 @@ async def test_create_chat_session_resolves_tilde_alias_cross_team(aweb_cloud_db
         "to_aliases": ["eng~bob"],
         "message": "hello eng",
         "from_did": alice_did_key,
-        "signature": "test-signature",
+        "signature": _raw_b64(bytes(64)),
         "message_id": message_id,
         "timestamp": timestamp,
         "signed_payload": signed_payload,
@@ -3331,6 +3331,29 @@ def _signed_local_chat_payload(alice_sk, alice_did_key, *, timestamp, include_si
     if include_signed_payload:
         payload["signed_payload"] = signed_payload.decode()
     return message_id, payload
+
+
+@pytest.mark.asyncio
+async def test_signed_plaintext_chat_rejects_non_base64_signature_before_storage(aweb_cloud_db):
+    app, alice_sk, alice_did_key = await _signed_local_chat_app(aweb_cloud_db)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    message_id, payload = _signed_local_chat_payload(
+        alice_sk,
+        alice_did_key,
+        timestamp=timestamp,
+    )
+    payload["signature"] += "!!!!"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/chat/sessions", json=payload)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "signature must be valid base64"
+    stored = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT 1 FROM {{tables.chat_messages}} WHERE message_id = $1",
+        UUID(message_id),
+    )
+    assert stored is None
 
 
 @pytest.mark.asyncio
