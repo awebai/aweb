@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-server test-awid test-cli test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
 	freshness check-go-vulnerability-audit check-node-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -37,6 +37,7 @@ help:
 	@echo "  test-cli     Run CLI tests"
 	@echo "  test-channel Run channel tests"
 	@echo "  test-channel-core Run channel-core tests"
+	@echo "  test-channel-core-process-guard Run the multi-process DeliveryStore guard (release path)"
 	@echo "  test-pi-extension Run pi-extension tests"
 	@echo "  freshness    Regenerate committed artifacts and fail on drift"
 	@echo "  check-node-audit Audit Node dependencies for known vulnerabilities"
@@ -140,6 +141,14 @@ test-channel:
 # that channel and pi-extension are both built from, so its suite gates them.
 test-channel-core:
 	cd channel-core && npm test
+
+# The multi-process DeliveryStore guard spawns 16 real subprocesses, enough to
+# blow unrelated timing deadlines elsewhere on a shared machine (default-aadj),
+# and it leaks all 16 if its parent dies mid-run (default-aaod). So it is kept
+# off `make test`, which agents run constantly and interrupt freely, and runs
+# from the release path instead.
+test-channel-core-process-guard:
+	cd channel-core && npm run test:process-guard
 
 test-pi-extension:
 	cd pi-extension && npm test
@@ -416,6 +425,9 @@ release-all-check:
 # is what runs `npm ci` in channel-core and channel. Moved earlier,
 # check-node-audit fails on a fresh checkout - its build-provenance step cannot
 # resolve the channel-core module before it is installed.
+	@echo "=== Running the multi-process DeliveryStore guard ==="
+	$(MAKE) test-channel-core-process-guard
+	@echo ""
 	@echo "=== Running vulnerability audits ==="
 	$(MAKE) check-node-audit
 	$(MAKE) check-go-vulnerability-audit
