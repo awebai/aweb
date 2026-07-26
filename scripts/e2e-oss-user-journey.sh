@@ -190,9 +190,14 @@ assert_file_exists() {
   fi
 }
 
+path_is_missing() {
+  local path="$1"
+  [[ ! -e "$path" ]]
+}
+
 assert_path_missing() {
   local label="$1" path="$2"
-  if [[ ! -e "$path" ]]; then
+  if path_is_missing "$path"; then
     echo "  PASS: $label"
     pass=$((pass + 1))
   else
@@ -598,9 +603,11 @@ capture_success team_out "team_out" run_aw_in "$ALICE_DIR" id team create \
 
 TEAM_ID="$(echo "$team_out" | jq_field team_id)"
 TEAM_DID_KEY="$(echo "$team_out" | jq_field team_did_key)"
+TEAM_KEY_PATH="$(echo "$team_out" | jq_field team_key_path)"
 
 assert_eq "team id" "devteam:test.local" "$TEAM_ID"
 assert_not_empty "team did_key" "$TEAM_DID_KEY"
+assert_not_empty "team key path from production resolver" "$TEAM_KEY_PATH"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -1051,12 +1058,28 @@ assert_file_exists "erin fetched cert file" "$erin_cert_path"
 erin_team_state="$REMOTE_ERIN_DIR/.aw/teams.yaml"
 erin_active_team="$(yaml_field "$erin_team_state" active_team)"
 assert_eq "erin active team after fetch" "devteam:test.local" "$erin_active_team"
-if [[ ! -f "$REMOTE_ERIN_HOME/.config/aw/team-keys/test.local/devteam.key" ]]; then
-  echo "  PASS: erin remote home has no controller team key"
-  pass=$((pass + 1))
-else
-  echo "  FAIL: erin remote home unexpectedly has controller team key"
-  fail=$((fail + 1))
+case "$TEAM_KEY_PATH" in
+  "$E2E_HOME"/*)
+    erin_controller_key_path="$REMOTE_ERIN_HOME/${TEAM_KEY_PATH#"$E2E_HOME"/}"
+    ;;
+  *)
+    echo "  FAIL: production-resolved team key path is outside the source HOME: $TEAM_KEY_PATH"
+    fail=$((fail + 1))
+    erin_controller_key_path=""
+    ;;
+esac
+if [[ -n "$erin_controller_key_path" ]]; then
+  mkdir -p "$(dirname "$erin_controller_key_path")"
+  printf 'negative-control' >"$erin_controller_key_path"
+  if path_is_missing "$erin_controller_key_path"; then
+    echo "  FAIL: controller-key absence check missed a seeded key at the production-resolved path"
+    fail=$((fail + 1))
+  else
+    echo "  PASS: controller-key absence check detects a seeded key at the production-resolved path"
+    pass=$((pass + 1))
+  fi
+  rm -f "$erin_controller_key_path"
+  assert_path_missing "erin remote home has no controller team key" "$erin_controller_key_path"
 fi
 
 run_success "erin init" run_aw_with_home_in "$REMOTE_ERIN_HOME" "$REMOTE_ERIN_DIR" init --url "$AWEB_URL"
