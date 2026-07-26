@@ -9,9 +9,19 @@ Binds OAS to aweb identity, messaging, and tasks. Remote host dispatch is out
 of scope.
 
 Every claim about external behaviour in this document was verified against
-running code at a stated version, and cites the file and line so a reader can
-re-check rather than trust. Versions: OAS 0.18.1, aw CLI 1.32.10, Claude Code
-2.1.219.
+running code at a stated version, and cites the source so a reader can re-check
+rather than trust. Versions: OAS 0.18.1, aw CLI 1.32.10, Claude Code 2.1.219.
+
+**On the form of citations.** Line numbers into files under active development
+go stale on the next merge that inserts a line above them — this document
+already shipped two citations to `identity_home_policy.go:35` that pointed
+somewhere else within hours, because a merge added two entries above the one
+being cited. So: cite a **stable identifier** (a symbol, a map key, an exported
+name) wherever one exists, and reserve line numbers for places where nothing
+stable can be named. For another repository, pin the commit as well — `ac` line
+numbers are meaningless here without the `c5650ecf` pin, since it moves
+independently of this one. A citation that cannot survive a merge is a claim
+with a short half-life, not evidence.
 
 ## The invariant
 
@@ -497,8 +507,8 @@ which is the exception — we built it first, and that ordering is corrected her
      (`channel-core/src/config.ts:58-62`), so both Pi and Claude read the
      disposable instance no matter what OAS places on the runtime.
    - **Outbound messaging admitted** (`aaaa.36`). The external-home allowlist
-     holds exactly one messaging entry, `aw mail inbox`
-     (`cli/go/cmd/aw/identity_home_policy.go:35`) — no reply, no send, no chat.
+     (`cli/go/cmd/aw/identity_home_policy.go`) holds exactly one messaging
+     entry, the map key `"aw mail inbox"` — no reply, no send, no chat.
 
    Only `.29` needs anything from upstream; the other two are ours.
 5. **Throwaway Pi attach proof** (`aaaa.30`) — positive wake, reply, ordinary
@@ -593,8 +603,9 @@ behind it, both found by scope review rather than by a failure, and both in our
 own code: the channel resolves its workspace, team state, identity and signing
 key from the working directory regardless of any identity home
 (`channel-core/src/config.ts:58-62`), and the outbound half of messaging is not
-admitted for an external home at all (`identity_home_policy.go:35` is the only
-messaging entry). An attached agent would read as the wrong identity, or sign
+admitted for an external home at all — `"aw mail inbox"` is the only messaging
+key in `identity_home_policy.go`. An attached agent would read as the wrong
+identity, or sign
 validly as the wrong identity — which is the failure that looks like success —
 and could not reply in any case.
 
