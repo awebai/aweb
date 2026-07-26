@@ -56,7 +56,10 @@ describe("loadPinStore fails closed", () => {
   test("well-formed YAML with wrong types throws", async () => {
     const path = join(dir, "known_agents.yaml");
     await writeFile(path, "pins: [1, 2, 3]\naddresses: 'not-a-map'\n", "utf-8");
-    await expect(loadPinStore(path)).rejects.toThrow(/pins.*mapping/i);
+    // The message is matched literally: loadPinStore embeds the store path in
+    // its error, and a pattern loose enough to match the path passes whether or
+    // not the guard is there.
+    await expect(loadPinStore(path)).rejects.toThrow("pin store 'pins' must be a mapping");
   });
 
   test("unreadable file throws instead of returning an empty store", async () => {

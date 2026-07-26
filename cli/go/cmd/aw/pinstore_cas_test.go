@@ -69,6 +69,40 @@ func TestCompareAndSetPinStoreFailsClosedWhenLockCannotBeCreated(t *testing.T) {
 	}
 }
 
+// The precondition is a snapshot taken before the lock, so it can be an empty
+// store while the file on disk is corrupt. If the load error were swallowed and
+// an unreadable store treated as empty, the precondition would match, and the
+// commit would overwrite the damaged trust database instead of surfacing it —
+// destroying the pins rather than refusing to proceed. Asserting the file is
+// unchanged is what separates that from a refusal.
+func TestCompareAndSetPinStoreRefusesToCommitOverACorruptStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_agents.yaml")
+	corrupt := "pins: 42\naddresses: {}\n"
+	if err := os.WriteFile(path, []byte(corrupt), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := compareAndSetPinStore(
+		path,
+		pinStoreYAML(t, awid.NewPinStore()),
+		pinStoreYAML(t, pinStoreWithAddress("did:key:zAlice", "acme.com/alice")),
+	)
+	if err == nil {
+		t.Fatal("a corrupt store on disk was committed over, want a visible refusal")
+	}
+	if !strings.Contains(err.Error(), "corrupt") {
+		t.Fatalf("error %q does not report the corrupt store: the mutation was refused by a different check", err)
+	}
+
+	content, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(content) != corrupt {
+		t.Fatalf("the corrupt store was overwritten:\n%s", content)
+	}
+}
+
 func TestCompareAndSetPinStoreRefusesStalePreconditionWithoutOverwrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "known_agents.yaml")
 	expected := awid.NewPinStore()
