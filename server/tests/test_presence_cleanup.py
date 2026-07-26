@@ -31,12 +31,17 @@ class _Redis:
         self.values: dict[str, str] = {}
         self.expirations: dict[str, int] = {}
         self.fail_eval_after_commit = False
+        self.fail_scan_once = False
+        self.fail_coordinate_hset_after_commit = False
 
     def pipeline(self, transaction=True):
         return _Pipeline(self)
 
     async def hset(self, key, mapping):
         self.hashes.setdefault(key, {}).update(mapping)
+        if key.startswith("presence_coordinates:") and self.fail_coordinate_hset_after_commit:
+            self.fail_coordinate_hset_after_commit = False
+            raise ConnectionError("lost response after fallback map commit")
         return len(mapping)
 
     async def hgetall(self, key):
@@ -77,6 +82,9 @@ class _Redis:
     async def scan_iter(self, match):
         import fnmatch
 
+        if self.fail_scan_once:
+            self.fail_scan_once = False
+            raise ConnectionError("fallback enumeration unavailable")
         for key in list(self.sets) + list(self.values):
             if fnmatch.fnmatch(key, match):
                 yield key
@@ -218,6 +226,41 @@ async def test_clear_workspace_presence_recovers_pre_coordinate_indices():
     assert workspace_id not in redis.sets["idx:team_workspaces:backend:acme.test"]
     assert workspace_id not in redis.sets["idx:repo_workspaces:repo-old"]
     assert workspace_id not in redis.sets["idx:branch_workspaces:repo-old:main"]
+    assert "idx:alias:backend%3Aacme.test:worker" not in redis.values
+    assert f"presence_coordinates:{workspace_id}" not in redis.hashes
+
+
+@pytest.mark.asyncio
+async def test_pre_coordinate_enumeration_failure_is_non_success_then_retryable():
+    redis = _Redis()
+    workspace_id = "workspace-scan-failure"
+    await redis.sadd("idx:all_workspaces", workspace_id)
+    await redis.sadd("idx:team_workspaces:backend:acme.test", workspace_id)
+    redis.fail_scan_once = True
+
+    with pytest.raises(ConnectionError, match="enumeration unavailable"):
+        await clear_workspace_presence(redis, [workspace_id])
+    assert workspace_id in redis.sets["idx:team_workspaces:backend:acme.test"]
+    assert f"presence_coordinates:{workspace_id}" not in redis.hashes
+    assert await clear_workspace_presence(redis, [workspace_id]) == 0
+    assert workspace_id not in redis.sets["idx:team_workspaces:backend:acme.test"]
+
+
+@pytest.mark.asyncio
+async def test_pre_coordinate_map_commit_response_loss_is_retryable():
+    redis = _Redis()
+    workspace_id = "workspace-map-response-loss"
+    await redis.sadd("idx:all_workspaces", workspace_id)
+    await redis.sadd("idx:team_workspaces:backend:acme.test", workspace_id)
+    await redis.set("idx:alias:backend%3Aacme.test:worker", workspace_id)
+    redis.fail_coordinate_hset_after_commit = True
+
+    with pytest.raises(ConnectionError, match="fallback map commit"):
+        await clear_workspace_presence(redis, [workspace_id])
+    assert f"presence_coordinates:{workspace_id}" in redis.hashes
+    assert workspace_id in redis.sets["idx:team_workspaces:backend:acme.test"]
+    assert await clear_workspace_presence(redis, [workspace_id]) == 0
+    assert workspace_id not in redis.sets["idx:team_workspaces:backend:acme.test"]
     assert "idx:alias:backend%3Aacme.test:worker" not in redis.values
     assert f"presence_coordinates:{workspace_id}" not in redis.hashes
 
