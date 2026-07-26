@@ -1,75 +1,140 @@
-import { describe, expect, test } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import {
+  copyFileSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import * as ed from "@noble/ed25519";
-import { sha512 } from "@noble/hashes/sha2.js";
 import { resolveConfig } from "../src/config.js";
-import { computeDIDKey } from "../src/identity/did.js";
-
-ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
-
-function writeSigningKey(path: string, seed: Uint8Array): void {
-  const pem = [
-    "-----BEGIN ED25519 PRIVATE KEY-----",
-    Buffer.from(seed).toString("base64"),
-    "-----END ED25519 PRIVATE KEY-----",
-    "",
-  ].join("\n");
-  writeFileSync(path, pem);
-}
-
-async function writeTeamCertificate(
-  path: string,
-  seed: Uint8Array,
-  fields: {
-    team_id: string;
-    alias: string;
-    member_did_aw?: string;
-    member_address?: string;
-  },
-): Promise<{ did: string }> {
-  const publicKey = ed.getPublicKey(seed);
-  const did = computeDIDKey(publicKey);
-  writeFileSync(path, JSON.stringify({
-    version: 1,
-    certificate_id: "cert-test",
-    team_id: fields.team_id,
-    team_did_key: "did:key:z6Mktestteam",
-    member_did_key: did,
-    member_did_aw: fields.member_did_aw,
-    member_address: fields.member_address,
-    alias: fields.alias,
-    lifetime: "ephemeral",
-    issued_at: "2026-04-09T00:00:00Z",
-    signature: "sig",
-  }, null, 2) + "\n");
-  return { did };
-}
-
-function writeWorkspaceBinding(awDir: string, teamID: string, alias: string, certPath: string): void {
-  writeFileSync(join(awDir, "workspace.yaml"), [
-    "aweb_url: https://app.aweb.ai",
-    "memberships:",
-    `  - team_id: ${teamID}`,
-    `    alias: ${alias}`,
-    `    cert_path: ${certPath}`,
-    "",
-  ].join("\n"));
-}
-
-function writeTeamState(awDir: string, teamID: string, alias: string, certPath: string): void {
-  writeFileSync(join(awDir, "teams.yaml"), [
-    `active_team: ${teamID}`,
-    "memberships:",
-    `  - team_id: ${teamID}`,
-    `    alias: ${alias}`,
-    `    cert_path: ${certPath}`,
-    "",
-  ].join("\n"));
-}
+import {
+  createShadowedPrincipalFixture,
+  writeSigningKey,
+  writeTeamCertificate,
+  writeTeamState,
+  writeWorkspaceBinding,
+} from "./helpers/config_fixture.js";
 
 describe("resolveConfig", () => {
+  const originalIdentityHome = process.env.AWEB_IDENTITY_HOME;
+
+  beforeEach(() => {
+    delete process.env.AWEB_IDENTITY_HOME;
+  });
+
+  afterEach(() => {
+    if (originalIdentityHome === undefined) {
+      delete process.env.AWEB_IDENTITY_HOME;
+    } else {
+      process.env.AWEB_IDENTITY_HOME = originalIdentityHome;
+    }
+  });
+
+  test("keeps resolving the working directory when AWEB_IDENTITY_HOME is unset", async () => {
+    const { external, shadow, workdir } = await createShadowedPrincipalFixture();
+    delete process.env.AWEB_IDENTITY_HOME;
+
+    const config = await resolveConfig(workdir);
+
+    expect(config.alias).toBe(shadow.alias);
+    expect(config.did).toBe(shadow.did);
+    expect(config.signingKey).toEqual(shadow.seed);
+    expect(config.alias).not.toBe(external.alias);
+  });
+
+  test("resolves every identity resource from AWEB_IDENTITY_HOME instead of a valid working-directory shadow", async () => {
+    const { external, shadow, workdir } = await createShadowedPrincipalFixture();
+    process.env.AWEB_IDENTITY_HOME = external.identityHome;
+
+    const config = await resolveConfig(workdir);
+
+    expect(config.alias).toBe(external.alias);
+    expect(config.teamID).toBe(external.teamID);
+    expect(config.did).toBe(external.did);
+    expect(config.signingKey).toEqual(external.seed);
+    expect(config.did).not.toBe(shadow.did);
+  });
+
+  test("keeps tolerating a symlinked working-directory .aw when the external selector is unset", async () => {
+    const { external } = await createShadowedPrincipalFixture();
+    const workdir = join(dirname(external.identityHome), "default-symlink-instance");
+    mkdirSync(workdir);
+    symlinkSync(external.identityHome, join(workdir, ".aw"), "dir");
+    delete process.env.AWEB_IDENTITY_HOME;
+
+    const config = await resolveConfig(workdir);
+
+    expect(config.alias).toBe(external.alias);
+    expect(config.signingKey).toEqual(external.seed);
+  });
+
+  test("rejects a relative external identity home", async () => {
+    const { workdir } = await createShadowedPrincipalFixture();
+    process.env.AWEB_IDENTITY_HOME = "relative-principal-home";
+
+    await expect(resolveConfig(workdir)).rejects.toThrow("AWEB_IDENTITY_HOME must be an absolute path");
+  });
+
+  test("rejects a symlinked external identity home", async () => {
+    const { external, workdir } = await createShadowedPrincipalFixture();
+    const linkedHome = join(dirname(external.identityHome), "linked-principal-home");
+    symlinkSync(external.identityHome, linkedHome, "dir");
+    process.env.AWEB_IDENTITY_HOME = linkedHome;
+
+    await expect(resolveConfig(workdir)).rejects.toThrow(/identity home .* must not be a symlink/);
+  });
+
+  test.each([
+    ["workspace config", "workspace.yaml"],
+    ["team state", "teams.yaml"],
+    ["identity config", "identity.yaml"],
+    ["signing key", "signing.key"],
+  ])("rejects a symlinked external %s before reading it", async (label, filename) => {
+    const { external, workdir } = await createShadowedPrincipalFixture();
+    const selectedPath = join(external.identityHome, filename);
+    const movedPath = join(dirname(external.identityHome), `moved-${filename}`);
+    renameSync(selectedPath, movedPath);
+    symlinkSync(movedPath, selectedPath);
+    process.env.AWEB_IDENTITY_HOME = external.identityHome;
+
+    await expect(resolveConfig(workdir)).rejects.toThrow(
+      new RegExp(`${label} .* must not be a symlink`),
+    );
+  });
+
+  test("rejects a symlinked external team certificate before reading it", async () => {
+    const { external, workdir } = await createShadowedPrincipalFixture();
+    const certsDir = join(external.identityHome, "team-certs");
+    const certificatePath = join(certsDir, readdirSync(certsDir)[0]);
+    const movedCertificatePath = join(dirname(external.identityHome), "moved-certificate.pem");
+    renameSync(certificatePath, movedCertificatePath);
+    symlinkSync(movedCertificatePath, certificatePath);
+    process.env.AWEB_IDENTITY_HOME = external.identityHome;
+
+    await expect(resolveConfig(workdir)).rejects.toThrow(/team certificate .* must not be a symlink/);
+  });
+
+  test("rejects an external stored certificate path that escapes the identity home", async () => {
+    const { external, workdir } = await createShadowedPrincipalFixture();
+    const certificate = readdirSync(join(external.identityHome, "team-certs"))[0];
+    copyFileSync(
+      join(external.identityHome, "team-certs", certificate),
+      join(dirname(external.identityHome), "outside.pem"),
+    );
+    for (const filename of ["workspace.yaml", "teams.yaml"]) {
+      const path = join(external.identityHome, filename);
+      writeFileSync(path, readFileSync(path, "utf8").replace(/cert_path: .*/g, "cert_path: ../outside.pem"));
+    }
+    process.env.AWEB_IDENTITY_HOME = external.identityHome;
+
+    await expect(resolveConfig(workdir)).rejects.toThrow(/certificate path escapes AWEB_IDENTITY_HOME/);
+  });
+
   test("loads channel config when workspace omits active_team and teams.yaml selects the team", async () => {
     const dir = mkdtempSync(join(tmpdir(), "channel-config-"));
     const awDir = join(dir, ".aw");

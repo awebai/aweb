@@ -36,6 +36,10 @@ const require = createRequire(import.meta.url);
 const WELCOME_VERSION = "0.1.0";
 const WELCOME_STATE_PATH = join(homedir(), ".config", "aw", "pi-welcome.json");
 
+export function loadChannelConfig(workdir: string) {
+  return resolveConfig(workdir);
+}
+
 export function tmuxCommandGuardReason(command: string): string | undefined {
   const words = command.match(/[A-Za-z0-9_./:@%+=,-]+/g) ?? [];
   for (let index = 0; index < words.length; index += 1) {
@@ -239,7 +243,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
 
     let config;
     try {
-      config = await resolveConfig(ctx.cwd);
+      config = await loadChannelConfig(ctx.cwd);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       pi.sendMessage({
