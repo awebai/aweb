@@ -121,7 +121,7 @@ function fixture({
   const bin = join(base, "bin");
   const awLog = join(base, "aw-argv.jsonl");
   write(join(bin, "pi"), "#!/bin/sh\nexit 0\n", 0o755);
-  write(join(bin, "aw"), `#!/usr/bin/env node\nimport { appendFileSync, readFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_AW_LOG, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");\nconst argv = process.argv.slice(2);\nif (argv.includes("delete") || argv.includes("reset") || argv.includes("init") || argv.includes("invite") || argv.includes("join")) process.exit(93);\nif (argv.at(-2) === "whoami" && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ address: "example.test/throwaway", stable_id: "did:aw:2ThrowawayStableId123" }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("team") && argv.includes("list") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ active_team: "test-team:example.test", memberships: [{ team_id: "test-team:example.test", active: true }] }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("import-request") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ controller_did: "did:key:z6MkiLocalController123" }) + "\\n");\n  process.exit(0);\n}\nconst flag = (name) => argv[argv.indexOf(name) + 1];\nif (argv.includes("cleanup-local-provision")) {\n  const operation = flag("--operation-id");\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "cleanup-pending") process.exit(95);\n  process.stdout.write(JSON.stringify({\n    status: "complete", operation_id: operation, grants: "physically-absent", workspace: "soft-deleted", identity: "soft-deleted",\n    certificate: "revoked", credentials: "physically-absent", audit: "intentionally-retained-operation-record",\n  }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("provision-local")) {\n  const operation = flag("--operation-id");\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "provisioning") process.exit(94);\n  process.stdout.write(JSON.stringify({\n    status: "provisioned", operation_id: operation, team_id: flag("--team-id"), alias: flag("--name"), name: flag("--name"),\n    identity_home: flag("--target-identity-home"), did_key: "did:key:z6MkiProvisionedWorker",\n    certificate_id: "certificate-provisioned", agent_id: "agent-provisioned", workspace_id: "workspace-provisioned",\n    registry_url: "https://registry.example.test", aweb_url: "https://aweb.example.test",\n  }) + "\\n");\n  process.exit(0);\n}\nprocess.exit(92);\n`, 0o755);
+  write(join(bin, "aw"), `#!/usr/bin/env node\nimport { appendFileSync, readFileSync, writeFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_AW_LOG, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");\nconst argv = process.argv.slice(2);\nif (argv.includes("delete") || argv.includes("reset") || argv.includes("init") || argv.includes("invite") || argv.includes("join")) process.exit(93);\nif (argv.at(-2) === "whoami" && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ address: "example.test/throwaway", stable_id: "did:aw:2ThrowawayStableId123" }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("team") && argv.includes("list") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ active_team: "test-team:example.test", memberships: [{ team_id: "test-team:example.test", active: true }] }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("import-request") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ controller_did: "did:key:z6MkiLocalController123" }) + "\\n");\n  process.exit(0);\n}\nconst flag = (name) => argv[argv.indexOf(name) + 1];\nif (argv.includes("cleanup-local-provision")) {\n  const operation = flag("--operation-id");\n  if (process.env.FAKE_AW_CLEANUP_FAILURES) {\n    let remaining = Number(readFileSync(process.env.FAKE_AW_CLEANUP_FAILURES, "utf8"));\n    if (remaining > 0) {\n      writeFileSync(process.env.FAKE_AW_CLEANUP_FAILURES, String(remaining - 1));\n      process.stderr.write("simulated cleanup failure\\n");\n      process.exit(96);\n    }\n  }\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "cleanup-pending") process.exit(95);\n  process.stdout.write(JSON.stringify({\n    status: "complete", operation_id: operation, grants: "physically-absent", workspace: "soft-deleted", identity: "soft-deleted",\n    certificate: "revoked", credentials: "physically-absent", audit: "intentionally-retained-operation-record",\n  }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("provision-local")) {\n  const operation = flag("--operation-id");\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "provisioning") process.exit(94);\n  process.stdout.write(JSON.stringify({\n    status: "provisioned", operation_id: operation, team_id: flag("--team-id"), alias: flag("--name"), name: flag("--name"),\n    identity_home: flag("--target-identity-home"), did_key: "did:key:z6MkiProvisionedWorker",\n    certificate_id: "certificate-provisioned", agent_id: "agent-provisioned", workspace_id: "workspace-provisioned",\n    registry_url: "https://registry.example.test", aweb_url: "https://aweb.example.test",\n  }) + "\\n");\n  process.exit(0);\n}\nprocess.exit(92);\n`, 0o755);
 
   const corroborationHome = join(principalHome, ".corroboration", "cleanup");
   mkdirSync(corroborationHome, { recursive: true });
@@ -530,6 +530,71 @@ test("operator and later-spawn reconciliation clean durable pending local intent
     assert.match(exact.stdout, new RegExp(`${operation}.*quarantined`));
     assert.equal(existsSync(path), false);
   }
+});
+
+test("cleanup attempt accounting counts executions before third-failure quarantine", () => {
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
+  const spawnLocal = (purpose) => parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", purpose, "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  const journalFor = (spawned) => {
+    const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+    const operation = meta.capabilityMeta["aweb.identity-attach"].identity_binding.journal_operation;
+    return { spawned, operation, path: join(f.principalHome, ".provisioning", "intents", `${operation}.json`) };
+  };
+  const ordinary = journalFor(spawnLocal("failure-count-ordinary"));
+  const recovered = journalFor(spawnLocal("failure-count-recovered"));
+  const prepared = journalFor(spawnLocal("failure-count-prepared"));
+  const bound = journalFor(spawnLocal("failure-count-bound"));
+
+  const recoveredRecord = JSON.parse(readFileSync(recovered.path, "utf8"));
+  recoveredRecord.state = "provisioning";
+  recoveredRecord.resource = null;
+  recoveredRecord.cleanup = { attempts: 0, last_error: null };
+  recoveredRecord.revision += 1;
+  writeFileSync(recovered.path, `${JSON.stringify(recoveredRecord, null, 2)}\n`, { mode: 0o600 });
+  const preparedRecord = JSON.parse(readFileSync(prepared.path, "utf8"));
+  preparedRecord.state = "prepared";
+  preparedRecord.revision += 1;
+  writeFileSync(prepared.path, `${JSON.stringify(preparedRecord, null, 2)}\n`, { mode: 0o600 });
+
+  const failurePath = join(f.base, "cleanup-failures");
+  f.env.FAKE_AW_CLEANUP_FAILURES = failurePath;
+  const assertFailureSequence = (intent, firstExecution) => {
+    writeFileSync(failurePath, "3");
+    firstExecution();
+    let journal = JSON.parse(readFileSync(intent.path, "utf8"));
+    assert.equal(journal.state, "cleanup-pending");
+    assert.equal(journal.cleanup.attempts, 1, "first cleanup execution must persist attempt one");
+
+    const second = reconcileCommand(["--operation", intent.operation], f.repo, f.env);
+    assert.equal(second.status, 1);
+    journal = JSON.parse(readFileSync(intent.path, "utf8"));
+    assert.equal(journal.state, "cleanup-pending");
+    assert.equal(journal.cleanup.attempts, 2, "second cleanup execution must persist attempt two");
+
+    const third = reconcileCommand(["--operation", intent.operation], f.repo, f.env);
+    assert.equal(third.status, 1);
+    journal = JSON.parse(readFileSync(intent.path, "utf8"));
+    assert.equal(journal.state, "quarantined");
+    assert.equal(journal.cleanup.attempts, 3, "quarantine must follow the third real cleanup execution");
+  };
+
+  assertFailureSequence(ordinary, () => {
+    const retired = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", ordinary.spawned.instance, "--json"], {
+      cwd: f.repo, env: f.env, encoding: "utf8",
+    }));
+    assert.match(retired.warnings[0], /cleanup remains durably pending/);
+  });
+  assertFailureSequence(recovered, () => {
+    assert.equal(reconcileCommand(["--operation", recovered.operation], f.repo, f.env).status, 1);
+  });
+  assertFailureSequence(prepared, () => {
+    assert.equal(reconcileCommand(["--cleanup-unacknowledged", prepared.operation], f.repo, f.env).status, 1);
+  });
+  assertFailureSequence(bound, () => {
+    assert.equal(reconcileCommand(["--cleanup-unacknowledged", bound.operation], f.repo, f.env).status, 1);
+  });
 });
 
 test("real OAS refuses declared local-controller path without controller authority", () => {

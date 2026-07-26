@@ -360,6 +360,7 @@ function recoverProvisionIntents(principalHome, cwd, {
         let intent = loadProvisionIntent(principalHome, candidate.operation_id);
         if (retryQuarantine) intent = retryProvisionIntentQuarantine(principalHome, intent.operation_id);
         let recoveredProvisioning = false;
+        let cleanupAttemptStarted = false;
         if (cleanupUnacknowledged && !["prepared", "bound"].includes(intent.state)) {
           throw new Error(`operator-confirmed cleanup requires prepared or bound state, found ${intent.state}`);
         }
@@ -377,9 +378,10 @@ function recoverProvisionIntents(principalHome, cwd, {
             ? "orphaned-provisioning-reconciled"
             : intent.state === "prepared" ? "operator-confirmed-unacknowledged-preparation" : "operator-confirmed-unacknowledged-binding";
           intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, reason);
+          cleanupAttemptStarted = true;
         }
         if (intent.state === "cleanup-pending") {
-          intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, "recovery-retry");
+          if (!cleanupAttemptStarted) intent = markProvisionIntentCleanupPending(principalHome, intent.operation_id, "recovery-retry");
           const cleanup = runCleanupCommandForIntent(intent, cwd);
           markProvisionIntentComplete(principalHome, intent.operation_id);
           return { operation_id: intent.operation_id, outcome: "cleanup-complete", cleanup };

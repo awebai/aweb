@@ -233,6 +233,43 @@ test("quarantine remains visible when the process dies after its report commit",
   assert.equal(readdirSync(join(root, ".provisioning", "intents")).includes(`${OPERATION_B}.json`), false);
 });
 
+test("concurrent malformed scanners commit one consistent quarantine", async (t) => {
+  const root = tempRoot(t, "aweb-provision-quarantine-race-");
+  const start = new Date("2026-07-26T00:00:00Z");
+  createProvisionIntent(root, {
+    operationID: OPERATION_A, instanceID: "instance-a", teamID: "backend:acme.test", authority: AUTHORITY,
+    authorityHome: join(root, "authority"), now: start,
+  });
+  markProvisionIntentProvisioning(root, OPERATION_A, start);
+  writeFileSync(join(root, ".provisioning", "intents", `${OPERATION_B}.json`), '{"schema_version":999}\n', { mode: 0o600 });
+  const journalModule = new URL("../.agents/capabilities/owned/aweb-identity-attach/lib/provisioning-journal.mjs", import.meta.url).href;
+  const worker = [
+    `import { listRecoverableProvisionIntents } from ${JSON.stringify(journalModule)};`,
+    `listRecoverableProvisionIntents(${JSON.stringify(root)}, { staleAfterMs: 0 });`,
+  ].join("\n");
+  const runWorker = () => new Promise((resolveWorker) => {
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", worker], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => resolveWorker({ status, stderr }));
+  });
+  const results = await Promise.all(Array.from({ length: 20 }, runWorker));
+  assert.equal(results.every((result) => result.status === 0), true, results.map((result) => result.stderr).join("\n"));
+  const quarantineDir = join(root, ".provisioning", "quarantine");
+  const artifacts = readdirSync(quarantineDir).filter((name) => name.startsWith(`${OPERATION_B}.json.`));
+  assert.equal(artifacts.length, 2, artifacts);
+  assert.equal(artifacts.filter((name) => name.endsWith(".report.json")).length, 1);
+  assert.equal(artifacts.filter((name) => name.endsWith(".record")).length, 1);
+  const surfaced = [];
+  assert.deepEqual(listRecoverableProvisionIntents(root, {
+    now: new Date("2026-07-26T00:01:00Z"), staleAfterMs: 30_000,
+    onQuarantine: (report) => surfaced.push(report),
+  }).map((intent) => intent.operation_id), [OPERATION_A]);
+  assert.equal(surfaced.length, 1);
+  assert.equal(existsSync(join(quarantineDir, surfaced[0].evidence_record)), true);
+});
+
 test("per-intent lock serializes stale takeover, never takes a live holder, and rejects symlinks", async (t) => {
   const root = tempRoot(t, "aweb-provision-lock-");
   createProvisionIntent(root, {

@@ -131,9 +131,10 @@ cleaned; a later spawn allocates its own operation and principal.
   to the external quarantine directory. If the process dies between those
   commits, the next scan completes the report-directed move, surfaces the
   quarantine warning, and continues other valid stale work.
-- A cleanup still failing on the third persisted attempt moves to visible
-  `quarantined`. Quarantine is a remediable non-success and is never reported as
-  completed cleanup.
+- Exactly one attempt is persisted per real cleanup-command execution, including
+  recovered provisioning and prepared/bound operator entry. A cleanup still
+  failing on its third execution moves to visible `quarantined`. Quarantine is a
+  remediable non-success and is never reported as completed cleanup.
 
 ## Real lifecycle proof
 

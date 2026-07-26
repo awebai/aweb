@@ -357,20 +357,27 @@ function quarantineMalformedIntent(home, entry, error, now, afterQuarantineRepor
     if (readError?.code === "ENOENT") return;
     evidence = `unreadable-entry:${readError?.code || "unknown"}`;
   }
-  const digest = createHash("sha256").update(evidence).digest("hex").slice(0, 16);
-  const basename = `${entry.name}.${digest}.${randomUUID()}`;
+  const digest = createHash("sha256").update(evidence).digest("hex");
+  const sourceDigest = createHash("sha256").update(entry.name).digest("hex").slice(0, 24);
+  const basename = `${entry.name}.${sourceDigest}`;
   const report = {
     schema_version: 1,
     state: "quarantined",
     source_name: entry.name,
     evidence_record: `${basename}.record`,
+    evidence_sha256: digest,
     cleanup_authority: "none-corrupt-record-not-trusted",
     error: String(error?.message || error).slice(0, 400),
     quarantined_at: timestamp(now),
   };
   // Visibility commits first. If the process dies before rename, the next scan
   // completes the move from this report rather than losing the quarantine.
-  writeNew(join(journalPaths.quarantine, `${basename}.report.json`), report);
+  try {
+    writeNew(join(journalPaths.quarantine, `${basename}.report.json`), report);
+  } catch (writeError) {
+    if (writeError?.code === "EEXIST") return;
+    throw writeError;
+  }
   afterQuarantineReport(report);
   try {
     renameSync(source, join(journalPaths.quarantine, report.evidence_record));
@@ -389,12 +396,13 @@ function surfaceProvisionQuarantines(home, onQuarantine, operationID = null) {
     let report;
     try {
       report = JSON.parse(readFileSync(reportPath, "utf8"));
-      if (!exactFields(report, ["schema_version", "state", "source_name", "evidence_record", "cleanup_authority", "error", "quarantined_at"])
+      if (!exactFields(report, ["schema_version", "state", "source_name", "evidence_record", "evidence_sha256", "cleanup_authority", "error", "quarantined_at"])
           || report.schema_version !== 1 || report.state !== "quarantined"
           || typeof report.source_name !== "string" || !report.source_name.endsWith(".json")
           || report.source_name.includes("/") || report.source_name.includes("\\")
           || typeof report.evidence_record !== "string" || !report.evidence_record.endsWith(".record")
           || report.evidence_record.includes("/") || report.evidence_record.includes("\\")
+          || typeof report.evidence_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(report.evidence_sha256)
           || report.cleanup_authority !== "none-corrupt-record-not-trusted") {
         throw new Error("malformed quarantine report");
       }
@@ -408,6 +416,7 @@ function surfaceProvisionQuarantines(home, onQuarantine, operationID = null) {
         state: "quarantined",
         source_name: entry.name,
         evidence_record: entry.name,
+        evidence_sha256: "0".repeat(64),
         cleanup_authority: "none-corrupt-record-not-trusted",
         error: String(error?.message || error).slice(0, 400),
         quarantined_at: new Date(0).toISOString(),
