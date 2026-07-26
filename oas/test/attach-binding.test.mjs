@@ -455,7 +455,10 @@ test("operator and later-spawn reconciliation clean durable pending local intent
   interruptedJournal.updated_at = "2000-01-01T00:00:00.000Z";
   writeFileSync(interruptedPath, `${JSON.stringify(interruptedJournal, null, 2)}\n`, { mode: 0o600 });
   const operatorCallStart = readFileSync(f.awLog, "utf8").trim().split("\n").length;
-  const operator = reconcileCommand([], f.repo, f.env);
+  const globalOperator = reconcileCommand([], f.repo, f.env);
+  assert.equal(globalOperator.status, 1, "operator reconciliation must never select all operations");
+  assert.match(globalOperator.stdout, /requires exactly one operation id/);
+  const operator = reconcileCommand(["--operation", interruptedOperation], f.repo, f.env);
   assert.equal(operator.status, 0, operator.stderr);
   assert.deepEqual(JSON.parse(operator.stdout).operations.map((item) => item.operation_id), [interruptedOperation]);
   assert.equal(JSON.parse(readFileSync(interruptedPath, "utf8")).state, "complete");

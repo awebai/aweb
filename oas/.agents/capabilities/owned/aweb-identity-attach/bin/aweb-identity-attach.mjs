@@ -603,7 +603,10 @@ try {
     const principalHome = resolvePrincipalHome();
     let operationID = null;
     let cleanupUnacknowledged = false;
-    if (process.argv[3] === "--retry-quarantine") {
+    if (process.argv[3] === "--operation") {
+      if (!process.argv[4] || process.argv.length !== 5) throw new TypeError("reconcile --operation requires exactly one operation id");
+      operationID = process.argv[4];
+    } else if (process.argv[3] === "--retry-quarantine") {
       if (!process.argv[4] || process.argv.length !== 5) throw new TypeError("reconcile --retry-quarantine requires exactly one operation id");
       operationID = process.argv[4];
       retryProvisionIntentQuarantine(principalHome, operationID);
@@ -611,8 +614,8 @@ try {
       if (!process.argv[4] || process.argv.length !== 5) throw new TypeError("reconcile --cleanup-unacknowledged requires exactly one operation id");
       operationID = process.argv[4];
       cleanupUnacknowledged = true;
-    } else if (process.argv.length !== 3) {
-      throw new TypeError("reconcile accepts --cleanup-unacknowledged <operation-id> or --retry-quarantine <operation-id>");
+    } else {
+      throw new TypeError("reconcile requires exactly one operation id via --operation, --cleanup-unacknowledged, or --retry-quarantine");
     }
     const recovered = recoverProvisionIntents(principalHome, realpathSync(process.cwd()), {
       force: true,
@@ -623,4 +626,5 @@ try {
   } else throw new TypeError(`unsupported lifecycle event ${JSON.stringify(event)}`);
 } catch (error) {
   warning(error);
+  if (event === "reconcile") process.exitCode = 1;
 }

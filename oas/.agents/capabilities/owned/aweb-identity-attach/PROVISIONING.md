@@ -97,10 +97,12 @@ cleaned; a later spawn allocates its own operation and principal.
 ## Scanner and quarantine contract
 
 - Triggers: a later local provisioning spawn, every retire hook, and the native
-  operator command `oas aweb-identity reconcile`. The OAS dispatcher requires
-  this capability to be active and executable-trusted; direct bin invocation is
-  not the operator contract. After fixing the reported authority/service
-  problem, an operator retries exactly one quarantined operation with
+  operator command `oas aweb-identity reconcile --operation <operation-id>`.
+  The operator surface always requires exactly one operation; only hook scanners
+  enumerate stale scanner-owned states. The OAS dispatcher requires this
+  capability to be active and executable-trusted; direct bin invocation is not
+  the operator contract. After fixing the reported authority/service problem,
+  an operator retries exactly one quarantined operation with
   `oas aweb-identity reconcile --retry-quarantine <operation-id>`.
 - Automatic stale threshold: five minutes. The explicit command ignores the
   threshold only for scanner-owned states.
