@@ -65,6 +65,12 @@ func TestExternalIdentityHomeTaskAndWorkCommandsUseSelectedPrincipal(t *testing.
 		}
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/session-leases":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "active", "team_id": "runtime:aweb.test", "principal_agent_id": "principal-agent", "session_id": "session-a", "generation": 1, "acquired_at": "2026-07-26T00:00:00Z", "expires_at": "2026-07-26T00:05:00Z"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/session-leases/release":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "released", "session_id": "session-a"})
+		case r.Method == http.MethodPost && (r.URL.Path == "/v1/session-leases" || r.URL.Path == "/v1/session-leases/renew" || r.URL.Path == "/v1/session-leases/takeover"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "active", "team_id": "runtime:aweb.test", "principal_agent_id": "principal-agent", "session_id": "session-a", "generation": 1, "acquired_at": "2026-07-26T00:00:00Z", "expires_at": "2026-07-26T00:05:00Z"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tasks":
 			_ = json.NewEncoder(w).Encode(task)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks":
@@ -117,10 +123,16 @@ func TestExternalIdentityHomeTaskAndWorkCommandsUseSelectedPrincipal(t *testing.
 
 	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
+	const sessionKey = "0123456789abcdef0123456789abcdef"
 	commands := []struct {
 		name string
 		args []string
 	}{
+		{name: "session-lease-status", args: []string{"session", "lease", "status"}},
+		{name: "session-lease-acquire", args: []string{"session", "lease", "acquire", "--session-id", "session-a", "--session-key", sessionKey}},
+		{name: "session-lease-renew", args: []string{"session", "lease", "renew", "--session-id", "session-a", "--session-key", sessionKey}},
+		{name: "session-lease-release", args: []string{"session", "lease", "release", "--session-id", "session-a", "--session-key", sessionKey}},
+		{name: "session-lease-takeover", args: []string{"session", "lease", "takeover", "--session-id", "session-a", "--session-key", sessionKey, "--reason", "operator test"}},
 		{name: "task-create", args: []string{"task", "create", "--title", "Principal task"}},
 		{name: "task-list", args: []string{"task", "list"}},
 		{name: "task-show", args: []string{"task", "show", "TASK-001"}},
