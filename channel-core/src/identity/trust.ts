@@ -292,7 +292,13 @@ export class SenderTrustManager {
       if (existingDID === fromDID) {
         const rekey = store.bindStableIdentity(fromDID, fromStableID);
         if (rekey.status === "conflict") {
-          return { status: "pin_conflict", stored: false };
+          // A stable id is one key and a pin carries one address, so an
+          // identity already pinned at another address cannot also move onto
+          // that key here. Keep both pins and stay on the did:key for this
+          // address, so the check below is made against the key the reverse
+          // index actually holds. Failing the message instead would report a
+          // legitimate sender as untrusted for being reachable twice.
+          pinKey = fromDID;
         }
       }
     }

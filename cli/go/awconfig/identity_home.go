@@ -122,10 +122,6 @@ func IdentityHomePath(home IdentityHome, relativePath string) (string, error) {
 		return "", fmt.Errorf("identity path escapes identity home: %q", relativePath)
 	}
 	path := filepath.Join(home.Root, clean)
-	rel, err := filepath.Rel(home.Root, path)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("identity path escapes identity home: %q", relativePath)
-	}
 	options := pathpreflight.Options{}
 	if home.Source == "" || home.Source == IdentityHomeDefault {
 		options = pathpreflight.AllowTempAmbientSymlinkPrefix()
