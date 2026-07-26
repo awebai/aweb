@@ -4,12 +4,209 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.T) {
+	var registeredCert *awid.TeamCertificate
+	var connectWorkspacePath string
+	var registerCalls, connectCalls int
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.test/teams/backend/certificates":
+			registerCalls++
+			var request struct {
+				Certificate string `json:"certificate"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			var err error
+			registeredCert, err = awid.DecodeTeamCertificateHeader(request.Certificate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Commit the certificate, then lose the response. The next real command
+			// must reconcile by alias + target key instead of signing a duplicate.
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("test server does not support hijacking")
+			}
+			conn, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = conn.Close()
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.test/teams/backend/members/oas-worker":
+			if registeredCert == nil {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id": registeredCert.Team, "certificate_id": registeredCert.CertificateID,
+				"member_did_key": registeredCert.MemberDIDKey, "alias": registeredCert.Alias,
+				"identity_scope": registeredCert.IdentityScope, "issued_at": registeredCert.IssuedAt,
+			})
+		case registeredCert != nil && r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.test/teams/backend/certificates/"+registeredCert.CertificateID:
+			encoded, err := awid.EncodeTeamCertificateHeader(registeredCert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"certificate_id": registeredCert.CertificateID, "team_id": registeredCert.Team,
+				"member_did_key": registeredCert.MemberDIDKey, "alias": registeredCert.Alias,
+				"identity_scope": registeredCert.IdentityScope, "issued_at": registeredCert.IssuedAt,
+				"certificate": encoded,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			connectCalls++
+			var request map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			connectWorkspacePath, _ = request["workspace_path"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id": "backend:acme.test", "alias": "oas-worker", "agent_id": "agent-provisioned",
+				"workspace_id": "workspace-provisioned", "repo_id": "", "team_did_key": "did:key:z6MkiTeam",
+			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-provisioned", "backend:acme.test", "oas-worker")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	rawRoot := t.TempDir()
+	root, err := filepath.EvalSymlinks(rawRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	t.Setenv("HOME", root)
+
+	_, controllerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, root, "acme.test", "backend", controllerKey)
+	controllerDID := awid.ComputeDIDKey(controllerKey.Public().(ed25519.PublicKey))
+
+	authorityDir := filepath.Join(root, "authority")
+	instanceDir := filepath.Join(root, "instance")
+	targetHome := filepath.Join(root, "external-principal")
+	for _, path := range []string{authorityDir, instanceDir} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, authorityKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorityDID := awid.ComputeDIDKey(authorityKey.Public().(ed25519.PublicKey))
+	authorityStableID := awid.ComputeStableID(authorityKey.Public().(ed25519.PublicKey))
+	writeSelectionFixtureForTest(t, authorityDir, testSelectionFixture{
+		AwebURL: server.URL, TeamID: "backend:acme.test", Alias: "provisioner", WorkspaceID: "workspace-provisioner",
+		DID: authorityDID, StableID: authorityStableID, Address: "acme.test/provisioner", Custody: awid.CustodySelf,
+		Lifetime: awid.LifetimePersistent, RegistryURL: server.URL, SigningKey: authorityKey,
+	})
+	_, shadowKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSelectionFixtureForTest(t, instanceDir, testSelectionFixture{
+		AwebURL: server.URL, TeamID: "backend:acme.test", Alias: "shadow", WorkspaceID: "workspace-shadow",
+		DID: awid.ComputeDIDKey(shadowKey.Public().(ed25519.PublicKey)), StableID: awid.ComputeStableID(shadowKey.Public().(ed25519.PublicKey)),
+		Address: "acme.test/shadow", Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, RegistryURL: server.URL, SigningKey: shadowKey,
+	})
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "provision-local",
+		"--operation-id", "oas-AAAAAAAAAAAAAAAAAAAAAA", "--team-id", "backend:acme.test", "--name", "oas-worker",
+		"--authority-identity-home", filepath.Join(authorityDir, ".aw"), "--target-identity-home", targetHome,
+		"--authority-address", "acme.test/provisioner", "--authority-stable-id", authorityStableID,
+		"--controller-did", controllerDID, "--json")
+	run.Env = append(testCommandEnv(root), "AWID_REGISTRY_URL="+server.URL)
+	run.Dir = instanceDir
+	output, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("first provision-local should lose its committed registry response:\n%s", output)
+	}
+	if registerCalls != 1 || registeredCert == nil {
+		t.Fatalf("register_calls=%d cert=%+v", registerCalls, registeredCert)
+	}
+	if matches, err := awconfig.ListTeamInvitesByOperation("oas-AAAAAAAAAAAAAAAAAAAAAA"); err != nil || len(matches) != 1 {
+		t.Fatalf("response-loss grant matches=%+v err=%v", matches, err)
+	}
+
+	recover := exec.CommandContext(ctx, bin, "id", "team", "provision-local",
+		"--operation-id", "oas-AAAAAAAAAAAAAAAAAAAAAA", "--team-id", "backend:acme.test", "--name", "oas-worker",
+		"--authority-identity-home", filepath.Join(authorityDir, ".aw"), "--target-identity-home", targetHome,
+		"--authority-address", "acme.test/provisioner", "--authority-stable-id", authorityStableID,
+		"--controller-did", controllerDID, "--json")
+	recover.Env = append(testCommandEnv(root), "AWID_REGISTRY_URL="+server.URL)
+	recover.Dir = instanceDir
+	output, err = recover.CombinedOutput()
+	if err != nil {
+		t.Fatalf("provision-local reconciliation failed: %v\n%s", err, output)
+	}
+	var got localProvisionOutput
+	if err := json.Unmarshal(extractJSON(t, output), &got); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, output)
+	}
+	if got.Status != "provisioned" || got.OperationID != "oas-AAAAAAAAAAAAAAAAAAAAAA" || got.CertificateID == "" || got.WorkspaceID != "workspace-provisioned" || got.AgentID != "agent-provisioned" {
+		t.Fatalf("output=%+v", got)
+	}
+	principalKey, err := awid.LoadSigningKey(filepath.Join(targetHome, "signing.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	principalDID := awid.ComputeDIDKey(principalKey.Public().(ed25519.PublicKey))
+	if registeredCert.MemberDIDKey != principalDID || registeredCert.MemberDIDKey == awid.ComputeDIDKey(shadowKey.Public().(ed25519.PublicKey)) {
+		t.Fatalf("registered did=%q principal=%q", registeredCert.MemberDIDKey, principalDID)
+	}
+	if connectWorkspacePath != instanceDir {
+		t.Fatalf("connect workspace_path=%q want %q", connectWorkspacePath, instanceDir)
+	}
+	if matches, err := awconfig.ListTeamInvitesByOperation("oas-AAAAAAAAAAAAAAAAAAAAAA"); err != nil || len(matches) != 0 {
+		t.Fatalf("terminal grants=%+v err=%v", matches, err)
+	}
+
+	// A lost command response is reconciled from the operation-specific target;
+	// it must not mint another certificate or create another workspace.
+	retry := exec.CommandContext(ctx, bin, "id", "team", "provision-local",
+		"--operation-id", "oas-AAAAAAAAAAAAAAAAAAAAAA", "--team-id", "backend:acme.test", "--name", "oas-worker",
+		"--authority-identity-home", filepath.Join(authorityDir, ".aw"), "--target-identity-home", targetHome,
+		"--authority-address", "acme.test/provisioner", "--authority-stable-id", authorityStableID,
+		"--controller-did", controllerDID, "--json")
+	retry.Env = append(testCommandEnv(root), "AWID_REGISTRY_URL="+server.URL)
+	retry.Dir = instanceDir
+	retryOutput, err := retry.CombinedOutput()
+	if err != nil {
+		t.Fatalf("provision-local response-loss retry failed: %v\n%s", err, retryOutput)
+	}
+	var retried localProvisionOutput
+	if err := json.Unmarshal(extractJSON(t, retryOutput), &retried); err != nil {
+		t.Fatal(err)
+	}
+	if retried.CertificateID != got.CertificateID || retried.WorkspaceID != got.WorkspaceID || registerCalls != 1 || connectCalls != 1 {
+		t.Fatalf("retry=%+v register_calls=%d connect_calls=%d", retried, registerCalls, connectCalls)
+	}
+}
 
 func TestLocalProvisionEnrollmentUsesExplicitIdentityHome(t *testing.T) {
 	root := t.TempDir()

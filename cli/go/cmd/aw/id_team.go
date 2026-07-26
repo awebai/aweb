@@ -1223,6 +1223,10 @@ func runTeamLeave(cmd *cobra.Command, args []string) error {
 }
 
 func createTeamInviteToken(domain, team, registryURL, awebURL string, ephemeral bool) (string, string, error) {
+	return createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL, ephemeral, "")
+}
+
+func createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL string, ephemeral bool, operationID string) (string, string, error) {
 	domain = awconfig.NormalizeDomain(domain)
 	team = strings.ToLower(strings.TrimSpace(team))
 	registryURL = strings.TrimSpace(registryURL)
@@ -1257,6 +1261,7 @@ func createTeamInviteToken(domain, team, registryURL, awebURL string, ephemeral 
 		Secret:      secret,
 		RegistryURL: registryURL,
 		AwebURL:     awebURL,
+		OperationID: operationID,
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := awconfig.SaveTeamInvite(invite); err != nil {

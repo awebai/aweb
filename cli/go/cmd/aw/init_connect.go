@@ -26,6 +26,7 @@ type connectOutput struct {
 	TeamID        string `json:"team_id"`
 	Alias         string `json:"alias"`
 	AwebURL       string `json:"aweb_url"`
+	AgentID       string `json:"agent_id,omitempty"`
 	WorkspaceID   string `json:"workspace_id,omitempty"`
 	StableID      string `json:"stable_id,omitempty"`
 	Address       string `json:"address,omitempty"`
@@ -178,6 +179,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		TeamID:        resp.TeamID,
 		Alias:         resp.Alias,
 		AwebURL:       awebURL,
+		AgentID:       resp.AgentID,
 		WorkspaceID:   resp.WorkspaceID,
 		StableID:      strings.TrimSpace(cert.MemberDIDAW),
 		Address:       strings.TrimSpace(cert.MemberAddress),
