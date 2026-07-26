@@ -282,10 +282,12 @@ reinterpreted as v2.
 Provision modes currently emit a pending policy receipt and an explicit warning;
 they create no identity. Disposable execution, reconciliation, grant cleanup,
 and real deletion belong to `aaaa.33` after minting authority exists. That task
-must explicitly refuse durable provisioning; `aaaa.39` owns its later execution. A disposable
-principal is addressed meanwhile by `operation:<operation_id>`, so recovery has
-a stable collision-resistant lookup key even when no `did:aw` exists. The later
-execution layer must reconcile that operation reference with remote state.
+must explicitly refuse durable provisioning; `aaaa.39` owns its later execution.
+A pending principal is addressed by `operation:oas-<instance-id>`: replaying the
+hook for one OAS instance retains the operation, while two distinct production
+spawns receive distinct identifiers. This avoids treating one config-scoped
+literal as a soul-global identity. The later execution layer must reconcile that
+operation reference with remote state.
 
 At retire, a mutable `instance.json` receipt is never self-authorizing. An
 `authorize_cleanup` judgement requires a valid disposable/provisioned receipt
@@ -294,10 +296,10 @@ wrong instance, target substitution, invalid record, or any disagreement
 produces preservation.
 
 The corroboration implemented here is explicitly labelled
-`local_same_uid_accident_guard`. Its Ed25519 signature and point-of-use symlink
-checks detect accidental corruption and confused-deputy target substitution;
-they are **not** an adversarial authority boundary. Hook and model share a UID,
-so an intentional model can replace both the local public key and signed record.
+`local_same_uid_accident_guard`. Its digest and point-of-use symlink checks
+detect accidental corruption and confused-deputy target substitution; they are
+**not** an adversarial authority boundary. Hook and model share a UID, so an
+intentional model can replace both the local record and its digest.
 No code, test, or verdict may call this local record unwritable, unforgeable, or
 tamper-proof. A real cross-principal boundary exists only where the destructive
 authority is absent from the machine and provenance comes from an authority the
@@ -521,11 +523,13 @@ which is the exception — we built it first, and that ordering is corrected her
    capability-contributed launch arguments. Written and merged in our source;
    **not finished** — it is open upstream as OAS-Framework PR 37, and until that
    merges the defect stands for every consumer but us.
-2. **Lifecycle policy in the capability** (`aaaa.4`). The three binding modes;
-   created resource, lifecycle and cleanup owner recorded at binding time;
-   retire deleting only identities that are both disposable and OAS-owned.
-3. **Clean external customer proof** (`aaaa.28`). A fresh workspace, two
-   developers, duplicate local instance names — the ordinary
+2. **Lifecycle policy in the capability** (`aaaa.4`). The three binding modes,
+   receipt validity matrix, cleanup ownership, operation naming, and labelled
+   authorization judgement only. It creates and deletes nothing. Minting
+   authority is `.5`; disposable execution and cleanup are `.33`; durable
+   execution is `.39`.
+3. **Clean external customer proof** (`aaaa.28`). After `.5` and `.33`, a fresh
+   workspace, two developers, duplicate local instance names — the ordinary
    provision-and-retire journey end to end.
 4. **A working attached runtime**, which is three things and not one. A
    pre-implementation review of what was originally scoped as a single step
