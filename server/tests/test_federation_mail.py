@@ -232,6 +232,79 @@ async def test_federation_delivery_enforces_response_limit(extra_bytes: int, sho
             )
 
 
+class ChunkedStream(httpx.AsyncByteStream):
+    """A response body delivered chunk by chunk, so httpx never pre-reads it.
+
+    A transport handed a ready-made body marks the response stream consumed,
+    which sends _read_bounded_response down its already-read path and leaves the
+    accumulating loop unexercised. Handing httpx a stream is what puts a
+    size-boundary test on the path production takes against a real server.
+    """
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+        self.chunks_yielded = 0
+
+    async def __aiter__(self):
+        for chunk in self._chunks:
+            self.chunks_yielded += 1
+            yield chunk
+
+
+def _json_padding_chunks(total_bytes: int, chunk_size: int = 64 * 1024) -> list[bytes]:
+    """An empty JSON document padded to exactly total_bytes, split into chunks."""
+    body = b"{}" + b" " * (total_bytes - 2)
+    return [body[offset : offset + chunk_size] for offset in range(0, len(body), chunk_size)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extra_bytes", "should_succeed"),
+    [(0, True), (1, False)],
+)
+async def test_federation_delivery_bounds_a_streamed_response(extra_bytes: int, should_succeed: bool):
+    chunks = _json_padding_chunks(MAX_FEDERATION_RESPONSE_BYTES + extra_bytes)
+    stream = ChunkedStream(chunks)
+    transport = MockTransport(lambda _request: Response(200, stream=stream))
+
+    if should_succeed:
+        assert await deliver_federated_message(
+            delivery_origin="https://target.example",
+            envelope=_envelope(),
+            signature="signature",
+            transport=transport,
+        ) == {}
+        assert stream.chunks_yielded == len(chunks)
+    else:
+        with pytest.raises(FederatedMailDeliveryError, match="maximum size of 10485760 bytes"):
+            await deliver_federated_message(
+                delivery_origin="https://target.example",
+                envelope=_envelope(),
+                signature="signature",
+                transport=transport,
+            )
+
+
+@pytest.mark.asyncio
+async def test_federation_delivery_abandons_a_streamed_response_at_the_bound():
+    chunk_size = 64 * 1024
+    chunks = [b" " * chunk_size] * (2 * MAX_FEDERATION_RESPONSE_BYTES // chunk_size)
+    stream = ChunkedStream(chunks)
+
+    with pytest.raises(FederatedMailDeliveryError, match="maximum size of 10485760 bytes"):
+        await deliver_federated_message(
+            delivery_origin="https://target.example",
+            envelope=_envelope(),
+            signature="signature",
+            transport=MockTransport(lambda _request: Response(200, stream=stream)),
+        )
+
+    # Leaving the body part-read is only reachable from inside the accumulating
+    # loop; the already-read path holds the whole response before it can measure
+    # it. This is what proves the fixture enters the branch under test.
+    assert 0 < stream.chunks_yielded < len(chunks)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("suffix", "should_succeed"),

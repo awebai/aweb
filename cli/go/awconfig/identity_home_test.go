@@ -122,3 +122,59 @@ func TestIdentityHomeStoredPathSupportsKnownLegacyPrefixAndRejectsEscapes(t *tes
 		t.Fatalf("linked credential error=%v", err)
 	}
 }
+
+// The containment check must run on the value that is ultimately opened. The
+// identity-home prefix is stripped first, so an upward walk hidden behind that
+// prefix has to be rejected on the stripped value, not the original.
+func TestIdentityHomeStoredPathRejectsEscapeBehindIdentityHomePrefix(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := IdentityHome{Root: root, Source: IdentityHomeFlag}
+
+	for _, unsafe := range []string{
+		".aw/../key",
+		".aw/../../key",
+		".aw/team-certs/../../../key",
+	} {
+		got, err := IdentityHomeStoredPath(home, unsafe)
+		if err == nil {
+			t.Fatalf("stored path %q accepted, resolved to %q", unsafe, got)
+		}
+		if !strings.Contains(err.Error(), "escapes identity home") {
+			t.Fatalf("stored path %q error=%q want it to name the escape", unsafe, err)
+		}
+	}
+
+	// The prefixed and plain forms designate the same file, which is why the
+	// default and identity-home branches may share this resolution.
+	prefixed, err := IdentityHomeStoredPath(home, ".aw/team-certs/team.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := IdentityHomeStoredPath(home, "team-certs/team.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prefixed != plain {
+		t.Fatalf("prefixed=%q plain=%q want the same path", prefixed, plain)
+	}
+}
+
+// A stored path of nothing but the identity-home prefix designates no file.
+// It is rejected rather than resolved to the identity home itself.
+func TestIdentityHomeStoredPathRejectsBareIdentityHomePrefix(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := IdentityHome{Root: root, Source: IdentityHomeFlag}
+	got, err := IdentityHomeStoredPath(home, ".aw/")
+	if err == nil {
+		t.Fatalf("bare prefix accepted, resolved to %q", got)
+	}
+	if !strings.Contains(err.Error(), "must be a relative forward-slash path") {
+		t.Fatalf("error=%q want it to name the unusable path", err)
+	}
+}

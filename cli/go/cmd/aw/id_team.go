@@ -883,7 +883,7 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 		Address:      teamAcceptAddress,
 		Scope:        acceptScope,
 		NoAddress:    teamAcceptNoAddress,
-	}, teamInviteStoreOptions{IdentityHome: externalIdentityHomeRoot(home), SetActive: true})
+	}, teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), SetActive: true})
 	if err != nil {
 		return err
 	}
@@ -918,15 +918,19 @@ func teamAcceptScopeFromGlobal(global bool) string {
 }
 
 type teamInviteStoreOptions struct {
-	IdentityHome    string
+	IdentityHome    encryptionKeyIdentityHomeIntent
 	SetActive       bool
 	RejectDuplicate bool
 }
 
 func acceptAndStoreTeamInvite(workingDir, token string, opts teamAcceptInviteOptions, store teamInviteStoreOptions) (*acceptedTeamInvite, error) {
+	identityHomeRoot, _, err := store.IdentityHome.resolve()
+	if err != nil {
+		return nil, err
+	}
 	var teamState *awconfig.TeamState
 	if store.RejectDuplicate {
-		loaded, err := requireTeamStateForMembershipAt(workingDir, store.IdentityHome)
+		loaded, err := requireTeamStateForMembershipAt(workingDir, identityHomeRoot)
 		if err != nil {
 			if !os.IsNotExist(err) {
 				return nil, err
@@ -972,7 +976,7 @@ func runTeamAdd(cmd *cobra.Command, args []string) error {
 		Address:      teamAddMemberAddress,
 		Scope:        awid.IdentityModeGlobal,
 		NoAddress:    teamAcceptNoAddress,
-	}, teamInviteStoreOptions{IdentityHome: externalIdentityHomeRoot(home), SetActive: false, RejectDuplicate: true})
+	}, teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), SetActive: false, RejectDuplicate: true})
 	if err != nil {
 		return err
 	}
@@ -2128,7 +2132,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 			}, existingCert, "", "", false); err != nil {
 				return err
 			}
-			if err := ensureLocalIdentityEncryptionKeyForDir(workingDir); err != nil {
+			if err := ensureLocalIdentityEncryptionKeyForDir(workingDir, currentEncryptionKeyIdentityHome()); err != nil {
 				return err
 			}
 			printOutput(teamFetchCertOutput{
@@ -2189,7 +2193,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 	}, cert, registryURL, "", false); err != nil {
 		return err
 	}
-	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir); err != nil {
+	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir, currentEncryptionKeyIdentityHome()); err != nil {
 		return err
 	}
 
@@ -3070,7 +3074,7 @@ func rollbackAddedTeamCertificate(workingDir string, accepted *acceptedTeamInvit
 // agent is ready to run, while `aw team join`/`aw team accept-invite` leave it unset
 // and defer it to `aw init`.
 type recordMembershipOptions struct {
-	IdentityHome          string
+	IdentityHome          encryptionKeyIdentityHomeIntent
 	SetActive             bool
 	WriteWorkspaceBinding bool
 }
@@ -3082,7 +3086,11 @@ type recordMembershipOptions struct {
 // certificate was obtained (local mint / hosted accept / cross-machine fetch) stays
 // with each caller; only these shared steps live here.
 func recordAcceptedTeamMembership(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, registryURL, awebURL string, opts recordMembershipOptions) error {
-	if err := upsertAcceptedTeamMembershipState(workingDir, output, cert, registryURL, awebURL, opts.SetActive, opts.IdentityHome); err != nil {
+	identityHomeRoot, _, err := opts.IdentityHome.resolve()
+	if err != nil {
+		return err
+	}
+	if err := upsertAcceptedTeamMembershipState(workingDir, output, cert, registryURL, awebURL, opts.SetActive, identityHomeRoot); err != nil {
 		return err
 	}
 	if opts.WriteWorkspaceBinding {
