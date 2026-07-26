@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -370,6 +371,168 @@ func TestOpen(t *testing.T) {
 	}
 	if !result.SenderWaiting {
 		t.Fatal("sender_waiting=false")
+	}
+}
+
+func TestOpenPresentsAndAcknowledgesACompleteMaximumUnreadSnapshot(t *testing.T) {
+	deliveredIDsTestPath(t)
+
+	const backlogSize = 1000
+	messages := make([]awid.ChatMessage, backlogSize)
+	unread := make(map[string]bool, backlogSize)
+	for i := range messages {
+		messageID := fmt.Sprintf("m-%04d", i)
+		messages[i] = awid.ChatMessage{
+			MessageID: messageID,
+			FromAgent: "bob",
+			Body:      "backlog",
+			Timestamp: time.Date(2025, 1, 1, 0, 0, i, 0, time.UTC).Format(time.RFC3339),
+		}
+		unread[messageID] = true
+	}
+	markReadCalls := 0
+	markedThrough := ""
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{SessionID: "s1", Participants: []string{"alice", "bob"}},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("unread_only") != "true" {
+				t.Error("history request did not select unread messages")
+			}
+			limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+			if err != nil {
+				t.Fatalf("invalid history limit: %v", err)
+			}
+			start := len(messages) - limit
+			if start < 0 {
+				start = 0
+			}
+			jsonResponse(w, awid.ChatHistoryResponse{Messages: messages[start:]})
+		},
+		"POST /v1/chat/sessions/s1/read": func(w http.ResponseWriter, r *http.Request) {
+			markReadCalls++
+			var req awid.ChatMarkReadRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode mark-read: %v", err)
+			}
+			markedThrough = req.UpToMessageID
+			marked := 0
+			for _, message := range messages {
+				unread[message.MessageID] = false
+				marked++
+				if message.MessageID == req.UpToMessageID {
+					break
+				}
+			}
+			jsonResponse(w, awid.ChatMarkReadResponse{Success: true, MessagesMarked: marked})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	result, err := Open(context.Background(), mustClient(t, server.URL), "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Messages) != backlogSize {
+		t.Fatalf("presented messages=%d, want %d", len(result.Messages), backlogSize)
+	}
+	if result.MarkedRead != backlogSize {
+		t.Fatalf("marked_read=%d, want %d", result.MarkedRead, backlogSize)
+	}
+	if markReadCalls != 1 {
+		t.Fatalf("mark_read_calls=%d, want 1", markReadCalls)
+	}
+	if markedThrough != "m-0999" {
+		t.Fatalf("marked through %q, want m-0999", markedThrough)
+	}
+	for messageID, stillUnread := range unread {
+		if stillUnread {
+			t.Fatalf("presented message %s remains unread", messageID)
+		}
+	}
+}
+
+func TestOpenRefusesToAcknowledgeAnIncompleteUnreadSnapshot(t *testing.T) {
+	deliveredIDsDir := deliveredIDsTestPath(t)
+
+	const backlogSize = 1001
+	messages := make([]awid.ChatMessage, backlogSize)
+	unread := make(map[string]bool, backlogSize)
+	for i := range messages {
+		messageID := fmt.Sprintf("m-%04d", i)
+		messages[i] = awid.ChatMessage{
+			MessageID: messageID,
+			FromAgent: "bob",
+			Body:      "backlog",
+			Timestamp: time.Date(2025, 1, 1, 0, 0, i, 0, time.UTC).Format(time.RFC3339),
+		}
+		unread[messageID] = true
+	}
+	markReadCalls := 0
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{
+				Pending: []awid.ChatPendingItem{
+					{SessionID: "s1", Participants: []string{"alice", "bob"}},
+				},
+			})
+		},
+		"GET /v1/chat/sessions/s1/messages": func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("unread_only") != "true" {
+				t.Error("history request did not select unread messages")
+			}
+			limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+			if err != nil {
+				t.Fatalf("invalid history limit: %v", err)
+			}
+			start := len(messages) - limit
+			if start < 0 {
+				start = 0
+			}
+			jsonResponse(w, awid.ChatHistoryResponse{Messages: messages[start:]})
+		},
+		"POST /v1/chat/sessions/s1/read": func(w http.ResponseWriter, r *http.Request) {
+			markReadCalls++
+			var req awid.ChatMarkReadRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode mark-read: %v", err)
+			}
+			for _, message := range messages {
+				unread[message.MessageID] = false
+				if message.MessageID == req.UpToMessageID {
+					break
+				}
+			}
+			jsonResponse(w, awid.ChatMarkReadResponse{Success: true})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	_, err := Open(context.Background(), mustClient(t, server.URL), "bob")
+	if err == nil || !strings.Contains(err.Error(), "more than 1000 unread messages") {
+		t.Fatalf("err=%v, want incomplete snapshot refusal", err)
+	}
+	if markReadCalls != 0 {
+		t.Fatalf("mark_read_calls=%d, want 0", markReadCalls)
+	}
+	deliveredIDs, err := LoadDeliveredIDsForDir(deliveredIDsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveredIDs) != 0 {
+		t.Fatalf("cached delivered ids=%d, want 0 for refused snapshot", len(deliveredIDs))
+	}
+	for messageID, stillUnread := range unread {
+		if !stillUnread {
+			t.Fatalf("unpresented message %s was marked read", messageID)
+		}
 	}
 }
 

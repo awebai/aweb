@@ -43,16 +43,19 @@ type doctorFixMutation struct {
 }
 
 type doctorFixPrecondition struct {
-	ID     string         `json:"id"`
-	Passed bool           `json:"passed"`
+	ID     string `json:"id"`
+	Passed bool   `json:"passed"`
+	// Detail is available in ordinary doctor output, but is omitted from
+	// shareable support bundles because its dynamic keys cannot be allowlisted.
 	Detail map[string]any `json:"detail,omitempty"`
 }
 
 type doctorFixContext struct {
-	WorkingDir string
-	Mode       doctorMode
-	DryRun     bool
-	FixTarget  string
+	WorkingDir   string
+	IdentityHome string
+	Mode         doctorMode
+	DryRun       bool
+	FixTarget    string
 }
 
 type doctorFixHandler interface {
@@ -75,10 +78,11 @@ func (r *doctorRunner) runFixFramework() {
 		return
 	}
 	ctx := doctorFixContext{
-		WorkingDir: r.workingDir,
-		Mode:       r.opts.Mode,
-		DryRun:     r.opts.DryRun,
-		FixTarget:  target,
+		WorkingDir:   r.workingDir,
+		IdentityHome: r.identityHome,
+		Mode:         r.opts.Mode,
+		DryRun:       r.opts.DryRun,
+		FixTarget:    target,
 	}
 	for _, check := range checks {
 		r.runFixForCheck(ctx, check)

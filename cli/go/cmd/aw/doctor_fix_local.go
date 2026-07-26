@@ -172,6 +172,21 @@ func preconditionDetailString(plan doctorFixPlan, id, key string) string {
 	return ""
 }
 
+func doctorFixIdentityPath(ctx doctorFixContext, relativePath string) string {
+	return doctorIdentityStatePath(ctx.WorkingDir, ctx.IdentityHome, relativePath)
+}
+
+func loadDoctorFixTeamState(ctx doctorFixContext) (*awconfig.TeamState, error) {
+	return loadDoctorTeamStateAt(ctx.WorkingDir, ctx.IdentityHome)
+}
+
+func saveDoctorFixTeamState(ctx doctorFixContext, state *awconfig.TeamState) error {
+	if strings.TrimSpace(ctx.IdentityHome) != "" {
+		return awconfig.SaveTeamStateToIdentityHome(ctx.IdentityHome, state)
+	}
+	return awconfig.SaveTeamState(ctx.WorkingDir, state)
+}
+
 func localFixBasePlan(check doctorCheck) doctorFixPlan {
 	return doctorFixPlan{
 		PlanID:     "fix:" + check.ID,
@@ -205,7 +220,7 @@ func (h localActiveTeamFixHandler) CheckID() string {
 
 func (h localActiveTeamFixHandler) Plan(_ context.Context, ctx doctorFixContext, check doctorCheck) (doctorFixPlan, error) {
 	plan := localFixBasePlan(check)
-	workspacePath := awconfig.WorktreeWorkspacePath(ctx.WorkingDir)
+	workspacePath := doctorFixIdentityPath(ctx, "workspace.yaml")
 	workspace, err := loadDoctorWorkspaceFrom(workspacePath)
 	if err != nil {
 		return refusedLocalFixPlan(plan, "precondition", "workspace_yaml_unreadable", "Workspace binding could not be loaded for teams.yaml active_team repair."), nil
@@ -214,7 +229,7 @@ func (h localActiveTeamFixHandler) Plan(_ context.Context, ctx doctorFixContext,
 	if reason != "" {
 		return refusedLocalFixPlan(plan, localFixReasonAmbiguousState, reason, "Repair workspace memberships manually or reinitialize the workspace binding."), nil
 	}
-	if teamState, err := awconfig.LoadTeamState(ctx.WorkingDir); err == nil && teamState.Membership(teamID) != nil && strings.EqualFold(strings.TrimSpace(teamState.ActiveTeam), teamID) {
+	if teamState, err := loadDoctorFixTeamState(ctx); err == nil && teamState.Membership(teamID) != nil && strings.EqualFold(strings.TrimSpace(teamState.ActiveTeam), teamID) {
 		plan.Status = doctorFixStatusNoop
 		return plan, nil
 	}
@@ -227,7 +242,7 @@ func (h localActiveTeamFixHandler) Plan(_ context.Context, ctx doctorFixContext,
 	plan.PlannedMutations = []doctorFixMutation{{
 		Operation:     "rewrite_teams_metadata",
 		Description:   "Set teams.yaml active_team from the sole local workspace membership.",
-		Target:        localPathTarget(awconfig.TeamStatePath(ctx.WorkingDir)),
+		Target:        localPathTarget(doctorFixIdentityPath(ctx, "teams.yaml")),
 		Path:          awconfig.DefaultTeamStateRelativePath(),
 		Resource:      "active_team",
 		SourceOfTruth: "local workspace memberships",
@@ -241,7 +256,7 @@ func (h localActiveTeamFixHandler) Plan(_ context.Context, ctx doctorFixContext,
 }
 
 func (h localActiveTeamFixHandler) Apply(_ context.Context, ctx doctorFixContext, plan doctorFixPlan) (doctorFixPlan, error) {
-	workspacePath := awconfig.WorktreeWorkspacePath(ctx.WorkingDir)
+	workspacePath := doctorFixIdentityPath(ctx, "workspace.yaml")
 	wantTeamID := preconditionDetailString(plan, localFixPreconditionSingleMembership, "team_id")
 	if wantTeamID == "" {
 		wantTeamID = preconditionDetailString(plan, localFixPreconditionWorkspaceYAMLUnchanged, "selected_team_id")
@@ -254,7 +269,7 @@ func (h localActiveTeamFixHandler) Apply(_ context.Context, ctx doctorFixContext
 	if err != nil {
 		return refusedLocalFixPlan(plan, "precondition", "workspace_yaml_unreadable", "Workspace binding could not be loaded for teams.yaml active_team repair."), nil
 	}
-	if teamState, err := awconfig.LoadTeamState(ctx.WorkingDir); err == nil && wantTeamID != "" && teamState.Membership(wantTeamID) != nil && strings.EqualFold(strings.TrimSpace(teamState.ActiveTeam), wantTeamID) {
+	if teamState, err := loadDoctorFixTeamState(ctx); err == nil && wantTeamID != "" && teamState.Membership(wantTeamID) != nil && strings.EqualFold(strings.TrimSpace(teamState.ActiveTeam), wantTeamID) {
 		plan.Status = doctorFixStatusNoop
 		return plan, nil
 	}
@@ -266,8 +281,15 @@ func (h localActiveTeamFixHandler) Apply(_ context.Context, ctx doctorFixContext
 	if reason != "" || (wantTeamID != "" && !strings.EqualFold(teamID, wantTeamID)) {
 		return refusedLocalFixPlan(plan, localFixReasonStateChanged, "workspace_membership_changed", "Workspace memberships changed after planning; rerun doctor before applying fixes."), nil
 	}
-	teamState := teamStateRepairFromWorkspaceMemberships(workspace, teamID)
-	if err := awconfig.SaveTeamState(ctx.WorkingDir, teamState); err != nil {
+	teamState, err := loadDoctorFixTeamState(ctx)
+	if errors.Is(err, os.ErrNotExist) {
+		teamState = teamStateRepairFromWorkspaceMemberships(workspace, teamID)
+	} else if err != nil {
+		return refusedLocalFixPlan(plan, "precondition", "teams_yaml_unreadable", "Existing teams.yaml could not be read safely; preserve it and repair it manually before retrying."), nil
+	} else {
+		teamState.ActiveTeam = teamID
+	}
+	if err := saveDoctorFixTeamState(ctx, teamState); err != nil {
 		return doctorFixPlan{}, err
 	}
 	plan.Status = doctorFixStatusApplied
@@ -328,7 +350,7 @@ func (localWorkspaceURLFixHandler) CheckID() string {
 
 func (localWorkspaceURLFixHandler) Plan(_ context.Context, ctx doctorFixContext, check doctorCheck) (doctorFixPlan, error) {
 	plan := localFixBasePlan(check)
-	workspacePath := awconfig.WorktreeWorkspacePath(ctx.WorkingDir)
+	workspacePath := doctorFixIdentityPath(ctx, "workspace.yaml")
 	workspace, err := loadDoctorWorkspaceFrom(workspacePath)
 	if err != nil {
 		return refusedLocalFixPlan(plan, "precondition", "workspace_yaml_unreadable", "Workspace binding could not be loaded for URL normalization."), nil
@@ -367,7 +389,7 @@ func (localWorkspaceURLFixHandler) Plan(_ context.Context, ctx doctorFixContext,
 }
 
 func (localWorkspaceURLFixHandler) Apply(_ context.Context, ctx doctorFixContext, plan doctorFixPlan) (doctorFixPlan, error) {
-	workspacePath := awconfig.WorktreeWorkspacePath(ctx.WorkingDir)
+	workspacePath := doctorFixIdentityPath(ctx, "workspace.yaml")
 	wantURL := preconditionDetailString(plan, localFixPreconditionWorkspaceYAMLUnchanged, "desired_url")
 	current, err := snapshotLocalFile(workspacePath)
 	if err != nil {
@@ -408,7 +430,7 @@ func (localIdentityRegistryURLFixHandler) CheckID() string {
 
 func (localIdentityRegistryURLFixHandler) Plan(_ context.Context, ctx doctorFixContext, check doctorCheck) (doctorFixPlan, error) {
 	plan := localFixBasePlan(check)
-	identityPath := awconfig.WorktreeIdentityPath(ctx.WorkingDir)
+	identityPath := doctorFixIdentityPath(ctx, "identity.yaml")
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
 	if err != nil {
 		return refusedLocalFixPlan(plan, "precondition", "identity_yaml_unreadable", "Identity metadata could not be loaded for registry_url normalization."), nil
@@ -448,7 +470,7 @@ func (localIdentityRegistryURLFixHandler) Plan(_ context.Context, ctx doctorFixC
 }
 
 func (localIdentityRegistryURLFixHandler) Apply(_ context.Context, ctx doctorFixContext, plan doctorFixPlan) (doctorFixPlan, error) {
-	identityPath := awconfig.WorktreeIdentityPath(ctx.WorkingDir)
+	identityPath := doctorFixIdentityPath(ctx, "identity.yaml")
 	wantURL := preconditionDetailString(plan, localFixPreconditionIdentityYAMLUnchanged, "desired_url")
 	current, err := snapshotLocalFile(identityPath)
 	if err != nil {
