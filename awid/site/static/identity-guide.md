@@ -110,7 +110,8 @@ then the hosted operator creates the managed address). See
 for the authority model.
 
 The first `aw id create` for a domain also creates the namespace
-controller key (stored at `~/.config/aw/team-keys/<domain>/`).  The
+controller key (stored at `~/.awid/controllers/<domain>.key`). Keep
+`~/.awid` safe and backed up; it contains AWID controller keys. The
 CLI stores the identity private key in `.aw/signing.key` and writes
 metadata to `.aw/identity.yaml`.
 
@@ -154,9 +155,9 @@ aw id team add-member --namespace acme.com --team main --did did:key:z6Mk...
 
 A hosted operator (like app.aweb.ai) can manage namespaces and team authority on
 your behalf, but hosted does not always mean custodial. Terminal agents use local
-self-custodial CLI workspaces: `aw init`, `AWEB_API_KEY`-based team bootstrap,
-and `aw workspace add-worktree` create or bind local `.aw/` state and local
-signing keys. Browser/MCP agents use hosted custodial addressed identities
+self-custodial CLI workspaces: `aw init`, `aw team join` / invite accept, and
+`aw workspace add-worktree` create or bind local `.aw/` state and local signing
+keys. Browser/MCP agents use hosted custodial addressed identities
 created through the dashboard or OAuth flow because those clients cannot keep
 local key files. See the [aweb agent guide](https://aweb.ai/docs/agent-guide.md)
 for the hosted onboarding paths.
@@ -220,9 +221,12 @@ Messaging has three recipient selectors:
 Address assignment is separate from delivery authorization. A global
 identity gets an address at creation time. awid resolves that address to the
 recipient identity, current key, and address-route delivery origin; aweb then
-applies the recipient's `inbound_mode` (`open` or `contacts_only`). Bare
-external `did:aw` first contact fails closed unless a stored participant route
-already exists.
+applies the recipient's `inbound_mode`: `open` (**All**) or
+`team_and_contacts` (**Team and contacts**). Team certificates do not create
+address routes or resolver visibility; verified same-team membership authorizes
+team-scoped delivery, and otherwise the restricted mode requires an exact active
+contact. Bare external `did:aw` first contact fails closed unless a stored
+participant route already exists.
 
 ---
 
@@ -337,10 +341,17 @@ Summary:
   key at awid, then re-issues certificates for all members.
 - **Identity key lost (custodial)**: the operator's replace operation
   generates a new key, re-registers the DID, and reassigns the address.
-- **Identity key lost (self-custodial)**: no CLI recovery path exists
-  today.  If you have a dashboard account (e.g., via `aw claim-human`),
-  the replace operation works.  Otherwise, escalate to whoever holds
-  the namespace controller key.
+- **Local identity key lost (self-custodial)**: for a local-controller/BYOT
+  team, the human holding the team controller runs `aw team replace-key <name>
+  --old-did-key <old> --home <agent-home> --generate-new-key`. The command
+  generates the missing key without overwriting one, authorizes the exact
+  old→new transition, revokes/reissues the membership certificate, and records
+  the service audit event. Hosted owner/admin support
+  is pending the AC integration and currently requires operator support.
+- **Global identity key lost (self-custodial)**: no complete CLI recovery path
+  exists today. If you have a dashboard account (e.g., via `aw claim-human`),
+  the replace operation works. Otherwise, escalate to whoever holds the
+  namespace controller key.
 
 ### Lifecycle operations
 
@@ -349,9 +360,13 @@ Four distinct operations for identity lifecycle:
 - **Delete**: local workspace teardown.  Releases the alias for reuse.
 - **Archive**: global identity cleanup.  Stops active participation,
   keeps message history.  No continuity claim.
-- **Replace**: global identity continuity.  Creates a new identity
-  and moves the address to it.  The namespace controller authorizes the
-  address reassignment.  Used when the owner has lost the key.
+- **Replace global identity**: creates a new identity and moves the address to
+  it. The namespace controller authorizes the address reassignment. Used when
+  the owner has lost the key.
+- **Replace local identity key**: the local identity has no stable identifier
+  above its key, so the team controller vouches for an exact roster old→new
+  transition and replaces its team certificate. This is `aw team replace-key`;
+  old-key-signed self-service replacement is forbidden.
 - **Rotate key**: cryptographic continuity signed by the old key.
   Preserves the `did:aw`.  Used for routine key hygiene.
 
@@ -401,6 +416,32 @@ aw id request POST https://api.example.com/action \
 This sets `Authorization: DIDKey <did:key> <signature>` and
 `X-AWEB-Timestamp` headers on the request.
 
+**Make a team-certified signed HTTP request** for an external AWCO/BYOIDT
+service:
+
+```bash
+aw id request POST https://byoidt.example.com/v1/tasks \
+  --team-auth \
+  --sign '{"operation":"task.create"}' \
+  --body '{"title":"prepare review"}'
+```
+
+`--team-auth` works for local CLI agents that have no `did:aw` and no
+AWID identity row. It attaches the active team certificate in
+`X-AWID-Team-Certificate` and signs a canonical request payload in
+`X-AWEB-Signed-Payload`. The signed payload binds the request to the
+target origin (`aud`), method, path plus query string, team id, request
+body hash, timestamp, and any caller-supplied fields. The receiving
+service validates the DIDKey signature, verifies the team certificate
+against AWID team state, checks that the certificate member key equals
+the signing key, and then applies its own authorization policy.
+
+Verifier lookup path: parse `team_id` as `{name}:{domain}`, fetch
+`GET /v1/namespaces/{domain}/teams/{name}` for the current team
+`did:key`, verify the certificate signature, then reject any certificate
+whose `certificate_id` appears in
+`GET /v1/namespaces/{domain}/teams/{name}/revocations`.
+
 Verification works the other way: given a `did:key` and a signature,
 anyone can extract the public key from the DID and verify the signature
 over the canonical payload.  No registry lookup is needed — the public
@@ -439,9 +480,12 @@ Identity-related files in a workspace:
 Shared across workspaces on the same machine:
 
 ```
-~/.config/aw/controllers/<domain>.key   # Namespace controller key
-~/.config/aw/team-keys/<domain>/<name>.key  # Team controller key
+~/.awid/controllers/<domain>.key   # Namespace controller key
+~/.awid/team-keys/<domain>/<name>.key  # Team controller key
 ```
+
+Back up `~/.awid` after creating namespace or team controller keys. These keys
+control namespace addresses and team membership.
 
 ---
 

@@ -124,8 +124,9 @@ cd cli/go && GOCACHE=/tmp/go-build-aweb go test ./...
 Some tracked files are generated from source and must not drift from it: the
 `uv.lock` files (`awid/`, `server/`), the CLI command reference
 (`docs/cli-command-reference.md`), the reserved-app-ids artifacts, resource
-packs, and the built claude-channel and pi-extension bundles (both rebuilt from
-`channel-core` source at build time).
+packs, the public AWID site mirrors of `docs/identity-guide.md` and
+`docs/trust-model.md`, and the built claude-channel and pi-extension bundles
+(both rebuilt from `channel-core` source at build time).
 
 Before opening a release PR, run the single freshness command and commit any
 regenerated output:
@@ -150,9 +151,10 @@ regenerating `server/uv.lock` (the server depends on the editable AWID source).
 
 ### What the freshness gate checks, and what it cannot
 
-`scripts/check-freshness.sh` mechanically verifies two things: that committed
-generated artifacts still match their sources, and that repository paths
-referenced in `docs/` actually exist (`scripts/check-doc-paths.sh`).
+`scripts/check-freshness.sh` mechanically verifies that committed generated
+artifacts and public AWID site document mirrors still match their sources, and
+that repository paths referenced in `docs/` actually exist
+(`scripts/check-doc-paths.sh`).
 
 It **cannot** verify that documentation prose is true. A path can resolve while
 the sentence around it is wrong, a `:LINE` anchor can point at unrelated code

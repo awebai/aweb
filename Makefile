@@ -8,7 +8,7 @@
 	release-a2a-gateway-check release-a2a-gateway-tag release-a2a-gateway-push \
 	release-channel-check release-channel-tag release-channel-push \
 	release-cli-tag release-cli-push \
-	release-awid-site \
+	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
 	release-all-check release-all-tag release-all-push \
 	publish-skills \
 	ship
@@ -18,6 +18,14 @@ AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml 
 CHANNEL_VERSION := $(shell node -p "require('./channel/package.json').version" 2>/dev/null)
 CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plugin.json').version" 2>/dev/null)
 CLI_VERSION := $(SERVER_VERSION)
+
+# Canonical docs mirrored onto the public AWID site. Sync, freshness checks, and
+# their negative controls all consume this one list so adding a mirror cannot
+# silently bypass the pre-merge gate.
+AWID_SITE_DOC_NAMES := identity-guide.md trust-model.md
+AWID_SITE_DOC_SOURCE_DIR ?= docs
+AWID_SITE_DOC_MIRROR_DIR ?= awid/site/static
+AWID_SITE_DOC_MIRRORS := $(addprefix $(AWID_SITE_DOC_MIRROR_DIR)/,$(AWID_SITE_DOC_NAMES))
 
 help:
 	@echo "Targets:"
@@ -68,6 +76,30 @@ test: test-server test-awid test-cli test-channel test-oas test-oas-proof-helper
 # the freshness CI job runs it on every push.
 freshness:
 	bash scripts/check-freshness.sh
+
+list-awid-site-docs:
+	@for name in $(AWID_SITE_DOC_NAMES); do printf '%s\n' "$$name"; done
+
+sync-awid-site-docs:
+	@mkdir -p "$(AWID_SITE_DOC_MIRROR_DIR)"
+	@set -e; for name in $(AWID_SITE_DOC_NAMES); do \
+		cp "$(AWID_SITE_DOC_SOURCE_DIR)/$$name" "$(AWID_SITE_DOC_MIRROR_DIR)/$$name"; \
+	done
+
+check-awid-site-docs:
+	@status=0; for name in $(AWID_SITE_DOC_NAMES); do \
+		source="$(AWID_SITE_DOC_SOURCE_DIR)/$$name"; \
+		mirror="$(AWID_SITE_DOC_MIRROR_DIR)/$$name"; \
+		if [ ! -f "$$source" ]; then \
+			echo "FAIL: canonical AWID site document missing: $$source"; status=1; \
+		elif [ ! -f "$$mirror" ]; then \
+			echo "FAIL: public AWID site document mirror missing: $$mirror"; status=1; \
+		elif ! cmp -s "$$source" "$$mirror"; then \
+			echo "FAIL: public AWID site document mirror stale: $$mirror differs from $$source"; status=1; \
+		fi; \
+	done; \
+	if [ "$$status" -eq 0 ]; then echo "AWID site document mirrors are up to date"; fi; \
+	exit "$$status"
 
 test-server:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
@@ -240,10 +272,9 @@ release-a2a-gateway-push:
 
 release-awid-site:
 	@echo "Syncing docs into awid site..."
-	cp docs/identity-guide.md awid/site/static/identity-guide.md
-	cp docs/trust-model.md awid/site/static/trust-model.md
-	git add awid/site/static/identity-guide.md awid/site/static/trust-model.md
-	@if ! git diff --cached --quiet -- awid/site/static/identity-guide.md awid/site/static/trust-model.md; then \
+	$(MAKE) sync-awid-site-docs
+	git add $(AWID_SITE_DOC_MIRRORS)
+	@if ! git diff --cached --quiet -- $(AWID_SITE_DOC_MIRRORS); then \
 		git commit -m "Sync identity-guide and trust-model into awid site"; \
 	fi
 	git checkout deploy-awid-landing
