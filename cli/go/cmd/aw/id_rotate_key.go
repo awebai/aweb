@@ -68,6 +68,9 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 		printOutput(out, formatIDRotationRecovery)
 		return nil
 	}
+	if err := validateResolvedIdentity(identity); err != nil {
+		return err
+	}
 	signingKey, err := resolveIdentitySigningKey(identity)
 	if err != nil {
 		return err

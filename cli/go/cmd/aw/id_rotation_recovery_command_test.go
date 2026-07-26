@@ -319,13 +319,40 @@ func TestAwIDRotationRecoveryWithoutPendingStateStillRejectsIdentityKeyMismatch(
 		t.Fatal(err)
 	}
 
-	for _, action := range []string{"recover", "status"} {
-		cmd := exec.CommandContext(ctx, bin, "id", "rotate-key", action, "--json")
+	actions := []struct {
+		name string
+		args []string
+	}{
+		{name: "recover", args: []string{"recover"}},
+		{name: "status", args: []string{"status"}},
+		{name: "plain"},
+	}
+	for _, action := range actions {
+		args := append([]string{"id", "rotate-key"}, action.args...)
+		args = append(args, "--json")
+		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Env = testCommandEnv(dir)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
 		if err == nil || !strings.Contains(string(out), "does not match .aw/signing.key") {
-			t.Fatalf("%s mismatch error=%v\n%s", action, err, out)
+			t.Fatalf("%s mismatch error=%v\n%s", action.name, err, out)
+		}
+	}
+	rotationDir := filepath.Join(dir, ".aw", "rotation")
+	pending, err := loadPendingRotationState(rotationDir, stableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending != nil {
+		t.Fatalf("ordinary mismatched identity created pending operation: %+v", pending)
+	}
+	entries, err := os.ReadDir(filepath.Join(rotationDir, "pending"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".lock") {
+			t.Fatalf("ordinary mismatched identity created pending file: %s", entry.Name())
 		}
 	}
 }
