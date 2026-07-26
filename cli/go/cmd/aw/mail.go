@@ -801,7 +801,14 @@ func e2eeAssertionIdentityForSelection(sel *awconfig.Selection) *awconfig.Resolv
 	// not carry member_did_aw. The local encryption-key assertion is still
 	// identity-signed and must be checked against identity.yaml when it matches
 	// the selected signing did:key.
-	if identity, err := awconfig.ResolveIdentity(sel.WorkingDir); err == nil {
+	var identity *awconfig.ResolvedIdentity
+	var err error
+	if strings.TrimSpace(sel.IdentityHome) != "" {
+		identity, err = awconfig.ResolveIdentityFromHome(sel.WorkingDir, sel.IdentityHome)
+	} else {
+		identity, err = awconfig.ResolveIdentity(sel.WorkingDir)
+	}
+	if err == nil {
 		identityDID := strings.TrimSpace(identity.DID)
 		if identityDID != "" && (did == "" || identityDID == did) {
 			did = identityDID
