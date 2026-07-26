@@ -37,6 +37,7 @@ func parseSignedEnvelopeMetadata(payload string) (signedEnvelopeMetadata, bool) 
 }
 
 const DefaultWait = 120 // Default wait timeout in seconds for replies
+const maxOpenUnreadMessages = 1000
 
 // maxStreamDeadline is the server-side SSE connection safety net.
 // The local waitTimer manages actual wait semantics; this just prevents
@@ -1358,10 +1359,13 @@ func Open(ctx context.Context, client *awid.Client, targetAlias string) (*OpenRe
 	messagesResp, err := client.ChatHistory(ctx, awid.ChatHistoryParams{
 		SessionID:  sessionID,
 		UnreadOnly: true,
-		Limit:      1000,
+		Limit:      maxOpenUnreadMessages + 1,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting unread messages: %w", err)
+	}
+	if len(messagesResp.Messages) > maxOpenUnreadMessages {
+		return nil, fmt.Errorf("more than %d unread messages; refusing to acknowledge an incomplete snapshot", maxOpenUnreadMessages)
 	}
 
 	result := &OpenResult{
