@@ -84,6 +84,30 @@ async def test_clear_workspace_presence_removes_every_production_index():
 
     assert await clear_workspace_presence(redis, [workspace_id]) == 1
     assert f"presence:{workspace_id}" not in redis.hashes
+    assert f"presence_coordinates:{workspace_id}" not in redis.hashes
+    assert workspace_id not in redis.sets["idx:all_workspaces"]
+    assert workspace_id not in redis.sets["idx:team_workspaces:backend:acme.test"]
+    assert workspace_id not in redis.sets["idx:repo_workspaces:repo-1"]
+    assert workspace_id not in redis.sets["idx:branch_workspaces:repo-1:main"]
+    assert "idx:alias:backend%3Aacme.test:worker" not in redis.values
+
+
+@pytest.mark.asyncio
+async def test_clear_workspace_presence_uses_coordinates_after_primary_expires():
+    redis = _Redis()
+    workspace_id = "workspace-expired"
+    await update_agent_presence(
+        redis,
+        workspace_id=workspace_id,
+        alias="worker",
+        team_id="backend:acme.test",
+        repo_id="repo-1",
+        current_branch="main",
+    )
+    redis.hashes.pop(f"presence:{workspace_id}")
+
+    assert await clear_workspace_presence(redis, [workspace_id]) == 0
+    assert f"presence_coordinates:{workspace_id}" not in redis.hashes
     assert workspace_id not in redis.sets["idx:all_workspaces"]
     assert workspace_id not in redis.sets["idx:team_workspaces:backend:acme.test"]
     assert workspace_id not in redis.sets["idx:repo_workspaces:repo-1"]

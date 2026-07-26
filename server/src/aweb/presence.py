@@ -32,6 +32,11 @@ def _presence_key(workspace_id: str) -> str:
     return f"presence:{workspace_id}"
 
 
+def _presence_coordinates_key(workspace_id: str) -> str:
+    """Durable cleanup coordinates that outlive the primary presence key."""
+    return f"presence_coordinates:{workspace_id}"
+
+
 def _team_workspaces_index_key(team_id: str) -> str:
     """Secondary index: workspace_ids by team_id."""
     return f"idx:team_workspaces:{team_id}"
@@ -123,6 +128,18 @@ async def update_agent_presence(
 
     await redis.hset(key, mapping=fields)
     await redis.expire(key, ttl_seconds)
+
+    # Cleanup can become eligible only after the primary has expired, while
+    # secondary indices intentionally live twice as long. Preserve their
+    # coordinates for that entire interval.
+    coordinates_key = _presence_coordinates_key(workspace_id)
+    await redis.hset(coordinates_key, mapping={
+        "team_id": team_id or "",
+        "alias": alias,
+        "repo_id": repo_id or "",
+        "current_branch": current_branch or "",
+    })
+    await redis.expire(coordinates_key, ttl_seconds * 2)
 
     # Update secondary indexes
     # Index TTL is 2x presence TTL to ensure index entries outlive presence keys,
@@ -451,13 +468,20 @@ async def clear_workspace_presence(
     pipe = redis.pipeline()
     for ws_id in workspace_ids:
         pipe.hgetall(_presence_key(ws_id))
-    presence_rows = await pipe.execute()
+        pipe.hgetall(_presence_coordinates_key(ws_id))
+    raw_rows = await pipe.execute()
+    presence_rows = []
+    for offset in range(0, len(raw_rows), 2):
+        primary = raw_rows[offset] or {}
+        coordinates = raw_rows[offset + 1] or {}
+        presence_rows.append({**primary, **coordinates})
 
     pipe = redis.pipeline()
     for ws_id in workspace_ids:
         pipe.delete(_presence_key(ws_id))
+        pipe.delete(_presence_coordinates_key(ws_id))
     results = await pipe.execute()
-    deleted_count = sum(1 for r in results if r)
+    deleted_count = sum(1 for r in results[::2] if r)
 
     def text(value) -> str:
         if isinstance(value, bytes):

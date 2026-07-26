@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -26,6 +26,7 @@ import { loadCleanupCorroboration } from "../.agents/capabilities/owned/aweb-ide
 
 const OPERATION_A = "oas-AAAAAAAAAAAAAAAAAAAAAA";
 const OPERATION_B = "oas-BBBBBBBBBBBBBBBBBBBBBQ";
+const OPERATION_C = "oas-zMzMzMzMzMzMzMzMzMzMzA";
 const operationAlias = (operation) => `oas-${createHash("sha256").update(operation).digest("hex").slice(0, 32)}`;
 const AUTHORITY = Object.freeze({
   schema_version: 2,
@@ -199,13 +200,45 @@ test("malformed journals quarantine without aborting valid stale recovery", (t) 
   assert.deepEqual(visibleQuarantines.map((report) => report.source_name).sort(), [`${OPERATION_B}.json`, "malformed.json"].sort());
   assert.equal(visibleQuarantines.every((report) => report.state === "quarantined"), true);
   assert.equal(readdirSync(join(root, ".provisioning", "intents")).includes(`${OPERATION_B}.json`), false);
-  const quarantined = readdirSync(join(root, ".provisioning", "quarantine"));
-  assert.equal(quarantined.some((name) => name.startsWith(`${OPERATION_B}.json.`) && name.endsWith(".record")), true);
-  const reportName = quarantined.find((name) => name.startsWith(`${OPERATION_B}.json.`) && name.endsWith(".report.json"));
-  const report = JSON.parse(readFileSync(join(root, ".provisioning", "quarantine", reportName), "utf8"));
+  const quarantineDir = join(root, ".provisioning", "quarantine");
+  const quarantined = readdirSync(quarantineDir);
+  const reportName = quarantined.find((name) => name.endsWith(".report.json")
+    && JSON.parse(readFileSync(join(quarantineDir, name), "utf8")).source_name === `${OPERATION_B}.json`);
+  const report = JSON.parse(readFileSync(join(quarantineDir, reportName), "utf8"));
+  assert.equal(existsSync(join(quarantineDir, report.evidence_record)), true);
   assert.equal(report.state, "quarantined");
   assert.equal(report.cleanup_authority, "none-corrupt-record-not-trusted");
   assert.match(report.error, /invalid/);
+});
+
+test("scanner quarantines unreadable and symlink intents while continuing valid work", (t) => {
+  const root = tempRoot(t, "aweb-provision-file-types-");
+  const start = new Date("2026-07-26T00:00:00Z");
+  createProvisionIntent(root, {
+    operationID: OPERATION_A, instanceID: "instance-a", teamID: "backend:acme.test", authority: AUTHORITY,
+    authorityHome: join(root, "authority"), now: start,
+  });
+  markProvisionIntentProvisioning(root, OPERATION_A, start);
+  const intents = join(root, ".provisioning", "intents");
+  const unreadable = join(intents, `${OPERATION_B}.json`);
+  writeFileSync(unreadable, '{"schema_version":999}\n', { mode: 0o600 });
+  chmodSync(unreadable, 0o000);
+  const symlinkTarget = join(root, "outside-intent.json");
+  writeFileSync(symlinkTarget, `${JSON.stringify(loadProvisionIntent(root, OPERATION_A))}\n`, { mode: 0o600 });
+  symlinkSync(symlinkTarget, join(intents, `${OPERATION_C}.json`));
+
+  const surfaced = [];
+  assert.deepEqual(listRecoverableProvisionIntents(root, {
+    now: new Date("2026-07-26T00:01:00Z"), staleAfterMs: 30_000,
+    onQuarantine: (report) => surfaced.push(report),
+  }).map((intent) => intent.operation_id), [OPERATION_A]);
+  assert.deepEqual(surfaced.map((report) => report.source_name).sort(), [`${OPERATION_B}.json`, `${OPERATION_C}.json`].sort());
+  const unreadableReport = surfaced.find((report) => report.source_name === `${OPERATION_B}.json`);
+  assert.match(unreadableReport.error, /EACCES|permission denied/i);
+  const linkedReport = surfaced.find((report) => report.source_name === `${OPERATION_C}.json`);
+  const movedLink = join(root, ".provisioning", "quarantine", linkedReport.evidence_record);
+  assert.equal(lstatSync(movedLink).isSymbolicLink(), true);
+  assert.equal(readFileSync(symlinkTarget, "utf8").length > 0, true);
 });
 
 test("quarantine remains visible when the process dies after its report commit", (t) => {
@@ -257,7 +290,7 @@ test("concurrent malformed scanners commit one consistent quarantine", async (t)
   const results = await Promise.all(Array.from({ length: 20 }, runWorker));
   assert.equal(results.every((result) => result.status === 0), true, results.map((result) => result.stderr).join("\n"));
   const quarantineDir = join(root, ".provisioning", "quarantine");
-  const artifacts = readdirSync(quarantineDir).filter((name) => name.startsWith(`${OPERATION_B}.json.`));
+  const artifacts = readdirSync(quarantineDir);
   assert.equal(artifacts.length, 2, artifacts);
   assert.equal(artifacts.filter((name) => name.endsWith(".report.json")).length, 1);
   assert.equal(artifacts.filter((name) => name.endsWith(".record")).length, 1);

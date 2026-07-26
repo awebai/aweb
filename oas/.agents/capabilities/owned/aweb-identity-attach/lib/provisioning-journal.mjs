@@ -359,7 +359,7 @@ function quarantineMalformedIntent(home, entry, error, now, afterQuarantineRepor
   }
   const digest = createHash("sha256").update(evidence).digest("hex");
   const sourceDigest = createHash("sha256").update(entry.name).digest("hex").slice(0, 24);
-  const basename = `${entry.name}.${sourceDigest}`;
+  const basename = sourceDigest;
   const report = {
     schema_version: 1,
     state: "quarantined",

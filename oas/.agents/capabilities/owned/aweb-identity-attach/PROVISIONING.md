@@ -62,7 +62,7 @@ forbidden.
 | aweb workspace row | exact-team persistent authority calling workspace delete | **soft-deleted** |
 | aweb local agent/identity row | local-workspace lifecycle cascade | **soft-deleted** |
 | Task claims and reservations created during runtime | aweb PostgreSQL lifecycle cascade; proof seeds positive rows | **physically absent** |
-| Workspace presence created during runtime | aweb Redis primary key plus global, team, and alias indices; proof seeds production-shaped positive entries | **physically absent** |
+| Workspace presence created during runtime | aweb Redis cleanup coordinates plus primary, global, team, repo, branch, and alias entries; proof expires the shorter-lived primary while positive applicable indices remain | **physically absent** |
 | aweb API keys | local certificate connect creates none; AWID certificate above is the authorization grant | **not created** |
 | Messages/delivery records | no model session or message is created by this no-launch provisioning proof; historical messages are audit, not member authorization | **not created / not applicable to the provision operation** |
 | Hosted organization membership | not created on the local-controller path | **physically absent / not applicable** |
@@ -88,7 +88,7 @@ authority. A 404 under an unrelated credential is not evidence.
 | resource tuple journaled, before hook output | `prepared` | never auto-adopt into another instance; retire/operator cleanup |
 | binding bytes handed to OAS | `bound` | ordinary matching retire owns cleanup |
 | grant removal committed | local enumeration has no matching usable grant | continue cleanup |
-| workspace delete committed, response lost | exact-team delete returns authoritative absence | record soft deletion and continue |
+| workspace SQL delete committed, Redis cleanup failed / response lost | server returns retryable failure; the surviving exact-team provisioning authority re-enters the deleted-workspace tombstone and clears durable Redis coordinates/indices | record soft deletion only after the server confirms post-commit cleanup |
 | certificate revoke committed, response lost | registry lists the certificate revoked | continue without a second destructive assumption |
 | credential removal interrupted | operation audit record plus remaining owned entries | remove remaining entries and re-read |
 | scanner killed | journal state and per-operation target record | next trigger resumes the same operation |
@@ -126,7 +126,7 @@ cleaned; a later spawn allocates its own operation and principal.
   quiescent and its metadata did not retain the receipt. The journal can observe
   writing hook stdout, not OAS accepting it. A `bound` identity with retained
   metadata still requires its matching retire judgement.
-- A malformed, unreadable, non-regular, or unknown-version intent first commits
+- A malformed, unreadable, symlink, non-regular, or unknown-version intent first commits
   a visible no-cleanup-authority report, then moves the original entry unchanged
   to the external quarantine directory. If the process dies between those
   commits, the next scan completes the report-directed move, surfaces the
@@ -141,8 +141,10 @@ cleaned; a later spawn allocates its own operation and principal.
 `scripts/e2e-oas-attached-principal-retire.sh` uses the repository's guarded,
 no-tmux loopback Docker stack. In addition to attached-principal preservation,
 it provisions two throwaway local identities through real OAS hooks, AWID, aweb,
-PostgreSQL, and Redis. It seeds real task-claim, reservation, and presence
-positive controls, asserts both external journals terminal `complete`, and
+PostgreSQL, and Redis. It seeds real task-claim/reservation rows and Redis
+cleanup coordinates/indices, expires the shorter-lived primary before cleanup,
+asserts every applicable secondary remains as a positive control, asserts both
+external journals terminal `complete`, and
 snapshots each provisioned credential tree before scanning both instance homes
 and the controlled repository by names, digests, symlink target, and device/inode
 for copies or hardlinks. It retargets one instance-side receipt at the other operation,

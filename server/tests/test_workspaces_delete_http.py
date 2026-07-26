@@ -154,19 +154,21 @@ class _FakeRedis:
 
 
 @pytest.mark.asyncio
-async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud_db):
+async def test_delete_workspace_recovers_post_commit_presence_failure(aweb_cloud_db, monkeypatch):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
+    _, _, target_did_key = _make_keypair()
     team_id = "backend:acme.com"
     workspace_id = uuid4()
     agent_id = uuid4()
+    authority_agent_id = uuid4()
 
     cert = _make_certificate(
         team_sk,
         team_did_key,
         agent_did_key,
         team_id=team_id,
-        alias="bob",
+        alias="provisioner",
         identity_scope="local",
     )
     headers = _signed_request(agent_sk, agent_did_key, team_id)
@@ -190,8 +192,19 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
         """,
         agent_id,
         team_id,
-        agent_did_key,
+        target_did_key,
         "bob",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, $3, $4, 'local', 'developer')
+        """,
+        authority_agent_id,
+        team_id,
+        agent_did_key,
+        "provisioner",
     )
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -221,13 +234,29 @@ async def test_delete_workspace_soft_deletes_stale_ephemeral_identity(aweb_cloud
     )
 
     redis = _FakeRedis()
+    from aweb import lifecycle
+
+    original_clear = lifecycle.clear_workspace_presence
+    clear_calls = 0
+
+    async def _fail_after_sql_once(redis_client, workspace_ids):
+        nonlocal clear_calls
+        clear_calls += 1
+        if clear_calls == 1:
+            raise ConnectionError("simulated Redis failure after SQL commit")
+        return await original_clear(redis_client, workspace_ids)
+
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _fail_after_sql_once)
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=redis)
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as client:
+        failed = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
         resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
 
+    assert failed.status_code == 503, failed.text
+    assert failed.json()["detail"]["code"] == "post_commit_cleanup_pending"
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["workspace_id"] == str(workspace_id)

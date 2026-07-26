@@ -317,6 +317,7 @@ seed_provision_lifecycle_artifacts() {
   encoded_team="$(url_component "$TEAM_ID")"
   encoded_alias="$(url_component "$alias")"
   docker exec "$REDIS_CONTAINER" redis-cli HSET "presence:$workspace" workspace_id "$workspace" alias "$alias" team_id "$TEAM_ID" repo_id "" current_branch "" >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli HSET "presence_coordinates:$workspace" alias "$alias" team_id "$TEAM_ID" repo_id "" current_branch "" >/dev/null
   docker exec "$REDIS_CONTAINER" redis-cli SADD idx:all_workspaces "$workspace" >/dev/null
   docker exec "$REDIS_CONTAINER" redis-cli SADD "idx:team_workspaces:$TEAM_ID" "$workspace" >/dev/null
   docker exec "$REDIS_CONTAINER" redis-cli SET "idx:alias:$encoded_team:$encoded_alias" "$workspace" >/dev/null
@@ -330,6 +331,17 @@ seed_provision_lifecycle_artifacts() {
     || fail "team presence index positive control was not created for $operation"
   [[ "$(docker exec "$REDIS_CONTAINER" redis-cli GET "idx:alias:$encoded_team:$encoded_alias")" == "$workspace" ]] \
     || fail "alias presence index positive control was not created for $operation"
+  docker exec "$REDIS_CONTAINER" redis-cli DEL "presence:$workspace" >/dev/null
+  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence:$workspace")" == "0" ]] \
+    || fail "primary presence did not expire before lifecycle cleanup for $operation"
+  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence_coordinates:$workspace")" == "1" ]] \
+    || fail "durable presence coordinates were not retained after primary expiry for $operation"
+  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER idx:all_workspaces "$workspace")" == "1" ]] \
+    || fail "global presence index did not outlive primary for $operation"
+  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER "idx:team_workspaces:$TEAM_ID" "$workspace")" == "1" ]] \
+    || fail "team presence index did not outlive primary for $operation"
+  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli GET "idx:alias:$encoded_team:$encoded_alias")" == "$workspace" ]] \
+    || fail "alias presence index did not outlive primary for $operation"
 }
 
 capture_provision_resource() {
@@ -380,6 +392,8 @@ PY
       || fail "$phase retained a live reservation"
     [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence:$workspace")" == "0" ]] \
       || fail "$phase retained workspace presence"
+    [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence_coordinates:$workspace")" == "0" ]] \
+      || fail "$phase retained durable presence cleanup coordinates"
     [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER idx:all_workspaces "$workspace")" == "0" ]] \
       || fail "$phase retained the global presence index"
     [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER "idx:team_workspaces:$TEAM_ID" "$workspace")" == "0" ]] \
@@ -730,11 +744,10 @@ document = {
         "forged_execution_refused_by": "target operation-record mismatch",
         "forged_receipt_refused_by": "cleanup_corroboration_missing_or_mismatched",
         "victim_remained_active_after_both_forged_paths": True,
-        "operation-guard-mutation_reaches_real_deletion_and_turns_owning-authority_assertion_red": True,
         "authorized_retire_deleted_victim": True,
         "attacker_operation": attacker_operation,
         "native_manifest_command_deleted_unacknowledged_attacker": True,
-        "positive_lifecycle_controls_removed": ["PostgreSQL task claim", "PostgreSQL reservation", "Redis workspace presence", "Redis global presence index", "Redis team presence index", "Redis alias presence index"],
+        "positive_lifecycle_controls_removed": ["PostgreSQL task claim", "PostgreSQL reservation", "Redis expired-primary cleanup coordinates", "Redis global presence index", "Redis team presence index", "Redis alias presence index"],
         "not_created_by_no_launch_provision": ["aweb API key", "message", "delivery record"],
         "provisioned_material_copy_hardlink_symlink_scan_passed": True,
         "external_journals_terminal_complete": True,

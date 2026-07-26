@@ -21,6 +21,7 @@ from ...input_validation import is_valid_alias, is_valid_canonical_origin, is_va
 from awid.pagination import encode_cursor, validate_pagination_params
 from ...presence import (
     DEFAULT_PRESENCE_TTL_SECONDS,
+    clear_workspace_presence,
     list_agent_presences,
     list_agent_presences_by_workspace_ids,
     update_agent_presence,
@@ -432,9 +433,33 @@ async def delete_workspace(
         )
 
     if existing["deleted_at"] is not None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Workspace {workspace_id} is already deleted",
+        if str(existing.get("agent_identity_scope") or "").strip():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Workspace {workspace_id} is already deleted",
+            )
+        # A previous local-workspace request may have committed SQL and lost its response
+        # or failed during Redis cleanup. Re-enter the idempotent post-commit
+        # step instead of turning 404 into false terminal success at the client.
+        try:
+            await clear_workspace_presence(redis, [validated_id])
+        except Exception as exc:
+            logger.warning("Retry failed to clear deleted workspace presence", exc_info=exc)
+            raise HTTPException(
+                status_code=503,
+                detail=_workspace_delete_conflict_detail(
+                    code="post_commit_cleanup_pending",
+                    workspace_id=validated_id,
+                    identity_id=existing.get("agent_id"),
+                    identity_scope="local",
+                    recommended_next_step="Retry deletion to finish durable presence cleanup.",
+                ),
+            ) from exc
+        return DeleteWorkspaceResponse(
+            workspace_id=validated_id,
+            alias=existing["alias"],
+            deleted_at=existing["deleted_at"].isoformat(),
+            identity_deleted=True,
         )
 
     agent_identity_scope = str(existing.get("agent_identity_scope") or "").strip()
@@ -530,6 +555,23 @@ async def delete_workspace(
                 "failed_event_intents": len(cascade_result.failed_event_intents),
                 "presence_cleanup_status": cascade_result.presence_cleanup_status,
             },
+        )
+        if cascade_result.presence_cleanup_status != "failed":
+            return DeleteWorkspaceResponse(
+                workspace_id=validated_id,
+                alias=existing["alias"],
+                deleted_at=deleted_at.isoformat(),
+                identity_deleted=cascade_result.identity_deleted,
+            )
+        raise HTTPException(
+            status_code=503,
+            detail=_workspace_delete_conflict_detail(
+                code="post_commit_cleanup_pending",
+                workspace_id=validated_id,
+                identity_id=existing.get("agent_id"),
+                identity_scope=agent_identity_scope,
+                recommended_next_step="Retry deletion to finish durable post-commit cleanup.",
+            ),
         )
 
     return DeleteWorkspaceResponse(
