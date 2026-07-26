@@ -455,10 +455,13 @@ describe("SenderTrustManager", () => {
     expect(store.pins.get(stableID)?.did_key).toBe(did);
   });
 
-  test("stable-id migration refuses an occupied target without losing either pin", async () => {
+  test("stable-id migration declines an occupied target without losing either pin", async () => {
     const identity = await didFromSeed(36);
     const stableID = "did:aw:stableCollision";
     const address = "acme.com/alice";
+    // The stable id is occupied because the same agent is already pinned at
+    // ANOTHER address. Two pins claiming one address is not a state the loader
+    // accepts in either runtime, so it cannot be the fixture here.
     const store = PinStore.fromYAML([
       "pins:",
       `  ${identity.did}:`,
@@ -467,12 +470,13 @@ describe("SenderTrustManager", () => {
       "    last_seen: 2026-02-22T11:00:00Z",
       "    future_old: {seq: 1}",
       `  ${stableID}:`,
-      `    address: ${address}`,
+      "    address: acme.com/bob",
       "    first_seen: 2026-02-22T09:00:00Z",
       "    last_seen: 2026-02-22T09:30:00Z",
       "    future_stable: {seq: 9}",
       "addresses:",
       `  ${address}: ${identity.did}`,
+      "  acme.com/bob: did:aw:stableCollision",
       "",
     ].join("\n"));
     const trust = new SenderTrustManager(
@@ -502,9 +506,12 @@ describe("SenderTrustManager", () => {
       undefined,
     );
 
-    expect(result).toEqual({ status: "pin_conflict", stored: false });
+    // Declining the migration must not fail the sender: being reachable at two
+    // addresses is ordinary operation, not an identity conflict.
+    expect(result).toEqual({ status: "verified", stored: true });
     expect(new Set(store.pins.keys())).toEqual(new Set([identity.did, stableID]));
     expect(store.addresses.get(address)).toBe(identity.did);
+    expect(store.pins.get(stableID)?.address).toBe("acme.com/bob");
     const emitted = yaml.load(store.toYAML(), { schema: yaml.JSON_SCHEMA }) as {
       pins: Record<string, Record<string, unknown>>;
     };

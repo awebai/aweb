@@ -360,11 +360,33 @@ export class PinStore {
       }
     }
 
-    // Every address must resolve to a known pin, or the reverse index is
-    // corrupt and identity-mismatch checks would silently misfire.
+    // The forward and reverse indexes must agree in BOTH directions, matching
+    // Go's loader. Checking only that a reverse entry resolves to some pin
+    // leaves a pin whose address has no reverse entry, and checkPin then
+    // reports 'new' for an address we actually hold a pin for — first-contact
+    // TOFU against a known identity.
     for (const [address, pinKey] of store.addresses) {
-      if (!store.mutablePins.has(pinKey)) {
+      const pin = store.mutablePins.get(pinKey);
+      if (!pin) {
         throw new Error(`pin store address '${address}' references unknown pin`);
+      }
+      if (pin.address !== address) {
+        throw new Error(
+          `pin store reverse index for '${address}' points at a pin whose address is '${pin.address}'`,
+        );
+      }
+    }
+    for (const [pinKey, pin] of store.mutablePins) {
+      const mapped = store.addresses.get(pin.address);
+      if (mapped === undefined) {
+        throw new Error(
+          `pin store pin '${pinKey}' claims address '${pin.address}' with no reverse index entry`,
+        );
+      }
+      if (mapped !== pinKey) {
+        throw new Error(
+          `pin store pin '${pinKey}' claims address '${pin.address}', but the reverse index points at '${mapped}'`,
+        );
       }
     }
 
