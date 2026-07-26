@@ -283,6 +283,39 @@ scan_instance() {
   echo "  instance contains no principal material at $phase"
 }
 
+scan_provisioned_material() {
+  local operation="$1" label="$2"
+  shift 2
+  local intent="$PRINCIPAL_HOME/.provisioning/intents/$operation.json"
+  local target snapshot controlled
+  target="$(json_value "$intent" resource.identity_home)"
+  snapshot="$EVIDENCE/$label-credential-snapshot.json"
+  python3 "$PROOF_HELPER" snapshot --root "$target" --output "$snapshot"
+  for controlled in "$@"; do
+    python3 "$PROOF_HELPER" scan-instance --principal-snapshot "$snapshot" --instance "$controlled"
+  done
+}
+
+seed_provision_lifecycle_artifacts() {
+  local operation="$1"
+  local intent="$PRINCIPAL_HOME/.provisioning/intents/$operation.json"
+  local alias agent workspace
+  alias="$(json_value "$intent" resource.alias)"
+  agent="$(json_value "$intent" resource.agent_id)"
+  workspace="$(json_value "$intent" resource.workspace_id)"
+  docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -v ON_ERROR_STOP=1 -q -c \
+    "INSERT INTO aweb.task_claims(team_id, workspace_id, alias, task_ref) VALUES ('$TEAM_ID', '$workspace', '$alias', 'proof-$operation');
+     INSERT INTO aweb.reservations(team_id, resource_key, holder_alias, holder_agent_id) VALUES ('$TEAM_ID', 'proof:$operation', '$alias', '$agent');"
+  docker exec "$REDIS_CONTAINER" redis-cli HSET "presence:$workspace" workspace_id "$workspace" alias "$alias" team_id "$TEAM_ID" >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli SADD idx:all_workspaces "$workspace" >/dev/null
+  [[ "$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$workspace';")" == "1" ]] \
+    || fail "task-claim positive control was not created for $operation"
+  [[ "$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT COUNT(*) FROM aweb.reservations WHERE holder_agent_id = '$agent';")" == "1" ]] \
+    || fail "reservation positive control was not created for $operation"
+  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence:$workspace")" == "1" ]] \
+    || fail "presence positive control was not created for $operation"
+}
+
 capture_provision_resource() {
   local phase="$1" operation="$2" expected="$3"
   local intent="$PRINCIPAL_HOME/.provisioning/intents/$operation.json"
@@ -323,6 +356,15 @@ PY
     if [[ -d "$PROOF_HOME/.config/aw/team-invites" ]] && grep -R -F -q "$operation" "$PROOF_HOME/.config/aw/team-invites"; then
       fail "$phase still has a usable local invite grant for $operation"
     fi
+    [[ "$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$workspace';")" == "0" ]] \
+      || fail "$phase retained a live task claim"
+    [[ "$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT COUNT(*) FROM aweb.reservations WHERE holder_agent_id = '$agent';")" == "0" ]] \
+      || fail "$phase retained a live reservation"
+    [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence:$workspace")" == "0" ]] \
+      || fail "$phase retained workspace presence"
+    [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER idx:all_workspaces "$workspace")" == "0" ]] \
+      || fail "$phase retained the global presence index"
+    [[ "$(json_value "$intent" state)" == "complete" ]] || fail "$phase external journal is not terminal complete"
   fi
 }
 
@@ -353,7 +395,9 @@ export LIBRARY_E2E_AWEB_PUBLIC_ORIGIN="$AWEB_URL"
 wait_health awid "$AWID_URL/health"
 wait_health aweb "$AWEB_URL/health"
 POSTGRES_CONTAINER="$("${COMPOSE[@]}" ps -q postgres)"
+REDIS_CONTAINER="$("${COMPOSE[@]}" ps -q redis)"
 [[ -n "$POSTGRES_CONTAINER" ]] || fail "proof postgres container is missing"
+[[ -n "$REDIS_CONTAINER" ]] || fail "proof redis container is missing"
 docker inspect -f '{{json .HostConfig.Tmpfs}}' "$POSTGRES_CONTAINER" | grep -q '/var/lib/postgresql/data' \
   || fail "proof postgres does not use tmpfs"
 
@@ -542,6 +586,8 @@ run_oas_in "$FIXTURE_REPO" spawn proof-resident --purpose forged-receipt-carrier
 ATTACKER_HOME="$(json_value "$EVIDENCE/provision-attacker-spawn.json" home)"
 ATTACKER_INSTANCE="$(json_value "$EVIDENCE/provision-attacker-spawn.json" instance)"
 ATTACKER_OPERATION="$(binding_operation "$ATTACKER_HOME/instance.json")"
+scan_provisioned_material "$VICTIM_OPERATION" victim "$VICTIM_HOME" "$ATTACKER_HOME" "$FIXTURE_REPO"
+scan_provisioned_material "$ATTACKER_OPERATION" attacker "$ATTACKER_HOME" "$VICTIM_HOME" "$FIXTURE_REPO"
 capture_provision_resource victim-before-forgery "$VICTIM_OPERATION" active
 capture_provision_resource attacker-before-forgery "$ATTACKER_OPERATION" active
 
@@ -602,6 +648,7 @@ assert retirement["cleanup_authorized"] is False, retirement
 assert retirement["reason"] == "cleanup_corroboration_missing_or_mismatched", retirement
 PY
 
+seed_provision_lifecycle_artifacts "$VICTIM_OPERATION"
 run_oas_in "$FIXTURE_REPO" retire "$VICTIM_INSTANCE" --json > "$EVIDENCE/authorized-retire.json"
 python3 - "$EVIDENCE/authorized-retire.json" <<'PY'
 import json, sys
@@ -617,7 +664,8 @@ capture_provision_resource victim-after-authorized-retire "$VICTIM_OPERATION" de
 
 # The forged carrier's ordinary instance is gone, so its genuinely owned bound
 # identity is an operator-confirmed unacknowledged handoff. Exercise the
-# committed exact-operation wrapper rather than a documented incantation.
+# native active/trust-gated exact-operation command rather than a direct bin.
+seed_provision_lifecycle_artifacts "$ATTACKER_OPERATION"
 run_reconcile --cleanup-unacknowledged "$ATTACKER_OPERATION" > "$EVIDENCE/operator-reconcile.json"
 capture_provision_resource attacker-after-operator-reconcile "$ATTACKER_OPERATION" deleted
 
@@ -663,8 +711,12 @@ document = {
         "operation-guard-mutation_reaches_real_deletion_and_turns_owning-authority_assertion_red": True,
         "authorized_retire_deleted_victim": True,
         "attacker_operation": attacker_operation,
-        "committed_operator_wrapper_deleted_unacknowledged_attacker": True,
-        "owning_authorities_queried": ["AWID certificate roster", "aweb PostgreSQL lifecycle state", "local credential and invite stores"],
+        "native_manifest_command_deleted_unacknowledged_attacker": True,
+        "positive_lifecycle_controls_removed": ["PostgreSQL task claim", "PostgreSQL reservation", "Redis workspace presence", "Redis global presence index"],
+        "not_created_by_no_launch_provision": ["aweb API key", "message", "delivery record"],
+        "provisioned_material_copy_hardlink_symlink_scan_passed": True,
+        "external_journals_terminal_complete": True,
+        "owning_authorities_queried": ["AWID certificate roster", "aweb PostgreSQL lifecycle state", "aweb Redis presence", "local credential and invite stores", "external provision journal"],
     },
     "independent_observations": {
         "registry_address_unchanged": True,

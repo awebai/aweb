@@ -631,8 +631,15 @@ func ensureLocalProvisionTargetRecord(targetHome, operationID, teamID, alias str
 		if record.Result != nil || record.Cleanup != nil {
 			return nil, fmt.Errorf("local provision target record has a contradictory pending status")
 		}
-	} else if record.Result == nil || record.Cleanup == nil ||
-		(record.Cleanup.Grants != "physically-absent" && record.Cleanup.Grants != "pending") ||
+	} else if record.Result == nil || record.Cleanup == nil {
+		return nil, fmt.Errorf("local provision target record has contradictory cleanup state")
+	} else if record.Result.Status != "provisioned" || record.Result.OperationID != record.OperationID ||
+		record.Result.TeamID != record.TeamID || record.Result.Alias != record.Alias ||
+		record.Result.IdentityHome != targetHome || !strings.HasPrefix(record.Result.DIDKey, "did:key:z") ||
+		record.Result.CertificateID == "" || record.Result.AgentID == "" || record.Result.WorkspaceID == "" ||
+		record.Result.RegistryURL == "" || record.Result.AwebURL == "" {
+		return nil, fmt.Errorf("local provision target record nested resource tuple contradicts its operation")
+	} else if (record.Cleanup.Grants != "physically-absent" && record.Cleanup.Grants != "pending") ||
 		(record.Cleanup.Workspace != "pending" && record.Cleanup.Workspace != "soft-deleted") ||
 		(record.Cleanup.Certificate != "pending" && record.Cleanup.Certificate != "revoked") ||
 		(record.Cleanup.Credentials != "pending" && record.Cleanup.Credentials != "physically-absent") {

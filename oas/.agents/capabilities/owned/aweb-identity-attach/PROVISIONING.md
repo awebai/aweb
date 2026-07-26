@@ -61,7 +61,10 @@ forbidden.
 | AWID team certificate | AWID registry list under exact team, then controller-authorized revoke | **revoked** (or authoritatively absent) |
 | aweb workspace row | exact-team persistent authority calling workspace delete | **soft-deleted** |
 | aweb local agent/identity row | local-workspace lifecycle cascade | **soft-deleted** |
-| Task claims, presence, API grants, delivery state | aweb local-workspace lifecycle cascade | **soft-deleted/revoked by the same cascade** |
+| Task claims and reservations created during runtime | aweb PostgreSQL lifecycle cascade; proof seeds positive rows | **physically absent** |
+| Workspace presence created during runtime | aweb Redis presence key/global index; proof seeds positive entries | **physically absent** |
+| aweb API keys | local certificate connect creates none; AWID certificate above is the authorization grant | **not created** |
+| Messages/delivery records | no model session or message is created by this no-launch provisioning proof; historical messages are audit, not member authorization | **not created / not applicable to the provision operation** |
 | Hosted organization membership | not created on the local-controller path | **physically absent / not applicable** |
 | Target `workspace.yaml`, `teams.yaml`, certificate files, context | owned credential tree | **physically absent** |
 | `provision-operation.json` | external target audit record | **intentionally retained audit** |
@@ -108,9 +111,10 @@ cleaned; a later spawn allocates its own operation and principal.
   threshold only for scanner-owned states.
 - Ownership: one SQLite lock row per operation. Acquisition and stale takeover
   run under `BEGIN IMMEDIATE`; takeover compare-and-swaps the observed random
-  token and refuses a live PID. No lock pathname is unlinked/recreated, so a
-  concurrent scanner cannot replace or remove a fresh holder. A process-kill
-  positive control leaves a row and proves transactional stale takeover.
+  token and refuses only the same host-boot/process-birth identity, not a reused
+  PID. No lock pathname is unlinked/recreated, so a concurrent scanner cannot
+  replace or remove a fresh holder. Process-kill and prior-boot PID-reuse
+  positive controls prove transactional stale takeover.
 - Automatic states: stale `allocated`, `provisioning`, and `cleanup-pending`.
   `prepared` and `bound` are not inferred to mean launched and are never globally
   selected. Only
@@ -119,10 +123,11 @@ cleaned; a later spawn allocates its own operation and principal.
   quiescent and its metadata did not retain the receipt. The journal can observe
   writing hook stdout, not OAS accepting it. A `bound` identity with retained
   metadata still requires its matching retire judgement.
-- A malformed or unknown-version intent is moved, unchanged, to the external
-  quarantine directory with a report that grants no cleanup authority. The
-  trigger surfaces that quarantine as a warning while other valid stale work
-  continues scanning.
+- A malformed, unreadable, non-regular, or unknown-version intent first commits
+  a visible no-cleanup-authority report, then moves the original entry unchanged
+  to the external quarantine directory. If the process dies between those
+  commits, the next scan completes the report-directed move, surfaces the
+  quarantine warning, and continues other valid stale work.
 - A cleanup still failing on the third persisted attempt moves to visible
   `quarantined`. Quarantine is a remediable non-success and is never reported as
   completed cleanup.
@@ -132,7 +137,11 @@ cleaned; a later spawn allocates its own operation and principal.
 `scripts/e2e-oas-attached-principal-retire.sh` uses the repository's guarded,
 no-tmux loopback Docker stack. In addition to attached-principal preservation,
 it provisions two throwaway local identities through real OAS hooks, AWID, aweb,
-and PostgreSQL. It retargets one instance-side receipt at the other operation,
+PostgreSQL, and Redis. It seeds real task-claim, reservation, and presence
+positive controls, asserts both external journals terminal `complete`, and
+snapshots each provisioned credential tree before scanning both instance homes
+and the controlled repository by names, digests, symlink target, and device/inode
+for copies or hardlinks. It retargets one instance-side receipt at the other operation,
 proves the exact corroboration refusal leaves both real rows and certificates
 active, then proves ordinary authorized retire and the native exact-operation
 command produce AWID revocation, aweb agent/workspace soft deletion, local grant

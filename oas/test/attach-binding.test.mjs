@@ -480,9 +480,14 @@ test("operator and later-spawn reconciliation clean durable pending local intent
   const journalFor = (spawned) => {
     const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
     const operation = meta.capabilityMeta["aweb.identity-attach"].identity_binding.journal_operation;
-    return { operation, path: join(f.principalHome, ".provisioning", "intents", `${operation}.json`) };
+    return { operation, path: join(f.principalHome, ".provisioning", "intents", `${operation}.json`), spawned, meta };
   };
   const prepared = journalFor(spawnLocal("operator-confirmed-prepared"));
+  assert.equal(prepared.spawned.launched, false, "prepared orphan must be quiescent before operator cleanup");
+  delete prepared.meta.capabilityMeta["aweb.identity-attach"].identity_binding;
+  writeFileSync(join(prepared.spawned.home, "instance.json"), `${JSON.stringify(prepared.meta, null, 2)}\n`);
+  unlinkSync(join(f.corroborationHome, `${prepared.spawned.instance}.json`));
+  assert.equal(JSON.parse(readFileSync(join(prepared.spawned.home, "instance.json"), "utf8")).capabilityMeta["aweb.identity-attach"].identity_binding, undefined);
   const preparedRecord = JSON.parse(readFileSync(prepared.path, "utf8"));
   preparedRecord.state = "prepared";
   preparedRecord.updated_at = "2000-01-01T00:00:00.000Z";
@@ -511,6 +516,20 @@ test("operator and later-spawn reconciliation clean durable pending local intent
   const quarantiningMeta = JSON.parse(readFileSync(join(quarantiningSpawn.home, "instance.json"), "utf8"));
   assert.equal(quarantiningMeta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
   assert.equal(readdirSync(join(f.principalHome, ".provisioning", "quarantine")).some((name) => name.startsWith(`${corruptOperation}.json.`)), true);
+
+  const exactCorruptModes = [
+    ["--operation", "oas-CCCCCCCCCCCCCCCCCCCCCA"],
+    ["--cleanup-unacknowledged", "oas-DDDDDDDDDDDDDDDDDDDDDQ"],
+    ["--retry-quarantine", "oas-EEEEEEEEEEEEEEEEEEEEEg"],
+  ];
+  for (const [mode, operation] of exactCorruptModes) {
+    const path = join(f.principalHome, ".provisioning", "intents", `${operation}.json`);
+    writeFileSync(path, '{"schema_version":999}\n', { mode: 0o600 });
+    const exact = reconcileCommand([mode, operation], f.repo, f.env);
+    assert.equal(exact.status, 1, `${mode} must surface corrupt exact work as non-success`);
+    assert.match(exact.stdout, new RegExp(`${operation}.*quarantined`));
+    assert.equal(existsSync(path), false);
+  }
 });
 
 test("real OAS refuses declared local-controller path without controller authority", () => {

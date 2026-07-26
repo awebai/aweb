@@ -270,6 +270,40 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 		t.Fatalf("retry=%+v register_calls=%d connect_calls=%d", retried, registeredCalls, connectedCalls)
 	}
 
+	// A complete-looking target record is not authority if its nested resource
+	// tuple contradicts the operation that owns it.
+	targetRecordPath := localProvisionTargetRecordPath(targetHome)
+	originalRecord, err := os.ReadFile(targetRecordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contradictoryRecord localProvisionTargetRecord
+	if err := json.Unmarshal(originalRecord, &contradictoryRecord); err != nil {
+		t.Fatal(err)
+	}
+	contradictoryRecord.Result.OperationID = "oas-BBBBBBBBBBBBBBBBBBBBBQ"
+	contradictoryJSON, err := json.Marshal(contradictoryRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(targetRecordPath, append(contradictoryJSON, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	contradictory := exec.CommandContext(ctx, bin, "id", "team", "cleanup-local-provision",
+		"--operation-id", "oas-AAAAAAAAAAAAAAAAAAAAAA", "--team-id", "backend:acme.test", "--name", "oas-worker",
+		"--authority-identity-home", filepath.Join(authorityDir, ".aw"), "--target-identity-home", targetHome,
+		"--authority-address", "acme.test/provisioner", "--authority-stable-id", authorityStableID,
+		"--controller-did", controllerDID, "--json")
+	contradictory.Env = append(testCommandEnv(root), "AWID_REGISTRY_URL="+server.URL)
+	contradictory.Dir = instanceDir
+	contradictoryOutput, contradictoryErr := contradictory.CombinedOutput()
+	if contradictoryErr == nil || !strings.Contains(string(contradictoryOutput), "nested resource tuple contradicts") {
+		t.Fatalf("contradictory nested resource attribution: err=%v\n%s", contradictoryErr, contradictoryOutput)
+	}
+	if err := os.WriteFile(targetRecordPath, originalRecord, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	// Local-path threat label: accident/confused-deputy only. A forged instance
 	// receipt for another operation cannot target this throwaway principal unless
 	// the operation-specific execution record corroborates it. The authorized

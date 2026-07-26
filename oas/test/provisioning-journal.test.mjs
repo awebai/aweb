@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 
 import {
@@ -187,15 +188,16 @@ test("malformed journals quarantine without aborting valid stale recovery", (t) 
   });
   markProvisionIntentProvisioning(root, OPERATION_A, start);
   writeFileSync(join(root, ".provisioning", "intents", `${OPERATION_B}.json`), '{"schema_version":999}\n', { mode: 0o600 });
+  mkdirSync(join(root, ".provisioning", "intents", "malformed.json"));
 
   const visibleQuarantines = [];
   assert.deepEqual(listRecoverableProvisionIntents(root, {
     now: new Date("2026-07-26T00:01:00Z"), staleAfterMs: 30_000,
     onQuarantine: (report) => visibleQuarantines.push(report),
   }).map((intent) => intent.operation_id), [OPERATION_A]);
-  assert.equal(visibleQuarantines.length, 1);
-  assert.equal(visibleQuarantines[0].state, "quarantined");
-  assert.equal(visibleQuarantines[0].source_name, `${OPERATION_B}.json`);
+  assert.equal(visibleQuarantines.length, 2);
+  assert.deepEqual(visibleQuarantines.map((report) => report.source_name).sort(), [`${OPERATION_B}.json`, "malformed.json"].sort());
+  assert.equal(visibleQuarantines.every((report) => report.state === "quarantined"), true);
   assert.equal(readdirSync(join(root, ".provisioning", "intents")).includes(`${OPERATION_B}.json`), false);
   const quarantined = readdirSync(join(root, ".provisioning", "quarantine"));
   assert.equal(quarantined.some((name) => name.startsWith(`${OPERATION_B}.json.`) && name.endsWith(".record")), true);
@@ -206,7 +208,32 @@ test("malformed journals quarantine without aborting valid stale recovery", (t) 
   assert.match(report.error, /invalid/);
 });
 
-test("per-intent lock serializes stale takeover, never takes a live holder, and rejects symlinks", (t) => {
+test("quarantine remains visible when the process dies after its report commit", (t) => {
+  const root = tempRoot(t, "aweb-provision-quarantine-crash-");
+  const start = new Date("2026-07-26T00:00:00Z");
+  createProvisionIntent(root, {
+    operationID: OPERATION_A, instanceID: "instance-a", teamID: "backend:acme.test", authority: AUTHORITY,
+    authorityHome: join(root, "authority"), now: start,
+  });
+  markProvisionIntentProvisioning(root, OPERATION_A, start);
+  writeFileSync(join(root, ".provisioning", "intents", `${OPERATION_B}.json`), '{"schema_version":999}\n', { mode: 0o600 });
+  const journalModule = new URL("../.agents/capabilities/owned/aweb-identity-attach/lib/provisioning-journal.mjs", import.meta.url).href;
+  const killed = spawnSync(process.execPath, ["--input-type=module", "--eval", [
+    `import { listRecoverableProvisionIntents } from ${JSON.stringify(journalModule)};`,
+    `listRecoverableProvisionIntents(${JSON.stringify(root)}, { staleAfterMs: 0, afterQuarantineReport: () => process.exit(73) });`,
+  ].join("\n")], { encoding: "utf8" });
+  assert.equal(killed.status, 73, killed.stderr);
+
+  const surfaced = [];
+  assert.deepEqual(listRecoverableProvisionIntents(root, {
+    now: new Date("2026-07-26T00:01:00Z"), staleAfterMs: 30_000,
+    onQuarantine: (report) => surfaced.push(report),
+  }).map((intent) => intent.operation_id), [OPERATION_A]);
+  assert.equal(surfaced.some((report) => report.source_name === `${OPERATION_B}.json`), true);
+  assert.equal(readdirSync(join(root, ".provisioning", "intents")).includes(`${OPERATION_B}.json`), false);
+});
+
+test("per-intent lock serializes stale takeover, never takes a live holder, and rejects symlinks", async (t) => {
   const root = tempRoot(t, "aweb-provision-lock-");
   createProvisionIntent(root, {
     operationID: OPERATION_A, instanceID: "instance-a", teamID: "backend:acme.test", authority: AUTHORITY,
@@ -229,6 +256,50 @@ test("per-intent lock serializes stale takeover, never takes a live holder, and 
     now: new Date(Date.now() + 600_000), staleAfterMs: 1,
   });
   assert.equal(reclaimed, true, "a killed holder is transactionally replaced after the stale threshold");
+
+  const reusedPID = spawnSync(process.execPath, ["--input-type=module", "--eval", [
+    `import { withProvisionIntentLock } from ${JSON.stringify(journalModule)};`,
+    `withProvisionIntentLock(${JSON.stringify(root)}, ${JSON.stringify(OPERATION_A)}, () => process.exit(0));`,
+  ].join("\n")], { encoding: "utf8" });
+  assert.equal(reusedPID.status, 0, reusedPID.stderr);
+  const database = new DatabaseSync(join(root, ".provisioning", "locks.sqlite"));
+  database.prepare("UPDATE operation_locks SET pid = ?, process_identity = ? WHERE operation_id = ?")
+    .run(process.pid, "prior-boot:reused-pid", OPERATION_A);
+  database.close();
+  let reclaimedReusedPID = false;
+  withProvisionIntentLock(root, OPERATION_A, () => { reclaimedReusedPID = true; }, {
+    now: new Date(Date.now() + 600_000), staleAfterMs: 1,
+  });
+  assert.equal(reclaimedReusedPID, true, "a stale prior-boot row cannot be kept alive by PID reuse");
+
+  const contested = spawnSync(process.execPath, ["--input-type=module", "--eval", [
+    `import { withProvisionIntentLock } from ${JSON.stringify(journalModule)};`,
+    `withProvisionIntentLock(${JSON.stringify(root)}, ${JSON.stringify(OPERATION_A)}, () => process.exit(0));`,
+  ].join("\n")], { encoding: "utf8" });
+  assert.equal(contested.status, 0, contested.stderr);
+  const winners = join(root, "stale-takeover-winners.txt");
+  const worker = [
+    `import { appendFileSync } from "node:fs";`,
+    `import { withProvisionIntentLock } from ${JSON.stringify(journalModule)};`,
+    `try {`,
+    `  withProvisionIntentLock(${JSON.stringify(root)}, ${JSON.stringify(OPERATION_A)}, () => {`,
+    `    appendFileSync(${JSON.stringify(winners)}, process.pid + "\\n");`,
+    `    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);`,
+    `  }, { now: new Date(Date.now() + 600000), staleAfterMs: 1 });`,
+    `} catch (error) {`,
+    `  if (!/live holder|already locked/.test(error.message)) throw error;`,
+    `}`,
+  ].join("\n");
+  const runWorker = () => new Promise((resolveWorker) => {
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", worker], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (status) => resolveWorker({ status, stderr }));
+  });
+  const contenders = await Promise.all([runWorker(), runWorker()]);
+  assert.deepEqual(contenders.map((result) => result.status), [0, 0], contenders.map((result) => result.stderr).join("\n"));
+  assert.equal(readFileSync(winners, "utf8").trim().split("\n").length, 1, "exactly one concurrent stale reclaimer may enter");
 
   const record = join(root, ".provisioning", "intents", `${OPERATION_A}.json`);
   const target = join(root, "substituted.json");

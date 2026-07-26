@@ -17,6 +17,7 @@ import {
   createProvisionIntent,
   listRecoverableProvisionIntents,
   loadProvisionIntent,
+  loadProvisionIntentForRecovery,
   markProvisionIntentAbandoned,
   markProvisionIntentCleanupPending,
   markProvisionIntentComplete,
@@ -334,15 +335,19 @@ function runCleanupCommandForIntent(intent, cwd) {
   ), intent.operation_id);
 }
 
-function recoverProvisionIntents(principalHome, cwd, { force = false, operationID = null, cleanupUnacknowledged = false } = {}) {
+function recoverProvisionIntents(principalHome, cwd, {
+  force = false, operationID = null, cleanupUnacknowledged = false, retryQuarantine = false,
+} = {}) {
   const malformed = [];
+  const onQuarantine = (report) => malformed.push(report);
+  const exactIntent = operationID === null ? null : loadProvisionIntentForRecovery(principalHome, operationID, { onQuarantine });
   const intents = operationID === null
     ? listRecoverableProvisionIntents(principalHome, {
         now: new Date(),
         staleAfterMs: force ? 0 : 300000,
-        onQuarantine: (report) => malformed.push(report),
+        onQuarantine,
       })
-    : [loadProvisionIntent(principalHome, operationID)];
+    : exactIntent ? [exactIntent] : [];
   const recovered = malformed.map((report) => ({
     operation_id: report.source_name.replace(/\.json$/, ""),
     outcome: "quarantined",
@@ -353,6 +358,7 @@ function recoverProvisionIntents(principalHome, cwd, { force = false, operationI
     try {
       result = withProvisionIntentLock(principalHome, candidate.operation_id, () => {
         let intent = loadProvisionIntent(principalHome, candidate.operation_id);
+        if (retryQuarantine) intent = retryProvisionIntentQuarantine(principalHome, intent.operation_id);
         let recoveredProvisioning = false;
         if (cleanupUnacknowledged && !["prepared", "bound"].includes(intent.state)) {
           throw new Error(`operator-confirmed cleanup requires prepared or bound state, found ${intent.state}`);
@@ -612,13 +618,14 @@ try {
     const principalHome = resolvePrincipalHome();
     let operationID = null;
     let cleanupUnacknowledged = false;
+    let retryQuarantine = false;
     if (process.argv[3] === "--operation") {
       if (!process.argv[4] || process.argv.length !== 5) throw new TypeError("reconcile --operation requires exactly one operation id");
       operationID = process.argv[4];
     } else if (process.argv[3] === "--retry-quarantine") {
       if (!process.argv[4] || process.argv.length !== 5) throw new TypeError("reconcile --retry-quarantine requires exactly one operation id");
       operationID = process.argv[4];
-      retryProvisionIntentQuarantine(principalHome, operationID);
+      retryQuarantine = true;
     } else if (process.argv[3] === "--cleanup-unacknowledged") {
       if (!process.argv[4] || process.argv.length !== 5) throw new TypeError("reconcile --cleanup-unacknowledged requires exactly one operation id");
       operationID = process.argv[4];
@@ -630,8 +637,10 @@ try {
       force: true,
       operationID,
       cleanupUnacknowledged,
+      retryQuarantine,
     });
     output({ status: "reconciled", operations: recovered });
+    if (recovered.some((item) => item.outcome === "quarantined")) process.exitCode = 1;
   } else throw new TypeError(`unsupported lifecycle event ${JSON.stringify(event)}`);
 } catch (error) {
   warning(error);

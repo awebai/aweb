@@ -707,8 +707,11 @@ So the established results are bounded **safety** results, and are exactly three
   victim receipt and an independently forged execution operation both leave the
   throwaway victim active; ordinary retire then revokes its real AWID
   certificate, soft-deletes its real aweb agent/workspace rows, and removes its
-  local grants and credential material. The second throwaway identity is
-  removed through the native, active/trust-gated, exact-operation OAS command.
+  local grants and credential material. Seeded PostgreSQL task-claim/reservation
+  and Redis presence controls are removed; the external journals are terminal;
+  and pre-cleanup credential snapshots find no name/digest/symlink/inode copies
+  in either instance or the controlled repository. The second throwaway identity
+  is removed through the native, active/trust-gated, exact-operation OAS command.
   Removing the target operation comparison makes the forged execution cleanup
   revoke/delete the real victim and turns the owning-authority assertion red.
   This is a local same-UID accident/confused-deputy result, not hostile-model

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -14,6 +15,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
+import { uptime } from "node:os";
 import { isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -334,26 +336,29 @@ export function writeProvisionCleanupCorroboration(home, instanceID, receipt) {
   return path;
 }
 
-function quarantineMalformedIntent(home, entry, error, now) {
+function quarantineEvidence(source) {
+  const info = lstatSync(source);
+  if (info.isSymbolicLink()) return `symlink:${readlinkSync(source)}`;
+  if (!info.isFile()) return `non-regular:${info.mode}:${info.size}`;
+  try {
+    return readFileSync(source);
+  } catch (error) {
+    return `unreadable:${error?.code || "unknown"}:${info.mode}:${info.size}`;
+  }
+}
+
+function quarantineMalformedIntent(home, entry, error, now, afterQuarantineReport) {
   const journalPaths = paths(home);
   const source = join(journalPaths.intents, entry.name);
   let evidence;
   try {
-    const info = lstatSync(source);
-    evidence = info.isSymbolicLink() ? `symlink:${readlinkSync(source)}` : readFileSync(source);
+    evidence = quarantineEvidence(source);
   } catch (readError) {
     if (readError?.code === "ENOENT") return;
-    throw readError;
+    evidence = `unreadable-entry:${readError?.code || "unknown"}`;
   }
   const digest = createHash("sha256").update(evidence).digest("hex").slice(0, 16);
   const basename = `${entry.name}.${digest}.${randomUUID()}`;
-  const record = join(journalPaths.quarantine, `${basename}.record`);
-  try {
-    renameSync(source, record);
-  } catch (renameError) {
-    if (renameError?.code === "ENOENT") return;
-    throw renameError;
-  }
   const report = {
     schema_version: 1,
     state: "quarantined",
@@ -363,36 +368,127 @@ function quarantineMalformedIntent(home, entry, error, now) {
     error: String(error?.message || error).slice(0, 400),
     quarantined_at: timestamp(now),
   };
+  // Visibility commits first. If the process dies before rename, the next scan
+  // completes the move from this report rather than losing the quarantine.
   writeNew(join(journalPaths.quarantine, `${basename}.report.json`), report);
+  afterQuarantineReport(report);
+  try {
+    renameSync(source, join(journalPaths.quarantine, report.evidence_record));
+  } catch (renameError) {
+    if (renameError?.code !== "ENOENT") throw renameError;
+  }
   return report;
 }
 
-export function listRecoverableProvisionIntents(home, { now = new Date(), staleAfterMs, onQuarantine = () => {} }) {
+function surfaceProvisionQuarantines(home, onQuarantine, operationID = null) {
+  const journalPaths = paths(home);
+  const surfacedSources = new Set();
+  for (const entry of readdirSync(journalPaths.quarantine, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".report.json")) continue;
+    const reportPath = join(journalPaths.quarantine, entry.name);
+    let report;
+    try {
+      report = JSON.parse(readFileSync(reportPath, "utf8"));
+      if (!exactFields(report, ["schema_version", "state", "source_name", "evidence_record", "cleanup_authority", "error", "quarantined_at"])
+          || report.schema_version !== 1 || report.state !== "quarantined"
+          || typeof report.source_name !== "string" || !report.source_name.endsWith(".json")
+          || report.source_name.includes("/") || report.source_name.includes("\\")
+          || typeof report.evidence_record !== "string" || !report.evidence_record.endsWith(".record")
+          || report.evidence_record.includes("/") || report.evidence_record.includes("\\")
+          || report.cleanup_authority !== "none-corrupt-record-not-trusted") {
+        throw new Error("malformed quarantine report");
+      }
+      if (operationID !== null && report.source_name !== `${operationID}.json`) continue;
+      const source = join(journalPaths.intents, report.source_name);
+      const record = join(journalPaths.quarantine, report.evidence_record);
+      if (existsSync(source) && !existsSync(record)) renameSync(source, record);
+    } catch (error) {
+      report = {
+        schema_version: 1,
+        state: "quarantined",
+        source_name: entry.name,
+        evidence_record: entry.name,
+        cleanup_authority: "none-corrupt-record-not-trusted",
+        error: String(error?.message || error).slice(0, 400),
+        quarantined_at: new Date(0).toISOString(),
+      };
+    }
+    if (operationID !== null && report.source_name !== `${operationID}.json`) continue;
+    surfacedSources.add(report.source_name);
+    onQuarantine(report);
+  }
+  return surfacedSources;
+}
+
+export function loadProvisionIntentForRecovery(home, operation, {
+  now = new Date(), onQuarantine = () => {}, afterQuarantineReport = () => {},
+} = {}) {
+  if (typeof onQuarantine !== "function") throw new TypeError("onQuarantine must be a function");
+  if (typeof afterQuarantineReport !== "function") throw new TypeError("afterQuarantineReport must be a function");
+  const operationID = validatedOperationID(operation);
+  // Surface and complete any earlier report-first transition before looking at
+  // the exact source again.
+  const surfaced = surfaceProvisionQuarantines(home, onQuarantine, operationID);
+  if (surfaced.has(`${operationID}.json`)) return null;
+  try {
+    return loadProvisionIntent(home, operationID);
+  } catch (error) {
+    const report = quarantineMalformedIntent(home, { name: `${operationID}.json` }, error, now, afterQuarantineReport);
+    if (!report) throw error;
+    onQuarantine(report);
+    return null;
+  }
+}
+
+export function listRecoverableProvisionIntents(home, {
+  now = new Date(), staleAfterMs, onQuarantine = () => {}, afterQuarantineReport = () => {},
+}) {
   if (!Number.isFinite(staleAfterMs) || staleAfterMs < 0) throw new TypeError("staleAfterMs must be non-negative");
   if (typeof onQuarantine !== "function") throw new TypeError("onQuarantine must be a function");
+  if (typeof afterQuarantineReport !== "function") throw new TypeError("afterQuarantineReport must be a function");
   const cutoff = new Date(now).getTime() - staleAfterMs;
   const intents = [];
+  surfaceProvisionQuarantines(home, onQuarantine);
   for (const entry of readdirSync(paths(home).intents, { withFileTypes: true })) {
     if (!entry.name.endsWith(".json")) continue;
     try {
       const intent = loadProvisionIntent(home, entry.name.slice(0, -5));
       if (RECOVERABLE_STATES.has(intent.state) && Date.parse(intent.updated_at) <= cutoff) intents.push(intent);
     } catch (error) {
-      const report = quarantineMalformedIntent(home, entry, error, now);
+      const report = quarantineMalformedIntent(home, entry, error, now, afterQuarantineReport);
       if (report) onQuarantine(report);
     }
   }
   return intents.sort((left, right) => left.operation_id.localeCompare(right.operation_id));
 }
 
-function processIsAlive(pid) {
+function hostBootIdentity() {
   try {
+    if (process.platform === "linux") return readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    if (process.platform === "darwin") return execFileSync("sysctl", ["-n", "kern.boottime"], { encoding: "utf8" }).trim();
+  } catch {}
+  return `boot-minute:${Math.floor((Date.now() / 1000 - uptime()) / 60)}`;
+}
+
+const HOST_BOOT_IDENTITY = hostBootIdentity();
+
+function processBirthIdentity(pid) {
+  try {
+    if (process.platform === "linux") {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const fieldsAfterCommand = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+      const startTicks = fieldsAfterCommand[19];
+      return startTicks ? `${HOST_BOOT_IDENTITY}:linux-ticks:${startTicks}` : null;
+    }
+    if (process.platform === "darwin") {
+      const started = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" }).trim();
+      return started ? `${HOST_BOOT_IDENTITY}:darwin-start:${started}` : null;
+    }
     process.kill(pid, 0);
-    return true;
+    return `${HOST_BOOT_IDENTITY}:pid:${pid}`;
   } catch (error) {
-    if (error?.code === "EPERM") return true;
-    if (error?.code === "ESRCH") return false;
-    throw error;
+    if (error?.code === "EPERM") return `${HOST_BOOT_IDENTITY}:pid:${pid}:permission-denied`;
+    return null;
   }
 }
 
@@ -405,6 +501,7 @@ function openProvisionLockDatabase(home) {
     operation_id TEXT PRIMARY KEY,
     token TEXT NOT NULL,
     pid INTEGER NOT NULL,
+    process_identity TEXT NOT NULL,
     acquired_at TEXT NOT NULL
   ) STRICT`);
   return database;
@@ -414,22 +511,27 @@ export function withProvisionIntentLock(home, operation, callback, { now = new D
   if (typeof callback !== "function") throw new TypeError("provision lock callback is required");
   if (!Number.isFinite(staleAfterMs) || staleAfterMs < 0) throw new TypeError("staleAfterMs must be non-negative");
   const operationID = validatedOperationID(operation);
-  const owner = { token: randomUUID(), pid: process.pid, acquiredAt: timestamp(now) };
+  const owner = {
+    token: randomUUID(), pid: process.pid, processIdentity: processBirthIdentity(process.pid), acquiredAt: timestamp(now),
+  };
+  if (!owner.processIdentity) throw new Error("cannot determine provision lock process identity");
   const database = openProvisionLockDatabase(home);
   try {
     database.exec("BEGIN IMMEDIATE");
-    const observed = database.prepare("SELECT token, pid, acquired_at FROM operation_locks WHERE operation_id = ?").get(operationID);
+    const observed = database.prepare("SELECT token, pid, process_identity, acquired_at FROM operation_locks WHERE operation_id = ?").get(operationID);
     if (observed) {
       const age = new Date(now).getTime() - Date.parse(observed.acquired_at);
-      if (processIsAlive(observed.pid)) throw new Error(`provision operation ${operationID} has a live holder`);
+      if (processBirthIdentity(observed.pid) === observed.process_identity) throw new Error(`provision operation ${operationID} has a live holder`);
       if (age <= staleAfterMs) throw new Error(`provision operation ${operationID} is already locked`);
       const changed = database.prepare(`UPDATE operation_locks
-        SET token = ?, pid = ?, acquired_at = ?
-        WHERE operation_id = ? AND token = ?`).run(owner.token, owner.pid, owner.acquiredAt, operationID, observed.token);
+        SET token = ?, pid = ?, process_identity = ?, acquired_at = ?
+        WHERE operation_id = ? AND token = ?`).run(
+        owner.token, owner.pid, owner.processIdentity, owner.acquiredAt, operationID, observed.token,
+      );
       if (changed.changes !== 1) throw new Error(`provision operation ${operationID} lock changed during stale takeover`);
     } else {
-      database.prepare("INSERT INTO operation_locks(operation_id, token, pid, acquired_at) VALUES (?, ?, ?, ?)")
-        .run(operationID, owner.token, owner.pid, owner.acquiredAt);
+      database.prepare(`INSERT INTO operation_locks(operation_id, token, pid, process_identity, acquired_at)
+        VALUES (?, ?, ?, ?, ?)`).run(operationID, owner.token, owner.pid, owner.processIdentity, owner.acquiredAt);
     }
     database.exec("COMMIT");
   } catch (error) {
