@@ -7,7 +7,7 @@ import json
 from typing import Any
 from uuid import UUID
 
-from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError
+from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 from aweb.messaging.conversations import (
     _equivalent_identity_refs,
     find_active_one_to_one_conversation_between,
@@ -16,6 +16,7 @@ from aweb.messaging.conversations import (
 logger = logging.getLogger(__name__)
 
 HANG_ON_EXTENSION_SECONDS = 300
+MAX_CHAT_MARK_READ_IDS = 1000
 
 
 def _uuid_or_none(value: str | UUID | None) -> UUID | None:
@@ -519,16 +520,18 @@ async def get_pending_conversations(
             ORDER BY created_at DESC
             LIMIT 1
         ) lm ON TRUE
-        LEFT JOIN {{tables.chat_read_receipts}} rr
-          ON rr.session_id = s.session_id AND rr.did = p.did
-        LEFT JOIN {{tables.chat_messages}} last_read_msg
-          ON last_read_msg.message_id = rr.last_read_message_id
         LEFT JOIN LATERAL (
             SELECT COUNT(*)::int AS cnt
             FROM {{tables.chat_messages}} m
             WHERE m.session_id = s.session_id
               AND m.from_did <> p.did
-              AND m.created_at > COALESCE(last_read_msg.created_at, 'epoch'::timestamptz)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM {{tables.chat_message_reads}} mr
+                  WHERE mr.session_id = m.session_id
+                    AND mr.did = p.did
+                    AND mr.message_id = m.message_id
+              )
         ) unread ON TRUE
         LEFT JOIN LATERAL (
             SELECT COALESCE(SUM($2::int), 0)::int AS total_seconds
@@ -633,20 +636,6 @@ async def get_message_history(
     if not is_participant:
         raise ForbiddenError("Not a participant in this session")
 
-    rr = await aweb_db.fetch_one(
-        """
-        SELECT last_read_msg.created_at AS last_read_message_at
-        FROM {{tables.chat_read_receipts}}
-        LEFT JOIN {{tables.chat_messages}} last_read_msg
-          ON last_read_msg.message_id = {{tables.chat_read_receipts}}.last_read_message_id
-        WHERE {{tables.chat_read_receipts}}.session_id = $1
-          AND {{tables.chat_read_receipts}}.did = $2
-        """,
-        session_id,
-        participant_did,
-    )
-    last_read_message_at = rr["last_read_message_at"] if rr else None
-
     message_uuid = _uuid_or_none(message_id)
 
     if message_uuid is not None:
@@ -679,16 +668,21 @@ async def get_message_history(
               AND (
                 $2::bool IS FALSE
                 OR (
-                    created_at > COALESCE($3::timestamptz, 'epoch'::timestamptz)
-                    AND from_did <> $4
+                    from_did <> $3
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM {{tables.chat_message_reads}} mr
+                        WHERE mr.session_id = {{tables.chat_messages}}.session_id
+                          AND mr.did = $3
+                          AND mr.message_id = {{tables.chat_messages}}.message_id
+                    )
                 )
               )
             ORDER BY created_at DESC
-            LIMIT $5
+            LIMIT $4
             """,
             session_id,
             bool(unread_only),
-            last_read_message_at,
             participant_did,
             int(limit),
         )
@@ -722,12 +716,16 @@ async def mark_messages_read(
     *,
     session_id: UUID,
     participant_did: str,
-    up_to_message_id: str,
+    message_ids: list[str],
     participant_agent_id: str | None = None,
 ) -> dict[str, Any]:
     aweb_db = db.get_manager("aweb")
     participant_agent_uuid = _uuid_or_none(participant_agent_id)
-    up_to_uuid = UUID(up_to_message_id)
+    if not message_ids:
+        raise ValidationError("message_ids is required")
+    if len(message_ids) > MAX_CHAT_MARK_READ_IDS:
+        raise ValidationError(f"message_ids cannot exceed {MAX_CHAT_MARK_READ_IDS} items")
+    requested_ids = list(dict.fromkeys(UUID(message_id) for message_id in message_ids))
 
     is_participant = await aweb_db.fetch_one(
         """
@@ -741,75 +739,56 @@ async def mark_messages_read(
     if not is_participant:
         raise ForbiddenError("Not a participant in this session")
 
-    msg = await aweb_db.fetch_one(
+    presented = await aweb_db.fetch_all(
         """
-        SELECT created_at
+        SELECT message_id
         FROM {{tables.chat_messages}}
-        WHERE session_id = $1 AND message_id = $2
+        WHERE session_id = $1 AND message_id = ANY($2::uuid[])
         """,
         session_id,
-        up_to_uuid,
+        requested_ids,
     )
-    if not msg:
+    if len(presented) != len(requested_ids):
         raise NotFoundError("Message not found")
 
-    up_to_time = msg["created_at"]
     read_time = datetime.now(timezone.utc)
-
-    old = await aweb_db.fetch_one(
-        """
-        SELECT last_read_msg.created_at AS last_read_message_at
-        FROM {{tables.chat_read_receipts}}
-        LEFT JOIN {{tables.chat_messages}} last_read_msg
-          ON last_read_msg.message_id = {{tables.chat_read_receipts}}.last_read_message_id
-        WHERE {{tables.chat_read_receipts}}.session_id = $1
-          AND {{tables.chat_read_receipts}}.did = $2
-        """,
-        session_id,
-        participant_did,
-    )
-    old_last_message_at = old["last_read_message_at"] if old else None
-
-    marked = await aweb_db.fetch_value(
-        """
-        SELECT COUNT(*)::int
-        FROM {{tables.chat_messages}}
-        WHERE session_id = $1
-          AND from_did <> $2
-          AND created_at > COALESCE($3::timestamptz, 'epoch'::timestamptz)
-          AND created_at <= $4
-        """,
-        session_id,
-        participant_did,
-        old_last_message_at,
-        up_to_time,
-    )
-
-    upserted = await aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.chat_read_receipts}}
-            (session_id, did, agent_id, last_read_message_id, last_read_at)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (session_id, did) DO UPDATE
-        SET last_read_message_id = EXCLUDED.last_read_message_id,
-            agent_id = EXCLUDED.agent_id,
-            last_read_at = EXCLUDED.last_read_at
-        WHERE $6 > COALESCE(
-            (SELECT created_at FROM {{tables.chat_messages}}
-             WHERE message_id = {{tables.chat_read_receipts}}.last_read_message_id),
-            'epoch'::timestamptz
+    async with aweb_db.transaction() as tx:
+        marked = await tx.fetch_all(
+            """
+            INSERT INTO {{tables.chat_message_reads}}
+                (session_id, did, message_id, agent_id, read_at)
+            SELECT $1, $2, m.message_id, $3, $4
+            FROM {{tables.chat_messages}} m
+            WHERE m.session_id = $1
+              AND m.message_id = ANY($5::uuid[])
+              AND m.from_did <> $2
+            ON CONFLICT (session_id, did, message_id) DO NOTHING
+            RETURNING message_id
+            """,
+            session_id,
+            participant_did,
+            participant_agent_uuid,
+            read_time,
+            requested_ids,
         )
-        RETURNING 1
-        """,
-        session_id,
-        participant_did,
-        participant_agent_uuid,
-        up_to_uuid,
-        read_time,
-        up_to_time,
-    )
+        await tx.execute(
+            """
+            INSERT INTO {{tables.chat_read_receipts}}
+                (session_id, did, agent_id, last_read_message_id, last_read_at)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (session_id, did) DO UPDATE
+            SET last_read_message_id = EXCLUDED.last_read_message_id,
+                agent_id = EXCLUDED.agent_id,
+                last_read_at = EXCLUDED.last_read_at
+            """,
+            session_id,
+            participant_did,
+            participant_agent_uuid,
+            requested_ids[-1],
+            read_time,
+        )
 
     return {
         "session_id": str(session_id),
-        "messages_marked": int(marked or 0) if upserted else 0,
+        "messages_marked": len(marked),
     }

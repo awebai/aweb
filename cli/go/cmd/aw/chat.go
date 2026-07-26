@@ -425,7 +425,7 @@ var chatReadCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		resp, err := c.Client.ChatMarkRead(ctx, sessionID, &awid.ChatMarkReadRequest{UpToMessageID: messageID})
+		resp, err := c.Client.ChatMarkRead(ctx, sessionID, &awid.ChatMarkReadRequest{MessageIDs: []string{messageID}})
 		if err != nil {
 			return err
 		}
