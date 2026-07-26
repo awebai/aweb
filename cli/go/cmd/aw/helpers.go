@@ -603,12 +603,13 @@ func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Cl
 		}
 		return nil, fmt.Errorf("workspace is missing active_team membership")
 	}
-	certPath := filepath.Join(sel.WorkingDir, ".aw", filepath.FromSlash(strings.TrimSpace(selectedMembership.CertPath)))
+	certHome := awconfig.WorktreeIdentityHome(sel.WorkingDir)
 	if strings.TrimSpace(sel.IdentityHome) != "" {
-		certPath, err = awconfig.IdentityHomeStoredPath(awconfig.IdentityHome{Root: sel.IdentityHome}, selectedMembership.CertPath)
-		if err != nil {
-			return nil, err
-		}
+		certHome = sel.IdentityHome
+	}
+	certPath, err := awconfig.IdentityHomeStoredPath(awconfig.IdentityHome{Root: certHome}, selectedMembership.CertPath)
+	if err != nil {
+		return nil, err
 	}
 	cert, err := awid.LoadTeamCertificate(certPath)
 	if err != nil {
