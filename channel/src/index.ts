@@ -26,9 +26,13 @@ import {
 // contract sentinel that the freshness gate (check-package-dist.mjs) asserts.
 export { resolveRegistryFallbackURL, CHANNEL_CORE_SECURITY_CONTRACT };
 
+export function loadChannelConfig(workdir: string) {
+  return resolveConfig(workdir);
+}
+
 async function main() {
   const workdir = process.cwd();
-  const config = await resolveConfig(workdir);
+  const config = await loadChannelConfig(workdir);
 
   const client = createChannelClient(config);
   // Fail closed: a corrupt/unreadable trust store must abort startup, never
