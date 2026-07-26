@@ -86,14 +86,25 @@ class SpawnRefusal extends Error {
   }
 }
 
+function shellWord(value) {
+  return `'${String(value).replaceAll("'", `'"'"'`)}'`;
+}
+
+function safeSoul(value, name = "OAS_AGENT") {
+  if (!value || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    throw new TypeError(`${name} must be a filesystem-safe soul name`);
+  }
+  return value;
+}
+
 function oneNextAction(issue, soul) {
   if (issue?.nextAction) return issue.nextAction;
-  if (soul) return `oas aweb-identity status --soul ${soul} --json`;
+  if (soul) return `oas aweb-identity status --soul ${shellWord(safeSoul(soul))} --json`;
   return "oas status --json";
 }
 
 function editConfigCommand(context) {
-  return `$EDITOR ${JSON.stringify(join(context, "oas-config.yaml"))}`;
+  return `$EDITOR ${shellWord(join(context, "oas-config.yaml"))}`;
 }
 
 function readinessReport({ readiness, message, nextAction, settingsSource }) {
@@ -114,9 +125,7 @@ function readinessReport({ readiness, message, nextAction, settingsSource }) {
 function commandSoul() {
   const index = process.argv.indexOf("--soul");
   if (index < 0) return null;
-  const soul = process.argv[index + 1];
-  if (!soul || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(soul)) throw new TypeError("status --soul requires a filesystem-safe soul name");
-  return soul;
+  return safeSoul(process.argv[index + 1], "status --soul");
 }
 
 function resolvedStatusSettings(context, soul) {
@@ -785,6 +794,7 @@ try {
     let binding;
     let preflight;
     try {
+      safeSoul(process.env.OAS_AGENT);
       binding = parseBindingSettings();
       preflight = preflightBinding(binding);
     } catch (error) {
@@ -842,8 +852,8 @@ try {
       identity_resources_created: false,
       admission: "advisory-hook-failure-cannot-prevent-oas-launch",
       message: error.message,
-      next_action: process.env.OAS_AGENT
-        ? `oas aweb-identity status --soul ${process.env.OAS_AGENT} --json`
+      next_action: process.env.OAS_AGENT && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(process.env.OAS_AGENT)
+        ? `oas aweb-identity status --soul ${shellWord(process.env.OAS_AGENT)} --json`
         : "oas status --json",
     };
     if (Object.hasOwn(process.env, "OAS_ROOT")) {

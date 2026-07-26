@@ -86,9 +86,10 @@ function fixture({
   schemaVersion = 1,
   mintingAuthority = mode === "provision-disposable" ? "throwaway" : undefined,
   mintingAuthorityPath = mode === "provision-disposable" ? "hosted" : undefined,
+  repoName = "repo",
 } = {}) {
   const base = temporaryDirectory();
-  const repo = join(base, "repo");
+  const repo = join(base, repoName);
   gitRepo(repo);
   const agentsRoot = join(base, "agents");
   const soul = join(agentsRoot, "developer", "soul");
@@ -250,6 +251,29 @@ test("native status returns needs-setup with one action for a repairable declara
   assert.equal(report.instance_or_session_created, false);
 });
 
+test("needs-setup command shell-quotes an adversarial config path as one exact argument", () => {
+  const repoName = "repo$(touch${IFS}next-action-injected)'quoted";
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2, repoName });
+  const configPath = join(f.repo, "oas-config.yaml");
+  writeFileSync(configPath, readFileSync(configPath, "utf8").replace("principal: throwaway", "principal: missing"));
+  const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  assert.equal(result.status, 1, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.readiness, "needs_setup");
+
+  const editor = join(f.base, "record-editor");
+  const editorLog = join(f.base, "editor-argv.json");
+  write(editor, `#!/bin/sh\nnode -e 'require("fs").writeFileSync(process.env.EDITOR_LOG, JSON.stringify(process.argv.slice(1)))' "$@"\n`, 0o755);
+  const executed = spawnSync("/bin/sh", ["-c", report.next_action], {
+    cwd: f.base,
+    env: { ...f.env, EDITOR: editor, EDITOR_LOG: editorLog },
+    encoding: "utf8",
+  });
+  assert.equal(executed.status, 0, executed.stderr);
+  assert.equal(existsSync(join(f.base, "next-action-injected")), false);
+  assert.deepEqual(JSON.parse(readFileSync(editorLog, "utf8")), [configPath]);
+});
+
 test("native status classifies durable resident configuration as unavailable experimental", () => {
   const f = fixture({ mode: "provision-durable", schemaVersion: 2 });
   const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
@@ -325,10 +349,33 @@ test("spawn preflight refusal is structured, nonzero, and precedes identity crea
   assert.equal(refusal.nothing_created_by_capability, true);
   assert.equal(refusal.identity_resources_created, false);
   assert.equal(refusal.admission, "advisory-hook-failure-cannot-prevent-oas-launch");
-  assert.equal(refusal.next_action, "oas aweb-identity status --soul developer --json");
+  assert.equal(refusal.next_action, "oas aweb-identity status --soul 'developer' --json");
   assert.equal(Object.hasOwn(refusal, "next_actions"), false);
   assert.equal(readdirSync(hookHome).length, 0);
   assert.equal(existsSync(join(f.principalHome, ".provisioning")), false);
+});
+
+test("standalone refusal rejects an unsafe ambient soul before constructing its action", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  const hookHome = join(f.base, "unsafe-soul-home");
+  mkdirSync(hookHome);
+  const marker = join(f.base, "unsafe-soul-action");
+  const result = spawnSync(process.execPath, [join(f.capability, "bin", "aweb-identity-attach.mjs"), "spawn"], {
+    cwd: hookHome,
+    env: {
+      ...f.env,
+      OAS_EVENT: "spawn", OAS_HOME: hookHome, OAS_CONTEXT: f.repo,
+      OAS_AGENT: `developer; touch ${marker}`, OAS_INSTANCE: "never-created", OAS_SETTINGS: "{}",
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  const refusal = JSON.parse(result.stdout);
+  assert.match(refusal.message, /OAS_AGENT.*filesystem-safe/);
+  assert.equal(refusal.next_action, "oas status --json");
+  const executed = spawnSync("/bin/sh", ["-c", refusal.next_action], { cwd: f.repo, env: f.env, encoding: "utf8" });
+  assert.equal(executed.status, 0, executed.stderr);
+  assert.equal(existsSync(marker), false);
 });
 
 test("instance link containment includes an exact renamed link to the principal root", () => {
