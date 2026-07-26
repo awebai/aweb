@@ -381,3 +381,155 @@ func TestResolveWorkspaceRejectsUnknownTeamOverrideWithAvailableMemberships(t *t
 		t.Fatalf("error=%q", got)
 	}
 }
+
+func teamCertificateForSelectionTest(teamID, address string) *awid.TeamCertificate {
+	return &awid.TeamCertificate{
+		Version:       1,
+		CertificateID: "cert-" + address,
+		Team:          teamID,
+		TeamDIDKey:    "did:key:z6MkTeam",
+		MemberDIDKey:  "did:key:z6MkMember",
+		MemberDIDAW:   "did:aw:member",
+		MemberAddress: address,
+		Alias:         "member",
+		Lifetime:      awid.LifetimePersistent,
+		IssuedAt:      "2026-04-21T00:00:00Z",
+		Signature:     "sig",
+	}
+}
+
+func TestResolveRejectsTeamCertificatePathEscapingIdentityHome(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	teamID := "backend:aweb.ai"
+	outside := filepath.Join(tmp, "outside", "planted.pem")
+	if err := os.MkdirAll(filepath.Dir(outside), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveTeamCertificate(outside, teamCertificateForSelectionTest(teamID, "aweb.ai/planted")); err != nil {
+		t.Fatal(err)
+	}
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, teamID, &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
+		Memberships: []WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "member",
+			WorkspaceID: "agent-member",
+			CertPath:    "../outside/planted.pem",
+			JoinedAt:    "2026-04-21T00:00:00Z",
+		}},
+	})
+
+	_, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
+	if err == nil {
+		t.Fatal("expected cert_path escaping the identity home to be rejected")
+	}
+	if !strings.Contains(err.Error(), "escapes identity home") {
+		t.Fatalf("error=%q want it to name the identity-home escape", err)
+	}
+}
+
+func TestResolveRejectsSymlinkedTeamCertificate(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	teamID := "backend:aweb.ai"
+	outside := filepath.Join(tmp, "outside", "planted.pem")
+	if err := os.MkdirAll(filepath.Dir(outside), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveTeamCertificate(outside, teamCertificateForSelectionTest(teamID, "aweb.ai/planted")); err != nil {
+		t.Fatal(err)
+	}
+	certPath := TeamCertificatePath(tmp, teamID)
+	if err := os.MkdirAll(filepath.Dir(certPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, certPath); err != nil {
+		t.Fatal(err)
+	}
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, teamID, &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
+		Memberships: []WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "member",
+			WorkspaceID: "agent-member",
+			CertPath:    TeamCertificateRelativePath(teamID),
+			JoinedAt:    "2026-04-21T00:00:00Z",
+		}},
+	})
+
+	_, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
+	if err == nil {
+		t.Fatal("expected a symlinked team certificate to be rejected")
+	}
+	if !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("error=%q want it to name the symlink", err)
+	}
+}
+
+// The stored cert_path is authoritative. Resolving the certificate from the
+// team_id instead would read a different file whenever the two disagree.
+func TestResolveReadsStoredCertPathNotTeamIDDerivedPath(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	teamID := "backend:aweb.ai"
+	storedRelative := "team-certs/stored.pem"
+	stored := filepath.Join(tmp, ".aw", filepath.FromSlash(storedRelative))
+	if err := os.MkdirAll(filepath.Dir(stored), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveTeamCertificate(stored, teamCertificateForSelectionTest(teamID, "aweb.ai/stored")); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveTeamCertificate(TeamCertificatePath(tmp, teamID), teamCertificateForSelectionTest(teamID, "aweb.ai/derived")); err != nil {
+		t.Fatal(err)
+	}
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, teamID, &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
+		Memberships: []WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "member",
+			WorkspaceID: "agent-member",
+			CertPath:    storedRelative,
+			JoinedAt:    "2026-04-21T00:00:00Z",
+		}},
+	})
+
+	sel, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Address != "aweb.ai/stored" {
+		t.Fatalf("address=%q want the certificate at the stored cert_path", sel.Address)
+	}
+}
+
+// A workspace that has not fetched its certificate yet must still resolve;
+// the hardened path must not turn a missing file into a hard failure.
+func TestResolveToleratesMissingTeamCertificate(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	teamID := "backend:aweb.ai"
+	saveWorkspaceAndTeamStateForSelectionTest(t, tmp, teamID, &WorktreeWorkspace{
+		AwebURL: "https://app.aweb.ai",
+		Memberships: []WorktreeMembership{{
+			TeamID:      teamID,
+			Alias:       "member",
+			WorkspaceID: "agent-member",
+			CertPath:    TeamCertificateRelativePath(teamID),
+			JoinedAt:    "2026-04-21T00:00:00Z",
+		}},
+	})
+
+	sel, err := ResolveWorkspace(ResolveOptions{WorkingDir: tmp})
+	if err != nil {
+		t.Fatalf("missing certificate should not fail selection: %v", err)
+	}
+	if sel.TeamID != teamID {
+		t.Fatalf("team_id=%q want %q", sel.TeamID, teamID)
+	}
+}
