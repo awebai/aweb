@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,7 +25,10 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	var workspaceDeleted, certificateRevoked bool
 	var workspaceDeleteCalls int
 	var authorityDID, controllerDID string
+	var stateMu sync.Mutex
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stateMu.Lock()
+		defer stateMu.Unlock()
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.test/teams/backend/certificates":
 			registerCalls++
@@ -138,6 +142,12 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 		}
 	}))
 
+	snapshot := func() (*awid.TeamCertificate, string, int, int, bool, bool, int) {
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		return registeredCert, connectWorkspacePath, registerCalls, connectCalls, workspaceDeleted, certificateRevoked, workspaceDeleteCalls
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	rawRoot := t.TempDir()
@@ -196,8 +206,9 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	if err == nil {
 		t.Fatalf("first provision-local should lose its committed registry response:\n%s", output)
 	}
-	if registerCalls != 1 || registeredCert == nil {
-		t.Fatalf("register_calls=%d cert=%+v", registerCalls, registeredCert)
+	registered, _, registeredCalls, _, _, _, _ := snapshot()
+	if registeredCalls != 1 || registered == nil {
+		t.Fatalf("register_calls=%d cert=%+v", registeredCalls, registered)
 	}
 	if matches, err := awconfig.ListTeamInvitesByOperation("oas-AAAAAAAAAAAAAAAAAAAAAA"); err != nil || len(matches) != 1 {
 		t.Fatalf("response-loss grant matches=%+v err=%v", matches, err)
@@ -226,11 +237,12 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 		t.Fatal(err)
 	}
 	principalDID := awid.ComputeDIDKey(principalKey.Public().(ed25519.PublicKey))
-	if registeredCert.MemberDIDKey != principalDID || registeredCert.MemberDIDKey == awid.ComputeDIDKey(shadowKey.Public().(ed25519.PublicKey)) {
-		t.Fatalf("registered did=%q principal=%q", registeredCert.MemberDIDKey, principalDID)
+	registered, connectedPath, _, _, _, _, _ := snapshot()
+	if registered.MemberDIDKey != principalDID || registered.MemberDIDKey == awid.ComputeDIDKey(shadowKey.Public().(ed25519.PublicKey)) {
+		t.Fatalf("registered did=%q principal=%q", registered.MemberDIDKey, principalDID)
 	}
-	if connectWorkspacePath != instanceDir {
-		t.Fatalf("connect workspace_path=%q want %q", connectWorkspacePath, instanceDir)
+	if connectedPath != instanceDir {
+		t.Fatalf("connect workspace_path=%q want %q", connectedPath, instanceDir)
 	}
 	if matches, err := awconfig.ListTeamInvitesByOperation("oas-AAAAAAAAAAAAAAAAAAAAAA"); err != nil || len(matches) != 0 {
 		t.Fatalf("terminal grants=%+v err=%v", matches, err)
@@ -253,8 +265,9 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	if err := json.Unmarshal(extractJSON(t, retryOutput), &retried); err != nil {
 		t.Fatal(err)
 	}
-	if retried.CertificateID != got.CertificateID || retried.WorkspaceID != got.WorkspaceID || registerCalls != 1 || connectCalls != 1 {
-		t.Fatalf("retry=%+v register_calls=%d connect_calls=%d", retried, registerCalls, connectCalls)
+	_, _, registeredCalls, connectedCalls, _, _, _ := snapshot()
+	if retried.CertificateID != got.CertificateID || retried.WorkspaceID != got.WorkspaceID || registeredCalls != 1 || connectedCalls != 1 {
+		t.Fatalf("retry=%+v register_calls=%d connect_calls=%d", retried, registeredCalls, connectedCalls)
 	}
 
 	// Local-path threat label: accident/confused-deputy only. A forged instance
@@ -273,7 +286,8 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	if forgedErr == nil || !strings.Contains(string(forgedOutput), "target record contradicts the requested operation") {
 		t.Fatalf("forged cleanup attribution: err=%v\n%s", forgedErr, forgedOutput)
 	}
-	if workspaceDeleted || certificateRevoked {
+	_, _, _, _, workspaceWasDeleted, certificateWasRevoked, _ := snapshot()
+	if workspaceWasDeleted || certificateWasRevoked {
 		t.Fatal("forged operation reached destructive cleanup")
 	}
 
@@ -289,8 +303,9 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	if cleanupErr == nil {
 		t.Fatalf("first cleanup should lose the committed workspace-delete response:\n%s", cleanupOutput)
 	}
-	if !workspaceDeleted || certificateRevoked {
-		t.Fatalf("workspace_deleted=%v certificate_revoked=%v", workspaceDeleted, certificateRevoked)
+	_, _, _, _, workspaceWasDeleted, certificateWasRevoked, _ = snapshot()
+	if !workspaceWasDeleted || certificateWasRevoked {
+		t.Fatalf("workspace_deleted=%v certificate_revoked=%v", workspaceWasDeleted, certificateWasRevoked)
 	}
 
 	cleanupRetry := exec.CommandContext(ctx, bin, cleanupArgs...)
@@ -300,7 +315,8 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	if cleanupErr == nil {
 		t.Fatalf("second cleanup should lose the committed certificate-revoke response:\n%s", cleanupOutput)
 	}
-	if !certificateRevoked {
+	_, _, _, _, _, certificateWasRevoked, _ = snapshot()
+	if !certificateWasRevoked {
 		t.Fatal("certificate revoke did not commit before response loss")
 	}
 
@@ -318,8 +334,9 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	if cleaned["status"] != "complete" || cleaned["workspace"] != "soft-deleted" || cleaned["identity"] != "soft-deleted" || cleaned["certificate"] != "revoked" || cleaned["credentials"] != "physically-absent" {
 		t.Fatalf("cleanup=%v", cleaned)
 	}
-	if workspaceDeleteCalls != 2 || !certificateRevoked {
-		t.Fatalf("workspace_delete_calls=%d certificate_revoked=%v", workspaceDeleteCalls, certificateRevoked)
+	_, _, _, _, _, certificateWasRevoked, deleteCalls := snapshot()
+	if deleteCalls != 2 || !certificateWasRevoked {
+		t.Fatalf("workspace_delete_calls=%d certificate_revoked=%v", deleteCalls, certificateWasRevoked)
 	}
 	entries, err := os.ReadDir(targetHome)
 	if err != nil {
