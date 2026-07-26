@@ -8,6 +8,14 @@ Epic: `aweb-oas-aaaa`
 Binds OAS to aweb identity, messaging, and tasks. Remote host dispatch is out
 of scope.
 
+**This document has one author.** Propose changes on the epic task and the owner
+makes them. This is not ceremony: two people editing one normative document in
+parallel is how it started contradicting itself once already, and how a
+correction landing in main can silently revert another correction still on a
+branch. The rule was previously enforced by remembering to tell each new agent,
+which failed the first time an agent arrived who had not been told — so it is
+written here instead, where anyone about to edit will see it.
+
 Every claim about external behaviour in this document was verified against
 running code at a stated version, and cites the source so a reader can re-check
 rather than trust. Versions: OAS 0.18.1, aw CLI 1.32.10, Claude Code 2.1.219.
