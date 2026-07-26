@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -120,18 +121,18 @@ func LoadPinStore(path string) (*PinStore, error) {
 		return nil, fmt.Errorf("trust pin store at %s is too large (over %d bytes); refusing to load", path, maxPinStoreBytes)
 	}
 
-	ps, err := parsePinStore(data)
+	ps, err := ParsePinStore(data)
 	if err != nil {
 		return nil, fmt.Errorf("trust pin store at %s is corrupt: %w (the file is left unchanged — repair or remove it)", path, err)
 	}
 	return ps, nil
 }
 
-// parsePinStore decodes and validates the on-disk document. Validation happens
-// on raw YAML nodes rather than through struct decoding, because yaml.v3 coerces
-// scalars (address: 123 would silently become "123") and honours custom tags,
-// neither of which channel-core's JSON_SCHEMA loader accepts.
-func parsePinStore(data []byte) (*PinStore, error) {
+// ParsePinStore decodes and validates an on-disk pin-store document. Validation
+// happens on raw YAML nodes rather than through struct decoding, because yaml.v3
+// coerces scalars (address: 123 would silently become "123") and honours custom
+// tags, neither of which channel-core's JSON_SCHEMA loader accepts.
+func ParsePinStore(data []byte) (*PinStore, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 
 	var root yaml.Node
@@ -552,10 +553,27 @@ func appendUnknown(node *yaml.Node, unknown map[string]any) (*yaml.Node, error) 
 	return node, nil
 }
 
+// Encode serializes the interoperable pin-store document.
+func (ps *PinStore) Encode() ([]byte, error) {
+	return yaml.Marshal(ps)
+}
+
+// SemanticallyEqual reports whether two stores contain the same modeled and
+// preserved state. Formatting is deliberately irrelevant: Go and Node both
+// read the shared YAML file and normalize quoting, ordering, and indentation.
+func (ps *PinStore) SemanticallyEqual(other *PinStore) bool {
+	if ps == nil || other == nil {
+		return ps == other
+	}
+	return reflect.DeepEqual(ps.Pins, other.Pins) &&
+		reflect.DeepEqual(ps.Addresses, other.Addresses) &&
+		reflect.DeepEqual(ps.unknown, other.unknown)
+}
+
 // Save writes the pin store to disk atomically. Creates parent
 // directories if needed. The file is written with 0600 permissions.
 func (ps *PinStore) Save(path string) error {
-	data, err := yaml.Marshal(ps)
+	data, err := ps.Encode()
 	if err != nil {
 		return err
 	}

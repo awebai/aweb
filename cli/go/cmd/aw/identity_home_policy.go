@@ -10,8 +10,9 @@ import (
 // commands that never access principal state and therefore bypass admission.
 // Its exact population and real-binary behavior are guarded in tests.
 var identityHomeNeutralCommandExemptions = map[*cobra.Command]struct{}{
-	versionCmd: {},
-	upgradeCmd: {},
+	pinStoreCompareAndSetCmd: {},
+	versionCmd:               {},
+	upgradeCmd:               {},
 }
 
 func isIdentityHomeNeutralCommand(cmd *cobra.Command) bool {

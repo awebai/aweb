@@ -3,7 +3,7 @@ export { streamAgentEvents, parseAgentEvent, formatEventStreamState, streamError
 export { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 export { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 export { resolveConfig, type AgentConfig } from "./config.js";
-export { PinStore, type IdentityScope, type Pin, type PinResult } from "./identity/pinstore.js";
+export { PinStore, type IdentityScope, type Pin, type PinResult, type PinStoreWriter } from "./identity/pinstore.js";
 export { RegistryResolver, DEFAULT_AWID_REGISTRY_URL, type StableIdentityVerification } from "./identity/registry.js";
 export { SenderTrustManager, canonicalReplacementJSON, canonicalRotationJSON, normalizeIdentityScope, type TrustResult, type RotationAnnouncement, type ReplacementAnnouncement } from "./identity/trust.js";
 export { computeDIDKey, extractPublicKey } from "./identity/did.js";
@@ -11,7 +11,14 @@ export { CHANNEL_CORE_SECURITY_CONTRACT } from "./contract.js";
 export { loadSigningKey } from "./identity/keys.js";
 export { certificateIdentityScope, loadTeamCertificate, encodeTeamCertificateHeader, type CertificateIdentityScope, type LegacyCertificateLifetime, type TeamCertificate } from "./identity/certificate.js";
 export { verifyMessage, verifySignedPayload, type VerificationStatus } from "./identity/signing.js";
-export { createLocalAWDecryptProvider, type LocalAWDecryptOptions, type LocalDecryptProvider } from "./local_aw.js";
+export {
+  createLocalAWDecryptProvider,
+  createLocalAWPinStoreWriter,
+  PinStoreCASConflictError,
+  type LocalAWDecryptOptions,
+  type LocalAWPinStoreOptions,
+  type LocalDecryptProvider,
+} from "./local_aw.js";
 export {
   DEFAULT_DELIVERY_STORE_PATH,
   DEFAULT_PIN_STORE_PATH,
