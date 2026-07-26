@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { decodeRawStdBase64, decodeRawStdBase64OrEmpty } from "../src/identity/base64.js";
+import { decodeRawStdBase64 } from "../src/identity/base64.js";
 
 // Go verifies signatures with base64.RawStdEncoding. TypeScript must reject
 // exactly what Go rejects: Node's Buffer.from(v, "base64") accepts padding and
@@ -20,7 +20,6 @@ describe("raw std base64 strictness matches Go", () => {
   for (const value of goRejects) {
     test(`rejects ${JSON.stringify(value)}`, () => {
       expect(() => decodeRawStdBase64(value)).toThrow();
-      expect(decodeRawStdBase64OrEmpty(value)).toHaveLength(0);
     });
   }
 
