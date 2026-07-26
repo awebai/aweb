@@ -1,11 +1,35 @@
 from __future__ import annotations
 
 import os
+import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 from oas_principal_proof import assert_unchanged, scan_instance, write_snapshot
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class PrincipalProofHarnessTests(unittest.TestCase):
+    def test_default_suite_runs_proof_helper_tests(self) -> None:
+        makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+        match = re.search(r"^test\s*:(.*)$", makefile, re.MULTILINE)
+        self.assertIsNotNone(match, "Makefile has no default test target")
+        self.assertIn("test-oas-proof-helpers", match.group(1).split())
+
+    def test_harness_preflight_checks_repository_paths_without_tooling(self) -> None:
+        result = subprocess.run(
+            ["/bin/bash", "scripts/e2e-oas-attached-principal-retire.sh", "--preflight"],
+            cwd=REPO_ROOT,
+            env={"PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class PrincipalProofFilesystemTests(unittest.TestCase):

@@ -23,13 +23,30 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CLI_DIR="$REPO_ROOT/cli/go"
 AW_BIN="${AW_BIN:-$CLI_DIR/aw}"
 PROOF_HELPER="$REPO_ROOT/scripts/e2e/oas_principal_proof.py"
+CAPABILITY_SOURCE="$REPO_ROOT/oas/.agents/capabilities/owned/aweb-identity-attach"
+COMPOSE_FILE="$REPO_ROOT/docker-compose.e2e.yml"
+
+preflight() {
+  [[ -d "$CLI_DIR" ]] || { echo "FAIL: CLI source not found at $CLI_DIR" >&2; return 1; }
+  [[ -f "$PROOF_HELPER" ]] || { echo "FAIL: proof helper not found at $PROOF_HELPER" >&2; return 1; }
+  [[ -f "$COMPOSE_FILE" ]] || { echo "FAIL: compose file not found at $COMPOSE_FILE" >&2; return 1; }
+  [[ -f "$CAPABILITY_SOURCE/oas.json" ]] || {
+    echo "FAIL: attach capability not found at $CAPABILITY_SOURCE" >&2
+    return 1
+  }
+}
+
+preflight
+if [[ "${1:-}" == "--preflight" ]]; then
+  exit
+fi
+
 OAS_ROOT="${OAS_TEST_ROOT:-}"
 if [[ -z "$OAS_ROOT" ]]; then
   OAS_ROOT="$(oas root)"
 fi
 OAS_ROOT="$(canonical_dir "$OAS_ROOT")"
 OAS_CLI="$OAS_ROOT/bin/oas.mjs"
-CAPABILITY_SOURCE="$REPO_ROOT/oas/.agents/capabilities/owned/aweb-identity-attach"
 
 AWID_PORT="${OAS_PROOF_AWID_PORT:-18110}"
 AWEB_PORT="${OAS_PROOF_AWEB_PORT:-18100}"
@@ -37,7 +54,7 @@ POSTGRES_PORT="${OAS_PROOF_POSTGRES_PORT:-55433}"
 AWID_URL="http://127.0.0.1:$AWID_PORT"
 AWEB_URL="http://127.0.0.1:$AWEB_PORT"
 PROJECT="${OAS_PROOF_PROJECT:-aweb-oas-retire-proof-$(printf '%s' "$REPO_ROOT" | cksum | cut -d' ' -f1)}"
-COMPOSE=(docker compose -p "$PROJECT" -f "$REPO_ROOT/docker-compose.e2e.yml")
+COMPOSE=(docker compose -p "$PROJECT" -f "$COMPOSE_FILE")
 
 PROOF_ROOT="$(make_temp_dir)"
 PROOF_HOME="$PROOF_ROOT/home"
@@ -81,8 +98,6 @@ require_loopback() {
 require_loopback "$AWID_URL"
 require_loopback "$AWEB_URL"
 [[ -f "$OAS_CLI" ]] || fail "OAS CLI not found at $OAS_CLI"
-[[ -d "$CAPABILITY_SOURCE" ]] || fail "attach capability not found at $CAPABILITY_SOURCE"
-[[ -f "$PROOF_HELPER" ]] || fail "proof helper not found at $PROOF_HELPER"
 
 json_value() {
   local path="$1" dotted="$2"
