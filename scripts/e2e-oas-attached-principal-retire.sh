@@ -321,12 +321,18 @@ seed_provision_lifecycle_artifacts() {
     "set:idx:all_workspaces" 1 \
     "set:idx:team_workspaces:$TEAM_ID" 1 \
     "alias:idx:alias:$encoded_team:$encoded_alias" "$workspace" >/dev/null
-  docker exec "$REDIS_CONTAINER" redis-cli SADD idx:all_workspaces "$workspace" >/dev/null
-  docker exec "$REDIS_CONTAINER" redis-cli SADD "idx:team_workspaces:$TEAM_ID" "$workspace" >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli HSET "presence:$agent" workspace_id "$agent" alias "$alias" team_id "$TEAM_ID" repo_id "" current_branch "" >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli HSET "presence_coordinates:$agent" \
+    "set:idx:all_workspaces" 1 \
+    "set:idx:team_workspaces:$TEAM_ID" 1 \
+    "alias:idx:alias:$encoded_team:$encoded_alias" "$agent" >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli SADD idx:all_workspaces "$workspace" "$agent" >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli SADD "idx:team_workspaces:$TEAM_ID" "$workspace" "$agent" >/dev/null
   docker exec "$REDIS_CONTAINER" redis-cli SET "idx:alias:$encoded_team:$encoded_alias" "$workspace" EX 3600 >/dev/null
   docker exec "$REDIS_CONTAINER" redis-cli EXPIRE idx:all_workspaces 3600 >/dev/null
   docker exec "$REDIS_CONTAINER" redis-cli EXPIRE "idx:team_workspaces:$TEAM_ID" 3600 >/dev/null
   docker exec "$REDIS_CONTAINER" redis-cli PERSIST "presence_coordinates:$workspace" >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli PERSIST "presence_coordinates:$agent" >/dev/null
   [[ "$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$workspace';")" == "1" ]] \
     || fail "task-claim positive control was not created for $operation"
   [[ "$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT COUNT(*) FROM aweb.reservations WHERE holder_agent_id = '$agent';")" == "1" ]] \
@@ -337,14 +343,22 @@ seed_provision_lifecycle_artifacts() {
     || fail "team presence index positive control was not created for $operation"
   [[ "$(docker exec "$REDIS_CONTAINER" redis-cli GET "idx:alias:$encoded_team:$encoded_alias")" == "$workspace" ]] \
     || fail "alias presence index positive control was not created for $operation"
-  docker exec "$REDIS_CONTAINER" redis-cli DEL "presence:$workspace" >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli DEL "presence:$workspace" "presence:$agent" >/dev/null
   [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence:$workspace")" == "0" ]] \
-    || fail "primary presence did not expire before lifecycle cleanup for $operation"
+    || fail "workspace primary presence did not expire before lifecycle cleanup for $operation"
+  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence:$agent")" == "0" ]] \
+    || fail "agent-heartbeat primary presence did not expire before lifecycle cleanup for $operation"
   [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence_coordinates:$workspace")" == "1" ]] \
-    || fail "durable presence coordinates were not retained after primary expiry for $operation"
+    || fail "durable workspace presence coordinates were not retained after primary expiry for $operation"
+  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence_coordinates:$agent")" == "1" ]] \
+    || fail "durable agent-heartbeat coordinates were not retained after primary expiry for $operation"
   coordinates_ttl="$(docker exec "$REDIS_CONTAINER" redis-cli TTL "presence_coordinates:$workspace")"
-  [[ "$coordinates_ttl" == "-1" ]] \
+  [[ "$coordinates_ttl" == "-1" && "$(docker exec "$REDIS_CONTAINER" redis-cli TTL "presence_coordinates:$agent")" == "-1" ]] \
     || fail "presence cleanup coordinates are not durable until explicit cleanup for $operation"
+  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER idx:all_workspaces "$agent")" == "1" ]] \
+    || fail "agent-heartbeat global membership was not created for $operation"
+  [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER "idx:team_workspaces:$TEAM_ID" "$agent")" == "1" ]] \
+    || fail "agent-heartbeat team membership was not created for $operation"
   if [[ "$operation" == "$VICTIM_OPERATION" ]]; then
     docker exec "$REDIS_CONTAINER" redis-cli DEL "presence_coordinates:$workspace" >/dev/null
     [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence_coordinates:$workspace")" == "0" ]] \
@@ -407,7 +421,15 @@ PY
     [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence:$workspace")" == "0" ]] \
       || fail "$phase retained workspace presence"
     [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence_coordinates:$workspace")" == "0" ]] \
-      || fail "$phase retained durable presence cleanup coordinates"
+      || fail "$phase retained durable workspace presence cleanup coordinates"
+    [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence:$agent")" == "0" ]] \
+      || fail "$phase retained agent-heartbeat presence"
+    [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence_coordinates:$agent")" == "0" ]] \
+      || fail "$phase retained durable agent-heartbeat cleanup coordinates"
+    [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER idx:all_workspaces "$agent")" == "0" ]] \
+      || fail "$phase retained the agent-heartbeat global membership"
+    [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER "idx:team_workspaces:$TEAM_ID" "$agent")" == "0" ]] \
+      || fail "$phase retained the agent-heartbeat team membership"
     [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER idx:all_workspaces "$workspace")" == "0" ]] \
       || fail "$phase retained the global presence index"
     [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER "idx:team_workspaces:$TEAM_ID" "$workspace")" == "0" ]] \
@@ -761,7 +783,7 @@ document = {
         "authorized_retire_deleted_victim": True,
         "attacker_operation": attacker_operation,
         "native_manifest_command_deleted_unacknowledged_attacker": True,
-        "positive_lifecycle_controls_removed": ["PostgreSQL task claim", "PostgreSQL reservation", "Redis expired-primary cleanup coordinates", "Redis global presence index", "Redis team presence index", "Redis alias presence index"],
+        "positive_lifecycle_controls_removed": ["PostgreSQL task claim", "PostgreSQL reservation", "Redis expired workspace+agent-heartbeat cleanup coordinates", "Redis global presence index", "Redis team presence index", "Redis alias presence index"],
         "not_created_by_no_launch_provision": ["aweb API key", "message", "delivery record"],
         "provisioned_material_copy_hardlink_symlink_scan_passed": True,
         "external_journals_terminal_complete": True,

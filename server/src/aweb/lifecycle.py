@@ -1004,7 +1004,11 @@ async def apply_lifecycle_cascade(
     chat_waiting_status, chat_waiting_cleared_count = await _clear_chat_waiting(
         redis, chat_participants
     )
-    presence_status, presence_cleared_count = await _clear_presence(redis, workspace_ids)
+    presence_ids = list(workspace_ids)
+    if identity_deleted or request.operation == "agent_deleted_cascade":
+        presence_ids.extend(str(agent_id) for agent_id in agent_ids)
+        presence_ids = list(dict.fromkeys(presence_ids))
+    presence_status, presence_cleared_count = await _clear_presence(redis, presence_ids)
 
     post_commit_status: PostCommitStatus
     if (

@@ -178,6 +178,32 @@ async def test_clear_workspace_presence_uses_all_historical_coordinates_after_pr
 
 
 @pytest.mark.asyncio
+async def test_clear_workspace_presence_removes_workspace_and_agent_heartbeat_ids():
+    redis = _Redis()
+    await update_agent_presence(
+        redis,
+        workspace_id="workspace-1",
+        alias="worker",
+        team_id="backend:acme.test",
+    )
+    await update_agent_presence(
+        redis,
+        agent_id="agent-1",
+        alias="worker",
+        team_id="backend:acme.test",
+    )
+
+    assert await clear_workspace_presence(redis, ["workspace-1", "agent-1"]) == 2
+    assert "workspace-1" not in redis.sets["idx:all_workspaces"]
+    assert "agent-1" not in redis.sets["idx:all_workspaces"]
+    assert "workspace-1" not in redis.sets["idx:team_workspaces:backend:acme.test"]
+    assert "agent-1" not in redis.sets["idx:team_workspaces:backend:acme.test"]
+    assert "presence_coordinates:workspace-1" not in redis.hashes
+    assert "presence_coordinates:agent-1" not in redis.hashes
+    assert "idx:alias:backend%3Aacme.test:worker" not in redis.values
+
+
+@pytest.mark.asyncio
 async def test_clear_workspace_presence_recovers_pre_coordinate_indices():
     redis = _Redis()
     workspace_id = "workspace-pre-upgrade"

@@ -442,7 +442,10 @@ async def delete_workspace(
         # or failed during Redis cleanup. Re-enter the idempotent post-commit
         # step instead of turning 404 into false terminal success at the client.
         try:
-            await clear_workspace_presence(redis, [validated_id])
+            presence_ids = [validated_id]
+            if existing.get("agent_id") is not None:
+                presence_ids.append(str(existing["agent_id"]))
+            await clear_workspace_presence(redis, presence_ids)
         except Exception as exc:
             logger.warning("Retry failed to clear deleted workspace presence", exc_info=exc)
             raise HTTPException(

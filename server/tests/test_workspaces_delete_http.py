@@ -141,6 +141,7 @@ class _FakeRedis:
         self.published = []
         self.pipeline_actions = []
         self.presence = {}
+        self.cleaned_presence_ids = []
 
     async def publish(self, channel, message):
         self.published.append((channel, json.loads(message)))
@@ -169,6 +170,7 @@ class _FakeRedis:
     async def eval(self, script, number_of_keys, *args):
         assert number_of_keys == 2
         primary_key, coordinates_key, workspace_id, all_index_key = args
+        self.cleaned_presence_ids.append(workspace_id)
         self.presence.pop(primary_key, None)
         self.presence.pop(coordinates_key, None)
         self.pipeline_actions.extend([
@@ -333,6 +335,7 @@ async def test_delete_workspace_recovers_post_commit_presence_failure(aweb_cloud
     )
     assert ("delete", f"presence:{workspace_id}") in redis.pipeline_actions
     assert ("srem", "idx:all_workspaces", str(workspace_id)) in redis.pipeline_actions
+    assert set(redis.cleaned_presence_ids) == {str(workspace_id), str(agent_id)}
 
 
 @pytest.mark.asyncio
