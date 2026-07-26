@@ -10,6 +10,9 @@ import {
   validateBindingSettings,
 } from "../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs";
 
+const OPERATION_A = "oas-AAAAAAAAAAAAAAAAAAAAAA";
+const OPERATION_B = "oas-BBBBBBBBBBBBBBBBBBBBBQ";
+
 const disposableProvisioned = {
   schema_version: 2,
   mode: "provision-disposable",
@@ -17,12 +20,12 @@ const disposableProvisioned = {
   cleanup_owner: "instance",
   resource_identity: {
     kind: "provision-operation",
-    operation_id: "operation-1",
+    operation_id: OPERATION_A,
     stable_id: null,
-    reference: "operation:operation-1",
+    reference: `operation:${OPERATION_A}`,
     cleanup_authority: "local-controller",
   },
-  journal_operation: "operation-1",
+  journal_operation: OPERATION_A,
 };
 
 test("binding modes are an exact declared vocabulary with independent cleanup ownership", () => {
@@ -36,16 +39,18 @@ test("binding modes are an exact declared vocabulary with independent cleanup ow
   assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "provision-disposable", operation_id: "shared" }), /exactly schema_version and mode/);
   assert.throws(() => validateBindingSettings({ schema_version: 1, mode: "attach", principal: 123 }), /legacy identity_binding/);
   assert.throws(() => validateBindingSettings({ schema_version: 2, mode: "attach-existing", principal: 123 }), /attach-existing requires/);
-  assert.throws(() => pendingProvisionReceipt({ schema_version: 2, mode: "provision-disposable" }, 123), /filesystem-safe OAS_INSTANCE/);
-  assert.deepEqual(
-    pendingProvisionReceipt({ schema_version: 2, mode: "provision-disposable" }, "same-instance"),
-    pendingProvisionReceipt({ schema_version: 2, mode: "provision-disposable" }, "same-instance"),
-  );
+  const firstIntent = pendingProvisionReceipt({ schema_version: 2, mode: "provision-disposable" });
+  const secondIntent = pendingProvisionReceipt({ schema_version: 2, mode: "provision-disposable" });
+  assert.notEqual(firstIntent.journal_operation, secondIntent.journal_operation);
+  for (const intent of [firstIntent, secondIntent]) {
+    assert.match(intent.journal_operation, /^oas-[A-Za-z0-9_-]{21}[AQgw]$/);
+    assert.ok(intent.journal_operation.length <= 64);
+  }
 });
 
 test("receipt validity matrix rejects contradictory combinations", () => {
   assert.equal(validateBindingReceipt(disposableProvisioned), disposableProvisioned);
-  const pendingDurable = pendingProvisionReceipt({ schema_version: 2, mode: "provision-durable" }, "instance-durable-1");
+  const pendingDurable = pendingProvisionReceipt({ schema_version: 2, mode: "provision-durable" });
   assert.equal(pendingDurable.cleanup_owner, "external");
   assert.throws(() => validateBindingReceipt({ ...disposableProvisioned, cleanup_owner: "external" }), /contradicts mode/);
   assert.throws(() => validateBindingReceipt({ ...disposableProvisioned, lifecycle: "bound" }), /contradictory lifecycle/);
@@ -55,6 +60,17 @@ test("receipt validity matrix rejects contradictory combinations", () => {
     journal_operation: 123,
     resource_identity: { ...disposableProvisioned.resource_identity, operation_id: 123 },
   }), /does not match/);
+  for (const invalidOperation of ["short", "dotted.operation", "x".repeat(65)]) {
+    assert.throws(() => validateBindingReceipt({
+      ...disposableProvisioned,
+      journal_operation: invalidOperation,
+      resource_identity: {
+        ...disposableProvisioned.resource_identity,
+        operation_id: invalidOperation,
+        reference: `operation:${invalidOperation}`,
+      },
+    }), /hosted alias carrier/);
+  }
   assert.throws(() => validateBindingReceipt({ ...disposableProvisioned, schema_version: 99 }), /invalid schema/);
   assert.throws(() => validateBindingReceipt({ ...disposableProvisioned, unexpected: true }), /invalid schema or fields/);
   assert.throws(() => validateBindingReceipt({
@@ -71,6 +87,15 @@ test("instance receipt alone cannot grant cleanup and may withhold it", () => {
     cleanup_authorized: true,
     reason: "corroborating_local_record_matches_disposable_resource",
     authority_scope: "local_same_uid_accident_guard",
+  });
+
+  assert.deepEqual(cleanupJudgement(disposableProvisioned, {
+    ...authority,
+    instance_id: 123,
+  }, 123), {
+    action: "preserve",
+    cleanup_authorized: false,
+    reason: "cleanup_corroboration_missing_or_mismatched",
   });
 
   const remoteReceipt = {
@@ -122,7 +147,7 @@ test("instance receipt alone cannot grant cleanup and may withhold it", () => {
     ["external owner withholds", durableReceipt, authority, "instance-1", "instance_metadata_withholds_cleanup"],
     ["no authority", disposableProvisioned, null, "instance-1", "cleanup_corroboration_missing_or_mismatched"],
     ["wrong instance", disposableProvisioned, authority, "instance-2", "cleanup_corroboration_missing_or_mismatched"],
-    ["target substitution", { ...disposableProvisioned, resource_identity: { ...disposableProvisioned.resource_identity, reference: "operation:other", operation_id: "other" }, journal_operation: "other" }, authority, "instance-1", "cleanup_corroboration_missing_or_mismatched"],
+    ["target substitution", { ...disposableProvisioned, resource_identity: { ...disposableProvisioned.resource_identity, reference: `operation:${OPERATION_B}`, operation_id: OPERATION_B }, journal_operation: OPERATION_B }, authority, "instance-1", "cleanup_corroboration_missing_or_mismatched"],
   ]) {
     const decision = cleanupJudgement(receipt, record, instanceID);
     assert.equal(decision.action, "preserve", name);

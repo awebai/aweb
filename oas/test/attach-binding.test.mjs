@@ -280,7 +280,9 @@ for (const [mode, cleanupOwner] of [
     assert.match(spawned.warnings[0], /provisioning execution is not installed/);
     const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
     const receipt = meta.capabilityMeta["aweb.identity-attach"].identity_binding;
-    const operationID = `oas-${spawned.instance}`;
+    const operationID = receipt.journal_operation;
+    assert.match(operationID, /^oas-[A-Za-z0-9_-]{21}[AQgw]$/);
+    assert.ok(operationID.length <= 64);
     assert.deepEqual(receipt, {
       schema_version: 2,
       mode,
@@ -306,11 +308,11 @@ for (const [mode, cleanupOwner] of [
   });
 }
 
-test("distinct production spawns receive distinct operation identities", () => {
+test("distinct production intents receive opaque carrier-safe operation identities", () => {
   const f = fixture({ mode: "provision-disposable", schemaVersion: 2 });
   const receipts = [];
   const instances = [];
-  for (const purpose of ["distinct-one", "distinct-two"]) {
+  for (const purpose of ["distinct-one", "distinct-two", "x".repeat(80)]) {
     const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", purpose, "--no-launch", "--json"], {
       cwd: f.repo, env: f.env, encoding: "utf8",
     }));
@@ -318,10 +320,13 @@ test("distinct production spawns receive distinct operation identities", () => {
     const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
     receipts.push(meta.capabilityMeta["aweb.identity-attach"].identity_binding);
   }
-  assert.notEqual(instances[0], instances[1]);
-  assert.notEqual(receipts[0].journal_operation, receipts[1].journal_operation);
-  assert.equal(receipts[0].journal_operation, `oas-${instances[0]}`);
-  assert.equal(receipts[1].journal_operation, `oas-${instances[1]}`);
+  assert.equal(new Set(instances).size, instances.length);
+  const operationIDs = receipts.map((receipt) => receipt.journal_operation);
+  assert.equal(new Set(operationIDs).size, operationIDs.length);
+  for (const operationID of operationIDs) {
+    assert.match(operationID, /^oas-[A-Za-z0-9_-]{21}[AQgw]$/);
+    assert.ok(operationID.length <= 64);
+  }
 });
 
 test("local same-UID corroboration guards cleanup judgement against receipt-only mistakes", () => {

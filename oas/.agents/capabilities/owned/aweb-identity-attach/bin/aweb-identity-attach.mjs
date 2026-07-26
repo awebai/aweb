@@ -228,7 +228,7 @@ try {
     const binding = parseBindingSettings();
     if (binding.mode === "attach" || binding.mode === "attach-existing") attach(binding);
     else {
-      const receipt = pendingProvisionReceipt(binding, process.env.OAS_INSTANCE);
+      const receipt = pendingProvisionReceipt(binding);
       output({
         meta: { identity_binding: receipt },
         warning: `${binding.mode} is declared but provisioning execution is not installed; no identity was created`,

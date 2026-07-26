@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
 
@@ -15,6 +15,9 @@ const MODE_CLEANUP_OWNER = Object.freeze({
 });
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const safeID = (value) => typeof value === "string" && SAFE_ID.test(value);
+// "oas-" plus the unpadded base64url encoding of 128 random bits.
+const PROVISION_OPERATION_ID = /^oas-[A-Za-z0-9_-]{21}[AQgw]$/;
+const provisionOperationID = (value) => typeof value === "string" && PROVISION_OPERATION_ID.test(value);
 const DID_AW = /^did:aw:[A-Za-z0-9]+$/;
 
 function exactFields(value, fields) {
@@ -54,11 +57,13 @@ export function validateBindingSettings(value) {
   return { ...value, legacy: false };
 }
 
-export function pendingProvisionReceipt(settings, instanceID) {
+export function pendingProvisionReceipt(settings) {
   const validated = settings?.legacy === false ? settings : validateBindingSettings(settings);
   if (!validated.mode.startsWith("provision-")) throw new TypeError("pending provisioning receipt requires a provision mode");
-  if (!safeID(instanceID)) throw new TypeError("provisioning requires a filesystem-safe OAS_INSTANCE");
-  const operationID = `oas-${instanceID}`;
+  // A fresh intent gets an opaque 128-bit identifier in the hosted alias_hint
+  // carrier domain. Recovery resumes a durable journal intent; it never
+  // re-derives this identifier from an instance name.
+  const operationID = `oas-${randomBytes(16).toString("base64url")}`;
   return validateBindingReceipt({
     schema_version: 2,
     mode: validated.mode,
@@ -89,6 +94,9 @@ export function validateBindingReceipt(receipt) {
   const resource = receipt.resource_identity;
   if (!safeID(receipt.journal_operation) || !safeID(resource.operation_id) || resource.operation_id !== receipt.journal_operation) {
     throw new TypeError("identity binding journal operation does not match its resource identity");
+  }
+  if (receipt.mode !== "attach-existing" && !provisionOperationID(resource.operation_id)) {
+    throw new TypeError("provision operation identity must be an opaque 128-bit id in the hosted alias carrier");
   }
   if (receipt.mode === "attach-existing") {
     if (receipt.lifecycle !== "bound" || receipt.cleanup_owner !== "external" || resource.kind !== "declared-principal"
@@ -169,9 +177,9 @@ export function cleanupJudgement(instanceReceipt, corroborationRecord, instanceI
 }
 
 function cleanupCorroborationMatches(corroborationRecord, receipt, instanceID, corroborationClass) {
-  if (!exactFields(corroborationRecord, ["schema_version", "corroboration_class", "instance_id", "receipt"])
+  if (!safeID(instanceID) || !exactFields(corroborationRecord, ["schema_version", "corroboration_class", "instance_id", "receipt"])
       || corroborationRecord.schema_version !== 1 || corroborationRecord.corroboration_class !== corroborationClass
-      || corroborationRecord.instance_id !== instanceID) return false;
+      || !safeID(corroborationRecord.instance_id) || corroborationRecord.instance_id !== instanceID) return false;
   try {
     return JSON.stringify(validateBindingReceipt(corroborationRecord.receipt)) === JSON.stringify(receipt);
   } catch {
