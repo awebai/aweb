@@ -1,9 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import yaml from "js-yaml";
 import {
   computeDIDKey,
@@ -774,19 +771,5 @@ describe("SenderTrustManager", () => {
     expect(result.stored).toBe(false);
     expect(store.pins.size).toBe(0);
     expect(store.addresses.size).toBe(0);
-  });
-});
-
-describe("PinStore", () => {
-  test("saves YAML to disk atomically", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "aweb-channel-"));
-    const path = join(dir, "known_agents.yaml");
-    const store = new PinStore();
-    store.storePin("did:key:zexample", "backend:acme.com/alice", "", "");
-
-    await store.save(path);
-
-    const content = readFileSync(path, "utf-8");
-    expect(content).toContain("backend:acme.com/alice");
   });
 });

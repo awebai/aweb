@@ -10,6 +10,7 @@ import {
   dispatchAgentEvent,
   formatAwakeningForAgent,
   PinStore,
+  PinStoreCASConflictError,
   type AgentEvent,
   type ChannelAwakening,
   SenderTrustManager,
@@ -40,6 +41,9 @@ describe("channel-core dispatchAgentEvent", () => {
   const trust = {
     normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
   } as unknown as SenderTrustManager;
+  const acceptingPinStoreWriter = {
+    compareAndSet: vi.fn(async () => {}),
+  };
 
   test("pending mid-turn mail does not block control events from the SSE stream", async () => {
     let finishMail: (() => void) | undefined;
@@ -197,6 +201,250 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(onAwakening).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/quarantined at .*\.corrupt-/i));
     expect(client.post).not.toHaveBeenCalled();
+  });
+
+  test("does not deliver or acknowledge a message when pin persistence fails", async () => {
+    const onAwakening = vi.fn();
+    const pinStore = new PinStore();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-pin-failure",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "must not be delivered",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    let trustAttempt = 0;
+    const storingTrust = {
+      normalizeTrust: vi.fn(async (store: PinStore) => {
+        trustAttempt += 1;
+        if (trustAttempt === 1) {
+          store.storePin("did:key:zAlice", "acme.com/alice", "", "");
+          return { status: "verified", stored: true };
+        }
+        return { status: "verified", stored: false };
+      }),
+    } as unknown as SenderTrustManager;
+    const expectedYAMLs: string[] = [];
+    const desiredYAMLs: string[] = [];
+    const pinStoreWriter = {
+      compareAndSet: vi.fn(async (_path: string, expectedYAML: string, desiredYAML: string) => {
+        expectedYAMLs.push(expectedYAML);
+        desiredYAMLs.push(desiredYAML);
+        throw new Error("aw binary missing");
+      }),
+    };
+
+    await expect(dispatchAgentEvent(
+      { client: client as never, pinStore, pinStoreWriter, trust: storingTrust, self, onAwakening },
+      new Set(),
+      { type: "mail_message", message_id: "mail-pin-failure" } satisfies AgentEvent,
+    )).rejects.toThrow(/aw binary missing/);
+
+    // The failed mutation remains undurable. Even if a retry's trust decision
+    // makes no further change, it must retry persistence and stay closed.
+    await expect(dispatchAgentEvent(
+      { client: client as never, pinStore, pinStoreWriter, trust: storingTrust, self, onAwakening },
+      new Set(),
+      { type: "mail_message", message_id: "mail-pin-failure" } satisfies AgentEvent,
+    )).rejects.toThrow(/aw binary missing/);
+
+    expect(pinStoreWriter.compareAndSet).toHaveBeenCalledTimes(2);
+    expect(expectedYAMLs).toHaveLength(2);
+    expect(expectedYAMLs[1]).toBe(expectedYAMLs[0]);
+    for (const expectedYAML of expectedYAMLs) {
+      const expected = PinStore.fromYAML(expectedYAML);
+      expect(expected.pins.size).toBe(0);
+      expect(expected.addresses.size).toBe(0);
+    }
+    expect(desiredYAMLs).toHaveLength(2);
+    expect(desiredYAMLs[1]).toBe(desiredYAMLs[0]);
+    for (const desiredYAML of desiredYAMLs) {
+      const desired = PinStore.fromYAML(desiredYAML);
+      expect(desired.addresses.get("acme.com/alice")).toBe("did:key:zAlice");
+      expect(desired.pins.get("did:key:zAlice")?.address).toBe("acme.com/alice");
+    }
+    expect(onAwakening).not.toHaveBeenCalled();
+    expect(client.post).not.toHaveBeenCalled();
+  });
+
+  test("serializes trust decisions through pin persistence", async () => {
+    let trustAttempt = 0;
+    const trustGate = {
+      normalizeTrust: vi.fn(async (store: PinStore) => {
+        trustAttempt += 1;
+        if (trustAttempt === 1) {
+          store.storePin("did:key:zAlice", "acme.com/alice", "", "");
+        } else {
+          store.storePin("did:key:zBob", "acme.com/bob", "", "");
+        }
+        return { status: "verified", stored: true };
+      }),
+    } as unknown as SenderTrustManager;
+    let signalCommitEntered!: () => void;
+    const commitEntered = new Promise<void>((resolve) => { signalCommitEntered = resolve; });
+    let releaseCommit!: () => void;
+    const commitRelease = new Promise<void>((resolve) => { releaseCommit = resolve; });
+    let firstDesiredYAML = "";
+    const pinStoreWriter = {
+      compareAndSet: vi.fn(async (_path: string, expectedYAML: string, desiredYAML: string) => {
+        if (!firstDesiredYAML) {
+          expect(PinStore.fromYAML(expectedYAML).pins.size).toBe(0);
+          firstDesiredYAML = desiredYAML;
+          signalCommitEntered();
+          await commitRelease;
+          return;
+        }
+        expect(expectedYAML).toBe(firstDesiredYAML);
+        const expected = PinStore.fromYAML(expectedYAML);
+        expect(expected.addresses.get("acme.com/alice")).toBe("did:key:zAlice");
+        const desired = PinStore.fromYAML(desiredYAML);
+        expect(desired.addresses.get("acme.com/alice")).toBe("did:key:zAlice");
+        expect(desired.addresses.get("acme.com/bob")).toBe("did:key:zBob");
+      }),
+    };
+    const message = (id: string) => ({
+      message_id: id,
+      from_agent_id: "agent-1",
+      from_alias: "alice",
+      from_address: "acme.com/alice",
+      to_alias: "eve",
+      subject: "hello",
+      body: id,
+      priority: "normal",
+      created_at: "2025-01-01T00:00:00Z",
+    });
+    const client = {
+      get: vi.fn()
+        .mockResolvedValueOnce({ messages: [message("mail-serialize-1")] })
+        .mockResolvedValueOnce({ messages: [message("mail-serialize-2")] }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const pinStore = new PinStore();
+    const runExclusive = vi.spyOn(pinStore, "runExclusive");
+    const options = {
+      client: client as never,
+      pinStore,
+      pinStoreWriter,
+      trust: trustGate,
+      self,
+      onAwakening: vi.fn(),
+    };
+
+    const first = dispatchAgentEvent(
+      options,
+      new Set(),
+      { type: "mail_message", message_id: "mail-serialize-1" } satisfies AgentEvent,
+    );
+    await commitEntered;
+    const second = dispatchAgentEvent(
+      options,
+      new Set(),
+      { type: "mail_message", message_id: "mail-serialize-2" } satisfies AgentEvent,
+    );
+    await vi.waitFor(() => expect(runExclusive).toHaveBeenCalledTimes(2));
+    expect(trustGate.normalizeTrust).toHaveBeenCalledTimes(1);
+
+    releaseCommit();
+    await Promise.all([first, second]);
+
+    expect(trustGate.normalizeTrust).toHaveBeenCalledTimes(2);
+    expect(pinStoreWriter.compareAndSet).toHaveBeenCalledTimes(2);
+  });
+
+  test("reloads after a CAS conflict so a later mutation can proceed", async () => {
+    const onAwakening = vi.fn();
+    const dir = await mkdtemp(join(tmpdir(), "aw-pin-conflict-reload-"));
+    const pinStorePath = join(dir, "known_agents.yaml");
+    const durable = new PinStore();
+    durable.storePin("did:key:zBob", "acme.com/bob", "", "");
+    await writeFile(pinStorePath, durable.toYAML(), "utf-8");
+
+    const pinStore = new PinStore();
+    let trustAttempt = 0;
+    const trustAfterReload = {
+      normalizeTrust: vi.fn(async (store: PinStore) => {
+        trustAttempt += 1;
+        if (trustAttempt === 1) {
+          store.storePin("did:key:zAlice", "acme.com/alice", "", "");
+        } else {
+          expect(store.addresses.get("acme.com/bob")).toBe("did:key:zBob");
+          expect(store.addresses.has("acme.com/alice")).toBe(false);
+          store.storePin("did:key:zCarol", "acme.com/carol", "", "");
+        }
+        return { status: "verified", stored: true };
+      }),
+    } as unknown as SenderTrustManager;
+    let writeAttempt = 0;
+    const pinStoreWriter = {
+      compareAndSet: vi.fn(async (_path: string, expectedYAML: string, desiredYAML: string) => {
+        writeAttempt += 1;
+        if (writeAttempt === 1) {
+          throw new PinStoreCASConflictError("trust pin store changed since it was read");
+        }
+        const expected = PinStore.fromYAML(expectedYAML);
+        expect(expected.toYAML()).toBe(durable.toYAML());
+        expect(expected.addresses.get("acme.com/bob")).toBe("did:key:zBob");
+        expect(expected.addresses.has("acme.com/alice")).toBe(false);
+        const desired = PinStore.fromYAML(desiredYAML);
+        expect(desired.addresses.get("acme.com/bob")).toBe("did:key:zBob");
+        expect(desired.addresses.get("acme.com/carol")).toBe("did:key:zCarol");
+        expect(desired.addresses.has("acme.com/alice")).toBe(false);
+        await writeFile(pinStorePath, desiredYAML, "utf-8");
+      }),
+    };
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-pin-conflict",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "retry after reload",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const options = {
+      client: client as never,
+      pinStore,
+      pinStorePath,
+      pinStoreWriter,
+      trust: trustAfterReload,
+      self,
+      onAwakening,
+    };
+
+    await expect(dispatchAgentEvent(
+      options,
+      new Set(),
+      { type: "mail_message", message_id: "mail-pin-conflict" } satisfies AgentEvent,
+    )).rejects.toBeInstanceOf(PinStoreCASConflictError);
+    expect(onAwakening).not.toHaveBeenCalled();
+
+    await dispatchAgentEvent(
+      options,
+      new Set(),
+      { type: "mail_message", message_id: "mail-pin-conflict" } satisfies AgentEvent,
+    );
+
+    const persisted = PinStore.fromYAML(await readFile(pinStorePath, "utf-8"));
+    expect(persisted.addresses.get("acme.com/bob")).toBe("did:key:zBob");
+    expect(persisted.addresses.get("acme.com/carol")).toBe("did:key:zCarol");
+    expect(persisted.addresses.has("acme.com/alice")).toBe(false);
+    expect(onAwakening).toHaveBeenCalledTimes(1);
   });
 
   test("skips and leaves unread only the inbox message whose verification throws", async () => {
@@ -1004,6 +1252,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
+        pinStoreWriter: acceptingPinStoreWriter,
         trust,
         self,
         onAwakening,
@@ -1086,6 +1335,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
+        pinStoreWriter: acceptingPinStoreWriter,
         trust,
         self,
         onAwakening,
@@ -1191,8 +1441,14 @@ describe("channel-core dispatchAgentEvent", () => {
     ownerPin.did_key = "did:key:address-owner";
 
     const pinStorePath = join(await mkdtemp(join(tmpdir(), "aw-checkpoint-only-")), "known_agents.yaml");
+    const pinStoreWriter = {
+      compareAndSet: async (path: string, _expectedYAML: string, desiredYAML: string) => {
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, desiredYAML, "utf-8");
+      },
+    };
     await dispatchAgentEvent(
-      { client: client as never, pinStore, pinStorePath, trust, self, onAwakening },
+      { client: client as never, pinStore, pinStorePath, pinStoreWriter, trust, self, onAwakening },
       new Set(),
       {
         type: "chat_message",

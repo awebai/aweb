@@ -211,8 +211,12 @@ type Client struct {
 	resolver                IdentityResolver // optional; resolves recipient DID for to_did binding
 	pinStore                *PinStore        // optional; TOFU pin store for sender identity verification
 	pinStorePath            string           // disk path for persisting pin store
-	metaCache               sync.Map         // address → *agentMeta; cached resolver results
-	latestClientVersion     atomic.Value     // last seen X-Latest-Client-Version header (string)
+	pinStorePersistMu       sync.Mutex
+	pinStoreBaseline        []byte
+	pinStoreBaselineErr     error
+	pinStorePersister       func(path string, expectedYAML, desiredYAML []byte) error
+	metaCache               sync.Map     // address → *agentMeta; cached resolver results
+	latestClientVersion     atomic.Value // last seen X-Latest-Client-Version header (string)
 }
 
 // New creates a new client.
@@ -420,6 +424,18 @@ func (c *Client) ResolveIdentity(ctx context.Context, identifier string) (*Resol
 func (c *Client) SetPinStore(ps *PinStore, path string) {
 	c.pinStore = ps
 	c.pinStorePath = path
+	c.pinStoreBaseline = nil
+	c.pinStoreBaselineErr = nil
+	if ps != nil {
+		c.pinStoreBaseline, c.pinStoreBaselineErr = ps.Encode()
+	}
+}
+
+// SetPinStorePersister installs the cross-process compare-and-set writer used by
+// aw. The callback must lock, reload, verify expectedYAML, and refuse a stale
+// mutation before writing desiredYAML.
+func (c *Client) SetPinStorePersister(persist func(path string, expectedYAML, desiredYAML []byte) error) {
+	c.pinStorePersister = persist
 }
 
 // LatestClientVersion returns the most recent X-Latest-Client-Version header
@@ -843,7 +859,24 @@ func (c *Client) savePinStore() error {
 	if c.pinStorePath == "" {
 		return nil
 	}
-	return c.pinStore.Save(c.pinStorePath)
+	if c.pinStorePersister == nil {
+		return c.pinStore.Save(c.pinStorePath)
+	}
+
+	c.pinStorePersistMu.Lock()
+	defer c.pinStorePersistMu.Unlock()
+	if c.pinStoreBaselineErr != nil {
+		return fmt.Errorf("encode pin-store precondition: %w", c.pinStoreBaselineErr)
+	}
+	desired, err := c.pinStore.Encode()
+	if err != nil {
+		return fmt.Errorf("encode desired pin store: %w", err)
+	}
+	if err := c.pinStorePersister(c.pinStorePath, c.pinStoreBaseline, desired); err != nil {
+		return err
+	}
+	c.pinStoreBaseline = append(c.pinStoreBaseline[:0], desired...)
+	return nil
 }
 
 // commitContinuity persists a newly established or rotated pin and downgrades

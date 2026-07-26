@@ -38,11 +38,11 @@ func TestExternalIdentityHomePolicyDefaultsToDeny(t *testing.T) {
 	}
 }
 
-func TestIdentityHomeNeutralExemptionsAreExactlyVersionAndUpgrade(t *testing.T) {
-	if len(identityHomeNeutralCommandExemptions) != 2 {
-		t.Fatalf("identity-neutral exemption count=%d want 2", len(identityHomeNeutralCommandExemptions))
+func TestIdentityHomeNeutralExemptionsAreExact(t *testing.T) {
+	if len(identityHomeNeutralCommandExemptions) != 3 {
+		t.Fatalf("identity-neutral exemption count=%d want 3", len(identityHomeNeutralCommandExemptions))
 	}
-	for _, cmd := range []*cobra.Command{versionCmd, upgradeCmd} {
+	for _, cmd := range []*cobra.Command{pinStoreCompareAndSetCmd, versionCmd, upgradeCmd} {
 		if _, ok := identityHomeNeutralCommandExemptions[cmd]; !ok {
 			t.Fatalf("identity-neutral exemption missing command pointer %p (%s)", cmd, cmd.CommandPath())
 		}
@@ -84,13 +84,18 @@ func TestIdentityNeutralExemptionsDoNotAccessPrincipalOrInstanceIdentityState(t 
 	before := fileDigestsForTest(t, identityHome)
 
 	for _, source := range []string{"flag", "environment"} {
-		for _, command := range []string{"version", "upgrade"} {
+		for _, command := range []string{"version", "upgrade", "pin-store-cas"} {
 			t.Run(source+"/"+command, func(t *testing.T) {
 				instance := filepath.Join(root, "neutral", source, command)
 				if err := os.MkdirAll(instance, 0o700); err != nil {
 					t.Fatal(err)
 				}
 				args := []string{command}
+				stdin := ""
+				if command == "pin-store-cas" {
+					args = []string{"id", "pin-store", "compare-and-set", "--path", filepath.Join(root, "pin-stores", source+".yaml")}
+					stdin = `{"expected_yaml":"pins: {}\naddresses: {}\n","desired_yaml":"pins: {}\naddresses: {}\n"}`
+				}
 				env := append(testCommandEnv(filepath.Join(root, "user-home")), awconfig.IdentityHomeEnv+"=", "AW_NO_UPDATE_CHECK=1")
 				if source == "flag" {
 					args = append([]string{"--identity-home", identityHome}, args...)
@@ -100,6 +105,7 @@ func TestIdentityNeutralExemptionsDoNotAccessPrincipalOrInstanceIdentityState(t 
 				cmd := exec.CommandContext(ctx, bin, args...)
 				cmd.Dir = instance
 				cmd.Env = env
+				cmd.Stdin = strings.NewReader(stdin)
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("identity-neutral command accessed unusable principal state: %v\n%s", err, out)
 				}

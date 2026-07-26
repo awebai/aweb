@@ -94,6 +94,9 @@ describe("dispatchEvent", () => {
     did: "did:key:self-eve",
     stableID: "did:aw:self-eve",
   };
+  const acceptingPinStoreWriter = {
+    compareAndSet: vi.fn(async () => {}),
+  };
 
   test("notifies claim_update events", async () => {
     const notification = vi.fn();
@@ -184,6 +187,7 @@ describe("dispatchEvent", () => {
       self,
       new Set(),
       { type: "mail_message", message_id: "msg-degraded" } satisfies AgentEvent,
+      acceptingPinStoreWriter,
     );
 
     expect(notification).toHaveBeenCalledWith({
@@ -328,6 +332,7 @@ describe("dispatchEvent", () => {
       self,
       new Set(),
       { type: "mail_message", message_id: "msg-stable-recipient" } satisfies AgentEvent,
+      acceptingPinStoreWriter,
     );
 
     expect(notification).toHaveBeenCalledWith({

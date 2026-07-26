@@ -647,6 +647,7 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 		return fmt.Errorf("%w; refusing to continue without the trust database", err)
 	}
 	c.SetPinStore(ps, pinPath)
+	c.SetPinStorePersister(compareAndSetPinStore)
 	registry, err := newSelectionRegistryResolver(c.Client.HTTPClient(), baseURL, sel.RegistryURL)
 	if err != nil {
 		return err
