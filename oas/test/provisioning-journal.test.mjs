@@ -239,11 +239,19 @@ test("per-intent lock serializes stale takeover, never takes a live holder, and 
     operationID: OPERATION_A, instanceID: "instance-a", teamID: "backend:acme.test", authority: AUTHORITY,
     authorityHome: join(root, "authority"), now: new Date("2026-07-26T00:00:00Z"),
   });
+  const legacyDatabase = new DatabaseSync(join(root, ".provisioning", "locks.sqlite"));
+  legacyDatabase.exec(`CREATE TABLE operation_locks (
+    operation_id TEXT PRIMARY KEY, token TEXT NOT NULL, pid INTEGER NOT NULL, acquired_at TEXT NOT NULL
+  ) STRICT`);
+  legacyDatabase.close();
   withProvisionIntentLock(root, OPERATION_A, () => {
     assert.throws(() => withProvisionIntentLock(root, OPERATION_A, () => {}, {
       now: new Date(Date.now() + 600_000), staleAfterMs: 1,
     }), /live holder/);
   });
+  const migratedDatabase = new DatabaseSync(join(root, ".provisioning", "locks.sqlite"));
+  assert.equal(migratedDatabase.prepare("PRAGMA table_info(operation_locks)").all().some((column) => column.name === "process_identity"), true);
+  migratedDatabase.close();
 
   const journalModule = new URL("../.agents/capabilities/owned/aweb-identity-attach/lib/provisioning-journal.mjs", import.meta.url).href;
   const killed = spawnSync(process.execPath, ["--input-type=module", "--eval", [

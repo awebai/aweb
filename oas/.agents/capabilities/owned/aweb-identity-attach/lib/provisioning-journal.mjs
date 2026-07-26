@@ -504,6 +504,10 @@ function openProvisionLockDatabase(home) {
     process_identity TEXT NOT NULL,
     acquired_at TEXT NOT NULL
   ) STRICT`);
+  const columns = database.prepare("PRAGMA table_info(operation_locks)").all();
+  if (!columns.some((column) => column.name === "process_identity")) {
+    database.exec("ALTER TABLE operation_locks ADD COLUMN process_identity TEXT NOT NULL DEFAULT 'legacy-unknown'");
+  }
   return database;
 }
 
