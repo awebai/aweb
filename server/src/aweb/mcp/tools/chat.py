@@ -958,7 +958,7 @@ async def chat_history(
     )
 
 
-async def chat_read(db_infra, *, session_id: str, up_to_message_id: str) -> str:
+async def chat_read(db_infra, *, session_id: str, message_ids: list[str]) -> str:
     auth = get_auth()
     actor_dids = _actor_dids()
     actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
@@ -968,8 +968,10 @@ async def chat_read(db_infra, *, session_id: str, up_to_message_id: str) -> str:
         session_uuid = UUID(session_id.strip())
     except Exception:
         return json.dumps({"error": "Invalid session_id format"})
+    if not message_ids:
+        return json.dumps({"error": "message_ids is required"})
     try:
-        UUID(up_to_message_id.strip())
+        normalized_message_ids = [str(UUID(message_id.strip())) for message_id in message_ids]
     except Exception:
         return json.dumps({"error": "Invalid message_id format"})
 
@@ -987,7 +989,7 @@ async def chat_read(db_infra, *, session_id: str, up_to_message_id: str) -> str:
             session_id=session_uuid,
             participant_did=actor_did,
             participant_agent_id=actor_agent_id,
-            up_to_message_id=up_to_message_id.strip(),
+            message_ids=normalized_message_ids,
         )
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})

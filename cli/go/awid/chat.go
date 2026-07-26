@@ -781,7 +781,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 }
 
 type ChatMarkReadRequest struct {
-	UpToMessageID string `json:"up_to_message_id"`
+	MessageIDs []string `json:"message_ids"`
 }
 
 type ChatMarkReadResponse struct {

@@ -101,6 +101,16 @@ async def _hard_delete_scope(aweb_db, *, team_id) -> None:
         )
         await tx.execute(
             """
+            UPDATE {{tables.chat_message_reads}}
+            SET agent_id = NULL
+            WHERE agent_id IN (
+                SELECT agent_id FROM {{tables.agents}} WHERE team_id = $1
+            )
+            """,
+            team_id,
+        )
+        await tx.execute(
+            """
             UPDATE {{tables.chat_read_receipts}}
             SET agent_id = NULL
             WHERE agent_id IN (

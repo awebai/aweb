@@ -238,16 +238,18 @@ async def list_conversations(
                     ORDER BY created_at DESC
                     LIMIT 1
                 ) lm ON TRUE
-                LEFT JOIN {{tables.chat_read_receipts}} rr
-                  ON rr.session_id = s.session_id AND rr.did = $1
-                LEFT JOIN {{tables.chat_messages}} last_read_msg
-                  ON last_read_msg.message_id = rr.last_read_message_id
                 LEFT JOIN LATERAL (
                     SELECT COUNT(*)::int AS cnt
                     FROM {{tables.chat_messages}} cm
                     WHERE cm.session_id = s.session_id
                       AND cm.from_did <> $1
-                      AND cm.created_at > COALESCE(last_read_msg.created_at, 'epoch'::timestamptz)
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM {{tables.chat_message_reads}} mr
+                          WHERE mr.session_id = cm.session_id
+                            AND mr.did = $1
+                            AND mr.message_id = cm.message_id
+                      )
                 ) unread ON TRUE
                 WHERE lm.created_at IS NOT NULL
                   AND (

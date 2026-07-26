@@ -373,12 +373,11 @@ func chatWakeResolution(client *aweb.Client, sessionID string, messages []awid.C
 	if len(presentedIDs) == 0 {
 		return resolution
 	}
-	lastPresentedID := presentedIDs[len(presentedIDs)-1]
 	resolution.AfterDelivery = func(deliveryCtx context.Context) error {
 		// A failed server acknowledgement must leave local suppression untouched
 		// so the unread batch remains retryable. Reversing this order recreates
 		// the permanent-loss bug this transaction prevents.
-		if err := markChatMessageRead(deliveryCtx, client, sessionID, lastPresentedID); err != nil {
+		if err := markChatMessagesRead(deliveryCtx, client, sessionID, presentedIDs); err != nil {
 			return err
 		}
 		return chat.SaveDeliveredIDs(presentedIDs)
@@ -546,12 +545,17 @@ func formatIncomingMailBlock(head string, subject string, body string) string {
 	return strings.Join(formatted, "\n")
 }
 
-func markChatMessageRead(ctx context.Context, client *aweb.Client, sessionID, messageID string) error {
-	messageID = strings.TrimSpace(messageID)
-	if messageID == "" {
+func markChatMessagesRead(ctx context.Context, client *aweb.Client, sessionID string, messageIDs []string) error {
+	presentedIDs := make([]string, 0, len(messageIDs))
+	for _, messageID := range messageIDs {
+		if messageID = strings.TrimSpace(messageID); messageID != "" {
+			presentedIDs = append(presentedIDs, messageID)
+		}
+	}
+	if len(presentedIDs) == 0 {
 		return nil
 	}
-	req := &awid.ChatMarkReadRequest{UpToMessageID: messageID}
+	req := &awid.ChatMarkReadRequest{MessageIDs: presentedIDs}
 	if _, err := client.ChatMarkRead(ctx, sessionID, req); err == nil {
 		return nil
 	}
