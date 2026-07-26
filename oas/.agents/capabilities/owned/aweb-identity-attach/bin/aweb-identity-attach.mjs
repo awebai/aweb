@@ -437,6 +437,7 @@ function runLocalProvision(binding, authority, pendingReceipt) {
         minting_authority: intent.authority,
         provisioning: result,
       },
+      env: { AWEB_IDENTITY_HOME: result.identity_home },
       brief: `Identity: provisioned disposable ${result.alias}; local same-UID cleanup authority is an accident/confused-deputy control, not a boundary against intent.`,
     });
     markProvisionIntentHandedOff(principalHome, intent.operation_id);
@@ -461,6 +462,7 @@ function attach(binding) {
   if (binding.legacy) {
     output({
       meta: { identity_binding: legacyBinding },
+      env: { AWEB_IDENTITY_HOME: store.credentials },
       brief: `Identity: attached to ${declaration.address} (${declaration.stable_id}); external cleanup ownership preserves the principal when this instance retires.`,
     });
     return;
@@ -470,6 +472,7 @@ function attach(binding) {
       identity_binding: attachmentReceipt({ declarationPath, stableID: declaration.stable_id }),
       attachment: legacyBinding,
     },
+    env: { AWEB_IDENTITY_HOME: store.credentials },
     brief: `Identity: attached-existing ${declaration.address} (${declaration.stable_id}); external cleanup ownership preserves the principal when this instance retires.`,
   });
 }

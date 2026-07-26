@@ -1,7 +1,12 @@
 # Disposable provisioning execution contract
 
 This capability executes `provision-disposable` only through declared
-`local-controller` authority in this release.
+`local-controller` authority in this release. After resolving and verifying the
+selected principal, its spawn hook contributes exactly one runtime environment
+value: `AWEB_IDENTITY_HOME` at the canonical credential root. It never copies
+the principal selector into the launch environment. This is data minimization,
+not selector secrecy: settings and identity metadata remain model-readable, and
+the resolved identity is necessarily observable through `whoami`.
 
 - `provision-durable` is refused because no production mint-and-handoff path
   exists (`aaaa.39`).
