@@ -96,16 +96,18 @@ type localProvisionOptions struct {
 }
 
 var teamProvisionLocalCmd = &cobra.Command{
-	Use:   "provision-local",
-	Short: "Provision one local identity through explicit controller authority",
-	Args:  cobra.NoArgs,
+	Use:    "provision-local",
+	Short:  "Provision one local identity through explicit controller authority",
+	Hidden: true,
+	Args:   cobra.NoArgs,
 	RunE:  runTeamProvisionLocal,
 }
 
 var teamCleanupLocalProvisionCmd = &cobra.Command{
-	Use:   "cleanup-local-provision",
-	Short: "Reconcile and clean one explicitly provisioned local identity",
-	Args:  cobra.NoArgs,
+	Use:    "cleanup-local-provision",
+	Short:  "Reconcile and clean one explicitly provisioned local identity",
+	Hidden: true,
+	Args:   cobra.NoArgs,
 	RunE:  runTeamCleanupLocalProvision,
 }
 
