@@ -139,7 +139,7 @@ func preflightRotationFile(path string) error {
 	return pathpreflight.PreflightFile(path, "rotation recovery file", pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
 
-func cleanupPendingRotationKeypair(keyPath string) error {
+func cleanupPendingRotationKeypair(keyPath, expectedDID string) error {
 	for index, path := range []string{keyPath, awid.PublicKeyPath(keyPath)} {
 		if err := preflightRotationFile(path); err != nil {
 			return err
@@ -153,6 +153,39 @@ func cleanupPendingRotationKeypair(keyPath string) error {
 			point = "after-pending-public-removal"
 		}
 		crashtest.Checkpoint(point, path)
+	}
+	return cleanupMatchingRotationPrivateTemps(filepath.Dir(keyPath), expectedDID)
+}
+
+func cleanupMatchingRotationPrivateTemps(dir, expectedDID string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !strings.HasPrefix(entry.Name(), ".tmp.") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		if err := preflightRotationFile(path); err != nil {
+			return err
+		}
+		key, err := awid.LoadSigningKey(path)
+		if err != nil {
+			continue
+		}
+		// Atomic temp names do not encode their destination. Bind residue to this
+		// operation by key identity; preserve every unknown or foreign temp.
+		did := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+		if strings.TrimSpace(did) != strings.TrimSpace(expectedDID) {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }

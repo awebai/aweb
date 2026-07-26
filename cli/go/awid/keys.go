@@ -157,7 +157,7 @@ func writePrivateKey(path string, priv ed25519.PrivateKey) error {
 		Type:  "ED25519 PRIVATE KEY",
 		Bytes: priv.Seed(),
 	})
-	if err := atomicWriteFile(path, data); err != nil {
+	if err := atomicWritePrivateKeyFile(path, data); err != nil {
 		return fmt.Errorf("write private key %s: %w", path, err)
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -115,7 +116,12 @@ func TestAwIDRotationCrashMatrixRecoversConsistently(t *testing.T) {
 	}
 }
 
-func TestAwIDRotationCrashCheckpointIsInertWithoutCompleteCapability(t *testing.T) {
+func TestAwIDRotationRecoveryRepairsPublicKeyBeforePendingPublicCleanup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
 	oldPublic, oldPrivate, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
@@ -123,55 +129,215 @@ func TestAwIDRotationCrashCheckpointIsInertWithoutCompleteCapability(t *testing.
 	oldDID := awid.ComputeDIDKey(oldPublic)
 	stableID := awid.ComputeStableID(oldPublic)
 	fixture, registryState := newRotationCrashRegistry(t, stableID, oldDID, rotationRegistrySuccess)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "aw")
-	buildAwBinary(t, ctx, bin)
+	dir := filepath.Join(root, "split-recovery-crash")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	writeStandaloneSelfCustodyIdentity(t, dir, "acme.com/alice", oldDID, stableID, fixture.server.URL, oldPrivate)
+	foreign := seedForeignRotationOperation(t, dir)
 
-	readyReader, readyWriter, err := os.Pipe()
+	killRotationAtCheckpoint(t, ctx, bin, dir, "after-active-private-rename", "")
+	assertRotationCrashState(t, dir, stableID, oldDID, fixture, rotationCrashCase{
+		wantState: true, wantPendingPublic: true, wantActivePrivateNew: true,
+		wantArchivePrivate: true, wantArchivePublic: true, wantRegistryNew: true,
+	})
+	killRotationCommandAtCheckpoint(t, ctx, bin, dir, "after-pending-public-removal", "/rotation/pending/", "recover")
+
+	rotationDir := filepath.Join(dir, ".aw", "rotation")
+	pending, err := loadPendingRotationState(rotationDir, stableID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	controlReader, controlWriter, err := os.Pipe()
+	if pending == nil {
+		t.Fatal("recovery removed operation state before the public-cleanup checkpoint")
+	}
+	assertCrashPathExists(t, pending.PendingKey, false)
+	assertCrashPathExists(t, awid.PublicKeyPath(pending.PendingKey), false)
+	activePath := awconfig.WorktreeSigningKeyPath(dir)
+	assertSigningKeyDID(t, activePath, pending.NewDID)
+	assertPublicKeyDID(t, awid.PublicKeyPath(activePath), pending.NewDID)
+	if identity := loadIdentityForTest(t, dir); identity.DID != pending.NewDID {
+		t.Fatalf("identity did=%q, want %q", identity.DID, pending.NewDID)
+	}
+	assertForeignRotationOperation(t, foreign)
+
+	recovered := runRotationRecoveryCommand(t, ctx, bin, dir, "recover")
+	if recovered.Status != "finalized" {
+		t.Fatalf("second recovery status=%q, want finalized", recovered.Status)
+	}
+	assertCompletedRotation(t, dir, stableID, oldDID, fixture, registryState, foreign)
+}
+
+func TestAwIDRotationRecoveryRemovesOwnedPrivateKeyTempResidue(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	oldPublic, oldPrivate, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer readyReader.Close()
-	defer controlWriter.Close()
-	cmd := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
-	cmd.Dir = dir
-	cmd.ExtraFiles = []*os.File{readyWriter, controlReader}
-	// Point and FDs without the exact protocol must remain inert on the same full
-	// rotate path used by the SIGKILL cases.
-	cmd.Env = append(testCommandEnv(dir),
-		"AWEB_INTERNAL_ROTATION_CRASH_TEST_POINT=after-key-generation",
-		"AWEB_INTERNAL_ROTATION_CRASH_TEST_READY_FD=3",
-		"AWEB_INTERNAL_ROTATION_CRASH_TEST_CONTROL_FD=4",
-	)
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	if err := cmd.Start(); err != nil {
+	oldDID := awid.ComputeDIDKey(oldPublic)
+	stableID := awid.ComputeStableID(oldPublic)
+	fixture, registryState := newRotationCrashRegistry(t, stableID, oldDID, rotationRegistrySuccess)
+	dir := filepath.Join(root, "private-temp-residue")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_ = readyWriter.Close()
-	_ = controlReader.Close()
-	if err := readyReader.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	writeStandaloneSelfCustodyIdentity(t, dir, "acme.com/alice", oldDID, stableID, fixture.server.URL, oldPrivate)
+	foreign := seedForeignRotationOperation(t, dir)
+
+	killRotationAtCheckpoint(t, ctx, bin, dir, "after-private-key-temp-sync", "/rotation/pending/")
+	rotationDir := filepath.Join(dir, ".aw", "rotation")
+	pending, err := loadPendingRotationState(rotationDir, stableID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	var marker [1]byte
-	if count, readErr := readyReader.Read(marker[:]); count != 0 || readErr == nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		t.Fatalf("inert checkpoint wrote a marker: count=%d err=%v", count, readErr)
+	if pending == nil {
+		t.Fatal("private-key write crash did not retain owned operation state")
 	}
-	if err := cmd.Wait(); err != nil {
-		t.Fatalf("rotation with inert checkpoint capability failed: %v\n%s", err, output.String())
+	matches, err := filepath.Glob(filepath.Join(rotationDir, "pending", ".tmp.*"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	assertCompletedRotation(t, dir, stableID, oldDID, fixture, registryState, nil)
+	var ownedTemp string
+	for _, match := range matches {
+		if match != foreign.tempPath {
+			if ownedTemp != "" {
+				t.Fatalf("multiple rotation-owned private-key temps: %s and %s", ownedTemp, match)
+			}
+			ownedTemp = match
+		}
+	}
+	if ownedTemp == "" {
+		t.Fatal("SIGKILL did not leave the representative private-key temp residue")
+	}
+	if got := pathSigningKeyDID(ownedTemp); got != pending.NewDID {
+		t.Fatalf("orphan temp private key did=%q, want operation new DID %q", got, pending.NewDID)
+	}
+	assertForeignRotationOperation(t, foreign)
+
+	recovered := runRotationRecoveryCommand(t, ctx, bin, dir, "recover")
+	if recovered.Status != "rolled_back" {
+		t.Fatalf("temp-residue recovery status=%q, want rolled_back", recovered.Status)
+	}
+	assertNoOwnedRotationFiles(t, rotationDir, foreign)
+	assertForeignRotationOperation(t, foreign)
+	out, err := runRotateKeyCommand(ctx, bin, dir)
+	if err != nil {
+		t.Fatalf("rotation after temp-residue recovery failed: %v\n%s", err, out)
+	}
+	assertCompletedRotation(t, dir, stableID, oldDID, fixture, registryState, foreign)
+}
+
+func TestAwIDRotationCrashCheckpointIsInertWithoutCompleteCapability(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	cases := []struct {
+		name      string
+		unset     string
+		overrides map[string]string
+	}{
+		{name: "missing protocol", unset: "AWEB_INTERNAL_ROTATION_CRASH_TEST_PROTOCOL"},
+		{name: "wrong protocol", overrides: map[string]string{"AWEB_INTERNAL_ROTATION_CRASH_TEST_PROTOCOL": "wrong-version"}},
+		{name: "wrong checkpoint", overrides: map[string]string{"AWEB_INTERNAL_ROTATION_CRASH_TEST_POINT": "not-a-checkpoint"}},
+		{name: "missing ready fd", unset: "AWEB_INTERNAL_ROTATION_CRASH_TEST_READY_FD"},
+		{name: "malformed ready fd", overrides: map[string]string{"AWEB_INTERNAL_ROTATION_CRASH_TEST_READY_FD": "not-a-fd"}},
+		{name: "non-inherited ready fd", overrides: map[string]string{"AWEB_INTERNAL_ROTATION_CRASH_TEST_READY_FD": "2"}},
+		{name: "missing control fd", unset: "AWEB_INTERNAL_ROTATION_CRASH_TEST_CONTROL_FD"},
+		{name: "malformed control fd", overrides: map[string]string{"AWEB_INTERNAL_ROTATION_CRASH_TEST_CONTROL_FD": "not-a-fd"}},
+		{name: "non-inherited control fd", overrides: map[string]string{"AWEB_INTERNAL_ROTATION_CRASH_TEST_CONTROL_FD": "2"}},
+		{name: "same descriptors", overrides: map[string]string{"AWEB_INTERNAL_ROTATION_CRASH_TEST_CONTROL_FD": "3"}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			oldPublic, oldPrivate, err := awid.GenerateKeypair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldDID := awid.ComputeDIDKey(oldPublic)
+			stableID := awid.ComputeStableID(oldPublic)
+			fixture, registryState := newRotationCrashRegistry(t, stableID, oldDID, rotationRegistrySuccess)
+			dir := filepath.Join(root, strings.ReplaceAll(testCase.name, " ", "-"))
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeStandaloneSelfCustodyIdentity(t, dir, "acme.com/alice", oldDID, stableID, fixture.server.URL, oldPrivate)
+
+			readyReader, readyWriter, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			controlReader, controlWriter, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer readyReader.Close()
+			defer controlWriter.Close()
+			cmd := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
+			cmd.Dir = dir
+			cmd.ExtraFiles = []*os.File{readyWriter, controlReader}
+			capability := map[string]string{
+				"AWEB_INTERNAL_ROTATION_CRASH_TEST_PROTOCOL":   rotationCrashTestProtocol,
+				"AWEB_INTERNAL_ROTATION_CRASH_TEST_POINT":      "after-key-generation",
+				"AWEB_INTERNAL_ROTATION_CRASH_TEST_READY_FD":   "3",
+				"AWEB_INTERNAL_ROTATION_CRASH_TEST_CONTROL_FD": "4",
+			}
+			delete(capability, testCase.unset)
+			for key, value := range testCase.overrides {
+				capability[key] = value
+			}
+			cmd.Env = rotationCrashCapabilityEnv(testCommandEnv(dir), capability)
+			var output bytes.Buffer
+			cmd.Stdout = &output
+			cmd.Stderr = &output
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			_ = readyWriter.Close()
+			_ = controlReader.Close()
+			if err := readyReader.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			var marker [1]byte
+			count, readErr := readyReader.Read(marker[:])
+			if count != 0 || readErr != io.EOF {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				t.Fatalf("incomplete checkpoint capability wrote or blocked: count=%d err=%v", count, readErr)
+			}
+			if err := cmd.Wait(); err != nil {
+				t.Fatalf("rotation with incomplete checkpoint capability failed: %v\n%s", err, output.String())
+			}
+			assertCompletedRotation(t, dir, stableID, oldDID, fixture, registryState, nil)
+		})
+	}
+}
+
+func rotationCrashCapabilityEnv(base []string, capability map[string]string) []string {
+	keys := map[string]bool{
+		"AWEB_INTERNAL_ROTATION_CRASH_TEST_PROTOCOL":      true,
+		"AWEB_INTERNAL_ROTATION_CRASH_TEST_POINT":         true,
+		"AWEB_INTERNAL_ROTATION_CRASH_TEST_READY_FD":      true,
+		"AWEB_INTERNAL_ROTATION_CRASH_TEST_CONTROL_FD":    true,
+		"AWEB_INTERNAL_ROTATION_CRASH_TEST_PATH_CONTAINS": true,
+	}
+	env := make([]string, 0, len(base)+len(capability))
+	for _, entry := range base {
+		key, _, _ := strings.Cut(entry, "=")
+		if !keys[key] {
+			env = append(env, entry)
+		}
+	}
+	for key, value := range capability {
+		env = append(env, key+"="+value)
+	}
+	return env
 }
 
 func runRotationCrashCase(t *testing.T, ctx context.Context, bin, root string, testCase rotationCrashCase) {
@@ -271,6 +437,11 @@ func killRotationAtRegistryWindow(t *testing.T, ctx context.Context, bin, dir st
 
 func killRotationAtCheckpoint(t *testing.T, ctx context.Context, bin, dir, point, pathContains string) {
 	t.Helper()
+	killRotationCommandAtCheckpoint(t, ctx, bin, dir, point, pathContains)
+}
+
+func killRotationCommandAtCheckpoint(t *testing.T, ctx context.Context, bin, dir, point, pathContains string, action ...string) {
+	t.Helper()
 	readyReader, readyWriter, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -282,16 +453,18 @@ func killRotationAtCheckpoint(t *testing.T, ctx context.Context, bin, dir, point
 	defer readyReader.Close()
 	defer controlWriter.Close()
 
-	cmd := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
+	args := append([]string{"id", "rotate-key"}, action...)
+	args = append(args, "--json")
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
 	cmd.ExtraFiles = []*os.File{readyWriter, controlReader}
-	cmd.Env = append(testCommandEnv(dir),
-		"AWEB_INTERNAL_ROTATION_CRASH_TEST_PROTOCOL="+rotationCrashTestProtocol,
-		"AWEB_INTERNAL_ROTATION_CRASH_TEST_POINT="+point,
-		"AWEB_INTERNAL_ROTATION_CRASH_TEST_READY_FD=3",
-		"AWEB_INTERNAL_ROTATION_CRASH_TEST_CONTROL_FD=4",
-		"AWEB_INTERNAL_ROTATION_CRASH_TEST_PATH_CONTAINS="+pathContains,
-	)
+	cmd.Env = rotationCrashCapabilityEnv(testCommandEnv(dir), map[string]string{
+		"AWEB_INTERNAL_ROTATION_CRASH_TEST_PROTOCOL":      rotationCrashTestProtocol,
+		"AWEB_INTERNAL_ROTATION_CRASH_TEST_POINT":         point,
+		"AWEB_INTERNAL_ROTATION_CRASH_TEST_READY_FD":      "3",
+		"AWEB_INTERNAL_ROTATION_CRASH_TEST_CONTROL_FD":    "4",
+		"AWEB_INTERNAL_ROTATION_CRASH_TEST_PATH_CONTAINS": pathContains,
+	})
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
@@ -478,6 +651,8 @@ type foreignRotationOperation struct {
 	private     []byte
 	publicPath  string
 	public      []byte
+	tempPath    string
+	temp        []byte
 }
 
 func seedForeignRotationOperation(t *testing.T, dir string) *foreignRotationOperation {
@@ -502,11 +677,16 @@ func seedForeignRotationOperation(t *testing.T, dir string) *foreignRotationOper
 		t.Fatal(err)
 	}
 	statePath := pendingRotationStatePath(rotationDir, stableID)
+	tempPath := filepath.Join(rotationDir, "pending", ".tmp.foreign-"+operationID)
+	if err := awid.SaveSigningKey(tempPath, priv); err != nil {
+		t.Fatal(err)
+	}
 	return &foreignRotationOperation{
 		rotationDir: rotationDir, stableID: stableID,
 		state:       readFileForCrashTest(t, statePath),
 		privatePath: privatePath, private: readFileForCrashTest(t, privatePath),
 		publicPath: awid.PublicKeyPath(privatePath), public: readFileForCrashTest(t, awid.PublicKeyPath(privatePath)),
+		tempPath: tempPath, temp: readFileForCrashTest(t, tempPath),
 	}
 }
 
@@ -518,6 +698,7 @@ func assertForeignRotationOperation(t *testing.T, foreign *foreignRotationOperat
 	statePath := pendingRotationStatePath(foreign.rotationDir, foreign.stableID)
 	for path, want := range map[string][]byte{
 		statePath: foreign.state, foreign.privatePath: foreign.private, foreign.publicPath: foreign.public,
+		foreign.tempPath: foreign.temp,
 	} {
 		if got := readFileForCrashTest(t, path); !bytes.Equal(got, want) {
 			t.Fatalf("foreign operation file changed at %s", path)
@@ -531,9 +712,18 @@ func assertNoOwnedRotationFiles(t *testing.T, rotationDir string, foreign *forei
 	if foreign != nil {
 		allowed[foreign.privatePath] = true
 		allowed[foreign.publicPath] = true
+		allowed[foreign.tempPath] = true
 	}
-	for _, pattern := range []string{"*.signing.key", "*.signing.pub"} {
-		matches, err := filepath.Glob(filepath.Join(rotationDir, "pending", pattern))
+	pendingDir := filepath.Join(rotationDir, "pending")
+	patterns := []string{
+		filepath.Join(pendingDir, "*.signing.key"),
+		filepath.Join(pendingDir, "*.signing.pub"),
+		filepath.Join(pendingDir, ".tmp.*"),
+		filepath.Join(filepath.Dir(rotationDir), ".tmp.*"),
+		filepath.Join(filepath.Dir(rotationDir), "rotated", ".tmp.*"),
+	}
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			t.Fatal(err)
 		}

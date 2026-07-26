@@ -124,7 +124,7 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 	// Crash-test observation only; the state rename is now visible to recovery.
 	crashtest.Checkpoint("after-pending-state-commit")
 	if _, err := savePendingRotationKeypair(rotationDir, operationID, newPub, newPriv); err != nil {
-		_ = cleanupPendingRotationKeypair(pendingKeyPath)
+		_ = cleanupPendingRotationKeypair(pendingKeyPath, newDID)
 		_ = removePendingRotationStateOwned(rotationDir, identity.StableID, operationID)
 		return err
 	}
@@ -133,7 +133,7 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		var outcomeErr *awid.DIDRotationError
 		if errors.As(err, &outcomeErr) && outcomeErr.Outcome == awid.DIDRotationDefinitelyNotApplied {
-			if cleanupErr := cleanupPendingRotationKeypair(pendingKeyPath); cleanupErr != nil {
+			if cleanupErr := cleanupPendingRotationKeypair(pendingKeyPath, newDID); cleanupErr != nil {
 				return fmt.Errorf("%w; failed to discard the unused replacement signing key: %v", err, cleanupErr)
 			}
 			if cleanupErr := removePendingRotationStateOwned(rotationDir, identity.StableID, operationID); cleanupErr != nil {

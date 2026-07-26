@@ -245,7 +245,7 @@ func recoverPendingRotation(ctx context.Context, identity *awconfig.ResolvedIden
 			out.Detail = "registry uses the old key, but " + detail + "; replacement key and state preserved"
 			return out, nil
 		}
-		if err := cleanupPendingRotationKeypair(state.PendingKey); err != nil {
+		if err := cleanupPendingRotationKeypair(state.PendingKey, state.NewDID); err != nil {
 			return idRotationRecoveryOutput{}, fmt.Errorf("discard unapplied replacement key for operation %s: %w", state.OperationID, err)
 		}
 		if err := removePendingRotationStateOwned(rotationDir, state.StableID, state.OperationID); err != nil {
@@ -317,8 +317,15 @@ func finalizePendingRotation(identity *awconfig.ResolvedIdentity, rotationDir st
 	}
 	// Crash-test observation only; active key files and identity now agree.
 	crashtest.Checkpoint("after-identity-state-commit", identity.IdentityPath)
-	if err := cleanupPendingRotationKeypair(state.PendingKey); err != nil {
+	if err := cleanupPendingRotationKeypair(state.PendingKey, state.NewDID); err != nil {
 		return fmt.Errorf("clean pending rotation key material: %w", err)
+	}
+	activeDir := filepath.Dir(identity.SigningKeyPath)
+	if err := cleanupMatchingRotationPrivateTemps(activeDir, state.NewDID); err != nil {
+		return fmt.Errorf("clean promoted rotation key temp material: %w", err)
+	}
+	if err := cleanupMatchingRotationPrivateTemps(filepath.Join(activeDir, "rotated"), state.OldDID); err != nil {
+		return fmt.Errorf("clean archived rotation key temp material: %w", err)
 	}
 	if err := removePendingRotationStateOwned(rotationDir, state.StableID, state.OperationID); err != nil {
 		return fmt.Errorf("remove finalized rotation state: %w", err)
