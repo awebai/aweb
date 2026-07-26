@@ -203,13 +203,13 @@ func finalizeWorkspaceSelection(workingDir, identityHome string, externalIdentit
 			domain = teamDomain
 			alias = strings.TrimSpace(selectedMembership.Alias)
 			workspaceID = strings.TrimSpace(selectedMembership.WorkspaceID)
-			certPath := filepath.Join(workingDir, ".aw", filepath.FromSlash(strings.TrimSpace(selectedMembership.CertPath)))
+			certHome := WorktreeIdentityHome(workingDir)
 			if identityHome != "" {
-				var pathErr error
-				certPath, pathErr = IdentityHomeStoredPath(IdentityHome{Root: identityHome}, selectedMembership.CertPath)
-				if pathErr != nil {
-					return nil, pathErr
-				}
+				certHome = identityHome
+			}
+			certPath, pathErr := IdentityHomeStoredPath(IdentityHome{Root: certHome}, selectedMembership.CertPath)
+			if pathErr != nil {
+				return nil, pathErr
 			}
 			if cert, err := awid.LoadTeamCertificate(certPath); err == nil {
 				if v := strings.TrimSpace(cert.MemberDIDKey); v != "" {

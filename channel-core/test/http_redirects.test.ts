@@ -99,6 +99,42 @@ describe("trust response bounds", () => {
     await expect(client.get("/oversize")).rejects.toThrow(/maximum|size|large|limit/i);
   });
 
+  test("a declared length over the limit is refused before the body is read", async () => {
+    let pulled = 0;
+    let cancelled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new Uint8Array(1024));
+      },
+      cancel() {
+        cancelled += 1;
+      },
+    });
+    const response = new Response(body, {
+      headers: { "Content-Length": String(MAX_RESPONSE_BYTES + 1) },
+    });
+
+    await expect(readBoundedResponse(response, MAX_RESPONSE_BYTES)).rejects.toThrow(
+      /maximum|size|large|limit/i,
+    );
+    // The accumulating loop would also refuse this body, so not reading it at
+    // all is what distinguishes the declared-length pre-check from that check.
+    expect(pulled).toBe(0);
+    expect(cancelled).toBe(1);
+  });
+
+  test("a declared length exactly at the limit is read rather than refused", async () => {
+    const content = `{}${" ".repeat(MAX_RESPONSE_BYTES - 2)}`;
+    const response = new Response(content, {
+      headers: { "Content-Length": String(MAX_RESPONSE_BYTES) },
+    });
+
+    await expect(readBoundedResponse(response, MAX_RESPONSE_BYTES)).resolves.toHaveLength(
+      MAX_RESPONSE_BYTES,
+    );
+  });
+
   test.each([
     { name: "trailing whitespace", suffix: " \r\n\t", shouldSucceed: true },
     { name: "a second document", suffix: "\n{}", shouldSucceed: false },

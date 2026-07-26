@@ -670,7 +670,7 @@ func TestEncryptionKeySetupUsesActiveLocalCertificateIdentity(t *testing.T) {
 		CreatedAt:      "2026-05-26T00:00:00Z",
 	})
 
-	identity, err := resolveIdentityForEncryptionKeyForDir(tmp)
+	identity, err := resolveIdentityForEncryptionKeyForDir(tmp, currentEncryptionKeyIdentityHome())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -689,6 +689,47 @@ func TestEncryptionKeySetupUsesActiveLocalCertificateIdentity(t *testing.T) {
 	}
 	if err := awid.VerifyEncryptionKeyAssertion(assertion, did, "", time.Now().UTC()); err != nil {
 		t.Fatalf("local assertion should verify without stable id: %v", err)
+	}
+}
+
+func TestEncryptionKeyIdentityHomeIntentZeroValueFailsClosed(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "target")
+	operator := filepath.Join(root, "operator")
+	teamID := "default:intent.example"
+	_, _ = writeSelfCustodyIdentityForTest(t, target, teamID)
+	_, _ = writeSelfCustodyIdentityForTest(t, operator, teamID)
+	operatorIdentityHome := awconfig.WorktreeIdentityHome(operator)
+	t.Setenv(awconfig.IdentityHomeEnv, operatorIdentityHome)
+	resolvedHome, err := identityHomeForDir(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedHome.Root != operatorIdentityHome || !resolvedHome.External() {
+		t.Fatalf("fixture did not activate distinct operator identity home: %+v", resolvedHome)
+	}
+
+	for name, intent := range map[string]encryptionKeyIdentityHomeIntent{
+		"zero value":     {},
+		"explicit blank": explicitEncryptionKeyIdentityHome(""),
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := ensureLocalIdentityEncryptionKeyForDir(target, intent)
+			if err == nil || !strings.Contains(err.Error(), "identity home") {
+				t.Fatalf("error=%v, want identity-home intent rejection", err)
+			}
+			for label, path := range map[string]string{
+				"target":   awconfig.WorktreeEncryptionStatePath(target),
+				"operator": awconfig.WorktreeEncryptionStatePath(operator),
+			} {
+				if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+					t.Errorf("%s encryption state changed at %s: %v", label, path, statErr)
+				}
+			}
+		})
 	}
 }
 
@@ -754,7 +795,7 @@ func TestEncryptionKeyEnsureRebindsGlobalAssertionWithoutRotatingActiveKey(t *te
 		CreatedAt:      "2026-05-26T00:00:00Z",
 	})
 
-	if err := ensureLocalIdentityEncryptionKeyForDir(tmp); err != nil {
+	if err := ensureLocalIdentityEncryptionKeyForDir(tmp, currentEncryptionKeyIdentityHome()); err != nil {
 		t.Fatal(err)
 	}
 	state, err := awconfig.LoadEncryptionKeyStateFrom(awconfig.WorktreeEncryptionStatePath(tmp))
@@ -812,7 +853,7 @@ func TestEnsureE2EEKeyReadyForSendPublishesExistingLocalRecord(t *testing.T) {
 		SigningKey:  priv,
 		CreatedAt:   "2026-05-26T00:00:00Z",
 	})
-	if err := ensureLocalIdentityEncryptionKeyForDir(tmp); err != nil {
+	if err := ensureLocalIdentityEncryptionKeyForDir(tmp, currentEncryptionKeyIdentityHome()); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(&publishCount); got != 0 {
@@ -901,7 +942,7 @@ func TestEncryptionKeySetupSkipsAWIDWhenGlobalCertificateHasNoRegistryContext(t 
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, tmp, false, currentEncryptionKeyIdentityHome)
+	out, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, tmp, false, currentEncryptionKeyIdentityHome())
 	if err != nil {
 		t.Fatal(err)
 	}

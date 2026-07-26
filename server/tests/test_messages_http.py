@@ -948,6 +948,86 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
 
 
 @pytest.mark.asyncio
+async def test_send_message_to_external_address_requires_signed_payload(aweb_cloud_db):
+    """Federated mail first contact must refuse an unsigned payload before delivery.
+
+    The request carries from_did, message_id, timestamp and conversation_id, so
+    the missing signature pair is the only thing _require_remote_mail_signature
+    can object to. The asserted detail is emitted by nothing else in the request
+    path, which is how this fixture proves it reached that gate.
+    """
+    _, _, alice_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=alice_did_key,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-2",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key="did:key:bob",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://remote.example"),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    remote_requests = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        remote_requests.append(request)
+        return httpx.Response(500, json={"detail": "unsigned mail must never reach the wire"})
+
+    app.state.federation_mail_transport = httpx.MockTransport(_remote_handler)
+
+    async def _auth():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=alice_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth
+    message_id = str(uuid4())
+    conversation_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/messages",
+            json={
+                "to_address": "otherco.com/bob",
+                "subject": "conversation address",
+                "body": "hello",
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "from_did": alice_did_key,
+            },
+        )
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "Federated mail delivery requires a sender-signed payload"
+    assert remote_requests == []
+    projected_count = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
+        UUID(message_id),
+    )
+    assert projected_count == 0
+
+
+@pytest.mark.asyncio
 async def test_send_encrypted_message_to_external_address_posts_ciphertext_only(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
@@ -4222,6 +4302,102 @@ async def test_send_message_federated_conversation_reply_uses_recorded_participa
 
 
 @pytest.mark.asyncio
+async def test_send_message_federated_conversation_reply_requires_signed_payload(aweb_cloud_db):
+    """Federated mail continuation must refuse an unsigned payload before delivery.
+
+    Continuation skips _validate_signed_mail_payload entirely when no signature
+    is present, so _require_remote_mail_signature is the only thing standing
+    between an unsigned body and the remote server.
+    """
+    _, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "default:beta.example")
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="default:beta.example",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="beta.example/bob",
+    )
+    conversation_id = str(uuid4())
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, team_id, created_by_did, created_at, updated_at
+        )
+        VALUES ($1, 'mail', 'default:beta.example', 'did:aw:alice', NOW() - INTERVAL '1 minute', NOW() - INTERVAL '1 minute')
+        """,
+        UUID(conversation_id),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
+        )
+        VALUES
+            ($1, 'did:aw:alice', NULL, 'alice', 'alpha.example/alice', 'https://sender.example', $3, 'federation:https://sender.example', 'initiator'),
+            ($1, 'did:aw:bob', $2, 'bob', 'beta.example/bob', NULL, $4, 'local', 'participant')
+        """,
+        UUID(conversation_id),
+        UUID(bob_agent_id),
+        alice_did_key,
+        bob_did_key,
+    )
+
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(side_effect=AssertionError("federated continuation must use stored current did:key"))
+    registry.resolve_address = AsyncMock(side_effect=AssertionError("federated continuation must not rediscover address"))
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://recipient.example"
+
+    remote_calls: list[dict] = []
+
+    async def _remote_handler(request: httpx.Request) -> httpx.Response:
+        remote_calls.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(500, json={"detail": "unsigned mail must never reach the wire"})
+
+    app.state.federation_mail_transport = httpx.MockTransport(_remote_handler)
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="beta.example/bob",
+            team_id="default:beta.example",
+            alias="bob",
+            agent_id=bob_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/messages",
+            json={
+                "conversation_id": conversation_id,
+                "to_did": "did:aw:alice",
+                "to_stable_id": "did:aw:alice",
+                "subject": "Federated reply",
+                "body": "federated continuation",
+                "from_did": bob_did_key,
+                "message_id": message_id,
+                "timestamp": timestamp,
+            },
+        )
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "Federated mail delivery requires a sender-signed payload"
+    assert remote_calls == []
+    projected_count = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
+        UUID(message_id),
+    )
+    assert projected_count == 0
+
+
+@pytest.mark.asyncio
 async def test_receive_federated_mail_stored_route_rejects_wrong_target_current_key(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()
@@ -6330,7 +6506,9 @@ async def test_send_message_rejects_signed_payload_body_mismatch(aweb_cloud_db):
     registry.list_team_certificates = AsyncMock(return_value=[])
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
-    timestamp = "2026-04-10T00:00:00Z"
+    # Generated at run time so the fixture clears the federation skew window and
+    # the tampered body is the only thing left that can refuse it.
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     message_id = "11111111-1111-4111-8111-111111111111"
     signed_payload = canonical_json_bytes(
         {
