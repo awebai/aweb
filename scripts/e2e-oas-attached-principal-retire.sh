@@ -307,7 +307,7 @@ scan_provisioned_material() {
 seed_provision_lifecycle_artifacts() {
   local operation="$1"
   local intent="$PRINCIPAL_HOME/.provisioning/intents/$operation.json"
-  local alias agent workspace encoded_team encoded_alias index_ttl coordinates_ttl
+  local alias agent workspace encoded_team encoded_alias coordinates_ttl
   alias="$(json_value "$intent" resource.alias)"
   agent="$(json_value "$intent" resource.agent_id)"
   workspace="$(json_value "$intent" resource.workspace_id)"
@@ -326,7 +326,7 @@ seed_provision_lifecycle_artifacts() {
   docker exec "$REDIS_CONTAINER" redis-cli SET "idx:alias:$encoded_team:$encoded_alias" "$workspace" EX 3600 >/dev/null
   docker exec "$REDIS_CONTAINER" redis-cli EXPIRE idx:all_workspaces 3600 >/dev/null
   docker exec "$REDIS_CONTAINER" redis-cli EXPIRE "idx:team_workspaces:$TEAM_ID" 3600 >/dev/null
-  docker exec "$REDIS_CONTAINER" redis-cli EXPIRE "presence_coordinates:$workspace" 3660 >/dev/null
+  docker exec "$REDIS_CONTAINER" redis-cli PERSIST "presence_coordinates:$workspace" >/dev/null
   [[ "$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$workspace';")" == "1" ]] \
     || fail "task-claim positive control was not created for $operation"
   [[ "$(docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT COUNT(*) FROM aweb.reservations WHERE holder_agent_id = '$agent';")" == "1" ]] \
@@ -342,10 +342,14 @@ seed_provision_lifecycle_artifacts() {
     || fail "primary presence did not expire before lifecycle cleanup for $operation"
   [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence_coordinates:$workspace")" == "1" ]] \
     || fail "durable presence coordinates were not retained after primary expiry for $operation"
-  index_ttl="$(docker exec "$REDIS_CONTAINER" redis-cli TTL "idx:team_workspaces:$TEAM_ID")"
   coordinates_ttl="$(docker exec "$REDIS_CONTAINER" redis-cli TTL "presence_coordinates:$workspace")"
-  (( coordinates_ttl > index_ttl )) \
-    || fail "presence cleanup coordinates do not strictly outlive their index for $operation"
+  [[ "$coordinates_ttl" == "-1" ]] \
+    || fail "presence cleanup coordinates are not durable until explicit cleanup for $operation"
+  if [[ "$operation" == "$VICTIM_OPERATION" ]]; then
+    docker exec "$REDIS_CONTAINER" redis-cli DEL "presence_coordinates:$workspace" >/dev/null
+    [[ "$(docker exec "$REDIS_CONTAINER" redis-cli EXISTS "presence_coordinates:$workspace")" == "0" ]] \
+      || fail "pre-coordinate fallback fixture retained reverse coordinates for $operation"
+  fi
   [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER idx:all_workspaces "$workspace")" == "1" ]] \
     || fail "global presence index did not outlive primary for $operation"
   [[ "$(docker exec "$REDIS_CONTAINER" redis-cli SISMEMBER "idx:team_workspaces:$TEAM_ID" "$workspace")" == "1" ]] \

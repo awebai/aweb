@@ -144,6 +144,9 @@ class _FakeRedis:
     async def expire(self, key, ttl):
         return True
 
+    async def persist(self, key):
+        return True
+
     async def sadd(self, key, *values):
         bucket = self.sets.setdefault(key, set())
         bucket.update(str(v) for v in values)

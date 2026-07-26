@@ -46,21 +46,40 @@ class _Redis:
         self.expirations[key] = seconds
         return True
 
+    async def persist(self, key):
+        return int(self.expirations.pop(key, None) is not None)
+
     async def sadd(self, key, value):
         before = len(self.sets.setdefault(key, set()))
         self.sets[key].add(value)
         return int(len(self.sets[key]) != before)
+
+    async def sismember(self, key, value):
+        return value in self.sets.get(key, set())
 
     async def srem(self, key, value):
         existed = value in self.sets.get(key, set())
         self.sets.setdefault(key, set()).discard(value)
         return int(existed)
 
+    async def get(self, key):
+        return self.values.get(key)
+
     async def set(self, key, value, ex=None):
         self.values[key] = value
         if ex is not None:
             self.expirations[key] = ex
         return True
+
+    async def exists(self, key):
+        return int(key in self.hashes or key in self.values or key in self.sets)
+
+    async def scan_iter(self, match):
+        import fnmatch
+
+        for key in list(self.sets) + list(self.values):
+            if fnmatch.fnmatch(key, match):
+                yield key
 
     async def delete(self, key):
         existed = key in self.hashes or key in self.values
@@ -130,9 +149,19 @@ async def test_clear_workspace_presence_uses_all_historical_coordinates_after_pr
         repo_id="repo-2",
         current_branch="next",
     )
+    await update_agent_presence(
+        redis,
+        workspace_id="workspace-live",
+        alias="live",
+        team_id="backend:acme.test",
+        repo_id="repo-2",
+        current_branch="next",
+        ttl_seconds=100,
+    )
     redis.hashes.pop(f"presence:{workspace_id}")
     coordinates_key = f"presence_coordinates:{workspace_id}"
-    assert redis.expirations[coordinates_key] > redis.expirations["idx:repo_workspaces:repo-2"]
+    assert coordinates_key not in redis.expirations
+    assert redis.expirations["idx:repo_workspaces:repo-2"] == 200
 
     assert await clear_workspace_presence(redis, [workspace_id]) == 0
     assert f"presence_coordinates:{workspace_id}" not in redis.hashes
@@ -144,6 +173,27 @@ async def test_clear_workspace_presence_uses_all_historical_coordinates_after_pr
     assert workspace_id not in redis.sets["idx:branch_workspaces:repo-2:next"]
     assert "idx:alias:backend%3Aacme.test:worker" not in redis.values
     assert "idx:alias:backend%3Aacme.test:worker-next" not in redis.values
+    assert "workspace-live" in redis.sets["idx:team_workspaces:backend:acme.test"]
+    assert "workspace-live" in redis.sets["idx:repo_workspaces:repo-2"]
+
+
+@pytest.mark.asyncio
+async def test_clear_workspace_presence_recovers_pre_coordinate_indices():
+    redis = _Redis()
+    workspace_id = "workspace-pre-upgrade"
+    await redis.sadd("idx:all_workspaces", workspace_id)
+    await redis.sadd("idx:team_workspaces:backend:acme.test", workspace_id)
+    await redis.sadd("idx:repo_workspaces:repo-old", workspace_id)
+    await redis.sadd("idx:branch_workspaces:repo-old:main", workspace_id)
+    await redis.set("idx:alias:backend%3Aacme.test:worker", workspace_id)
+
+    assert await clear_workspace_presence(redis, [workspace_id]) == 0
+    assert workspace_id not in redis.sets["idx:all_workspaces"]
+    assert workspace_id not in redis.sets["idx:team_workspaces:backend:acme.test"]
+    assert workspace_id not in redis.sets["idx:repo_workspaces:repo-old"]
+    assert workspace_id not in redis.sets["idx:branch_workspaces:repo-old:main"]
+    assert "idx:alias:backend%3Aacme.test:worker" not in redis.values
+    assert f"presence_coordinates:{workspace_id}" not in redis.hashes
 
 
 @pytest.mark.asyncio

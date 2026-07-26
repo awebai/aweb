@@ -62,7 +62,7 @@ forbidden.
 | aweb workspace row | exact-team persistent authority calling workspace delete | **soft-deleted** |
 | aweb local agent/identity row | local-workspace lifecycle cascade | **soft-deleted** |
 | Task claims and reservations created during runtime | aweb PostgreSQL lifecycle cascade; proof seeds positive rows | **physically absent** |
-| Workspace presence created during runtime | aweb Redis reverse-coordinate hash accumulates every global/team/repo/branch/alias key and strictly outlives those indices; proof expires the shorter-lived primary while positive applicable indices remain | **physically absent** |
+| Workspace presence created during runtime | aweb Redis reverse-coordinate hash accumulates every global/team/repo/branch/alias key and remains durable until explicit cleanup; pre-coordinate entries use a complete fallback index scan | **physically absent** |
 | aweb API keys | local certificate connect creates none; AWID certificate above is the authorization grant | **not created** |
 | Messages/delivery records | no model session or message is created by this no-launch provisioning proof; historical messages are audit, not member authorization | **not created / not applicable to the provision operation** |
 | Hosted organization membership | not created on the local-controller path | **physically absent / not applicable** |
@@ -142,8 +142,8 @@ cleaned; a later spawn allocates its own operation and principal.
 no-tmux loopback Docker stack. In addition to attached-principal preservation,
 it provisions two throwaway local identities through real OAS hooks, AWID, aweb,
 PostgreSQL, and Redis. It seeds real task-claim/reservation rows and Redis
-reverse cleanup coordinates/indices, proves coordinates strictly outlive indices,
-expires the shorter-lived primary before cleanup, asserts every applicable
+reverse cleanup coordinates/indices, proves coordinates have no expiry, exercises
+one pre-coordinate fallback, expires the shorter-lived primary, asserts every
 secondary remains as a positive control, asserts both
 external journals terminal `complete`, and
 snapshots each provisioned credential tree before scanning both instance homes

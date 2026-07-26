@@ -129,9 +129,10 @@ async def update_agent_presence(
     # Primary, indices, and their reverse cleanup coordinates commit in one
     # Redis transaction. The coordinate hash accumulates every index key ever
     # written for this presence lifetime, including historical repo/branch and
-    # alias values, and outlives those indices by a grace interval.
+    # alias values. Coordinates are intentionally durable until lifecycle
+    # cleanup; shared set TTLs can be refreshed forever by other workspaces, so
+    # no finite coordinate TTL can safely outlive an individual membership.
     index_ttl = ttl_seconds * 2
-    coordinates_ttl = index_ttl + max(60, ttl_seconds // 10)
     coordinates_key = _presence_coordinates_key(workspace_id)
     all_idx_key = _all_workspaces_index_key()
     set_indices = [all_idx_key]
@@ -155,7 +156,7 @@ async def update_agent_presence(
     for index_key in alias_indices:
         pipe.set(index_key, workspace_id, ex=index_ttl)
     pipe.hset(coordinates_key, mapping=reverse_coordinates)
-    pipe.expire(coordinates_key, coordinates_ttl)
+    pipe.persist(coordinates_key)
     await pipe.execute()
 
     return now
@@ -448,6 +449,34 @@ async def clear_workspace_presence(
     if not workspace_ids:
         return 0
 
+    def text(value) -> str:
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value or "")
+
+    async def recover_pre_coordinate_indices(ws_id: str) -> None:
+        coordinates_key = _presence_coordinates_key(ws_id)
+        if await redis.exists(coordinates_key):
+            return
+        # Upgrade fallback for presence written before reverse coordinates
+        # existed (or by an interrupted older writer). A completed scan is
+        # persisted before cleanup, so failure never becomes false success.
+        recovered = {"scan-complete": "1"}
+        for pattern in (
+            "idx:team_workspaces:*",
+            "idx:repo_workspaces:*",
+            "idx:branch_workspaces:*",
+        ):
+            async for raw_key in redis.scan_iter(match=pattern):
+                index_key = text(raw_key)
+                if await redis.sismember(index_key, ws_id):
+                    recovered[f"set:{index_key}"] = "1"
+        async for raw_key in redis.scan_iter(match="idx:alias:*"):
+            index_key = text(raw_key)
+            if text(await redis.get(index_key)) == ws_id:
+                recovered[f"alias:{index_key}"] = ws_id
+        await redis.hset(coordinates_key, mapping=recovered)
+
     # Redis executes each script atomically: coordinates remain available until
     # every referenced set/alias mutation succeeds, then both primary and
     # coordinates are deleted as the final operations in the same commit.
@@ -473,6 +502,7 @@ async def clear_workspace_presence(
     """
     deleted_count = 0
     for ws_id in workspace_ids:
+        await recover_pre_coordinate_indices(ws_id)
         deleted_count += int(await redis.eval(
             cleanup_script,
             2,
