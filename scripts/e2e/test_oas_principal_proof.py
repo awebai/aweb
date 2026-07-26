@@ -20,6 +20,20 @@ class PrincipalProofHarnessTests(unittest.TestCase):
         self.assertIsNotNone(match, "Makefile has no default test target")
         self.assertIn("test-oas-proof-helpers", match.group(1).split())
 
+    def test_customer_journey_wires_external_acquisition_and_distinct_operations(self) -> None:
+        harness = (REPO_ROOT / "scripts/e2e-oas-attached-principal-retire.sh").read_text(encoding="utf-8")
+        for required in (
+            'install "$CAPABILITY_SOURCE" --dir "$FIXTURE_REPO"',
+            'doctor "$FIXTURE_REPO" --soul proof-worker',
+            'fail "$refused_mode refusal mutated an owning authority"',
+            'independent developers did not exercise duplicate local instance names',
+            'duplicate local names collapsed into one provisioning operation',
+            'attacker-after-victim-retire',
+            'third failed cleanup did not enter terminal visible quarantine',
+            '--retry-quarantine "$QUARANTINE_OPERATION"',
+        ):
+            self.assertIn(required, harness)
+
     def test_harness_preflight_checks_repository_paths_without_tooling(self) -> None:
         result = subprocess.run(
             ["/bin/bash", "scripts/e2e-oas-attached-principal-retire.sh", "--preflight"],

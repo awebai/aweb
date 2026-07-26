@@ -139,9 +139,14 @@ cleaned; a later spawn allocates its own operation and principal.
 ## Real lifecycle proof
 
 `scripts/e2e-oas-attached-principal-retire.sh` uses the repository's guarded,
-no-tmux loopback Docker stack. In addition to attached-principal preservation,
-it provisions two throwaway local identities through real OAS hooks, AWID, aweb,
-PostgreSQL, and Redis. It seeds real task-claim/reservation rows and Redis
+no-tmux loopback Docker stack and a fresh external git workspace. It acquires
+this capability with `oas install` without activation, explicitly activates and
+trusts it, records `oas doctor`, and performs internal authority onboarding.
+That onboarding still writes identity-binding and declaration YAML and is **not**
+the no-jargon customer setup experience owned by aaaa.44/.46. In addition to
+attached-principal preservation, the harness requires two independent developer
+roots to spawn the same local OAS instance name successfully as distinct opaque
+operations and aliases through real OAS hooks, AWID, aweb, PostgreSQL, and Redis. It seeds real task-claim/reservation rows and Redis
 reverse cleanup coordinates/indices for both workspace and production agent-
 heartbeat IDs, proves coordinates have no expiry, exercises one pre-coordinate
 fallback, expires the shorter-lived primaries, asserts every
@@ -149,11 +154,15 @@ secondary remains as a positive control, asserts both
 external journals terminal `complete`, and
 snapshots each provisioned credential tree before scanning both instance homes
 and the controlled repository by names, digests, symlink target, and device/inode
-for copies or hardlinks. It retargets one instance-side receipt at the other operation,
-proves the exact corroboration refusal leaves both real rows and certificates
-active, then proves ordinary authorized retire and the native exact-operation
-command produce AWID revocation, aweb agent/workspace soft deletion, local grant
-absence, and credential-tree absence at their owning authorities. This is
+for copies or hardlinks. It exchanges real plaintext mail in both directions, retargets one
+instance-side receipt at the other operation, proves the exact corroboration
+refusal leaves both real rows and certificates active, then proves ordinary
+authorized retire and the native exact-operation command produce AWID
+revocation, aweb agent/workspace soft deletion, local grant absence, and
+credential-tree absence at their owning authorities. A third operation loses
+its throwaway controller key for three cleanup executions, must surface terminal
+visible quarantine as non-success, and completes only after explicit remediation.
+Historical messages remain audit records; they are not authorization residue. This is
 explicitly local same-UID accident/confused-deputy evidence, not hostile-model
 resistance. Removing the operation comparison in the target audit makes the
 forged execution cleanup reach real deletion and turns the owning-authority
