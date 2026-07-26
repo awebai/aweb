@@ -19,6 +19,9 @@ AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml 
 CHANNEL_VERSION := $(shell node -p "require('./channel/package.json').version" 2>/dev/null)
 CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plugin.json').version" 2>/dev/null)
 CLI_VERSION := $(SERVER_VERSION)
+# OAS seam tests intentionally measure the working sibling clone, including
+# unreleased integration primitives, rather than whichever CLI is global.
+OAS_TEST_ROOT ?= $(abspath $(shell git rev-parse --git-common-dir)/../../oas)
 
 # Canonical docs mirrored onto the public AWID site. Sync, freshness checks, and
 # their negative controls all consume this one list so adding a mirror cannot
@@ -154,7 +157,7 @@ test-pi-extension:
 	cd pi-extension && npm test
 
 test-oas:
-	node --test oas/test/*.test.mjs
+	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node --test oas/test/*.test.mjs
 
 test-oas-proof-helpers:
 	python3 scripts/e2e/test_oas_principal_proof.py
