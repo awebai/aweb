@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -18,8 +19,9 @@ import (
 )
 
 const (
-	doctorSupportBundleSchema = "support_bundle.v1"
-	doctorRedactedMarker      = "[REDACTED]"
+	doctorSupportBundleSchema    = "support_bundle.v1"
+	doctorRedactedMarker         = "[REDACTED]"
+	doctorIdentityHomePathMarker = "$IDENTITY_HOME"
 )
 
 type doctorSupportBundleInfo struct {
@@ -36,6 +38,11 @@ type doctorSupportBundlePlatform struct {
 	Arch string `json:"arch"`
 }
 
+// doctorSupportBundleLocalMetadata is the explicit export allowlist. It may
+// contain public identity/team identifiers, sanitized service origins, local
+// path/host diagnostics, and presence booleans. Raw credentials, signatures,
+// private or encrypted key material, tokens, cookies, and URL credentials are
+// never exportable and are guarded again by the bundle-wide redaction scan.
 type doctorSupportBundleLocalMetadata struct {
 	WorkspaceYAMLPresent   bool                                    `json:"workspace_yaml_present"`
 	IdentityYAMLPresent    bool                                    `json:"identity_yaml_present"`
@@ -86,7 +93,7 @@ func buildDoctorSupportBundle(opts doctorRunOptions) (doctorOutput, []doctorKnow
 	if workingDir == "" {
 		workingDir = "."
 	}
-	knownSecrets := collectDoctorKnownSecrets(workingDir)
+	knownSecrets := collectDoctorKnownSecretsAt(workingDir, opts.IdentityHome)
 	out.SupportBundle = &doctorSupportBundleInfo{
 		Schema:      doctorSupportBundleSchema,
 		GeneratedBy: "aw doctor support-bundle",
@@ -95,8 +102,10 @@ func buildDoctorSupportBundle(opts doctorRunOptions) (doctorOutput, []doctorKnow
 			OS:   runtime.GOOS,
 			Arch: runtime.GOARCH,
 		},
-		LocalMetadata: collectDoctorSupportBundleLocalMetadata(workingDir),
+		LocalMetadata: collectDoctorSupportBundleLocalMetadataAt(workingDir, opts.IdentityHome),
 	}
+	out = omitDoctorSupportBundleDynamicDetails(out)
+	out = symbolizeDoctorIdentityHomePaths(out, opts.IdentityHome)
 	out = redactDoctorSupportBundle(out, knownSecrets)
 	if out.SupportBundle != nil {
 		out.SupportBundle.RedactionSummary = summarizeDoctorRedactions(out.Redactions)
@@ -104,9 +113,28 @@ func buildDoctorSupportBundle(opts doctorRunOptions) (doctorOutput, []doctorKnow
 	return out, knownSecrets, nil
 }
 
+func omitDoctorSupportBundleDynamicDetails(out doctorOutput) doctorOutput {
+	out.Checks = append([]doctorCheck(nil), out.Checks...)
+	for i := range out.Checks {
+		out.Checks[i].Detail = nil
+	}
+	out.Fixes = append([]doctorFixPlan(nil), out.Fixes...)
+	for i := range out.Fixes {
+		out.Fixes[i].Preconditions = append([]doctorFixPrecondition(nil), out.Fixes[i].Preconditions...)
+		for j := range out.Fixes[i].Preconditions {
+			out.Fixes[i].Preconditions[j].Detail = nil
+		}
+	}
+	return out
+}
+
 func collectDoctorSupportBundleLocalMetadata(workingDir string) doctorSupportBundleLocalMetadata {
+	return collectDoctorSupportBundleLocalMetadataAt(workingDir, "")
+}
+
+func collectDoctorSupportBundleLocalMetadataAt(workingDir, identityHome string) doctorSupportBundleLocalMetadata {
 	meta := doctorSupportBundleLocalMetadata{}
-	workspace, _, err := loadDoctorWorkspaceFromDir(workingDir)
+	workspace, _, err := loadDoctorWorkspaceAt(workingDir, identityHome)
 	if err == nil && workspace != nil {
 		meta.WorkspaceYAMLPresent = true
 		if safe, err := sanitizeLocalURLForOutput(workspace.AwebURL); err == nil {
@@ -114,13 +142,13 @@ func collectDoctorSupportBundleLocalMetadata(workingDir string) doctorSupportBun
 		}
 		meta.Hostname = strings.TrimSpace(workspace.Hostname)
 		meta.WorkspacePath = strings.TrimSpace(workspace.WorkspacePath)
-		teamState, _ := awconfig.LoadTeamState(workingDir)
+		teamState, _ := loadDoctorTeamStateAt(workingDir, identityHome)
 		if membership := awconfig.ActiveMembershipFor(workspace, teamState); membership != nil {
 			meta.TeamID = strings.TrimSpace(membership.TeamID)
 			meta.WorkspaceID = strings.TrimSpace(membership.WorkspaceID)
 			meta.Alias = strings.TrimSpace(membership.Alias)
 			meta.RoleName = strings.TrimSpace(membership.RoleName)
-			certPath := resolveWorkspaceCertificatePath(workingDir, membership.CertPath)
+			certPath, _ := resolveIdentityStoredPath(workingDir, identityHome, membership.CertPath)
 			if strings.TrimSpace(certPath) != "" {
 				if cert, err := awid.LoadTeamCertificate(certPath); err == nil && cert != nil {
 					meta.TeamCertificatePresent = true
@@ -143,7 +171,7 @@ func collectDoctorSupportBundleLocalMetadata(workingDir string) doctorSupportBun
 			}
 		}
 	}
-	identityPath := awconfig.WorktreeIdentityPath(workingDir)
+	identityPath := doctorIdentityStatePath(workingDir, identityHome, "identity.yaml")
 	if identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath); err == nil && identity != nil {
 		meta.IdentityYAMLPresent = true
 		if scope := strings.TrimSpace(identity.IdentityScope); scope != "" {
@@ -163,13 +191,17 @@ func collectDoctorSupportBundleLocalMetadata(workingDir string) doctorSupportBun
 			meta.RegistryURL = safe
 		}
 	}
-	if _, err := os.Stat(awconfig.WorktreeSigningKeyPath(workingDir)); err == nil {
+	if _, err := os.Stat(doctorIdentityStatePath(workingDir, identityHome, "signing.key")); err == nil {
 		meta.SigningKeyPresent = true
 	}
 	return meta
 }
 
 func collectDoctorKnownSecrets(workingDir string) []doctorKnownSecret {
+	return collectDoctorKnownSecretsAt(workingDir, "")
+}
+
+func collectDoctorKnownSecretsAt(workingDir, identityHome string) []doctorKnownSecret {
 	var secrets []doctorKnownSecret
 	add := func(value, reason string) {
 		value = strings.TrimSpace(value)
@@ -203,12 +235,12 @@ func collectDoctorKnownSecrets(workingDir string) []doctorKnownSecret {
 		}
 	}
 
-	if workspace, _, err := loadDoctorWorkspaceFromDir(workingDir); err == nil && workspace != nil {
+	if workspace, _, err := loadDoctorWorkspaceAt(workingDir, identityHome); err == nil && workspace != nil {
 		add(workspace.APIKey, "api_key")
 		addURLSecrets(workspace.AwebURL)
-		teamState, _ := awconfig.LoadTeamState(workingDir)
+		teamState, _ := loadDoctorTeamStateAt(workingDir, identityHome)
 		if membership := awconfig.ActiveMembershipFor(workspace, teamState); membership != nil {
-			certPath := resolveWorkspaceCertificatePath(workingDir, membership.CertPath)
+			certPath, _ := resolveIdentityStoredPath(workingDir, identityHome, membership.CertPath)
 			if strings.TrimSpace(certPath) != "" {
 				if data, err := os.ReadFile(certPath); err == nil {
 					add(string(data), "raw_team_certificate")
@@ -219,14 +251,58 @@ func collectDoctorKnownSecrets(workingDir string) []doctorKnownSecret {
 			}
 		}
 	}
-	if identity, err := awconfig.LoadWorktreeIdentityFrom(awconfig.WorktreeIdentityPath(workingDir)); err == nil && identity != nil {
+	if identity, err := awconfig.LoadWorktreeIdentityFrom(doctorIdentityStatePath(workingDir, identityHome, "identity.yaml")); err == nil && identity != nil {
 		addURLSecrets(identity.RegistryURL)
 	}
 	addURLSecrets(os.Getenv("AWID_REGISTRY_URL"))
-	if data, err := os.ReadFile(awconfig.WorktreeSigningKeyPath(workingDir)); err == nil {
+	if data, err := os.ReadFile(doctorIdentityStatePath(workingDir, identityHome, "signing.key")); err == nil {
 		add(string(data), "secret_key_material")
 	}
 	return secrets
+}
+
+func symbolizeDoctorIdentityHomePaths(out doctorOutput, identityHome string) doctorOutput {
+	identityHome = filepath.Clean(strings.TrimSpace(identityHome))
+	if identityHome == "." || identityHome == "" {
+		return out
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return out
+	}
+	var generic any
+	if err := json.Unmarshal(data, &generic); err != nil {
+		return out
+	}
+	generic = symbolizeDoctorPathValue(generic, identityHome)
+	data, err = json.Marshal(generic)
+	if err != nil {
+		return out
+	}
+	var symbolized doctorOutput
+	if err := json.Unmarshal(data, &symbolized); err != nil {
+		return out
+	}
+	return symbolized
+}
+
+func symbolizeDoctorPathValue(value any, identityHome string) any {
+	switch v := value.(type) {
+	case map[string]any:
+		for key, child := range v {
+			v[key] = symbolizeDoctorPathValue(child, identityHome)
+		}
+		return v
+	case []any:
+		for i, child := range v {
+			v[i] = symbolizeDoctorPathValue(child, identityHome)
+		}
+		return v
+	case string:
+		return strings.ReplaceAll(v, identityHome, doctorIdentityHomePathMarker)
+	default:
+		return v
+	}
 }
 
 func redactDoctorSupportBundle(out doctorOutput, knownSecrets []doctorKnownSecret) doctorOutput {

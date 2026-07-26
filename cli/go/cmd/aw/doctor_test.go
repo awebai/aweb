@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,6 +21,57 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+func TestDoctorSupportBundleExportSchemaIsExplicit(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		value  any
+		fields []string
+	}{
+		{"doctorOutput", doctorOutput{}, []string{"checks", "fixes", "generated_at", "mode", "redactions", "status", "subject", "support_bundle", "version"}},
+		{"doctorSubject", doctorSubject{}, []string{"alias", "aweb_url", "identity_path", "lifetime", "team_id", "working_dir", "workspace_id"}},
+		{"doctorCheck", doctorCheck{}, []string{"authoritative", "authority", "detail", "fix", "handoff", "id", "message", "next_step", "source", "status", "target"}},
+		{"doctorTarget", doctorTarget{}, []string{"display", "id", "type"}},
+		{"doctorFixInfo", doctorFixInfo{}, []string{"available", "command", "dry_run", "reason", "safe"}},
+		{"doctorHandoff", doctorHandoff{}, []string{"action", "caller_authority_evidence", "caller_authority_status", "consequences", "dashboard_action", "doctor_refusal_reason", "dry_run_command", "expected_action", "explicit_command", "replacement_guidance", "required_authority", "support_runbook_ref"}},
+		{"doctorRedaction", doctorRedaction{}, []string{"field", "reason"}},
+		{"doctorSupportBundleInfo", doctorSupportBundleInfo{}, []string{"generated_by", "local_metadata", "platform", "redaction_summary", "safe_to_share", "schema"}},
+		{"doctorSupportBundlePlatform", doctorSupportBundlePlatform{}, []string{"arch", "os"}},
+		{"doctorSupportBundleLocalMetadata", doctorSupportBundleLocalMetadata{}, []string{"address", "alias", "aweb_url", "certificate", "custody", "did_key", "hostname", "identity_scope", "identity_yaml_present", "lifetime", "registry_url", "role_name", "signing_key_present", "stable_id", "team_certificate_present", "team_id", "workspace_id", "workspace_path", "workspace_yaml_present"}},
+		{"doctorSupportBundleCertificateMetadata", doctorSupportBundleCertificateMetadata{}, []string{"alias", "identity_scope", "lifetime", "member_address", "member_did_aw", "member_did_key", "team_did_key", "team_id"}},
+		{"doctorSupportBundleRedactionSummary", doctorSupportBundleRedactionSummary{}, []string{"by_reason", "count", "rule_version"}},
+		{"doctorFixPlan", doctorFixPlan{}, []string{"authority", "check_id", "dry_run", "high_impact", "next_step", "plan_id", "planned_mutations", "preconditions", "refusal_detail", "refusal_reason", "rollback_guidance", "safe", "source", "status", "target"}},
+		{"doctorFixMutation", doctorFixMutation{}, []string{"description", "operation", "path", "resource", "source_of_truth", "target"}},
+		{"doctorFixPrecondition", doctorFixPrecondition{}, []string{"detail", "id", "passed"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			typ := reflect.TypeOf(tc.value)
+			var got []string
+			for i := 0; i < typ.NumField(); i++ {
+				field := typ.Field(i)
+				if field.PkgPath != "" {
+					continue
+				}
+				tag, tagged := field.Tag.Lookup("json")
+				name := strings.Split(tag, ",")[0]
+				if !tagged || name == "" {
+					t.Fatalf("exported field %s lacks an explicit reviewed JSON name", field.Name)
+				}
+				if name != "-" {
+					got = append(got, name)
+				}
+			}
+			sort.Strings(got)
+			want := append([]string(nil), tc.fields...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("exported JSON schema changed: got %v want %v; explicitly review support-bundle policy before updating", got, want)
+			}
+		})
+	}
+}
 
 func buildDoctorBinary(t *testing.T) (string, string) {
 	t.Helper()
@@ -315,6 +368,9 @@ func TestAwDoctorSupportBundleJSONPrintsRedactedBundle(t *testing.T) {
 		t.Fatalf("printed support bundle JSON omitted support_bundle")
 	}
 	text := string(out)
+	if strings.Contains(text, `"detail"`) || strings.Contains(text, "future-confidential-payload") {
+		t.Fatalf("printed support bundle exported dynamic diagnostic detail:\n%s", text)
+	}
 	for _, secret := range []string{
 		"secret-api-token",
 		"BEGIN ED25519 PRIVATE KEY",
@@ -376,50 +432,44 @@ func TestAwDoctorSupportBundleFinalScanFailsBeforeWrite(t *testing.T) {
 	}
 }
 
-func TestAwDoctorSupportBundleFinalScanRejectsRawTeamCertificate(t *testing.T) {
+func TestAwDoctorSupportBundleOmitsDynamicDetailBeforeSerialization(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
-	writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
-	certPath := awconfig.TeamCertificatePath(tmp, resolvedTeamIDForTest("backend:example.com"))
-	rawCert, err := os.ReadFile(certPath)
-	if err != nil {
-		t.Fatalf("read cert: %v", err)
-	}
-	rawCertText := strings.TrimSpace(string(rawCert))
-	secrets := collectDoctorKnownSecrets(tmp)
-	foundRawCert := false
-	for _, secret := range secrets {
-		if secret.Value == rawCertText && secret.Reason == "raw_team_certificate" {
-			foundRawCert = true
-			break
-		}
-	}
-	if !foundRawCert {
-		t.Fatalf("known secrets did not include raw team certificate")
-	}
-	outputPath := filepath.Join(tmp, "unsafe-cert.json")
+	outputPath := filepath.Join(tmp, "dynamic-detail.json")
 	out := doctorOutput{
 		Version:     doctorVersion,
 		GeneratedAt: "2026-04-18T00:00:00Z",
 		Status:      doctorStatusInfo,
 		Mode:        doctorModeOffline,
 		Checks: []doctorCheck{{
-			ID:        "synthetic.raw_cert",
+			ID:        "synthetic.dynamic_detail",
 			Status:    doctorStatusInfo,
 			Source:    doctorSourceLocal,
 			Authority: doctorAuthorityCaller,
 			Message:   "synthetic",
-			Detail:    map[string]any{"unexpected_blob": rawCertText},
+			Detail: map[string]any{
+				"future_debug_payload": "future-confidential-payload",
+			},
+		}},
+		Fixes: []doctorFixPlan{{
+			PlanID: "synthetic-fix",
+			Preconditions: []doctorFixPrecondition{{
+				ID:     "synthetic-precondition",
+				Detail: map[string]any{"future_precondition_payload": "future-precondition-confidential"},
+			}},
 		}},
 		SupportBundle: &doctorSupportBundleInfo{Schema: doctorSupportBundleSchema},
 	}
-	err = writeDoctorSupportBundleFile(outputPath, out, secrets)
-	if err == nil {
-		t.Fatalf("expected raw team certificate final scan failure")
+	if err := writeDoctorSupportBundleFile(outputPath, out, nil); err != nil {
+		t.Fatalf("write support bundle with dynamic detail: %v", err)
 	}
-	if _, statErr := os.Stat(outputPath); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("unsafe raw cert bundle file was written, statErr=%v", statErr)
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "future_debug_payload") || strings.Contains(string(data), "future-confidential-payload") || strings.Contains(string(data), "future_precondition_payload") || strings.Contains(string(data), "future-precondition-confidential") {
+		t.Fatalf("dynamic detail was exportable: %s", data)
 	}
 }
 
