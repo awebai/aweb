@@ -17,6 +17,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// currentEncryptionKeyIdentityHome makes callers explicitly opt in to ambient
+// --identity-home / AWEB_IDENTITY_HOME resolution for the active identity.
+const currentEncryptionKeyIdentityHome = ""
+
 type idEncryptionKeyOutput struct {
 	Status         string   `json:"status"`
 	KeyID          string   `json:"key_id,omitempty"`
@@ -117,11 +121,11 @@ func runIDEncryptionKeyShow(cmd *cobra.Command, args []string) error {
 
 func setupOrRotateIdentityEncryptionKey(ctx context.Context, rotate bool) (idEncryptionKeyOutput, error) {
 	wd, _ := os.Getwd()
-	return setupOrRotateIdentityEncryptionKeyForDir(ctx, wd, rotate)
+	return setupOrRotateIdentityEncryptionKeyForDir(ctx, wd, rotate, currentEncryptionKeyIdentityHome)
 }
 
-func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, rotate bool, identityHomes ...string) (idEncryptionKeyOutput, error) {
-	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHomes...)
+func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, rotate bool, identityHome string) (idEncryptionKeyOutput, error) {
+	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHome)
 	if err != nil {
 		return idEncryptionKeyOutput{}, err
 	}
