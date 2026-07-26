@@ -246,10 +246,11 @@ func TestReplacementHomeWithoutOldCertificateAcceptsExplicitCertificateID(t *tes
 	}
 }
 
-func TestTeamReplaceKeyReplacesRosterRevokesOldRegistersAndInstallsNewCertificate(t *testing.T) {
+func TestTeamReplaceKeyWithOperatorIdentityHomeRefreshesOnlyTargetEncryptionKey(t *testing.T) {
 	var server *httptest.Server
 	var order []string
 	var registered map[string]any
+	var publishedEncryptionAssertion awid.EncryptionKeyAssertion
 	var servicePayload localIdentityKeyReplacementRequest
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -297,6 +298,9 @@ func TestTeamReplaceKeyReplacesRosterRevokesOldRegistersAndInstallsNewCertificat
 			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			order = append(order, "refresh-e2e")
+			if err := json.NewDecoder(r.Body).Decode(&publishedEncryptionAssertion); err != nil {
+				t.Fatal(err)
+			}
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.com", "alice")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -304,7 +308,39 @@ func TestTeamReplaceKeyReplacesRosterRevokesOldRegistersAndInstallsNewCertificat
 	}))
 	t.Cleanup(server.Close)
 
-	_, agentHome, oldDID, newDID, _, oldCert := seedReplaceKeyWorkspace(t, server.URL)
+	root, agentHome, oldDID, newDID, _, oldCert := seedReplaceKeyWorkspace(t, server.URL)
+	operatorRoot := filepath.Join(root, "operator")
+	operatorPublicKey, operatorSigningKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorDID := awid.ComputeDIDKey(operatorPublicKey)
+	writeSelectionFixtureForTest(t, operatorRoot, testSelectionFixture{
+		AwebURL: server.URL, TeamID: "backend:acme.com", Alias: "captain", WorkspaceID: "workspace-captain",
+		DID: operatorDID, Custody: awid.CustodySelf, Lifetime: awid.LifetimeEphemeral,
+		SigningKey: operatorSigningKey, CreatedAt: "2026-07-26T00:00:00Z",
+	})
+	operatorIdentityHome, err := filepath.EvalSymlinks(awconfig.WorktreeIdentityHome(operatorRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorRoot = filepath.Dir(operatorIdentityHome)
+	t.Setenv(awconfig.IdentityHomeEnv, operatorIdentityHome)
+	resolvedHome, err := identityHomeForDir(agentHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedHome.Root != operatorIdentityHome || !resolvedHome.External() {
+		t.Fatalf("fixture did not activate distinct operator identity home: %+v", resolvedHome)
+	}
+	targetEncryptionStatePath := awconfig.WorktreeEncryptionStatePath(agentHome)
+	operatorEncryptionStatePath := awconfig.WorktreeEncryptionStatePath(operatorRoot)
+	for label, path := range map[string]string{"target": targetEncryptionStatePath, "operator": operatorEncryptionStatePath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("precondition: %s encryption state must be absent at %s: %v", label, path, err)
+		}
+	}
+
 	teamHumanReplaceKeyOldDID = oldDID
 	teamHumanReplaceKeyNewDID = newDID
 	teamHumanReplaceKeyHome = agentHome
@@ -328,8 +364,15 @@ func TestTeamReplaceKeyReplacesRosterRevokesOldRegistersAndInstallsNewCertificat
 	if installed.MemberDIDKey != newDID || installed.CertificateID != servicePayload.NewCertificateID {
 		t.Fatalf("installed=%+v", installed)
 	}
-	if keyID := requireWorktreeEncryptionKeyForTest(t, agentHome); keyID == "" {
-		t.Fatal("replacement did not refresh E2E encryption state")
+	targetState, targetStateErr := awconfig.LoadEncryptionKeyStateFrom(targetEncryptionStatePath)
+	if targetStateErr != nil || targetState.ActiveRecord() == nil {
+		t.Errorf("target E2E encryption key was not refreshed: state=%+v err=%v", targetState, targetStateErr)
+	}
+	if _, operatorStateErr := os.Stat(operatorEncryptionStatePath); !os.IsNotExist(operatorStateErr) {
+		t.Errorf("operator E2E encryption key changed at %s: %v", operatorEncryptionStatePath, operatorStateErr)
+	}
+	if publishedEncryptionAssertion.IdentityDID != newDID {
+		t.Errorf("published E2E assertion identity=%q, want target %q (operator %q)", publishedEncryptionAssertion.IdentityDID, newDID, operatorDID)
 	}
 }
 
