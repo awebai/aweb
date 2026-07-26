@@ -16,7 +16,14 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key, stable_id_from_public_key
 from awid.registry import Address, AddressDelivery, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
-from aweb.e2ee_messages import E2EE_SUITE, _envelope_map, _hash_canonical, _key_wrap_map
+from aweb.e2ee_messages import (
+    E2EE_SUITE,
+    E2EEEnvelopeError,
+    _envelope_map,
+    _hash_canonical,
+    _key_wrap_map,
+    validate_e2ee_mail_envelope,
+)
 from aweb.federation.envelope import verify_federation_envelope
 from aweb.identity_auth_deps import (
     IDENTITY_DID_AW_HEADER,
@@ -198,6 +205,37 @@ def _encrypted_mail_envelope(
     )
     envelope["signature"] = _raw_b64(signing_key.sign(payload).signature)
     return envelope
+
+
+def test_encrypted_mail_rejects_non_base64_message_signature_shape():
+    alice_sk, alice_pk, alice_did_key = _make_keypair()
+    _, bob_pk, bob_did_key = _make_keypair()
+    alice_stable = stable_id_from_public_key(alice_pk)
+    bob_stable = stable_id_from_public_key(bob_pk)
+    message_id = str(uuid4())
+    conversation_id = str(uuid4())
+    envelope = _encrypted_mail_envelope(
+        sender_sk=alice_sk,
+        sender_did=alice_did_key,
+        sender_stable_id=alice_stable,
+        recipient_did=bob_did_key,
+        recipient_stable_id=bob_stable,
+        message_id=message_id,
+        conversation_id=conversation_id,
+    )
+    envelope["signature"] += "!!!!"
+
+    with pytest.raises(E2EEEnvelopeError, match="signature must be valid base64"):
+        validate_e2ee_mail_envelope(
+            envelope,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            sender_did=alice_did_key,
+            sender_stable_id=alice_stable,
+            recipient_did=bob_did_key,
+            recipient_stable_id=bob_stable,
+            recipient_address="acme.com/bob",
+        )
 
 
 def _build_test_app(aweb_db, registry):
@@ -2367,6 +2405,54 @@ async def test_signed_plaintext_mail_stores_server_time_and_preserves_attestatio
     assert row["created_at"] != attested_at
     assert json.loads(row["signed_payload"])["timestamp"] == payload["timestamp"]
     assert datetime.fromisoformat(response.json()["delivered_at"]) == row["created_at"].replace(microsecond=0)
+
+
+@pytest.mark.asyncio
+async def test_signed_plaintext_mail_rejects_non_base64_signature_before_storage(aweb_cloud_db):
+    app, alice_sk, alice_did_key = await _signed_local_mail_app(aweb_cloud_db)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    message_id, payload = _signed_local_mail_payload(
+        alice_sk,
+        alice_did_key,
+        timestamp=timestamp,
+        subject="invalid signature alphabet",
+    )
+    payload["signature"] = base64.b64encode(bytes(64)).rstrip(b"=").decode() + "!!!!"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/messages", json=payload)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "signature must be valid base64"
+    stored = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT 1 FROM {{tables.messages}} WHERE message_id = $1",
+        UUID(message_id),
+    )
+    assert stored is None
+
+
+@pytest.mark.asyncio
+async def test_signed_plaintext_mail_rejects_wrong_length_signature_before_storage(aweb_cloud_db):
+    app, alice_sk, alice_did_key = await _signed_local_mail_app(aweb_cloud_db)
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    message_id, payload = _signed_local_mail_payload(
+        alice_sk,
+        alice_did_key,
+        timestamp=timestamp,
+        subject="invalid signature length",
+    )
+    payload["signature"] = base64.b64encode(bytes(63)).rstrip(b"=").decode()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/messages", json=payload)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "signature must decode to 64 bytes"
+    stored = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT 1 FROM {{tables.messages}} WHERE message_id = $1",
+        UUID(message_id),
+    )
+    assert stored is None
 
 
 @pytest.mark.asyncio
@@ -4907,7 +4993,7 @@ async def test_send_message_accepts_local_to_address_binding_when_awid_misses(aw
         "from_did": "did:aw:alice",
         "message_id": message_id,
         "timestamp": timestamp,
-        "signature": "test-signature",
+        "signature": _raw_b64(bytes(64)),
         "signed_payload": signed_payload.decode(),
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -5700,7 +5786,7 @@ async def test_send_message_resolves_tilde_alias_cross_team(aweb_cloud_db):
                 "subject": "hello eng",
                 "body": "hi",
                 "from_did": alice_did_key,
-                "signature": "test-signature",
+                "signature": _raw_b64(bytes(64)),
                 "message_id": message_id,
                 "timestamp": timestamp,
                 "signed_payload": signed_payload,

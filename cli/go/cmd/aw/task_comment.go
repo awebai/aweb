@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	aweb "github.com/awebai/aw"
@@ -15,9 +17,9 @@ var taskCommentCmd = &cobra.Command{
 }
 
 var taskCommentAddCmd = &cobra.Command{
-	Use:   "add <ref> <body>",
+	Use:   "add <ref> [body]",
 	Short: "Add a comment to a task",
-	Args:  cobra.ExactArgs(2),
+	Args:  cobra.RangeArgs(1, 2),
 	RunE:  runTaskCommentAdd,
 }
 
@@ -29,12 +31,34 @@ var taskCommentListCmd = &cobra.Command{
 }
 
 func init() {
+	taskCommentAddCmd.Flags().String("body", "", "Comment body")
+	taskCommentAddCmd.Flags().String("body-file", "", "Read comment body from file")
+	taskCommentAddCmd.MarkFlagsMutuallyExclusive("body", "body-file")
 	taskCommentCmd.AddCommand(taskCommentAddCmd, taskCommentListCmd)
 	taskCmd.AddCommand(taskCommentCmd)
 }
 
 func runTaskCommentAdd(cmd *cobra.Command, args []string) error {
-	ref, body := args[0], args[1]
+	ref := args[0]
+	body := ""
+	if len(args) == 2 {
+		if cmd.Flags().Changed("body") || cmd.Flags().Changed("body-file") {
+			return fmt.Errorf("comment body must be provided either positionally, with --body, or with --body-file")
+		}
+		body = args[1]
+	} else if cmd.Flags().Changed("body") {
+		body, _ = cmd.Flags().GetString("body")
+	} else if cmd.Flags().Changed("body-file") {
+		bodyPath, _ := cmd.Flags().GetString("body-file")
+		data, err := os.ReadFile(bodyPath)
+		if err != nil {
+			return fmt.Errorf("reading comment body file: %w", err)
+		}
+		body = string(data)
+	}
+	if strings.TrimSpace(body) == "" {
+		return fmt.Errorf("comment body is required")
+	}
 
 	client, _, err := resolveClientSelection()
 	if err != nil {

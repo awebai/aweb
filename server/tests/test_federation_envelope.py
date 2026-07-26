@@ -106,6 +106,16 @@ def test_verify_federation_envelope_accepts_signed_mail_payload():
     assert verified.target_delivery_origin == "https://aweb.beta.example"
 
 
+def test_verify_federation_envelope_rejects_non_base64_message_signature_shape():
+    signing_key, public_key = generate_keypair()
+    sender_did_key = did_from_public_key(public_key)
+    envelope = _envelope(sender_did_key)
+    signature = _sign(envelope, signing_key) + "!!!!"
+
+    with pytest.raises(FederationEnvelopeError, match="signature must be valid base64"):
+        verify_federation_envelope(envelope, signature)
+
+
 def test_verify_federation_envelope_accepts_deprecated_v1_fields_as_ignored_compatibility():
     signing_key, public_key = generate_keypair()
     sender_did_key = did_from_public_key(public_key)

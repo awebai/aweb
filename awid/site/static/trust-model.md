@@ -47,12 +47,15 @@ team key rotation within the namespace.
 | Aspect                   | Detail                                                                                                                                               |
 |--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Algorithm**            | Ed25519                                                                                                                                              |
-| **Private key location** | BYOD: `~/.config/aw/controllers/<domain>.key`. Managed: held by the operator (e.g., app.aweb.ai)                                                     |
+| **Private key location** | BYOD: `~/.awid/controllers/<domain>.key`. Managed: held by the operator (e.g., app.aweb.ai)                                                          |
 | **Public key location**  | awid `dns_namespaces.controller_did` + DNS TXT record (`_awid.<domain>`)                                                                             |
 | **Authorizes**           | Namespace operations, child namespace creation (parent delegation), team creation/deletion, team key rotation, address create/delete/reassign        |
 | **Created by**           | BYOD: `aw id create` on first identity for a domain. Managed: the operator on behalf of the user                                                     |
 | **Rotation**             | `aw id namespace rotate-controller` (requires DNS reverify)                                                                                          |
 | **Recovery if lost**     | DNS reverify: DNS is the root of trust.  The `rotate-controller` command proves domain ownership via DNS TXT and re-establishes a new controller key |
+
+For BYOD namespaces, keep `~/.awid` safe and backed up. It contains the
+namespace controller private key.
 
 #### Parent delegation
 
@@ -78,7 +81,7 @@ The authority over team membership.  Issues and revokes team certificates.
 | Aspect                   | Detail                                                                                                                                                       |
 |--------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Algorithm**            | Ed25519                                                                                                                                                      |
-| **Private key location** | BYOD: `~/.config/aw/team-keys/<domain>/<team>.key`. Managed: held by the operator (encrypted)                                                                |
+| **Private key location** | BYOD: `~/.awid/team-keys/<domain>/<team>.key`. Managed: held by the operator (encrypted)                                                                     |
 | **Public key location**  | awid `teams.team_did_key`                                                                                                                                    |
 | **Authorizes**           | Certificate issuance, certificate revocation, team visibility toggle                                                                                         |
 | **Created by**           | `aw id team create` generates the keypair and registers the public key at awid                                                                               |
@@ -106,8 +109,8 @@ DID operations.
 | **Public key location** | awid `did_aw_mappings.current_did_key` (for global identities).  Also embedded in the team certificate as `member_did_key` |
 | **Authorizes** | Message signing, DID registration (identity-only `register_did`, no address), DID key rotation, identity-scoped auth (messaging routes), team-certificate auth (coordination routes, together with the team cert) |
 | **Created by** | Self-custodial: `aw init` for a local workspace or `aw init --global --name <name>` for a global identity.  Custodial: the operator's dashboard |
-| **Rotation** | Self-custodial: `aw id rotate-key` — requires the old key to sign.  Custodial: operator re-generates server-side |
-| **Recovery if lost** | Self-custodial: **no CLI recovery path exists today** (see [Identity Key Loss](#identity-key-loss)).  Custodial: the operator's replace operation generates a new key, re-registers DID, reassigns address |
+| **Rotation** | Global self-custodial: `aw id rotate-key` requires the old key to sign. Local team-scoped: `aw team replace-key` requires the team controller and an exact old→new compare-and-swap. Custodial: operator re-generates server-side. |
+| **Recovery if lost** | Local-controller/BYOT local identity: team-authorized `aw team replace-key`. Self-custodial global identity remains a gap (see [Identity Key Loss](#identity-key-loss)). Custodial: the operator's replace operation generates a new key, re-registers DID, reassigns address. |
 
 #### Custody modes
 
@@ -159,11 +162,14 @@ boundary between awid authority and aweb local routing state, see
 ### BYOD (self-hosted / CLI-only)
 
 ```
-~/.config/aw/controllers/<domain>.key       # Namespace controller key
-~/.config/aw/team-keys/<domain>/<team>.key  # Team controller key
+~/.awid/controllers/<domain>.key       # Namespace controller key
+~/.awid/team-keys/<domain>/<team>.key  # Team controller key
 <repo>/.aw/signing.key                      # Identity signing key (per workspace)
 <repo>/.aw/team-certs/<team_id>.pem         # Team membership certificate (not a key)
 ```
+
+Back up `~/.awid` after creating a namespace or team controller. These keys
+control namespace addresses and team membership.
 
 ### Managed (hosted at app.aweb.ai)
 
@@ -184,7 +190,8 @@ Each key type is recoverable by the authority one level above it:
 | Namespace controller      | DNS ownership                   | `aw id namespace rotate-controller` — DNS reverify         | **Implemented** |
 | Team controller           | Namespace controller            | `POST /v1/namespaces/{domain}/teams/{name}/rotate` at awid | **Implemented** |
 | Identity (custodial)      | Operator (namespace controller) | Replace — new keypair, re-register DID, reassign address   | **Implemented** |
-| Identity (self-custodial) | ???                             | No mechanism exists                                        | **Gap**         |
+| Local identity (self-custodial, local-controller team) | Team controller | `aw team replace-key` — roster CAS + certificate replacement + audit | **Implemented** |
+| Global identity (self-custodial) | Namespace + team controllers | Stable-identity/address recovery flow | **Gap** |
 
 ---
 
@@ -236,9 +243,34 @@ expected one.
 
 ### Local identity
 
-Local identities have no recovery story by design.  If the signing key
-is lost, delete the workspace and create a new one.  The alias is released
-for reuse.
+A local identity has no stable identifier above its Ed25519 `did:key`: the key
+**is the identity**. Preserve the complete `.aw/` directory when moving the
+workspace between machines. Regenerating `.aw/signing.key` without an
+authorized replacement creates a new identity; correspondents with the old key
+pinned will honestly report an identity mismatch.
+
+For a local-controller/BYOT team, a human operator holding the team controller
+can authorize the explicit transition:
+
+```bash
+aw team replace-key alice \
+  --old-did-key did:key:OLD \
+  --home agents/instances/alice \
+  --generate-new-key
+```
+
+The operation compare-and-swaps the service roster, records the controller DID
+and old→new transition in `audit_log`, revokes the old team certificate, mints
+and registers the replacement, installs it in `--home`, and refreshes the local
+E2E encryption-key assertion under the new signing identity. The generated key
+is written only when `.aw/signing.key` is absent; an existing key is never
+silently overwritten. For a compromised key, back it up and remove it
+deliberately before using `--generate-new-key`. It never accepts an old-member-key
+self-service handover. Without `--home`, the operator must pass
+`--old-cert-id`; the command outputs the new public certificate with placement
+instructions. Phase 1 supports locally held team-controller keys only. Hosted
+owner/admin replacement is a separate AC integration; until then it requires
+operator support.
 
 ---
 
@@ -271,10 +303,23 @@ acme.com/alice → did:aw:new  (new identity, namespace controller signed)
 ```
 
 Recipients see that the address still resolves but the underlying `did:aw`
-changed.  They can verify the namespace controller authorized the change.
-This is weaker trust than signed rotation — it says "the namespace owner
-vouches for this replacement" rather than "the old identity vouches for
+changed.  This is weaker trust than signed rotation — it says "the namespace
+owner vouches for this replacement" rather than "the old identity vouches for
 this successor."
+
+**The controller-signed announcement is required, not advisory.** A client that
+holds a pin for an address refuses to move it to a different `did:aw` without
+one, and reports `identity_mismatch` instead. A valid DID log for the incoming
+identity is *never* sufficient on its own: the log proves `did:aw → did:key`,
+not `address → did:aw`, and an attacker who legitimately owns their own `did:aw`
+has a wholly valid log. The controller's authority is anchored in the address's
+`_awid` DNS TXT `controller=` field rather than in the registry response, so a
+compromised registry cannot forge it. The announcement is carried on the message
+and self-authenticating, so it needs no registry read route to be verified.
+
+Operationally this means an address handover that is not accompanied by a
+controller-signed announcement will be refused. See `default-aakj` for
+publishing announcements registry-side.
 
 ---
 

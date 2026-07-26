@@ -764,3 +764,22 @@ unexpired.
 - Resident instance GC. Restart-as-a-new-instance means residents accumulate
   homes. Manual retire only for now — never GC from tmux-window absence or aweb
   presence, both of which are unreliable liveness signals.
+- **Hosted disposable provisioning is not deliverable, and the reason is a
+  cleanup authority we cannot hold safely.** The hosted creator certificate can
+  create, list and revoke grants; it cannot remove the member it created, since
+  hosted remove-member rejects workspace-bound keys and then requires team owner
+  or admin authority. The only way to hold that in the spawn hook is to place an
+  owner key where the launched model can read it — hook and model share a UID —
+  which would give every disposable worker team-wide administrative authority
+  and make the hosted path *strictly weaker than local* while claiming to be
+  stronger. `aaaa.42` established that the created identity **can** self-delete
+  its workspace and bound identity, because hosted acceptance creates a
+  *local-scoped* identity and the OSS delete rejects only `global`; what it
+  cannot reach is the AWID certificate and the organization-membership row. A
+  lingering organization membership is **live authorization, not an audit
+  tombstone**, and one accrues per provisioned worker — so partial cleanup is
+  worse than an honest refusal, and hosted refuses before creating. This
+  resolves when AC offers either a local/ephemeral-aware delete that also
+  revokes the certificate and removes the membership, or a scoped
+  revoke-own-member capability on the creator certificate. The first is smaller
+  and needs no new credential class.
