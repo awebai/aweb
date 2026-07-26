@@ -14,7 +14,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.deps import get_db
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
@@ -37,6 +37,14 @@ class LeaseReleaseRequest(BaseModel):
 
 class LeaseTakeoverRequest(LeaseRequest):
     reason: str = Field(..., min_length=1, max_length=4096)
+
+    @field_validator("reason")
+    @classmethod
+    def reason_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("reason must not be blank")
+        return value
 
 
 class LeaseView(BaseModel):
@@ -125,10 +133,10 @@ async def acquire_session_lease(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> LeaseView | JSONResponse:
     manager = db.get_manager("aweb")
-    now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(seconds=payload.ttl_seconds)
     async with manager.transaction() as tx:
         row = await _locked_row(tx, identity)
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=payload.ttl_seconds)
         live = bool(row and row["expires_at"] > now)
         same_session = bool(row and _matches(row, payload.session_id, payload.session_key))
         if live and not same_session:
@@ -168,10 +176,10 @@ async def renew_session_lease(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> LeaseView:
     manager = db.get_manager("aweb")
-    now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(seconds=payload.ttl_seconds)
     async with manager.transaction() as tx:
         row = await _locked_row(tx, identity)
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=payload.ttl_seconds)
         if not row or row["expires_at"] <= now:
             raise HTTPException(status_code=404, detail="session admission lease not found or expired")
         if not _matches(row, payload.session_id, payload.session_key):
@@ -213,10 +221,10 @@ async def take_over_session_lease(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> LeaseView:
     manager = db.get_manager("aweb")
-    now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(seconds=payload.ttl_seconds)
     async with manager.transaction() as tx:
         row = await _locked_row(tx, identity)
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=payload.ttl_seconds)
         old_session_id = row["session_id"] if row else None
         generation = (row["generation"] + 1) if row else 1
         if row:

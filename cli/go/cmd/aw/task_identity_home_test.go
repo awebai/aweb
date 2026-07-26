@@ -59,6 +59,8 @@ func TestExternalIdentityHomeTaskAndWorkCommandsUseSelectedPrincipal(t *testing.
 			signedRequests = append(signedRequests, messagingSignedRequest{
 				authorization: r.Header.Get("Authorization"),
 				timestamp:     r.Header.Get("X-AWEB-Timestamp"),
+				method:        r.Method,
+				path:          r.URL.Path,
 				body:          body,
 			})
 			requestMu.Unlock()
@@ -170,4 +172,35 @@ func TestExternalIdentityHomeTaskAndWorkCommandsUseSelectedPrincipal(t *testing.
 	requests := append([]messagingSignedRequest(nil), signedRequests...)
 	requestMu.Unlock()
 	verifyMessagingRequestsForTest(t, requests, principalPub, shadowPub, principalDID, shadowDID)
+	wantLeaseBodies := map[string]map[string]any{
+		"/v1/session-leases":          {"session_id": "session-a", "session_key": sessionKey, "ttl_seconds": float64(300)},
+		"/v1/session-leases/renew":    {"session_id": "session-a", "session_key": sessionKey, "ttl_seconds": float64(300)},
+		"/v1/session-leases/release":  {"session_id": "session-a", "session_key": sessionKey},
+		"/v1/session-leases/takeover": {"session_id": "session-a", "session_key": sessionKey, "ttl_seconds": float64(300), "reason": "operator test"},
+	}
+	seen := make(map[string]bool)
+	for _, request := range requests {
+		want, ok := wantLeaseBodies[request.path]
+		if !ok || request.method != http.MethodPost {
+			continue
+		}
+		var got map[string]any
+		if err := json.Unmarshal(request.body, &got); err != nil {
+			t.Fatalf("decode %s request: %v", request.path, err)
+		}
+		if len(got) != len(want) {
+			t.Fatalf("%s body = %#v, want %#v", request.path, got, want)
+		}
+		for key, value := range want {
+			if got[key] != value {
+				t.Fatalf("%s body[%s] = %#v, want %#v", request.path, key, got[key], value)
+			}
+		}
+		seen[request.path] = true
+	}
+	for path := range wantLeaseBodies {
+		if !seen[path] {
+			t.Fatalf("missing exact request assertion for %s", path)
+		}
+	}
 }
