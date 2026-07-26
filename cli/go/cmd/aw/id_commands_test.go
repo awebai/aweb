@@ -901,7 +901,7 @@ func TestEncryptionKeySetupSkipsAWIDWhenGlobalCertificateHasNoRegistryContext(t 
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, tmp, false)
+	out, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, tmp, false, currentEncryptionKeyIdentityHome)
 	if err != nil {
 		t.Fatal(err)
 	}
