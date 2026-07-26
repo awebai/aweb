@@ -780,7 +780,7 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 }
 
 func ensureE2EEKeyReadyForSend(ctx context.Context, workingDir string) error {
-	out, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, workingDir, false)
+	out, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, workingDir, false, currentEncryptionKeyIdentityHome)
 	if err != nil {
 		return err
 	}
