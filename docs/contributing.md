@@ -135,7 +135,28 @@ regenerated output:
 make freshness
 ```
 
-The `Freshness` CI job runs the same check on every push and fails on drift.
+`make release-all-check` runs the same check and fails on drift.
+
+## Vulnerability audits
+
+`make check-node-audit` and `make check-go-vulnerability-audit` audit the
+dependencies a release ships. Both run from `make release-all-check`, and
+neither runs from `make test`: the Go audit pins itself to the toolchain in
+`cli/go/go.mod` and refuses to run under any other, and both consult an
+advisory database that moves without any repo change, which would make `make
+test` non-deterministic.
+
+These run **at release time only — nothing runs them on a schedule**. An
+advisory published between two releases is not seen until the next release,
+and the deferral deadlines in `.github/go-vulnerability-exceptions.json` are
+only checked when an audit runs. This is an accepted limitation, tracked in
+`default-aaoa`.
+
+The Go audit refuses to run under the wrong toolchain and prints the two
+commands that install the pinned one. `make check-node-audit` needs the
+workspace dependencies installed (`npm ci` in `channel-core`, `channel` and
+`pi-extension`); `make release-all-check` installs them before auditing.
+
 Routine `make test` uses `uv run --frozen`, so tests never silently repair a
 stale lock — regenerate it explicitly with `cd server && uv lock` (or `cd awid
 && uv lock`) and commit the result. An AWID version bump therefore also requires
