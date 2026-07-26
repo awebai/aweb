@@ -215,6 +215,7 @@ type Client struct {
 	pinStoreBaseline        []byte
 	pinStoreBaselineErr     error
 	pinStorePersister       func(path string, expectedYAML, desiredYAML []byte) error
+	pinMigrationObserver    func(PinMigrationDecline)
 	metaCache               sync.Map     // address → *agentMeta; cached resolver results
 	latestClientVersion     atomic.Value // last seen X-Latest-Client-Version header (string)
 }
@@ -417,6 +418,58 @@ func (c *Client) ResolveIdentity(ctx context.Context, identifier string) (*Resol
 		return nil, errors.New("aweb: no identity resolver configured")
 	}
 	return c.resolver.Resolve(ctx, identifier)
+}
+
+// PinMigrationOutcome names why an upgrade-on-first-sight migration was
+// declined. The action is the same in every case — both pins are kept — but the
+// operator situations differ: a same-identity decline is expected, a conflict is
+// a different identity holding the stable id, and an unclassifiable one is
+// repairable by recording the occupant's did:key.
+type PinMigrationOutcome string
+
+const (
+	PinMigrationSameIdentity   PinMigrationOutcome = "same_identity"
+	PinMigrationConflict       PinMigrationOutcome = "conflict"
+	PinMigrationUnclassifiable PinMigrationOutcome = "unclassifiable"
+)
+
+// PinMigrationDecline reports a migration that did not happen.
+type PinMigrationDecline struct {
+	Outcome     PinMigrationOutcome
+	StableID    string
+	Address     string
+	OccupantDID string
+	IncomingDID string
+}
+
+// SetPinMigrationObserver registers a callback invoked when a stable-id
+// migration is declined because the stable-id key already holds another pin.
+func (c *Client) SetPinMigrationObserver(observe func(PinMigrationDecline)) {
+	c.pinMigrationObserver = observe
+}
+
+// reportPinMigrationDecline classifies a declined migration by whether the
+// occupant of the stable-id key can be shown to be the same identity. An
+// occupant with no recorded did:key cannot be classified either way, and an
+// absent field must never be read as proof of sameness.
+func (c *Client) reportPinMigrationDecline(occupant *Pin, incomingDID, stableID, address string) {
+	if c.pinMigrationObserver == nil {
+		return
+	}
+	outcome := PinMigrationConflict
+	switch {
+	case strings.TrimSpace(occupant.DIDKey) == "":
+		outcome = PinMigrationUnclassifiable
+	case occupant.DIDKey == incomingDID:
+		outcome = PinMigrationSameIdentity
+	}
+	c.pinMigrationObserver(PinMigrationDecline{
+		Outcome:     outcome,
+		StableID:    stableID,
+		Address:     address,
+		OccupantDID: occupant.DIDKey,
+		IncomingDID: incomingDID,
+	})
 }
 
 // SetPinStore sets the TOFU pin store for sender identity verification.
@@ -712,10 +765,21 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 		// and the did:key matches, migrate to stable_id pin before the check.
 		if existingDID, ok := c.pinStore.Addresses[trustAddress]; ok && existingDID == fromDID {
 			if existingPin, hasDIDPin := c.pinStore.Pins[fromDID]; hasDIDPin {
-				delete(c.pinStore.Pins, fromDID)
-				existingPin.StableID = fromStableID
-				c.pinStore.Pins[fromStableID] = existingPin
-				c.pinStore.Addresses[trustAddress] = fromStableID
+				// A stable id is one key and a pin carries one address, so an
+				// identity already pinned at another address cannot also move
+				// onto that key here. Migrating anyway would overwrite the pin
+				// holding the other address and produce a store ParsePinStore
+				// refuses, so keep both pins and stay on the did:key for this
+				// address. The occupant decides only what gets reported.
+				if occupant, occupied := c.pinStore.Pins[fromStableID]; occupied && occupant != existingPin {
+					pinKey = fromDID
+					c.reportPinMigrationDecline(occupant, fromDID, fromStableID, trustAddress)
+				} else {
+					delete(c.pinStore.Pins, fromDID)
+					existingPin.StableID = fromStableID
+					c.pinStore.Pins[fromStableID] = existingPin
+					c.pinStore.Addresses[trustAddress] = fromStableID
+				}
 			}
 		}
 	}
