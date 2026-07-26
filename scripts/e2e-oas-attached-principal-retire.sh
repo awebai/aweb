@@ -809,15 +809,16 @@ VICTIM_ALIAS="$(json_value "$VICTIM_INTENT" alias)"
 VICTIM_TARGET="$(json_value "$VICTIM_INTENT" identity_home)"
 ATTACKER_ALIAS="$(json_value "$ATTACKER_INTENT" alias)"
 ATTACKER_TARGET="$(json_value "$ATTACKER_INTENT" identity_home)"
+scan_provisioned_material "$VICTIM_OPERATION" victim "$VICTIM_HOME" "$ATTACKER_HOME" "$FIXTURE_REPO"
+scan_provisioned_material "$ATTACKER_OPERATION" attacker "$ATTACKER_HOME" "$VICTIM_HOME" "$FIXTURE_REPO"
+# Messaging intentionally creates a non-secret .aw/interaction-log.jsonl in the
+# external workspace, so provision-material copy scans run before this use step.
 run_observer_aw mail send --to "$VICTIM_ALIAS" --subject "ordinary worker proof" --body "observer-to-worker-$VICTIM_OPERATION" --plaintext --json > "$EVIDENCE/message-to-worker.json"
 run_target_aw "$VICTIM_TARGET" mail inbox --show-all --json > "$EVIDENCE/worker-inbox.json"
 grep -q "observer-to-worker-$VICTIM_OPERATION" "$EVIDENCE/worker-inbox.json" || fail "real observer message did not reach developer A worker"
 run_target_aw "$VICTIM_TARGET" mail send --to observer --subject "ordinary worker reply" --body "worker-to-observer-$VICTIM_OPERATION" --plaintext --json > "$EVIDENCE/message-from-worker.json"
 run_observer_aw mail inbox --show-all --json > "$EVIDENCE/observer-inbox.json"
 grep -q "worker-to-observer-$VICTIM_OPERATION" "$EVIDENCE/observer-inbox.json" || fail "real developer A worker reply did not reach observer"
-
-scan_provisioned_material "$VICTIM_OPERATION" victim "$VICTIM_HOME" "$ATTACKER_HOME" "$FIXTURE_REPO"
-scan_provisioned_material "$ATTACKER_OPERATION" attacker "$ATTACKER_HOME" "$VICTIM_HOME" "$FIXTURE_REPO"
 capture_provision_resource victim-before-forgery "$VICTIM_OPERATION" active
 capture_provision_resource attacker-before-forgery "$ATTACKER_OPERATION" active
 
