@@ -584,11 +584,20 @@ settings. Step 1 is merged in our source and **still open as `.1`**, because
 what remains is upstream acceptance of PR 37, and the defect is unfixed for
 every consumer but us until that lands.
 
-**What is already delivered:** the two bounded safety results below — ordinary
-retire of an attached instance preserves the principal (`.17`), and the attach
-path cannot register the disposable instance path, so the gone-workspace route
-is unreachable by construction (`.24`). Both required no upstream change. This
-is *not* non-destruction in full: see *What is NOT yet proven*.
+**What is already delivered.** Two bounded *safety* results, both requiring no
+upstream change: ordinary retire of an attached instance preserves the principal
+(`.17`), and the attach path cannot register the disposable instance path, so
+the gone-workspace route is unreachable by construction (`.24`). This is *not*
+non-destruction in full — see *What is NOT yet proven*.
+
+Plus the *mechanism* those proofs guard, built since: identity resolution with
+default-deny admission (`.11`, `.22`, `.23`, `.36` — 29 commands admitted, each
+routed before it was admitted, never the reverse); the binding decision layer,
+whose judgement carries its own assurance level so a caller cannot mistake local
+accident-resistance for a security boundary (`.4`); minting authority declared
+and verified per path, hosted and local having opposite failure modes (`.5`);
+and the runtime's own resolution — channel config at the selected principal
+(`.35`) and outbound messaging admitted (`.36`).
 
 **What is not:** fail-closed admission, which is impossible while hook failure
 is advisory. Until required hooks land, any attach is an **attended development
@@ -637,16 +646,27 @@ directory it inherits. That is arguably worse than none, because it can appear
 to work. What does not exist is any mechanism that makes it the *declared*
 principal.
 
-**And propagation alone would not be that mechanism.** Two further gaps sit
-behind it, both found by scope review rather than by a failure, and both in our
-own code: the channel resolves its workspace, team state, identity and signing
-key from the working directory regardless of any identity home
-(`channel-core/src/config.ts:58-62`), and the outbound half of messaging is not
-admitted for an external home at all — `"aw mail inbox"` is the only messaging
-key in `identity_home_policy.go`. An attached agent would read as the wrong
-identity, or sign
-validly as the wrong identity — which is the failure that looks like success —
-and could not reply in any case.
+**Propagation alone would not have been enough, and that is why it is one of
+three.** Scope review — not a failure — found two further gaps behind it, both
+in our own code, and **both are now closed**:
+
+- the channel resolved its workspace, team state, identity and signing key from
+  the working directory regardless of any identity home, so an attached agent
+  would have read as the wrong identity or *signed validly as the wrong
+  identity*, which is the failure that looks like success. Closed by `.35`:
+  `resolveConfig` honours the selected principal on both Pi and Claude, proven
+  against a complete valid divergent shadow, with the packaged MCP child
+  observed over real stdio.
+- the outbound half of messaging was not admitted for an external home at all —
+  `"aw mail inbox"` was the only messaging key in the allowlist, so a resident
+  could read and never answer. Closed by `.36`: reply, send, ack and the whole
+  chat surface routed through the selected principal *before* admission, each
+  with its own divergent evidence.
+
+What remains of the three is propagation itself (`.29`), which needs an upstream
+change. So the gap is no longer "an attached agent could not act as its
+principal"; it is precisely that **nothing places the resolved identity home on
+the launched process**. Everything downstream of that variable now honours it.
 
 `.17` exercises the real spawn/retire lifecycle through
 `oas spawn --no-launch`: kernel, hook dispatch, instance lifecycle and retire
