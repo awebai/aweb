@@ -11,7 +11,10 @@ import {
   pendingProvisionReceipt,
   validateBindingSettings,
 } from "../lib/binding-policy.mjs";
-import { mintingAuthorityReceipt } from "../lib/provisioning-authority.mjs";
+import {
+  hostedMintingAuthorityReceipt,
+  localControllerMintingAuthorityReceipt,
+} from "../lib/provisioning-authority.mjs";
 import {
   assertPrincipalStoreContained,
   assertPrincipalStoreSafe,
@@ -114,6 +117,34 @@ function parseWhoami(stdout) {
   return identity;
 }
 
+function parseActiveTeam(stdout, expectedTeamID) {
+  let state;
+  try {
+    state = JSON.parse(stdout);
+  } catch {
+    throw new Error("aw id team list returned invalid JSON");
+  }
+  const membership = Array.isArray(state?.memberships)
+    ? state.memberships.find((item) => item?.team_id === expectedTeamID && item?.active === true)
+    : undefined;
+  if (state?.active_team !== expectedTeamID || !membership) {
+    throw new Error(`declared principal active team does not match declaration ${JSON.stringify(expectedTeamID)}`);
+  }
+}
+
+function parseControllerDID(stdout) {
+  let authority;
+  try {
+    authority = JSON.parse(stdout);
+  } catch {
+    throw new Error("aw id team import-request returned invalid JSON");
+  }
+  if (typeof authority?.controller_did !== "string" || !/^did:key:z[A-Za-z0-9]+$/.test(authority.controller_did)) {
+    throw new Error("local-controller authority did not return a valid controller_did");
+  }
+  return authority.controller_did;
+}
+
 function assertCommittedMintingAuthority(context, declarationPath) {
   const path = relative(context, declarationPath);
   if (!path || path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path)) {
@@ -164,10 +195,41 @@ function resolveAndVerifyDeclaredPrincipal(principal, {
   if (whoami.stable_id !== declaration.stable_id) {
     throw new Error(`${identityLabel} stable_id ${JSON.stringify(whoami.stable_id)} does not match declaration ${JSON.stringify(declaration.stable_id)}`);
   }
-  if (whoami.team_id !== undefined && whoami.team_id !== declaration.team_id) {
-    throw new Error(`${identityLabel} team_id ${JSON.stringify(whoami.team_id)} does not match declaration ${JSON.stringify(declaration.team_id)}`);
-  }
-  return { soul, declaration, declarationPath, store };
+  parseActiveTeam(execFileSync(
+    "aw",
+    ["--identity-home", store.credentials, "id", "team", "list", "--json"],
+    {
+      cwd: instanceHome,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 45000,
+      env: { ...process.env, AW_NO_UPDATE_CHECK: "1" },
+    },
+  ), declaration.team_id);
+  return { instanceHome, soul, declaration, declarationPath, store };
+}
+
+function resolveLocalControllerDID(instanceHome, teamID) {
+  const separator = teamID.indexOf(":");
+  const team = teamID.slice(0, separator);
+  const namespace = teamID.slice(separator + 1);
+  return parseControllerDID(execFileSync(
+    "aw",
+    [
+      "id", "team", "import-request",
+      "--team", team,
+      "--namespace", namespace,
+      "--timestamp", "2000-01-01T00:00:00Z",
+      "--json",
+    ],
+    {
+      cwd: instanceHome,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 45000,
+      env: { ...process.env, AW_NO_UPDATE_CHECK: "1" },
+    },
+  ));
 }
 
 function attach(binding) {
@@ -257,14 +319,21 @@ try {
         identityLabel: "minting authority credentials",
       });
       const receipt = pendingProvisionReceipt(binding);
+      const authorityInput = {
+        principal: binding.minting_authority,
+        declarationPath: authority.declarationPath,
+        declaration: authority.declaration,
+      };
+      const authorityReceipt = binding.minting_authority_path === "hosted"
+        ? hostedMintingAuthorityReceipt(authorityInput)
+        : localControllerMintingAuthorityReceipt({
+            ...authorityInput,
+            controllerDID: resolveLocalControllerDID(authority.instanceHome, authority.declaration.team_id),
+          });
       output({
         meta: {
           identity_binding: receipt,
-          minting_authority: mintingAuthorityReceipt({
-            principal: binding.minting_authority,
-            declarationPath: authority.declarationPath,
-            declaration: authority.declaration,
-          }),
+          minting_authority: authorityReceipt,
         },
         warning: `${binding.mode} is declared but provisioning execution is not installed; no identity was created`,
         brief: `Identity binding policy: ${binding.mode}; provisioning is pending and no cleanup is authorized.`,
