@@ -17,6 +17,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
 let awBinaryDir: string;
 let awBinary: string;
+let hermeticAWBinary: string;
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -31,6 +32,7 @@ async function createBarrierCommand(
   const command = join(dir, name);
   await writeFile(command, [
     "#!/bin/sh",
+    "unset AWEB_IDENTITY_HOME",
     `export AW_PIN_STORE_CAS_TEST_READY=${shellQuote(readyPath)}`,
     `export AW_PIN_STORE_CAS_TEST_RELEASE=${shellQuote(releasePath)}`,
     `exec ${shellQuote(awBinary)} "$@"`,
@@ -70,6 +72,14 @@ beforeAll(async () => {
     timeout: 120_000,
     maxBuffer: 1024 * 1024,
   });
+  hermeticAWBinary = join(awBinaryDir, "aw-hermetic");
+  await writeFile(hermeticAWBinary, [
+    "#!/bin/sh",
+    "unset AWEB_IDENTITY_HOME",
+    `exec ${shellQuote(awBinary)} "$@"`,
+    "",
+  ].join("\n"), "utf-8");
+  await chmod(hermeticAWBinary, 0o700);
 }, 120_000);
 
 afterAll(async () => {
@@ -133,7 +143,7 @@ describe("pin store compare-and-set delegation", () => {
     const path = join(dir, "known_agents.yaml");
     const store = new PinStore();
     store.storePin("did:key:zAlice", "acme.com/alice", "@alice", "https://app.aweb.ai");
-    const writer = createLocalAWPinStoreWriter({ workdir: repoRoot, awCommand: awBinary });
+    const writer = createLocalAWPinStoreWriter({ workdir: repoRoot, awCommand: hermeticAWBinary });
 
     await store.commit(writer, path);
 
@@ -152,7 +162,7 @@ describe("pin store compare-and-set delegation", () => {
     await symlink(victim, path);
     const store = new PinStore();
     store.storePin("did:key:zAlice", "acme.com/alice", "", "");
-    const writer = createLocalAWPinStoreWriter({ workdir: repoRoot, awCommand: awBinary });
+    const writer = createLocalAWPinStoreWriter({ workdir: repoRoot, awCommand: hermeticAWBinary });
 
     await store.commit(writer, path);
 
