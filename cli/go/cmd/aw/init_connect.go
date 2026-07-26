@@ -165,10 +165,10 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	if err := ensureWorktreeContextAtIdentityHome(identityHome); err != nil {
 		return connectOutput{}, err
 	}
-	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir, identityHome); err != nil {
+	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir, explicitEncryptionKeyIdentityHome(identityHome)); err != nil {
 		return connectOutput{}, fmt.Errorf("set up E2E encryption key: %w", err)
 	}
-	if _, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, workingDir, false, identityHome); err != nil {
+	if _, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, workingDir, false, explicitEncryptionKeyIdentityHome(identityHome)); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not publish E2E encryption key automatically: %v\n", err)
 	}
 
