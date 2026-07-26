@@ -7,11 +7,16 @@ import { APIClient } from "./api/client.js";
 import { streamAgentEvents, type AgentEvent, type EventStreamState } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
-import { PinStore } from "./identity/pinstore.js";
+import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
 import { RegistryResolver } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
 import type { VerificationStatus } from "./identity/signing.js";
-import { createLocalAWDecryptProvider, type LocalDecryptProvider } from "./local_aw.js";
+import {
+  createLocalAWDecryptProvider,
+  createLocalAWPinStoreWriter,
+  PinStoreCASConflictError,
+  type LocalDecryptProvider,
+} from "./local_aw.js";
 
 export const DEFAULT_PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
 export const DEFAULT_DELIVERY_STORE_PATH = join(homedir(), ".config", "aw", "channel-delivered-ids.json");
@@ -55,6 +60,7 @@ export interface ChannelLoopOptions {
   localDecrypt?: LocalDecryptProvider;
   workdir?: string;
   awCommand?: string;
+  pinStoreWriter?: PinStoreWriter;
   log?: (message: string) => void;
   onStreamState?: (state: EventStreamState) => void;
 }
@@ -466,7 +472,6 @@ async function dispatchMailEvent(
   log: (message: string) => void,
 ): Promise<void> {
   const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log);
-  let pinsDirty = false;
   for (const msg of messages) {
     if (msg.verification_error) continue;
     if (isSelfSender(msg.from_alias, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
@@ -490,9 +495,15 @@ async function dispatchMailEvent(
       });
       continue;
     }
-    const trust = await normalizeMessageTrust(options, msg, msg.from_alias, msg.from_address, msg.to_did, msg.to_stable_id);
+    const trust = await normalizeAndPersistMessageTrust(
+      options,
+      msg,
+      msg.from_alias,
+      msg.from_address,
+      msg.to_did,
+      msg.to_stable_id,
+    );
     msg.verification_status = trust.status as InboxMessage["verification_status"];
-    if (trust.stored) pinsDirty = true;
 
     const meta: Record<string, string> = {
       type: "mail",
@@ -516,7 +527,6 @@ async function dispatchMailEvent(
       await ackMessage(options.client, msg.message_id);
     }
   }
-  if (pinsDirty) await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
 }
 
 async function dispatchChatEvent(
@@ -526,7 +536,6 @@ async function dispatchChatEvent(
 ): Promise<void> {
   if (!event.session_id) return;
   const messages = await fetchHistory(options.client, event.session_id, true, CHAT_FETCH_LIMIT, event.message_id);
-  let pinsDirty = false;
   let lastMessageId: string | undefined;
   for (const msg of messages) {
     if (isSelfSender(msg.from_agent, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
@@ -548,9 +557,15 @@ async function dispatchChatEvent(
       });
       continue;
     }
-    const trust = await normalizeMessageTrust(options, msg, msg.from_agent, msg.from_address, msg.to_did, msg.to_stable_id);
+    const trust = await normalizeAndPersistMessageTrust(
+      options,
+      msg,
+      msg.from_agent,
+      msg.from_address,
+      msg.to_did,
+      msg.to_stable_id,
+    );
     msg.verification_status = trust.status as ChatMessage["verification_status"];
-    if (trust.stored) pinsDirty = true;
 
     const meta: Record<string, string> = {
       type: "chat",
@@ -574,7 +589,48 @@ async function dispatchChatEvent(
     lastMessageId = msg.message_id;
   }
   if (lastMessageId) await markRead(options.client, event.session_id, lastMessageId);
-  if (pinsDirty) await options.pinStore.save(options.pinStorePath || DEFAULT_PIN_STORE_PATH);
+}
+
+async function commitPinStore(
+  options: Pick<ChannelLoopOptions, "pinStore" | "pinStorePath" | "pinStoreWriter" | "workdir" | "awCommand">,
+): Promise<void> {
+  const writer = options.pinStoreWriter || createLocalAWPinStoreWriter({
+    workdir: options.workdir,
+    awCommand: options.awCommand,
+  });
+  const path = options.pinStorePath || DEFAULT_PIN_STORE_PATH;
+  try {
+    await options.pinStore.commit(writer, path);
+  } catch (error) {
+    if (error instanceof PinStoreCASConflictError) {
+      options.pinStore.replaceWithDurableState(await loadPinStore(path));
+    }
+    throw error;
+  }
+}
+
+async function normalizeAndPersistMessageTrust(
+  options: Pick<ChannelLoopOptions, "trust" | "pinStore" | "pinStorePath" | "pinStoreWriter" | "workdir" | "awCommand">,
+  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from">,
+  fromAlias: string | undefined,
+  fromAddress: string | undefined,
+  toDID: string | undefined,
+  toStableID: string | undefined,
+) {
+  return options.pinStore.runExclusive(async () => {
+    const trust = await normalizeMessageTrust(
+      options,
+      msg,
+      fromAlias,
+      fromAddress,
+      toDID,
+      toStableID,
+    );
+    if (trust.stored || options.pinStore.hasUndurableChanges()) {
+      await commitPinStore(options);
+    }
+    return trust;
+  });
 }
 
 async function persistDeliveryMark(

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,6 +41,7 @@ const (
 
 type doctorIdentityState struct {
 	workingDir     string
+	identityHome   string
 	identityPath   string
 	signingKeyPath string
 
@@ -98,21 +100,26 @@ func (c awidDoctorRegistryClient) ListNamespaceAddressesAtSigned(ctx context.Con
 }
 
 func (r *doctorRunner) runIdentityDoctorChecks() {
-	state := collectDoctorIdentityState(r.workingDir)
+	state := collectDoctorIdentityStateAt(r.workingDir, r.identityHome)
 	r.addIdentityLocalChecks(state)
 }
 
 func (r *doctorRunner) runRegistryDoctorChecks() {
-	state := collectDoctorIdentityState(r.workingDir)
+	state := collectDoctorIdentityStateAt(r.workingDir, r.identityHome)
 	r.addRegistryChecks(state)
 }
 
 func collectDoctorIdentityState(workingDir string) *doctorIdentityState {
+	return collectDoctorIdentityStateAt(workingDir, "")
+}
+
+func collectDoctorIdentityStateAt(workingDir, identityHome string) *doctorIdentityState {
 	state := &doctorIdentityState{
 		workingDir:          strings.TrimSpace(workingDir),
-		identityPath:        awconfig.WorktreeIdentityPath(workingDir),
-		signingKeyPath:      awconfig.WorktreeSigningKeyPath(workingDir),
-		encryptionStatePath: awconfig.WorktreeEncryptionStatePath(workingDir),
+		identityHome:        strings.TrimSpace(identityHome),
+		identityPath:        doctorIdentityStatePath(workingDir, identityHome, "identity.yaml"),
+		signingKeyPath:      doctorIdentityStatePath(workingDir, identityHome, "signing.key"),
+		encryptionStatePath: doctorIdentityStatePath(workingDir, identityHome, "encryption.yaml"),
 	}
 
 	identity, err := awconfig.LoadWorktreeIdentityFrom(state.identityPath)
@@ -147,6 +154,17 @@ func collectDoctorIdentityState(workingDir string) *doctorIdentityState {
 	return state
 }
 
+func doctorIdentityStatePath(workingDir, identityHome, relativePath string) string {
+	if strings.TrimSpace(identityHome) != "" {
+		path, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, relativePath)
+		if err == nil {
+			return path
+		}
+		return ""
+	}
+	return filepath.Join(awconfig.WorktreeIdentityHome(workingDir), filepath.FromSlash(relativePath))
+}
+
 func (s *doctorIdentityState) setRegistryURL(source, raw string) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -164,11 +182,7 @@ func (s *doctorIdentityState) setRegistryURL(source, raw string) {
 }
 
 func (s *doctorIdentityState) loadIdentityExpectationFromCertificate() {
-	workspace, _, err := loadDoctorWorkspaceFromDir(s.workingDir)
-	if err != nil {
-		return
-	}
-	teamState, err := awconfig.LoadTeamState(s.workingDir)
+	workspace, teamState, _, err := loadCurrentWorkspaceAndTeamState(s.workingDir, s.identityHome)
 	if err != nil {
 		return
 	}
@@ -176,7 +190,7 @@ func (s *doctorIdentityState) loadIdentityExpectationFromCertificate() {
 	if membership == nil {
 		return
 	}
-	certPath := resolveWorkspaceCertificatePath(s.workingDir, membership.CertPath)
+	certPath, err := resolveIdentityStoredPath(s.workingDir, s.identityHome, membership.CertPath)
 	if strings.TrimSpace(certPath) == "" {
 		return
 	}
@@ -312,7 +326,7 @@ func (r *doctorRunner) addIdentityEncryptionKeyLocalChecks(state *doctorIdentity
 	}
 	r.add(localPathCheck(doctorCheckIdentityEncryptionState, doctorStatusOK, state.encryptionStatePath, "Local E2E encryption key state has an active key.", "", map[string]any{"encryption_key_id": record.KeyID}))
 
-	privatePath := resolveWorktreeRelativePath(state.workingDir, record.PrivateKeyPath)
+	privatePath, _ := resolveIdentityStoredPath(state.workingDir, state.identityHome, record.PrivateKeyPath)
 	priv, err := awid.LoadX25519PrivateKey(privatePath)
 	if err != nil {
 		r.add(localPathCheck(doctorCheckIdentityEncryptionPrivate, doctorStatusFail, privatePath, "Local E2E encryption private key could not be loaded.", "Restore this key from backup or rotate the E2E encryption key; old messages for this key are unrecoverable without it.", map[string]any{"error": safeLocalKeyError(err), "encryption_key_id": record.KeyID}))
@@ -334,16 +348,27 @@ func (r *doctorRunner) addIdentityEncryptionKeyLocalChecks(state *doctorIdentity
 	}
 	r.add(localPathCheck(doctorCheckIdentityEncryptionPrivate, doctorStatusOK, privatePath, "Local E2E encryption private key matches the active key id.", "", map[string]any{"encryption_key_id": keyID}))
 
-	assertion, err := loadEncryptionAssertion(state.workingDir, record.AssertionPath)
+	assertion, err := loadEncryptionAssertionAt(state.workingDir, state.identityHome, record.AssertionPath)
 	if err != nil {
-		r.add(localPathCheck(doctorCheckIdentityEncryptionAssertion, doctorStatusFail, resolveWorktreeRelativePath(state.workingDir, record.AssertionPath), "Local E2E encryption-key assertion could not be loaded.", "Run `aw id encryption-key setup` to recreate and publish the identity-signed assertion.", map[string]any{"error": err.Error()}))
+		r.add(localPathCheck(doctorCheckIdentityEncryptionAssertion, doctorStatusFail, doctorIdentityStateStoredPath(state, record.AssertionPath), "Local E2E encryption-key assertion could not be loaded.", "Run `aw id encryption-key setup` to recreate and publish the identity-signed assertion.", map[string]any{"error": err.Error()}))
 		return
 	}
 	if err := awid.VerifyEncryptionKeyAssertion(assertion, strings.TrimSpace(state.did), strings.TrimSpace(state.stableID), time.Now().UTC()); err != nil {
-		r.add(localPathCheck(doctorCheckIdentityEncryptionAssertion, doctorStatusFail, resolveWorktreeRelativePath(state.workingDir, record.AssertionPath), "Local E2E encryption-key assertion is stale or mismatched.", "Run `aw id encryption-key setup` or `aw id encryption-key rotate`; do not fall back to plaintext.", map[string]any{"error": err.Error()}))
+		r.add(localPathCheck(doctorCheckIdentityEncryptionAssertion, doctorStatusFail, doctorIdentityStateStoredPath(state, record.AssertionPath), "Local E2E encryption-key assertion is stale or mismatched.", "Run `aw id encryption-key setup` or `aw id encryption-key rotate`; do not fall back to plaintext.", map[string]any{"error": err.Error()}))
 		return
 	}
-	r.add(localPathCheck(doctorCheckIdentityEncryptionAssertion, doctorStatusOK, resolveWorktreeRelativePath(state.workingDir, record.AssertionPath), "Local E2E encryption-key assertion verifies under the identity signing key.", "", map[string]any{"encryption_key_id": assertion.EncryptionKeyID}))
+	r.add(localPathCheck(doctorCheckIdentityEncryptionAssertion, doctorStatusOK, doctorIdentityStateStoredPath(state, record.AssertionPath), "Local E2E encryption-key assertion verifies under the identity signing key.", "", map[string]any{"encryption_key_id": assertion.EncryptionKeyID}))
+}
+
+func doctorIdentityStateStoredPath(state *doctorIdentityState, storedPath string) string {
+	if state == nil {
+		return ""
+	}
+	path, err := resolveIdentityStoredPath(state.workingDir, state.identityHome, storedPath)
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 func (r *doctorRunner) addIdentityDIDFormatCheck(state *doctorIdentityState) {

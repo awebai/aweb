@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -10,8 +11,9 @@ import (
 // commands that never access principal state and therefore bypass admission.
 // Its exact population and real-binary behavior are guarded in tests.
 var identityHomeNeutralCommandExemptions = map[*cobra.Command]struct{}{
-	versionCmd: {},
-	upgradeCmd: {},
+	pinStoreCompareAndSetCmd: {},
+	versionCmd:               {},
+	upgradeCmd:               {},
 }
 
 func isIdentityHomeNeutralCommand(cmd *cobra.Command) bool {
@@ -26,6 +28,8 @@ func isIdentityHomeNeutralCommand(cmd *cobra.Command) bool {
 var identityHomeAwareCommandPaths = map[string]struct{}{
 	"aw a2a status":             {},
 	"aw claim-human":            {},
+	"aw doctor identity":        {},
+	"aw doctor registry":        {},
 	"aw id create":              {},
 	"aw id team accept-invite":  {},
 	"aw id team leave":          {},
@@ -50,5 +54,29 @@ func requireIdentityHomeAwareCommand(cmd *cobra.Command, external bool) error {
 	if _, ok := identityHomeAwareCommandPaths[path]; ok {
 		return nil
 	}
-	return usageError("command %q is not yet identity-home-aware; refusing to use an external identity home so principal state cannot fall back to the instance directory", path)
+	alternatives := identityHomeAwareAlternatives(cmd, identityHomeAwareCommandPaths)
+	if len(alternatives) == 0 {
+		return usageError("command %q is not yet identity-home-aware; refusing to use an external identity home so principal state cannot fall back to the instance directory. No command in this group is currently supported for an attached principal; stop rather than running the command against the disposable instance", path)
+	}
+	return usageError("command %q is not yet identity-home-aware; refusing to use an external identity home so principal state cannot fall back to the instance directory. Supported alternatives for this attached principal: %s", path, strings.Join(alternatives, ", "))
+}
+
+func identityHomeAwareAlternatives(cmd *cobra.Command, allowed map[string]struct{}) []string {
+	if cmd == nil {
+		return nil
+	}
+	group := cmd
+	for group.Parent() != nil && group.Parent().Parent() != nil {
+		group = group.Parent()
+	}
+	prefix := strings.TrimSpace(group.CommandPath()) + " "
+	alternatives := make([]string, 0, len(allowed))
+	for path := range allowed {
+		path = strings.TrimSpace(path)
+		if strings.HasPrefix(path, prefix) {
+			alternatives = append(alternatives, path)
+		}
+	}
+	sort.Strings(alternatives)
+	return alternatives
 }
