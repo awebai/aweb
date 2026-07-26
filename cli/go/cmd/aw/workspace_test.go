@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2197,7 +2198,7 @@ func TestAwWorkspaceAddWorktreeRejectsAliasAlreadyInUse(t *testing.T) {
 	}
 }
 
-func TestAwWorkspaceAddWorktreeUsesHostedInviteWithoutTeamKeyOrAPIKey(t *testing.T) {
+func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKeyOrAPIKey(t *testing.T) {
 	t.Parallel()
 
 	const origin = "https://github.com/acme/repo.git"
@@ -2317,8 +2318,14 @@ func TestAwWorkspaceAddWorktreeUsesHostedInviteWithoutTeamKeyOrAPIKey(t *testing
 	}))
 
 	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	repo := filepath.Join(tmp, "repo")
+	canonicalTmp, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(canonicalTmp, "aw")
+	repo := filepath.Join(canonicalTmp, "repo")
+	principalDir := filepath.Join(canonicalTmp, "principal")
+	identityHome := filepath.Join(principalDir, ".aw")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -2327,12 +2334,27 @@ func TestAwWorkspaceAddWorktreeUsesHostedInviteWithoutTeamKeyOrAPIKey(t *testing
 
 	// No local team key and no API key: this matches hosted worktree agents
 	// created by `aw team bootstrap` through the primary-workspace invite path.
-	writeWorkspaceBindingForTest(t, repo, workspaceBinding(server.URL, teamID, "dev", "ws-dev"))
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
-		t.Fatalf("seed .aw/context: %v", err)
+	writeWorkspaceBindingForTest(t, principalDir, workspaceBinding(server.URL, teamID, "dev", "ws-dev"))
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(identityHome, "context"), &awconfig.WorktreeContext{}); err != nil {
+		t.Fatalf("seed principal context: %v", err)
 	}
+	shadow := workspaceBinding(server.URL, teamID, "mallory", "shadow-workspace")
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(repo, ".aw", "workspace.yaml"), &shadow); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamState(repo, &awconfig.TeamState{
+		ActiveTeam: teamID,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   teamID,
+			Alias:    "mallory",
+			CertPath: awconfig.TeamCertificateRelativePath(teamID),
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	shadowBefore := fileDigestsForTest(t, filepath.Join(repo, ".aw"))
 
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "frontend")
+	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree", "frontend")
 	run.Env = testCommandEnv(tmp)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
@@ -2353,7 +2375,16 @@ func TestAwWorkspaceAddWorktreeUsesHostedInviteWithoutTeamKeyOrAPIKey(t *testing
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 
-	child := filepath.Join(tmp, "repo-alice")
+	if shadowAfter := fileDigestsForTest(t, filepath.Join(repo, ".aw")); !reflect.DeepEqual(shadowAfter, shadowBefore) {
+		t.Fatal("hosted primary invite read or mutated the source instance shadow")
+	}
+	if err := os.RemoveAll(filepath.Join(repo, ".aw")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(repo, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("hosted primary invite left source instance state: %v", err)
+	}
+	child := filepath.Join(canonicalTmp, "repo-alice")
 	childWorkspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(child, ".aw", "workspace.yaml"))
 	if err != nil {
 		t.Fatalf("load child workspace: %v", err)
@@ -2366,7 +2397,7 @@ func TestAwWorkspaceAddWorktreeUsesHostedInviteWithoutTeamKeyOrAPIKey(t *testing
 	}
 }
 
-func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithParentAPIKey(t *testing.T) {
+func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesParentAPIKey(t *testing.T) {
 	t.Parallel()
 
 	const origin = "https://github.com/acme/repo.git"
@@ -2453,8 +2484,14 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithParentAP
 	}))
 
 	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
-	repo := filepath.Join(tmp, "repo")
+	canonicalTmp, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(canonicalTmp, "aw")
+	repo := filepath.Join(canonicalTmp, "repo")
+	principalDir := filepath.Join(canonicalTmp, "principal")
+	identityHome := filepath.Join(principalDir, ".aw")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -2465,12 +2502,12 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithParentAP
 	// No identity.yaml for local mode.
 	binding := workspaceBinding(server.URL, teamID, "alice", "source-1")
 	binding.APIKey = "aw_sk_parent_key"
-	writeWorkspaceBindingForTest(t, repo, binding)
-	if err := awconfig.SaveWorktreeContextTo(filepath.Join(repo, ".aw", "context"), &awconfig.WorktreeContext{}); err != nil {
-		t.Fatalf("seed .aw/context: %v", err)
+	writeWorkspaceBindingForTest(t, principalDir, binding)
+	if err := awconfig.SaveWorktreeContextTo(filepath.Join(identityHome, "context"), &awconfig.WorktreeContext{}); err != nil {
+		t.Fatalf("seed principal context: %v", err)
 	}
 
-	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
+	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "add-worktree", "developer")
 	run.Env = testCommandEnv(tmp)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
@@ -2504,7 +2541,10 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithParentAP
 	}
 
 	// Verify child worktree exists and has correct state.
-	child := filepath.Join(tmp, "repo-grace")
+	if _, err := os.Lstat(filepath.Join(repo, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("API-key bootstrap fell back to source instance state: %v", err)
+	}
+	child := filepath.Join(canonicalTmp, "repo-grace")
 	if _, err := os.Stat(child); err != nil {
 		t.Fatalf("expected sibling worktree: %v", err)
 	}

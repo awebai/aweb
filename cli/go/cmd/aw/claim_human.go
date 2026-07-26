@@ -52,11 +52,16 @@ func runClaimHuman(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
 	resp, username, err := claimHumanWithOptions(claimHumanOptions{
-		WorkingDir: workingDir,
-		BaseURL:    baseURL,
-		Email:      email,
-		Username:   strings.TrimSpace(claimHumanUsername),
+		WorkingDir:   workingDir,
+		IdentityHome: externalIdentityHomeRoot(home),
+		BaseURL:      baseURL,
+		Email:        email,
+		Username:     strings.TrimSpace(claimHumanUsername),
 	})
 	if err != nil {
 		return err
@@ -74,10 +79,11 @@ func runClaimHuman(cmd *cobra.Command, args []string) error {
 }
 
 type claimHumanOptions struct {
-	WorkingDir string
-	BaseURL    string
-	Email      string
-	Username   string
+	WorkingDir   string
+	IdentityHome string
+	BaseURL      string
+	Email        string
+	Username     string
 }
 
 func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, string, error) {
@@ -86,11 +92,11 @@ func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, st
 		return nil, "", usageError("missing required flag: --email")
 	}
 
-	didKey, signingKey, identityAddress, err := resolveClaimHumanIdentity(opts.WorkingDir)
+	didKey, signingKey, identityAddress, err := resolveClaimHumanIdentity(opts.WorkingDir, opts.IdentityHome)
 	if err != nil {
 		return nil, "", err
 	}
-	username, err := resolveClaimHumanUsername(opts.WorkingDir, identityAddress, opts.Username)
+	username, err := resolveClaimHumanUsername(opts.WorkingDir, opts.IdentityHome, identityAddress, opts.Username)
 	if err != nil {
 		return nil, "", err
 	}
@@ -113,14 +119,26 @@ func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, st
 	return resp, username, nil
 }
 
-func resolveClaimHumanIdentity(workingDir string) (string, ed25519.PrivateKey, string, error) {
-	identity, err := awconfig.ResolveIdentity(workingDir)
+func resolveClaimHumanIdentity(workingDir, identityHome string) (string, ed25519.PrivateKey, string, error) {
+	var identity *awconfig.ResolvedIdentity
+	var err error
+	if strings.TrimSpace(identityHome) != "" {
+		identity, err = awconfig.ResolveIdentityFromHome(workingDir, identityHome)
+	} else {
+		identity, err = awconfig.ResolveIdentity(workingDir)
+	}
 	identityMissing := errors.Is(err, os.ErrNotExist)
 	if err != nil && !identityMissing {
 		return "", nil, "", err
 	}
 
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	if strings.TrimSpace(identityHome) != "" {
+		signingKeyPath, err = awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "signing.key")
+		if err != nil {
+			return "", nil, "", err
+		}
+	}
 	didKey := ""
 	address := ""
 	if !identityMissing {
@@ -151,7 +169,7 @@ func resolveClaimHumanIdentity(workingDir string) (string, ed25519.PrivateKey, s
 	return didKey, signingKey, address, nil
 }
 
-func resolveClaimHumanUsername(workingDir, address, override string) (string, error) {
+func resolveClaimHumanUsername(workingDir, identityHome, address, override string) (string, error) {
 	if username := strings.TrimSpace(override); username != "" {
 		return username, nil
 	}
@@ -159,7 +177,14 @@ func resolveClaimHumanUsername(workingDir, address, override string) (string, er
 		return usernameFromMemberAddress(address)
 	}
 
-	workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
+	var workspace *awconfig.WorktreeWorkspace
+	var teamState *awconfig.TeamState
+	var err error
+	if strings.TrimSpace(identityHome) != "" {
+		workspace, teamState, _, err = awconfig.LoadWorkspaceAndTeamStateFromIdentityHome(identityHome)
+	} else {
+		workspace, teamState, _, err = awconfig.LoadWorkspaceAndTeamState(workingDir)
+	}
 	if err != nil {
 		if workspace == nil && errors.Is(err, os.ErrNotExist) {
 			return "", usageError("No identity found. Run aw init first to create an agent, then claim-human to attach an email.")
