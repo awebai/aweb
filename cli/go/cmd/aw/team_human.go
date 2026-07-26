@@ -2031,7 +2031,7 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 	}
 	// Agent provisioning writes the worktree binding immediately: the produced
 	// agent is ready to run with no separate `aw init`.
-	if err := recordAcceptedTeamMembership(homeDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, recordMembershipOptions{SetActive: true, WriteWorkspaceBinding: true}); err != nil {
+	if err := recordAcceptedTeamMembership(homeDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, recordMembershipOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), SetActive: true, WriteWorkspaceBinding: true}); err != nil {
 		return nil, err
 	}
 	return accepted, nil

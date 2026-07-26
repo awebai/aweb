@@ -3085,7 +3085,7 @@ func recordAcceptedTeamMembership(workingDir string, output *teamAcceptInviteOut
 			return err
 		}
 	}
-	return ensureLocalIdentityEncryptionKeyForDir(workingDir)
+	return ensureLocalIdentityEncryptionKeyForDir(workingDir, opts.IdentityHome)
 }
 
 func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, registryURL, awebURL string, setActive bool, identityHomes ...string) error {
