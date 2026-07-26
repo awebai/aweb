@@ -128,6 +128,7 @@ function fixture({
   const bin = join(base, "bin");
   const awLog = join(base, "aw-argv.jsonl");
   write(join(bin, "pi"), "#!/bin/sh\nexit 0\n", 0o755);
+  write(join(bin, "oas"), "#!/bin/sh\nexec \"$OAS_TEST_NODE\" \"$OAS_TEST_CLI\" \"$@\"\n", 0o755);
   write(join(bin, "aw"), `#!/usr/bin/env node\nimport { appendFileSync, readFileSync, writeFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_AW_LOG, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");\nconst argv = process.argv.slice(2);\nif (argv.includes("delete") || argv.includes("reset") || argv.includes("init") || argv.includes("invite") || argv.includes("join")) process.exit(93);\nif (argv.at(-2) === "whoami" && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ address: "example.test/throwaway", stable_id: "did:aw:2ThrowawayStableId123" }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("team") && argv.includes("list") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ active_team: "test-team:example.test", memberships: [{ team_id: "test-team:example.test", active: true }] }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("import-request") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ controller_did: "did:key:z6MkiLocalController123" }) + "\\n");\n  process.exit(0);\n}\nconst flag = (name) => argv[argv.indexOf(name) + 1];\nif (argv.includes("cleanup-local-provision")) {\n  const operation = flag("--operation-id");\n  if (process.env.FAKE_AW_CLEANUP_FAILURES) {\n    let remaining = Number(readFileSync(process.env.FAKE_AW_CLEANUP_FAILURES, "utf8"));\n    if (remaining > 0) {\n      writeFileSync(process.env.FAKE_AW_CLEANUP_FAILURES, String(remaining - 1));\n      process.stderr.write("simulated cleanup failure\\n");\n      process.exit(96);\n    }\n  }\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "cleanup-pending") process.exit(95);\n  process.stdout.write(JSON.stringify({\n    status: "complete", operation_id: operation, grants: "physically-absent", workspace: "soft-deleted", identity: "soft-deleted",\n    certificate: "revoked", credentials: "physically-absent", audit: "intentionally-retained-operation-record",\n  }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("provision-local")) {\n  const operation = flag("--operation-id");\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "provisioning") process.exit(94);\n  process.stdout.write(JSON.stringify({\n    status: "provisioned", operation_id: operation, team_id: flag("--team-id"), alias: flag("--name"), name: flag("--name"),\n    identity_home: flag("--target-identity-home"), did_key: "did:key:z6MkiProvisionedWorker",\n    certificate_id: "certificate-provisioned", agent_id: "agent-provisioned", workspace_id: "workspace-provisioned",\n    registry_url: "https://registry.example.test", aweb_url: "https://aweb.example.test",\n  }) + "\\n");\n  process.exit(0);\n}\nprocess.exit(92);\n`, 0o755);
 
   const corroborationHome = join(principalHome, ".corroboration", "cleanup");
@@ -135,12 +136,14 @@ function fixture({
   const env = {
     ...process.env,
     PATH: `${bin}:${process.env.PATH}`,
+    OAS_TEST_NODE: process.execPath,
+    OAS_TEST_CLI: oasCli(),
     PI_AGENTS_ROOT: agentsRoot,
     AWEB_PRINCIPAL_HOME: principalHome,
     FAKE_AW_LOG: awLog,
     PI_AGENTS_TMUX_SESSION: "oas-attach-test-no-session",
   };
-  return { base, repo, agentsRoot, capability, declarationPath, principalHome, principal, credentials, state, corroborationHome, awLog, awPath: join(bin, "aw"), env };
+  return { base, repo, agentsRoot, capability, declarationPath, principalHome, principal, credentials, state, corroborationHome, awLog, bin, awPath: join(bin, "aw"), env };
 }
 
 function digestedCleanupCorroboration(instanceID, receipt) {
@@ -360,6 +363,9 @@ test("standalone refusal rejects an unsafe ambient soul before constructing its 
   const hookHome = join(f.base, "unsafe-soul-home");
   mkdirSync(hookHome);
   const marker = join(f.base, "unsafe-soul-action");
+  const poisonBin = join(f.base, "poison-global");
+  const poisonMarker = join(f.base, "global-oas-called");
+  write(join(poisonBin, "oas"), `#!/bin/sh\nprintf called > ${JSON.stringify(poisonMarker)}\nexit 97\n`, 0o755);
   const result = spawnSync(process.execPath, [join(f.capability, "bin", "aweb-identity-attach.mjs"), "spawn"], {
     cwd: hookHome,
     env: {
@@ -373,8 +379,13 @@ test("standalone refusal rejects an unsafe ambient soul before constructing its 
   const refusal = JSON.parse(result.stdout);
   assert.match(refusal.message, /OAS_AGENT.*filesystem-safe/);
   assert.equal(refusal.next_action, "oas status --json");
-  const executed = spawnSync("/bin/sh", ["-c", refusal.next_action], { cwd: f.repo, env: f.env, encoding: "utf8" });
+  const executed = spawnSync("/bin/sh", ["-c", refusal.next_action], {
+    cwd: f.repo,
+    env: { ...f.env, PATH: `${f.bin}:${poisonBin}:${process.env.PATH}` },
+    encoding: "utf8",
+  });
   assert.equal(executed.status, 0, executed.stderr);
+  assert.equal(existsSync(poisonMarker), false, "literal oas action must use the declared OAS_TEST_ROOT subject");
   assert.equal(existsSync(marker), false);
 });
 
