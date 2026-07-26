@@ -92,33 +92,60 @@ async def test_message_inserted_during_presented_snapshot_remains_unread(
     )
     assert presented is not None
 
-    snapshot = await get_message_history(
+    async with aweb_cloud_db.aweb_db.transaction() as writer_tx:
+        concurrent = await send_in_session(
+            _DbShim(writer_tx),
+            session_id=session_id,
+            sender_did=alice["did_aw"],
+            sender_agent_id=str(alice["agent_id"]),
+            body="committed after recipient acknowledgement",
+        )
+        assert concurrent is not None
+        assert presented["created_at"] == concurrent["created_at"] == _FrozenDateTime.instant
+
+        snapshot = await get_message_history(
+            db,
+            session_id=session_id,
+            participant_did=bob["did_aw"],
+            unread_only=True,
+        )
+        presented_ids = [row["message_id"] for row in snapshot]
+        assert presented_ids == [str(presented["message_id"])]
+        assert str(concurrent["message_id"]) not in presented_ids
+
+        invisible = await get_message_history(
+            db,
+            session_id=session_id,
+            participant_did=bob["did_aw"],
+            message_id=str(concurrent["message_id"]),
+        )
+        assert invisible == [], "uncommitted message entered the recipient snapshot"
+
+        await mark_messages_read(
+            db,
+            session_id=session_id,
+            participant_did=bob["did_aw"],
+            participant_agent_id=str(bob["agent_id"]),
+            message_ids=presented_ids,
+        )
+        receipt = await aweb_cloud_db.aweb_db.fetch_one(
+            """
+            SELECT last_read_message_id
+            FROM {{tables.chat_read_receipts}}
+            WHERE session_id = $1 AND did = $2
+            """,
+            session_id,
+            bob["did_aw"],
+        )
+        assert str(receipt["last_read_message_id"]) == presented_ids[-1]
+
+    retrievable = await get_message_history(
         db,
         session_id=session_id,
         participant_did=bob["did_aw"],
-        unread_only=True,
+        message_id=str(concurrent["message_id"]),
     )
-    presented_ids = [row["message_id"] for row in snapshot]
-    assert presented_ids == [str(presented["message_id"])]
-
-    concurrent = await send_in_session(
-        db,
-        session_id=session_id,
-        sender_did=alice["did_aw"],
-        sender_agent_id=str(alice["agent_id"]),
-        body="committed while recipient is mid-run",
-    )
-    assert concurrent is not None
-    assert presented["created_at"] == concurrent["created_at"] == _FrozenDateTime.instant
-    assert str(concurrent["message_id"]) not in presented_ids
-
-    await mark_messages_read(
-        db,
-        session_id=session_id,
-        participant_did=bob["did_aw"],
-        participant_agent_id=str(bob["agent_id"]),
-        message_ids=presented_ids,
-    )
+    assert [row["message_id"] for row in retrievable] == [str(concurrent["message_id"])]
 
     unread = await get_message_history(
         db,
