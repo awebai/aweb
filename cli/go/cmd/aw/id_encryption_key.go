@@ -17,9 +17,55 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// currentEncryptionKeyIdentityHome makes callers explicitly opt in to ambient
-// --identity-home / AWEB_IDENTITY_HOME resolution for the active identity.
-const currentEncryptionKeyIdentityHome = ""
+type encryptionKeyIdentityHomeMode uint8
+
+const (
+	encryptionKeyIdentityHomeUnset encryptionKeyIdentityHomeMode = iota
+	encryptionKeyIdentityHomeCurrent
+	encryptionKeyIdentityHomeExplicit
+)
+
+// encryptionKeyIdentityHomeIntent forces every encryption-key mutation caller
+// to choose the active identity or a specific identity root. Its zero value is
+// invalid so an uninitialized value cannot silently resolve through
+// AWEB_IDENTITY_HOME.
+type encryptionKeyIdentityHomeIntent struct {
+	mode encryptionKeyIdentityHomeMode
+	root string
+}
+
+func currentEncryptionKeyIdentityHome() encryptionKeyIdentityHomeIntent {
+	return encryptionKeyIdentityHomeIntent{mode: encryptionKeyIdentityHomeCurrent}
+}
+
+func explicitEncryptionKeyIdentityHome(root string) encryptionKeyIdentityHomeIntent {
+	return encryptionKeyIdentityHomeIntent{mode: encryptionKeyIdentityHomeExplicit, root: strings.TrimSpace(root)}
+}
+
+func resolvedEncryptionKeyIdentityHome(home awconfig.IdentityHome) encryptionKeyIdentityHomeIntent {
+	if home.External() {
+		return explicitEncryptionKeyIdentityHome(home.Root)
+	}
+	return currentEncryptionKeyIdentityHome()
+}
+
+func (intent encryptionKeyIdentityHomeIntent) resolve() (root string, explicit bool, err error) {
+	switch intent.mode {
+	case encryptionKeyIdentityHomeCurrent:
+		if strings.TrimSpace(intent.root) != "" {
+			return "", false, errors.New("current encryption-key identity home cannot include an explicit root")
+		}
+		return "", false, nil
+	case encryptionKeyIdentityHomeExplicit:
+		root = strings.TrimSpace(intent.root)
+		if root == "" {
+			return "", false, errors.New("explicit encryption-key identity home root is required")
+		}
+		return root, true, nil
+	default:
+		return "", false, errors.New("encryption-key identity home intent is required")
+	}
+}
 
 type idEncryptionKeyOutput struct {
 	Status         string   `json:"status"`
@@ -121,10 +167,10 @@ func runIDEncryptionKeyShow(cmd *cobra.Command, args []string) error {
 
 func setupOrRotateIdentityEncryptionKey(ctx context.Context, rotate bool) (idEncryptionKeyOutput, error) {
 	wd, _ := os.Getwd()
-	return setupOrRotateIdentityEncryptionKeyForDir(ctx, wd, rotate, currentEncryptionKeyIdentityHome)
+	return setupOrRotateIdentityEncryptionKeyForDir(ctx, wd, rotate, currentEncryptionKeyIdentityHome())
 }
 
-func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, rotate bool, identityHome string) (idEncryptionKeyOutput, error) {
+func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, rotate bool, identityHome encryptionKeyIdentityHomeIntent) (idEncryptionKeyOutput, error) {
 	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHome)
 	if err != nil {
 		return idEncryptionKeyOutput{}, err
@@ -227,8 +273,8 @@ func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir st
 	}, nil
 }
 
-func ensureLocalIdentityEncryptionKeyForDir(workingDir string, identityHomes ...string) error {
-	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHomes...)
+func ensureLocalIdentityEncryptionKeyForDir(workingDir string, identityHome encryptionKeyIdentityHomeIntent) error {
+	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHome)
 	if err != nil {
 		return err
 	}
@@ -297,10 +343,13 @@ func shouldRefreshEncryptionKeyForIdentityBinding(err error) bool {
 		strings.Contains(msg, "identity_did does not match current did:key")
 }
 
-func resolveIdentityForEncryptionKeyForDir(workingDir string, identityHomes ...string) (*awconfig.ResolvedIdentity, error) {
-	explicitIdentityHome := len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != ""
+func resolveIdentityForEncryptionKeyForDir(workingDir string, identityHome encryptionKeyIdentityHomeIntent) (*awconfig.ResolvedIdentity, error) {
+	identityHomeRoot, explicitIdentityHome, err := identityHome.resolve()
+	if err != nil {
+		return nil, err
+	}
 	if explicitIdentityHome {
-		identity, err := awconfig.ResolveIdentityFromHome(workingDir, identityHomes[0])
+		identity, err := awconfig.ResolveIdentityFromHome(workingDir, identityHomeRoot)
 		if err == nil {
 			return identity, nil
 		}

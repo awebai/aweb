@@ -164,10 +164,10 @@ func TestExternalIdentityHomeOutboundMessagingSignsAsPrincipal(t *testing.T) {
 		})
 	}
 
-	if err := ensureLocalIdentityEncryptionKeyForDir(principalRoot); err != nil {
+	if err := ensureLocalIdentityEncryptionKeyForDir(principalRoot, currentEncryptionKeyIdentityHome()); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureLocalIdentityEncryptionKeyForDir(instance); err != nil {
+	if err := ensureLocalIdentityEncryptionKeyForDir(instance, currentEncryptionKeyIdentityHome()); err != nil {
 		t.Fatal(err)
 	}
 	shadowBefore := fileDigestsForTest(t, filepath.Join(instance, ".aw"))

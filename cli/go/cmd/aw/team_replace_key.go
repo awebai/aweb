@@ -281,7 +281,7 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 		output.CertificatePath = filepath.ToSlash(filepath.Join(homeDir, ".aw", filepath.FromSlash(certPath)))
 		output.SigningKeyPath = filepath.ToSlash(generatedKeyPath)
 		encryptionCtx, encryptionCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		encryptionOutput, encryptionErr := setupOrRotateIdentityEncryptionKeyForDir(encryptionCtx, homeDir, false, awconfig.WorktreeIdentityHome(homeDir))
+		encryptionOutput, encryptionErr := setupOrRotateIdentityEncryptionKeyForDir(encryptionCtx, homeDir, false, explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(homeDir)))
 		encryptionCancel()
 		if encryptionErr != nil {
 			return fmt.Errorf("replace-key partial state: roster row and audit were updated, old certificate was revoked, and replacement signing key/certificate %s were installed, but the E2E encryption-key assertion was not refreshed: %w; from %s run `aw id encryption-key setup`", newCertificate.CertificateID, encryptionErr, homeDir)

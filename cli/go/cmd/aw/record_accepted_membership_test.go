@@ -92,7 +92,7 @@ func TestRecordAcceptedTeamMembershipJoinLeavesNoWorkspaceBinding(t *testing.T) 
 	teamID := "default:gracehosted.aweb.ai"
 	output, cert := writeSelfCustodyIdentityForTest(t, dir, teamID)
 
-	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{SetActive: true}); err != nil {
+	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true}); err != nil {
 		t.Fatalf("record accepted membership: %v", err)
 	}
 
@@ -109,15 +109,34 @@ func TestRecordAcceptedTeamMembershipJoinLeavesNoWorkspaceBinding(t *testing.T) 
 	}
 }
 
-// TestRecordAcceptedTeamMembershipProvisionWritesWorkspaceBinding pins the
-// provision model: agent-provisioning records the membership, writes the worktree
-// binding, and ensures the encryption key.
-func TestRecordAcceptedTeamMembershipProvisionWritesWorkspaceBinding(t *testing.T) {
-	dir := t.TempDir()
+// TestRecordAcceptedTeamMembershipProvisionWritesTargetEncryptionKeyNotOperators
+// pins the provision model: foreign agent provisioning writes the worktree binding
+// and target encryption key without following the operator's active identity home.
+func TestRecordAcceptedTeamMembershipProvisionWritesTargetEncryptionKeyNotOperators(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "target")
+	operatorDir := filepath.Join(root, "operator")
 	teamID := "default:gracehosted.aweb.ai"
 	output, cert := writeSelfCustodyIdentityForTest(t, dir, teamID)
+	_, _ = writeSelfCustodyIdentityForTest(t, operatorDir, teamID)
+	operatorIdentityHome := awconfig.WorktreeIdentityHome(operatorDir)
+	t.Setenv(awconfig.IdentityHomeEnv, operatorIdentityHome)
+	resolvedHome, err := identityHomeForDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedHome.Root != operatorIdentityHome || !resolvedHome.External() {
+		t.Fatalf("fixture did not activate distinct operator identity home: %+v", resolvedHome)
+	}
+	targetEncryptionStatePath := awconfig.WorktreeEncryptionStatePath(dir)
+	operatorEncryptionStatePath := awconfig.WorktreeEncryptionStatePath(operatorDir)
 
-	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{SetActive: true, WriteWorkspaceBinding: true}); err != nil {
+	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{
+		IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(dir)), SetActive: true, WriteWorkspaceBinding: true,
+	}); err != nil {
 		t.Fatalf("record accepted membership: %v", err)
 	}
 
@@ -128,7 +147,13 @@ func TestRecordAcceptedTeamMembershipProvisionWritesWorkspaceBinding(t *testing.
 	if teamState.Membership(teamID) == nil {
 		t.Fatalf("provision did not record teams.yaml membership: %#v", teamState)
 	}
-	requireEncryptionKeyRecordForTest(t, dir)
+	targetState, targetStateErr := awconfig.LoadEncryptionKeyStateFrom(targetEncryptionStatePath)
+	if targetStateErr != nil || targetState.ActiveRecord() == nil {
+		t.Errorf("target E2E encryption key was not created: state=%+v err=%v", targetState, targetStateErr)
+	}
+	if _, operatorStateErr := os.Stat(operatorEncryptionStatePath); !os.IsNotExist(operatorStateErr) {
+		t.Errorf("operator E2E encryption key changed at %s: %v", operatorEncryptionStatePath, operatorStateErr)
+	}
 	if !workspaceYAMLExists(t, dir) {
 		t.Fatal("provision must write workspace.yaml")
 	}
@@ -159,13 +184,13 @@ func TestRecordAcceptedTeamMembershipPreservesJoinedAt(t *testing.T) {
 
 	const originalJoinedAt = "2026-01-01T00:00:00Z"
 	cert.IssuedAt = originalJoinedAt
-	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{SetActive: true}); err != nil {
+	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true}); err != nil {
 		t.Fatalf("record first membership: %v", err)
 	}
 
 	// Re-accept with a newer certificate (a later IssuedAt, e.g. a rotation).
 	cert.IssuedAt = "2026-06-01T00:00:00Z"
-	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{SetActive: true}); err != nil {
+	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true}); err != nil {
 		t.Fatalf("re-record membership: %v", err)
 	}
 
@@ -194,7 +219,7 @@ func TestRecordAcceptedTeamMembershipEnsuresEncryptionKeyForCreator(t *testing.T
 		t.Fatalf("precondition: encryption state should be absent, stat err=%v", err)
 	}
 
-	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{SetActive: true, WriteWorkspaceBinding: true}); err != nil {
+	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true, WriteWorkspaceBinding: true}); err != nil {
 		t.Fatalf("record accepted membership: %v", err)
 	}
 	requireEncryptionKeyRecordForTest(t, dir)
