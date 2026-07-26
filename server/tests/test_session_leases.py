@@ -158,15 +158,23 @@ async def test_expired_lease_allows_new_session_and_increments_generation(aweb_c
 
 
 @pytest.mark.asyncio
-async def test_ttl_starts_after_waiting_for_serialization_lock(aweb_cloud_db):
+@pytest.mark.parametrize("operation", ["acquire", "renew", "takeover"])
+async def test_ttl_starts_after_waiting_for_serialization_lock(aweb_cloud_db, operation):
     app, agent_id = await _fixture(aweb_cloud_db.aweb_db)
     lock_key = f"session-admission:{TEAM_ID}:{agent_id}"
-    async with aweb_cloud_db.aweb_db.transaction() as tx:
-        await tx.fetch_value("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", lock_key)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            pending = asyncio.create_task(client.post("/v1/session-leases", json={"session_id": "session-a", "session_key": KEY_A, "ttl_seconds": 1}))
+    path = "/v1/session-leases" if operation == "acquire" else f"/v1/session-leases/{operation}"
+    payload = {"session_id": "session-a", "session_key": KEY_A, "ttl_seconds": 1}
+    if operation == "takeover":
+        payload = {"session_id": "session-b", "session_key": KEY_B, "ttl_seconds": 1, "reason": "held-lock proof"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        if operation != "acquire":
+            initial = await client.post("/v1/session-leases", json={"session_id": "session-a", "session_key": KEY_A, "ttl_seconds": 60})
+            assert initial.status_code == 200
+        async with aweb_cloud_db.aweb_db.transaction() as tx:
+            await tx.fetch_value("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", lock_key)
+            pending = asyncio.create_task(client.post(path, json=payload))
             await asyncio.sleep(1.1)
-    response = await pending
+        response = await pending
     assert response.status_code == 200
     assert datetime.fromisoformat(response.json()["expires_at"]) > datetime.now(timezone.utc)
 
