@@ -12,6 +12,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/crashtest"
 	"github.com/spf13/cobra"
 )
 
@@ -46,7 +47,7 @@ func init() {
 }
 
 func runIDRotateKeyRecover(cmd *cobra.Command, args []string) error {
-	identity, rotationDir, lockPath, err := prepareRotationIdentity(true)
+	identity, rotationDir, lockPath, err := prepareRotationIdentity(false)
 	if err != nil {
 		return err
 	}
@@ -65,6 +66,11 @@ func runIDRotateKeyRecover(cmd *cobra.Command, args []string) error {
 	out, err := recoverPendingRotation(ctx, identity, rotationDir)
 	if err != nil {
 		return err
+	}
+	if out.Status == "no_pending" {
+		if err := validateResolvedIdentity(identity); err != nil {
+			return err
+		}
 	}
 	printOutput(out, formatIDRotationRecovery)
 	return nil
@@ -98,6 +104,9 @@ func runIDRotateKeyStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if state == nil {
+		if err := validateResolvedIdentity(identity); err != nil {
+			return err
+		}
 		printOutput(idRotationRecoveryOutput{
 			Status: "no_pending", StableID: identity.StableID,
 			StatePath: pendingRotationStatePath(rotationDir, identity.StableID),
@@ -112,7 +121,7 @@ func runIDRotateKeyStatus(cmd *cobra.Command, args []string) error {
 }
 
 func prepareRotationIdentity(requireSigningKey bool) (*awconfig.ResolvedIdentity, string, string, error) {
-	identity, err := resolveIdentity()
+	identity, err := resolveRotationIdentity()
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -126,6 +135,9 @@ func prepareRotationIdentity(requireSigningKey bool) (*awconfig.ResolvedIdentity
 		return nil, "", "", fmt.Errorf("current identity is missing a did:aw stable identifier")
 	}
 	if requireSigningKey {
+		if err := validateResolvedIdentity(identity); err != nil {
+			return nil, "", "", err
+		}
 		signingKey, err := resolveIdentitySigningKey(identity)
 		if err != nil {
 			return nil, "", "", err
@@ -145,8 +157,31 @@ func prepareRotationIdentity(requireSigningKey bool) (*awconfig.ResolvedIdentity
 	return identity, rotationDir, lockPath, nil
 }
 
+func resolveRotationIdentity() (*awconfig.ResolvedIdentity, error) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	identityHome, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, err
+	}
+	identity, err := awconfig.ResolveIdentityFromHome(workingDir, identityHome.Root)
+	if errors.Is(err, os.ErrNotExist) {
+		return resolveEphemeralIdentityWithoutState(workingDir)
+	}
+	if err != nil {
+		return nil, err
+	}
+	identity.ExternalIdentityHome = identityHome.External()
+	if strings.TrimSpace(identity.DID) == "" {
+		return nil, usageError("current identity is invalid: .aw/identity.yaml is missing did")
+	}
+	return identity, nil
+}
+
 func reloadRotationIdentity(lockIdentity *awconfig.ResolvedIdentity, rotationDir string) (*awconfig.ResolvedIdentity, error) {
-	identity, err := resolveIdentity()
+	identity, err := resolveRotationIdentity()
 	if err != nil {
 		return nil, err
 	}
@@ -156,13 +191,6 @@ func reloadRotationIdentity(lockIdentity *awconfig.ResolvedIdentity, rotationDir
 	}
 	if strings.TrimSpace(identity.StableID) != strings.TrimSpace(lockIdentity.StableID) || filepath.Clean(currentRotationDir) != filepath.Clean(rotationDir) {
 		return nil, fmt.Errorf("active identity changed while waiting for the rotation lock; retry the command")
-	}
-	signingKey, err := resolveIdentitySigningKey(identity)
-	if err != nil {
-		return nil, err
-	}
-	if err := requirePersistentSelfCustodialIdentity(identity, signingKey); err != nil {
-		return nil, err
 	}
 	return identity, nil
 }
@@ -217,7 +245,7 @@ func recoverPendingRotation(ctx context.Context, identity *awconfig.ResolvedIden
 			out.Detail = "registry uses the old key, but " + detail + "; replacement key and state preserved"
 			return out, nil
 		}
-		if err := cleanupPendingRotationKeypair(state.PendingKey); err != nil {
+		if err := cleanupPendingRotationKeypair(state.PendingKey, state.NewDID); err != nil {
 			return idRotationRecoveryOutput{}, fmt.Errorf("discard unapplied replacement key for operation %s: %w", state.OperationID, err)
 		}
 		if err := removePendingRotationStateOwned(rotationDir, state.StableID, state.OperationID); err != nil {
@@ -287,8 +315,17 @@ func finalizePendingRotation(identity *awconfig.ResolvedIdentity, rotationDir st
 	if err := awconfig.SaveWorktreeIdentityTo(identity.IdentityPath, local); err != nil {
 		return fmt.Errorf("update local identity state: %w", err)
 	}
-	if err := cleanupPendingRotationKeypair(state.PendingKey); err != nil {
+	// Crash-test observation only; active key files and identity now agree.
+	crashtest.Checkpoint("after-identity-state-commit", identity.IdentityPath)
+	if err := cleanupPendingRotationKeypair(state.PendingKey, state.NewDID); err != nil {
 		return fmt.Errorf("clean pending rotation key material: %w", err)
+	}
+	activeDir := filepath.Dir(identity.SigningKeyPath)
+	if err := cleanupMatchingRotationPrivateTemps(activeDir, state.NewDID); err != nil {
+		return fmt.Errorf("clean promoted rotation key temp material: %w", err)
+	}
+	if err := cleanupMatchingRotationPrivateTemps(filepath.Join(activeDir, "rotated"), state.OldDID); err != nil {
+		return fmt.Errorf("clean archived rotation key temp material: %w", err)
 	}
 	if err := removePendingRotationStateOwned(rotationDir, state.StableID, state.OperationID); err != nil {
 		return fmt.Errorf("remove finalized rotation state: %w", err)
