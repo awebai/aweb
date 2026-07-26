@@ -516,6 +516,9 @@ func formatChatOpen(v any) string {
 	} else {
 		sb.WriteString(fmt.Sprintf("Unread chat messages (%d):\n\n", len(result.Messages)))
 	}
+	if result.MarkReadError != "" {
+		sb.WriteString(fmt.Sprintf("Warning: these messages were not marked as read (%s); they will be shown again.\n\n", result.MarkReadError))
+	}
 	if result.SenderWaiting {
 		sb.WriteString(fmt.Sprintf("Status: %s is WAITING for your reply\n\n", result.TargetAgent))
 	}
