@@ -579,9 +579,26 @@ part of the system is customer-ready until its journey passes end to end:
 
 1. **The ordinary worker** (`aaaa.44`). An organization publishes a config; a
    developer clones, runs `oas install`, runs `oas doctor` and gets either
-   *Ready* or **exactly one** setup action, spawns a worker, sees its aweb
-   address, exchanges a real message, retires it, and no disposable state
-   remains. **No identity jargon and no YAML editing anywhere in that path.**
+   *Ready* or **exactly one** setup action, spawns a worker, **sees an identity
+   they can act on**, exchanges a real message, retires it, and no disposable
+   state remains. **No identity jargon and no YAML editing anywhere in that
+   path.**
+
+   That criterion once read *sees its aweb address*, and a developer building
+   the surface found the contradiction before implementing it:
+   `provision-disposable` provisions a **local** identity, which has a `did:key`
+   and **no address** — the accepted team certificate carries an empty
+   `MemberAddress`. Synthesising one would have been laundering. **The
+   correction is more correct, not a compromise:** an address is a durable,
+   registered, globally resolvable artifact, and a worker that dies this
+   afternoon should not have one. Minting an address to satisfy an acceptance
+   sentence would create exactly the durable residue we refuse elsewhere — the
+   same shape as an organization membership outliving its worker. So the surface
+   shows **what is true per mode**: an address for attached or durable
+   identities, and for disposable ones the team member name and `did:key`,
+   labelled as team-scoped. What the criterion actually requires is that the
+   developer can identify the worker, **message it**, and know what retire will
+   do.
 2. **The resident** (`aaaa.45`). A durable principal is created or selected
    explicitly, comes back as *the same stable identity* across a session
    restart, answers a message, **retains what it learned across sessions**, and
