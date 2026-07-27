@@ -44,6 +44,18 @@ function output(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
+let spawnBindingResult = null;
+
+function recordCompleteSpawnBinding(value) {
+  if (!value?.meta?.identity_binding || !value?.env || Object.keys(value.env).join(",") !== "AWEB_IDENTITY_HOME"
+      || typeof value.env.AWEB_IDENTITY_HOME !== "string" || !isAbsolute(value.env.AWEB_IDENTITY_HOME)) {
+    throw new Error("spawn hook did not produce complete binding metadata and environment");
+  }
+  if (value.meta.identity_binding.schema_version === 1) validatePersistedAttachBinding(value.meta.identity_binding);
+  else validateBindingReceipt(value.meta.identity_binding);
+  spawnBindingResult = value;
+}
+
 function warning(error) {
   const message = error instanceof Error ? error.message : String(error);
   output({ warning: `aweb-identity-attach: ${message.slice(0, 400)}` });
@@ -86,6 +98,28 @@ class SpawnRefusal extends Error {
     super(issue.message);
     this.issue = issue;
   }
+}
+
+function safeSpawnIssue(error, binding) {
+  if (error instanceof Error && /^OAS_AGENT must be a filesystem-safe soul name$/.test(error.message)) {
+    return new ReadinessIssue("needs_setup", "the selected soul name is invalid", null);
+  }
+  if (binding?.mode === "attach" || binding?.mode === "attach-existing") {
+    return new ReadinessIssue("needs_setup", "the selected attached identity could not be verified", null);
+  }
+  if (binding?.mode === "provision-durable") {
+    return new ReadinessIssue("experimental", "durable resident identity provisioning is not available", null);
+  }
+  if (binding?.mode === "provision-disposable" && binding.minting_authority_path === "hosted") {
+    return new ReadinessIssue("experimental", "hosted disposable identity provisioning is not available", null);
+  }
+  return new ReadinessIssue("needs_setup", "the selected aweb identity settings could not be verified", null);
+}
+
+function spawnNextAction() {
+  return process.env.OAS_AGENT && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(process.env.OAS_AGENT)
+    ? `oas aweb-identity status --soul ${shellWord(process.env.OAS_AGENT)} --json`
+    : "oas status --json";
 }
 
 function shellWord(value) {
@@ -775,7 +809,7 @@ function runLocalProvision(binding, authority, controllerDID, pendingReceipt) {
     markProvisionIntentPrepared(principalHome, intent.operation_id, result);
     const receipt = provisionedDisposableReceipt(pendingReceipt, { cleanupAuthority: "local-controller" });
     writeProvisionCleanupCorroboration(principalHome, intent.operation_id, instanceID, receipt);
-    output({
+    recordCompleteSpawnBinding({
       meta: {
         identity_binding: receipt,
         minting_authority: intent.authority,
@@ -804,14 +838,14 @@ function attach(binding, verifiedPrincipal = null) {
     store,
   });
   if (binding.legacy) {
-    output({
+    recordCompleteSpawnBinding({
       meta: { identity_binding: legacyBinding },
       env: { AWEB_IDENTITY_HOME: store.credentials },
       brief: `Identity: attached to ${declaration.address} (${declaration.stable_id}); external cleanup ownership preserves the principal when this instance retires.`,
     });
     return;
   }
-  output({
+  recordCompleteSpawnBinding({
     meta: {
       identity_binding: attachmentReceipt({ declarationPath, stableID: declaration.stable_id }),
       attachment: legacyBinding,
@@ -958,20 +992,12 @@ try {
       binding = parseBindingSettings();
       preflight = preflightBinding(binding);
     } catch (error) {
-      const durableUnavailable = error instanceof Error && /durable resident provisioning/.test(error.message);
-      const issue = error instanceof ReadinessIssue
-        ? error
-        : new ReadinessIssue(
-          durableUnavailable ? "experimental" : "needs_setup",
-          durableUnavailable
-            ? "provision-durable is declared but not executable; durable minting authority belongs to aaaa.39"
-            : error instanceof Error ? error.message : String(error),
-          null,
-        );
-      throw new SpawnRefusal(issue);
+      throw new SpawnRefusal(safeSpawnIssue(error, binding));
     }
     if (binding.mode === "attach" || binding.mode === "attach-existing") attach(binding, preflight.principal);
     else runLocalProvision(binding, preflight.authority, preflight.controllerDID, pendingProvisionReceipt(binding));
+    if (!spawnBindingResult) throw new Error("spawn hook returned without a complete binding result");
+    output(spawnBindingResult);
   } else if (event === "retire") retire();
   else if (event === "reconcile") {
     const principalHome = resolvePrincipalHome();
@@ -1010,22 +1036,26 @@ try {
       release_stage: "experimental-internal",
       nothing_created_by_capability: true,
       identity_resources_created: false,
-      admission: "advisory-hook-failure-cannot-prevent-oas-launch",
+      admission: "adapter-signalled-subprocess-failure",
       message: error.message,
-      next_action: process.env.OAS_AGENT && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(process.env.OAS_AGENT)
-        ? `oas aweb-identity status --soul ${shellWord(process.env.OAS_AGENT)} --json`
-        : "oas status --json",
+      next_action: spawnNextAction(),
     };
-    if (Object.hasOwn(process.env, "OAS_ROOT")) {
-      // OAS 0.18 hooks are advisory. Preserve the specific refusal in its
-      // structured warning instead of letting execSync replace it with a
-      // truncated command path. Required-hook nonzero admission belongs to .2.
-      output({ ...refusal, warning: `aweb-identity-attach: ${error.message}; NOTHING CREATED by this capability; next action: ${refusal.next_action}` });
-    } else {
-      output(refusal);
-      process.stderr.write(`aweb-identity-attach: ${error.message.slice(0, 110)}; NOTHING CREATED by this capability; OAS hook admission remains advisory\n`);
-      process.exitCode = 1;
-    }
+    output(refusal);
+    process.stderr.write(`aweb-identity-attach: ${error.message}; NOTHING CREATED by this capability; next action: ${refusal.next_action}\n`);
+    process.exitCode = 1;
+  } else if (event === "spawn") {
+    const failure = {
+      schema_version: 1,
+      status: "binding_incomplete",
+      readiness: "needs_setup",
+      release_stage: "experimental-internal",
+      admission: "adapter-signalled-subprocess-failure",
+      message: "aweb identity binding did not complete; durable recovery state may remain",
+      next_action: spawnNextAction(),
+    };
+    output(failure);
+    process.stderr.write(`aweb-identity-attach: ${failure.message}; next action: ${failure.next_action}\n`);
+    process.exitCode = 1;
   } else {
     warning(error);
     if (event === "reconcile" || event === "status") process.exitCode = 1;
