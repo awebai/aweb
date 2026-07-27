@@ -125,6 +125,7 @@ RUNTIME_STATE_MAX_BYTES = 1024 * 1024
 INTERACTION_LOG_KEYS = {
     "ts", "kind", "message_id", "session_id", "conversation_id", "from", "to", "subject", "text"
 }
+INTERACTION_LOG_KINDS = {"user", "agent", "chat_in", "chat_out", "mail_in", "mail_out"}
 RUNTIME_STATE_LEAVES = {".aw/interaction-log.jsonl", ".aw/channel-delivered-ids.json"}
 
 
@@ -145,6 +146,14 @@ def _validate_runtime_state(path: Path, relative: str, encoded: bytes) -> None:
                 raise AssertionError(f"interaction log line {line_number} is not JSON: {path}") from error
             if not isinstance(document, dict) or not set(document) <= INTERACTION_LOG_KEYS:
                 raise AssertionError(f"interaction log line {line_number} has unbounded shape: {path}")
+            if not {"ts", "kind"} <= set(document):
+                raise AssertionError(f"interaction log line {line_number} lacks required discriminators: {path}")
+            if not all(isinstance(value, str) and value.strip() for value in document.values()):
+                raise AssertionError(f"interaction log line {line_number} has non-string or empty values: {path}")
+            if document["kind"] not in INTERACTION_LOG_KINDS:
+                raise AssertionError(f"interaction log line {line_number} has unknown kind: {path}")
+            if not document.get("text", "").strip() and not document.get("subject", "").strip():
+                raise AssertionError(f"interaction log line {line_number} has no interaction content: {path}")
     elif relative == ".aw/channel-delivered-ids.json":
         try:
             document = json.loads(text)

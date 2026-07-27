@@ -210,7 +210,7 @@ class PrincipalProofFilesystemTests(unittest.TestCase):
         runtime = instance / ".aw"
         runtime.mkdir()
         (runtime / "interaction-log.jsonl").write_text(
-            '{"kind":"mail","message_id":"message-1","text":"hello"}\n', encoding="utf-8"
+            '{"ts":"2026-01-01T00:00:00Z","kind":"mail_in","message_id":"message-1","text":"hello"}\n', encoding="utf-8"
         )
         (runtime / "channel-delivered-ids.json").write_text(
             '{"conversation-1":"message-1"}\n', encoding="utf-8"
@@ -226,7 +226,7 @@ class PrincipalProofFilesystemTests(unittest.TestCase):
         interaction = instance / ".aw" / "interaction-log.jsonl"
         interaction.parent.mkdir()
         interaction.write_text(
-            json.dumps({"kind": "mail", "text": f"prefix-{self.key.read_text()}-suffix"}) + "\n",
+            json.dumps({"ts": "2026-01-01T00:00:00Z", "kind": "mail_in", "text": f"prefix-{self.key.read_text()}-suffix"}) + "\n",
             encoding="utf-8",
         )
         with self.assertRaisesRegex(AssertionError, "embeds principal file bytes"):
@@ -248,7 +248,7 @@ class PrincipalProofFilesystemTests(unittest.TestCase):
         runtime = instance / ".aw"
         runtime.mkdir()
         external = self.root / "external.jsonl"
-        external.write_text('{"kind":"mail"}\n', encoding="utf-8")
+        external.write_text('{"ts":"2026-01-01T00:00:00Z","kind":"mail_in","text":"hello"}\n', encoding="utf-8")
         (runtime / "interaction-log.jsonl").symlink_to(external)
         with self.assertRaisesRegex(AssertionError, "runtime state must be a regular file"):
             scan_sensitive_material(str(self.snapshot), str(instance))
@@ -269,6 +269,23 @@ class PrincipalProofFilesystemTests(unittest.TestCase):
         interaction.parent.mkdir()
         interaction.write_text('{"authority":"unexpected"}\n', encoding="utf-8")
         with self.assertRaisesRegex(AssertionError, "unbounded shape"):
+            scan_sensitive_material(str(self.snapshot), str(interaction_instance))
+
+        interaction.write_text(
+            '{"ts":"2026-01-01T00:00:00Z","kind":"mail_in","text":{"bearer":"nested"}}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(AssertionError, "non-string or empty values"):
+            scan_sensitive_material(str(self.snapshot), str(interaction_instance))
+
+        interaction.write_text('{"kind":"mail_in","text":"hello"}\n', encoding="utf-8")
+        with self.assertRaisesRegex(AssertionError, "lacks required discriminators"):
+            scan_sensitive_material(str(self.snapshot), str(interaction_instance))
+
+        interaction.write_text(
+            '{"ts":"2026-01-01T00:00:00Z","kind":"unknown","text":"hello"}\n', encoding="utf-8"
+        )
+        with self.assertRaisesRegex(AssertionError, "unknown kind"):
             scan_sensitive_material(str(self.snapshot), str(interaction_instance))
 
         delivery_instance = self.instance("delivery-shape-instance")
