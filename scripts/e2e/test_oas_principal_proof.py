@@ -27,6 +27,7 @@ class PrincipalProofHarnessTests(unittest.TestCase):
             'doctor "$FIXTURE_REPO" --soul proof-worker',
             'assert_owning_state_same refusal-before "refusal-after-$refused_mode"',
             'assert_pre_activation_state',
+            'aweb-identity status --soul proof-worker',
             'assert_worker_doctor_state',
             'capture_operation_grants both-active',
             'assert_operation_grant_isolation',
