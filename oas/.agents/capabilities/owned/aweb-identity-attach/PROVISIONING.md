@@ -185,8 +185,11 @@ reverse cleanup coordinates/indices for both workspace and production agent-
 heartbeat IDs, proves coordinates have no expiry, exercises one pre-coordinate
 fallback, expires the shorter-lived primaries, asserts every
 secondary remains as a positive control, asserts both
-external journals terminal `complete`, and
-snapshots each provisioned credential tree before scanning both instance homes
+external journals terminal `complete`, observes exactly zero usable local grants
+for each successfully provisioned operation, and exercises the transient grant
+window by stopping one real provision after its operation-tagged grant is
+created but before acceptance; re-entry adopts and consumes that exact grant.
+It snapshots each provisioned credential tree before scanning both instance homes
 and the controlled repository by names, digests, symlink target, and device/inode
 for copies or hardlinks. After exchanging real plaintext mail in both directions,
 it repeats the sensitive-material scan while structurally allowing only the

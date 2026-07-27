@@ -919,6 +919,54 @@ write_provision_config provision-disposable local-controller
 run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT" "$FIXTURE_REPO" doctor "$FIXTURE_REPO" --soul proof-worker --json > "$EVIDENCE/oas-doctor-worker.json"
 assert_worker_doctor_state "$EVIDENCE/oas-doctor-worker.json"
 
+# Exercise the real transient grant boundary deterministically. An unsupported
+# signing-key path makes the production command stop after creating its
+# operation-tagged grant but before acceptance. Re-entering the same operation
+# adopts that exact grant, consumes it, and cleanup removes only those resources.
+INTERRUPTED_OPERATION="oas-AAAAAAAAAAAAAAAAAAAAAA"
+INTERRUPTED_ALIAS="interrupted-grant-proof"
+INTERRUPTED_TARGET="$PRINCIPAL_HOME/.provisioning/identities/$INTERRUPTED_OPERATION"
+TEAM_CONTROLLER_DID="$(json_value "$EVIDENCE/team-create.json" team_did_key)"
+mkdir -p "$INTERRUPTED_TARGET/signing.key"
+set +e
+(
+  cd "$FIXTURE_REPO"
+  env -u AWEB_IDENTITY_HOME HOME="$PROOF_HOME" AW_CONFIG_PATH="$CONFIG_PATH" \
+    AWID_REGISTRY_URL="$AWID_URL" AWID_SKIP_DNS_VERIFY=1 OAS_EVENT=spawn \
+    "$AW_BIN" id team provision-local \
+      --operation-id "$INTERRUPTED_OPERATION" --team-id "$TEAM_ID" --name "$INTERRUPTED_ALIAS" \
+      --authority-identity-home "$CREDENTIALS" --target-identity-home "$INTERRUPTED_TARGET" \
+      --authority-address "$ADDRESS" --authority-stable-id "$DID_AW" \
+      --controller-did "$TEAM_CONTROLLER_DID" --json
+) > "$EVIDENCE/interrupted-grant-create.txt" 2>&1
+INTERRUPTED_CREATE_STATUS=$?
+set -e
+[[ "$INTERRUPTED_CREATE_STATUS" -ne 0 ]] || fail "pre-accept grant interruption unexpectedly completed"
+capture_operation_grants interrupted-grant "$INTERRUPTED_OPERATION=1"
+rmdir "$INTERRUPTED_TARGET/signing.key"
+(
+  cd "$FIXTURE_REPO"
+  env -u AWEB_IDENTITY_HOME HOME="$PROOF_HOME" AW_CONFIG_PATH="$CONFIG_PATH" \
+    AWID_REGISTRY_URL="$AWID_URL" AWID_SKIP_DNS_VERIFY=1 OAS_EVENT=spawn \
+    "$AW_BIN" id team provision-local \
+      --operation-id "$INTERRUPTED_OPERATION" --team-id "$TEAM_ID" --name "$INTERRUPTED_ALIAS" \
+      --authority-identity-home "$CREDENTIALS" --target-identity-home "$INTERRUPTED_TARGET" \
+      --authority-address "$ADDRESS" --authority-stable-id "$DID_AW" \
+      --controller-did "$TEAM_CONTROLLER_DID" --json
+) > "$EVIDENCE/interrupted-grant-recovery.json"
+capture_operation_grants interrupted-grant-recovered "$INTERRUPTED_OPERATION=0"
+assert_operation_grant_isolation interrupted-grant interrupted-grant-recovered "$INTERRUPTED_OPERATION"
+(
+  cd "$FIXTURE_REPO"
+  env -u AWEB_IDENTITY_HOME HOME="$PROOF_HOME" AW_CONFIG_PATH="$CONFIG_PATH" \
+    AWID_REGISTRY_URL="$AWID_URL" AWID_SKIP_DNS_VERIFY=1 OAS_EVENT=retire \
+    "$AW_BIN" id team cleanup-local-provision \
+      --operation-id "$INTERRUPTED_OPERATION" --team-id "$TEAM_ID" --name "$INTERRUPTED_ALIAS" \
+      --authority-identity-home "$CREDENTIALS" --target-identity-home "$INTERRUPTED_TARGET" \
+      --authority-address "$ADDRESS" --authority-stable-id "$DID_AW" \
+      --controller-did "$TEAM_CONTROLLER_DID" --json
+) > "$EVIDENCE/interrupted-grant-cleanup.json"
+
 run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT" "$FIXTURE_REPO" spawn proof-worker --purpose ordinary-worker --no-launch --json > "$EVIDENCE/provision-victim-spawn.json"
 VICTIM_HOME="$(json_value "$EVIDENCE/provision-victim-spawn.json" home)"
 VICTIM_INSTANCE="$(json_value "$EVIDENCE/provision-victim-spawn.json" instance)"
@@ -963,7 +1011,7 @@ assert first["alias"] != second["alias"]
 assert first["resource"]["operation_id"] == first["operation_id"]
 assert second["resource"]["operation_id"] == second["operation_id"]
 PY
-capture_operation_grants both-active "$VICTIM_OPERATION=1" "$ATTACKER_OPERATION=1"
+capture_operation_grants both-active "$VICTIM_OPERATION=0" "$ATTACKER_OPERATION=0"
 
 # These are internal lifecycle observations, not the customer-visible address
 # and setup experience owned by aaaa.44/.46.
@@ -1070,8 +1118,7 @@ assert retirement["cleanup"]["status"] == "complete", retirement
 PY
 capture_provision_resource victim-after-authorized-retire "$VICTIM_OPERATION" deleted
 capture_provision_resource attacker-after-victim-retire "$ATTACKER_OPERATION" active
-capture_operation_grants after-victim "$VICTIM_OPERATION=0" "$ATTACKER_OPERATION=1"
-assert_operation_grant_isolation both-active after-victim "$VICTIM_OPERATION" "$ATTACKER_OPERATION"
+capture_operation_grants after-victim "$VICTIM_OPERATION=0" "$ATTACKER_OPERATION=0"
 
 # The forged carrier's ordinary instance is gone, so its genuinely owned bound
 # identity is an operator-confirmed unacknowledged handoff. Exercise the
@@ -1080,7 +1127,7 @@ seed_provision_lifecycle_artifacts "$ATTACKER_OPERATION"
 run_reconcile --cleanup-unacknowledged "$ATTACKER_OPERATION" > "$EVIDENCE/operator-reconcile.json"
 capture_provision_resource attacker-after-operator-reconcile "$ATTACKER_OPERATION" deleted
 capture_operation_grants after-attacker "$VICTIM_OPERATION=0" "$ATTACKER_OPERATION=0"
-assert_operation_grant_isolation after-victim after-attacker "$ATTACKER_OPERATION"
+capture_provision_resource victim-after-attacker-reconcile "$VICTIM_OPERATION" deleted
 
 # Developer B also completes an unmodified ordinary retire; the interrupted
 # duplicate-name handoff above proves reconciliation, not the clean path.
@@ -1180,8 +1227,9 @@ document = {
         "durable_refused_before_create": True,
         "duplicate_local_instance_names_both_succeeded": True,
         "duplicate_names_produced_distinct_operations_and_aliases": True,
-        "operation_grants_observed_at_local_owner": True,
-        "each_cleanup_removed_only_its_operation_grant": True,
+        "successful_operations_had_zero_usable_grants_at_local_owner": True,
+        "interrupted_pre_accept_grant_attributed_and_adopted": True,
+        "each_cleanup_changed_only_its_durable_operation_tuple": True,
         "both_developers_completed_an_ordinary_retire": True,
     },
     "provision_cleanup_observation": {
