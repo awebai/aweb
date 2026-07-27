@@ -211,10 +211,11 @@ test("native status reports an unconfigured capability as experimental without c
   assert.equal(result.status, 1, result.stderr);
   const report = JSON.parse(result.stdout);
   assert.deepEqual(Object.keys(report).sort(), [
-    "admission", "capability", "identity_resources_created", "instance_or_session_created",
+    "admission", "capability", "identity", "identity_resources_created", "instance_or_session_created",
     "message", "next_action", "readiness", "release_stage", "schema_version", "settings_source",
   ]);
   assert.equal(report.readiness, "experimental");
+  assert.equal(report.identity, null);
   assert.equal(report.release_stage, "experimental-internal");
   assert.equal(report.identity_resources_created, false);
   assert.equal(report.instance_or_session_created, false);
@@ -483,6 +484,35 @@ test("real OAS attach-existing v2 emits an externally owned bound receipt", () =
   assert.equal(receipt.resource_identity.kind, "declared-principal");
   assert.equal(receipt.resource_identity.stable_id, "did:aw:2ThrowawayStableId123");
   assert.equal(receipt.resource_identity.reference, f.declarationPath);
+
+  const status = statusCommand(["--soul", "developer", "--json"], f.repo, {
+    ...f.env, PI_AGENT_HOME: spawned.home, OAS_HOME: "",
+  });
+  assert.equal(status.status, 0, status.stderr);
+  const report = JSON.parse(status.stdout);
+  assert.equal(report.readiness, "ready");
+  assert.deepEqual(report.identity, {
+    address: "example.test/throwaway",
+    team_member_name: null,
+    did: "did:aw:2ThrowawayStableId123",
+    type: "attached",
+    cleanup_owner: "principal-owner",
+  });
+  assert.doesNotMatch(JSON.stringify(report.identity), /identity_binding|schema_version|minting_authority|journal_operation|principal-store|credentials/);
+  assert.equal(JSON.stringify(report).includes(f.principalHome), false);
+
+  const metaPath = join(spawned.home, "instance.json");
+  delete meta.capabilityMeta["aweb.identity-attach"].attachment;
+  writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
+  const incomplete = statusCommand(["--soul", "developer", "--json"], f.repo, {
+    ...f.env, PI_AGENT_HOME: spawned.home, OAS_HOME: "",
+  });
+  assert.equal(incomplete.status, 1);
+  const incompleteReport = JSON.parse(incomplete.stdout);
+  assert.equal(incompleteReport.readiness, "needs_setup");
+  assert.equal(incompleteReport.identity, null);
+  assert.match(incompleteReport.message, /persisted external attach binding has invalid fields/);
+  assert.equal(JSON.stringify(incompleteReport).includes(f.principalHome), false);
 });
 
 test("real OAS refuses hosted disposable provisioning before authority resolution or creation", () => {
@@ -537,6 +567,23 @@ test("real OAS emits a local-controller authority statement with indefinite gran
   assert.notEqual(resource.alias, operationID, "normalized member alias is not operation identity");
   assert.equal(resource.identity_home, join(f.principalHome, ".provisioning", "identities", operationID));
   assert.equal(resource.did_key, "did:key:z6MkiProvisionedWorker");
+
+  const status = statusCommand(["--soul", "developer", "--json"], f.repo, {
+    ...f.env, PI_AGENT_HOME: spawned.home, OAS_HOME: "",
+  });
+  assert.equal(status.status, 0, status.stderr);
+  const report = JSON.parse(status.stdout);
+  assert.equal(report.readiness, "ready");
+  assert.deepEqual(report.identity, {
+    address: null,
+    team_member_name: resource.alias,
+    did: "did:key:z6MkiProvisionedWorker",
+    type: "disposable",
+    cleanup_owner: "this-instance",
+  });
+  assert.doesNotMatch(JSON.stringify(report.identity), /identity_binding|schema_version|minting_authority|journal_operation|operation_id|identity_home|principal-store|credentials/);
+  assert.equal(JSON.stringify(report).includes(f.principalHome), false);
+
   const journal = JSON.parse(readFileSync(join(f.principalHome, ".provisioning", "intents", `${operationID}.json`), "utf8"));
   assert.equal(journal.state, "bound");
   assert.equal(journal.instance_id, spawned.instance);

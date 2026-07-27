@@ -8,6 +8,13 @@
 > `next_action`, or `experimental` with no identity/instance/session creation.
 > This verdict is advisory: OAS 0.18 hooks are not required and can still launch
 > after hook failure. Only `aaaa.2` can provide fail-closed admission/rollback.
+When the command runs in a bound instance, that same result includes a public
+`identity` projection: attached/durable identities show their registered
+address and DID; disposable local identities honestly show `address: null`,
+their actionable team member name, and `did:key`. It also labels the identity
+type and cleanup owner. Receipt fields, operations, and principal-store paths
+are never projected. A disposable local identity has no global address by
+design; the command never synthesizes one from its team and alias.
 
 This capability executes `provision-disposable` only through declared
 `local-controller` authority in this release.

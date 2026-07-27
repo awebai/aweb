@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 
 import {
@@ -10,6 +10,7 @@ import {
   loadCleanupCorroboration,
   pendingProvisionReceipt,
   provisionedDisposableReceipt,
+  validateBindingReceipt,
   validateBindingSettings,
 } from "../lib/binding-policy.mjs";
 import { localControllerMintingAuthorityReceipt } from "../lib/provisioning-authority.mjs";
@@ -108,11 +109,12 @@ function editConfigCommand(context) {
   return `$EDITOR ${shellWord(join(context, "oas-config.yaml"))}`;
 }
 
-function readinessReport({ readiness, message, nextAction, settingsSource }) {
+function readinessReport({ readiness, message, nextAction, settingsSource, identity = null }) {
   return {
     schema_version: 1,
     capability: "aweb.identity-attach",
     readiness,
+    identity,
     release_stage: "experimental-internal",
     settings_source: settingsSource,
     identity_resources_created: false,
@@ -411,6 +413,71 @@ function bindingReadiness(settings, { context, soul, settingsSource }) {
   });
 }
 
+function currentInstanceIdentityProjection() {
+  const homes = [process.env.PI_AGENT_HOME, process.env.OAS_HOME].filter(Boolean);
+  const home = homes.find((candidate) => isAbsolute(candidate) && existsSync(join(candidate, "instance.json")));
+  if (!home) return { found: false, identity: null };
+  const metadataPath = join(realpathSync(resolve(home)), "instance.json");
+  const metadataStat = lstatSync(metadataPath);
+  if (metadataStat.isSymbolicLink() || !metadataStat.isFile()) throw new TypeError("instance metadata must be a regular file");
+  const metadata = parseSettingsJSON(readFileSync(metadataPath, "utf8"), "instance.json");
+  const capability = metadata.capabilityMeta?.["aweb.identity-attach"];
+  if (!capability) throw new TypeError("this instance has no completed aweb identity binding");
+
+  if (capability.identity_binding?.schema_version === 1) {
+    const attached = validatePersistedAttachBinding(capability.identity_binding);
+    return {
+      found: true,
+      identity: { address: attached.address, team_member_name: null, did: attached.stable_id, type: "attached", cleanup_owner: "principal-owner" },
+    };
+  }
+
+  const receipt = validateBindingReceipt(capability.identity_binding);
+  if (receipt.mode === "attach-existing" || receipt.mode === "provision-durable") {
+    const attached = validatePersistedAttachBinding(capability.attachment);
+    if (attached.stable_id !== receipt.resource_identity.stable_id
+        || attached.declaration_path !== receipt.resource_identity.reference) {
+      throw new TypeError("persisted attached identity contradicts its binding receipt");
+    }
+    return {
+      found: true,
+      identity: {
+        address: attached.address,
+        team_member_name: null,
+        did: attached.stable_id,
+        type: receipt.mode === "attach-existing" ? "attached" : "durable",
+        cleanup_owner: "principal-owner",
+      },
+    };
+  }
+
+  const provisioned = capability.provisioning;
+  const fields = [
+    "status", "operation_id", "team_id", "alias", "identity_home", "did_key", "certificate_id",
+    "agent_id", "workspace_id", "registry_url", "aweb_url",
+  ];
+  if (!exactFields(provisioned, fields)
+      || receipt.mode !== "provision-disposable" || receipt.lifecycle !== "provisioned"
+      || receipt.journal_operation !== provisioned.operation_id
+      || provisioned.status !== "provisioned"
+      || typeof provisioned.alias !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(provisioned.alias)
+      || typeof provisioned.did_key !== "string" || !provisioned.did_key.startsWith("did:key:z")) {
+    throw new TypeError("persisted disposable identity is incomplete or contradicts its binding receipt");
+  }
+  const [teamName, namespace, ...extra] = String(provisioned.team_id).split(":");
+  if (!teamName || !namespace || extra.length) throw new TypeError("persisted disposable identity has an invalid team");
+  return {
+    found: true,
+    identity: {
+      address: null,
+      team_member_name: provisioned.alias,
+      did: provisioned.did_key,
+      type: "disposable",
+      cleanup_owner: "this-instance",
+    },
+  };
+}
+
 function status() {
   const allowed = new Set(["status", "--soul", "--json"]);
   for (let index = 2; index < process.argv.length; index += 1) {
@@ -431,7 +498,20 @@ function status() {
     process.exitCode = 1;
     return;
   }
-  const report = bindingReadiness(resolved.settings, { context, soul, settingsSource: resolved.source });
+  let report = bindingReadiness(resolved.settings, { context, soul, settingsSource: resolved.source });
+  if (report.readiness === "ready") {
+    try {
+      const projected = currentInstanceIdentityProjection();
+      report = { ...report, identity: projected.identity };
+    } catch (error) {
+      report = readinessReport({
+        readiness: "needs_setup",
+        message: error instanceof Error ? error.message : String(error),
+        nextAction: "Retire this instance and spawn it again after repairing its aweb identity.",
+        settingsSource: resolved.source,
+      });
+    }
+  }
   output(report);
   if (report.readiness !== "ready") process.exitCode = 1;
 }
