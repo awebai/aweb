@@ -924,7 +924,7 @@ VICTIM_HOME="$(json_value "$EVIDENCE/provision-victim-spawn.json" home)"
 VICTIM_INSTANCE="$(json_value "$EVIDENCE/provision-victim-spawn.json" instance)"
 VICTIM_OPERATION="$(binding_operation "$VICTIM_HOME/instance.json")"
 VICTIM_INTENT="$PRINCIPAL_HOME/.provisioning/intents/$VICTIM_OPERATION.json"
-PI_AGENT_HOME="$VICTIM_HOME" run_oas_in "$FIXTURE_REPO" aweb-identity status --soul proof-worker --json > "$EVIDENCE/provision-victim-identity-status.json"
+PI_AGENT_HOME="$VICTIM_HOME" run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT" "$FIXTURE_REPO" aweb-identity status --soul proof-worker --json > "$EVIDENCE/provision-victim-identity-status.json"
 python3 - "$EVIDENCE/provision-victim-identity-status.json" "$VICTIM_INTENT" "$PRINCIPAL_HOME" <<'PY'
 import json, sys
 status_path, intent_path, principal_home = sys.argv[1:]
