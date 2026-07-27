@@ -53,7 +53,7 @@ For the canonical contract, see the MCP section of
 | `send_chat` | `to`, `message`, `conversation_id=""`, `wait=False`, `wait_seconds=120`, `leaving=False`, `hang_on=False` | Send chat by routable address, same-team alias, or stored-route DID continuation; optionally wait for a reply; or continue an existing chat conversation by `conversation_id`. Bare external `did:aw` first contact fails closed. |
 | `check_chats` | none | List unread chat conversations waiting for you. |
 | `read_chat` | `conversation_id`, `unread_only=False`, `limit=50` | Read chat history for a conversation. |
-| `mark_chat_read` | `conversation_id`, `message_ids` | Mark exactly the presented chat message IDs as read. |
+| `mark_chat_read` | `conversation_id`, `up_to_message_id=None`, `message_ids=None` | Mark chat read using a deployed-client watermark, exact presented IDs, or both; exact IDs take precedence when both are sent. |
 
 ## Tasks
 
