@@ -33,6 +33,15 @@ decisions, not only the developer's code.
 it.** A push landing after an ACK is how unreviewed code reaches main. Test the
 *merged* result, not just the branch.
 
+**Run the whole suite. Never choose one by reading the diff.** I merged a tmux
+guard fix after verifying it by hand and running only the OAS tests, because the
+diff touched a shell script and a Makefile and "did not look like Go" — and left
+main red, because an *embedded copy* of that script is Go-suite surface and a
+test exists solely to catch their divergence. The test worked; the gate did not.
+Selecting a suite from a diff is precisely the inference a full suite exists to
+remove, and this repository has several artifacts with a second copy, so the
+inference is wrong more often than it looks.
+
 **State the required property, not the mechanism.** A named mechanism is
 followed faithfully, including into failure modes you did not check. "Route
 everything through one API" produced helpers that ignored their own arguments

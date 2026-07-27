@@ -231,15 +231,16 @@ test("native status reports an unconfigured capability as experimental without c
   assert.equal(result.status, 1, result.stderr);
   const report = JSON.parse(result.stdout);
   assert.deepEqual(Object.keys(report).sort(), [
-    "admission", "capability", "identity_resources_created", "instance_or_session_created",
+    "admission", "capability", "identity", "identity_resources_created", "instance_or_session_created",
     "message", "next_action", "readiness", "release_stage", "schema_version", "settings_source",
   ]);
   assert.equal(report.readiness, "experimental");
+  assert.equal(report.identity, null);
   assert.equal(report.release_stage, "experimental-internal");
   assert.equal(report.identity_resources_created, false);
   assert.equal(report.instance_or_session_created, false);
   assert.equal(report.admission, "advisory-status-cannot-prevent-oas-launch");
-  assert.match(report.message, /identity_binding settings are required/);
+  assert.match(report.message, /aweb identity setup is required/);
   assert.equal(typeof report.next_action, "string");
   assert.equal(report.next_action.length > 0, true);
   assert.equal(Array.isArray(report.next_action), false, "the result must give exactly one next action");
@@ -267,11 +268,26 @@ test("native status returns needs-setup with one action for a repairable declara
   assert.equal(result.status, 1, result.stderr);
   const report = JSON.parse(result.stdout);
   assert.equal(report.readiness, "needs_setup");
-  assert.match(report.message, /missing\.yaml|no such file/i);
+  assert.match(report.message, /selected attached identity could not be verified/i);
   assert.match(report.next_action, /^\$EDITOR /, "needs-setup must give exactly one executable setup command");
   assert.equal(Object.hasOwn(report, "next_actions"), false);
   assert.equal(report.identity_resources_created, false);
   assert.equal(report.instance_or_session_created, false);
+});
+
+test("status redacts unsafe principal-store failures from the complete customer report", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  rmSync(f.credentials, { recursive: true });
+  symlinkSync(f.state, f.credentials, "dir");
+  const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  assert.equal(result.status, 1);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.readiness, "needs_setup");
+  assert.equal(report.identity, null);
+  const encoded = JSON.stringify(report);
+  assert.equal(encoded.includes(f.principalHome), false);
+  assert.doesNotMatch(encoded, /identity_binding|identity binding receipt|journal|credentials/);
+  assert.match(report.message, /selected attached identity could not be verified/i);
 });
 
 test("needs-setup command shell-quotes an adversarial config path as one exact argument", () => {
@@ -523,6 +539,81 @@ test("real OAS attach-existing v2 emits an externally owned bound receipt", () =
   assert.equal(receipt.resource_identity.stable_id, "did:aw:2ThrowawayStableId123");
   assert.equal(receipt.resource_identity.reference, f.declarationPath);
   assertRuntimeEnvironmentContribution(meta.command, f.credentials);
+
+  const status = statusCommand(["--soul", "developer", "--json"], f.repo, {
+    ...f.env, PI_AGENT_HOME: spawned.home, OAS_HOME: "",
+  });
+  assert.equal(status.status, 0, status.stderr);
+  const report = JSON.parse(status.stdout);
+  assert.equal(report.readiness, "ready");
+  assert.deepEqual(report.identity, {
+    address: "example.test/throwaway",
+    team_member_name: null,
+    did: "did:aw:2ThrowawayStableId123",
+    type: "attached",
+    cleanup_owner: "principal-owner",
+  });
+  assert.doesNotMatch(JSON.stringify(report.identity), /identity_binding|schema_version|minting_authority|journal_operation|principal-store|credentials/);
+  assert.equal(JSON.stringify(report).includes(f.principalHome), false);
+
+  const assertLocatorFailure = (env) => {
+    const result = statusCommand(["--soul", "developer", "--json"], f.repo, env);
+    assert.equal(result.status, 1);
+    const failure = JSON.parse(result.stdout);
+    assert.equal(failure.readiness, "needs_setup");
+    assert.equal(failure.identity, null);
+    assert.match(failure.message, /instance identity is incomplete or contradicts/i);
+    assert.equal(JSON.stringify(failure).includes(f.principalHome), false);
+  };
+  assertLocatorFailure({
+    ...f.env,
+    PI_AGENT_HOME: join(f.base, "missing-primary-instance"),
+    OAS_HOME: spawned.home,
+  });
+  assertLocatorFailure({
+    ...f.env,
+    PI_AGENT_HOME: spawned.home,
+    OAS_HOME: spawned.home,
+    OAS_INSTANCE: spawned.instance,
+    PI_AGENT_INSTANCE: "contradictory-instance",
+  });
+
+  const metaPath = join(spawned.home, "instance.json");
+  const assertSafeIdentityFailure = (changedMeta) => {
+    writeFileSync(metaPath, `${JSON.stringify(changedMeta, null, 2)}\n`);
+    const result = statusCommand(["--soul", "developer", "--json"], f.repo, {
+      ...f.env, PI_AGENT_HOME: spawned.home, OAS_HOME: "",
+    });
+    assert.equal(result.status, 1);
+    const failure = JSON.parse(result.stdout);
+    assert.equal(failure.readiness, "needs_setup");
+    assert.equal(failure.identity, null);
+    assert.match(failure.message, /instance identity is incomplete or contradicts/i);
+    assert.equal(JSON.stringify(failure).includes(f.principalHome), false);
+    assert.doesNotMatch(JSON.stringify(failure), /identity binding receipt|journal|credentials/);
+  };
+
+  const incompleteMeta = structuredClone(meta);
+  delete incompleteMeta.capabilityMeta["aweb.identity-attach"].attachment;
+  assertSafeIdentityFailure(incompleteMeta);
+
+  const substitutedMeta = structuredClone(meta);
+  substitutedMeta.capabilityMeta["aweb.identity-attach"].attachment.address = "example.test/other";
+  assertSafeIdentityFailure(substitutedMeta);
+
+  const malformedReceiptMeta = structuredClone(meta);
+  malformedReceiptMeta.capabilityMeta["aweb.identity-attach"].identity_binding.schema_version = 99;
+  assertSafeIdentityFailure(malformedReceiptMeta);
+
+  unlinkSync(metaPath);
+  const missingMetadata = statusCommand(["--soul", "developer", "--json"], f.repo, {
+    ...f.env, PI_AGENT_HOME: spawned.home, OAS_HOME: "",
+  });
+  assert.equal(missingMetadata.status, 1);
+  const missingReport = JSON.parse(missingMetadata.stdout);
+  assert.equal(missingReport.readiness, "needs_setup");
+  assert.equal(missingReport.identity, null);
+  assert.doesNotMatch(JSON.stringify(missingReport), /identity binding receipt|journal|credentials/);
 });
 
 test("real OAS refuses hosted disposable provisioning before authority resolution or creation", () => {
@@ -578,6 +669,38 @@ test("real OAS emits a local-controller authority statement with indefinite gran
   assert.equal(resource.identity_home, join(f.principalHome, ".provisioning", "identities", operationID));
   assertRuntimeEnvironmentContribution(meta.command, resource.identity_home);
   assert.equal(resource.did_key, "did:key:z6MkiProvisionedWorker");
+
+  const status = statusCommand(["--soul", "developer", "--json"], f.repo, {
+    ...f.env, PI_AGENT_HOME: spawned.home, OAS_HOME: "",
+  });
+  assert.equal(status.status, 0, status.stderr);
+  const report = JSON.parse(status.stdout);
+  assert.equal(report.readiness, "ready");
+  assert.deepEqual(report.identity, {
+    address: null,
+    team_member_name: resource.alias,
+    did: "did:key:z6MkiProvisionedWorker",
+    type: "disposable",
+    cleanup_owner: "this-instance",
+  });
+  assert.doesNotMatch(JSON.stringify(report.identity), /identity_binding|schema_version|minting_authority|journal_operation|operation_id|identity_home|principal-store|credentials/);
+  assert.equal(JSON.stringify(report).includes(f.principalHome), false);
+
+  const metaPath = join(spawned.home, "instance.json");
+  const substituted = structuredClone(meta);
+  substituted.capabilityMeta["aweb.identity-attach"].provisioning.alias = "wrong-but-valid";
+  writeFileSync(metaPath, `${JSON.stringify(substituted, null, 2)}\n`);
+  const substitutedStatus = statusCommand(["--soul", "developer", "--json"], f.repo, {
+    ...f.env, PI_AGENT_HOME: spawned.home, OAS_HOME: "",
+  });
+  assert.equal(substitutedStatus.status, 1);
+  const substitutedReport = JSON.parse(substitutedStatus.stdout);
+  assert.equal(substitutedReport.readiness, "needs_setup");
+  assert.equal(substitutedReport.identity, null);
+  assert.equal(JSON.stringify(substitutedReport).includes(f.principalHome), false);
+  assert.doesNotMatch(JSON.stringify(substitutedReport), /identity binding receipt|journal|operation_id|identity_home|credentials/);
+  writeFileSync(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
+
   const journal = JSON.parse(readFileSync(join(f.principalHome, ".provisioning", "intents", `${operationID}.json`), "utf8"));
   assert.equal(journal.state, "bound");
   assert.equal(journal.instance_id, spawned.instance);
