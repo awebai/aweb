@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -204,22 +205,102 @@ class PrincipalProofFilesystemTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "symlink resolves into principal store"):
             scan_instance(str(self.snapshot), str(instance))
 
-    def test_sensitive_scan_allows_only_the_expected_interaction_log_under_dot_aw(self) -> None:
-        instance = self.instance("interaction-instance")
-        interaction = instance / ".aw" / "interaction-log.jsonl"
-        interaction.parent.mkdir()
-        interaction.write_text('{"event":"mail"}\n', encoding="utf-8")
+    def test_sensitive_scan_accepts_bounded_runtime_state_leaves(self) -> None:
+        instance = self.instance("runtime-state-instance")
+        runtime = instance / ".aw"
+        runtime.mkdir()
+        (runtime / "interaction-log.jsonl").write_text(
+            '{"ts":"2026-01-01T00:00:00Z","kind":"mail_in","message_id":"message-1","text":"hello"}\n', encoding="utf-8"
+        )
+        (runtime / "channel-delivered-ids.json").write_text(
+            '{"conversation-1":"message-1"}\n', encoding="utf-8"
+        )
         scan_sensitive_material(str(self.snapshot), str(instance))
-        (interaction.parent / "unexpected.json").write_text("not allowed\n", encoding="utf-8")
+
+        (runtime / "signing.key").write_text("different bytes\n", encoding="utf-8")
         with self.assertRaisesRegex(AssertionError, "unexpected .aw path"):
             scan_sensitive_material(str(self.snapshot), str(instance))
 
-    def test_sensitive_scan_still_rejects_principal_material_in_allowed_interaction_log(self) -> None:
+    def test_sensitive_scan_rejects_embedded_authority_bytes_in_interaction_log(self) -> None:
         instance = self.instance("tainted-interaction-instance")
         interaction = instance / ".aw" / "interaction-log.jsonl"
         interaction.parent.mkdir()
-        interaction.write_bytes(b'prefix-' + self.key.read_bytes() + b'-suffix')
-        with self.assertRaisesRegex(AssertionError, "principal file content"):
+        interaction.write_text(
+            json.dumps({"ts": "2026-01-01T00:00:00Z", "kind": "mail_in", "text": f"prefix-{self.key.read_text()}-suffix"}) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(AssertionError, "embeds principal file bytes"):
+            scan_sensitive_material(str(self.snapshot), str(instance))
+
+    def test_sensitive_scan_rejects_embedded_authority_bytes_in_delivery_store(self) -> None:
+        instance = self.instance("tainted-delivery-instance")
+        delivery = instance / ".aw" / "channel-delivered-ids.json"
+        delivery.parent.mkdir()
+        delivery.write_text(
+            json.dumps({"conversation-1": f"prefix-{self.key.read_text()}-suffix"}) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(AssertionError, "embeds principal file bytes"):
+            scan_sensitive_material(str(self.snapshot), str(instance))
+
+    def test_sensitive_scan_rejects_interaction_log_symlink(self) -> None:
+        instance = self.instance("interaction-symlink-instance")
+        runtime = instance / ".aw"
+        runtime.mkdir()
+        external = self.root / "external.jsonl"
+        external.write_text('{"ts":"2026-01-01T00:00:00Z","kind":"mail_in","text":"hello"}\n', encoding="utf-8")
+        (runtime / "interaction-log.jsonl").symlink_to(external)
+        with self.assertRaisesRegex(AssertionError, "runtime state must be a regular file"):
+            scan_sensitive_material(str(self.snapshot), str(instance))
+
+    def test_sensitive_scan_rejects_delivery_store_symlink(self) -> None:
+        instance = self.instance("delivery-symlink-instance")
+        runtime = instance / ".aw"
+        runtime.mkdir()
+        external = self.root / "external.json"
+        external.write_text('{}\n', encoding="utf-8")
+        (runtime / "channel-delivered-ids.json").symlink_to(external)
+        with self.assertRaisesRegex(AssertionError, "runtime state must be a regular file"):
+            scan_sensitive_material(str(self.snapshot), str(instance))
+
+    def test_sensitive_scan_rejects_unbounded_runtime_state_shapes(self) -> None:
+        interaction_instance = self.instance("interaction-shape-instance")
+        interaction = interaction_instance / ".aw" / "interaction-log.jsonl"
+        interaction.parent.mkdir()
+        interaction.write_text('{"authority":"unexpected"}\n', encoding="utf-8")
+        with self.assertRaisesRegex(AssertionError, "unbounded shape"):
+            scan_sensitive_material(str(self.snapshot), str(interaction_instance))
+
+        interaction.write_text(
+            '{"ts":"2026-01-01T00:00:00Z","kind":"mail_in","text":{"bearer":"nested"}}\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(AssertionError, "non-string or empty values"):
+            scan_sensitive_material(str(self.snapshot), str(interaction_instance))
+
+        interaction.write_text('{"kind":"mail_in","text":"hello"}\n', encoding="utf-8")
+        with self.assertRaisesRegex(AssertionError, "lacks required discriminators"):
+            scan_sensitive_material(str(self.snapshot), str(interaction_instance))
+
+        interaction.write_text(
+            '{"ts":"2026-01-01T00:00:00Z","kind":"unknown","text":"hello"}\n', encoding="utf-8"
+        )
+        with self.assertRaisesRegex(AssertionError, "unknown kind"):
+            scan_sensitive_material(str(self.snapshot), str(interaction_instance))
+
+        delivery_instance = self.instance("delivery-shape-instance")
+        delivery = delivery_instance / ".aw" / "channel-delivered-ids.json"
+        delivery.parent.mkdir()
+        delivery.write_text('{"conversation-1":["message-1"]}\n', encoding="utf-8")
+        with self.assertRaisesRegex(AssertionError, "not a string map"):
+            scan_sensitive_material(str(self.snapshot), str(delivery_instance))
+
+    def test_sensitive_scan_rejects_oversized_runtime_state(self) -> None:
+        instance = self.instance("oversized-runtime-state-instance")
+        interaction = instance / ".aw" / "interaction-log.jsonl"
+        interaction.parent.mkdir()
+        interaction.write_bytes(b" " * (1024 * 1024 + 1))
+        with self.assertRaisesRegex(AssertionError, "exceeds 1 MiB"):
             scan_sensitive_material(str(self.snapshot), str(instance))
 
 
