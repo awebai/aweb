@@ -12,7 +12,9 @@ default_tmux_socket_path() {
 }
 
 snapshot_default_tmux_topology() {
-  local output="$1" raw="$output.raw" status socket
+  local output raw status socket
+  output="$1"
+  raw="$output.raw"
   if env -u TMUX -u TMUX_TMPDIR PATH="$TMUX_GUARD_DIR:$PATH" \
     tmux list-panes -a -F '#{session_name}|#{window_id}|#{window_name}|#{pane_id}|#{pane_pid}|#{pane_dead}' \
       > "$raw" 2>/dev/null; then

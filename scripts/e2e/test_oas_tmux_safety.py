@@ -85,7 +85,7 @@ exit 2
         return subprocess.run(
             [
                 "bash", "-c",
-                f"source {HELPER!s}; DEFAULT_TMUX_SOCKET_ROOT=$TMPDIR; {command}",
+                f"set -u; source {HELPER!s}; DEFAULT_TMUX_SOCKET_ROOT=$TMPDIR; {command}",
             ],
             text=True,
             capture_output=True,
