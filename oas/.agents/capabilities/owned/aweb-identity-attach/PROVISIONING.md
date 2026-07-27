@@ -98,7 +98,6 @@ forbidden.
 | Task claims and reservations created during runtime | aweb PostgreSQL lifecycle cascade; proof seeds positive rows | **physically absent** |
 | Workspace and agent-heartbeat presence created during runtime | aweb Redis reverse-coordinate hashes accumulate every global/team/repo/branch/alias key and remain durable until explicit cleanup; lifecycle clears both workspace and local-agent IDs; pre-coordinate entries use a complete fallback scan | **physically absent** |
 | aweb API keys | local certificate connect creates none; AWID certificate above is the authorization grant | **not created** |
-| Messages/delivery records | no model session or message is created by this no-launch provisioning proof; historical messages are audit, not member authorization | **not created / not applicable to the provision operation** |
 | Hosted organization membership | not created on the local-controller path | **physically absent / not applicable** |
 | Target `workspace.yaml`, `teams.yaml`, certificate files, context | owned credential tree | **physically absent** |
 | `provision-operation.json` | external target audit record | **intentionally retained audit** |
@@ -121,7 +120,7 @@ authority. A 404 under an unrelated credential is not evidence.
 | aweb connect committed, response lost | operation target plus idempotent certificate connect | reconcile the same target and continue |
 | resource tuple journaled, before hook output | `prepared` | never auto-adopt into another instance; retire/operator cleanup |
 | binding bytes handed to OAS | `bound` | ordinary matching retire owns cleanup |
-| grant removal committed | local enumeration has no matching usable grant | continue cleanup |
+| grant removal committed | local enumeration has no matching grant record; copied-bearer usability is unobserved | continue cleanup |
 | workspace SQL delete committed, Redis cleanup failed / response lost | server returns retryable failure; the surviving exact-team provisioning authority re-enters the tombstone; one Redis Lua commit removes every accumulated set/alias entry before deleting coordinates | record soft deletion only after the server confirms post-commit cleanup |
 | certificate revoke committed, response lost | registry lists the certificate revoked | continue without a second destructive assumption |
 | credential removal interrupted | operation audit record plus remaining owned entries | remove remaining entries and re-read |
@@ -173,21 +172,40 @@ cleaned; a later spawn allocates its own operation and principal.
 ## Real lifecycle proof
 
 `scripts/e2e-oas-attached-principal-retire.sh` uses the repository's guarded,
-no-tmux loopback Docker stack. In addition to attached-principal preservation,
-it provisions two throwaway local identities through real OAS hooks, AWID, aweb,
-PostgreSQL, and Redis. It seeds real task-claim/reservation rows and Redis
+no-tmux loopback Docker stack and a fresh external git workspace. It acquires
+this capability with `oas install` without activation, explicitly activates and
+reads the acquired artifact, lock, and config directly before activation, then
+trusts it, records `oas doctor`, and performs internal authority onboarding.
+That onboarding still writes identity-binding and declaration YAML and is **not**
+the no-jargon customer setup experience owned by aaaa.44/.46. In addition to
+attached-principal preservation, the harness requires two independent developer
+roots to spawn the same local OAS instance name successfully as distinct opaque
+operations and aliases through real OAS hooks, AWID, aweb, PostgreSQL, and Redis. It seeds real task-claim/reservation rows and Redis
 reverse cleanup coordinates/indices for both workspace and production agent-
 heartbeat IDs, proves coordinates have no expiry, exercises one pre-coordinate
 fallback, expires the shorter-lived primaries, asserts every
 secondary remains as a positive control, asserts both
-external journals terminal `complete`, and
-snapshots each provisioned credential tree before scanning both instance homes
+external journals terminal `complete`, observes exactly zero local grant records
+for each successfully provisioned operation (not proof that no previously copied
+bearer can be redeemed), and exercises the transient grant
+window by stopping one real provision after its operation-tagged grant is
+created but before acceptance; re-entry adopts and consumes that exact grant.
+It snapshots each provisioned credential tree before scanning both instance homes
 and the controlled repository by names, digests, symlink target, and device/inode
-for copies or hardlinks. It retargets one instance-side receipt at the other operation,
-proves the exact corroboration refusal leaves both real rows and certificates
-active, then proves ordinary authorized retire and the native exact-operation
-command produce AWID revocation, aweb agent/workspace soft deletion, local grant
-absence, and credential-tree absence at their owning authorities. This is
+for copies or hardlinks. After exchanging real plaintext mail in both directions,
+it repeats the sensitive-material scan while structurally allowing only the
+expected `.aw/interaction-log.jsonl`, and at journey end searches every allowed
+file for verbatim known credential bytes. This proves no verbatim known-file
+copy; it does not cover encoded, split, derived, or newly generated bearer
+material. It retargets one
+instance-side receipt at the other operation, proves the exact corroboration
+refusal leaves both real rows and certificates active, then proves ordinary
+authorized retire and the native exact-operation command produce AWID
+revocation, aweb agent/workspace soft deletion, local grant absence, and
+credential-tree absence at their owning authorities. A third operation loses
+its throwaway controller key for three cleanup executions, must surface terminal
+visible quarantine as non-success, and completes only after explicit remediation.
+Message retention and authorization semantics are outside this lifecycle proof. This is
 explicitly local same-UID accident/confused-deputy evidence, not hostile-model
 resistance. Removing the operation comparison in the target audit makes the
 forged execution cleanup reach real deletion and turns the owning-authority

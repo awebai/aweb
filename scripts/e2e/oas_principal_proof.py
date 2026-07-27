@@ -86,7 +86,42 @@ def assert_unchanged(root: str, expected_path: str) -> None:
         raise AssertionError(f"principal store changed:\n{diff}")
 
 
-def scan_instance(principal_snapshot_path: str, instance_value: str) -> None:
+def capture_structure(root_value: str) -> list[dict[str, Any]]:
+    root = Path(root_value).resolve(strict=True)
+    rows: list[dict[str, Any]] = []
+
+    def visit(path: Path, relative: str) -> None:
+        info = path.lstat()
+        row: dict[str, Any] = {
+            "path": relative,
+            "mode": stat.S_IMODE(info.st_mode),
+            "device": info.st_dev,
+            "inode": info.st_ino,
+        }
+        if stat.S_ISLNK(info.st_mode):
+            row.update(kind="symlink", target=os.readlink(path))
+        elif stat.S_ISDIR(info.st_mode):
+            row["kind"] = "directory"
+        elif stat.S_ISREG(info.st_mode):
+            row.update(kind="file", sha256=_sha256(path))
+        else:
+            row["kind"] = "other"
+        rows.append(row)
+        if row["kind"] == "directory":
+            for child in sorted(path.iterdir(), key=lambda item: item.name):
+                child_relative = child.name if relative == "." else f"{relative}/{child.name}"
+                visit(child, child_relative)
+
+    visit(root, ".")
+    return rows
+
+
+def write_structure_snapshot(root_value: str, output_value: str) -> None:
+    rows = capture_structure(root_value)
+    Path(output_value).write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _scan_material(principal_snapshot_path: str, instance_value: str, *, allow_interaction_log: bool) -> None:
     principal = load_snapshot(principal_snapshot_path)
     principal_root = Path(principal["root"]).resolve(strict=True)
     instance_root = Path(instance_value).resolve(strict=True)
@@ -96,6 +131,14 @@ def scan_instance(principal_snapshot_path: str, instance_value: str) -> None:
     principal_digests = {
         entry["sha256"] for entry in principal["entries"] if entry.get("kind") == "file"
     }
+    credential_suffixes = (".key", ".pem")
+    principal_contents = [
+        (principal_root / entry["path"]).read_bytes()
+        for entry in principal["entries"]
+        if entry.get("kind") == "file"
+        and entry.get("size", 0) > 0
+        and (entry["path"] == "signing.key" or entry["path"].endswith(credential_suffixes))
+    ]
     principal_inodes = {
         (entry["device"], entry["inode"])
         for entry in principal["entries"]
@@ -105,11 +148,20 @@ def scan_instance(principal_snapshot_path: str, instance_value: str) -> None:
     stack = [instance_root]
     while stack:
         path = stack.pop()
-        relative_parts = () if path == instance_root else path.relative_to(instance_root).parts
-        if ".aw" in relative_parts:
-            raise AssertionError(f"instance contains forbidden .aw path: {path}")
+        relative = "." if path == instance_root else path.relative_to(instance_root).as_posix()
+        relative_parts = () if relative == "." else Path(relative).parts
+        under_dot_aw = ".aw" in relative_parts
+        if under_dot_aw:
+            if not allow_interaction_log:
+                raise AssertionError(f"instance contains forbidden .aw path: {path}")
+            if relative not in (".aw", ".aw/interaction-log.jsonl"):
+                raise AssertionError(f"instance contains unexpected .aw path: {path}")
 
         info = path.lstat()
+        if under_dot_aw and stat.S_ISLNK(info.st_mode):
+            raise AssertionError(f"instance contains unexpected .aw path type: {path}")
+        if relative == ".aw" and allow_interaction_log and not stat.S_ISDIR(info.st_mode):
+            raise AssertionError(f"instance contains unexpected .aw path type: {path}")
         if stat.S_ISLNK(info.st_mode):
             target = Path(os.path.realpath(path))
             if _within_or_equal(principal_root, target):
@@ -121,11 +173,21 @@ def scan_instance(principal_snapshot_path: str, instance_value: str) -> None:
         if stat.S_ISREG(info.st_mode):
             if (info.st_dev, info.st_ino) in principal_inodes:
                 raise AssertionError(f"instance contains a principal hardlink: {path}")
-            digest = _sha256(path)
-            if digest in principal_digests:
+            encoded = path.read_bytes()
+            digest = hashlib.sha256(encoded).hexdigest()
+            if digest in principal_digests or any(content in encoded for content in principal_contents):
                 raise AssertionError(f"instance contains principal file content: {path} ({digest})")
             continue
         raise AssertionError(f"instance contains unsupported entry: {path}")
+
+
+def scan_instance(principal_snapshot_path: str, instance_value: str) -> None:
+    _scan_material(principal_snapshot_path, instance_value, allow_interaction_log=False)
+
+
+def scan_sensitive_material(principal_snapshot_path: str, instance_value: str) -> None:
+    """Reject structural hazards and verbatim enumerated credential bytes in the interaction log."""
+    _scan_material(principal_snapshot_path, instance_value, allow_interaction_log=True)
 
 
 def main() -> int:
@@ -140,17 +202,29 @@ def main() -> int:
     unchanged_parser.add_argument("--root", required=True)
     unchanged_parser.add_argument("--snapshot", required=True)
 
+    structure_parser = subparsers.add_parser("snapshot-structure")
+    structure_parser.add_argument("--root", required=True)
+    structure_parser.add_argument("--output", required=True)
+
     scan_parser = subparsers.add_parser("scan-instance")
     scan_parser.add_argument("--principal-snapshot", required=True)
     scan_parser.add_argument("--instance", required=True)
+
+    sensitive_parser = subparsers.add_parser("scan-sensitive-material")
+    sensitive_parser.add_argument("--principal-snapshot", required=True)
+    sensitive_parser.add_argument("--instance", required=True)
 
     args = parser.parse_args()
     if args.command == "snapshot":
         write_snapshot(args.root, args.output)
     elif args.command == "assert-unchanged":
         assert_unchanged(args.root, args.snapshot)
+    elif args.command == "snapshot-structure":
+        write_structure_snapshot(args.root, args.output)
     elif args.command == "scan-instance":
         scan_instance(args.principal_snapshot, args.instance)
+    elif args.command == "scan-sensitive-material":
+        scan_sensitive_material(args.principal_snapshot, args.instance)
     else:  # pragma: no cover
         raise AssertionError(args.command)
     return 0

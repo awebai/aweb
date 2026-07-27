@@ -7,7 +7,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from oas_principal_proof import assert_unchanged, scan_instance, write_snapshot
+from oas_principal_proof import (
+    assert_unchanged,
+    capture_structure,
+    scan_instance,
+    scan_sensitive_material,
+    write_snapshot,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -20,6 +26,38 @@ class PrincipalProofHarnessTests(unittest.TestCase):
         self.assertIsNotNone(match, "Makefile has no default test target")
         self.assertIn("test-oas-proof-helpers", match.group(1).split())
 
+    def test_customer_journey_wires_external_acquisition_and_distinct_operations(self) -> None:
+        harness = (REPO_ROOT / "scripts/e2e-oas-attached-principal-retire.sh").read_text(encoding="utf-8")
+        for required in (
+            'install "$CAPABILITY_SOURCE" --dir "$FIXTURE_REPO"',
+            'doctor "$FIXTURE_REPO" --soul proof-worker',
+            'assert_owning_state_same refusal-before "refusal-after-$refused_mode"',
+            'assert_pre_activation_state',
+            'config-divergence',
+            'divergent attach-existing setting did not produce its predicted binding mode',
+            'PI_AGENT_HOME="$VICTIM_HOME" run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT"',
+            'aweb-identity status --soul proof-worker',
+            'assert_worker_doctor_state',
+            'capture_operation_grants both-active "$VICTIM_OPERATION=0" "$ATTACKER_OPERATION=0"',
+            'capture_operation_grants interrupted-grant "$INTERRUPTED_OPERATION=1"',
+            'assert_operation_grant_isolation interrupted-grant interrupted-grant-recovered',
+            'assert_clean_git_subject',
+            'capture_execution_subject',
+            'scan_provisioned_sensitive_material',
+            'scan_final_known_material',
+            'independent developers did not exercise duplicate local instance names',
+            'duplicate local names collapsed into one provisioning operation',
+            'attacker-after-victim-retire',
+            'assert_durable_operation_tuple_same attacker-before-victim-cleanup attacker-after-victim-cleanup',
+            'assert_durable_operation_tuple_same reverse-a-before-b-cleanup reverse-a-after-b-cleanup',
+            'assert_durable_operation_tuple_same reverse-b-before-a-cleanup reverse-b-after-a-cleanup',
+            'third failed cleanup did not enter terminal visible quarantine',
+            '--retry-quarantine "$QUARANTINE_OPERATION"',
+            'credential content scan excludes verbatim known file bytes but not encoded, split, derived',
+            'refusal_temporal_claim_bounded_by_missing_local_allocation_counter',
+        ):
+            self.assertIn(required, harness)
+
     def test_harness_preflight_checks_repository_paths_without_tooling(self) -> None:
         result = subprocess.run(
             ["/bin/bash", "scripts/e2e-oas-attached-principal-retire.sh", "--preflight"],
@@ -30,6 +68,49 @@ class PrincipalProofHarnessTests(unittest.TestCase):
             timeout=10,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_harness_preflight_refuses_aw_binary_override(self) -> None:
+        result = subprocess.run(
+            ["/bin/bash", "scripts/e2e-oas-attached-principal-retire.sh", "--preflight"],
+            cwd=REPO_ROOT,
+            env={"PATH": "/usr/bin:/bin", "AW_BIN": "/tmp/unattributed-aw"},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AW_BIN overrides are outside the declared execution subject", result.stderr)
+
+    def test_harness_preflight_refuses_external_node_preloads(self) -> None:
+        result = subprocess.run(
+            ["/bin/bash", "scripts/e2e-oas-attached-principal-retire.sh", "--preflight"],
+            cwd=REPO_ROOT,
+            env={"PATH": "/usr/bin:/bin", "NODE_OPTIONS": "--import=/tmp/external-preload.mjs"},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NODE_OPTIONS preloads are outside the declared execution subject", result.stderr)
+
+    def test_bounded_branches_cannot_emit_broader_claim_wording(self) -> None:
+        paths = (
+            REPO_ROOT / "scripts/e2e-oas-attached-principal-retire.sh",
+            REPO_ROOT / "scripts/e2e/oas_principal_proof.py",
+            REPO_ROOT / "oas/.agents/capabilities/owned/aweb-identity-attach/PROVISIONING.md",
+        )
+        text = "\n".join(path.read_text(encoding="utf-8") for path in paths).lower()
+        for forbidden in (
+            "known non-secret",
+            "secret-free",
+            "no matching usable grant",
+            "pure acquisition",
+            "refused_before_create",
+            "refused before create",
+            "zero usable",
+            '"oas_kernel_sha"',
+        ):
+            self.assertNotIn(forbidden, text)
 
 
 class PrincipalProofFilesystemTests(unittest.TestCase):
@@ -67,6 +148,35 @@ class PrincipalProofFilesystemTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "principal store contains a symbolic link"):
             write_snapshot(str(self.principal), str(self.root / "unsafe-snapshot.json"))
 
+    def test_structure_capture_detects_same_byte_symlink_directory_and_type_changes(self) -> None:
+        target = self.root / "target"
+        target.mkdir()
+        key = target / "signing.key"
+        key.write_bytes(b"credential material")
+        before = capture_structure(str(target))
+
+        external = self.root / "external.key"
+        external.write_bytes(key.read_bytes())
+        key.unlink()
+        key.symlink_to(external)
+        (target / "added-directory").mkdir()
+        after = capture_structure(str(target))
+        self.assertNotEqual(before, after)
+        row = next(entry for entry in after if entry["path"] == "signing.key")
+        self.assertEqual(row["kind"], "symlink")
+        self.assertEqual(row["target"], str(external))
+        self.assertTrue(any(entry["path"] == "added-directory" for entry in after))
+
+    def test_structure_capture_detects_mode_change(self) -> None:
+        target = self.root / "mode-target"
+        target.mkdir()
+        key = target / "signing.key"
+        key.write_bytes(b"credential material")
+        before = capture_structure(str(target))
+        key.chmod(0o600)
+        after = capture_structure(str(target))
+        self.assertNotEqual(before, after)
+
     def test_scan_accepts_an_unrelated_instance(self) -> None:
         scan_instance(str(self.snapshot), str(self.instance("clean-instance")))
 
@@ -93,6 +203,24 @@ class PrincipalProofFilesystemTests(unittest.TestCase):
         os.symlink(self.principal, instance / "ordinary-directory", target_is_directory=True)
         with self.assertRaisesRegex(AssertionError, "symlink resolves into principal store"):
             scan_instance(str(self.snapshot), str(instance))
+
+    def test_sensitive_scan_allows_only_the_expected_interaction_log_under_dot_aw(self) -> None:
+        instance = self.instance("interaction-instance")
+        interaction = instance / ".aw" / "interaction-log.jsonl"
+        interaction.parent.mkdir()
+        interaction.write_text('{"event":"mail"}\n', encoding="utf-8")
+        scan_sensitive_material(str(self.snapshot), str(instance))
+        (interaction.parent / "unexpected.json").write_text("not allowed\n", encoding="utf-8")
+        with self.assertRaisesRegex(AssertionError, "unexpected .aw path"):
+            scan_sensitive_material(str(self.snapshot), str(instance))
+
+    def test_sensitive_scan_still_rejects_principal_material_in_allowed_interaction_log(self) -> None:
+        instance = self.instance("tainted-interaction-instance")
+        interaction = instance / ".aw" / "interaction-log.jsonl"
+        interaction.parent.mkdir()
+        interaction.write_bytes(b'prefix-' + self.key.read_bytes() + b'-suffix')
+        with self.assertRaisesRegex(AssertionError, "principal file content"):
+            scan_sensitive_material(str(self.snapshot), str(instance))
 
 
 if __name__ == "__main__":
