@@ -176,6 +176,25 @@ function allPaths(root) {
   return paths;
 }
 
+function assertRuntimeEnvironmentContribution(command, expectedIdentityHome) {
+  const escapedHome = expectedIdentityHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  assert.match(
+    command,
+    new RegExp(`AWEB_IDENTITY_HOME=.*${escapedHome}`),
+    "persisted initial-process command carries the exact verified identity home; this does not prove real-aw resolution or signing",
+  );
+  assert.deepEqual(
+    [...command.matchAll(/(?:^| )(AWEB_[A-Z0-9_]+)=/g)].map((match) => match[1]),
+    ["AWEB_IDENTITY_HOME"],
+    "adapter contributes exactly one AWEB runtime variable: the identity-home locator, not an admission selector",
+  );
+  assert.doesNotMatch(
+    command,
+    /AWEB_PRINCIPAL|principal=throwaway/,
+    "adapter command contribution excludes admission selectors; ambient environment inheritance is outside this assertion",
+  );
+}
+
 function assertNoInstanceIdentityMaterial(instanceHome, principal, credentialFile) {
   assert.equal(existsSync(join(instanceHome, ".aw")), false);
   const credentialStat = statSync(credentialFile);
@@ -407,9 +426,9 @@ test("instance link containment includes an exact renamed link to the principal 
   );
 });
 
-// These command assertions require the upstream hook-environment contract at
-// OAS commit c15145a (0.18.6 + separator 92f3617). No published OAS implements
-// it yet; the suite must run against the explicitly pinned source checkout.
+// These command assertions require the working-clone hook-environment contract.
+// No published OAS implements it yet; the suite must run against the explicitly
+// pinned source checkout.
 test("real OAS attach spawn persists external ownership and ordinary retire preserves the principal", () => {
   const f = fixture();
   const cli = oasCli();
@@ -442,14 +461,22 @@ test("real OAS attach spawn persists external ownership and ordinary retire pres
     },
   });
   assert.match(readFileSync(join(spawned.home, "TASK.md"), "utf8"), /external cleanup ownership/);
-  assert.match(instanceMeta.command, new RegExp(`AWEB_IDENTITY_HOME=.*${f.credentials.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-  assert.doesNotMatch(instanceMeta.command, /AWEB_PRINCIPAL|principal=throwaway/);
+  assertRuntimeEnvironmentContribution(instanceMeta.command, f.credentials);
   const runtimeEnvLog = join(f.base, "pi-runtime-env.log");
   execFileSync("/bin/sh", ["-c", instanceMeta.command], {
     cwd: spawned.home,
-    env: { ...f.env, AWEB_IDENTITY_HOME: join(f.base, "wrong-ambient-home"), FAKE_PI_ENV_LOG: runtimeEnvLog },
+    env: {
+      ...f.env,
+      AWEB_IDENTITY_HOME: join(f.base, "wrong-ambient-home"),
+      AWEB_PRINCIPAL: "ambient-selector",
+      FAKE_PI_ENV_LOG: runtimeEnvLog,
+    },
   });
-  assert.deepEqual(readFileSync(runtimeEnvLog, "utf8").trim().split("\n"), [f.credentials, "unset"]);
+  assert.deepEqual(
+    readFileSync(runtimeEnvLog, "utf8").trim().split("\n"),
+    [f.credentials, "ambient-selector"],
+    "actual initial Pi child receives the contributed home over ambient; ambient selector remains ambient and is not an adapter contribution",
+  );
   assertNoInstanceIdentityMaterial(spawned.home, f.principal, join(f.credentials, "signing.key"));
 
   const invocationsAtSpawn = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse);
@@ -494,8 +521,7 @@ test("real OAS attach-existing v2 emits an externally owned bound receipt", () =
   assert.equal(receipt.resource_identity.kind, "declared-principal");
   assert.equal(receipt.resource_identity.stable_id, "did:aw:2ThrowawayStableId123");
   assert.equal(receipt.resource_identity.reference, f.declarationPath);
-  assert.match(meta.command, /AWEB_IDENTITY_HOME=/);
-  assert.doesNotMatch(meta.command, /AWEB_PRINCIPAL|principal=throwaway/);
+  assertRuntimeEnvironmentContribution(meta.command, f.credentials);
 });
 
 test("real OAS refuses hosted disposable provisioning before authority resolution or creation", () => {
@@ -549,9 +575,7 @@ test("real OAS emits a local-controller authority statement with indefinite gran
   assert.match(resource.alias, /^oas-[a-f0-9]{32}$/);
   assert.notEqual(resource.alias, operationID, "normalized member alias is not operation identity");
   assert.equal(resource.identity_home, join(f.principalHome, ".provisioning", "identities", operationID));
-  assert.match(meta.command, /AWEB_IDENTITY_HOME=/);
-  assert.match(meta.command, new RegExp(resource.identity_home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.doesNotMatch(meta.command, /AWEB_PRINCIPAL|principal=throwaway/);
+  assertRuntimeEnvironmentContribution(meta.command, resource.identity_home);
   assert.equal(resource.did_key, "did:key:z6MkiProvisionedWorker");
   const journal = JSON.parse(readFileSync(join(f.principalHome, ".provisioning", "intents", `${operationID}.json`), "utf8"));
   assert.equal(journal.state, "bound");
