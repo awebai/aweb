@@ -1,4 +1,4 @@
-import type { APIClient } from "./client.js";
+import { APIError, type APIClient } from "./client.js";
 import type { MessageEnvelope, VerificationStatus } from "../identity/signing.js";
 import type { ReplacementAnnouncement, RotationAnnouncement } from "../identity/trust.js";
 import {
@@ -93,6 +93,16 @@ function hydrateAddressesFromSignedPayload(msg: ChatMessage): void {
 
 const CHAT_MARK_READ_BATCH_SIZE = 1000;
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isClientError(error: unknown): error is APIError {
+  return error instanceof APIError && error.statusCode >= 400 && error.statusCode < 500;
+}
+
+function hasWellFormedMessageIDs(messageIds: readonly string[]): boolean {
+  return messageIds.every((messageId) => UUID_PATTERN.test(messageId));
+}
+
 export async function markRead(
   client: APIClient,
   sessionId: string,
@@ -107,7 +117,22 @@ export async function markRead(
   for (let start = 0; start < messageIds.length; start += CHAT_MARK_READ_BATCH_SIZE) {
     const chunk = messageIds.slice(start, start + CHAT_MARK_READ_BATCH_SIZE);
     try {
-      await client.post(path, { message_ids: chunk });
+      try {
+        await client.post(path, { message_ids: chunk });
+      } catch (error) {
+        // Well-formedness gates only the retry: the exact request is always sent
+        // first so the server remains the authoritative validator and its
+        // original error remains observable.
+        if (!isClientError(error) || !hasWellFormedMessageIDs(chunk)) throw error;
+        try {
+          // Old servers only support a range watermark. The newest presented ID
+          // intentionally preserves their deployed-client semantics, including
+          // marking any unpresented gaps before it.
+          await client.post(path, { up_to_message_id: chunk[chunk.length - 1] });
+        } catch {
+          throw error;
+        }
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(
