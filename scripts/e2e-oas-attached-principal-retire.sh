@@ -23,7 +23,7 @@ canonical_dir() {
 
 make_temp_dir() {
   local directory
-  directory="$(mktemp -d "${TMPDIR:-/tmp}/aweb-oas-retire-proof.XXXXXX")"
+  directory="$(mktemp -d "/tmp/aweb-oas-retire-proof.XXXXXX")"
   canonical_dir "$directory"
 }
 
