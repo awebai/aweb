@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from oas_principal_proof import (
+    assert_resident_session,
     assert_unchanged,
     capture_structure,
     scan_instance,
@@ -112,6 +113,210 @@ class PrincipalProofHarnessTests(unittest.TestCase):
             '"oas_kernel_sha"',
         ):
             self.assertNotIn(forbidden, text)
+
+
+class ResidentSessionEvidenceTests(unittest.TestCase):
+    ADDRESS = "proof.local/resident"
+    STABLE_ID = "did:aw:2ResidentProof"
+    MESSAGE_ID = "message-proof-123"
+    WAKE_BODY = "WAKE_PROOF_SENTINEL"
+    REPLY_BODY = "REPLY_PROOF_SENTINEL"
+    READY_SUBJECT = "OAS_RESIDENT_READY"
+    READY_BODY = "READY_FROM_THROWAWAY_RESIDENT"
+    SESSION_CWD = "/proof/instance"
+    PROVIDER = "openai-codex"
+    MODEL = "gpt-5.4-mini"
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.session = Path(self.temporary.name) / "session.jsonl"
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def write_session(
+        self, *, include_reply: bool = True, wake_before_ready: bool = False,
+        fabricated_identity_fallback: bool = False,
+    ) -> None:
+        entries = [
+            {"type": "session", "version": 3, "id": "session-proof", "cwd": self.SESSION_CWD},
+            {
+                "type": "message",
+                "id": "assistant-whoami",
+                "message": {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "toolCall",
+                        "id": "call-whoami",
+                        "name": "bash",
+                        "arguments": {"command": (
+                            "aw whoami --json || printf "
+                            "'{\"address\":\"proof.local/resident\",\"stable_id\":\"did:aw:2ResidentProof\"}'"
+                            if fabricated_identity_fallback else "aw whoami --json"
+                        )},
+                    }],
+                    "provider": self.PROVIDER,
+                    "model": self.MODEL,
+                    "stopReason": "toolUse",
+                },
+            },
+            {
+                "type": "message",
+                "id": "result-whoami",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "call-whoami",
+                    "toolName": "bash",
+                    "isError": False,
+                    "content": [{
+                        "type": "text",
+                        "text": '{"address":"proof.local/resident","stable_id":"did:aw:2ResidentProof"}',
+                    }],
+                },
+            },
+            {
+                "type": "message",
+                "id": "assistant-ready",
+                "message": {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "toolCall",
+                        "id": "call-ready",
+                        "name": "bash",
+                        "arguments": {
+                            "command": (
+                                "aw mail send --plaintext --to observer "
+                                f"--subject '{self.READY_SUBJECT}' --body '{self.READY_BODY}' --json"
+                            ),
+                        },
+                    }],
+                    "provider": self.PROVIDER,
+                    "model": self.MODEL,
+                    "stopReason": "toolUse",
+                },
+            },
+            {
+                "type": "message",
+                "id": "result-ready",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "call-ready",
+                    "toolName": "bash",
+                    "isError": False,
+                    "content": [{"type": "text", "text": "Sent mail"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "assistant-settled",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Ready and waiting."}],
+                    "provider": self.PROVIDER,
+                    "model": self.MODEL,
+                    "stopReason": "stop",
+                },
+            },
+            {
+                "type": "custom_message",
+                "id": "wake-message",
+                "customType": "aweb-channel",
+                "content": f"aweb mail event received: {self.WAKE_BODY}",
+                "details": {
+                    "type": "mail",
+                    "message_id": self.MESSAGE_ID,
+                    "trust_status": "verified",
+                    "verified": True,
+                },
+            },
+        ]
+        if wake_before_ready:
+            wake = entries.pop()
+            entries.insert(2, wake)
+        if include_reply:
+            entries.extend([
+                {
+                    "type": "message",
+                    "id": "assistant-reply",
+                    "message": {
+                        "role": "assistant",
+                        "content": [{
+                            "type": "toolCall",
+                            "id": "call-reply",
+                            "name": "bash",
+                            "arguments": {
+                                "command": (
+                                    f"aw mail reply {self.MESSAGE_ID} "
+                                    f"--body '{self.REPLY_BODY}'"
+                                ),
+                            },
+                        }],
+                        "provider": self.PROVIDER,
+                        "model": self.MODEL,
+                        "stopReason": "toolUse",
+                    },
+                },
+                {
+                    "type": "message",
+                    "id": "result-reply",
+                    "message": {
+                        "role": "toolResult",
+                        "toolCallId": "call-reply",
+                        "toolName": "bash",
+                        "isError": False,
+                        "content": [{"type": "text", "text": "Sent mail reply"}],
+                    },
+                },
+            ])
+        self.session.write_text(
+            "".join(json.dumps(entry) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+
+    def assert_session(self) -> dict[str, object]:
+        return assert_resident_session(
+            str(self.session),
+            expected_address=self.ADDRESS,
+            expected_stable_id=self.STABLE_ID,
+            expected_message_id=self.MESSAGE_ID,
+            expected_wake_body=self.WAKE_BODY,
+            expected_reply_body=self.REPLY_BODY,
+            expected_ready_subject=self.READY_SUBJECT,
+            expected_ready_body=self.READY_BODY,
+            expected_session_cwd=self.SESSION_CWD,
+            expected_provider=self.PROVIDER,
+            expected_model=self.MODEL,
+        )
+
+    def test_observes_identity_wake_and_successful_reply_inside_resident_session(self) -> None:
+        self.write_session()
+        observation = self.assert_session()
+        self.assertEqual(observation["wake_message_id"], self.MESSAGE_ID)
+        self.assertEqual(observation["identity"], {
+            "address": self.ADDRESS,
+            "stable_id": self.STABLE_ID,
+        })
+        self.assertEqual(observation["reply_tool_call_id"], "call-reply")
+        self.assertEqual(observation["session_cwd"], self.SESSION_CWD)
+        self.assertEqual(observation["model"], {
+            "provider": self.PROVIDER,
+            "model": self.MODEL,
+        })
+
+    def test_missing_reply_tool_call_is_reported_as_absent(self) -> None:
+        self.write_session(include_reply=False)
+        with self.assertRaisesRegex(AssertionError, "resident session has no matching reply tool call"):
+            self.assert_session()
+
+    def test_wake_before_resident_readiness_is_not_wake_evidence(self) -> None:
+        self.write_session(wake_before_ready=True)
+        with self.assertRaisesRegex(AssertionError, "wake was not observed after resident readiness settled"):
+            self.assert_session()
+
+    def test_chained_fallback_cannot_fabricate_process_identity(self) -> None:
+        self.write_session(fabricated_identity_fallback=True)
+        with self.assertRaisesRegex(AssertionError, "no exact ordinary aw whoami --json tool call"):
+            self.assert_session()
 
 
 class PrincipalProofFilesystemTests(unittest.TestCase):

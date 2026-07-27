@@ -6,11 +6,15 @@
 # mail, forged cross-operation cleanup, interrupted handoff reconciliation,
 # visible quarantine/remediation, and owning-authority terminal cleanup.
 #
-# Requirements: Docker Compose, Go, Python 3, curl, and an OAS source install.
+# Requirements: Docker Compose, Go, Python 3, curl, Node/npm, Pi, model auth,
+# and an OAS source install.
 # OAS_TEST_ROOT selects that install. OAS_PROOF_{AWID,AWEB,POSTGRES}_PORT and
 # OAS_PROOF_PROJECT isolate concurrent runs. OAS_PROOF_REPORT selects the
-# persistent JSON evidence destination; KEEP_OAS_PROOF=1 retains local fixtures.
-# The harness refuses non-loopback services and never launches a model or tmux.
+# persistent JSON evidence destination; KEEP_OAS_PROOF=1 retains non-secret
+# fixtures. OAS_PROOF_MODE defaults to lifecycle (no model or tmux) and accepts
+# resident-pi for the reviewed real-Pi wake/reply proof. The latter copies model
+# auth into the throwaway root without logging it and removes that copy even
+# when other evidence is retained.
 set -euo pipefail
 
 canonical_dir() {
@@ -25,10 +29,19 @@ make_temp_dir() {
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CLI_DIR="$REPO_ROOT/cli/go"
-AW_BIN="${AW_BIN:-$CLI_DIR/aw}"
+[[ -z "${AW_BIN+x}" ]] || { echo "FAIL: AW_BIN overrides are outside the declared execution subject" >&2; exit 2; }
+AW_BIN="$CLI_DIR/aw"
 PROOF_HELPER="$REPO_ROOT/scripts/e2e/oas_principal_proof.py"
 CAPABILITY_SOURCE="$REPO_ROOT/oas/.agents/capabilities/owned/aweb-identity-attach"
+PI_EXTENSION_DIR="$REPO_ROOT/pi-extension"
 COMPOSE_FILE="$REPO_ROOT/docker-compose.e2e.yml"
+TMUX_GUARD_DIR="$REPO_ROOT/scripts/guard-bin"
+MODE="${OAS_PROOF_MODE:-lifecycle}"
+case "$MODE" in
+  lifecycle|resident-pi) ;;
+  *) echo "FAIL: OAS_PROOF_MODE must be lifecycle or resident-pi (got $MODE)" >&2; exit 2 ;;
+esac
+HOST_PI_AUTH="${OAS_PROOF_PI_AUTH:-${PI_CODING_AGENT_DIR:-${HOME:-}/.pi/agent}/auth.json}"
 
 preflight() {
   [[ -d "$CLI_DIR" ]] || { echo "FAIL: CLI source not found at $CLI_DIR" >&2; return 1; }
@@ -41,6 +54,14 @@ preflight() {
   }
   [[ -z "${NODE_OPTIONS:-}" ]] || {
     echo "FAIL: NODE_OPTIONS preloads are outside the declared execution subject" >&2
+    return 1
+  }
+  [[ -x "$TMUX_GUARD_DIR/tmux" ]] || {
+    echo "FAIL: repository tmux guard not found at $TMUX_GUARD_DIR/tmux" >&2
+    return 1
+  }
+  [[ -f "$PI_EXTENSION_DIR/package.json" ]] || {
+    echo "FAIL: Pi extension source not found at $PI_EXTENSION_DIR" >&2
     return 1
   }
 }
@@ -152,19 +173,53 @@ PROOF_BIN="$PROOF_ROOT/bin"
 EVIDENCE="$PROOF_ROOT/evidence"
 REPORT="${OAS_PROOF_REPORT:-${TMPDIR:-/tmp}/aweb-oas-attached-principal-proof-report.json}"
 KEEP="${KEEP_OAS_PROOF:-0}"
-mkdir -p "$PROOF_HOME" "$STAGING" "$PRINCIPAL_WORKSPACE" "$OBSERVER" "$PRINCIPAL_HOME" "$FIXTURE_REPO" "$AGENTS_ROOT" "$DEVELOPER_A_AGENTS_ROOT" "$DEVELOPER_B_AGENTS_ROOT" "$PROOF_BIN" "$EVIDENCE"
+PROOF_TMUX_DIR="$PROOF_ROOT/tmux"
+PROOF_TMUX_SESSION="oas-resident-proof-$(printf '%s' "$PROOF_ROOT" | cksum | cut -d' ' -f1)"
+PI_MODEL="${OAS_PROOF_PI_MODEL:-openai-codex/gpt-5.4-mini:minimal}"
+[[ "$PI_MODEL" == */* ]] || { echo "FAIL: OAS_PROOF_PI_MODEL must be provider/model[:thinking]" >&2; exit 2; }
+PI_PROVIDER="${PI_MODEL%%/*}"
+PI_MODEL_ID="${PI_MODEL#*/}"
+case "$PI_MODEL_ID" in
+  *:off|*:minimal|*:low|*:medium|*:high|*:xhigh|*:max) PI_MODEL_ID="${PI_MODEL_ID%:*}" ;;
+esac
+mkdir -p "$PROOF_HOME" "$STAGING" "$PRINCIPAL_WORKSPACE" "$OBSERVER" "$PRINCIPAL_HOME" "$FIXTURE_REPO" "$AGENTS_ROOT" "$DEVELOPER_A_AGENTS_ROOT" "$DEVELOPER_B_AGENTS_ROOT" "$PROOF_BIN" "$EVIDENCE" "$PROOF_TMUX_DIR"
 : > "$EVIDENCE/executed-esm-trace.log"
 
+# shellcheck source=scripts/e2e/oas_tmux_safety.sh
+source "$REPO_ROOT/scripts/e2e/oas_tmux_safety.sh"
+
+assert_default_tmux_topology_unchanged() {
+  local phase="$1" observed="$EVIDENCE/tmux-topology-$phase.txt"
+  snapshot_default_tmux_topology "$observed" || return 1
+  if ! cmp "$EVIDENCE/tmux-topology-before.txt" "$observed" >/dev/null; then
+    diff -u "$EVIDENCE/tmux-topology-before.txt" "$observed" >&2 || true
+    echo "FAIL: pre-existing tmux session/window/pane topology changed during resident proof" >&2
+    return 1
+  fi
+}
+
 cleanup() {
-  local status=$?
+  local status=$? retain="$KEEP"
+  trap - EXIT
   set +e
+  rm -f "$PROOF_HOME/.pi/agent/auth.json"
+  if [[ "$MODE" == "resident-pi" ]]; then
+    if ! remove_proof_tmux_session; then
+      status=1
+      retain=1
+    fi
+    if [[ -f "$EVIDENCE/tmux-topology-before.txt" ]] && ! assert_default_tmux_topology_unchanged cleanup; then
+      status=1
+      retain=1
+    fi
+  fi
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1
-  if [[ "$KEEP" == "1" ]]; then
-    echo "Proof workspace retained at $PROOF_ROOT" >&2
+  if [[ "$retain" == "1" ]]; then
+    echo "Proof workspace retained for safe remediation at $PROOF_ROOT" >&2
   else
     rm -rf "$PROOF_ROOT"
   fi
-  return "$status"
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -255,11 +310,13 @@ run_aw_in() {
   shift
   (
     cd "$directory"
-    env -u AWEB_IDENTITY_HOME \
+    env -u AWEB_IDENTITY_HOME -u AWEB_PRINCIPAL -u AWEB_API_KEY -u AW_HOME \
       HOME="$PROOF_HOME" \
       AW_CONFIG_PATH="$CONFIG_PATH" \
+      AWEB_URL="$AWEB_URL" \
       AWID_REGISTRY_URL="$AWID_URL" \
       AWID_SKIP_DNS_VERIFY=1 \
+      AW_NO_UPDATE_CHECK=1 \
       "$AW_BIN" "$@"
   )
 }
@@ -267,11 +324,13 @@ run_aw_in() {
 run_observer_aw() {
   (
     cd "$OBSERVER"
-    env -u AWEB_IDENTITY_HOME \
+    env -u AWEB_IDENTITY_HOME -u AWEB_PRINCIPAL -u AWEB_API_KEY -u AW_HOME \
       HOME="$PROOF_HOME" \
       AW_CONFIG_PATH="$CONFIG_PATH" \
+      AWEB_URL="$AWEB_URL" \
       AWID_REGISTRY_URL="$AWID_URL" \
       AWID_SKIP_DNS_VERIFY=1 \
+      AW_NO_UPDATE_CHECK=1 \
       "$AW_BIN" "$@"
   )
 }
@@ -295,15 +354,21 @@ run_oas_with_agents() {
   shift 2
   (
     cd "$directory"
-    env -u AWEB_IDENTITY_HOME \
+    env -u AWEB_IDENTITY_HOME -u AWEB_PRINCIPAL -u AWEB_API_KEY -u AW_HOME \
       HOME="$PROOF_HOME" \
       AW_CONFIG_PATH="$CONFIG_PATH" \
+      AWEB_URL="$AWEB_URL" \
       AWID_REGISTRY_URL="$AWID_URL" \
       AWID_SKIP_DNS_VERIFY=1 \
+      AW_NO_UPDATE_CHECK=1 \
       AWEB_PRINCIPAL_HOME="$PRINCIPAL_HOME" \
       PI_AGENTS_ROOT="$agents_root" \
-      PI_AGENTS_TMUX_SESSION="oas-retire-proof-no-session" \
-      PATH="$PROOF_BIN:$CLI_DIR:$PATH" \
+      PI_AGENTS_TMUX_SESSION="$PROOF_TMUX_SESSION" \
+      PI_SKIP_VERSION_CHECK=1 \
+      PI_TELEMETRY=0 \
+      TMUX= \
+      TMUX_TMPDIR="$PROOF_TMUX_DIR" \
+      PATH="$TMUX_GUARD_DIR:$PROOF_BIN:$CLI_DIR:$PATH" \
       NODE_DEBUG=esm node "$OAS_CLI" "$@" 2> >(tee -a "$EVIDENCE/executed-esm-trace.log" >&2)
   )
 }
@@ -385,14 +450,50 @@ compare_registry_to_pre() {
 }
 
 assert_principal_unchanged() {
-  local phase="$1"
-  python3 "$PROOF_HELPER" assert-unchanged --root "$PRINCIPAL_DIR" --snapshot "$EVIDENCE/principal-pre.json"
+  local phase="$1" observed="$EVIDENCE/principal-$phase.json"
+  python3 "$PROOF_HELPER" snapshot --root "$PRINCIPAL_DIR" --output "$observed"
+  cmp "$EVIDENCE/principal-pre.json" "$observed" >/dev/null \
+    || fail "principal file inventory changed at $phase"
   echo "  principal store unchanged at $phase"
 }
 
 scan_instance() {
-  local phase="$1"
-  python3 "$PROOF_HELPER" scan-instance --principal-snapshot "$EVIDENCE/principal-pre.json" --instance "$INSTANCE_HOME"
+  local phase="$1" observation="$EVIDENCE/instance-$phase-scan.json"
+  if [[ "$MODE" == "resident-pi" ]]; then
+    # scan-sensitive-material is owned by the shared .28 proof helper. This
+    # harness consumes that reviewed detector; it does not fork its policy.
+    python3 "$PROOF_HELPER" scan-sensitive-material \
+      --principal-snapshot "$EVIDENCE/principal-pre.json" \
+      --instance "$INSTANCE_HOME"
+    python3 - "$INSTANCE_HOME" "$observation" <<'PY'
+import json, os, stat, sys
+root, output = sys.argv[1:]
+entries = []
+for current, directories, files in os.walk(root, followlinks=False):
+    for name in sorted([*directories, *files]):
+        path = os.path.join(current, name)
+        info = os.lstat(path)
+        entries.append({
+            "path": os.path.relpath(path, root),
+            "kind": "symlink" if stat.S_ISLNK(info.st_mode) else "directory" if stat.S_ISDIR(info.st_mode) else "file",
+            "device": info.st_dev, "inode": info.st_ino, "size": info.st_size,
+        })
+with open(output, "w", encoding="utf-8") as stream:
+    json.dump({
+        "scanner": "shared scan-sensitive-material",
+        "forbidden_principal_material_found": False,
+        "allowed_runtime_state": sorted(
+            entry["path"] for entry in entries if entry["path"].startswith(".aw/")
+        ),
+        "entries": entries,
+    }, stream, indent=2, sort_keys=True)
+    stream.write("\n")
+PY
+  else
+    python3 "$PROOF_HELPER" scan-instance \
+      --principal-snapshot "$EVIDENCE/principal-pre.json" \
+      --instance "$INSTANCE_HOME"
+  fi
   echo "  instance contains no principal material at $phase"
 }
 
@@ -769,18 +870,61 @@ PY
 run_reconcile() {
   (
     cd "$FIXTURE_REPO"
-    env -u OAS_EVENT -u OAS_META -u OAS_SETTINGS -u AWEB_IDENTITY_HOME \
-      HOME="$PROOF_HOME" AW_CONFIG_PATH="$CONFIG_PATH" AWID_REGISTRY_URL="$AWID_URL" AWID_SKIP_DNS_VERIFY=1 \
+    env -u OAS_EVENT -u OAS_META -u OAS_SETTINGS -u AWEB_IDENTITY_HOME -u AWEB_PRINCIPAL -u AWEB_API_KEY -u AW_HOME \
+      HOME="$PROOF_HOME" AW_CONFIG_PATH="$CONFIG_PATH" AWEB_URL="$AWEB_URL" AWID_REGISTRY_URL="$AWID_URL" AWID_SKIP_DNS_VERIFY=1 AW_NO_UPDATE_CHECK=1 \
       AWEB_PRINCIPAL_HOME="$PRINCIPAL_HOME" PATH="$PROOF_BIN:$CLI_DIR:$PATH" \
       NODE_DEBUG=esm node "$OAS_CLI" aweb-identity reconcile "$@" 2> >(tee -a "$EVIDENCE/executed-esm-trace.log" >&2)
   )
 }
 
-echo "=== Build the real aw CLI ==="
+echo "=== Pin clean tracked proof subjects and build the real aw CLI ==="
+[[ "$(git -C "$REPO_ROOT" rev-parse --show-toplevel)" == "$REPO_ROOT" ]] \
+  || fail "aweb proof source is not its own git top-level"
+[[ "$(git -C "$OAS_ROOT" rev-parse --show-toplevel)" == "$OAS_ROOT" ]] \
+  || fail "OAS_TEST_ROOT is not its own git top-level: $OAS_ROOT"
+git -C "$REPO_ROOT" diff --quiet && git -C "$REPO_ROOT" diff --cached --quiet \
+  || fail "aweb proof source has tracked changes"
+git -C "$OAS_ROOT" diff --quiet && git -C "$OAS_ROOT" diff --cached --quiet \
+  || fail "local OAS proof source has tracked changes"
+SOURCE_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+OAS_SOURCE_SHA="$(git -C "$OAS_ROOT" rev-parse HEAD)"
 make -C "$CLI_DIR" build
 [[ -x "$AW_BIN" ]] || fail "aw binary was not built at $AW_BIN"
-printf '#!/bin/sh\nexit 0\n' > "$PROOF_BIN/pi"
-chmod +x "$PROOF_BIN/pi"
+AW_BIN_SHA="$(file_sha256 "$AW_BIN")"
+OAS_BIN_SHA="$(file_sha256 "$OAS_CLI")"
+OAS_CORE_SHA="$(file_sha256 "$OAS_ROOT/lib/core.mjs")"
+PI_LAUNCH_PATH=""
+PI_BIN_SHA=""
+PI_VERSION=""
+PI_EXTENSION_SHA=""
+
+if [[ "$MODE" == "resident-pi" ]]; then
+  echo "=== Prepare the source Pi extension and isolated model session ==="
+  snapshot_default_tmux_topology "$EVIDENCE/tmux-topology-before.txt" \
+    || fail "could not snapshot pre-existing tmux session/window/pane topology"
+  [[ -f "$HOST_PI_AUTH" ]] || fail "Pi model authentication not found at $HOST_PI_AUTH"
+  PI_LAUNCH_PATH="$(command -v pi)"
+  [[ -n "$PI_LAUNCH_PATH" && -x "$PI_LAUNCH_PATH" ]] || fail "real Pi runtime not found on PATH"
+  PI_BIN_SHA="$(file_sha256 "$PI_LAUNCH_PATH")"
+  PI_VERSION="$(pi --version)"
+  npm --prefix "$PI_EXTENSION_DIR" run build > "$EVIDENCE/pi-extension-build.txt"
+  PI_EXTENSION_SHA="$(file_sha256 "$PI_EXTENSION_DIR/dist/index.js")"
+  mkdir -p "$PROOF_HOME/.pi/agent/sessions"
+  install -m 600 "$HOST_PI_AUTH" "$PROOF_HOME/.pi/agent/auth.json"
+  env HOME="$PROOF_HOME" PI_CODING_AGENT_DIR="$PROOF_HOME/.pi/agent" \
+    PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 \
+    pi install "$PI_EXTENSION_DIR" > "$EVIDENCE/pi-install.txt"
+  env HOME="$PROOF_HOME" PI_CODING_AGENT_DIR="$PROOF_HOME/.pi/agent" \
+    PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 \
+    pi list > "$EVIDENCE/pi-list.txt"
+  grep -F -q "$PI_EXTENSION_DIR" "$EVIDENCE/pi-list.txt" \
+    || fail "isolated Pi config did not resolve the source extension"
+  [[ -z "$(find "$PROOF_HOME/.pi/agent/sessions" -type f -name '*.jsonl' -print -quit)" ]] \
+    || fail "isolated Pi session store was not empty before production spawn"
+else
+  printf '#!/bin/sh\nexit 0\n' > "$PROOF_BIN/pi"
+  chmod +x "$PROOF_BIN/pi"
+fi
 
 echo "=== Start a fresh loopback tmpfs-backed AWID + aweb stack ==="
 export LIBRARY_E2E_AWID_PORT="$AWID_PORT"
@@ -822,6 +966,12 @@ run_aw_in "$PRINCIPAL_WORKSPACE" init --url "$AWEB_URL" > "$EVIDENCE/principal-i
 
 # A distinct initialized workspace triggers the gone-workspace sweep after retire.
 run_observer_aw id create --name observer --domain proof.local --registry "$AWID_URL" --skip-dns-verify --json > "$EVIDENCE/observer-create.json"
+OBSERVER_DID_AW="$(json_value "$EVIDENCE/observer-create.json" did_aw)"
+OBSERVER_DID_KEY="$(json_value "$EVIDENCE/observer-create.json" did_key)"
+OBSERVER_ADDRESS="$(json_value "$EVIDENCE/observer-create.json" address)"
+[[ "$OBSERVER_DID_AW" == did:aw:* && "$OBSERVER_DID_KEY" == did:key:* ]] \
+  || fail "observer was not newly created on the local registry"
+[[ "$OBSERVER_ADDRESS" == "proof.local/observer" ]] || fail "unexpected observer address: $OBSERVER_ADDRESS"
 run_aw_in "$PRINCIPAL_WORKSPACE" id team invite --team proofteam --namespace proof.local --member-global --json > "$EVIDENCE/observer-invite.json"
 OBSERVER_INVITE="$(json_value "$EVIDENCE/observer-invite.json" token)"
 run_observer_aw id team accept-invite "$OBSERVER_INVITE" --global --name observer --json > "$EVIDENCE/observer-accept.json"
@@ -857,8 +1007,12 @@ assert_owning_state_same acquisition-before acquisition-after "acquisition ownin
 assert_principal_unchanged after-pure-acquisition
 capture_registry after-acquisition
 compare_registry_to_pre after-acquisition
+echo "=== Materialize the throwaway resident fixture ==="
 mkdir -p "$AGENTS_ROOT/proof-resident/soul" "$AGENTS_ROOT/proof-resident/instances"
 printf 'name: proof-resident\nkind: persistent\nrepo: %s\nwork: checkout\nruntime: pi\n' "$FIXTURE_REPO" > "$AGENTS_ROOT/proof-resident/soul/soul.yaml"
+if [[ "$MODE" == "resident-pi" ]]; then
+  printf 'model: %s\n' "$PI_MODEL" >> "$AGENTS_ROOT/proof-resident/soul/soul.yaml"
+fi
 printf '# Throwaway proof soul\n' > "$AGENTS_ROOT/proof-resident/soul/AGENTS.md"
 mkdir -p "$FIXTURE_REPO/oas/agents/proof-resident/principals"
 cat > "$FIXTURE_REPO/oas/agents/proof-resident/principals/resident.yaml" <<EOF
@@ -868,7 +1022,9 @@ stable_id: $DID_AW
 team_id: $TEAM_ID
 soul: proof-resident
 EOF
-cat > "$FIXTURE_REPO/oas-config.yaml" <<EOF
+write_attach_config() {
+  local principal="$1"
+  cat > "$FIXTURE_REPO/oas-config.yaml" <<EOF
 team:
   name: proofteam
   id: $TEAM_ID
@@ -883,8 +1039,10 @@ capabilities:
           identity_binding:
             schema_version: 1
             mode: attach
-            principal: resident
+            principal: $principal
 EOF
+}
+write_attach_config "$([[ "$MODE" == "resident-pi" ]] && printf missing || printf resident)"
 run_oas_in "$FIXTURE_REPO" trust aweb.identity-attach --dir "$FIXTURE_REPO" > "$EVIDENCE/oas-trust.txt"
 (
   cd "$FIXTURE_REPO"
@@ -902,9 +1060,10 @@ assert doc["layers"]["messaging"]["integration"] == "aweb.identity-attach", doc
 assert any(cap["id"] == "aweb.identity-attach" and cap["trust"]["trusted"] for cap in doc["capabilities"]), doc
 PY
 
-# Diverge the resolved mode and require the corresponding successful binding
-# consequence, then restore the ordinary attach config used by the journey.
-cp "$FIXTURE_REPO/oas-config.yaml" "$EVIDENCE/oas-config-attach.yaml"
+if [[ "$MODE" == "lifecycle" ]]; then
+  # Diverge the resolved mode and require the corresponding successful binding
+  # consequence, then restore the ordinary attach config used by the journey.
+  cp "$FIXTURE_REPO/oas-config.yaml" "$EVIDENCE/oas-config-attach.yaml"
 python3 - "$FIXTURE_REPO/oas-config.yaml" <<'PY'
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
@@ -922,22 +1081,93 @@ PY
 )"
 [[ "$DIVERGENCE_MODE" == "attach-existing" ]] \
   || fail "divergent attach-existing setting did not produce its predicted binding mode"
-run_oas_in "$FIXTURE_REPO" retire "$DIVERGENCE_INSTANCE" --json > "$EVIDENCE/config-divergence-retire.json"
-cp "$EVIDENCE/oas-config-attach.yaml" "$FIXTURE_REPO/oas-config.yaml"
+  run_oas_in "$FIXTURE_REPO" retire "$DIVERGENCE_INSTANCE" --json > "$EVIDENCE/config-divergence-retire.json"
+  cp "$EVIDENCE/oas-config-attach.yaml" "$FIXTURE_REPO/oas-config.yaml"
+fi
 
-echo "=== Materialize a real OAS instance with attach mode and no session launch ==="
+echo "=== Spawn the attached-principal instance ==="
 
-run_oas_in "$FIXTURE_REPO" spawn proof-resident --purpose attached-principal-retire-proof --no-launch --json > "$EVIDENCE/oas-spawn.json"
+if [[ "$MODE" == "resident-pi" ]]; then
+  echo "=== Observe broken-binding readiness refusal and the separate advisory gap ==="
+  if run_oas_in "$FIXTURE_REPO" aweb-identity status --soul proof-resident --json > "$EVIDENCE/broken-binding-status.json"; then
+    fail "broken binding status unexpectedly reported ready"
+  else
+    BROKEN_STATUS=$?
+  fi
+  [[ "$BROKEN_STATUS" == "1" ]] || fail "broken binding status exited $BROKEN_STATUS, expected 1"
+  python3 - "$EVIDENCE/broken-binding-status.json" "$AGENTS_ROOT/proof-resident/instances" <<'PY'
+import json, os, sys
+report = json.load(open(sys.argv[1], encoding="utf-8"))
+assert report["readiness"] == "needs_setup", report
+assert report["message"] == "the selected attached identity could not be verified", report
+assert report["identity_resources_created"] is False, report
+assert report["instance_or_session_created"] is False, report
+assert report["identity"] is None, report
+assert os.listdir(sys.argv[2]) == [], os.listdir(sys.argv[2])
+PY
+  [[ ! -e "$PRINCIPAL_HOME/.provisioning" ]] || fail "broken binding status created provisioning state"
+  assert_principal_unchanged after-broken-status
+  capture_registry after-broken-status
+  compare_registry_to_pre after-broken-status
+
+  run_oas_in "$FIXTURE_REPO" spawn proof-resident --purpose advisory-binding-gap --no-launch --json \
+    > "$EVIDENCE/broken-binding-advisory-spawn.json"
+  BROKEN_HOME="$(json_value "$EVIDENCE/broken-binding-advisory-spawn.json" home)"
+  BROKEN_INSTANCE="$(json_value "$EVIDENCE/broken-binding-advisory-spawn.json" instance)"
+  python3 - "$EVIDENCE/broken-binding-advisory-spawn.json" "$BROKEN_HOME/instance.json" <<'PY'
+import json, re, sys
+spawn = json.load(open(sys.argv[1], encoding="utf-8"))
+if spawn.get("schemaVersion") == 1:
+    spawn = spawn["result"]
+assert spawn["launched"] is False, spawn
+assert len(spawn.get("warnings", [])) == 1, spawn
+assert re.search(r"selected attached identity could not be verified.*NOTHING CREATED", spawn["warnings"][0], re.I), spawn
+meta = json.load(open(sys.argv[2], encoding="utf-8"))
+assert "aweb.identity-attach" not in meta.get("capabilityMeta", {}), meta
+PY
+  run_oas_in "$FIXTURE_REPO" retire "$BROKEN_INSTANCE" --json > "$EVIDENCE/broken-binding-advisory-retire.json"
+  [[ ! -e "$BROKEN_HOME" ]] || fail "ordinary retire left the advisory-gap scaffold"
+  [[ ! -e "$PRINCIPAL_HOME/.provisioning" ]] || fail "advisory broken spawn created provisioning state"
+  assert_principal_unchanged after-broken-advisory-observation
+  write_attach_config resident
+  (
+    cd "$FIXTURE_REPO"
+    git add oas-config.yaml
+    git commit -qm "select the verified throwaway resident"
+  )
+fi
+
+READY_SUBJECT="OAS_RESIDENT_READY_$(printf '%s' "$PROOF_ROOT" | cksum | cut -d' ' -f1)"
+READY_BODY="READY_FROM_THROWAWAY_RESIDENT"
+WAKE_SUBJECT="OAS_RESIDENT_WAKE_$(printf '%s' "$DID_AW" | cksum | cut -d' ' -f1)"
+WAKE_BODY="WAKE_PROOF_SENTINEL"
+REPLY_BODY="REPLY_PROOF_SENTINEL"
+SPAWN_ARGS=(spawn proof-resident --purpose attached-principal-retire-proof --json)
+if [[ "$MODE" == "resident-pi" ]]; then
+  cat > "$EVIDENCE/resident-task.md" <<EOF
+This is a controlled proof against a throwaway principal on a local stack.
+On the first turn, run exactly: aw whoami --json
+Then run exactly: aw mail send --plaintext --to observer --subject '$READY_SUBJECT' --body '$READY_BODY' --json
+After those commands, finish the turn and wait without polling.
+When an aweb mail wake arrives whose body contains $WAKE_BODY, inspect its verified metadata and run aw mail reply with that exact message_id and body '$REPLY_BODY'.
+Do not invoke any identity create/delete/rotate command, OAS retire, tmux command, or filesystem mutation.
+EOF
+  SPAWN_ARGS+=(--task-file "$EVIDENCE/resident-task.md")
+else
+  SPAWN_ARGS+=(--no-launch)
+fi
+run_oas_in "$FIXTURE_REPO" "${SPAWN_ARGS[@]}" > "$EVIDENCE/oas-spawn.json"
 INSTANCE_HOME="$(json_value "$EVIDENCE/oas-spawn.json" home)"
 INSTANCE_NAME="$(json_value "$EVIDENCE/oas-spawn.json" instance)"
 [[ -d "$INSTANCE_HOME" ]] || fail "OAS did not create the instance home"
-python3 - "$EVIDENCE/oas-spawn.json" "$INSTANCE_HOME/instance.json" "$ADDRESS" "$DID_AW" "$TEAM_ID" "$PRINCIPAL_HOME" "$PRINCIPAL_DIR" "$CREDENTIALS" "$STATE" <<'PY'
-import json, sys
-spawn_path, meta_path, address, stable, team, home, principal, credentials, state = sys.argv[1:]
+python3 - "$EVIDENCE/oas-spawn.json" "$INSTANCE_HOME/instance.json" "$ADDRESS" "$DID_AW" "$TEAM_ID" "$PRINCIPAL_HOME" "$PRINCIPAL_DIR" "$CREDENTIALS" "$STATE" "$MODE" "$PI_LAUNCH_PATH" "$PI_MODEL" <<'PY'
+import json, shlex, sys
+spawn_path, meta_path, address, stable, team, home, principal, credentials, state, mode, pi_path, pi_model = sys.argv[1:]
 spawn = json.load(open(spawn_path, encoding="utf-8"))
 if spawn.get("schemaVersion") == 1:
     spawn = spawn["result"]
 assert spawn.get("warnings", []) == []
+assert spawn["launched"] is (mode == "resident-pi"), spawn
 meta = json.load(open(meta_path, encoding="utf-8"))
 binding = meta["capabilityMeta"]["aweb.identity-attach"]["identity_binding"]
 assert binding["schema_version"] == 1
@@ -949,42 +1179,263 @@ assert binding["stable_id"] == stable
 assert binding["team_id"] == team
 assert binding["soul"] == "proof-resident"
 assert binding["store"] == {"home": home, "principal": principal, "credentials": credentials, "state": state}
+assert f"AWEB_IDENTITY_HOME='{credentials}'" in meta["command"] or f"AWEB_IDENTITY_HOME={credentials}" in meta["command"]
+if mode == "resident-pi":
+    assert meta["runtime"] == "pi", meta
+    assert meta["model"] == pi_model, meta
+    assert shlex.quote(pi_path) in meta["command"], (pi_path, meta["command"])
 PY
 assert_principal_unchanged after-spawn
 scan_instance after-spawn
 
-echo "=== Use the attached principal directly from the scaffolded instance ==="
-(
-  cd "$INSTANCE_HOME"
-  env -u AWEB_IDENTITY_HOME \
-    HOME="$PROOF_HOME" AW_CONFIG_PATH="$CONFIG_PATH" AWID_REGISTRY_URL="$AWID_URL" AWID_SKIP_DNS_VERIFY=1 \
-    "$AW_BIN" --identity-home "$CREDENTIALS" whoami --json
-) > "$EVIDENCE/instance-whoami.raw.json"
-normalize_json "$EVIDENCE/instance-whoami.raw.json" "$EVIDENCE/instance-whoami.json"
-python3 - "$EVIDENCE/instance-whoami.json" "$ADDRESS" "$DID_AW" <<'PY'
+if [[ "$MODE" == "resident-pi" ]]; then
+  echo "=== Observe the real resident identify itself, wake, and reply ==="
+  SESSION_FILE=""
+  READY_SEEN=0
+  for _ in $(seq 1 180); do
+    SESSION_COUNT="$(find "$PROOF_HOME/.pi/agent/sessions" -type f -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ')"
+    if [[ "$SESSION_COUNT" == "1" ]]; then
+      SESSION_FILE="$(find "$PROOF_HOME/.pi/agent/sessions" -type f -name '*.jsonl' 2>/dev/null | LC_ALL=C sort | head -n 1)"
+    fi
+    if run_observer_aw mail inbox --json --show-all > "$EVIDENCE/observer-ready-inbox.json" 2>/dev/null; then
+      if python3 - "$EVIDENCE/observer-ready-inbox.json" "$READY_SUBJECT" "$READY_BODY" "$ADDRESS" "$DID_AW" <<'PY'
+import json, sys
+path, subject, body, address, stable = sys.argv[1:]
+messages = json.load(open(path, encoding="utf-8")).get("messages", [])
+match = next((message for message in messages if message.get("subject") == subject and message.get("body") == body), None)
+assert match is not None
+assert match.get("from_address") == address, match
+assert match.get("from_stable_id") == stable, match
+assert match.get("verification_status") in ("verified", "verified_custodial"), match
+PY
+      then
+        READY_SEEN=1
+        break
+      fi
+    fi
+    sleep 2
+  done
+  [[ "$READY_SEEN" == "1" ]] || fail "real Pi resident did not send the ready observation"
+  [[ -n "$SESSION_FILE" ]] || fail "real Pi resident session JSONL was not found"
+  READINESS_OBSERVED=0
+  for _ in $(seq 1 90); do
+    if python3 "$PROOF_HELPER" verify-resident-readiness \
+      --session "$SESSION_FILE" \
+      --expected-address "$ADDRESS" \
+      --expected-stable-id "$DID_AW" \
+      --expected-ready-subject "$READY_SUBJECT" \
+      --expected-ready-body "$READY_BODY" \
+      --expected-session-cwd "$INSTANCE_HOME" \
+      --expected-provider "$PI_PROVIDER" \
+      --expected-model "$PI_MODEL_ID" \
+      --output "$EVIDENCE/resident-readiness-observation.json" \
+      2> "$EVIDENCE/resident-readiness-last-error.txt"; then
+      READINESS_OBSERVED=1
+      break
+    fi
+    sleep 1
+  done
+  [[ "$READINESS_OBSERVED" == "1" ]] || {
+    cat "$EVIDENCE/resident-readiness-last-error.txt" >&2 || true
+    fail "resident Pi session did not settle after its identity and ready-mail results"
+  }
+
+  run_observer_aw mail send --plaintext --to-address "$ADDRESS" \
+    --subject "$WAKE_SUBJECT" --body "$WAKE_BODY" --json > "$EVIDENCE/observer-wake-send.json"
+  WAKE_MESSAGE_ID="$(json_value "$EVIDENCE/observer-wake-send.json" message_id)"
+  WAKE_CONVERSATION_ID="$(json_value "$EVIDENCE/observer-wake-send.json" conversation_id)"
+  [[ -n "$WAKE_MESSAGE_ID" && -n "$WAKE_CONVERSATION_ID" ]] || fail "observer wake send returned no message identity"
+
+  SESSION_OBSERVED=0
+  for _ in $(seq 1 180); do
+    if python3 "$PROOF_HELPER" verify-resident-session \
+      --session "$SESSION_FILE" \
+      --expected-address "$ADDRESS" \
+      --expected-stable-id "$DID_AW" \
+      --expected-message-id "$WAKE_MESSAGE_ID" \
+      --expected-wake-body "$WAKE_BODY" \
+      --expected-reply-body "$REPLY_BODY" \
+      --expected-ready-subject "$READY_SUBJECT" \
+      --expected-ready-body "$READY_BODY" \
+      --expected-session-cwd "$INSTANCE_HOME" \
+      --expected-provider "$PI_PROVIDER" \
+      --expected-model "$PI_MODEL_ID" \
+      --output "$EVIDENCE/resident-session-observation.json" \
+      2> "$EVIDENCE/resident-session-last-error.txt"; then
+      SESSION_OBSERVED=1
+      break
+    fi
+    sleep 2
+  done
+  [[ "$SESSION_OBSERVED" == "1" ]] || {
+    cat "$EVIDENCE/resident-session-last-error.txt" >&2 || true
+    fail "resident session did not contain identity, wake, and successful reply evidence"
+  }
+  cp "$SESSION_FILE" "$EVIDENCE/resident-session.jsonl"
+
+  REPLY_OBSERVED=0
+  for _ in $(seq 1 90); do
+    if run_observer_aw mail inbox --json --show-all > "$EVIDENCE/observer-reply-inbox.json" 2>/dev/null; then
+      if python3 - "$EVIDENCE/observer-reply-inbox.json" "$WAKE_CONVERSATION_ID" "$REPLY_BODY" "$ADDRESS" "$DID_AW" "$DID_KEY" "$EVIDENCE/resident-reply-observation.json" <<'PY'
+import json, sys
+path, conversation, body, address, stable, did_key, output = sys.argv[1:]
+messages = json.load(open(path, encoding="utf-8")).get("messages", [])
+match = next((message for message in messages if message.get("conversation_id") == conversation and message.get("body") == body), None)
+assert match is not None
+assert match.get("from_address") == address, match
+assert match.get("from_stable_id") == stable, match
+assert match.get("from_did") == did_key, match
+assert match.get("verification_status") in ("verified", "verified_custodial"), match
+projection = {key: match.get(key) for key in (
+    "message_id", "conversation_id", "from_alias", "from_address", "from_did",
+    "from_stable_id", "to_alias", "body", "verification_status",
+)}
+with open(output, "w", encoding="utf-8") as stream:
+    json.dump(projection, stream, indent=2, sort_keys=True)
+    stream.write("\n")
+PY
+      then
+        REPLY_OBSERVED=1
+        break
+      fi
+    fi
+    sleep 2
+  done
+  [[ "$REPLY_OBSERVED" == "1" ]] || fail "observer did not receive the resident's exact verified reply"
+  env -u TMUX TMUX_TMPDIR="$PROOF_TMUX_DIR" PATH="$TMUX_GUARD_DIR:$PATH" \
+    tmux list-panes -t "=$PROOF_TMUX_SESSION:=$INSTANCE_NAME" \
+      -F '#{pane_pid}|#{pane_current_command}|#{pane_dead}' > "$EVIDENCE/resident-pane.txt"
+  ps -axo pid=,ppid=,lstart=,command= > "$EVIDENCE/process-table-before-retire.txt"
+  python3 - "$EVIDENCE/resident-pane.txt" "$EVIDENCE/process-table-before-retire.txt" \
+    "$PI_LAUNCH_PATH" "$EVIDENCE/resident-processes.json" <<'PY'
+import json, os, re, sys
+pane_path, process_path, pi_path, output = sys.argv[1:]
+lines = [line for line in open(pane_path, encoding="utf-8").read().splitlines() if line]
+assert len(lines) == 1, lines
+pane_pid, command, dead = lines[0].split("|", 2)
+assert pane_pid.isdigit(), lines
+assert re.search(r"(?:^|/)(?:node|pi)$", command), lines
+assert dead == "0", lines
+processes = []
+for line in open(process_path, encoding="utf-8"):
+    parts = line.strip().split(None, 7)
+    if len(parts) != 8 or not parts[0].isdigit() or not parts[1].isdigit():
+        continue
+    processes.append({
+        "pid": int(parts[0]), "ppid": int(parts[1]),
+        "started": " ".join(parts[2:7]), "command": parts[7],
+    })
+by_parent = {}
+for process in processes:
+    by_parent.setdefault(process["ppid"], []).append(process)
+descendants = []
+stack = [int(pane_pid)]
+while stack:
+    parent = stack.pop()
+    for child in by_parent.get(parent, []):
+        descendants.append(child)
+        stack.append(child["pid"])
+hints = {pi_path, os.path.realpath(pi_path), "pi-coding-agent"}
+pi_processes = [
+    process for process in descendants
+    if any(hint and hint in process["command"] for hint in hints)
+]
+assert pi_processes, {"pane": lines, "descendants": descendants, "pi_path": pi_path}
+with open(output, "w", encoding="utf-8") as stream:
+    json.dump({
+        "pane_pid": int(pane_pid), "pane_current_command": command,
+        "descendants": descendants, "pi_processes": pi_processes,
+    }, stream, indent=2, sort_keys=True)
+    stream.write("\n")
+PY
+  FINAL_SESSION_COUNT="$(find "$PROOF_HOME/.pi/agent/sessions" -type f -name '*.jsonl' | wc -l | tr -d ' ')"
+  [[ "$FINAL_SESSION_COUNT" == "1" ]] || fail "proof Pi created $FINAL_SESSION_COUNT session files, expected exactly one"
+  [[ "$(find "$PROOF_HOME/.pi/agent/sessions" -type f -name '*.jsonl' -print -quit)" == "$SESSION_FILE" ]] \
+    || fail "proof Pi session file changed before retire"
+  cp "$INSTANCE_HOME/instance.json" "$EVIDENCE/resident-instance.json"
+
+  assert_principal_unchanged after-real-pi-session
+  scan_instance after-real-pi-session
+  capture_registry after-session
+  compare_registry_to_pre after-session
+else
+  echo "=== Use the attached principal directly from the scaffolded instance ==="
+  (
+    cd "$INSTANCE_HOME"
+    env -u AWEB_IDENTITY_HOME -u AWEB_PRINCIPAL -u AWEB_API_KEY -u AW_HOME \
+      HOME="$PROOF_HOME" AW_CONFIG_PATH="$CONFIG_PATH" AWEB_URL="$AWEB_URL" \
+      AWID_REGISTRY_URL="$AWID_URL" AWID_SKIP_DNS_VERIFY=1 AW_NO_UPDATE_CHECK=1 \
+      "$AW_BIN" --identity-home "$CREDENTIALS" whoami --json
+  ) > "$EVIDENCE/instance-whoami.raw.json"
+  normalize_json "$EVIDENCE/instance-whoami.raw.json" "$EVIDENCE/instance-whoami.json"
+  python3 - "$EVIDENCE/instance-whoami.json" "$ADDRESS" "$DID_AW" <<'PY'
 import json, sys
 identity = json.load(open(sys.argv[1], encoding="utf-8"))
 assert identity["address"] == sys.argv[2]
 assert identity["stable_id"] == sys.argv[3]
 PY
-assert_principal_unchanged after-direct-whoami
-scan_instance after-direct-whoami
+  assert_principal_unchanged after-direct-whoami
+  scan_instance after-direct-whoami
+fi
 
 echo "=== Retire through the ordinary production lifecycle ==="
 run_oas_in "$FIXTURE_REPO" retire "$INSTANCE_NAME" --json > "$EVIDENCE/oas-retire.json"
 [[ ! -e "$INSTANCE_HOME" ]] || fail "ordinary retire did not remove the disposable instance"
-python3 - "$EVIDENCE/oas-retire.json" "$ADDRESS" "$DID_AW" <<'PY'
+if [[ "$MODE" == "resident-pi" ]] && env -u TMUX TMUX_TMPDIR="$PROOF_TMUX_DIR" PATH="$TMUX_GUARD_DIR:$PATH" \
+  tmux list-windows -t "=$PROOF_TMUX_SESSION" -F '#{window_name}' 2>/dev/null | grep -F -x -q "$INSTANCE_NAME"; then
+  fail "ordinary retire left the resident tmux window running"
+fi
+python3 - "$EVIDENCE/oas-retire.json" "$ADDRESS" "$DID_AW" "$INSTANCE_NAME" <<'PY'
 import json, sys
 document = json.load(open(sys.argv[1], encoding="utf-8"))
 if document.get("schemaVersion") == 1:
     document = document["result"]
 assert document.get("warnings", []) == []
+assert document["retired"] == sys.argv[4], document
+assert document["removedDir"] is True, document
 meta = document["capabilityMeta"]["aweb.identity-attach"]
 assert meta["identity_binding"]["address"] == sys.argv[2]
 assert meta["identity_binding"]["stable_id"] == sys.argv[3]
 assert meta["identity_binding"]["cleanup_owner"] == "external"
 assert meta["retirement"] == {"action": "preserve_principal", "cleanup_owner": "external"}
 PY
+if [[ "$MODE" == "resident-pi" ]]; then
+  env -u TMUX TMUX_TMPDIR="$PROOF_TMUX_DIR" PATH="$TMUX_GUARD_DIR:$PATH" \
+    tmux list-windows -t "=$PROOF_TMUX_SESSION" -F '#{window_name}|#{window_panes}' \
+      > "$EVIDENCE/proof-windows-after-retire.txt"
+  [[ "$(cat "$EVIDENCE/proof-windows-after-retire.txt")" == "hq|1" ]] \
+    || fail "ordinary retire left unexpected proof-session window/pane topology"
+  PROCESS_GONE=0
+  for _ in $(seq 1 50); do
+    ps -axo pid=,ppid=,lstart=,command= > "$EVIDENCE/process-table-after-retire.txt"
+    if python3 - "$EVIDENCE/resident-processes.json" "$EVIDENCE/process-table-after-retire.txt" <<'PY'
+import json, sys
+snapshot_path, process_path = sys.argv[1:]
+snapshot = json.load(open(snapshot_path, encoding="utf-8"))
+current = {}
+for line in open(process_path, encoding="utf-8"):
+    parts = line.strip().split(None, 7)
+    if len(parts) == 8 and parts[0].isdigit():
+        current[int(parts[0])] = " ".join(parts[2:7])
+still_alive = [
+    process for process in snapshot["pi_processes"]
+    if current.get(process["pid"]) == process["started"]
+]
+assert not still_alive, still_alive
+PY
+    then
+      PROCESS_GONE=1
+      break
+    fi
+    sleep 0.2
+  done
+  [[ "$PROCESS_GONE" == "1" ]] || fail "captured Pi model process remained alive after ordinary retire"
+  TERMINAL_SESSION_COUNT="$(find "$PROOF_HOME/.pi/agent/sessions" -type f -name '*.jsonl' | wc -l | tr -d ' ')"
+  [[ "$TERMINAL_SESSION_COUNT" == "1" ]] || fail "terminal Pi session cardinality is $TERMINAL_SESSION_COUNT, expected one"
+  [[ "$(find "$PROOF_HOME/.pi/agent/sessions" -type f -name '*.jsonl' -print -quit)" == "$SESSION_FILE" ]] \
+    || fail "terminal Pi session is not the spawned run's session"
+  cp "$SESSION_FILE" "$EVIDENCE/resident-session.jsonl"
+fi
 assert_principal_unchanged after-retire
 capture_registry after-retire
 compare_registry_to_pre after-retire
@@ -1010,6 +1461,230 @@ PY
 assert_principal_unchanged after-gone-workspace-sweep
 capture_registry after-cleanup
 compare_registry_to_pre after-cleanup
+
+if [[ "$MODE" == "resident-pi" ]]; then
+  echo "=== Remove only the isolated proof session and verify every pre-existing session ==="
+  if ! remove_proof_tmux_session; then
+    KEEP=1
+    fail "isolated proof tmux session cleanup could not be verified"
+  fi
+  assert_default_tmux_topology_unchanged after \
+    || fail "pre-existing tmux session/window/pane topology changed"
+  rm -f "$PROOF_HOME/.pi/agent/auth.json"
+  [[ ! -e "$PROOF_HOME/.pi/agent/auth.json" ]] || fail "throwaway Pi model authentication copy remains"
+  git -C "$REPO_ROOT" diff --quiet && git -C "$REPO_ROOT" diff --cached --quiet \
+    || fail "aweb proof source changed during the run"
+  git -C "$OAS_ROOT" diff --quiet && git -C "$OAS_ROOT" diff --cached --quiet \
+    || fail "local OAS proof source changed during the run"
+  [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$SOURCE_SHA" ]] \
+    || fail "aweb source HEAD changed during the run"
+  [[ "$(git -C "$OAS_ROOT" rev-parse HEAD)" == "$OAS_SOURCE_SHA" ]] \
+    || fail "local OAS source HEAD changed during the run"
+  [[ "$(file_sha256 "$AW_BIN")" == "$AW_BIN_SHA" ]] \
+    || fail "built aw binary changed during the model run"
+  [[ "$(file_sha256 "$OAS_CLI")" == "$OAS_BIN_SHA" ]] \
+    || fail "OAS CLI binary changed during the model run"
+  [[ "$(file_sha256 "$OAS_ROOT/lib/core.mjs")" == "$OAS_CORE_SHA" ]] \
+    || fail "OAS core changed during the model run"
+  [[ "$(file_sha256 "$PI_LAUNCH_PATH")" == "$PI_BIN_SHA" ]] \
+    || fail "Pi executable changed during the model run"
+  [[ "$(file_sha256 "$PI_EXTENSION_DIR/dist/index.js")" == "$PI_EXTENSION_SHA" ]] \
+    || fail "built Pi extension changed during the model run"
+  python3 - "$EVIDENCE/provenance.json" "$SOURCE_SHA" "$AW_BIN" "$AW_BIN_SHA" \
+    "$OAS_ROOT" "$OAS_SOURCE_SHA" "$OAS_CLI" "$OAS_BIN_SHA" "$OAS_CORE_SHA" \
+    "$PI_LAUNCH_PATH" "$PI_BIN_SHA" "$PI_VERSION" "$PI_PROVIDER" "$PI_MODEL_ID" \
+    "$PI_EXTENSION_DIR/dist/index.js" "$PI_EXTENSION_SHA" "$EVIDENCE" <<'PY'
+import hashlib, json, os, sys
+(
+    output, source_sha, aw_path, aw_sha, oas_root, oas_sha, oas_bin, oas_bin_sha,
+    oas_core_sha, pi_path, pi_sha, pi_version, pi_provider, pi_model,
+    extension_path, extension_sha, evidence,
+) = sys.argv[1:]
+
+def sha256(path):
+    return hashlib.sha256(open(path, "rb").read()).hexdigest()
+
+document = {
+    "tracked_sources_clean_before_and_after": True,
+    "all_executable_and_extension_hashes_reverified_after_model_exit": True,
+    "aweb": {
+        "source_sha": source_sha,
+        "aw_binary_path": os.path.realpath(aw_path),
+        "aw_binary_sha256": aw_sha,
+    },
+    "oas": {
+        "source": "local-unpublished-clone",
+        "root": oas_root,
+        "source_sha": oas_sha,
+        "bin_path": oas_bin,
+        "bin_sha256": oas_bin_sha,
+        "core_sha256": oas_core_sha,
+        "published_reproducibility": False,
+        "tracking_task": "aweb-oas-aaaa.56",
+    },
+    "pi": {
+        "binary_path": os.path.realpath(pi_path),
+        "binary_sha256": pi_sha,
+        "version": pi_version,
+        "provider": pi_provider,
+        "model": pi_model,
+        "extension_path": extension_path,
+        "extension_sha256": extension_sha,
+    },
+    "run": {
+        "session_store_empty_before_spawn": True,
+        "spawn_result_sha256": sha256(os.path.join(evidence, "oas-spawn.json")),
+        "instance_metadata_sha256": sha256(os.path.join(evidence, "resident-instance.json")),
+        "session_jsonl_sha256": sha256(os.path.join(evidence, "resident-session.jsonl")),
+        "session_observation_sha256": sha256(os.path.join(evidence, "resident-session-observation.json")),
+        "receiver_observation_sha256": sha256(os.path.join(evidence, "resident-reply-observation.json")),
+        "pane_observation_sha256": sha256(os.path.join(evidence, "resident-pane.txt")),
+        "captured_model_processes_sha256": sha256(os.path.join(evidence, "resident-processes.json")),
+        "terminal_process_table_sha256": sha256(os.path.join(evidence, "process-table-after-retire.txt")),
+        "terminal_proof_window_topology_sha256": sha256(os.path.join(evidence, "proof-windows-after-retire.txt")),
+        "terminal_session_file_count": 1,
+        "captured_model_processes_gone_after_retire": True,
+    },
+}
+with open(output, "w", encoding="utf-8") as stream:
+    json.dump(document, stream, indent=2, sort_keys=True)
+    stream.write("\n")
+PY
+
+  python3 - "$REPORT" "$SOURCE_SHA" "$OAS_SOURCE_SHA" "$OAS_ROOT" "$ADDRESS" "$DID_AW" "$TEAM_ID" \
+    "$OBSERVER_ADDRESS" "$OBSERVER_DID_AW" "$OBSERVER_DID_KEY" "$AWEB_URL" "$AWID_URL" \
+    "$WAKE_MESSAGE_ID" "$WAKE_CONVERSATION_ID" "$EVIDENCE" <<'PY'
+import hashlib, json, os, sys
+(
+    report, source, oas_source, oas_root, address, stable, team,
+    observer_address, observer_stable, observer_did_key, aweb_url, awid_url,
+    wake_message, wake_conversation, evidence,
+) = sys.argv[1:]
+
+def load(name):
+    with open(os.path.join(evidence, name), encoding="utf-8") as stream:
+        return json.load(stream)
+
+def sha256(name):
+    return hashlib.sha256(open(os.path.join(evidence, name), "rb").read()).hexdigest()
+
+document = {
+    "schema": "aweb.oas-pi-resident-proof.v1",
+    "source_sha": source,
+    "provenance": load("provenance.json"),
+    "oas_subject": {
+        "source": "local-unpublished-clone",
+        "root": oas_root,
+        "sha": oas_source,
+        "published_oas_reproduces_launch_environment_contract": False,
+        "tracking_task": "aweb-oas-aaaa.56",
+    },
+    "stack": {
+        "loopback_only": True,
+        "postgres_tmpfs_verified": True,
+        "throwaway_principal": True,
+        "messaging": "server-readable-plaintext",
+    },
+    "principal": {"address": address, "stable_id": stable, "team_id": team},
+    "isolation_observation": {
+        "principal_created_in_proof": True,
+        "observer_created_in_proof": True,
+        "observer": {
+            "address": observer_address,
+            "stable_id": observer_stable,
+            "did_key": observer_did_key,
+        },
+        "team_created_in_proof": True,
+        "principal_create_sha256": sha256("create.json"),
+        "observer_create_sha256": sha256("observer-create.json"),
+        "team_create_sha256": sha256("team-create.json"),
+        "ambient_identity_home_scrubbed_before_attach": True,
+        "ambient_identity_selector_and_service_authority_scrubbed": True,
+        "explicit_aweb_origin": aweb_url,
+        "explicit_awid_registry": awid_url,
+    },
+    "broken_binding": {
+        "proof_step": {
+            "surface": "oas aweb-identity status",
+            "readiness": "needs_setup",
+            "message": "the selected attached identity could not be verified",
+            "identity_resources_created": False,
+            "instance_or_session_created": False,
+        },
+        "known_gap_observation": {
+            "surface": "oas spawn --no-launch",
+            "binding_warning_observed": True,
+            "binding_prevented_launch": False,
+            "why_no_process_was_created": "operator supplied --no-launch; not binding enforcement",
+            "enforcement_owner": "aweb-oas-aaaa.2",
+        },
+    },
+    "resident_observation": {
+        "production_entry": "ordinary oas spawn with launch",
+        "identity": load("resident-session-observation.json")["identity"],
+        "wake_message_id": wake_message,
+        "wake_conversation_id": wake_conversation,
+        "wake_observed_at": "resident Pi session custom_message",
+        "reply_observed_at": ["resident Pi bash tool call/result", "observer verified inbox"],
+        "resident_session_observation": load("resident-session-observation.json"),
+        "observer_reply_observation": load("resident-reply-observation.json"),
+        "resident_session_sha256": sha256("resident-session.jsonl"),
+    },
+    "retire_observation": {
+        "production_entry": "ordinary oas retire",
+        "cleanup_owner": "external",
+        "receipt": "preserve_principal",
+        "instance_removed": True,
+    },
+    "independent_observations": {
+        "registry_address_unchanged": True,
+        "registry_resolution_unchanged": True,
+        "did_log_verified_pre_post": True,
+        "principal_store_bytes_and_inodes_unchanged_after_session_and_retire": True,
+        "principal_inventory_sha256": {
+            "before_run": sha256("principal-pre.json"),
+            "after_session": sha256("principal-after-real-pi-session.json"),
+            "after_retire": sha256("principal-after-retire.json"),
+        },
+        "registry_record_sha256": {
+            "before_run": {
+                kind: sha256(f"registry-pre-{kind}.json") for kind in ("address", "resolve", "verify")
+            },
+            "after_session": {
+                kind: sha256(f"registry-after-session-{kind}.json") for kind in ("address", "resolve", "verify")
+            },
+            "after_retire": {
+                kind: sha256(f"registry-after-retire-{kind}.json") for kind in ("address", "resolve", "verify")
+            },
+        },
+        "instance_copy_hardlink_symlink_scan_passed_after_session": True,
+        "instance_runtime_state_allowed": load("instance-after-real-pi-session-scan.json")["allowed_runtime_state"],
+        "instance_after_session_scan_sha256": sha256("instance-after-real-pi-session-scan.json"),
+        "preexisting_tmux_session_window_pane_topology_unchanged": True,
+        "tmux_topology_before_sha256": sha256("tmux-topology-before.txt"),
+        "tmux_topology_after_sha256": sha256("tmux-topology-after.txt"),
+    },
+    "limitations": [
+        "no fail-closed hook admission",
+        "no restart/resume propagation",
+        "no lease/fencing/concurrency result",
+        "no E2EE result",
+        "no universal cannot-harm claim",
+        "launch-environment propagation was verified against the named local unpublished OAS clone, not published OAS",
+        "the proof observes one initial Pi session and one mail wake/reply on a loopback throwaway stack",
+    ],
+}
+with open(report, "w", encoding="utf-8") as stream:
+    json.dump(document, stream, indent=2, sort_keys=True)
+    stream.write("\n")
+PY
+  echo "PROOF PASSED"
+  echo "  report: $REPORT"
+  echo "  principal: $ADDRESS ($DID_AW)"
+  echo "  local OAS subject: $OAS_SOURCE_SHA"
+  echo "  pre-existing tmux session/window/pane topology: unchanged"
+  exit 0
+fi
 
 echo "=== Prepare two independent developers with the same local instance name ==="
 for developer_root in "$DEVELOPER_A_AGENTS_ROOT" "$DEVELOPER_B_AGENTS_ROOT"; do
@@ -1224,8 +1899,9 @@ CONTROLLER_DID="$(json_value "$VICTIM_INTENT" authority.controller_did)"
 set +e
 (
   cd "$ATTACKER_HOME"
-  env -u AWEB_IDENTITY_HOME HOME="$PROOF_HOME" AW_CONFIG_PATH="$CONFIG_PATH" \
-    AWID_REGISTRY_URL="$AWID_URL" AWID_SKIP_DNS_VERIFY=1 \
+  env -u AWEB_IDENTITY_HOME -u AWEB_PRINCIPAL -u AWEB_API_KEY -u AW_HOME \
+    HOME="$PROOF_HOME" AW_CONFIG_PATH="$CONFIG_PATH" AWEB_URL="$AWEB_URL" \
+    AWID_REGISTRY_URL="$AWID_URL" AWID_SKIP_DNS_VERIFY=1 AW_NO_UPDATE_CHECK=1 \
     "$AW_BIN" id team cleanup-local-provision \
       --operation-id "$ATTACKER_OPERATION" --team-id "$TEAM_ID" --name "$VICTIM_ALIAS" \
       --authority-identity-home "$AUTHORITY_HOME" --target-identity-home "$VICTIM_TARGET" \
