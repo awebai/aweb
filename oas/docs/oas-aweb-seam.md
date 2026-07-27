@@ -231,12 +231,29 @@ Do not compensate for any of this by pinning the rotatable `did:key`.
 
 ## Identity binding
 
-Declared explicitly, never inferred. Three modes, defined once here and
-described in full under *Binding modes* below:
+Selecting the aweb messaging capability for a configured team defaults ordinary
+spawn to a temporary team worker. The user-facing config contains no identity
+receipt vocabulary:
 
-- **`provision-disposable`** — mint for this instance; `cleanup_owner = instance`
+```yaml
+team:
+  name: example-engineering
+  id: example-engineering:example.com
+capabilities:
+  layers:
+    messaging:
+      capability: aweb.identity-attach
+      global:
+        enabled: true
+        settings: {}
+```
+
+The capability discovers the selected `aw` team controller and records the
+following modes internally:
+
+- **`provision-disposable`** — the default; mint for this instance; `cleanup_owner = instance`
 - **`provision-durable`** — create to outlive it; `cleanup_owner = external`
-- **`attach-existing`** — bind an existing principal; `cleanup_owner = external`
+- **`attach-existing`** — explicitly bind an existing principal; `cleanup_owner = external`
 
 There is no `none` mode. Selecting `messaging: none` in the deployment config
 already expresses that, and a second way to say the same thing is a second thing
@@ -245,26 +262,11 @@ to keep consistent.
 Inferring cleanup ownership from the presence of a `.aw` directory is rejected.
 That inference is the bug class that destroys durable identities.
 
-The attach-only walking skeleton is implemented by the
-`aweb.identity-attach` messaging capability under
+The `aweb.identity-attach` messaging capability lives under
 `oas/.agents/capabilities/owned/aweb-identity-attach`. Its ID is deliberately distinct from
-upstream OAS's destructive per-instance `oas.aweb` lifecycle. The messaging
-layer must select this capability explicitly, so capability discovery order
-cannot substitute one retire policy for the other:
-
-```yaml
-capabilities:
-  layers:
-    messaging:
-      capability: aweb.identity-attach
-      global:
-        enabled: true
-        settings:
-          identity_binding:
-            schema_version: 1
-            mode: attach
-            principal: <declaration-basename>
-```
+upstream OAS's destructive per-instance `oas.aweb` lifecycle. Explicit
+attach-existing settings remain an internal/development escape hatch; the
+ordinary team-selected path never asks a developer to write them.
 
 At the production `spawn` hook, it validates the selected declaration, resolves
 and rechecks the host store, and confirms that the credentials selected by

@@ -6,7 +6,7 @@
     "oas": ">=0.18.0"
   },
   "layer": "messaging",
-  "description": "EXPERIMENTAL / INTERNAL: bind existing principals or provision, reconcile, and clean disposable local-controller principals with explicit authority.",
+  "description": "EXPERIMENTAL: give ordinary team-selected instances temporary aweb workers by default, with safe attach and cleanup support.",
   "requires": [
     {
       "command": "aw",

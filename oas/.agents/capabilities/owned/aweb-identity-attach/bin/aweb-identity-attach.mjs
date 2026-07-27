@@ -69,8 +69,33 @@ function parseSettingsJSON(encoded, source) {
   return settings;
 }
 
+const CONFIGURED_TEAM_AUTHORITY = "team-controller";
+
+function configuredTeamID() {
+  const teamID = String(process.env.OAS_TEAM_ID || "").trim();
+  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(teamID)) {
+    throw new ReadinessIssue(
+      "needs_setup",
+      "the configured aweb team needs a canonical team id",
+      editConfigCommand(process.env.OAS_CONTEXT || process.cwd()),
+    );
+  }
+  return teamID;
+}
+
+function effectiveBindingSettings(settings) {
+  if (settings?.identity_binding != null) return validateBindingSettings(settings.identity_binding);
+  configuredTeamID();
+  return validateBindingSettings({
+    schema_version: 2,
+    mode: "provision-disposable",
+    minting_authority: CONFIGURED_TEAM_AUTHORITY,
+    minting_authority_path: "local-controller",
+  });
+}
+
 function parseBindingSettings() {
-  return validateBindingSettings(parseSettingsJSON(process.env.OAS_SETTINGS, "OAS_SETTINGS")?.identity_binding);
+  return effectiveBindingSettings(parseSettingsJSON(process.env.OAS_SETTINGS, "OAS_SETTINGS"));
 }
 
 class ReadinessIssue extends Error {
@@ -231,6 +256,25 @@ function parseActiveTeam(stdout, expectedTeamID) {
   }
 }
 
+function parseConfiguredTeamState(stdout, expectedTeamID) {
+  let state;
+  try {
+    state = JSON.parse(stdout);
+  } catch {
+    throw new Error("aw team list returned invalid JSON");
+  }
+  const active = state?.active_team === expectedTeamID
+    && Array.isArray(state.memberships)
+    && state.memberships.some((membership) => membership?.team_id === expectedTeamID && membership?.active === true);
+  if (!active) {
+    throw new ReadinessIssue(
+      "needs_setup",
+      `the configured team is not active in aw: ${expectedTeamID}`,
+      `aw team switch ${shellWord(expectedTeamID)}`,
+    );
+  }
+}
+
 function parseControllerDID(stdout) {
   let authority;
   try {
@@ -334,6 +378,64 @@ function resolveLocalControllerDID(instanceHome, teamID) {
   ));
 }
 
+function discoverConfiguredTeamAuthority(binding, { instanceHome, context, soul }) {
+  const teamID = configuredTeamID();
+  const identityHomeValue = process.env.AWEB_IDENTITY_HOME;
+  if (!identityHomeValue) {
+    throw new ReadinessIssue(
+      "needs_setup",
+      "the configured team needs a local controller selected in aw",
+      `aw team switch ${shellWord(teamID)}`,
+    );
+  }
+  let identityHome;
+  try {
+    identityHome = requiredAbsoluteDirectory(realpathSync(identityHomeValue), "selected aw identity home");
+  } catch {
+    throw new ReadinessIssue(
+      "needs_setup",
+      "the configured team controller is unavailable",
+      `aw team switch ${shellWord(teamID)}`,
+    );
+  }
+  const commandOptions = {
+    cwd: instanceHome,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 45000,
+    env: { ...process.env, AW_NO_UPDATE_CHECK: "1" },
+  };
+  let identity;
+  try {
+    identity = parseWhoami(execFileSync("aw", ["--identity-home", identityHome, "whoami", "--json"], commandOptions));
+    parseConfiguredTeamState(execFileSync(
+      "aw", ["--identity-home", identityHome, "id", "team", "list", "--json"], commandOptions,
+    ), teamID);
+  } catch (error) {
+    if (error instanceof ReadinessIssue) throw error;
+    throw new ReadinessIssue(
+      "needs_setup",
+      "the configured team controller could not be verified",
+      `aw team switch ${shellWord(teamID)}`,
+    );
+  }
+  const principal = CONFIGURED_TEAM_AUTHORITY;
+  const declarationPath = join(context, "oas", "agents", soul, "principals", `${principal}.yaml`);
+  return {
+    instanceHome,
+    soul,
+    declarationPath,
+    declaration: {
+      schema_version: 1,
+      address: identity.address,
+      stable_id: identity.stable_id,
+      team_id: teamID,
+      soul,
+    },
+    store: { credentials: identityHome },
+  };
+}
+
 function preflightBinding(binding, {
   instanceHome = process.env.OAS_HOME,
   context = process.env.OAS_CONTEXT,
@@ -351,6 +453,14 @@ function preflightBinding(binding, {
       "provision-durable is declared but not executable; durable minting authority belongs to aaaa.39",
       "Use the temporary-worker journey; do not attempt durable resident setup.",
     );
+  }
+  if (binding.minting_authority === CONFIGURED_TEAM_AUTHORITY) {
+    const authority = discoverConfiguredTeamAuthority(binding, { instanceHome, context, soul });
+    return {
+      binding,
+      authority,
+      controllerDID: resolveLocalControllerDID(authority.instanceHome, authority.declaration.team_id),
+    };
   }
   if (binding.minting_authority_path === "hosted") {
     throw new ReadinessIssue(
@@ -387,12 +497,14 @@ function bindingReadiness(settings, { context, soul, settingsSource }) {
   }
   let binding;
   try {
-    binding = validateBindingSettings(settings?.identity_binding);
+    binding = effectiveBindingSettings(settings);
     const preflight = preflightBinding(binding, { instanceHome: context, context, soul });
     return {
       report: readinessReport({
         readiness: "ready",
-        message: "selected settings and declared authority passed the same non-mutating preflight used by spawn",
+        message: binding.minting_authority === CONFIGURED_TEAM_AUTHORITY
+          ? "configured team and local controller are ready for a temporary worker"
+          : "selected settings and declared authority passed the same non-mutating preflight used by spawn",
         nextAction: null,
         settingsSource,
       }),

@@ -146,6 +146,12 @@ function fixture({
   return { base, repo, agentsRoot, capability, declarationPath, principalHome, principal, credentials, state, corroborationHome, awLog, bin, awPath: join(bin, "aw"), env };
 }
 
+function configureCustomerTeamDefault(f, teamID = "test-team:example.test") {
+  write(join(f.repo, "oas-config.yaml"), `team:\n  name: test-team\n  id: ${teamID}\ncapabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global:\n        enabled: true\n        settings: {}\n`);
+  rmSync(join(f.repo, "oas"), { recursive: true, force: true });
+  f.env.AWEB_IDENTITY_HOME = f.credentials;
+}
+
 function digestedCleanupCorroboration(instanceID, receipt) {
   const record = { schema_version: 1, corroboration_class: "local-same-uid", instance_id: instanceID, receipt };
   return {
@@ -216,14 +222,14 @@ test("attach capability is explicitly internal and exposes native status", () =>
   assert.equal(manifest.capability, "aweb.identity-attach");
   assert.notEqual(manifest.capability, "oas.aweb");
   assert.equal(manifest.layer, "messaging");
-  assert.match(manifest.description, /EXPERIMENTAL.*INTERNAL/i);
+  assert.match(manifest.description, /EXPERIMENTAL.*temporary aweb workers by default/i);
   assert.equal(manifest.inject, "injects/aweb-identity-attach.md");
   assert.deepEqual(manifest.environment, ["AWEB_IDENTITY_HOME"], "manifest trust authority is the exact sole runtime contribution");
   assert.equal(manifest.commands.status, "bin/aweb-identity-attach.mjs status");
   assert.match(readFileSync(join(CAPABILITY_SOURCE, manifest.inject), "utf8"), /advisory.*cannot prevent OAS from launching/i);
 });
 
-test("native status reports an unconfigured capability as experimental without creating anything", () => {
+test("native status requires one team-config action without creating anything", () => {
   const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
   write(join(f.repo, "oas-config.yaml"), "capabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global: true\n");
   const before = readdirSync(join(f.agentsRoot, "developer", "instances"));
@@ -234,27 +240,91 @@ test("native status reports an unconfigured capability as experimental without c
     "admission", "capability", "identity", "identity_resources_created", "instance_or_session_created",
     "message", "next_action", "readiness", "release_stage", "schema_version", "settings_source",
   ]);
-  assert.equal(report.readiness, "experimental");
+  assert.equal(report.readiness, "needs_setup");
   assert.equal(report.identity, null);
   assert.equal(report.release_stage, "experimental-internal");
   assert.equal(report.identity_resources_created, false);
   assert.equal(report.instance_or_session_created, false);
   assert.equal(report.admission, "advisory-status-cannot-prevent-oas-launch");
-  assert.match(report.message, /aweb identity setup is required/);
+  assert.match(report.message, /configured aweb team needs a canonical team id/);
   assert.equal(typeof report.next_action, "string");
   assert.equal(report.next_action.length > 0, true);
   assert.equal(Array.isArray(report.next_action), false, "the result must give exactly one next action");
   assert.deepEqual(readdirSync(join(f.agentsRoot, "developer", "instances")), before);
 });
 
-test("production spawn surfaces preflight refusal without claiming fail-closed OAS admission", () => {
+test("team-selected capability defaults ordinary spawn to a working temporary worker without identity settings", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  configureCustomerTeamDefault(f);
+  const config = readFileSync(join(f.repo, "oas-config.yaml"), "utf8");
+  assert.doesNotMatch(config, /schema_version|identity_binding|minting_authority|minting_authority_path/);
+
+  const before = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  assert.equal(before.status, 0, before.stderr);
+  assert.deepEqual(JSON.parse(before.stdout), {
+    schema_version: 1,
+    capability: "aweb.identity-attach",
+    readiness: "ready",
+    identity: null,
+    release_stage: "experimental-internal",
+    settings_source: "resolved-oas-config:soul=developer",
+    identity_resources_created: false,
+    instance_or_session_created: false,
+    admission: "advisory-status-cannot-prevent-oas-launch",
+    message: "configured team and local controller are ready for a temporary worker",
+    next_action: null,
+  });
+
+  const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "customer-default", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
+  const receipt = meta.capabilityMeta["aweb.identity-attach"].identity_binding;
+  assert.equal(receipt.mode, "provision-disposable");
+  assert.equal(receipt.cleanup_owner, "instance");
+  const resource = meta.capabilityMeta["aweb.identity-attach"].provisioning;
+  assert.equal(resource.team_id, "test-team:example.test");
+  assert.equal(typeof resource.alias, "string");
+
+  const active = statusCommand(["--soul", "developer", "--json"], f.repo, {
+    ...f.env, PI_AGENT_HOME: spawned.home, OAS_HOME: "",
+  });
+  assert.equal(active.status, 0, active.stderr);
+  const identity = JSON.parse(active.stdout).identity;
+  assert.equal(identity.team_member_name, resource.alias);
+  assert.equal(identity.did, "did:key:z6MkiProvisionedWorker");
+  assert.equal(identity.type, "disposable");
+
+  const authorityKey = readFileSync(join(f.credentials, "signing.key"), "utf8");
+  const retired = parseSuccess(spawnSync(process.execPath, [oasCli(), "retire", spawned.instance, "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  }));
+  assert.equal(retired.capabilityMeta["aweb.identity-attach"].retirement.action, "cleanup_complete");
+  assert.equal(readFileSync(join(f.credentials, "signing.key"), "utf8"), authorityKey, "retire preserves the durable team authority");
+});
+
+test("doctor reports one team-switch action before a default spawn would fail", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  configureCustomerTeamDefault(f, "other-team:example.test");
+  const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  assert.equal(result.status, 1, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.readiness, "needs_setup");
+  assert.match(report.message, /configured team is not active/i);
+  assert.equal(report.next_action, "aw team switch 'other-team:example.test'");
+  assert.equal(Object.hasOwn(report, "next_actions"), false);
+  assert.equal(report.identity_resources_created, false);
+  assert.equal(report.instance_or_session_created, false);
+});
+
+test("production spawn surfaces missing-team refusal without claiming fail-closed OAS admission", () => {
   const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
   write(join(f.repo, "oas-config.yaml"), "capabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global: true\n");
   const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "unservable-is-advisory", "--no-launch", "--json"], {
     cwd: f.repo, env: f.env, encoding: "utf8",
   }));
   assert.equal(existsSync(spawned.home), true, "current advisory OAS still creates the instance scaffold");
-  assert.match(spawned.warnings[0], /identity_binding settings are required.*NOTHING CREATED by this capability/i);
+  assert.match(spawned.warnings[0], /configured aweb team needs a canonical team id.*NOTHING CREATED by this capability/i);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
   assert.equal(existsSync(join(f.principalHome, ".provisioning")), false);
