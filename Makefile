@@ -166,7 +166,7 @@ test-oas-proof-helpers:
 	python3 scripts/e2e/test_oas_tmux_safety.py
 
 test-oas-attached-principal-e2e: test-oas-proof-helpers
-	./scripts/e2e-oas-attached-principal-retire.sh
+	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" ./scripts/e2e-oas-attached-principal-retire.sh
 
 test-oas-pi-resident-e2e: test-oas-proof-helpers
 	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" PATH="$(CURDIR)/scripts/guard-bin:$$PATH" OAS_PROOF_MODE=resident-pi ./scripts/e2e-oas-attached-principal-retire.sh
