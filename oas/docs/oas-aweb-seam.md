@@ -751,26 +751,31 @@ passes with attached evidence.
 
 ### What is NOT yet proven, stated here rather than in a footnote
 
-**Nothing binds the launched runtime to the declared principal.** The spawn
-hook verifies the principal and persists the binding in capability metadata,
-emitting exactly `meta` and `brief`
-(`oas/.agents/capabilities/owned/aweb-identity-attach/bin/aweb-identity-attach.mjs:171-174`)
-and so contributing nothing to the launch. OAS accepts a hook `launch` map of
-runtime → extra **command arguments** — documented at `lib/core.mjs:854-857`,
-aggregated at `:893`, appended to the command at `:1457`. It has no hook
-**environment** map: the command's environment prefix is built from a fixed set
-of core variables at `lib/core.mjs:1467`, with no hook contribution. So the
-authority variable `AWEB_IDENTITY_HOME` (`cli/go/awconfig/identity_home.go:12`)
-is **not deterministically set by the hook or by OAS**. It is not "never set" — the
-launched process inherits an environment, and something in it may happen to
-carry that variable, which is precisely the ambient case described next.
+**The initial launched runtime is now deterministically bound to the resolved
+principal home on the `.29` implementation branches.** The spawn hook verifies
+the principal, persists the binding in capability metadata, and contributes
+exactly `env: { AWEB_IDENTITY_HOME: <canonical credentials root> }`. It does not
+duplicate the admission selector into its launch contribution. That is data
+minimization, not secrecy: settings and public identity metadata remain
+model-readable, the resolved path carries identity structure, and `whoami`
+necessarily reveals the selected identity.
 
-The precise claim is **no deterministic binding**, not "the model cannot act as
-the principal". The launch command does not scrub ambient identity state, so a
-session could still resolve *some* identity from the environment or working
-directory it inherits. That is arguably worse than none, because it can appear
-to work. What does not exist is any mechanism that makes it the *declared*
-principal.
+The upstream half was implemented and tested against the fresh OAS 0.18.6 clone
+plus the separately reviewed task-prompt separator commit. The capability
+manifest asks trust to approve the exact sole name `AWEB_IDENTITY_HOME`, and OAS
+rejects hook output outside that declaration. OAS validates a strict whole
+capability ID plus string-only, bounded, single-line values; confines names to
+the dotted vendor namespace; denies known core/bootstrap surfaces in depth;
+rejects capability collisions; sorts and shell-quotes assignments; and lets the
+resolved value override a wrong ambient value. Invalid contracts abort before
+`instance.json`, tmux, or model launch and remove uncommitted topology.
+Hook execution failures remain advisory and are still the separate critical-hook
+problem owned by `.2`.
+
+This claim is intentionally limited to the initial Pi or Claude process. The
+`--no-launch` path validates construction but has no runtime consumer. The
+fallback shell after process exit does not inherit command-scoped assignments,
+and OAS has no restart/resume consumer or replay decision yet.
 
 **Propagation alone would not have been enough, and that is why it is one of
 three.** Scope review — not a failure — found two further gaps behind it, both
@@ -789,10 +794,11 @@ in our own code, and **both are now closed**:
   chat surface routed through the selected principal *before* admission, each
   with its own divergent evidence.
 
-What remains of the three is propagation itself (`.29`), which needs an upstream
-change. So the gap is no longer "an attached agent could not act as its
-principal"; it is precisely that **nothing places the resolved identity home on
-the launched process**. Everything downstream of that variable now honours it.
+`.29` closes the remaining propagation gap in code: the adapter contributes the
+resolved root and the upstream kernel places it on both Pi and Claude initial
+processes. Everything downstream of that variable already honours it. Upstream
+acceptance is still a separate release fact; the implementation must not be
+restated as present in stock OAS 0.18.6 until its PR merges.
 
 `.17` exercises the real spawn/retire lifecycle through
 `oas spawn --no-launch`: kernel, hook dispatch, instance lifecycle and retire
@@ -843,13 +849,11 @@ So the established results are bounded **safety** results, and are exactly three
   This is a local same-UID accident/confused-deputy result, not hostile-model
   resistance (`.33`).
 
-None establishes the absence of *every* harm — not unsupported provision paths, not
-future code, not a route nobody has tested. Do not restate these as "cannot harm
-a principal". That it can *use* one is unproven, and stays unproven until some
-mechanism propagates the resolved identity home into the launched process
-deterministically. A validated hook environment map upstream is the proposed
-shape and the smallest one found; the requirement is the deterministic
-propagation, not that shape.
+None establishes the absence of *every* harm — not unsupported provision paths,
+not future code, not a route nobody has tested. Do not restate these as "cannot
+harm a principal". `.29` proves process-level propagation and the adapter's
+minimal output; the positive live wake/reply/non-destruction composition remains
+`.30` and must run a real model rather than inherit the no-launch safety result.
 
 Two related limits, for the same reason of not overstating by omission:
 

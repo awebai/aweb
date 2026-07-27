@@ -127,7 +127,7 @@ function fixture({
 
   const bin = join(base, "bin");
   const awLog = join(base, "aw-argv.jsonl");
-  write(join(bin, "pi"), "#!/bin/sh\nexit 0\n", 0o755);
+  write(join(bin, "pi"), "#!/bin/sh\nif [ -n \"${FAKE_PI_ENV_LOG:-}\" ]; then\n  printf '%s\\n%s\\n' \"${AWEB_IDENTITY_HOME:-unset}\" \"${AWEB_PRINCIPAL:-unset}\" > \"$FAKE_PI_ENV_LOG\"\nfi\nexit 0\n", 0o755);
   write(join(bin, "oas"), "#!/bin/sh\nexec \"$OAS_TEST_NODE\" \"$OAS_TEST_CLI\" \"$@\"\n", 0o755);
   write(join(bin, "aw"), `#!/usr/bin/env node\nimport { appendFileSync, readFileSync, writeFileSync } from "node:fs";\nappendFileSync(process.env.FAKE_AW_LOG, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");\nconst argv = process.argv.slice(2);\nif (argv.includes("delete") || argv.includes("reset") || argv.includes("init") || argv.includes("invite") || argv.includes("join")) process.exit(93);\nif (argv.at(-2) === "whoami" && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ address: "example.test/throwaway", stable_id: "did:aw:2ThrowawayStableId123" }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("team") && argv.includes("list") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ active_team: "test-team:example.test", memberships: [{ team_id: "test-team:example.test", active: true }] }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("import-request") && argv.at(-1) === "--json") {\n  process.stdout.write(JSON.stringify({ controller_did: "did:key:z6MkiLocalController123" }) + "\\n");\n  process.exit(0);\n}\nconst flag = (name) => argv[argv.indexOf(name) + 1];\nif (argv.includes("cleanup-local-provision")) {\n  const operation = flag("--operation-id");\n  if (process.env.FAKE_AW_CLEANUP_FAILURES) {\n    let remaining = Number(readFileSync(process.env.FAKE_AW_CLEANUP_FAILURES, "utf8"));\n    if (remaining > 0) {\n      writeFileSync(process.env.FAKE_AW_CLEANUP_FAILURES, String(remaining - 1));\n      process.stderr.write("simulated cleanup failure\\n");\n      process.exit(96);\n    }\n  }\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "cleanup-pending") process.exit(95);\n  process.stdout.write(JSON.stringify({\n    status: "complete", operation_id: operation, grants: "physically-absent", workspace: "soft-deleted", identity: "soft-deleted",\n    certificate: "revoked", credentials: "physically-absent", audit: "intentionally-retained-operation-record",\n  }) + "\\n");\n  process.exit(0);\n}\nif (argv.includes("provision-local")) {\n  const operation = flag("--operation-id");\n  const journal = JSON.parse(readFileSync(process.env.AWEB_PRINCIPAL_HOME + "/.provisioning/intents/" + operation + ".json", "utf8"));\n  if (journal.state !== "provisioning") process.exit(94);\n  process.stdout.write(JSON.stringify({\n    status: "provisioned", operation_id: operation, team_id: flag("--team-id"), alias: flag("--name"), name: flag("--name"),\n    identity_home: flag("--target-identity-home"), did_key: "did:key:z6MkiProvisionedWorker",\n    certificate_id: "certificate-provisioned", agent_id: "agent-provisioned", workspace_id: "workspace-provisioned",\n    registry_url: "https://registry.example.test", aweb_url: "https://aweb.example.test",\n  }) + "\\n");\n  process.exit(0);\n}\nprocess.exit(92);\n`, 0o755);
 
@@ -176,6 +176,25 @@ function allPaths(root) {
   return paths;
 }
 
+function assertRuntimeEnvironmentContribution(command, expectedIdentityHome) {
+  const escapedHome = expectedIdentityHome.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  assert.match(
+    command,
+    new RegExp(`AWEB_IDENTITY_HOME=.*${escapedHome}`),
+    "persisted initial-process command carries the exact verified identity home; this does not prove real-aw resolution or signing",
+  );
+  assert.deepEqual(
+    [...command.matchAll(/(?:^| )(AWEB_[A-Z0-9_]+)=/g)].map((match) => match[1]),
+    ["AWEB_IDENTITY_HOME"],
+    "adapter contributes exactly one AWEB runtime variable: the identity-home locator, not an admission selector",
+  );
+  assert.doesNotMatch(
+    command,
+    /AWEB_PRINCIPAL|principal=throwaway/,
+    "adapter command contribution excludes admission selectors; ambient environment inheritance is outside this assertion",
+  );
+}
+
 function assertNoInstanceIdentityMaterial(instanceHome, principal, credentialFile) {
   assert.equal(existsSync(join(instanceHome, ".aw")), false);
   const credentialStat = statSync(credentialFile);
@@ -199,6 +218,7 @@ test("attach capability is explicitly internal and exposes native status", () =>
   assert.equal(manifest.layer, "messaging");
   assert.match(manifest.description, /EXPERIMENTAL.*INTERNAL/i);
   assert.equal(manifest.inject, "injects/aweb-identity-attach.md");
+  assert.deepEqual(manifest.environment, ["AWEB_IDENTITY_HOME"], "manifest trust authority is the exact sole runtime contribution");
   assert.equal(manifest.commands.status, "bin/aweb-identity-attach.mjs status");
   assert.match(readFileSync(join(CAPABILITY_SOURCE, manifest.inject), "utf8"), /advisory.*cannot prevent OAS from launching/i);
 });
@@ -423,6 +443,9 @@ test("instance link containment includes an exact renamed link to the principal 
   );
 });
 
+// These command assertions require the working-clone hook-environment contract.
+// No published OAS implements it yet; the suite must run against the explicitly
+// pinned source checkout.
 test("real OAS attach spawn persists external ownership and ordinary retire preserves the principal", () => {
   const f = fixture();
   const cli = oasCli();
@@ -455,6 +478,22 @@ test("real OAS attach spawn persists external ownership and ordinary retire pres
     },
   });
   assert.match(readFileSync(join(spawned.home, "TASK.md"), "utf8"), /external cleanup ownership/);
+  assertRuntimeEnvironmentContribution(instanceMeta.command, f.credentials);
+  const runtimeEnvLog = join(f.base, "pi-runtime-env.log");
+  execFileSync("/bin/sh", ["-c", instanceMeta.command], {
+    cwd: spawned.home,
+    env: {
+      ...f.env,
+      AWEB_IDENTITY_HOME: join(f.base, "wrong-ambient-home"),
+      AWEB_PRINCIPAL: "ambient-selector",
+      FAKE_PI_ENV_LOG: runtimeEnvLog,
+    },
+  });
+  assert.deepEqual(
+    readFileSync(runtimeEnvLog, "utf8").trim().split("\n"),
+    [f.credentials, "ambient-selector"],
+    "actual initial Pi child receives the contributed home over ambient; ambient selector remains ambient and is not an adapter contribution",
+  );
   assertNoInstanceIdentityMaterial(spawned.home, f.principal, join(f.credentials, "signing.key"));
 
   const invocationsAtSpawn = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse);
@@ -499,6 +538,7 @@ test("real OAS attach-existing v2 emits an externally owned bound receipt", () =
   assert.equal(receipt.resource_identity.kind, "declared-principal");
   assert.equal(receipt.resource_identity.stable_id, "did:aw:2ThrowawayStableId123");
   assert.equal(receipt.resource_identity.reference, f.declarationPath);
+  assertRuntimeEnvironmentContribution(meta.command, f.credentials);
 
   const status = statusCommand(["--soul", "developer", "--json"], f.repo, {
     ...f.env, PI_AGENT_HOME: spawned.home, OAS_HOME: "",
@@ -627,6 +667,7 @@ test("real OAS emits a local-controller authority statement with indefinite gran
   assert.match(resource.alias, /^oas-[a-f0-9]{32}$/);
   assert.notEqual(resource.alias, operationID, "normalized member alias is not operation identity");
   assert.equal(resource.identity_home, join(f.principalHome, ".provisioning", "identities", operationID));
+  assertRuntimeEnvironmentContribution(meta.command, resource.identity_home);
   assert.equal(resource.did_key, "did:key:z6MkiProvisionedWorker");
 
   const status = statusCommand(["--soul", "developer", "--json"], f.repo, {
