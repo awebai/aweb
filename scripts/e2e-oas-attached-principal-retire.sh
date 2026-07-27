@@ -1400,7 +1400,7 @@ document = {
         "version": oas_version,
         "bin_oas_mjs_sha256": oas_cli_sha,
         "lib_core_mjs_sha256": oas_core_sha,
-        "executed_first_party_module_closure_sha256": closure_sha,
+        "executed_module_manifest_sha256": closure_sha,
         "git_top_level_equals_selected_root": True,
         "tracked_clean": True,
     },
