@@ -654,10 +654,11 @@ run_oas_in "$FIXTURE_REPO" spawn proof-resident --purpose real-delete-victim --n
 VICTIM_HOME="$(json_value "$EVIDENCE/provision-victim-spawn.json" home)"
 VICTIM_INSTANCE="$(json_value "$EVIDENCE/provision-victim-spawn.json" instance)"
 VICTIM_OPERATION="$(binding_operation "$VICTIM_HOME/instance.json")"
+VICTIM_INTENT="$PRINCIPAL_HOME/.provisioning/intents/$VICTIM_OPERATION.json"
 PI_AGENT_HOME="$VICTIM_HOME" run_oas_in "$FIXTURE_REPO" aweb-identity status --soul proof-resident --json > "$EVIDENCE/provision-victim-identity-status.json"
-python3 - "$EVIDENCE/provision-victim-identity-status.json" "$PRINCIPAL_HOME" <<'PY'
+python3 - "$EVIDENCE/provision-victim-identity-status.json" "$VICTIM_INTENT" "$PRINCIPAL_HOME" <<'PY'
 import json, sys
-status_path, principal_home = sys.argv[1:]
+status_path, intent_path, principal_home = sys.argv[1:]
 document = json.load(open(status_path, encoding="utf-8"))
 assert document["readiness"] == "ready", document
 assert document["identity"] == {
@@ -667,7 +668,9 @@ assert document["identity"] == {
     "type": "disposable",
     "cleanup_owner": "this-instance",
 }, document
-assert document["identity"]["team_member_name"], document
+intent = json.load(open(intent_path, encoding="utf-8"))
+assert document["identity"]["team_member_name"] == intent["alias"], (document, intent)
+assert document["identity"]["did"] == intent["resource"]["did_key"], (document, intent)
 assert document["identity"]["did"].startswith("did:key:z"), document
 encoded = json.dumps(document, sort_keys=True)
 assert principal_home not in encoded, document
@@ -683,7 +686,6 @@ scan_provisioned_material "$ATTACKER_OPERATION" attacker "$ATTACKER_HOME" "$VICT
 capture_provision_resource victim-before-forgery "$VICTIM_OPERATION" active
 capture_provision_resource attacker-before-forgery "$ATTACKER_OPERATION" active
 
-VICTIM_INTENT="$PRINCIPAL_HOME/.provisioning/intents/$VICTIM_OPERATION.json"
 ATTACKER_INTENT="$PRINCIPAL_HOME/.provisioning/intents/$ATTACKER_OPERATION.json"
 VICTIM_ALIAS="$(json_value "$VICTIM_INTENT" alias)"
 VICTIM_TARGET="$(json_value "$VICTIM_INTENT" identity_home)"
