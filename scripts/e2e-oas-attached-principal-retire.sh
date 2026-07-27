@@ -468,7 +468,11 @@ output.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="u
 PY
   run_observer_aw id team members --team-id "$TEAM_ID" --registry "$AWID_URL" --include-revoked --json > "$prefix-members.raw.json"
   normalize_json "$prefix-members.raw.json" "$prefix-members.json"
-  python3 "$PROOF_HELPER" snapshot-structure --root "$PRINCIPAL_HOME/.provisioning" --output "$prefix-provisioning.json"
+  if [[ -e "$PRINCIPAL_HOME/.provisioning" || -L "$PRINCIPAL_HOME/.provisioning" ]]; then
+    python3 "$PROOF_HELPER" snapshot-structure --root "$PRINCIPAL_HOME/.provisioning" --output "$prefix-provisioning.json"
+  else
+    printf '{"state":"absent"}\n' > "$prefix-provisioning.json"
+  fi
   python3 - "$REDIS_CONTAINER" "$prefix-redis.json" <<'PY'
 import json, pathlib, subprocess, sys
 container, output = sys.argv[1:]
