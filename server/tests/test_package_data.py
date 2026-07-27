@@ -86,7 +86,9 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "008_app_registry_grants.sql",
         "009_app_events.sql",
         "010_session_admission_leases.sql",
+        "010a_chat_message_reads_orphan_guard.sql",
         "011_chat_message_reads.sql",
+        "012_chat_message_reads_orphan_backfill.sql",
     ]
 
 

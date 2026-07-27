@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Migration compatibility
+
+- The immutable published `011_chat_message_reads.sql` migration can now run on
+  existing databases whose legacy read receipts outlived their chat participant.
+  An append-only pre-shim preserves the participant foreign key while filtering
+  those orphan backfill rows; migration 012 removes the temporary filter,
+  repeats the backfill with an explicit participant guard, and restores the
+  same final constraint set for fresh and already-011-applied databases.
+
 ### Server compatibility
 
 - The chat mark-read HTTP endpoint and both canonical/legacy MCP tools now

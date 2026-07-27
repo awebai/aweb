@@ -352,8 +352,9 @@ async def test_mark_read_batch_limit_accepts_1000_and_rejects_1001(aweb_cloud_db
 
 
 @pytest.mark.asyncio
-async def test_exact_read_migration_backfills_existing_watermarks(
-    shared_test_pool, tmp_path
+@pytest.mark.parametrize("published_011_already_applied", [False, True])
+async def test_exact_read_migration_skips_orphaned_receipts_on_both_upgrade_paths(
+    shared_test_pool, tmp_path, published_011_already_applied
 ):
     schema_manager = AsyncDatabaseManager(pool=shared_test_pool, schema=None)
     await schema_manager.execute("CREATE SCHEMA aweb")
@@ -363,7 +364,7 @@ async def test_exact_read_migration_backfills_existing_watermarks(
     staged_migrations = tmp_path / "migrations"
     staged_migrations.mkdir()
     for migration in sorted(migrations.glob("*.sql")):
-        if migration.name < "011_chat_message_reads.sql":
+        if migration.name <= "010_session_admission_leases.sql":
             shutil.copy(migration, staged_migrations / migration.name)
 
     migration_manager = AsyncMigrationManager(
@@ -377,6 +378,7 @@ async def test_exact_read_migration_backfills_existing_watermarks(
     session_id = uuid4()
     alice_did = "did:aw:upgrade-alice"
     bob_did = "did:aw:upgrade-bob"
+    orphan_did = "did:aw:hard-deleted-participant"
     message_ids = [uuid4(), uuid4(), uuid4()]
     base_time = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)
     await upgrade_db.execute(
@@ -408,32 +410,175 @@ async def test_exact_read_migration_backfills_existing_watermarks(
             f"message {index}",
             base_time + timedelta(seconds=index),
         )
+
+    if published_011_already_applied:
+        shutil.copy(
+            migrations / "011_chat_message_reads.sql",
+            staged_migrations / "011_chat_message_reads.sql",
+        )
+        await migration_manager.apply_pending_migrations()
+
     await upgrade_db.execute(
         """
         INSERT INTO {{tables.chat_read_receipts}}
             (session_id, did, last_read_message_id, last_read_at)
-        VALUES ($1, $2, $3, $4)
+        VALUES
+            ($1, $2, $4, $5),
+            ($1, $3, $6, $5)
         """,
         session_id,
         bob_did,
+        orphan_did,
         message_ids[1],
         base_time + timedelta(minutes=1),
+        message_ids[2],
     )
 
-    shutil.copy(
-        migrations / "011_chat_message_reads.sql",
-        staged_migrations / "011_chat_message_reads.sql",
+    pre_012_filenames = (
+        ("010a_chat_message_reads_orphan_guard.sql",)
+        if published_011_already_applied
+        else (
+            "010a_chat_message_reads_orphan_guard.sql",
+            "011_chat_message_reads.sql",
+        )
     )
-    await migration_manager.apply_pending_migrations()
+    for filename in pre_012_filenames:
+        shutil.copy(migrations / filename, staged_migrations / filename)
+    pre_012_error = None
+    try:
+        await migration_manager.apply_pending_migrations()
+    except Exception as exc:  # asserted so a published-011 FK failure is named
+        pre_012_error = exc
+    pre_012_error_detail = (
+        f"{pre_012_error!r}; cause={pre_012_error.__cause__!r}"
+        if pre_012_error is not None
+        else ""
+    )
+    assert pre_012_error is None, (
+        f"published 011 must complete with the orphan guard: {pre_012_error_detail}"
+    )
+
+    intermediate_constraints = await upgrade_db.fetch_all(
+        """
+        SELECT pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+        WHERE conrelid = 'aweb.chat_message_reads'::regclass
+        """
+    )
+    intermediate_definitions = {
+        row["definition"] for row in intermediate_constraints
+    }
+    assert any(
+        "FOREIGN KEY (session_id, did) REFERENCES aweb.chat_participants(session_id, did)"
+        in definition
+        for definition in intermediate_definitions
+    )
+    assert any(
+        "FOREIGN KEY (session_id, message_id) REFERENCES aweb.chat_messages(session_id, message_id)"
+        in definition
+        for definition in intermediate_definitions
+    )
+
+    if not published_011_already_applied:
+        rows_after_published_011 = await upgrade_db.fetch_all(
+            """
+            SELECT did, message_id
+            FROM {{tables.chat_message_reads}}
+            WHERE session_id = $1
+            """,
+            session_id,
+        )
+        assert {
+            row["message_id"]
+            for row in rows_after_published_011
+            if row["did"] == bob_did
+        } == set(message_ids[:2])
+        assert [
+            row for row in rows_after_published_011 if row["did"] == orphan_did
+        ] == []
+
+    shutil.copy(
+        migrations / "012_chat_message_reads_orphan_backfill.sql",
+        staged_migrations / "012_chat_message_reads_orphan_backfill.sql",
+    )
+    migration_error = None
+    migration_result = None
+    try:
+        migration_result = await migration_manager.apply_pending_migrations()
+    except Exception as exc:  # asserted below so an FK failure is named clearly
+        migration_error = exc
+    error_detail = (
+        f"{migration_error!r}; cause={migration_error.__cause__!r}"
+        if migration_error is not None
+        else ""
+    )
+    assert migration_error is None, f"orphan-safe backfill must complete: {error_detail}"
+    assert migration_result is not None
 
     backfilled = await upgrade_db.fetch_all(
         """
-        SELECT message_id
+        SELECT did, message_id
         FROM {{tables.chat_message_reads}}
-        WHERE session_id = $1 AND did = $2
-        ORDER BY read_at, message_id
+        WHERE session_id = $1
+        ORDER BY did, message_id
         """,
         session_id,
-        bob_did,
     )
-    assert {row["message_id"] for row in backfilled} == set(message_ids[:2])
+    assert {
+        row["message_id"] for row in backfilled if row["did"] == bob_did
+    } == set(message_ids[:2])
+    assert [row for row in backfilled if row["did"] == orphan_did] == []
+
+    receipt_count = await upgrade_db.fetch_val(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.chat_read_receipts}}
+        WHERE session_id = $1
+        """,
+        session_id,
+    )
+    assert receipt_count == 2
+
+    constraints = await upgrade_db.fetch_all(
+        """
+        SELECT conname, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+        WHERE conrelid = 'aweb.chat_message_reads'::regclass
+        ORDER BY conname
+        """
+    )
+    definitions = {row["definition"] for row in constraints}
+    assert any(
+        "FOREIGN KEY (session_id, did) REFERENCES aweb.chat_participants(session_id, did)"
+        in definition
+        for definition in definitions
+    )
+    assert any(
+        "FOREIGN KEY (session_id, message_id) REFERENCES aweb.chat_messages(session_id, message_id)"
+        in definition
+        for definition in definitions
+    )
+    message_constraints = await upgrade_db.fetch_all(
+        """
+        SELECT conname
+        FROM pg_constraint
+        WHERE conrelid = 'aweb.chat_messages'::regclass
+        """
+    )
+    message_constraint_names = {row["conname"] for row in message_constraints}
+    assert "chat_messages_session_message_unique" in message_constraint_names
+    assert "aapc_chat_messages_session_message_unique" not in message_constraint_names
+
+    trigger_count = await upgrade_db.fetch_val(
+        """
+        SELECT COUNT(*)
+        FROM pg_trigger
+        WHERE tgrelid = 'aweb.chat_message_reads'::regclass
+          AND NOT tgisinternal
+        """
+    )
+    assert trigger_count == 0
+    shim_function = await upgrade_db.fetch_val(
+        "SELECT to_regprocedure('aweb.aapc_skip_orphan_chat_message_read()')"
+    )
+    assert shim_function is None
