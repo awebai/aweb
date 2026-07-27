@@ -1447,7 +1447,7 @@ document = {
         "v1 has no admission lease or concurrent-use fencing",
         "attach itself performs no registry resolution or DID-log verification",
         "local cleanup corroboration is same-UID accident/confused-deputy evidence, not hostile-model resistance",
-        "refusal before-create is proven for append-retained AWID and SQL owner rows; local intent/grant files expose no monotonic allocation signal, so their claim is endpoint equality only",
+        "refusal mutation evidence is bounded to full owning-namespace endpoint equality; no per-writer known-positive monotonic control ran before the refusals, so the proof does not establish the temporal before-create claim",
         "zero local grant records after success does not independently prove that no copied bearer could be redeemed",
         "credential content scan excludes verbatim known file bytes but not encoded, split, derived, or newly generated bearer material",
     ],
