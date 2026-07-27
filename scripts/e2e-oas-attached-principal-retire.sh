@@ -1277,6 +1277,7 @@ run_oas_with_agents "$DEVELOPER_B_AGENTS_ROOT" "$FIXTURE_REPO" spawn proof-worke
 REVERSE_B_HOME="$(json_value "$EVIDENCE/reverse-b-spawn.json" home)"
 REVERSE_B_INSTANCE="$(json_value "$EVIDENCE/reverse-b-spawn.json" instance)"
 REVERSE_B_OPERATION="$(binding_operation "$REVERSE_B_HOME/instance.json")"
+capture_operation_grants reverse-both-active "$REVERSE_A_OPERATION=0" "$REVERSE_B_OPERATION=0"
 [[ "$REVERSE_A_INSTANCE" == "$REVERSE_B_INSTANCE" ]] || fail "reverse isolation did not retain duplicate local names"
 capture_provision_resource reverse-a-before-b-retire "$REVERSE_A_OPERATION" active
 capture_provision_resource reverse-b-before-b-retire "$REVERSE_B_OPERATION" active
@@ -1300,6 +1301,7 @@ run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT" "$FIXTURE_REPO" spawn proof-worke
 QUARANTINE_HOME="$(json_value "$EVIDENCE/quarantine-spawn.json" home)"
 QUARANTINE_INSTANCE="$(json_value "$EVIDENCE/quarantine-spawn.json" instance)"
 QUARANTINE_OPERATION="$(binding_operation "$QUARANTINE_HOME/instance.json")"
+capture_operation_grants quarantine-active "$QUARANTINE_OPERATION=0"
 seed_provision_lifecycle_artifacts "$QUARANTINE_OPERATION"
 TEAM_KEY_PATH="$(json_value "$EVIDENCE/team-create.json" team_key_path)"
 [[ -f "$TEAM_KEY_PATH" ]] || fail "throwaway controller key was not found for quarantine proof"
