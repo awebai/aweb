@@ -499,9 +499,9 @@ PY
 capture_operation_grants() {
   local label="$1"
   shift
-  python3 - "$PROOF_HOME/.config/aw/team-invites" "$EVIDENCE/grants-$label.json" "$@" <<'PY'
+  python3 - "$PROOF_HOME/.config/aw/team-invites" "$EVIDENCE/grants-$label.json" "$TEAM_ID" "$@" <<'PY'
 import hashlib, json, pathlib, sys
-root, output, *specs = sys.argv[1:]
+root, output, expected_team, *specs = sys.argv[1:]
 expected = {}
 for spec in specs:
     operation, count = spec.rsplit("=", 1)
@@ -522,6 +522,7 @@ if root_path.is_dir():
             "ephemeral": document.get("ephemeral"),
             "registry_url": document.get("registry_url"),
             "aweb_url": document.get("aweb_url"),
+            "bearer_present": bool(document.get("secret")),
             "bearer_sha256": hashlib.sha256(document.get("secret", "").encode()).hexdigest(),
         }
         if operation in rows:
@@ -531,6 +532,10 @@ if root_path.is_dir():
 assert unmatched == [], unmatched
 for operation, count in expected.items():
     assert len(rows[operation]) == count, (operation, rows[operation], count)
+    for row in rows[operation]:
+        assert row["operation_id"] == operation, row
+        assert row["team_id"] == expected_team, row
+        assert row["ephemeral"] is True and row["bearer_present"] is True, row
 pathlib.Path(output).write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 }
@@ -1383,7 +1388,6 @@ document = {
         "workspace": "fresh external git workspace",
         "acquisition": "on-disk acquired artifact and untrusted lock observed directly; owning endpoints unchanged, with no local monotonic writer signal to exclude create-then-erase",
         "configuration_consumption": "attach-existing divergence spawned successfully and persisted the predicted attach-existing binding before ordinary attach was restored",
-        "doctor_resolved": True,
         "onboarding": "explicit principal, team, declaration, config, and trust setup",
         "hosted_disposable_refusal_owning_endpoints_unchanged": True,
         "durable_refusal_owning_endpoints_unchanged": True,
@@ -1391,7 +1395,7 @@ document = {
         "duplicate_local_instance_names_both_succeeded": True,
         "duplicate_names_produced_distinct_operations_and_aliases": True,
         "successful_operations_had_zero_local_grant_records_at_local_owner": True,
-        "interrupted_pre_accept_grant_attributed_and_adopted": True,
+        "interrupted_pre_accept_observation": "one exhaustive local bearer record matched the operation and target team by content; the record has no grantee field by bearer design; same-operation re-entry left zero local records",
         "each_cleanup_changed_only_its_durable_operation_tuple": True,
         "cleanup_isolation_exercised_in_both_orders": True,
         "both_developers_completed_an_ordinary_retire": True,
