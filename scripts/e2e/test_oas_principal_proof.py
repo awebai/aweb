@@ -7,7 +7,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from oas_principal_proof import assert_unchanged, scan_instance, scan_sensitive_material, write_snapshot
+from oas_principal_proof import (
+    assert_unchanged,
+    capture_structure,
+    scan_instance,
+    scan_sensitive_material,
+    write_snapshot,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -63,6 +69,49 @@ class PrincipalProofHarnessTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_harness_preflight_refuses_aw_binary_override(self) -> None:
+        result = subprocess.run(
+            ["/bin/bash", "scripts/e2e-oas-attached-principal-retire.sh", "--preflight"],
+            cwd=REPO_ROOT,
+            env={"PATH": "/usr/bin:/bin", "AW_BIN": "/tmp/unattributed-aw"},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AW_BIN overrides are outside the declared execution subject", result.stderr)
+
+    def test_harness_preflight_refuses_external_node_preloads(self) -> None:
+        result = subprocess.run(
+            ["/bin/bash", "scripts/e2e-oas-attached-principal-retire.sh", "--preflight"],
+            cwd=REPO_ROOT,
+            env={"PATH": "/usr/bin:/bin", "NODE_OPTIONS": "--import=/tmp/external-preload.mjs"},
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NODE_OPTIONS preloads are outside the declared execution subject", result.stderr)
+
+    def test_bounded_branches_cannot_emit_broader_claim_wording(self) -> None:
+        paths = (
+            REPO_ROOT / "scripts/e2e-oas-attached-principal-retire.sh",
+            REPO_ROOT / "scripts/e2e/oas_principal_proof.py",
+            REPO_ROOT / "oas/.agents/capabilities/owned/aweb-identity-attach/PROVISIONING.md",
+        )
+        text = "\n".join(path.read_text(encoding="utf-8") for path in paths).lower()
+        for forbidden in (
+            "known non-secret",
+            "secret-free",
+            "no matching usable grant",
+            "pure acquisition",
+            "refused_before_create",
+            "refused before create",
+            "zero usable",
+            '"oas_kernel_sha"',
+        ):
+            self.assertNotIn(forbidden, text)
+
 
 class PrincipalProofFilesystemTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -98,6 +147,35 @@ class PrincipalProofFilesystemTests(unittest.TestCase):
         os.symlink(self.key, self.state / "linked-key")
         with self.assertRaisesRegex(ValueError, "principal store contains a symbolic link"):
             write_snapshot(str(self.principal), str(self.root / "unsafe-snapshot.json"))
+
+    def test_structure_capture_detects_same_byte_symlink_directory_and_type_changes(self) -> None:
+        target = self.root / "target"
+        target.mkdir()
+        key = target / "signing.key"
+        key.write_bytes(b"credential material")
+        before = capture_structure(str(target))
+
+        external = self.root / "external.key"
+        external.write_bytes(key.read_bytes())
+        key.unlink()
+        key.symlink_to(external)
+        (target / "added-directory").mkdir()
+        after = capture_structure(str(target))
+        self.assertNotEqual(before, after)
+        row = next(entry for entry in after if entry["path"] == "signing.key")
+        self.assertEqual(row["kind"], "symlink")
+        self.assertEqual(row["target"], str(external))
+        self.assertTrue(any(entry["path"] == "added-directory" for entry in after))
+
+    def test_structure_capture_detects_mode_change(self) -> None:
+        target = self.root / "mode-target"
+        target.mkdir()
+        key = target / "signing.key"
+        key.write_bytes(b"credential material")
+        before = capture_structure(str(target))
+        key.chmod(0o600)
+        after = capture_structure(str(target))
+        self.assertNotEqual(before, after)
 
     def test_scan_accepts_an_unrelated_instance(self) -> None:
         scan_instance(str(self.snapshot), str(self.instance("clean-instance")))

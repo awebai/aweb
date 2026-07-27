@@ -33,9 +33,14 @@ COMPOSE_FILE="$REPO_ROOT/docker-compose.e2e.yml"
 preflight() {
   [[ -d "$CLI_DIR" ]] || { echo "FAIL: CLI source not found at $CLI_DIR" >&2; return 1; }
   [[ -f "$PROOF_HELPER" ]] || { echo "FAIL: proof helper not found at $PROOF_HELPER" >&2; return 1; }
+  [[ "$AW_BIN" == "$CLI_DIR/aw" ]] || { echo "FAIL: AW_BIN overrides are outside the declared execution subject" >&2; return 1; }
   [[ -f "$COMPOSE_FILE" ]] || { echo "FAIL: compose file not found at $COMPOSE_FILE" >&2; return 1; }
   [[ -f "$CAPABILITY_SOURCE/oas.json" ]] || {
     echo "FAIL: attach capability not found at $CAPABILITY_SOURCE" >&2
+    return 1
+  }
+  [[ -z "${NODE_OPTIONS:-}" ]] || {
+    echo "FAIL: NODE_OPTIONS preloads are outside the declared execution subject" >&2
     return 1
   }
 }
@@ -70,19 +75,15 @@ print(pathlib.Path(sys.argv[1]).resolve(strict=True))
 PY
 )"
   [[ "$resolved_aw" == "$CLI_DIR/aw" ]] || fail "AW_BIN override/resolution escaped the declared aweb subject: $resolved_aw"
-  : > "$EVIDENCE/executed-esm-trace.log"
-  NODE_DEBUG=esm run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT" "$FIXTURE_REPO" doctor "$FIXTURE_REPO" --soul proof-worker --json \
-    > "$EVIDENCE/execution-doctor.json" 2>> "$EVIDENCE/executed-esm-trace.log"
-  NODE_DEBUG=esm run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT" "$FIXTURE_REPO" aweb-identity status --soul proof-worker --json \
-    > "$EVIDENCE/execution-capability-status.json" 2>> "$EVIDENCE/executed-esm-trace.log" || true
-  python3 - "$EVIDENCE/executed-esm-trace.log" "$EVIDENCE/execution-subject.json" "$OAS_ROOT" "$installed" "$CAPABILITY_SOURCE" "$OAS_CLI" <<'PY'
+  python3 - "$EVIDENCE/executed-esm-trace.log" "$EVIDENCE/execution-subject.json" "$OAS_ROOT" "$installed" "$CAPABILITY_SOURCE" "$OAS_CLI" "$resolved_aw" "$REPO_ROOT" <<'PY'
 import hashlib, json, pathlib, re, sys
 from urllib.parse import unquote, urlparse
-trace, output, oas_root, installed, source, oas_cli = sys.argv[1:]
+trace, output, oas_root, installed, source, oas_cli, aw_binary, repo_root = sys.argv[1:]
 roots = {
     "oas": pathlib.Path(oas_root).resolve(strict=True),
     "aweb-capability": pathlib.Path(installed).resolve(strict=True),
 }
+node_modules_root = roots["oas"] / "node_modules"
 source_root = pathlib.Path(source).resolve(strict=True)
 paths = set()
 for encoded in re.findall(r"file://[^\s'\]]+", pathlib.Path(trace).read_text(encoding="utf-8", errors="replace")):
@@ -90,18 +91,38 @@ for encoded in re.findall(r"file://[^\s'\]]+", pathlib.Path(trace).read_text(enc
     if path.is_file():
         paths.add(path.resolve(strict=True))
 rows = []
+unknown = []
 for path in sorted(paths):
-    owner = next((name for name, root in roots.items() if path == root or root in path.parents), None)
+    dependency = node_modules_root in path.parents
+    owner = "oas-third-party-dependency" if dependency else next(
+        (name for name, root in roots.items() if path == root or root in path.parents), None
+    )
     if owner is None:
+        unknown.append(str(path))
         continue
-    root = roots[owner]
+    root = node_modules_root if dependency else roots[owner]
     relative = path.relative_to(root).as_posix()
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if owner == "aweb-capability":
         counterpart = source_root / relative
         assert counterpart.is_file(), (path, counterpart)
         assert hashlib.sha256(counterpart.read_bytes()).hexdigest() == digest, (path, counterpart)
-    rows.append({"subject": owner, "relative_path": relative, "sha256": digest})
+    row = {"subject": owner, "resolved_path": str(path), "relative_path": relative, "sha256": digest}
+    if dependency:
+        components = pathlib.PurePosixPath(relative).parts
+        package_parts = components[:2] if components[0].startswith("@") else components[:1]
+        package_root = node_modules_root.joinpath(*package_parts)
+        metadata = json.loads((package_root / "package.json").read_text(encoding="utf-8"))
+        row.update(package=metadata["name"], version=metadata["version"], outside_first_party_subject=True)
+    rows.append(row)
+assert unknown == [], {"unclassified_loaded_file_modules": unknown}
+aw_path = pathlib.Path(aw_binary).resolve(strict=True)
+rows.append({
+    "subject": "aweb-cli",
+    "resolved_path": str(aw_path),
+    "relative_path": aw_path.relative_to(pathlib.Path(repo_root).resolve(strict=True)).as_posix(),
+    "sha256": hashlib.sha256(aw_path.read_bytes()).hexdigest(),
+})
 required = {("oas", "bin/oas.mjs"), ("oas", "lib/core.mjs"), ("aweb-capability", "bin/aweb-identity-attach.mjs")}
 assert required <= {(row["subject"], row["relative_path"]) for row in rows}, rows
 pathlib.Path(output).write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -132,6 +153,7 @@ EVIDENCE="$PROOF_ROOT/evidence"
 REPORT="${OAS_PROOF_REPORT:-${TMPDIR:-/tmp}/aweb-oas-attached-principal-proof-report.json}"
 KEEP="${KEEP_OAS_PROOF:-0}"
 mkdir -p "$PROOF_HOME" "$STAGING" "$PRINCIPAL_WORKSPACE" "$OBSERVER" "$PRINCIPAL_HOME" "$FIXTURE_REPO" "$AGENTS_ROOT" "$DEVELOPER_A_AGENTS_ROOT" "$DEVELOPER_B_AGENTS_ROOT" "$PROOF_BIN" "$EVIDENCE"
+: > "$EVIDENCE/executed-esm-trace.log"
 
 cleanup() {
   local status=$?
@@ -282,7 +304,7 @@ run_oas_with_agents() {
       PI_AGENTS_ROOT="$agents_root" \
       PI_AGENTS_TMUX_SESSION="oas-retire-proof-no-session" \
       PATH="$PROOF_BIN:$CLI_DIR:$PATH" \
-      node "$OAS_CLI" "$@"
+      NODE_DEBUG=esm node "$OAS_CLI" "$@" 2> >(tee -a "$EVIDENCE/executed-esm-trace.log" >&2)
   )
 }
 
@@ -428,19 +450,13 @@ if root.is_dir():
         rows.append({"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
 output.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
-  docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c \
-    "SELECT COALESCE(json_agg(row_to_json(rows) ORDER BY rows.agent_id)::text, '[]') FROM
-       (SELECT agent_id::text, team_id, did_key, did_aw, address, alias, human_name, agent_type, role, status,
-               created_at::text, deleted_at::text, inbound_mode, identity_scope
-          FROM aweb.agents WHERE team_id = '$TEAM_ID') rows;" > "$prefix-agents.raw.json"
-  normalize_json "$prefix-agents.raw.json" "$prefix-agents.json"
-  docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c \
-    "SELECT COALESCE(json_agg(row_to_json(rows) ORDER BY rows.workspace_id)::text, '[]') FROM
-       (SELECT workspace_id::text, team_id, agent_id::text, repo_id::text, alias, human_name, role, hostname,
-               workspace_path, workspace_type, focus_task_ref, focus_updated_at::text, last_seen_at::text,
-               created_at::text, updated_at::text, deleted_at::text
-          FROM aweb.workspaces WHERE team_id = '$TEAM_ID') rows;" > "$prefix-workspaces.raw.json"
-  normalize_json "$prefix-workspaces.raw.json" "$prefix-workspaces.json"
+  local table
+  for table in agents workspaces task_claims reservations; do
+    docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c \
+      "SELECT COALESCE(json_agg(row_to_json(rows) ORDER BY row_to_json(rows)::text)::text, '[]') FROM (SELECT * FROM aweb.$table) rows;" \
+      > "$prefix-sql-$table.raw.json"
+    normalize_json "$prefix-sql-$table.raw.json" "$prefix-sql-$table.json"
+  done
   python3 - "$PROOF_HOME/.config/aw/team-invites" "$prefix-grants.json" <<'PY'
 import hashlib, json, pathlib, sys
 root, output = map(pathlib.Path, sys.argv[1:])
@@ -452,11 +468,33 @@ output.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="u
 PY
   run_observer_aw id team members --team-id "$TEAM_ID" --registry "$AWID_URL" --include-revoked --json > "$prefix-members.raw.json"
   normalize_json "$prefix-members.raw.json" "$prefix-members.json"
+  python3 "$PROOF_HELPER" snapshot-structure --root "$PRINCIPAL_HOME/.provisioning" --output "$prefix-provisioning.json"
+  python3 - "$REDIS_CONTAINER" "$prefix-redis.json" <<'PY'
+import json, pathlib, subprocess, sys
+container, output = sys.argv[1:]
+def redis(*args):
+    return subprocess.check_output(["docker", "exec", container, "redis-cli", "--raw", *args], text=True).splitlines()
+rows = []
+for key in sorted(redis("KEYS", "*")):
+    kind = redis("TYPE", key)[0]
+    row = {"key": key, "type": kind, "ttl_ms": int(redis("PTTL", key)[0])}
+    if kind == "string": row["value"] = "\n".join(redis("GET", key))
+    elif kind == "set": row["value"] = sorted(redis("SMEMBERS", key))
+    elif kind == "hash":
+        values = redis("HGETALL", key)
+        row["value"] = sorted(zip(values[::2], values[1::2]))
+    elif kind == "zset": row["value"] = redis("ZRANGE", key, "0", "-1", "WITHSCORES")
+    elif kind == "list": row["value"] = redis("LRANGE", key, "0", "-1")
+    elif kind == "stream": row["value"] = redis("XRANGE", key, "-", "+")
+    else: raise AssertionError((key, kind))
+    rows.append(row)
+pathlib.Path(output).write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
 }
 
 assert_owning_state_same() {
   local before="$1" after="$2" label="$3" kind
-  for kind in intents agents workspaces grants members; do
+  for kind in intents sql-agents sql-workspaces sql-task_claims sql-reservations grants members provisioning redis; do
     cmp "$EVIDENCE/owning-$before-$kind.json" "$EVIDENCE/owning-$after-$kind.json" >/dev/null \
       || fail "$label mutated owning $kind state"
   done
@@ -644,21 +682,13 @@ PY
   normalize_json "$prefix-agent.raw.json" "$prefix-agent.json"
   docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT row_to_json(rows)::text FROM (SELECT * FROM aweb.workspaces WHERE workspace_id = '$workspace') rows;" > "$prefix-workspace.raw.json"
   normalize_json "$prefix-workspace.raw.json" "$prefix-workspace.json"
-  python3 - "$intent" "$target" "$prefix-files.json" <<'PY'
-import hashlib, json, pathlib, sys
-intent, target, output = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
-rows = [{"path": "intent", "sha256": hashlib.sha256(intent.read_bytes()).hexdigest()}]
-if target.is_dir():
-    for path in sorted(target.rglob("*")):
-        if path.is_file():
-            rows.append({"path": path.relative_to(target).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
-output.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-PY
+  cp "$intent" "$prefix-intent.json"
+  python3 "$PROOF_HELPER" snapshot-structure --root "$target" --output "$prefix-target.json"
 }
 
 assert_durable_operation_tuple_same() {
   local before="$1" after="$2" suffix
-  for suffix in member.json agent.json workspace.json files.json; do
+  for suffix in member.json agent.json workspace.json intent.json target.json; do
     cmp -s "$EVIDENCE/tuple-$before-$suffix" "$EVIDENCE/tuple-$after-$suffix" \
       || fail "durable operation tuple changed across isolated cleanup: $before -> $after ($suffix)"
   done
@@ -738,7 +768,7 @@ run_reconcile() {
     env -u OAS_EVENT -u OAS_META -u OAS_SETTINGS -u AWEB_IDENTITY_HOME \
       HOME="$PROOF_HOME" AW_CONFIG_PATH="$CONFIG_PATH" AWID_REGISTRY_URL="$AWID_URL" AWID_SKIP_DNS_VERIFY=1 \
       AWEB_PRINCIPAL_HOME="$PRINCIPAL_HOME" PATH="$PROOF_BIN:$CLI_DIR:$PATH" \
-      node "$OAS_CLI" aweb-identity reconcile "$@"
+      NODE_DEBUG=esm node "$OAS_CLI" aweb-identity reconcile "$@" 2> >(tee -a "$EVIDENCE/executed-esm-trace.log" >&2)
   )
 }
 
@@ -1347,21 +1377,22 @@ ADDRESS_SHA="$(file_sha256 "$EVIDENCE/registry-pre-address.json")"
 RESOLVE_SHA="$(file_sha256 "$EVIDENCE/registry-pre-resolve.json")"
 VERIFY_SHA="$(file_sha256 "$EVIDENCE/registry-pre-verify.json")"
 mkdir -p "$(dirname "$REPORT")"
-python3 - "$REPORT" "$SOURCE_SHA" "$OAS_SHA" "$OAS_PACKAGE_VERSION" "$OAS_CLI_SHA" "$OAS_CORE_SHA" "$EXECUTION_CLOSURE_SHA" "$AW_BINARY_SHA" "$NODE_VERSION" "$PYTHON_VERSION" "$ADDRESS" "$DID_AW" "$TEAM_ID" "$SNAPSHOT_SHA" "$ADDRESS_SHA" "$RESOLVE_SHA" "$VERIFY_SHA" "$EVIDENCE/registry-pre-address.json" "$EVIDENCE/registry-pre-resolve.json" "$EVIDENCE/registry-pre-verify.json" "$VICTIM_OPERATION" "$ATTACKER_OPERATION" "$QUARANTINE_OPERATION" <<'PY'
+python3 - "$REPORT" "$SOURCE_SHA" "$OAS_SHA" "$OAS_PACKAGE_VERSION" "$OAS_CLI_SHA" "$OAS_CORE_SHA" "$EXECUTION_CLOSURE_SHA" "$EVIDENCE/execution-subject.json" "$AW_BINARY_SHA" "$NODE_VERSION" "$PYTHON_VERSION" "$ADDRESS" "$DID_AW" "$TEAM_ID" "$SNAPSHOT_SHA" "$ADDRESS_SHA" "$RESOLVE_SHA" "$VERIFY_SHA" "$EVIDENCE/registry-pre-address.json" "$EVIDENCE/registry-pre-resolve.json" "$EVIDENCE/registry-pre-verify.json" "$VICTIM_OPERATION" "$ATTACKER_OPERATION" "$QUARANTINE_OPERATION" <<'PY'
 import json, sys
-(report, source, oas_source, oas_version, oas_cli_sha, oas_core_sha, closure_sha, aw_binary_sha,
- node_version, python_version, address, stable, team, snapshot_sha, address_sha, resolve_sha,
+(report, source, oas_source, oas_version, oas_cli_sha, oas_core_sha, closure_sha, closure_path,
+ aw_binary_sha, node_version, python_version, address, stable, team, snapshot_sha, address_sha, resolve_sha,
  verify_sha, address_path, resolve_path, verify_path, victim_operation, attacker_operation,
  quarantine_operation) = sys.argv[1:]
 address_observation = json.load(open(address_path, encoding="utf-8"))
 resolve_observation = json.load(open(resolve_path, encoding="utf-8"))
 verify_observation = json.load(open(verify_path, encoding="utf-8"))
+execution_modules = json.load(open(closure_path, encoding="utf-8"))
 document = {
     "schema": "aweb.oas-principal-lifecycle-proof.v3",
     "source_sha": source,
     "source_tracked_clean": True,
-    "oas_kernel_sha": oas_source,
     "oas_subject": {
+        "git_sha": oas_source,
         "version": oas_version,
         "bin_oas_mjs_sha256": oas_cli_sha,
         "lib_core_mjs_sha256": oas_core_sha,
@@ -1373,7 +1404,7 @@ document = {
         "aw_binary_sha256": aw_binary_sha,
         "node_version_outside_first_party_subject": node_version,
         "python_version_outside_first_party_subject": python_version,
-        "first_party_paths_resolved_inside_declared_roots": True,
+        "resolved_execution_modules": execution_modules,
     },
     "stack": {"loopback_only": True, "postgres_tmpfs_verified": True},
     "principal": {"address": address, "stable_id": stable, "team_id": team, "throwaway": True},
@@ -1450,6 +1481,7 @@ document = {
         "refusal mutation evidence is bounded to full owning-namespace endpoint equality; no per-writer known-positive monotonic control ran before the refusals, so the proof does not establish the temporal before-create claim",
         "zero local grant records after success does not independently prove that no copied bearer could be redeemed",
         "credential content scan excludes verbatim known file bytes but not encoded, split, derived, or newly generated bearer material",
+        "the exact OAS Git subject is a local unpushed clone; this report does not claim reproduction from published OAS 0.18.6",
     ],
 }
 with open(report, "w", encoding="utf-8") as stream:

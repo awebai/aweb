@@ -120,7 +120,7 @@ authority. A 404 under an unrelated credential is not evidence.
 | aweb connect committed, response lost | operation target plus idempotent certificate connect | reconcile the same target and continue |
 | resource tuple journaled, before hook output | `prepared` | never auto-adopt into another instance; retire/operator cleanup |
 | binding bytes handed to OAS | `bound` | ordinary matching retire owns cleanup |
-| grant removal committed | local enumeration has no matching usable grant | continue cleanup |
+| grant removal committed | local enumeration has no matching grant record; copied-bearer usability is unobserved | continue cleanup |
 | workspace SQL delete committed, Redis cleanup failed / response lost | server returns retryable failure; the surviving exact-team provisioning authority re-enters the tombstone; one Redis Lua commit removes every accumulated set/alias entry before deleting coordinates | record soft deletion only after the server confirms post-commit cleanup |
 | certificate revoke committed, response lost | registry lists the certificate revoked | continue without a second destructive assumption |
 | credential removal interrupted | operation audit record plus remaining owned entries | remove remaining entries and re-read |
