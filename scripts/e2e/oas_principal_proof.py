@@ -96,10 +96,13 @@ def _scan_material(principal_snapshot_path: str, instance_value: str, *, allow_i
     principal_digests = {
         entry["sha256"] for entry in principal["entries"] if entry.get("kind") == "file"
     }
+    credential_suffixes = (".key", ".pem")
     principal_contents = [
         (principal_root / entry["path"]).read_bytes()
         for entry in principal["entries"]
-        if entry.get("kind") == "file" and entry.get("size", 0) > 0
+        if entry.get("kind") == "file"
+        and entry.get("size", 0) > 0
+        and (entry["path"] == "signing.key" or entry["path"].endswith(credential_suffixes))
     ]
     principal_inodes = {
         (entry["device"], entry["inode"])
