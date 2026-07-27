@@ -86,7 +86,7 @@ def assert_unchanged(root: str, expected_path: str) -> None:
         raise AssertionError(f"principal store changed:\n{diff}")
 
 
-def scan_instance(principal_snapshot_path: str, instance_value: str) -> None:
+def _scan_material(principal_snapshot_path: str, instance_value: str, *, allow_interaction_log: bool) -> None:
     principal = load_snapshot(principal_snapshot_path)
     principal_root = Path(principal["root"]).resolve(strict=True)
     instance_root = Path(instance_value).resolve(strict=True)
@@ -105,11 +105,20 @@ def scan_instance(principal_snapshot_path: str, instance_value: str) -> None:
     stack = [instance_root]
     while stack:
         path = stack.pop()
-        relative_parts = () if path == instance_root else path.relative_to(instance_root).parts
-        if ".aw" in relative_parts:
-            raise AssertionError(f"instance contains forbidden .aw path: {path}")
+        relative = "." if path == instance_root else path.relative_to(instance_root).as_posix()
+        relative_parts = () if relative == "." else Path(relative).parts
+        under_dot_aw = ".aw" in relative_parts
+        if under_dot_aw:
+            if not allow_interaction_log:
+                raise AssertionError(f"instance contains forbidden .aw path: {path}")
+            if relative not in (".aw", ".aw/interaction-log.jsonl"):
+                raise AssertionError(f"instance contains unexpected .aw path: {path}")
 
         info = path.lstat()
+        if under_dot_aw and stat.S_ISLNK(info.st_mode):
+            raise AssertionError(f"instance contains unexpected .aw path type: {path}")
+        if relative == ".aw" and allow_interaction_log and not stat.S_ISDIR(info.st_mode):
+            raise AssertionError(f"instance contains unexpected .aw path type: {path}")
         if stat.S_ISLNK(info.st_mode):
             target = Path(os.path.realpath(path))
             if _within_or_equal(principal_root, target):
@@ -128,6 +137,15 @@ def scan_instance(principal_snapshot_path: str, instance_value: str) -> None:
         raise AssertionError(f"instance contains unsupported entry: {path}")
 
 
+def scan_instance(principal_snapshot_path: str, instance_value: str) -> None:
+    _scan_material(principal_snapshot_path, instance_value, allow_interaction_log=False)
+
+
+def scan_sensitive_material(principal_snapshot_path: str, instance_value: str) -> None:
+    """Scan secrets/links while permitting only the known non-secret interaction log."""
+    _scan_material(principal_snapshot_path, instance_value, allow_interaction_log=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -144,6 +162,10 @@ def main() -> int:
     scan_parser.add_argument("--principal-snapshot", required=True)
     scan_parser.add_argument("--instance", required=True)
 
+    sensitive_parser = subparsers.add_parser("scan-sensitive-material")
+    sensitive_parser.add_argument("--principal-snapshot", required=True)
+    sensitive_parser.add_argument("--instance", required=True)
+
     args = parser.parse_args()
     if args.command == "snapshot":
         write_snapshot(args.root, args.output)
@@ -151,6 +173,8 @@ def main() -> int:
         assert_unchanged(args.root, args.snapshot)
     elif args.command == "scan-instance":
         scan_instance(args.principal_snapshot, args.instance)
+    elif args.command == "scan-sensitive-material":
+        scan_sensitive_material(args.principal_snapshot, args.instance)
     else:  # pragma: no cover
         raise AssertionError(args.command)
     return 0

@@ -98,7 +98,7 @@ forbidden.
 | Task claims and reservations created during runtime | aweb PostgreSQL lifecycle cascade; proof seeds positive rows | **physically absent** |
 | Workspace and agent-heartbeat presence created during runtime | aweb Redis reverse-coordinate hashes accumulate every global/team/repo/branch/alias key and remain durable until explicit cleanup; lifecycle clears both workspace and local-agent IDs; pre-coordinate entries use a complete fallback scan | **physically absent** |
 | aweb API keys | local certificate connect creates none; AWID certificate above is the authorization grant | **not created** |
-| Messages/delivery records | no model session or message is created by this no-launch provisioning proof; historical messages are audit, not member authorization | **not created / not applicable to the provision operation** |
+| Messages/delivery records | proof CLI sends are queried by exact message id at the owning PostgreSQL store after worker cleanup; historical messages are audit, not member authorization | **intentionally retained audit; not authorization residue** |
 | Hosted organization membership | not created on the local-controller path | **physically absent / not applicable** |
 | Target `workspace.yaml`, `teams.yaml`, certificate files, context | owned credential tree | **physically absent** |
 | `provision-operation.json` | external target audit record | **intentionally retained audit** |
@@ -188,7 +188,10 @@ secondary remains as a positive control, asserts both
 external journals terminal `complete`, and
 snapshots each provisioned credential tree before scanning both instance homes
 and the controlled repository by names, digests, symlink target, and device/inode
-for copies or hardlinks. It exchanges real plaintext mail in both directions, retargets one
+for copies or hardlinks. After exchanging real plaintext mail in both directions,
+it repeats the sensitive-material scan while structurally allowing only the
+expected non-secret `.aw/interaction-log.jsonl`, then queries both exact message
+ids at the owning PostgreSQL store after worker cleanup. It retargets one
 instance-side receipt at the other operation, proves the exact corroboration
 refusal leaves both real rows and certificates active, then proves ordinary
 authorized retire and the native exact-operation command produce AWID

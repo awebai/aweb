@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from oas_principal_proof import assert_unchanged, scan_instance, write_snapshot
+from oas_principal_proof import assert_unchanged, scan_instance, scan_sensitive_material, write_snapshot
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -25,7 +25,14 @@ class PrincipalProofHarnessTests(unittest.TestCase):
         for required in (
             'install "$CAPABILITY_SOURCE" --dir "$FIXTURE_REPO"',
             'doctor "$FIXTURE_REPO" --soul proof-worker',
-            'fail "$refused_mode refusal mutated an owning authority"',
+            'assert_owning_state_same refusal-before "refusal-after-$refused_mode"',
+            'assert_pre_activation_state',
+            'assert_worker_doctor_state',
+            'capture_operation_grants both-active',
+            'assert_operation_grant_isolation',
+            'assert_retained_messages',
+            'assert_clean_git_subject',
+            'scan_provisioned_sensitive_material',
             'independent developers did not exercise duplicate local instance names',
             'duplicate local names collapsed into one provisioning operation',
             'attacker-after-victim-retire',
@@ -107,6 +114,24 @@ class PrincipalProofFilesystemTests(unittest.TestCase):
         os.symlink(self.principal, instance / "ordinary-directory", target_is_directory=True)
         with self.assertRaisesRegex(AssertionError, "symlink resolves into principal store"):
             scan_instance(str(self.snapshot), str(instance))
+
+    def test_sensitive_scan_allows_only_the_expected_interaction_log_under_dot_aw(self) -> None:
+        instance = self.instance("interaction-instance")
+        interaction = instance / ".aw" / "interaction-log.jsonl"
+        interaction.parent.mkdir()
+        interaction.write_text('{"event":"mail"}\n', encoding="utf-8")
+        scan_sensitive_material(str(self.snapshot), str(instance))
+        (interaction.parent / "unexpected.json").write_text("not allowed\n", encoding="utf-8")
+        with self.assertRaisesRegex(AssertionError, "unexpected .aw path"):
+            scan_sensitive_material(str(self.snapshot), str(instance))
+
+    def test_sensitive_scan_still_rejects_principal_material_in_allowed_interaction_log(self) -> None:
+        instance = self.instance("tainted-interaction-instance")
+        interaction = instance / ".aw" / "interaction-log.jsonl"
+        interaction.parent.mkdir()
+        interaction.write_bytes(self.key.read_bytes())
+        with self.assertRaisesRegex(AssertionError, "principal file content"):
+            scan_sensitive_material(str(self.snapshot), str(instance))
 
 
 if __name__ == "__main__":
