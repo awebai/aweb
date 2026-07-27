@@ -408,7 +408,7 @@ function bindingReadiness(settings, { context, soul, settingsSource }) {
         missing
           ? "aweb identity setup is required"
           : durable
-            ? "durable resident provisioning is not available"
+            ? "durable resident provisioning is not configurable or available"
             : settings?.identity_binding?.mode === "attach-existing" || settings?.identity_binding?.mode === "attach"
               ? "the selected attached identity could not be verified"
               : "the selected aweb identity settings could not be verified",
