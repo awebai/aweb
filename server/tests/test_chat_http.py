@@ -5623,7 +5623,7 @@ async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_
 
 
 @pytest.mark.asyncio
-async def test_chat_history_and_exact_read_contract_for_alternate_participant_did(aweb_cloud_db, monkeypatch):
+async def test_chat_history_and_dual_read_contract_for_alternate_participant_did(aweb_cloud_db, monkeypatch):
     session_id = uuid4()
     message_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
@@ -5669,31 +5669,40 @@ async def test_chat_history_and_exact_read_contract_for_alternate_participant_di
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         history = await client.get(f"/v1/chat/sessions/{session_id}/messages")
-        old_read = await client.post(
+        published_client_read = await client.post(
             f"/v1/chat/sessions/{session_id}/read",
             json={"up_to_message_id": str(message_id)},
         )
-        unread_after_old_read = await client.get(
+        unread_after_published_client_read = await client.get(
             f"/v1/chat/sessions/{session_id}/messages",
             params={"unread_only": "true"},
         )
-        read = await client.post(
+        exact_read_retry = await client.post(
             f"/v1/chat/sessions/{session_id}/read",
             json={"message_ids": [str(message_id)]},
         )
+        both_shapes = await client.post(
+            f"/v1/chat/sessions/{session_id}/read",
+            json={
+                "up_to_message_id": str(message_id),
+                "message_ids": [str(message_id)],
+            },
+        )
+        neither_shape = await client.post(f"/v1/chat/sessions/{session_id}/read", json={})
 
     assert history.status_code == 200, history.text
     assert history.json()["messages"][0]["conversation_id"] == str(session_id)
     assert [item["body"] for item in history.json()["messages"]] == ["hello"]
-    assert old_read.status_code == 422, old_read.text
-    old_error = old_read.text
-    assert "up_to_message_id" in old_error
-    assert "upgrade the client" in old_error
-    assert "message_ids" in old_error
-    assert unread_after_old_read.status_code == 200, unread_after_old_read.text
-    assert [item["body"] for item in unread_after_old_read.json()["messages"]] == ["hello"]
-    assert read.status_code == 200, read.text
-    assert read.json()["messages_marked"] == 1
+    assert published_client_read.status_code == 200, published_client_read.text
+    assert published_client_read.json()["messages_marked"] == 1
+    assert unread_after_published_client_read.status_code == 200, unread_after_published_client_read.text
+    assert unread_after_published_client_read.json()["messages"] == []
+    assert exact_read_retry.status_code == 200, exact_read_retry.text
+    assert exact_read_retry.json()["messages_marked"] == 0
+    assert both_shapes.status_code == 422, both_shapes.text
+    assert "provide exactly one" in both_shapes.text
+    assert neither_shape.status_code == 422, neither_shape.text
+    assert "provide exactly one" in neither_shape.text
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Server compatibility
+
+- Chat mark-read now accepts exactly one of the deployed-client
+  `up_to_message_id` watermark or the upgraded-client `message_ids` list. This
+  keeps published aw, Claude channel, and Pi clients compatible with a
+  server-first rollout while preserving exact per-message read state for
+  upgraded clients.
+- The silent-loss race is fixed only for upgraded clients that send every
+  presented `message_ids` value. Older clients that send `up_to_message_id`
+  retain their existing range-resolution race because the server must infer
+  the read set from the watermark; this is their prior behavior, not a new
+  regression.
+
 ## v1.8.1
 
 ### awid/aweb separation
