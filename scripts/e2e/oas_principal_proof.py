@@ -121,7 +121,42 @@ def write_structure_snapshot(root_value: str, output_value: str) -> None:
     Path(output_value).write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _scan_material(principal_snapshot_path: str, instance_value: str, *, allow_interaction_log: bool) -> None:
+RUNTIME_STATE_MAX_BYTES = 1024 * 1024
+INTERACTION_LOG_KEYS = {
+    "ts", "kind", "message_id", "session_id", "conversation_id", "from", "to", "subject", "text"
+}
+RUNTIME_STATE_LEAVES = {".aw/interaction-log.jsonl", ".aw/channel-delivered-ids.json"}
+
+
+def _validate_runtime_state(path: Path, relative: str, encoded: bytes) -> None:
+    if len(encoded) > RUNTIME_STATE_MAX_BYTES:
+        raise AssertionError(f"runtime state exceeds 1 MiB: {path}")
+    try:
+        text = encoded.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise AssertionError(f"runtime state is not UTF-8: {path}") from error
+    if relative == ".aw/interaction-log.jsonl":
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                document = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise AssertionError(f"interaction log line {line_number} is not JSON: {path}") from error
+            if not isinstance(document, dict) or not set(document) <= INTERACTION_LOG_KEYS:
+                raise AssertionError(f"interaction log line {line_number} has unbounded shape: {path}")
+    elif relative == ".aw/channel-delivered-ids.json":
+        try:
+            document = json.loads(text)
+        except json.JSONDecodeError as error:
+            raise AssertionError(f"delivered-id store is not JSON: {path}") from error
+        if not isinstance(document, dict) or not all(
+            isinstance(key, str) and isinstance(value, str) for key, value in document.items()
+        ):
+            raise AssertionError(f"delivered-id store is not a string map: {path}")
+
+
+def _scan_material(principal_snapshot_path: str, instance_value: str, *, allow_runtime_state: bool) -> None:
     principal = load_snapshot(principal_snapshot_path)
     principal_root = Path(principal["root"]).resolve(strict=True)
     instance_root = Path(instance_value).resolve(strict=True)
@@ -131,14 +166,14 @@ def _scan_material(principal_snapshot_path: str, instance_value: str, *, allow_i
     principal_digests = {
         entry["sha256"] for entry in principal["entries"] if entry.get("kind") == "file"
     }
-    credential_suffixes = (".key", ".pem")
-    principal_contents = [
-        (principal_root / entry["path"]).read_bytes()
-        for entry in principal["entries"]
-        if entry.get("kind") == "file"
-        and entry.get("size", 0) > 0
-        and (entry["path"] == "signing.key" or entry["path"].endswith(credential_suffixes))
-    ]
+    principal_contents: set[bytes] = set()
+    for entry in principal["entries"]:
+        if entry.get("kind") != "file":
+            continue
+        content = (principal_root / entry["path"]).read_bytes()
+        for needle in (content, content.strip()):
+            if len(needle) >= 16:
+                principal_contents.add(needle)
     principal_inodes = {
         (entry["device"], entry["inode"])
         for entry in principal["entries"]
@@ -152,16 +187,16 @@ def _scan_material(principal_snapshot_path: str, instance_value: str, *, allow_i
         relative_parts = () if relative == "." else Path(relative).parts
         under_dot_aw = ".aw" in relative_parts
         if under_dot_aw:
-            if not allow_interaction_log:
+            if not allow_runtime_state:
                 raise AssertionError(f"instance contains forbidden .aw path: {path}")
-            if relative not in (".aw", ".aw/interaction-log.jsonl"):
+            if relative != ".aw" and relative not in RUNTIME_STATE_LEAVES:
                 raise AssertionError(f"instance contains unexpected .aw path: {path}")
 
         info = path.lstat()
-        if under_dot_aw and stat.S_ISLNK(info.st_mode):
-            raise AssertionError(f"instance contains unexpected .aw path type: {path}")
-        if relative == ".aw" and allow_interaction_log and not stat.S_ISDIR(info.st_mode):
-            raise AssertionError(f"instance contains unexpected .aw path type: {path}")
+        if relative == ".aw" and allow_runtime_state and not stat.S_ISDIR(info.st_mode):
+            raise AssertionError(f"runtime state root must be a real directory: {path}")
+        if relative in RUNTIME_STATE_LEAVES and not stat.S_ISREG(info.st_mode):
+            raise AssertionError(f"runtime state must be a regular file: {path}")
         if stat.S_ISLNK(info.st_mode):
             target = Path(os.path.realpath(path))
             if _within_or_equal(principal_root, target):
@@ -175,19 +210,23 @@ def _scan_material(principal_snapshot_path: str, instance_value: str, *, allow_i
                 raise AssertionError(f"instance contains a principal hardlink: {path}")
             encoded = path.read_bytes()
             digest = hashlib.sha256(encoded).hexdigest()
-            if digest in principal_digests or any(content in encoded for content in principal_contents):
+            if digest in principal_digests:
                 raise AssertionError(f"instance contains principal file content: {path} ({digest})")
+            if any(content in encoded for content in principal_contents):
+                raise AssertionError(f"runtime state embeds principal file bytes: {path} ({digest})")
+            if relative in RUNTIME_STATE_LEAVES:
+                _validate_runtime_state(path, relative, encoded)
             continue
         raise AssertionError(f"instance contains unsupported entry: {path}")
 
 
 def scan_instance(principal_snapshot_path: str, instance_value: str) -> None:
-    _scan_material(principal_snapshot_path, instance_value, allow_interaction_log=False)
+    _scan_material(principal_snapshot_path, instance_value, allow_runtime_state=False)
 
 
 def scan_sensitive_material(principal_snapshot_path: str, instance_value: str) -> None:
-    """Reject structural hazards and verbatim enumerated credential bytes in the interaction log."""
-    _scan_material(principal_snapshot_path, instance_value, allow_interaction_log=True)
+    """Validate bounded runtime-state leaves and reject verbatim principal-store byte sequences."""
+    _scan_material(principal_snapshot_path, instance_value, allow_runtime_state=True)
 
 
 def main() -> int:
