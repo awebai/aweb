@@ -481,7 +481,7 @@ def redis(*args):
 rows = []
 for key in sorted(redis("KEYS", "*")):
     kind = redis("TYPE", key)[0]
-    row = {"key": key, "type": kind, "ttl_ms": int(redis("PTTL", key)[0])}
+    row = {"key": key, "type": kind, "expire_at_ms": int(redis("PEXPIRETIME", key)[0])}
     if kind == "string": row["value"] = "\n".join(redis("GET", key))
     elif kind == "set": row["value"] = sorted(redis("SMEMBERS", key))
     elif kind == "hash":
