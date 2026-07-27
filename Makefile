@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-server test-awid test-cli test-channel test-channel-core test-channel-core-process-guard test-pi-extension check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
 	freshness check-go-vulnerability-audit check-node-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -42,6 +42,7 @@ help:
 	@echo "  test-channel-core Run channel-core tests"
 	@echo "  test-channel-core-process-guard Run the multi-process DeliveryStore guard (release path)"
 	@echo "  test-pi-extension Run pi-extension tests"
+	@echo "  check-oas-launch-environment-contract Verify the unreleased OAS seam dependency"
 	@echo "  freshness    Regenerate committed artifacts and fail on drift"
 	@echo "  check-node-audit Audit Node dependencies for known vulnerabilities"
 	@echo "  check-go-vulnerability-audit Audit Go dependencies (pinned toolchain)"
@@ -157,7 +158,10 @@ test-channel-core-process-guard:
 test-pi-extension:
 	cd pi-extension && npm test
 
-test-oas:
+check-oas-launch-environment-contract:
+	@OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node scripts/check-oas-launch-environment-contract.mjs
+
+test-oas: check-oas-launch-environment-contract
 	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node --test oas/test/*.test.mjs
 
 test-oas-proof-helpers:
