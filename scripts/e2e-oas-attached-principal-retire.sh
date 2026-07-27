@@ -1128,7 +1128,7 @@ if spawn.get("schemaVersion") == 1:
     spawn = spawn["result"]
 assert spawn["launched"] is False, spawn
 assert len(spawn.get("warnings", [])) == 1, spawn
-assert re.search(r"selected attached identity could not be verified.*NOTHING CREATED", spawn["warnings"][0], re.I), spawn
+assert re.search(r"missing\.yaml.*NOTHING CREATED", spawn["warnings"][0], re.I), spawn
 meta = json.load(open(sys.argv[2], encoding="utf-8"))
 assert "aweb.identity-attach" not in meta.get("capabilityMeta", {}), meta
 PY
