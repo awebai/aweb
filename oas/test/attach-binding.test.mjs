@@ -149,7 +149,8 @@ function fixture({
 function configureCustomerTeamDefault(f, teamID = "test-team:example.test") {
   write(join(f.repo, "oas-config.yaml"), `team:\n  name: test-team\n  id: ${teamID}\ncapabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global:\n        enabled: true\n        settings: {}\n`);
   rmSync(join(f.repo, "oas"), { recursive: true, force: true });
-  f.env.AWEB_IDENTITY_HOME = f.credentials;
+  cpSync(f.credentials, join(f.repo, ".aw"), { recursive: true });
+  delete f.env.AWEB_IDENTITY_HOME;
 }
 
 function digestedCleanupCorroboration(instanceID, receipt) {
@@ -258,6 +259,7 @@ test("team-selected capability defaults ordinary spawn to a working temporary wo
   configureCustomerTeamDefault(f);
   const config = readFileSync(join(f.repo, "oas-config.yaml"), "utf8");
   assert.doesNotMatch(config, /schema_version|identity_binding|minting_authority|minting_authority_path/);
+  assert.equal(f.env.AWEB_IDENTITY_HOME, undefined, "ordinary aw workspace state needs no hidden identity-home variable");
 
   const before = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
   assert.equal(before.status, 0, before.stderr);

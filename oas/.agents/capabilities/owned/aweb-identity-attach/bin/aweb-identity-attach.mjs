@@ -380,14 +380,7 @@ function resolveLocalControllerDID(instanceHome, teamID) {
 
 function discoverConfiguredTeamAuthority(binding, { instanceHome, context, soul }) {
   const teamID = configuredTeamID();
-  const identityHomeValue = process.env.AWEB_IDENTITY_HOME;
-  if (!identityHomeValue) {
-    throw new ReadinessIssue(
-      "needs_setup",
-      "the configured team needs a local controller selected in aw",
-      `aw team switch ${shellWord(teamID)}`,
-    );
-  }
+  const identityHomeValue = process.env.AWEB_IDENTITY_HOME || join(context, ".aw");
   let identityHome;
   try {
     identityHome = requiredAbsoluteDirectory(realpathSync(identityHomeValue), "selected aw identity home");
