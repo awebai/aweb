@@ -85,6 +85,22 @@ time — it will feel like stating the point clearly.
 round breaks a clean area" is a judgement; deciding it afterwards is a
 rationalisation.
 
+**Contract attack needs a terminating condition, and it is this: the goal is
+not an unattackable criterion but one whose RESIDUAL GAP IS STATED.** Any
+criterion can be attacked indefinitely — there is always another satisfier — so
+without this, review never converges and a good reviewer looks like an
+obstruction. Where a property cannot be observed with the authority available,
+the proof says what it observed, names what it did not, and bounds the claim.
+An unstated gap is the defect; a stated one is a result. A proof went four
+rounds under this rule and closed smaller and truer each time.
+
+**A bound may not exclude a surface the work itself touches.** Bounding is
+honest when it excludes something we have no specific reason to think matters.
+It is dishonest when it excludes precisely where the risk is — refusal evidence
+bounded to five namespaces while the same journey demonstrably writes to Redis
+is not a stated residual, it is a bound drawn around the hazard. Ask of every
+bound: does this exclude the place I would look if I suspected the claim?
+
 ## What green does not mean
 
 Before accepting any result, ask: *what artifact did this actually measure?*
