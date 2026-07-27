@@ -101,6 +101,37 @@ func TestMaterializeManagedSetUsesDeclarationAndPerSkillPathOrder(t *testing.T) 
 	}
 }
 
+func TestMaterializeLibraryProfilePayloadWarnsForShelfAssetsOutsideDeclaration(t *testing.T) {
+	target := t.TempDir()
+	files := withPayloadFileSHA([]LibraryProfilePayloadFile{
+		{Path: "profile.yaml", ContentUTF8: "id: reviewer\nname: Reviewer\nversion: 0.1.5\nmission: Review.\naccepted_work: [review]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\nartifacts:\n  - path: artifacts/review-template.md\n"},
+		{Path: "instructions.md", ContentUTF8: "Review carefully.\n"},
+		{Path: "artifacts/review-template.md", ContentUTF8: "# Delivered review template\n"},
+		{Path: "patterns/common-failure-patterns.md", ContentUTF8: "# Undeliverable lesson\n"},
+	})
+
+	result, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
+		TargetDir: target, ProfileRef: "reviewer", ProfileVersion: "0.1.5", RuntimeKind: "pi", Files: files,
+	})
+	if err != nil {
+		t.Fatalf("MaterializeLibraryProfilePayload: %v", err)
+	}
+	wantWarning := "library profile asset patterns/common-failure-patterns.md is not declared by profile.yaml and was not materialized (warning only)"
+	if strings.Join(result.Warnings, "\n") != wantWarning {
+		t.Fatalf("warnings=%q want %q", result.Warnings, wantWarning)
+	}
+	delivered, err := os.ReadFile(filepath.Join(target, "artifacts", "review-template.md"))
+	if err != nil {
+		t.Fatalf("open materialized declared artifact: %v", err)
+	}
+	if string(delivered) != "# Delivered review template\n" {
+		t.Fatalf("materialized artifact=%q", delivered)
+	}
+	if _, err := os.Lstat(filepath.Join(target, "patterns", "common-failure-patterns.md")); !os.IsNotExist(err) {
+		t.Fatalf("undeclared asset must remain unmaterialized: %v", err)
+	}
+}
+
 func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) {
 	target := t.TempDir()
 	_, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{

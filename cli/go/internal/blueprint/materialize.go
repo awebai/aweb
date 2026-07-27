@@ -32,6 +32,7 @@ type MaterializeResult struct {
 	SourceBlueprintDigest  string   `json:"source_blueprint_digest,omitempty"`
 	TargetDir              string   `json:"target_dir"`
 	FilesWritten           []string `json:"files_written"`
+	Warnings               []string `json:"warnings,omitempty"`
 }
 
 type materializedProfileRef struct {
@@ -452,7 +453,49 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	// not leak the synthetic one-profile wrapper digest into the home pin. Shelf
 	// and local callers that have a real upstream blueprint digest pass it here.
 	bp.Source.Digest = strings.TrimSpace(opts.BlueprintDigest)
-	return materializeLoadedProfile(bp, opts.ProfileRef, opts.TargetDir, opts.Force, opts.RuntimeKind, materializeProvenance{SourceBlueprint: hasSourceBlueprint, LibraryURL: opts.LibraryURL})
+	result, err := materializeLoadedProfile(bp, opts.ProfileRef, opts.TargetDir, opts.Force, opts.RuntimeKind, materializeProvenance{SourceBlueprint: hasSourceBlueprint, LibraryURL: opts.LibraryURL})
+	if err != nil {
+		return nil, err
+	}
+	profile, _ := findProfile(bp, opts.ProfileRef)
+	result.Warnings = undeclaredLibraryProfileAssetWarnings(bp, profile)
+	return result, nil
+}
+
+// Library may legitimately publish profile assets this consumer does not know
+// how to place, so this is deliberately diagnostic rather than a rejection.
+// Reporting the paths prevents a successful mint from being mistaken for local
+// delivery while leaving producer policy at the producer boundary.
+func undeclaredLibraryProfileAssetWarnings(bp *Blueprint, profile Profile) []string {
+	reachable := map[string]bool{
+		filepath.ToSlash(filepath.Join(profile.Path, "profile.yaml")): true,
+		profile.InstructionPath: true,
+	}
+	for _, artifact := range profile.Artifacts {
+		reachable[artifact.Path] = true
+	}
+	for _, skill := range profile.Skills {
+		skillName, err := skillNameFromPath(profile.ID, skill.Path)
+		if err != nil {
+			continue
+		}
+		for _, payloadPath := range skillPayloadPaths(bp.PayloadFiles, profile.ID, skillName) {
+			reachable[payloadPath] = true
+		}
+	}
+	prefix := filepath.ToSlash(profile.Path) + "/"
+	paths := make([]string, 0)
+	for _, payloadPath := range bp.PayloadFiles {
+		if strings.HasPrefix(payloadPath, prefix) && !reachable[payloadPath] {
+			paths = append(paths, strings.TrimPrefix(payloadPath, prefix))
+		}
+	}
+	sort.Strings(paths)
+	warnings := make([]string, 0, len(paths))
+	for _, path := range paths {
+		warnings = append(warnings, fmt.Sprintf("library profile asset %s is not declared by profile.yaml and was not materialized (warning only)", path))
+	}
+	return warnings
 }
 
 func validateLibraryProfilePayload(profileRef, profileVersion, profileDigest string, files []LibraryProfilePayloadFile) ([]LibraryProfilePayloadFile, string, error) {

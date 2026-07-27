@@ -75,6 +75,8 @@ func TestRefreshPublicLibraryProfileNoOpsWhenDigestUnchanged(t *testing.T) {
 func TestRefreshPublicLibraryProfileMaterializesMissingManagedPathDespiteUnchangedDigest(t *testing.T) {
 	home := t.TempDir()
 	files := testLibraryProfilePayloadFiles()
+	files = append(files, blueprint.LibraryProfilePayloadFile{Path: "patterns/unconsumed.md", ContentUTF8: "unconsumed\n"})
+	files = withLibraryPayloadFileSHA(files)
 	digest := testLibraryProfilePayloadDigest(t, files)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/blueprints/aweb.engineering/profiles/coordinator" {
@@ -109,6 +111,9 @@ func TestRefreshPublicLibraryProfileMaterializesMissingManagedPathDespiteUnchang
 	}
 	if !strings.Contains(out.String(), "re-materialized") {
 		t.Fatalf("repair did not report written files: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "WARNING: library profile asset patterns/unconsumed.md is not declared by profile.yaml and was not materialized (warning only)") {
+		t.Fatalf("refresh output omitted unmaterialized-asset warning: %q", out.String())
 	}
 	if data, err := os.ReadFile(filepath.Join(home, "AGENTS.md")); err != nil || !strings.Contains(string(data), "Coordinate.") {
 		t.Fatalf("missing body was not materialized: %q err=%v", data, err)
@@ -290,6 +295,7 @@ func TestRefreshLibraryProfileReMaterializesFromLatestShelf(t *testing.T) {
 			files[i].ContentUTF8 = strings.Replace(files[i].ContentUTF8, "version: 0.1.0", "version: 0.2.0", 1)
 		}
 	}
+	files = append(files, blueprint.LibraryProfilePayloadFile{Path: "patterns/common-failure-patterns.md", ContentUTF8: "# Shelf-only lesson\n"})
 	files = withLibraryPayloadFileSHA(files)
 	newDigest := testLibraryProfilePayloadDigest(t, files)
 
@@ -334,6 +340,9 @@ func TestRefreshLibraryProfileReMaterializesFromLatestShelf(t *testing.T) {
 	}
 	if result.ProfileVersion != "0.2.0" || result.ProfileDigest != newDigest {
 		t.Fatalf("refresh did not pick up the latest shelf version: %+v", result)
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "patterns/common-failure-patterns.md") {
+		t.Fatalf("refresh did not report shelf-only asset: %+v", result.Warnings)
 	}
 
 	// ref.json is rewritten to the new shelf version.

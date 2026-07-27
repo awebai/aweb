@@ -70,6 +70,9 @@ func runTeamRefresh(cmd *cobra.Command, args []string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(result)
 	}
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(out, "WARNING: %s\n", warning)
+	}
 	if result.ProfileVersion == old.ProfileVersion && result.ProfileDigest == old.ProfileDigest && len(result.FilesWritten) == 0 {
 		fmt.Fprintf(out, "%s is already at the latest shelf version: %s@%s\n", name, result.ProfileRef, result.ProfileVersion)
 		return nil

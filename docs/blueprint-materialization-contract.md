@@ -188,6 +188,13 @@ Given a resolved `library-url`, `blueprint`, and `profile`:
      `.claude/skills/<name> -> ../../skills/<name>` after that skill's files;
      do not add a per-file `SKILL.md` symlink. Other runtimes do not receive
      this Claude-specific link. Artifact projection is unchanged.
+   - Report every profile payload asset not reachable through `instructions`, a
+     declared skill tree, or a declared artifact as an unmaterialized-asset
+     warning naming its profile-relative path. This is deliberately a warning,
+     not a rejection: a producer may legitimately publish content this consumer
+     does not place. It is downstream detection only and does not replace the
+     Library approval boundary's responsibility to reject undeliverable learning
+     proposals before minting.
 5. Write the pin (§6), recording the exact ordered set of paths written as the
    **managed set**.
 
