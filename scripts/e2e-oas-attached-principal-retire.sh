@@ -874,7 +874,12 @@ PY
 run_oas_in "$FIXTURE_REPO" spawn proof-resident --purpose config-divergence --no-launch --json > "$EVIDENCE/config-divergence-spawn.json"
 DIVERGENCE_HOME="$(json_value "$EVIDENCE/config-divergence-spawn.json" home)"
 DIVERGENCE_INSTANCE="$(json_value "$EVIDENCE/config-divergence-spawn.json" instance)"
-[[ "$(json_value "$DIVERGENCE_HOME/instance.json" capabilityMeta.aweb.identity-attach.identity_binding.mode)" == "attach-existing" ]] \
+DIVERGENCE_MODE="$(python3 - "$DIVERGENCE_HOME/instance.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["capabilityMeta"]["aweb.identity-attach"]["identity_binding"]["mode"])
+PY
+)"
+[[ "$DIVERGENCE_MODE" == "attach-existing" ]] \
   || fail "divergent attach-existing setting did not produce its predicted binding mode"
 run_oas_in "$FIXTURE_REPO" retire "$DIVERGENCE_INSTANCE" --json > "$EVIDENCE/config-divergence-retire.json"
 cp "$EVIDENCE/oas-config-attach.yaml" "$FIXTURE_REPO/oas-config.yaml"
