@@ -966,6 +966,10 @@ func markReadBestEffort(ctx context.Context, client *awid.Client, sessionID stri
 	req := &awid.ChatMarkReadRequest{MessageIDs: presentedIDs}
 	if _, err := client.ChatMarkRead(ctx, sessionID, req); err == nil {
 		return true, nil
+	} else if status, ok := awid.HTTPStatusCode(err); ok && status >= 400 && status < 500 {
+		// ChatMarkRead already performed the one compatibility fallback when
+		// eligible. Do not repeat malformed or rejected requests at this layer.
+		return false, fmt.Errorf("marking %d message(s) read: %w", len(presentedIDs), err)
 	}
 	timer := time.NewTimer(100 * time.Millisecond)
 	defer timer.Stop()

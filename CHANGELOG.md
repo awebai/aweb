@@ -25,6 +25,17 @@
   the read set from the watermark; this is their prior behavior, not a new
   regression.
 
+### CLI compatibility
+
+- The aw CLI now sends exact chat read IDs first and retries one rejected,
+  well-formed request with the legacy newest-ID watermark. Failed fallbacks
+  retain the original 4xx, while malformed IDs make only the authoritative
+  server request. On older servers the watermark deliberately retains legacy
+  range semantics and may mark unpresented messages before it; that trade
+  retires when the server accepts exact IDs.
+- Session-lease commands now turn a 404 from their lease routes into an explicit
+  requirement for aweb server 1.26.28 or later.
+
 ### Channel compatibility
 
 - Chat mark-read sends exact presented IDs on current servers. When a server
