@@ -16,6 +16,18 @@
   the read set from the watermark; this is their prior behavior, not a new
   regression.
 
+### Channel compatibility
+
+- Chat mark-read sends exact presented IDs on current servers. When a server
+  returns a 4xx for a well-formed exact request, the channel retries once per
+  chunk with the legacy watermark; malformed exact requests still surface the
+  server's original error without retrying, and a failed fallback preserves the
+  original 4xx. This lets auto-updated channels work with older self-hosted
+  servers regardless of validation-error wording. The fallback deliberately
+  retains old-client range semantics: an old server may mark unpresented
+  messages before the watermark read. That trade retires itself when the server
+  upgrades and accepts the exact-ID fast path.
+
 ## v1.8.1
 
 ### awid/aweb separation
