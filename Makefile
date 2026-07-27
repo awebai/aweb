@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-channel test-channel-core test-channel-core-process-guard test-pi-extension check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-server test-awid test-cli test-channel test-channel-core test-channel-core-process-guard test-pi-extension check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
 	freshness check-go-vulnerability-audit check-node-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -49,6 +49,7 @@ help:
 	@echo "  test-a2a     Run A2A conformance, gateway, AWID lookup, and CLI command gates"
 	@echo "  test-oas-proof-helpers Run attached-principal proof filesystem guard tests"
 	@echo "  test-oas-attached-principal-e2e Run the real local-stack attach/retire proof"
+	@echo "  test-oas-pi-resident-e2e Run the guarded real-Pi wake/reply/retire proof"
 	@echo "  test-tmux-guard Run the guarded tmux migration and PATH-alias regressions"
 	@echo "  test-e2e     Run the end-to-end user journey and its mutation guard (requires Docker)"
 	@echo "  test-federation-e2e Run the OSS federation journey (requires Docker)"
@@ -166,9 +167,13 @@ test-oas: check-oas-launch-environment-contract
 
 test-oas-proof-helpers:
 	python3 scripts/e2e/test_oas_principal_proof.py
+	python3 scripts/e2e/test_oas_tmux_safety.py
 
 test-oas-attached-principal-e2e: test-oas-proof-helpers
-	./scripts/e2e-oas-attached-principal-retire.sh
+	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" ./scripts/e2e-oas-attached-principal-retire.sh
+
+test-oas-pi-resident-e2e: test-oas-proof-helpers
+	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" PATH="$(CURDIR)/scripts/guard-bin:$$PATH" OAS_PROOF_MODE=resident-pi ./scripts/e2e-oas-attached-principal-retire.sh
 
 test-tmux-guard:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-migrate-agent-tmux.sh
