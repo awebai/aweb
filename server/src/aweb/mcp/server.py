@@ -313,11 +313,21 @@ def register_tools(
 
     @mcp.tool(
         name="mark_chat_read",
-        description="Mark the presented chat message IDs as read.",
+        description=(
+            "Mark chat messages read using up_to_message_id, message_ids, or both; "
+            "message_ids takes precedence."
+        ),
     )
-    async def mark_chat_read(conversation_id: str, message_ids: list[str]) -> str:
+    async def mark_chat_read(
+        conversation_id: str,
+        up_to_message_id: str | None = None,
+        message_ids: list[str] | None = None,
+    ) -> str:
         return await _chat_read_impl(
-            db_infra, session_id=conversation_id, message_ids=message_ids
+            db_infra,
+            session_id=conversation_id,
+            up_to_message_id=up_to_message_id,
+            message_ids=message_ids,
         )
 
     # -- Tasks --
@@ -646,11 +656,21 @@ def register_tools(
 
     @mcp.tool(
         name="chat_read",
-        description="Legacy compatibility alias for mark_chat_read. Prefer mark_chat_read.",
+        description=(
+            "Legacy compatibility alias for mark_chat_read. Accepts up_to_message_id, "
+            "message_ids, or both; message_ids takes precedence."
+        ),
     )
-    async def chat_read(session_id: str, message_ids: list[str]) -> str:
+    async def chat_read(
+        session_id: str,
+        up_to_message_id: str | None = None,
+        message_ids: list[str] | None = None,
+    ) -> str:
         return await _chat_read_impl(
-            db_infra, session_id=session_id, message_ids=message_ids
+            db_infra,
+            session_id=session_id,
+            up_to_message_id=up_to_message_id,
+            message_ids=message_ids,
         )
 
     @mcp.tool(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -27,9 +28,11 @@ class ToolCollector:
     def __init__(self) -> None:
         self.names: list[str] = []
         self.funcs: dict[str, object] = {}
+        self.descriptions: dict[str, str] = {}
 
     def tool(self, *, name: str, description: str):
         self.names.append(name)
+        self.descriptions[name] = description
 
         def decorator(func):
             self.funcs[name] = func
@@ -133,6 +136,113 @@ def test_mcp_tool_names_include_canonical_and_legacy_compatibility_aliases():
     }
     for name in expected | legacy:
         assert name in collector.names
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "session_parameter"),
+    (("mark_chat_read", "conversation_id"), ("chat_read", "session_id")),
+)
+async def test_mcp_read_tools_accept_old_new_and_expand_contract_shapes(
+    aweb_cloud_db,
+    monkeypatch,
+    tool_name,
+    session_parameter,
+):
+    alice_agent_id, _ = await _seed_team(aweb_cloud_db.aweb_db)
+    _patch_auth(monkeypatch, _auth(alice_agent_id))
+
+    session_id = uuid4()
+    first_message_id = uuid4()
+    exact_message_id = uuid4()
+    watermark_message_id = uuid4()
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+        VALUES ($1, 'alice', $2)
+        """,
+        session_id,
+        created_at,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+        VALUES ($1, 'did:key:alice', 'alice'), ($1, 'did:aw:bob', 'bob')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}}
+            (message_id, session_id, from_did, from_alias, body, created_at)
+        VALUES
+            ($2, $1, 'did:aw:bob', 'bob', 'first', $5),
+            ($3, $1, 'did:aw:bob', 'bob', 'exact only', $6),
+            ($4, $1, 'did:aw:bob', 'bob', 'watermark only', $7)
+        """,
+        session_id,
+        first_message_id,
+        exact_message_id,
+        watermark_message_id,
+        created_at + timedelta(minutes=1),
+        created_at + timedelta(minutes=2),
+        created_at + timedelta(minutes=3),
+    )
+
+    collector = ToolCollector()
+    register_tools(
+        collector,  # type: ignore[arg-type]
+        db_infra=DBInfra(aweb_cloud_db.aweb_db),
+        redis=None,
+        registry_client=object(),  # type: ignore[arg-type]
+    )
+    read_tool = collector.funcs[tool_name]
+    session_arg = {session_parameter: str(session_id)}
+
+    old_shape = json.loads(
+        await read_tool(  # type: ignore[operator]
+            **session_arg,
+            up_to_message_id=str(first_message_id),
+        )
+    )
+    new_shape = json.loads(
+        await read_tool(  # type: ignore[operator]
+            **session_arg,
+            message_ids=[str(exact_message_id)],
+        )
+    )
+    disagreeing_both = json.loads(
+        await read_tool(  # type: ignore[operator]
+            **session_arg,
+            up_to_message_id=str(watermark_message_id),
+            message_ids=[str(first_message_id)],
+        )
+    )
+    neither_shape = json.loads(await read_tool(**session_arg))  # type: ignore[operator]
+
+    read_rows = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT message_id::text AS message_id
+        FROM {{tables.chat_message_reads}}
+        WHERE session_id = $1
+        ORDER BY message_id
+        """,
+        session_id,
+    )
+
+    assert old_shape["messages_marked"] == 1
+    assert new_shape["messages_marked"] == 1
+    assert disagreeing_both["messages_marked"] == 0
+    assert {row["message_id"] for row in read_rows} == {
+        str(first_message_id),
+        str(exact_message_id),
+    }
+    assert neither_shape == {"error": "up_to_message_id or message_ids is required"}
+    description = collector.descriptions[tool_name]
+    assert "up_to_message_id" in description
+    assert "message_ids" in description
+    assert "takes precedence" in description
 
 
 @pytest.mark.asyncio

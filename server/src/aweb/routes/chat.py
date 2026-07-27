@@ -65,6 +65,7 @@ from aweb.messaging.chat import (
     get_message_history,
     get_pending_conversations,
     mark_messages_read,
+    mark_messages_read_up_to,
     resolve_agent_by_did,
     send_in_session,
 )
@@ -1803,22 +1804,26 @@ async def history(
 class MarkReadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_range_watermark_payload(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "up_to_message_id" in data:
-            raise ValueError(
-                "up_to_message_id is no longer supported; upgrade the client and "
-                "send message_ids with every presented message ID"
-            )
-        return data
+    up_to_message_id: str | None = Field(default=None, min_length=1)
+    message_ids: list[str] | None = Field(default=None, min_length=1, max_length=MAX_CHAT_MARK_READ_IDS)
 
-    message_ids: list[str] = Field(..., min_length=1, max_length=MAX_CHAT_MARK_READ_IDS)
+    @field_validator("up_to_message_id")
+    @classmethod
+    def _validate_watermark_message_id(cls, value: str | None) -> str | None:
+        return _parse_uuid(value, field="up_to_message_id") if value is not None else None
 
     @field_validator("message_ids")
     @classmethod
-    def _validate_message_ids(cls, values: list[str]) -> list[str]:
+    def _validate_message_ids(cls, values: list[str] | None) -> list[str] | None:
+        if values is None:
+            return None
         return [_parse_uuid(value, field="message_ids") for value in values]
+
+    @model_validator(mode="after")
+    def _require_at_least_one_shape(self) -> "MarkReadRequest":
+        if self.up_to_message_id is None and self.message_ids is None:
+            raise ValueError("provide at least one of up_to_message_id or message_ids")
+        return self
 
 
 @router.post("/sessions/{session_id}/read")
@@ -1847,20 +1852,33 @@ async def mark_read(
     if not actor_did:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    result = await mark_messages_read(
-        db,
-        session_id=session_uuid,
-        participant_did=actor_did,
-        participant_agent_id=actor_agent_id,
-        message_ids=payload.message_ids,
-    )
+    if payload.message_ids is not None:
+        result = await mark_messages_read(
+            db,
+            session_id=session_uuid,
+            participant_did=actor_did,
+            participant_agent_id=actor_agent_id,
+            message_ids=payload.message_ids,
+        )
+        read_receipt_message_id = payload.message_ids[-1]
+    else:
+        assert payload.up_to_message_id is not None
+        result = await mark_messages_read_up_to(
+            db,
+            session_id=session_uuid,
+            participant_did=actor_did,
+            participant_agent_id=actor_agent_id,
+            up_to_message_id=payload.up_to_message_id,
+        )
+        read_receipt_message_id = payload.up_to_message_id
+
     if int(result["messages_marked"] or 0) > 0:
         await publish_chat_session_signal(
             redis,
             session_id=str(session_uuid),
             signal_type="read_receipt",
             agent_id=actor_did,
-            message_id=payload.message_ids[-1],
+            message_id=read_receipt_message_id,
         )
 
     return {"success": True, "messages_marked": result["messages_marked"]}

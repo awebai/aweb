@@ -17,6 +17,7 @@ from aweb.messaging.chat import (
     get_message_history,
     get_pending_conversations,
     mark_messages_read,
+    mark_messages_read_up_to,
     resolve_agent_by_did,
     send_in_session,
 )
@@ -958,7 +959,13 @@ async def chat_history(
     )
 
 
-async def chat_read(db_infra, *, session_id: str, message_ids: list[str]) -> str:
+async def chat_read(
+    db_infra,
+    *,
+    session_id: str,
+    up_to_message_id: str | None = None,
+    message_ids: list[str] | None = None,
+) -> str:
     auth = get_auth()
     actor_dids = _actor_dids()
     actor_agent = await _resolve_actor_agent(db_infra, actor_dids)
@@ -968,12 +975,23 @@ async def chat_read(db_infra, *, session_id: str, message_ids: list[str]) -> str
         session_uuid = UUID(session_id.strip())
     except Exception:
         return json.dumps({"error": "Invalid session_id format"})
-    if not message_ids:
-        return json.dumps({"error": "message_ids is required"})
-    try:
-        normalized_message_ids = [str(UUID(message_id.strip())) for message_id in message_ids]
-    except Exception:
-        return json.dumps({"error": "Invalid message_id format"})
+
+    normalized_message_ids: list[str] | None = None
+    normalized_watermark: str | None = None
+    if up_to_message_id is not None:
+        try:
+            normalized_watermark = str(UUID(up_to_message_id.strip()))
+        except Exception:
+            return json.dumps({"error": "Invalid message_id format"})
+    if message_ids is not None:
+        if not message_ids:
+            return json.dumps({"error": "message_ids is required"})
+        try:
+            normalized_message_ids = [str(UUID(message_id.strip())) for message_id in message_ids]
+        except Exception:
+            return json.dumps({"error": "Invalid message_id format"})
+    elif normalized_watermark is None:
+        return json.dumps({"error": "up_to_message_id or message_ids is required"})
 
     actor_did = await _resolve_session_actor_did(
         db_infra,
@@ -984,13 +1002,23 @@ async def chat_read(db_infra, *, session_id: str, message_ids: list[str]) -> str
         return json.dumps({"error": "Session not found"})
 
     try:
-        result = await mark_messages_read(
-            db_infra,
-            session_id=session_uuid,
-            participant_did=actor_did,
-            participant_agent_id=actor_agent_id,
-            message_ids=normalized_message_ids,
-        )
+        if normalized_message_ids is not None:
+            result = await mark_messages_read(
+                db_infra,
+                session_id=session_uuid,
+                participant_did=actor_did,
+                participant_agent_id=actor_agent_id,
+                message_ids=normalized_message_ids,
+            )
+        else:
+            assert normalized_watermark is not None
+            result = await mark_messages_read_up_to(
+                db_infra,
+                session_id=session_uuid,
+                participant_did=actor_did,
+                participant_agent_id=actor_agent_id,
+                up_to_message_id=normalized_watermark,
+            )
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 
