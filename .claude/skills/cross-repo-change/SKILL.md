@@ -9,11 +9,55 @@ Changes that affect both aweb (OSS) and aweb-cloud must be
 coordinated carefully because the cloud embeds aweb as a PyPI
 package.
 
-## Principle
+## Read this first: shippability
+
+**A released client is a permanent constraint.** Once a client that
+sends X is in the field, the server must accept X until you can prove
+nothing sends it.
+
+Everything below about atomic deploys applies to **aweb ↔ aweb-cloud
+only**. Every other consumer — the channel plugin, pi, the `aw` CLI,
+self-hosted servers — updates on its own schedule. A running agent
+keeps its loaded module until the process **restarts**, which for a
+long-lived agent may be never.
+
+**Default: additive only.** You may ADD an accepted shape. You may NOT:
+
+- remove an accepted shape,
+- make an optional field required,
+- reject a shape that is in the field,
+- narrow a type or add a stricter validator to an existing field.
+
+**The only exception:** you may narrow a contract if you can NAME every
+consumer and show each deploys **atomically** with this change — same
+image, same deploy, same instant. "We will release the client right
+after" is not atomic. Put the justification in the commit message.
+Today exactly one boundary qualifies: aweb ↔ aweb-cloud.
+
+**Removal is a separate, later change.** Remove support for an old shape
+only after MEASURING that nothing sends it. If you cannot measure it,
+you cannot remove it.
+
+**Before merge, answer:** *what is deployed today, and does this still
+work against it?* Check against PUBLISHED ARTIFACTS — `npm pack` the
+tarball and read the shipped bundle, or read the released tag — never
+against your own source. Your source and the published client disagree;
+that disagreement is the entire risk.
+
+Why this section exists: on 2026-07-26 a chat mark-read change made a new
+field required and explicitly rejected the old one. Every published client
+sent the old field, so deploying it would have broken every client in the
+world. It was faithful to the anti-pattern below, which is correct for the
+cloud boundary and catastrophic for clients. The process was not ignored —
+it was followed.
+
+## Principle (aweb ↔ aweb-cloud only)
 
 The cloud imports aweb. Both deploy in the same Docker image.
 There is no transition period — when the cloud pins a new aweb
 version, both the old and new code deploy atomically.
+
+This is the ONLY boundary with that property. Do not generalise it.
 
 ## Sequence
 
@@ -44,7 +88,17 @@ version, both the old and new code deploy atomically.
 - Do NOT use editable/sibling source installs as a permanent
   workaround. They mask version pinning issues.
 - Do NOT accept both old and new formats "during transition" when
-  both sides deploy atomically. Pick one format.
+  both sides deploy atomically. Pick one format. **This applies to
+  aweb ↔ aweb-cloud and nowhere else.** Before invoking it, confirm
+  every consumer of the contract deploys in that same image. If any
+  consumer is a published client — channel, pi, `aw` — or a
+  self-hosted server, the rule INVERTS: accept both, prefer the new
+  one, and remove the old only after measuring. See "Read this
+  first: shippability".
+- Do NOT change a contract without enumerating what currently sends
+  it. For the channel that check is small — its entire write surface
+  is two calls, one of which has no body — so there is no excuse for
+  skipping it.
 
 ## Aweb-cloud schema mirrors
 
