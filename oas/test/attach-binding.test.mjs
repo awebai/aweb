@@ -218,6 +218,7 @@ test("attach capability is explicitly internal and exposes native status", () =>
   assert.equal(manifest.layer, "messaging");
   assert.match(manifest.description, /EXPERIMENTAL.*INTERNAL/i);
   assert.equal(manifest.inject, "injects/aweb-identity-attach.md");
+  assert.deepEqual(manifest.environment, ["AWEB_IDENTITY_HOME"], "manifest trust authority is the exact sole runtime contribution");
   assert.equal(manifest.commands.status, "bin/aweb-identity-attach.mjs status");
   assert.match(readFileSync(join(CAPABILITY_SOURCE, manifest.inject), "utf8"), /advisory.*cannot prevent OAS from launching/i);
 });

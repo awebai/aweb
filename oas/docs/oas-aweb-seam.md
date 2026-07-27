@@ -744,11 +744,14 @@ model-readable, the resolved path carries identity structure, and `whoami`
 necessarily reveals the selected identity.
 
 The upstream half was implemented and tested against the fresh OAS 0.18.6 clone
-plus the separately reviewed task-prompt separator commit. OAS validates
-string-only, bounded, single-line values; reserves core namespaces; confines a
-capability to its vendor namespace; rejects capability collisions; sorts and
-shell-quotes assignments; and lets the resolved value override a wrong ambient
-value. Invalid contracts abort before `instance.json`, tmux, or model launch.
+plus the separately reviewed task-prompt separator commit. The capability
+manifest asks trust to approve the exact sole name `AWEB_IDENTITY_HOME`, and OAS
+rejects hook output outside that declaration. OAS validates a strict whole
+capability ID plus string-only, bounded, single-line values; confines names to
+the dotted vendor namespace; denies known core/bootstrap surfaces in depth;
+rejects capability collisions; sorts and shell-quotes assignments; and lets the
+resolved value override a wrong ambient value. Invalid contracts abort before
+`instance.json`, tmux, or model launch and remove uncommitted topology.
 Hook execution failures remain advisory and are still the separate critical-hook
 problem owned by `.2`.
 

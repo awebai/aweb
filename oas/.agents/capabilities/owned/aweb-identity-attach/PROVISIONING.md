@@ -11,8 +11,9 @@
 
 This capability executes `provision-disposable` only through declared
 `local-controller` authority in this release. After resolving and verifying the
-selected principal, its spawn hook contributes exactly one runtime environment
-value: `AWEB_IDENTITY_HOME` at the canonical credential root. It never copies
+selected principal, its manifest asks executable trust to approve exactly one
+runtime environment name, and its spawn hook contributes that value:
+`AWEB_IDENTITY_HOME` at the canonical credential root. It never copies
 the principal selector into the launch environment. This is data minimization,
 not selector secrecy: settings and identity metadata remain model-readable, and
 the resolved identity is necessarily observable through `whoami`.

@@ -19,6 +19,9 @@
     "reconcile": "bin/aweb-identity-attach.mjs reconcile"
   },
   "inject": "injects/aweb-identity-attach.md",
+  "environment": [
+    "AWEB_IDENTITY_HOME"
+  ],
   "hooks": {
     "spawn": "bin/aweb-identity-attach.mjs spawn",
     "retire": "bin/aweb-identity-attach.mjs retire"
