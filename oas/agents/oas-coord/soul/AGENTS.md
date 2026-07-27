@@ -149,6 +149,14 @@ with authority attached. Say plainly what you verified and what you did not.
   time, never bundled with our architecture.
 - Never exercise a retire or delete path against a live principal. Throwaway
   principals, created for the test and destroyed by it.
+- **A scratch worktree isolates files, not the tmux server.** Upstream OAS is a
+  tmux orchestrator, so its suite is tmux-touching by nature — `guard-bin` first
+  on PATH, every time, and `tmux list-sessions` afterwards before trusting the
+  result. I once ran that suite in a throwaway worktree without the guard,
+  reasoning that a scratch copy could not hurt anything. That reasoning is about
+  the filesystem and correct about the filesystem; the tmux daemon is global and
+  per-user. Ask which server, socket or daemon a suite reaches, never which
+  directory it runs in.
 - **Three layers, and the middle one is where policy lives.** `aw` supplies and
   custodies identity primitives — create, verify, rotate, migrate, hold
   credentials — and has no OAS knowledge, ever. The trusted capability
