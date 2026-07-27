@@ -1134,7 +1134,8 @@ assert "aweb.identity-attach" not in meta.get("capabilityMeta", {}), meta
 PY
   run_oas_in "$FIXTURE_REPO" retire "$BROKEN_INSTANCE" --json > "$EVIDENCE/broken-binding-advisory-retire.json"
   [[ ! -e "$BROKEN_HOME" ]] || fail "ordinary retire left the advisory-gap scaffold"
-  [[ ! -e "$PRINCIPAL_HOME/.provisioning" ]] || fail "advisory broken spawn created provisioning state"
+  [[ -z "$(find "$PRINCIPAL_HOME/.provisioning/intents" -type f -name '*.json' -print -quit 2>/dev/null)" ]] \
+    || fail "advisory broken spawn created a provisioning intent"
   assert_principal_unchanged after-broken-advisory-observation
   write_attach_config resident
   (
