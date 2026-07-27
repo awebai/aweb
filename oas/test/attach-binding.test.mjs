@@ -516,6 +516,28 @@ test("real OAS attach-existing v2 emits an externally owned bound receipt", () =
   assert.doesNotMatch(JSON.stringify(report.identity), /identity_binding|schema_version|minting_authority|journal_operation|principal-store|credentials/);
   assert.equal(JSON.stringify(report).includes(f.principalHome), false);
 
+  const assertLocatorFailure = (env) => {
+    const result = statusCommand(["--soul", "developer", "--json"], f.repo, env);
+    assert.equal(result.status, 1);
+    const failure = JSON.parse(result.stdout);
+    assert.equal(failure.readiness, "needs_setup");
+    assert.equal(failure.identity, null);
+    assert.match(failure.message, /instance identity is incomplete or contradicts/i);
+    assert.equal(JSON.stringify(failure).includes(f.principalHome), false);
+  };
+  assertLocatorFailure({
+    ...f.env,
+    PI_AGENT_HOME: join(f.base, "missing-primary-instance"),
+    OAS_HOME: spawned.home,
+  });
+  assertLocatorFailure({
+    ...f.env,
+    PI_AGENT_HOME: spawned.home,
+    OAS_HOME: spawned.home,
+    OAS_INSTANCE: spawned.instance,
+    PI_AGENT_INSTANCE: "contradictory-instance",
+  });
+
   const metaPath = join(spawned.home, "instance.json");
   const assertSafeIdentityFailure = (changedMeta) => {
     writeFileSync(metaPath, `${JSON.stringify(changedMeta, null, 2)}\n`);

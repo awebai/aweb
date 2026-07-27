@@ -431,16 +431,30 @@ function bindingReadiness(settings, { context, soul, settingsSource }) {
 }
 
 function currentInstanceIdentityProjection({ context, soul, settings, evidence }) {
-  const homes = [process.env.PI_AGENT_HOME, process.env.OAS_HOME].filter(Boolean);
-  if (!homes.length) return { found: false, identity: null };
-  const home = homes.find((candidate) => isAbsolute(candidate) && existsSync(join(candidate, "instance.json")));
-  if (!home) throw new TypeError("the selected instance identity is unavailable");
+  const primaryHome = process.env.PI_AGENT_HOME;
+  const secondaryHome = process.env.OAS_HOME;
+  const home = primaryHome || secondaryHome;
+  if (!home) return { found: false, identity: null };
+  if (!isAbsolute(home) || !existsSync(join(home, "instance.json"))) {
+    throw new TypeError("the selected instance identity is unavailable");
+  }
   const canonicalHome = realpathSync(resolve(home));
+  if (primaryHome && secondaryHome) {
+    if (!isAbsolute(secondaryHome) || !existsSync(join(secondaryHome, "instance.json"))
+        || realpathSync(resolve(secondaryHome)) !== canonicalHome) {
+      throw new TypeError("the supplied instance homes contradict each other");
+    }
+  }
   const metadataPath = join(canonicalHome, "instance.json");
   const metadataStat = lstatSync(metadataPath);
   if (metadataStat.isSymbolicLink() || !metadataStat.isFile()) throw new TypeError("instance metadata must be a regular file");
   const metadata = parseSettingsJSON(readFileSync(metadataPath, "utf8"), "instance.json");
-  const expectedInstance = process.env.OAS_INSTANCE || process.env.PI_AGENT_INSTANCE;
+  const oasInstance = process.env.OAS_INSTANCE;
+  const piInstance = process.env.PI_AGENT_INSTANCE;
+  if (oasInstance && piInstance && oasInstance !== piInstance) {
+    throw new TypeError("the supplied instance identifiers contradict each other");
+  }
+  const expectedInstance = oasInstance || piInstance;
   const snapshot = Array.isArray(metadata.capabilities)
     ? metadata.capabilities.find((item) => item?.id === "aweb.identity-attach")
     : null;
