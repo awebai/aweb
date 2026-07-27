@@ -81,6 +81,11 @@ function parseSuccess(result) {
   return document.result;
 }
 
+function assertOASObservedSpawnFailure(spawned) {
+  assert.equal(spawned.warnings.length, 1);
+  assert.match(spawned.warnings[0], /aweb\.identity-attach spawn hook failed \(continuing\)/i);
+}
+
 function fixture({
   mode = "attach",
   schemaVersion = 1,
@@ -319,14 +324,15 @@ test("doctor reports one team-switch action before a default spawn would fail", 
   assert.equal(report.instance_or_session_created, false);
 });
 
-test("production spawn surfaces missing-team refusal without claiming fail-closed OAS admission", () => {
+test("production OAS observes adapter preflight refusal as a hook failure without yet preventing spawn", () => {
   const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
   write(join(f.repo, "oas-config.yaml"), "capabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global: true\n");
   const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "unservable-is-advisory", "--no-launch", "--json"], {
     cwd: f.repo, env: f.env, encoding: "utf8",
   }));
-  assert.equal(existsSync(spawned.home), true, "current advisory OAS still creates the instance scaffold");
-  assert.match(spawned.warnings[0], /configured aweb team needs a canonical team id.*NOTHING CREATED by this capability/i);
+  assert.equal(existsSync(spawned.home), true, "current advisory OAS still creates the instance scaffold; .2 owns prevention");
+  assert.equal(spawned.warnings.length, 1);
+  assert.match(spawned.warnings[0], /aweb\.identity-attach spawn hook failed \(continuing\)/i);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
   assert.equal(existsSync(join(f.principalHome, ".provisioning")), false);
@@ -450,7 +456,7 @@ test("spawn preflight refusal is structured, nonzero, and precedes identity crea
     env: {
       ...f.env,
       OAS_EVENT: "spawn", OAS_HOME: hookHome, OAS_CONTEXT: f.repo, OAS_AGENT: "developer",
-      OAS_INSTANCE: "never-created", OAS_SETTINGS: "{}",
+      OAS_INSTANCE: "never-created", OAS_SETTINGS: "{}", OAS_ROOT: dirname(oasCli()),
     },
     encoding: "utf8",
   });
@@ -459,11 +465,72 @@ test("spawn preflight refusal is structured, nonzero, and precedes identity crea
   assert.equal(refusal.status, "unservable");
   assert.equal(refusal.nothing_created_by_capability, true);
   assert.equal(refusal.identity_resources_created, false);
-  assert.equal(refusal.admission, "advisory-hook-failure-cannot-prevent-oas-launch");
+  assert.equal(refusal.admission, "adapter-signalled-subprocess-failure");
   assert.equal(refusal.next_action, "oas aweb-identity status --soul 'developer' --json");
   assert.equal(Object.hasOwn(refusal, "next_actions"), false);
   assert.equal(readdirSync(hookHome).length, 0);
   assert.equal(existsSync(join(f.principalHome, ".provisioning")), false);
+});
+
+test("post-side-effect spawn failure is nonzero and redacted without borrowing preflight non-creation claims", () => {
+  const f = fixture({ mode: "provision-disposable", schemaVersion: 2, mintingAuthorityPath: "local-controller" });
+  const hookHome = join(f.base, "post-side-effect-home");
+  mkdirSync(hookHome);
+  const outside = join(f.base, "untrusted-corroboration-target");
+  mkdirSync(outside);
+  rmSync(join(f.principalHome, ".corroboration"), { recursive: true });
+  symlinkSync(outside, join(f.principalHome, ".corroboration"), "dir");
+  const result = spawnSync(process.execPath, [join(f.capability, "bin", "aweb-identity-attach.mjs"), "spawn"], {
+    cwd: hookHome,
+    env: {
+      ...f.env,
+      OAS_EVENT: "spawn", OAS_HOME: hookHome, OAS_CONTEXT: f.repo, OAS_AGENT: "developer",
+      OAS_INSTANCE: "partially-provisioned", OAS_ROOT: dirname(oasCli()),
+      OAS_SETTINGS: JSON.stringify({ identity_binding: {
+        schema_version: 2, mode: "provision-disposable", minting_authority: "throwaway",
+        minting_authority_path: "local-controller",
+      } }),
+    },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  const failure = JSON.parse(result.stdout);
+  assert.equal(failure.status, "binding_incomplete");
+  assert.equal(failure.admission, "adapter-signalled-subprocess-failure");
+  assert.equal(Object.hasOwn(failure, "nothing_created_by_capability"), false);
+  assert.equal(Object.hasOwn(failure, "identity_resources_created"), false);
+  assert.equal(failure.next_action, "oas aweb-identity status --soul 'developer' --json");
+  assert.match(failure.message, /binding did not complete.*recovery state may remain/i);
+  const serialized = JSON.stringify(failure);
+  assert.equal(serialized.includes(f.principalHome), false);
+  assert.doesNotMatch(serialized, /corroboration|journal|credentials|symbolic link/i);
+
+  const intentDirectory = join(f.principalHome, ".provisioning", "intents");
+  const intentFiles = readdirSync(intentDirectory).filter((name) => name.endsWith(".json"));
+  assert.equal(intentFiles.length, 1);
+  const intent = JSON.parse(readFileSync(join(intentDirectory, intentFiles[0]), "utf8"));
+  assert.equal(intent.state, "prepared");
+  assert.equal(intent.resource.status, "provisioned");
+  assert.equal(intent.resource.operation_id, intent.operation_id);
+  assert.equal(intent.resource.identity_home, intent.identity_home);
+  const provisionCalls = readFileSync(f.awLog, "utf8").trim().split("\n")
+    .map((line) => JSON.parse(line))
+    .filter((call) => call.argv.includes("provision-local"));
+  assert.deepEqual(provisionCalls, [{
+    argv: [
+      "id", "team", "provision-local",
+      "--operation-id", intent.operation_id,
+      "--team-id", intent.team_id,
+      "--name", intent.alias,
+      "--authority-identity-home", intent.authority_home,
+      "--target-identity-home", intent.identity_home,
+      "--authority-address", "example.test/throwaway",
+      "--authority-stable-id", "did:aw:2ThrowawayStableId123",
+      "--controller-did", "did:key:z6MkiLocalController123",
+      "--json",
+    ],
+    cwd: hookHome,
+  }]);
 });
 
 test("standalone refusal rejects an unsafe ambient soul before constructing its action", () => {
@@ -485,7 +552,7 @@ test("standalone refusal rejects an unsafe ambient soul before constructing its 
   });
   assert.equal(result.status, 1);
   const refusal = JSON.parse(result.stdout);
-  assert.match(refusal.message, /OAS_AGENT.*filesystem-safe/);
+  assert.equal(refusal.message, "the selected soul name is invalid");
   assert.equal(refusal.next_action, "oas status --json");
   const executed = spawnSync("/bin/sh", ["-c", refusal.next_action], {
     cwd: f.repo,
@@ -693,8 +760,7 @@ test("real OAS refuses hosted disposable provisioning before authority resolutio
   const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "hosted-refused", "--no-launch", "--json"], {
     cwd: f.repo, env: f.env, encoding: "utf8",
   }));
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /hosted provision-disposable is refused before creation.*owner\/admin API key/);
+  assertOASObservedSpawnFailure(spawned);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
   assert.equal(existsSync(f.awLog), false, "hosted refusal must precede every aw side effect and authority read");
@@ -967,7 +1033,7 @@ test("operator and later-spawn reconciliation clean durable pending local intent
   writeFileSync(join(f.principalHome, ".provisioning", "intents", `${corruptOperation}.json`), '{"schema_version":999}\n', { mode: 0o600 });
   const quarantiningSpawn = spawnLocal("surface-corrupt-journal-quarantine");
   assert.equal(JSON.parse(readFileSync(validAlongsideCorruption.path, "utf8")).state, "complete", "corruption must not abort other stale cleanup");
-  assert.match(quarantiningSpawn.warnings[0], new RegExp(`${corruptOperation}.*visible quarantine`));
+  assertOASObservedSpawnFailure(quarantiningSpawn);
   const quarantiningMeta = JSON.parse(readFileSync(join(quarantiningSpawn.home, "instance.json"), "utf8"));
   assert.equal(quarantiningMeta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
   const quarantinePath = join(f.principalHome, ".provisioning", "quarantine");
@@ -1063,8 +1129,7 @@ test("real OAS refuses declared local-controller path without controller authori
   const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "local-authority-missing", "--no-launch", "--json"], {
     cwd: f.repo, env: f.env, encoding: "utf8",
   }));
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /did not return a valid controller_did/);
+  assertOASObservedSpawnFailure(spawned);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
 });
@@ -1074,8 +1139,7 @@ test("real OAS refuses provision-durable before ephemeral authority resolution",
   const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "durable-refused", "--no-launch", "--json"], {
     cwd: f.repo, env: f.env, encoding: "utf8",
   }));
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /provision-durable.*not executable/);
+  assertOASObservedSpawnFailure(spawned);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
   assert.equal(existsSync(f.awLog), false, "durable refusal must precede ephemeral authority resolution");
@@ -1086,8 +1150,7 @@ test("real OAS provision-disposable rejects missing declared minting authority",
   const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "authority-missing", "--no-launch", "--json"], {
     cwd: f.repo, env: f.env, encoding: "utf8",
   }));
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /minting_authority/);
+  assertOASObservedSpawnFailure(spawned);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
   assert.equal(existsSync(f.awLog), false);
@@ -1099,8 +1162,7 @@ test("real OAS provision-disposable rejects an uncommitted minting authority dec
   const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "authority-uncommitted", "--no-launch", "--json"], {
     cwd: f.repo, env: f.env, encoding: "utf8",
   }));
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /minting authority declaration must be committed and unmodified/);
+  assertOASObservedSpawnFailure(spawned);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
   assert.equal(existsSync(f.awLog), false);
@@ -1115,8 +1177,7 @@ test("real OAS provision-disposable rejects minting credentials that disagree wi
   const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "authority-mismatch", "--no-launch", "--json"], {
     cwd: f.repo, env: f.env, encoding: "utf8",
   }));
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /stable_id.*does not match declaration/);
+  assertOASObservedSpawnFailure(spawned);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
   const calls = readFileSync(f.awLog, "utf8").trim().split("\n").map(JSON.parse);
@@ -1305,8 +1366,7 @@ test("real OAS attach rejects a declaration for a different soul before invoking
     cwd: f.repo, env: f.env, encoding: "utf8",
   });
   const spawned = parseSuccess(result);
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /declaration soul.*does not match OAS_AGENT/);
+  assertOASObservedSpawnFailure(spawned);
   assert.equal(existsSync(f.awLog), false);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
@@ -1322,8 +1382,7 @@ test("real OAS attach fails visibly when aw reports a different address", () => 
     cwd: f.repo, env: f.env, encoding: "utf8",
   });
   const spawned = parseSuccess(result);
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /address.*does not match declaration/);
+  assertOASObservedSpawnFailure(spawned);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
 });
@@ -1340,8 +1399,7 @@ test("real OAS attach fails visibly when aw reports a different stable identity"
     encoding: "utf8",
   });
   const spawned = parseSuccess(result);
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /stable_id.*does not match declaration/);
+  assertOASObservedSpawnFailure(spawned);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
   assert.equal(existsSync(join(spawned.home, ".aw")), false);
@@ -1355,8 +1413,7 @@ test("real OAS provision-disposable rejects missing active-team evidence", () =>
   const spawned = parseSuccess(spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "authority-team-missing", "--no-launch", "--json"], {
     cwd: f.repo, env: f.env, encoding: "utf8",
   }));
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /active team does not match declaration/);
+  assertOASObservedSpawnFailure(spawned);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"]?.identity_binding, undefined);
 });
@@ -1370,8 +1427,7 @@ test("real OAS provision-disposable rejects a complete authority active in anoth
     cwd: f.repo, env: f.env, encoding: "utf8",
   });
   const spawned = parseSuccess(result);
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /active team does not match declaration/);
+  assertOASObservedSpawnFailure(spawned);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
 });
@@ -1396,8 +1452,7 @@ test("real OAS attach reaches the point-of-use credential symlink recheck", () =
     encoding: "utf8",
   });
   const spawned = parseSuccess(result);
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /symbolic link/);
+  assertOASObservedSpawnFailure(spawned);
   assert.equal(existsSync(f.awLog), false, "unsafe credential path must fail before aw invocation");
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
@@ -1491,8 +1546,7 @@ test("real OAS spawn rejects a non-attach binding without minting or cleanup aut
     encoding: "utf8",
   });
   const spawned = parseSuccess(result);
-  assert.equal(spawned.warnings.length, 1);
-  assert.match(spawned.warnings[0], /legacy identity_binding v1 must declare mode attach/);
+  assertOASObservedSpawnFailure(spawned);
   const meta = JSON.parse(readFileSync(join(spawned.home, "instance.json"), "utf8"));
   assert.equal(meta.capabilityMeta?.["aweb.identity-attach"], undefined);
   assert.equal(existsSync(f.awLog), false);

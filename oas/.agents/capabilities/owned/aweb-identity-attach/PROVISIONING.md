@@ -8,6 +8,15 @@
 > `next_action`, or `experimental` with no identity/instance/session creation.
 > This verdict is advisory: OAS 0.18 hooks are not required and can still launch
 > after hook failure. Only `aaaa.2` can provide fail-closed admission/rollback.
+>
+> The adapter nevertheless signals every incomplete spawn binding with a nonzero
+> hook result, whether it was rejected during preflight or failed during
+> provisioning, corroboration, or handoff. The pinned OAS observes that signal but
+> continues; it does not preserve the adapter's structured diagnostic yet.
+> Preflight refusals may state that this capability created nothing. Later
+> failures use a redacted recovery-state message and make no such claim.
+> Successful complete binding metadata and environment remain exit-zero; any
+> informational warning accompanying such a result remains advisory.
 When the command runs in a bound instance, that same result includes a public
 `identity` projection: attached/durable identities show their registered
 address and DID; disposable local identities honestly show `address: null`,

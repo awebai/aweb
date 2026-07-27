@@ -163,6 +163,17 @@ with authority attached. Say plainly what you verified and what you did not.
   (`OAS-Framework/oas`) is a dependency, not ours — generic lifecycle
   improvements are proposed there, one small obviously-correct change at a
   time, never bundled with our architecture.
+- **Never propose a change that breaks a fundamental feature. Before any
+  upstream PR is opened or updated, EXECUTE the affected feature end to end
+  against the real binary** — not the test suite, not the `--help` text, not
+  reasoning about the parser. Actually spawn the thing and watch it come up.
+  PR 37 inserted `--` before the task prompt to stop capability arguments from
+  swallowing it. Correct intent; pi has no end-of-options marker, so **every pi
+  spawn died at launch**. It passed review with 80+ green tests, four review
+  rounds and three safety gates — none of which ever ran the command. A suite
+  that never launches the product cannot tell you the product still launches.
+  Breaking someone else's fundamental feature is the worst thing we can do to a
+  dependency, and it is invisible to every check that does not execute.
 - Never exercise a retire or delete path against a live principal. Throwaway
   principals, created for the test and destroyed by it.
 - **A scratch worktree isolates files, not the tmux server.** Upstream OAS is a
