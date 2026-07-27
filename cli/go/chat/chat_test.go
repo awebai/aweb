@@ -722,6 +722,31 @@ func TestOpenSupportsStableDIDTargetViaResolvedAddress(t *testing.T) {
 	}
 }
 
+func TestMarkReadBestEffortDoesNotRepeatRejectedMalformedIDs(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		http.Error(w, "authoritative malformed uuid", http.StatusUnprocessableEntity)
+	}))
+	t.Cleanup(server.Close)
+
+	marked, err := markReadBestEffort(
+		context.Background(),
+		mustClient(t, server.URL),
+		"session-bad",
+		[]string{"not-a-uuid"},
+	)
+	if marked {
+		t.Fatal("malformed message ID was marked read")
+	}
+	if err == nil || !strings.Contains(err.Error(), "authoritative malformed uuid") {
+		t.Fatalf("error=%v, want authoritative server rejection", err)
+	}
+	if calls != 1 {
+		t.Fatalf("mark_read_calls=%d, want exactly one", calls)
+	}
+}
+
 func TestOpenRetriesMarkReadOnce(t *testing.T) {
 	var markReadCalls int
 
