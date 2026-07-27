@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const selectedRoot = process.env.OAS_TEST_ROOT;
@@ -38,9 +38,13 @@ if (!selectedRoot) {
     const missing = [];
     for (const [relativePath, marker] of expectedContract) {
       const path = join(root, relativePath);
-      if (!existsSync(path) || !readFileSync(path, "utf8").includes(marker)) {
-        missing.push(`${relativePath}:${marker}`);
+      let content;
+      try {
+        content = readFileSync(path, "utf8");
+      } catch {
+        content = "";
       }
+      if (!content.includes(marker)) missing.push(`${relativePath}:${marker}`);
     }
 
     const schemaPath = join(root, "docs", "capability-manifest.schema.json");

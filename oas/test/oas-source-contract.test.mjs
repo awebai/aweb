@@ -47,6 +47,24 @@ test(
   },
 );
 
+test("a present non-file contract marker still produces the readable diagnostic", () => {
+  const root = contractlessOasRoot();
+  const core = join(root, "lib", "core.mjs");
+  rmSync(core);
+  mkdirSync(core);
+  const result = spawnSync(
+    "make",
+    ["--no-print-directory", "check-oas-launch-environment-contract", `OAS_TEST_ROOT=${root}`],
+    { cwd: REPO_ROOT, encoding: "utf8" },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /OAS_TEST_ROOT .* lacks the required launch-environment contract/);
+  assert.match(result.stderr, /upstream PR 48/);
+  assert.doesNotMatch(result.stderr, /EISDIR|node:fs|check-oas-launch-environment-contract\.mjs:\d+/);
+});
+
 test("test-oas checks the launch-environment contract before starting assertions", () => {
   const makefile = readFileSync(join(REPO_ROOT, "Makefile"), "utf8");
   assert.match(makefile, /^test-oas:\s+check-oas-launch-environment-contract$/m);
