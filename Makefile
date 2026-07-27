@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-server test-awid test-cli test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
 	freshness check-go-vulnerability-audit check-node-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -48,6 +48,7 @@ help:
 	@echo "  test-a2a     Run A2A conformance, gateway, AWID lookup, and CLI command gates"
 	@echo "  test-oas-proof-helpers Run attached-principal proof filesystem guard tests"
 	@echo "  test-oas-attached-principal-e2e Run the real local-stack attach/retire proof"
+	@echo "  test-tmux-guard Run the guarded tmux migration and PATH-alias regressions"
 	@echo "  test-e2e     Run the end-to-end user journey and its mutation guard (requires Docker)"
 	@echo "  test-federation-e2e Run the OSS federation journey (requires Docker)"
 	@echo "  test-a2a-gateway-e2e Run the A2A gateway Docker journey against real aweb+awid"
@@ -78,7 +79,7 @@ help:
 build:
 	cd cli/go && $(MAKE) build
 
-test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers
+test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
@@ -164,6 +165,9 @@ test-oas-proof-helpers:
 
 test-oas-attached-principal-e2e: test-oas-proof-helpers
 	./scripts/e2e-oas-attached-principal-retire.sh
+
+test-tmux-guard:
+	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-migrate-agent-tmux.sh
 
 test-a2a:
 	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./a2a ./a2agw ./awid -count=1
