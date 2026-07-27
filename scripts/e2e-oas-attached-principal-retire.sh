@@ -399,7 +399,8 @@ scan_provisioned_sensitive_material() {
 }
 
 preserve_known_material_for_final_scan() {
-  local label="$1" source="$2" vault="$PROOF_ROOT/known-material/$label"
+  local label="$1" source="$2" vault
+  vault="$PROOF_ROOT/known-material/$label"
   mkdir -p "$PROOF_ROOT/known-material"
   chmod 700 "$PROOF_ROOT/known-material"
   cp -R "$source" "$vault"
@@ -623,7 +624,8 @@ seed_provision_lifecycle_artifacts() {
 
 capture_durable_operation_tuple() {
   local label="$1" operation="$2" prefix="$EVIDENCE/tuple-$1"
-  local intent="$PRINCIPAL_HOME/.provisioning/intents/$operation.json" alias certificate agent workspace target
+  local intent alias certificate agent workspace target
+  intent="$PRINCIPAL_HOME/.provisioning/intents/$operation.json"
   alias="$(json_value "$intent" resource.alias)"
   certificate="$(json_value "$intent" resource.certificate_id)"
   agent="$(json_value "$intent" resource.agent_id)"
