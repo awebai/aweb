@@ -131,6 +131,21 @@ run_guard_probe "$TMP_CHECKOUT/worktree/scripts/guard-bin" tmp-physical-alias
 ln -s "$TMP_CHECKOUT/worktree/scripts/guard-bin" "$ROOT/guard-path-alias"
 run_guard_probe "$ROOT/guard-path-alias" symlink-path-alias
 
+# The CLI embeds the same guard for installed homes. Exercise that artifact,
+# rather than treating byte equality as evidence that it terminates safely.
+cp "$REPO_ROOT/cli/go/cmd/aw/tmux_guard.sh" "$TMP_CHECKOUT/worktree/scripts/guard-bin/tmux"
+chmod +x "$TMP_CHECKOUT/worktree/scripts/guard-bin/tmux"
+run_guard_probe "$TMP_CHECKOUT/worktree/scripts/guard-bin" embedded-tmp-physical-alias
+run_guard_probe "$ROOT/guard-path-alias" embedded-symlink-path-alias
+embedded_calls_before=$(wc -l < "$ROOT/tmux.log" | tr -d ' ')
+set +e
+PATH="$TMP_CHECKOUT/worktree/scripts/guard-bin:$FAKE_BIN:/usr/bin:/bin" tmux kill-server > "$ROOT/embedded-guard.out" 2>&1
+embedded_status=$?
+set -e
+[[ $embedded_status == 86 ]]
+grep -q 'kill-server REFUSED' "$ROOT/embedded-guard.out"
+[[ $(wc -l < "$ROOT/tmux.log" | tr -d ' ') == "$embedded_calls_before" ]]
+
 OLD_SOCKET="$ROOT/old.sock"
 python3 - "$OLD_SOCKET" <<'PY' &
 import socket
