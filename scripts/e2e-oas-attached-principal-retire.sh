@@ -44,6 +44,10 @@ esac
 HOST_PI_AUTH="${OAS_PROOF_PI_AUTH:-${PI_CODING_AGENT_DIR:-${HOME:-}/.pi/agent}/auth.json}"
 
 preflight() {
+  [[ -n "${OAS_TEST_ROOT:-}" ]] || {
+    echo "FAIL: OAS_TEST_ROOT must name the reviewed OAS checkout" >&2
+    return 1
+  }
   [[ -d "$CLI_DIR" ]] || { echo "FAIL: CLI source not found at $CLI_DIR" >&2; return 1; }
   [[ -f "$PROOF_HELPER" ]] || { echo "FAIL: proof helper not found at $PROOF_HELPER" >&2; return 1; }
   [[ "$AW_BIN" == "$CLI_DIR/aw" ]] || { echo "FAIL: AW_BIN overrides are outside the declared execution subject" >&2; return 1; }
@@ -71,11 +75,7 @@ if [[ "${1:-}" == "--preflight" ]]; then
   exit
 fi
 
-OAS_ROOT="${OAS_TEST_ROOT:-}"
-if [[ -z "$OAS_ROOT" ]]; then
-  OAS_ROOT="$(oas root)"
-fi
-OAS_ROOT="$(canonical_dir "$OAS_ROOT")"
+OAS_ROOT="$(canonical_dir "$OAS_TEST_ROOT")"
 OAS_CLI="$OAS_ROOT/bin/oas.mjs"
 
 assert_clean_git_subject() {
