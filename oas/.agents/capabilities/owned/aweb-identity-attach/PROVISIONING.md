@@ -98,7 +98,6 @@ forbidden.
 | Task claims and reservations created during runtime | aweb PostgreSQL lifecycle cascade; proof seeds positive rows | **physically absent** |
 | Workspace and agent-heartbeat presence created during runtime | aweb Redis reverse-coordinate hashes accumulate every global/team/repo/branch/alias key and remain durable until explicit cleanup; lifecycle clears both workspace and local-agent IDs; pre-coordinate entries use a complete fallback scan | **physically absent** |
 | aweb API keys | local certificate connect creates none; AWID certificate above is the authorization grant | **not created** |
-| Messages/delivery records | proof CLI sends are queried by exact message id at the owning PostgreSQL store after worker cleanup; historical messages are audit, not member authorization | **intentionally retained audit; not authorization residue** |
 | Hosted organization membership | not created on the local-controller path | **physically absent / not applicable** |
 | Target `workspace.yaml`, `teams.yaml`, certificate files, context | owned credential tree | **physically absent** |
 | `provision-operation.json` | external target audit record | **intentionally retained audit** |
@@ -175,6 +174,7 @@ cleaned; a later spawn allocates its own operation and principal.
 `scripts/e2e-oas-attached-principal-retire.sh` uses the repository's guarded,
 no-tmux loopback Docker stack and a fresh external git workspace. It acquires
 this capability with `oas install` without activation, explicitly activates and
+reads the acquired artifact, lock, and config directly before activation, then
 trusts it, records `oas doctor`, and performs internal authority onboarding.
 That onboarding still writes identity-binding and declaration YAML and is **not**
 the no-jargon customer setup experience owned by aaaa.44/.46. In addition to
@@ -185,16 +185,19 @@ reverse cleanup coordinates/indices for both workspace and production agent-
 heartbeat IDs, proves coordinates have no expiry, exercises one pre-coordinate
 fallback, expires the shorter-lived primaries, asserts every
 secondary remains as a positive control, asserts both
-external journals terminal `complete`, observes exactly zero usable local grants
-for each successfully provisioned operation, and exercises the transient grant
+external journals terminal `complete`, observes exactly zero local grant records
+for each successfully provisioned operation (not proof that no previously copied
+bearer can be redeemed), and exercises the transient grant
 window by stopping one real provision after its operation-tagged grant is
 created but before acceptance; re-entry adopts and consumes that exact grant.
 It snapshots each provisioned credential tree before scanning both instance homes
 and the controlled repository by names, digests, symlink target, and device/inode
 for copies or hardlinks. After exchanging real plaintext mail in both directions,
 it repeats the sensitive-material scan while structurally allowing only the
-expected non-secret `.aw/interaction-log.jsonl`, then queries both exact message
-ids at the owning PostgreSQL store after worker cleanup. It retargets one
+expected `.aw/interaction-log.jsonl`, and at journey end searches every allowed
+file for verbatim known credential bytes. This proves no verbatim known-file
+copy; it does not cover encoded, split, derived, or newly generated bearer
+material. It retargets one
 instance-side receipt at the other operation, proves the exact corroboration
 refusal leaves both real rows and certificates active, then proves ordinary
 authorized retire and the native exact-operation command produce AWID
@@ -202,7 +205,7 @@ revocation, aweb agent/workspace soft deletion, local grant absence, and
 credential-tree absence at their owning authorities. A third operation loses
 its throwaway controller key for three cleanup executions, must surface terminal
 visible quarantine as non-success, and completes only after explicit remediation.
-Historical messages remain audit records; they are not authorization residue. This is
+Message retention and authorization semantics are outside this lifecycle proof. This is
 explicitly local same-UID accident/confused-deputy evidence, not hostile-model
 resistance. Removing the operation comparison in the target audit makes the
 forged execution cleanup reach real deletion and turns the owning-authority

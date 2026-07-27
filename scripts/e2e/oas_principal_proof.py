@@ -96,6 +96,11 @@ def _scan_material(principal_snapshot_path: str, instance_value: str, *, allow_i
     principal_digests = {
         entry["sha256"] for entry in principal["entries"] if entry.get("kind") == "file"
     }
+    principal_contents = [
+        (principal_root / entry["path"]).read_bytes()
+        for entry in principal["entries"]
+        if entry.get("kind") == "file" and entry.get("size", 0) > 0
+    ]
     principal_inodes = {
         (entry["device"], entry["inode"])
         for entry in principal["entries"]
@@ -130,8 +135,9 @@ def _scan_material(principal_snapshot_path: str, instance_value: str, *, allow_i
         if stat.S_ISREG(info.st_mode):
             if (info.st_dev, info.st_ino) in principal_inodes:
                 raise AssertionError(f"instance contains a principal hardlink: {path}")
-            digest = _sha256(path)
-            if digest in principal_digests:
+            encoded = path.read_bytes()
+            digest = hashlib.sha256(encoded).hexdigest()
+            if digest in principal_digests or any(content in encoded for content in principal_contents):
                 raise AssertionError(f"instance contains principal file content: {path} ({digest})")
             continue
         raise AssertionError(f"instance contains unsupported entry: {path}")

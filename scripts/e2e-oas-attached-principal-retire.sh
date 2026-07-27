@@ -61,6 +61,53 @@ assert_clean_git_subject() {
   [[ -z "$status" ]] || fail "$label proof subject has tracked changes"
 }
 
+capture_execution_subject() {
+  local installed="$FIXTURE_REPO/.agents/capabilities/installed/aweb-identity-attach"
+  local resolved_aw
+  resolved_aw="$(python3 - "$AW_BIN" <<'PY'
+import pathlib, sys
+print(pathlib.Path(sys.argv[1]).resolve(strict=True))
+PY
+)"
+  [[ "$resolved_aw" == "$CLI_DIR/aw" ]] || fail "AW_BIN override/resolution escaped the declared aweb subject: $resolved_aw"
+  : > "$EVIDENCE/executed-esm-trace.log"
+  NODE_DEBUG=esm run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT" "$FIXTURE_REPO" doctor "$FIXTURE_REPO" --soul proof-worker --json \
+    > "$EVIDENCE/execution-doctor.json" 2>> "$EVIDENCE/executed-esm-trace.log"
+  NODE_DEBUG=esm run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT" "$FIXTURE_REPO" aweb-identity status --soul proof-worker --json \
+    > "$EVIDENCE/execution-capability-status.json" 2>> "$EVIDENCE/executed-esm-trace.log" || true
+  python3 - "$EVIDENCE/executed-esm-trace.log" "$EVIDENCE/execution-subject.json" "$OAS_ROOT" "$installed" "$CAPABILITY_SOURCE" "$OAS_CLI" <<'PY'
+import hashlib, json, pathlib, re, sys
+from urllib.parse import unquote, urlparse
+trace, output, oas_root, installed, source, oas_cli = sys.argv[1:]
+roots = {
+    "oas": pathlib.Path(oas_root).resolve(strict=True),
+    "aweb-capability": pathlib.Path(installed).resolve(strict=True),
+}
+source_root = pathlib.Path(source).resolve(strict=True)
+paths = set()
+for encoded in re.findall(r"file://[^\s'\]]+", pathlib.Path(trace).read_text(encoding="utf-8", errors="replace")):
+    path = pathlib.Path(unquote(urlparse(encoded).path))
+    if path.is_file():
+        paths.add(path.resolve(strict=True))
+rows = []
+for path in sorted(paths):
+    owner = next((name for name, root in roots.items() if path == root or root in path.parents), None)
+    if owner is None:
+        continue
+    root = roots[owner]
+    relative = path.relative_to(root).as_posix()
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if owner == "aweb-capability":
+        counterpart = source_root / relative
+        assert counterpart.is_file(), (path, counterpart)
+        assert hashlib.sha256(counterpart.read_bytes()).hexdigest() == digest, (path, counterpart)
+    rows.append({"subject": owner, "relative_path": relative, "sha256": digest})
+required = {("oas", "bin/oas.mjs"), ("oas", "lib/core.mjs"), ("aweb-capability", "bin/aweb-identity-attach.mjs")}
+assert required <= {(row["subject"], row["relative_path"]) for row in rows}, rows
+pathlib.Path(output).write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
 AWID_PORT="${OAS_PROOF_AWID_PORT:-18110}"
 AWEB_PORT="${OAS_PROOF_AWEB_PORT:-18100}"
 POSTGRES_PORT="${OAS_PROOF_POSTGRES_PORT:-55433}"
@@ -351,6 +398,24 @@ scan_provisioned_sensitive_material() {
   done
 }
 
+preserve_known_material_for_final_scan() {
+  local label="$1" source="$2" vault="$PROOF_ROOT/known-material/$label"
+  mkdir -p "$PROOF_ROOT/known-material"
+  chmod 700 "$PROOF_ROOT/known-material"
+  cp -R "$source" "$vault"
+  python3 "$PROOF_HELPER" snapshot --root "$vault" --output "$EVIDENCE/$label-final-credential-snapshot.json"
+}
+
+scan_final_known_material() {
+  local label="$1"
+  shift
+  local snapshot="$EVIDENCE/$label-final-credential-snapshot.json" controlled
+  for controlled in "$@"; do
+    [[ -e "$controlled" ]] || continue
+    python3 "$PROOF_HELPER" scan-sensitive-material --principal-snapshot "$snapshot" --instance "$controlled"
+  done
+}
+
 capture_owning_state() {
   local label="$1" prefix="$EVIDENCE/owning-$1"
   python3 - "$PRINCIPAL_HOME/.provisioning/intents" "$prefix-intents.json" <<'PY'
@@ -397,17 +462,16 @@ assert_owning_state_same() {
 }
 
 assert_pre_activation_state() {
-  local doctor="$1" lock="$2" artifact="$3"
-  python3 - "$doctor" "$lock" "$artifact" <<'PY'
+  local lock="$1" config="$2" artifact="$3"
+  python3 - "$lock" "$config" "$artifact" <<'PY'
 import json, pathlib, sys
-doctor_path, lock_path, artifact = sys.argv[1:]
-doc = json.load(open(doctor_path, encoding="utf-8"))
-assert "aweb.identity-attach" in doc["acquired"], doc
-assert doc["capabilities"] == [], doc
-assert "integration" not in doc["layers"]["messaging"], doc
+lock_path, config_path, artifact = sys.argv[1:]
+manifest = json.load(open(pathlib.Path(artifact, "oas.json"), encoding="utf-8"))
+assert manifest["capability"] == "aweb.identity-attach", manifest
 lock = json.load(open(lock_path, encoding="utf-8"))["capabilities"]["aweb.identity-attach"]
 assert lock["trustedExecutables"] is False, lock
-assert pathlib.Path(artifact, "oas.json").is_file(), artifact
+config = pathlib.Path(config_path).read_text(encoding="utf-8")
+assert "capabilities:" not in config and "aweb.identity-attach" not in config, config
 PY
 }
 
@@ -443,13 +507,28 @@ for spec in specs:
     operation, count = spec.rsplit("=", 1)
     expected[operation] = int(count)
 rows = {operation: [] for operation in expected}
+unmatched = []
 root_path = pathlib.Path(root)
 if root_path.is_dir():
     for path in sorted(root_path.glob("*.json")):
         document = json.loads(path.read_text(encoding="utf-8"))
         operation = document.get("operation_id")
+        projected = {
+            "file": path.name,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "invite_id": document.get("invite_id"),
+            "operation_id": operation,
+            "team_id": f'{document.get("team_name")}:{document.get("domain")}',
+            "ephemeral": document.get("ephemeral"),
+            "registry_url": document.get("registry_url"),
+            "aweb_url": document.get("aweb_url"),
+            "bearer_sha256": hashlib.sha256(document.get("secret", "").encode()).hexdigest(),
+        }
         if operation in rows:
-            rows[operation].append({"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+            rows[operation].append(projected)
+        else:
+            unmatched.append(projected)
+assert unmatched == [], unmatched
 for operation, count in expected.items():
     assert len(rows[operation]) == count, (operation, rows[operation], count)
 pathlib.Path(output).write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -466,24 +545,6 @@ after = json.load(open(after_path, encoding="utf-8"))
 assert len(before[removed]) == 1 and after[removed] == [], (before, after, removed)
 if survivor:
     assert len(before[survivor]) == 1 and after[survivor] == before[survivor], (before, after, survivor)
-PY
-}
-
-assert_retained_messages() {
-  local first="$1" second="$2"
-  python3 - "$first" "$second" <<'PY'
-import sys, uuid
-for value in sys.argv[1:]:
-    uuid.UUID(value)
-PY
-  docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c \
-    "SELECT COALESCE(json_agg(message_id::text ORDER BY message_id::text)::text, '[]')
-       FROM aweb.messages WHERE message_id IN ('$first'::uuid, '$second'::uuid);" > "$EVIDENCE/retained-message-ids.raw.json"
-  normalize_json "$EVIDENCE/retained-message-ids.raw.json" "$EVIDENCE/retained-message-ids.json"
-  python3 - "$EVIDENCE/retained-message-ids.json" "$first" "$second" <<'PY'
-import json, sys
-rows = json.load(open(sys.argv[1], encoding="utf-8"))
-assert rows == sorted(sys.argv[2:]), (rows, sys.argv[2:])
 PY
 }
 
@@ -553,6 +614,47 @@ seed_provision_lifecycle_artifacts() {
     || fail "team presence index did not outlive primary for $operation"
   [[ "$(docker exec "$REDIS_CONTAINER" redis-cli GET "idx:alias:$encoded_team:$encoded_alias")" == "$workspace" ]] \
     || fail "alias presence index did not outlive primary for $operation"
+}
+
+capture_durable_operation_tuple() {
+  local label="$1" operation="$2" prefix="$EVIDENCE/tuple-$1"
+  local intent="$PRINCIPAL_HOME/.provisioning/intents/$operation.json" alias certificate agent workspace target
+  alias="$(json_value "$intent" resource.alias)"
+  certificate="$(json_value "$intent" resource.certificate_id)"
+  agent="$(json_value "$intent" resource.agent_id)"
+  workspace="$(json_value "$intent" resource.workspace_id)"
+  target="$(json_value "$intent" resource.identity_home)"
+  run_observer_aw id team members --team-id "$TEAM_ID" --registry "$AWID_URL" --include-revoked --json > "$prefix-members.raw.json"
+  normalize_json "$prefix-members.raw.json" "$prefix-members.json"
+  python3 - "$prefix-members.json" "$prefix-member.json" "$alias" "$certificate" <<'PY'
+import json, pathlib, sys
+source, output, alias, certificate = sys.argv[1:]
+rows = [row for row in json.load(open(source, encoding="utf-8"))["members"] if row["alias"] == alias and row["certificate_id"] == certificate]
+assert len(rows) == 1, rows
+pathlib.Path(output).write_text(json.dumps(rows[0], indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+  docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT row_to_json(rows)::text FROM (SELECT * FROM aweb.agents WHERE agent_id = '$agent') rows;" > "$prefix-agent.raw.json"
+  normalize_json "$prefix-agent.raw.json" "$prefix-agent.json"
+  docker exec "$POSTGRES_CONTAINER" psql -U aweb -d aweb -At -c "SELECT row_to_json(rows)::text FROM (SELECT * FROM aweb.workspaces WHERE workspace_id = '$workspace') rows;" > "$prefix-workspace.raw.json"
+  normalize_json "$prefix-workspace.raw.json" "$prefix-workspace.json"
+  python3 - "$intent" "$target" "$prefix-files.json" <<'PY'
+import hashlib, json, pathlib, sys
+intent, target, output = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+rows = [{"path": "intent", "sha256": hashlib.sha256(intent.read_bytes()).hexdigest()}]
+if target.is_dir():
+    for path in sorted(target.rglob("*")):
+        if path.is_file():
+            rows.append({"path": path.relative_to(target).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+output.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+assert_durable_operation_tuple_same() {
+  local before="$1" after="$2" suffix
+  for suffix in member.json agent.json workspace.json files.json; do
+    cmp -s "$EVIDENCE/tuple-$before-$suffix" "$EVIDENCE/tuple-$after-$suffix" \
+      || fail "durable operation tuple changed across isolated cleanup: $before -> $after ($suffix)"
+  done
 }
 
 capture_provision_resource() {
@@ -705,13 +807,12 @@ run_oas_in "$FIXTURE_REPO" install "$CAPABILITY_SOURCE" --dir "$FIXTURE_REPO" > 
 grep -q 'Acquired aweb.identity-attach' "$EVIDENCE/oas-install.txt" || fail "oas install did not acquire the capability"
 [[ ! -e "$FIXTURE_REPO/oas-config.yaml" ]] || fail "oas install mutated activation config"
 printf 'name: external-proof-workspace\n' > "$FIXTURE_REPO/oas-config.yaml"
-run_oas_in "$FIXTURE_REPO" doctor "$FIXTURE_REPO" --json > "$EVIDENCE/oas-doctor-pre-activation.json"
 assert_pre_activation_state \
-  "$EVIDENCE/oas-doctor-pre-activation.json" \
   "$FIXTURE_REPO/oas-lock.json" \
+  "$FIXTURE_REPO/oas-config.yaml" \
   "$FIXTURE_REPO/.agents/capabilities/installed/aweb-identity-attach"
 capture_owning_state acquisition-after
-assert_owning_state_same acquisition-before acquisition-after "pure acquisition"
+assert_owning_state_same acquisition-before acquisition-after "acquisition owning endpoints"
 assert_principal_unchanged after-pure-acquisition
 capture_registry after-acquisition
 compare_registry_to_pre after-acquisition
@@ -759,6 +860,24 @@ if doc.get("schemaVersion") == 1:
 assert doc["layers"]["messaging"]["integration"] == "aweb.identity-attach", doc
 assert any(cap["id"] == "aweb.identity-attach" and cap["trust"]["trusted"] for cap in doc["capabilities"]), doc
 PY
+
+# Diverge the resolved mode and require the corresponding successful binding
+# consequence, then restore the ordinary attach config used by the journey.
+cp "$FIXTURE_REPO/oas-config.yaml" "$EVIDENCE/oas-config-attach.yaml"
+python3 - "$FIXTURE_REPO/oas-config.yaml" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text = text.replace("schema_version: 1", "schema_version: 2").replace("mode: attach", "mode: attach-existing")
+path.write_text(text, encoding="utf-8")
+PY
+run_oas_in "$FIXTURE_REPO" spawn proof-resident --purpose config-divergence --no-launch --json > "$EVIDENCE/config-divergence-spawn.json"
+DIVERGENCE_HOME="$(json_value "$EVIDENCE/config-divergence-spawn.json" home)"
+DIVERGENCE_INSTANCE="$(json_value "$EVIDENCE/config-divergence-spawn.json" instance)"
+[[ "$(json_value "$DIVERGENCE_HOME/instance.json" capabilityMeta.aweb.identity-attach.identity_binding.mode)" == "attach-existing" ]] \
+  || fail "divergent attach-existing setting did not produce its predicted binding mode"
+run_oas_in "$FIXTURE_REPO" retire "$DIVERGENCE_INSTANCE" --json > "$EVIDENCE/config-divergence-retire.json"
+cp "$EVIDENCE/oas-config-attach.yaml" "$FIXTURE_REPO/oas-config.yaml"
 
 echo "=== Materialize a real OAS instance with attach mode and no session launch ==="
 
@@ -1036,20 +1155,21 @@ ATTACKER_ALIAS="$(json_value "$ATTACKER_INTENT" alias)"
 ATTACKER_TARGET="$(json_value "$ATTACKER_INTENT" identity_home)"
 scan_provisioned_material "$VICTIM_OPERATION" victim "$VICTIM_HOME" "$ATTACKER_HOME" "$FIXTURE_REPO"
 scan_provisioned_material "$ATTACKER_OPERATION" attacker "$ATTACKER_HOME" "$VICTIM_HOME" "$FIXTURE_REPO"
-# Messaging intentionally creates a non-secret .aw/interaction-log.jsonl in the
+# Messaging intentionally creates an .aw/interaction-log.jsonl in the
 # external workspace, so provision-material copy scans run before this use step.
 run_observer_aw mail send --to "$VICTIM_ALIAS" --subject "ordinary worker proof" --body "observer-to-worker-$VICTIM_OPERATION" --plaintext --json > "$EVIDENCE/message-to-worker.json"
-MESSAGE_TO_WORKER_ID="$(json_value "$EVIDENCE/message-to-worker.json" message_id)"
 run_target_aw "$VICTIM_TARGET" mail inbox --show-all --json > "$EVIDENCE/worker-inbox.json"
 grep -q "observer-to-worker-$VICTIM_OPERATION" "$EVIDENCE/worker-inbox.json" || fail "real observer message did not reach developer A worker"
 run_target_aw "$VICTIM_TARGET" mail send --to observer --subject "ordinary worker reply" --body "worker-to-observer-$VICTIM_OPERATION" --plaintext --json > "$EVIDENCE/message-from-worker.json"
-MESSAGE_FROM_WORKER_ID="$(json_value "$EVIDENCE/message-from-worker.json" message_id)"
 run_observer_aw mail inbox --show-all --json > "$EVIDENCE/observer-inbox.json"
 grep -q "worker-to-observer-$VICTIM_OPERATION" "$EVIDENCE/observer-inbox.json" || fail "real developer A worker reply did not reach observer"
 scan_provisioned_sensitive_material victim "$VICTIM_HOME" "$ATTACKER_HOME" "$FIXTURE_REPO"
 scan_provisioned_sensitive_material attacker "$ATTACKER_HOME" "$VICTIM_HOME" "$FIXTURE_REPO"
+preserve_known_material_for_final_scan victim "$VICTIM_TARGET"
+preserve_known_material_for_final_scan attacker "$ATTACKER_TARGET"
 capture_provision_resource victim-before-forgery "$VICTIM_OPERATION" active
 capture_provision_resource attacker-before-forgery "$ATTACKER_OPERATION" active
+capture_durable_operation_tuple attacker-before-victim-cleanup "$ATTACKER_OPERATION"
 
 AUTHORITY_HOME="$(json_value "$VICTIM_INTENT" authority_home)"
 AUTHORITY_ADDRESS="$(json_value "$VICTIM_INTENT" authority.intended_creator.address)"
@@ -1118,6 +1238,9 @@ assert retirement["cleanup"]["status"] == "complete", retirement
 PY
 capture_provision_resource victim-after-authorized-retire "$VICTIM_OPERATION" deleted
 capture_provision_resource attacker-after-victim-retire "$ATTACKER_OPERATION" active
+capture_durable_operation_tuple attacker-after-victim-cleanup "$ATTACKER_OPERATION"
+assert_durable_operation_tuple_same attacker-before-victim-cleanup attacker-after-victim-cleanup
+capture_durable_operation_tuple victim-before-attacker-cleanup "$VICTIM_OPERATION"
 capture_operation_grants after-victim "$VICTIM_OPERATION=0" "$ATTACKER_OPERATION=0"
 
 # The forged carrier's ordinary instance is gone, so its genuinely owned bound
@@ -1128,16 +1251,37 @@ run_reconcile --cleanup-unacknowledged "$ATTACKER_OPERATION" > "$EVIDENCE/operat
 capture_provision_resource attacker-after-operator-reconcile "$ATTACKER_OPERATION" deleted
 capture_operation_grants after-attacker "$VICTIM_OPERATION=0" "$ATTACKER_OPERATION=0"
 capture_provision_resource victim-after-attacker-reconcile "$VICTIM_OPERATION" deleted
+capture_durable_operation_tuple victim-after-attacker-cleanup "$VICTIM_OPERATION"
+assert_durable_operation_tuple_same victim-before-attacker-cleanup victim-after-attacker-cleanup
 
-# Developer B also completes an unmodified ordinary retire; the interrupted
-# duplicate-name handoff above proves reconciliation, not the clean path.
-run_oas_with_agents "$DEVELOPER_B_AGENTS_ROOT" "$FIXTURE_REPO" spawn proof-worker --purpose developer-b-clean-retire --no-launch --json > "$EVIDENCE/developer-b-clean-spawn.json"
-DEVELOPER_B_CLEAN_HOME="$(json_value "$EVIDENCE/developer-b-clean-spawn.json" home)"
-DEVELOPER_B_CLEAN_INSTANCE="$(json_value "$EVIDENCE/developer-b-clean-spawn.json" instance)"
-DEVELOPER_B_CLEAN_OPERATION="$(binding_operation "$DEVELOPER_B_CLEAN_HOME/instance.json")"
-seed_provision_lifecycle_artifacts "$DEVELOPER_B_CLEAN_OPERATION"
-run_oas_with_agents "$DEVELOPER_B_AGENTS_ROOT" "$FIXTURE_REPO" retire "$DEVELOPER_B_CLEAN_INSTANCE" --json > "$EVIDENCE/developer-b-clean-retire.json"
-capture_provision_resource developer-b-after-clean-retire "$DEVELOPER_B_CLEAN_OPERATION" deleted
+# Repeat isolation in the opposite order. B retires while A is still active;
+# every A owner remains active. A then retires while B's deleted tuple remains
+# unchanged, closing the latent direction hidden by the first A-then-B path.
+run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT" "$FIXTURE_REPO" spawn proof-worker --purpose reverse-isolation --no-launch --json > "$EVIDENCE/reverse-a-spawn.json"
+REVERSE_A_HOME="$(json_value "$EVIDENCE/reverse-a-spawn.json" home)"
+REVERSE_A_INSTANCE="$(json_value "$EVIDENCE/reverse-a-spawn.json" instance)"
+REVERSE_A_OPERATION="$(binding_operation "$REVERSE_A_HOME/instance.json")"
+run_oas_with_agents "$DEVELOPER_B_AGENTS_ROOT" "$FIXTURE_REPO" spawn proof-worker --purpose reverse-isolation --no-launch --json > "$EVIDENCE/reverse-b-spawn.json"
+REVERSE_B_HOME="$(json_value "$EVIDENCE/reverse-b-spawn.json" home)"
+REVERSE_B_INSTANCE="$(json_value "$EVIDENCE/reverse-b-spawn.json" instance)"
+REVERSE_B_OPERATION="$(binding_operation "$REVERSE_B_HOME/instance.json")"
+[[ "$REVERSE_A_INSTANCE" == "$REVERSE_B_INSTANCE" ]] || fail "reverse isolation did not retain duplicate local names"
+capture_provision_resource reverse-a-before-b-retire "$REVERSE_A_OPERATION" active
+capture_provision_resource reverse-b-before-b-retire "$REVERSE_B_OPERATION" active
+capture_durable_operation_tuple reverse-a-before-b-cleanup "$REVERSE_A_OPERATION"
+seed_provision_lifecycle_artifacts "$REVERSE_B_OPERATION"
+run_oas_with_agents "$DEVELOPER_B_AGENTS_ROOT" "$FIXTURE_REPO" retire "$REVERSE_B_INSTANCE" --json > "$EVIDENCE/reverse-b-retire.json"
+capture_provision_resource reverse-b-after-b-retire "$REVERSE_B_OPERATION" deleted
+capture_provision_resource reverse-a-after-b-retire "$REVERSE_A_OPERATION" active
+capture_durable_operation_tuple reverse-a-after-b-cleanup "$REVERSE_A_OPERATION"
+assert_durable_operation_tuple_same reverse-a-before-b-cleanup reverse-a-after-b-cleanup
+capture_durable_operation_tuple reverse-b-before-a-cleanup "$REVERSE_B_OPERATION"
+seed_provision_lifecycle_artifacts "$REVERSE_A_OPERATION"
+run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT" "$FIXTURE_REPO" retire "$REVERSE_A_INSTANCE" --json > "$EVIDENCE/reverse-a-retire.json"
+capture_provision_resource reverse-a-after-a-retire "$REVERSE_A_OPERATION" deleted
+capture_provision_resource reverse-b-after-a-retire "$REVERSE_B_OPERATION" deleted
+capture_durable_operation_tuple reverse-b-after-a-cleanup "$REVERSE_B_OPERATION"
+assert_durable_operation_tuple_same reverse-b-before-a-cleanup reverse-b-after-a-cleanup
 
 echo "=== Surface terminal quarantine and prove explicit remediation ==="
 run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT" "$FIXTURE_REPO" spawn proof-worker --purpose quarantine-is-not-success --no-launch --json > "$EVIDENCE/quarantine-spawn.json"
@@ -1163,12 +1307,12 @@ grep -q 'quarantined' "$EVIDENCE/quarantine-retry-3.json" || fail "terminal quar
 mv "$TEAM_KEY_PATH.proof-unavailable" "$TEAM_KEY_PATH"
 run_reconcile --retry-quarantine "$QUARANTINE_OPERATION" > "$EVIDENCE/quarantine-remediation.json"
 capture_provision_resource quarantine-after-remediation "$QUARANTINE_OPERATION" deleted
-assert_retained_messages "$MESSAGE_TO_WORKER_ID" "$MESSAGE_FROM_WORKER_ID"
-scan_provisioned_sensitive_material victim "$FIXTURE_REPO" "$DEVELOPER_A_AGENTS_ROOT" "$DEVELOPER_B_AGENTS_ROOT"
-scan_provisioned_sensitive_material attacker "$FIXTURE_REPO" "$DEVELOPER_A_AGENTS_ROOT" "$DEVELOPER_B_AGENTS_ROOT"
+scan_final_known_material victim "$FIXTURE_REPO" "$DEVELOPER_A_AGENTS_ROOT" "$DEVELOPER_B_AGENTS_ROOT"
+scan_final_known_material attacker "$FIXTURE_REPO" "$DEVELOPER_A_AGENTS_ROOT" "$DEVELOPER_B_AGENTS_ROOT"
 
 assert_clean_git_subject "$REPO_ROOT" aweb
 assert_clean_git_subject "$OAS_ROOT" OAS
+capture_execution_subject
 
 echo "=== Write proof report ==="
 SOURCE_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
@@ -1180,16 +1324,21 @@ PY
 )"
 OAS_CLI_SHA="$(file_sha256 "$OAS_ROOT/bin/oas.mjs")"
 OAS_CORE_SHA="$(file_sha256 "$OAS_ROOT/lib/core.mjs")"
+EXECUTION_CLOSURE_SHA="$(file_sha256 "$EVIDENCE/execution-subject.json")"
+AW_BINARY_SHA="$(file_sha256 "$AW_BIN")"
+NODE_VERSION="$(node --version)"
+PYTHON_VERSION="$(python3 --version 2>&1)"
 SNAPSHOT_SHA="$(file_sha256 "$EVIDENCE/principal-pre.json")"
 ADDRESS_SHA="$(file_sha256 "$EVIDENCE/registry-pre-address.json")"
 RESOLVE_SHA="$(file_sha256 "$EVIDENCE/registry-pre-resolve.json")"
 VERIFY_SHA="$(file_sha256 "$EVIDENCE/registry-pre-verify.json")"
 mkdir -p "$(dirname "$REPORT")"
-python3 - "$REPORT" "$SOURCE_SHA" "$OAS_SHA" "$OAS_PACKAGE_VERSION" "$OAS_CLI_SHA" "$OAS_CORE_SHA" "$ADDRESS" "$DID_AW" "$TEAM_ID" "$SNAPSHOT_SHA" "$ADDRESS_SHA" "$RESOLVE_SHA" "$VERIFY_SHA" "$EVIDENCE/registry-pre-address.json" "$EVIDENCE/registry-pre-resolve.json" "$EVIDENCE/registry-pre-verify.json" "$VICTIM_OPERATION" "$ATTACKER_OPERATION" "$QUARANTINE_OPERATION" <<'PY'
+python3 - "$REPORT" "$SOURCE_SHA" "$OAS_SHA" "$OAS_PACKAGE_VERSION" "$OAS_CLI_SHA" "$OAS_CORE_SHA" "$EXECUTION_CLOSURE_SHA" "$AW_BINARY_SHA" "$NODE_VERSION" "$PYTHON_VERSION" "$ADDRESS" "$DID_AW" "$TEAM_ID" "$SNAPSHOT_SHA" "$ADDRESS_SHA" "$RESOLVE_SHA" "$VERIFY_SHA" "$EVIDENCE/registry-pre-address.json" "$EVIDENCE/registry-pre-resolve.json" "$EVIDENCE/registry-pre-verify.json" "$VICTIM_OPERATION" "$ATTACKER_OPERATION" "$QUARANTINE_OPERATION" <<'PY'
 import json, sys
-(report, source, oas_source, oas_version, oas_cli_sha, oas_core_sha, address, stable, team,
- snapshot_sha, address_sha, resolve_sha, verify_sha, address_path, resolve_path, verify_path,
- victim_operation, attacker_operation, quarantine_operation) = sys.argv[1:]
+(report, source, oas_source, oas_version, oas_cli_sha, oas_core_sha, closure_sha, aw_binary_sha,
+ node_version, python_version, address, stable, team, snapshot_sha, address_sha, resolve_sha,
+ verify_sha, address_path, resolve_path, verify_path, victim_operation, attacker_operation,
+ quarantine_operation) = sys.argv[1:]
 address_observation = json.load(open(address_path, encoding="utf-8"))
 resolve_observation = json.load(open(resolve_path, encoding="utf-8"))
 verify_observation = json.load(open(verify_path, encoding="utf-8"))
@@ -1202,8 +1351,15 @@ document = {
         "version": oas_version,
         "bin_oas_mjs_sha256": oas_cli_sha,
         "lib_core_mjs_sha256": oas_core_sha,
+        "executed_first_party_module_closure_sha256": closure_sha,
         "git_top_level_equals_selected_root": True,
         "tracked_clean": True,
+    },
+    "execution_subject": {
+        "aw_binary_sha256": aw_binary_sha,
+        "node_version_outside_first_party_subject": node_version,
+        "python_version_outside_first_party_subject": python_version,
+        "first_party_paths_resolved_inside_declared_roots": True,
     },
     "stack": {"loopback_only": True, "postgres_tmpfs_verified": True},
     "principal": {"address": address, "stable_id": stable, "team_id": team, "throwaway": True},
@@ -1220,16 +1376,19 @@ document = {
     },
     "customer_journey_observation": {
         "workspace": "fresh external git workspace",
-        "acquisition": "oas install path artifact; pre-activation doctor observed acquired, inactive, and untrusted state",
+        "acquisition": "on-disk acquired artifact and untrusted lock observed directly; owning endpoints unchanged, with no local monotonic writer signal to exclude create-then-erase",
+        "configuration_consumption": "attach-existing divergence spawned successfully and persisted the predicted attach-existing binding before ordinary attach was restored",
         "doctor_resolved": True,
         "onboarding": "explicit principal, team, declaration, config, and trust setup",
-        "hosted_disposable_refused_before_create": True,
-        "durable_refused_before_create": True,
+        "hosted_disposable_refusal_owning_endpoints_unchanged": True,
+        "durable_refusal_owning_endpoints_unchanged": True,
+        "refusal_temporal_claim_bounded_by_missing_local_allocation_counter": True,
         "duplicate_local_instance_names_both_succeeded": True,
         "duplicate_names_produced_distinct_operations_and_aliases": True,
-        "successful_operations_had_zero_usable_grants_at_local_owner": True,
+        "successful_operations_had_zero_local_grant_records_at_local_owner": True,
         "interrupted_pre_accept_grant_attributed_and_adopted": True,
         "each_cleanup_changed_only_its_durable_operation_tuple": True,
+        "cleanup_isolation_exercised_in_both_orders": True,
         "both_developers_completed_an_ordinary_retire": True,
     },
     "provision_cleanup_observation": {
@@ -1248,11 +1407,9 @@ document = {
         "explicit_quarantine_remediation_completed": True,
         "positive_lifecycle_controls_removed": ["PostgreSQL task claim", "PostgreSQL reservation", "Redis expired workspace+agent-heartbeat cleanup coordinates", "Redis global presence index", "Redis team presence index", "Redis alias presence index"],
         "real_plaintext_mail_round_trip_completed": True,
-        "historical_messages_retained_as_audit_not_authorization": True,
-        "historical_message_ids_observed_at_owning_postgresql_store_after_cleanup": True,
         "not_created_by_no_launch_provision": ["aweb API key"],
         "provisioned_material_copy_hardlink_symlink_scan_passed": True,
-        "post_message_sensitive_material_scan_passed": True,
+        "no_verbatim_copy_of_known_credential_files_in_controlled_roots_after_messaging": True,
         "external_journals_terminal_complete": True,
         "owning_authorities_queried": ["AWID certificate roster", "aweb PostgreSQL lifecycle state", "aweb Redis presence", "local credential and invite stores", "external provision journal"],
     },
@@ -1277,6 +1434,9 @@ document = {
         "v1 has no admission lease or concurrent-use fencing",
         "attach itself performs no registry resolution or DID-log verification",
         "local cleanup corroboration is same-UID accident/confused-deputy evidence, not hostile-model resistance",
+        "refusal before-create is proven for append-retained AWID and SQL owner rows; local intent/grant files expose no monotonic allocation signal, so their claim is endpoint equality only",
+        "zero local grant records after success does not independently prove that no copied bearer could be redeemed",
+        "credential content scan excludes verbatim known file bytes but not encoded, split, derived, or newly generated bearer material",
     ],
 }
 with open(report, "w", encoding="utf-8") as stream:

@@ -27,20 +27,28 @@ class PrincipalProofHarnessTests(unittest.TestCase):
             'doctor "$FIXTURE_REPO" --soul proof-worker',
             'assert_owning_state_same refusal-before "refusal-after-$refused_mode"',
             'assert_pre_activation_state',
+            'config-divergence',
+            'divergent attach-existing setting did not produce its predicted binding mode',
             'PI_AGENT_HOME="$VICTIM_HOME" run_oas_with_agents "$DEVELOPER_A_AGENTS_ROOT"',
             'aweb-identity status --soul proof-worker',
             'assert_worker_doctor_state',
             'capture_operation_grants both-active "$VICTIM_OPERATION=0" "$ATTACKER_OPERATION=0"',
             'capture_operation_grants interrupted-grant "$INTERRUPTED_OPERATION=1"',
             'assert_operation_grant_isolation interrupted-grant interrupted-grant-recovered',
-            'assert_retained_messages',
             'assert_clean_git_subject',
+            'capture_execution_subject',
             'scan_provisioned_sensitive_material',
+            'scan_final_known_material',
             'independent developers did not exercise duplicate local instance names',
             'duplicate local names collapsed into one provisioning operation',
             'attacker-after-victim-retire',
+            'assert_durable_operation_tuple_same attacker-before-victim-cleanup attacker-after-victim-cleanup',
+            'assert_durable_operation_tuple_same reverse-a-before-b-cleanup reverse-a-after-b-cleanup',
+            'assert_durable_operation_tuple_same reverse-b-before-a-cleanup reverse-b-after-a-cleanup',
             'third failed cleanup did not enter terminal visible quarantine',
             '--retry-quarantine "$QUARANTINE_OPERATION"',
+            'credential content scan excludes verbatim known file bytes but not encoded, split, derived',
+            'refusal_temporal_claim_bounded_by_missing_local_allocation_counter',
         ):
             self.assertIn(required, harness)
 
@@ -132,7 +140,7 @@ class PrincipalProofFilesystemTests(unittest.TestCase):
         instance = self.instance("tainted-interaction-instance")
         interaction = instance / ".aw" / "interaction-log.jsonl"
         interaction.parent.mkdir()
-        interaction.write_bytes(self.key.read_bytes())
+        interaction.write_bytes(b'prefix-' + self.key.read_bytes() + b'-suffix')
         with self.assertRaisesRegex(AssertionError, "principal file content"):
             scan_sensitive_material(str(self.snapshot), str(instance))
 
