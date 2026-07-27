@@ -884,6 +884,58 @@ provisioning and launch orphans nothing and duplicates nothing on replay; a
 message injects into a live session; a second start is refused while a lease is
 unexpired.
 
+## Cleanup authority belongs to the spawner, never to the worker
+
+This resolves the hosted deadlock, and it corrects a question we were asking
+wrongly for most of this epic.
+
+**Membership is a certificate, not a row.** Joining a team installs a team
+certificate signed by the team controller; `team_certificates` in AWID carries
+the canonical `identity_scope`. Removing a member *is* revoking that
+certificate — `aw team remove-agent` / `aw id team remove-member`, team-scoped,
+and explicitly not deletion of a global identity. A local identity has no AWID
+identity row and no `did:aw`, but it does have a certificate, and an unrevoked
+certificate is live membership regardless of whether any projection row still
+exists. Authorization is *presented cert + signature against the team public key
++ non-revocation*, never row existence.
+
+**So the residue a disposable worker leaves is an unrevoked certificate**, and
+revoking one requires the team controller key — held locally for BYOT teams, by
+the operator for hosted namespaces.
+
+**The question we kept asking was "how does a disposable worker delete itself?"
+That question has no safe answer and should never have been asked.** Every route
+to it ends with revocation authority placed where a launched model can read it,
+because hook and model share a UID. A worker must never be able to revoke
+anything, including its own membership.
+
+**The answer is that cleanup is the spawner's operation.** The spawner already
+holds what is required — the controller key for a local-controller team, or
+owner/admin authentication for a hosted one — and the capability already runs in
+the spawner's context at provision time and already records cleanup ownership as
+an explicit decision. Nothing new needs to be trusted.
+
+Concretely:
+
+- **Provision** records the binding and its cleanup owner. Already built.
+- **Owner-initiated retire** revokes the certificate under the spawner's
+  authority, in the documented order: grants, then workspace and identity under
+  the persistent declared authority, then certificate revocation, then the owned
+  credential tree.
+- **Self-retire tears down local state and cannot revoke, by design.** The
+  recorded cleanup owner reconciles the outstanding revocation. This is what the
+  operation journal and corroboration exist for; a self-retire that leaves an
+  unrevoked certificate is a *recorded incomplete operation*, not a silent leak.
+
+**Hosted then stops being a special case.** Same sequence, same ordering
+constraint, different credential at exactly one step: a locally held controller
+key for BYOT, an authenticated owner/admin call for hosted. OAS holds neither —
+it never receives an owner credential under either arrangement.
+
+This is why hosted disposable provisioning refuses today: not because AC lacks a
+revocation path, but because we assumed the worker had to perform cleanup. It
+does not.
+
 ## Open
 
 - Whether attach should add registry resolution and cryptographic DID-log
