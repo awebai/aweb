@@ -169,7 +169,7 @@ test-oas-attached-principal-e2e: test-oas-proof-helpers
 	./scripts/e2e-oas-attached-principal-retire.sh
 
 test-oas-pi-resident-e2e: test-oas-proof-helpers
-	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" OAS_PROOF_MODE=resident-pi ./scripts/e2e-oas-attached-principal-retire.sh
+	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" PATH="$(CURDIR)/scripts/guard-bin:$$PATH" OAS_PROOF_MODE=resident-pi ./scripts/e2e-oas-attached-principal-retire.sh
 
 test-tmux-guard:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-migrate-agent-tmux.sh

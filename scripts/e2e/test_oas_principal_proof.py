@@ -60,6 +60,16 @@ class PrincipalProofHarnessTests(unittest.TestCase):
         ):
             self.assertIn(required, harness)
 
+    def test_resident_make_target_pins_the_declared_oas_checkout(self) -> None:
+        makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+        target = re.search(
+            r"^test-oas-pi-resident-e2e:.*\n\t([^\n]+)$",
+            makefile,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(target, "Makefile has no resident proof recipe")
+        self.assertIn('OAS_TEST_ROOT="$(OAS_TEST_ROOT)"', target.group(1))
+
     def test_harness_preflight_checks_repository_paths_without_tooling(self) -> None:
         result = subprocess.run(
             ["/bin/bash", "scripts/e2e-oas-attached-principal-retire.sh", "--preflight"],
