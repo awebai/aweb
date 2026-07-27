@@ -792,3 +792,90 @@ async def mark_messages_read(
         "session_id": str(session_id),
         "messages_marked": len(marked),
     }
+
+
+async def mark_messages_read_up_to(
+    db,
+    *,
+    session_id: UUID,
+    participant_did: str,
+    up_to_message_id: str,
+    participant_agent_id: str | None = None,
+) -> dict[str, Any]:
+    """Resolve a deployed-client watermark into exact per-message reads."""
+    aweb_db = db.get_manager("aweb")
+    participant_agent_uuid = _uuid_or_none(participant_agent_id)
+    up_to_uuid = UUID(up_to_message_id)
+
+    is_participant = await aweb_db.fetch_one(
+        """
+        SELECT 1
+        FROM {{tables.chat_participants}}
+        WHERE session_id = $1 AND did = $2
+        """,
+        session_id,
+        participant_did,
+    )
+    if not is_participant:
+        raise ForbiddenError("Not a participant in this session")
+
+    watermark = await aweb_db.fetch_one(
+        """
+        SELECT created_at
+        FROM {{tables.chat_messages}}
+        WHERE session_id = $1 AND message_id = $2
+        """,
+        session_id,
+        up_to_uuid,
+    )
+    if not watermark:
+        raise NotFoundError("Message not found")
+
+    read_time = datetime.now(timezone.utc)
+    async with aweb_db.transaction() as tx:
+        marked = await tx.fetch_all(
+            """
+            INSERT INTO {{tables.chat_message_reads}}
+                (session_id, did, message_id, agent_id, read_at)
+            SELECT $1, $2, m.message_id, $3, $4
+            FROM {{tables.chat_messages}} m
+            WHERE m.session_id = $1
+              AND m.from_did <> $2
+              AND m.created_at <= $5
+            ON CONFLICT (session_id, did, message_id) DO NOTHING
+            RETURNING message_id
+            """,
+            session_id,
+            participant_did,
+            participant_agent_uuid,
+            read_time,
+            watermark["created_at"],
+        )
+        await tx.execute(
+            """
+            INSERT INTO {{tables.chat_read_receipts}}
+                (session_id, did, agent_id, last_read_message_id, last_read_at)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (session_id, did) DO UPDATE
+            SET last_read_message_id = EXCLUDED.last_read_message_id,
+                agent_id = EXCLUDED.agent_id,
+                last_read_at = EXCLUDED.last_read_at
+            WHERE $6 > COALESCE(
+                (SELECT created_at FROM {{tables.chat_messages}}
+                 WHERE session_id = $1
+                   AND message_id = {{tables.chat_read_receipts}}.last_read_message_id),
+                'epoch'::timestamptz
+            )
+            """,
+            session_id,
+            participant_did,
+            participant_agent_uuid,
+            up_to_uuid,
+            read_time,
+            watermark["created_at"],
+        )
+
+    return {
+        "session_id": str(session_id),
+        "messages_marked": len(marked),
+    }

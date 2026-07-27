@@ -221,6 +221,94 @@ async def test_mark_read_records_only_the_presented_message_ids(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_watermark_and_exact_ids_produce_equivalent_read_state(aweb_cloud_db):
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
+    session_id = await ensure_session(
+        db,
+        team_id="backend:read-race.example",
+        participant_rows=[alice, bob],
+        created_by="alice",
+    )
+
+    messages = []
+    for body in ("first", "second", "third"):
+        message = await send_in_session(
+            db,
+            session_id=session_id,
+            sender_did=alice["did_aw"],
+            sender_agent_id=str(alice["agent_id"]),
+            body=body,
+        )
+        assert message is not None
+        messages.append(message)
+
+    message_ids = [str(message["message_id"]) for message in messages]
+    legacy_result = await chat_service.mark_messages_read_up_to(
+        db,
+        session_id=session_id,
+        participant_did=bob["did_aw"],
+        participant_agent_id=str(bob["agent_id"]),
+        up_to_message_id=message_ids[-1],
+    )
+    legacy_rows = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT message_id::text AS message_id
+        FROM {{tables.chat_message_reads}}
+        WHERE session_id = $1 AND did = $2
+        ORDER BY message_id
+        """,
+        session_id,
+        bob["did_aw"],
+    )
+    legacy_unread = await get_message_history(
+        db,
+        session_id=session_id,
+        participant_did=bob["did_aw"],
+        unread_only=True,
+    )
+
+    await aweb_cloud_db.aweb_db.execute(
+        "DELETE FROM {{tables.chat_message_reads}} WHERE session_id = $1 AND did = $2",
+        session_id,
+        bob["did_aw"],
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        "DELETE FROM {{tables.chat_read_receipts}} WHERE session_id = $1 AND did = $2",
+        session_id,
+        bob["did_aw"],
+    )
+
+    exact_result = await mark_messages_read(
+        db,
+        session_id=session_id,
+        participant_did=bob["did_aw"],
+        participant_agent_id=str(bob["agent_id"]),
+        message_ids=message_ids,
+    )
+    exact_rows = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT message_id::text AS message_id
+        FROM {{tables.chat_message_reads}}
+        WHERE session_id = $1 AND did = $2
+        ORDER BY message_id
+        """,
+        session_id,
+        bob["did_aw"],
+    )
+    exact_unread = await get_message_history(
+        db,
+        session_id=session_id,
+        participant_did=bob["did_aw"],
+        unread_only=True,
+    )
+
+    assert legacy_result["messages_marked"] == exact_result["messages_marked"] == 3
+    assert [row["message_id"] for row in legacy_rows] == [row["message_id"] for row in exact_rows]
+    assert legacy_unread == exact_unread == []
+
+
+@pytest.mark.asyncio
 async def test_mark_read_batch_limit_accepts_1000_and_rejects_1001(aweb_cloud_db):
     db = _DbShim(aweb_cloud_db.aweb_db)
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)

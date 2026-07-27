@@ -5623,9 +5623,11 @@ async def test_chat_send_message_accepts_alternate_session_participant_did(aweb_
 
 
 @pytest.mark.asyncio
-async def test_chat_history_and_exact_read_contract_for_alternate_participant_did(aweb_cloud_db, monkeypatch):
+async def test_chat_history_and_dual_read_contract_for_alternate_participant_did(aweb_cloud_db, monkeypatch):
     session_id = uuid4()
-    message_id = uuid4()
+    first_message_id = uuid4()
+    exact_message_id = uuid4()
+    watermark_message_id = uuid4()
     created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -5648,11 +5650,18 @@ async def test_chat_history_and_exact_read_contract_for_alternate_participant_di
         """
         INSERT INTO {{tables.chat_messages}}
             (message_id, session_id, from_did, from_alias, body, created_at)
-        VALUES ($1, $2, 'did:aw:bob', 'bob', 'hello', $3)
+        VALUES
+            ($2, $1, 'did:aw:bob', 'bob', 'first', $5),
+            ($3, $1, 'did:aw:bob', 'bob', 'exact only', $6),
+            ($4, $1, 'did:aw:bob', 'bob', 'watermark only', $7)
         """,
-        message_id,
         session_id,
+        first_message_id,
+        exact_message_id,
+        watermark_message_id,
         created_at + timedelta(minutes=1),
+        created_at + timedelta(minutes=2),
+        created_at + timedelta(minutes=3),
     )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
@@ -5669,31 +5678,53 @@ async def test_chat_history_and_exact_read_contract_for_alternate_participant_di
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         history = await client.get(f"/v1/chat/sessions/{session_id}/messages")
-        old_read = await client.post(
+        published_client_read = await client.post(
             f"/v1/chat/sessions/{session_id}/read",
-            json={"up_to_message_id": str(message_id)},
+            json={"up_to_message_id": str(first_message_id)},
         )
-        unread_after_old_read = await client.get(
+        unread_after_published_client_read = await client.get(
             f"/v1/chat/sessions/{session_id}/messages",
             params={"unread_only": "true"},
         )
-        read = await client.post(
+        exact_read_retry = await client.post(
             f"/v1/chat/sessions/{session_id}/read",
-            json={"message_ids": [str(message_id)]},
+            json={"message_ids": [str(first_message_id)]},
         )
+        both_shapes = await client.post(
+            f"/v1/chat/sessions/{session_id}/read",
+            json={
+                "up_to_message_id": str(watermark_message_id),
+                "message_ids": [str(exact_message_id)],
+            },
+        )
+        unread_after_both_shapes = await client.get(
+            f"/v1/chat/sessions/{session_id}/messages",
+            params={"unread_only": "true"},
+        )
+        neither_shape = await client.post(f"/v1/chat/sessions/{session_id}/read", json={})
 
     assert history.status_code == 200, history.text
     assert history.json()["messages"][0]["conversation_id"] == str(session_id)
-    assert [item["body"] for item in history.json()["messages"]] == ["hello"]
-    assert old_read.status_code == 422, old_read.text
-    old_error = old_read.text
-    assert "up_to_message_id" in old_error
-    assert "upgrade the client" in old_error
-    assert "message_ids" in old_error
-    assert unread_after_old_read.status_code == 200, unread_after_old_read.text
-    assert [item["body"] for item in unread_after_old_read.json()["messages"]] == ["hello"]
-    assert read.status_code == 200, read.text
-    assert read.json()["messages_marked"] == 1
+    assert [item["body"] for item in history.json()["messages"]] == [
+        "first",
+        "exact only",
+        "watermark only",
+    ]
+    assert published_client_read.status_code == 200, published_client_read.text
+    assert published_client_read.json()["messages_marked"] == 1
+    assert unread_after_published_client_read.status_code == 200, unread_after_published_client_read.text
+    assert [item["body"] for item in unread_after_published_client_read.json()["messages"]] == [
+        "exact only",
+        "watermark only",
+    ]
+    assert exact_read_retry.status_code == 200, exact_read_retry.text
+    assert exact_read_retry.json()["messages_marked"] == 0
+    assert both_shapes.status_code == 200, both_shapes.text
+    assert both_shapes.json()["messages_marked"] == 1
+    assert unread_after_both_shapes.status_code == 200, unread_after_both_shapes.text
+    assert [item["body"] for item in unread_after_both_shapes.json()["messages"]] == ["watermark only"]
+    assert neither_shape.status_code == 422, neither_shape.text
+    assert "provide at least one" in neither_shape.text
 
 
 @pytest.mark.asyncio
