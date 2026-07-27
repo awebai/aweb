@@ -189,7 +189,9 @@ mkdir -p "$PROOF_HOME" "$STAGING" "$PRINCIPAL_WORKSPACE" "$OBSERVER" "$PRINCIPAL
 source "$REPO_ROOT/scripts/e2e/oas_tmux_safety.sh"
 
 assert_default_tmux_topology_unchanged() {
-  local phase="$1" observed="$EVIDENCE/tmux-topology-$phase.txt"
+  local phase observed
+  phase="$1"
+  observed="$EVIDENCE/tmux-topology-$phase.txt"
   snapshot_default_tmux_topology "$observed" || return 1
   if ! cmp "$EVIDENCE/tmux-topology-before.txt" "$observed" >/dev/null; then
     diff -u "$EVIDENCE/tmux-topology-before.txt" "$observed" >&2 || true
@@ -450,7 +452,9 @@ compare_registry_to_pre() {
 }
 
 assert_principal_unchanged() {
-  local phase="$1" observed="$EVIDENCE/principal-$phase.json"
+  local phase observed
+  phase="$1"
+  observed="$EVIDENCE/principal-$phase.json"
   python3 "$PROOF_HELPER" snapshot --root "$PRINCIPAL_DIR" --output "$observed"
   cmp "$EVIDENCE/principal-pre.json" "$observed" >/dev/null \
     || fail "principal file inventory changed at $phase"
@@ -458,7 +462,9 @@ assert_principal_unchanged() {
 }
 
 scan_instance() {
-  local phase="$1" observation="$EVIDENCE/instance-$phase-scan.json"
+  local phase observation
+  phase="$1"
+  observation="$EVIDENCE/instance-$phase-scan.json"
   if [[ "$MODE" == "resident-pi" ]]; then
     # scan-sensitive-material is owned by the shared .28 proof helper. This
     # harness consumes that reviewed detector; it does not fork its policy.
@@ -907,6 +913,7 @@ if [[ "$MODE" == "resident-pi" ]]; then
   [[ -n "$PI_LAUNCH_PATH" && -x "$PI_LAUNCH_PATH" ]] || fail "real Pi runtime not found on PATH"
   PI_BIN_SHA="$(file_sha256 "$PI_LAUNCH_PATH")"
   PI_VERSION="$(pi --version)"
+  npm --prefix "$PI_EXTENSION_DIR" ci > "$EVIDENCE/pi-extension-install.txt"
   npm --prefix "$PI_EXTENSION_DIR" run build > "$EVIDENCE/pi-extension-build.txt"
   PI_EXTENSION_SHA="$(file_sha256 "$PI_EXTENSION_DIR/dist/index.js")"
   mkdir -p "$PROOF_HOME/.pi/agent/sessions"

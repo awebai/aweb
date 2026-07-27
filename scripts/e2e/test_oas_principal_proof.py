@@ -49,6 +49,7 @@ class PrincipalProofHarnessTests(unittest.TestCase):
             'assert_operation_grant_isolation interrupted-grant interrupted-grant-recovered',
             'assert_clean_git_subject',
             'capture_execution_subject',
+            'npm --prefix "$PI_EXTENSION_DIR" ci',
             'scan_provisioned_sensitive_material',
             'scan_final_known_material',
             'independent developers did not exercise duplicate local instance names',
