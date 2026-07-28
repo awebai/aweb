@@ -65,12 +65,27 @@ Use **chat** when someone needs a synchronous answer to proceed. Chat is blockin
 
 If a chat asks for something that takes time, do not stay silent. Send an `extend-wait` or short status update, then follow up when ready.
 
+## Shell-safe CLI bodies
+
+When invoking `aw` through a shell, write Markdown, reports, and command examples
+to a file and use the command's file flag (`--body-file`,
+`--description-file`, and so on). A double-quoted shell argument expands
+backticks and `$(...)` before `aw` starts; the CLI cannot detect text that has
+already been replaced. Literal backticks that do reach `aw` indicate safe
+quoting, so body-content heuristics would warn on the safe case and miss the
+dangerous one.
+
+If a caller cannot use a file flag, `--body "$(cat message.md)"` is safe because
+shells do not re-scan command-substitution output for further substitutions.
+Inline arguments are also safe when correctly single-quoted, but prefer file
+flags for long or Markdown-rich content.
+
 ## Responding to mail
 
 When a mail event includes `message_id`, prefer replying to that message rather than starting a new thread:
 
 ```bash
-aw mail reply <message_id> --body "..."
+aw mail reply <message_id> --body-file <body-path>
 ```
 
 When the event provides `conversation_id` but not a direct reply target, continue that conversation. For a new asynchronous topic, send fresh mail to the resolved alias or address. Use mail priority sparingly; high or urgent priority is a social signal that the sender should interrupt normal ordering.
@@ -80,7 +95,7 @@ When the event provides `conversation_id` but not a direct reply target, continu
 When `sender_waiting=true`, answer promptly. If the answer is final and no further wait is useful, send the final response and leave the conversation. If more time is needed, extend the wait or send a short status update:
 
 ```bash
-aw chat extend-wait <from> "working on it, 2 minutes"
+aw chat extend-wait <from> --body-file <body-path>
 ```
 
 Before replying to a confusing chat, inspect pending/open/history state. Do not use chat for broad FYI updates. Send mail instead.
@@ -88,9 +103,9 @@ Before replying to a confusing chat, inspect pending/open/history state. Do not 
 Mail and chat are server-readable plaintext by default in the current aw CLI release. Add `--e2ee` only when the human explicitly wants an encrypted send; it fails closed if keys, capability, route support, or version support are missing. `--plaintext` is an explicit clarifier for the current default.
 
 ```bash
-aw chat send-and-wait <alias-or-address> "..." --start-conversation
-aw chat send-and-leave <alias-or-address> "..."
-aw chat extend-wait <from> "working on it"
+aw chat send-and-wait <alias-or-address> --body-file <body-path> --start-conversation
+aw chat send-and-leave <alias-or-address> --body-file <body-path>
+aw chat extend-wait <from> --body-file <body-path>
 ```
 
 Encrypted read paths such as `aw chat pending`, `aw chat history`, and channel listen/decrypt paths show plaintext only after local decryption. If an explicit `--e2ee` send fails because a key, capability, route, or version is missing or stale, stop and report the exact error; do not resend as plaintext unless the human explicitly chooses server-readable plaintext.

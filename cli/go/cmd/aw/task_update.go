@@ -21,8 +21,12 @@ var taskUpdateCmd = &cobra.Command{
 func init() {
 	taskUpdateCmd.Flags().String("status", "", "Status (open, in_progress, closed)")
 	taskUpdateCmd.Flags().String("title", "", "Title")
-	taskUpdateCmd.Flags().String("description", "", "Description")
-	taskUpdateCmd.Flags().String("notes", "", "Notes")
+	taskUpdateCmd.Flags().String("description", "", shellExpandedInlineHelp("Description", "--description-file"))
+	taskUpdateCmd.Flags().String("description-file", "", safeFileInputHelp("task description"))
+	taskUpdateCmd.Flags().String("notes", "", shellExpandedInlineHelp("Notes", "--notes-file"))
+	taskUpdateCmd.Flags().String("notes-file", "", safeFileInputHelp("task notes"))
+	taskUpdateCmd.MarkFlagsMutuallyExclusive("description", "description-file")
+	taskUpdateCmd.MarkFlagsMutuallyExclusive("notes", "notes-file")
 	taskUpdateCmd.Flags().String("type", "", "Type (task, bug, feature, epic)")
 	taskUpdateCmd.Flags().String("priority", "", "Priority 0-4 (accepts P0-P4)")
 	taskUpdateCmd.Flags().String("labels", "", "Comma-separated labels")
@@ -33,6 +37,15 @@ func init() {
 
 func runTaskUpdate(cmd *cobra.Command, args []string) error {
 	ref := args[0]
+
+	description, descriptionSet, err := resolveLongTextFlags(cmd, "description", "description-file")
+	if err != nil {
+		return err
+	}
+	notes, notesSet, err := resolveLongTextFlags(cmd, "notes", "notes-file")
+	if err != nil {
+		return err
+	}
 
 	req := &aweb.TaskUpdateRequest{}
 	hasUpdate := false
@@ -48,12 +61,12 @@ func runTaskUpdate(cmd *cobra.Command, args []string) error {
 		req.Title = &v
 		hasUpdate = true
 	}
-	if v, _ := cmd.Flags().GetString("description"); v != "" {
-		req.Description = &v
+	if descriptionSet && description != "" {
+		req.Description = &description
 		hasUpdate = true
 	}
-	if v, _ := cmd.Flags().GetString("notes"); v != "" {
-		req.Notes = &v
+	if notesSet && notes != "" {
+		req.Notes = &notes
 		hasUpdate = true
 	}
 	if v, _ := cmd.Flags().GetString("type"); v != "" {

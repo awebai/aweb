@@ -658,6 +658,21 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 	if gotReq["leaving"] != true {
 		t.Fatalf("leaving=%v", gotReq["leaving"])
 	}
+
+	bodyFile := filepath.Join(tmp, "body.md")
+	body := "run `make test` and preserve $(EXAMPLE)"
+	if err := os.WriteFile(bodyFile, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run = exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "bob", "--body-file", bodyFile, "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("body-file run failed: %v\n%s", err, string(out))
+	}
+	if gotReq["message"] != body {
+		t.Fatalf("body-file message=%v, want %q", gotReq["message"], body)
+	}
 }
 
 func TestAwChatSendAndWaitMissingArgs(t *testing.T) {

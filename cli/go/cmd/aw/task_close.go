@@ -18,7 +18,9 @@ var taskCloseCmd = &cobra.Command{
 }
 
 func init() {
-	taskCloseCmd.Flags().String("reason", "", "Reason for closing (replaces notes)")
+	taskCloseCmd.Flags().String("reason", "", shellExpandedInlineHelp("Reason for closing (replaces notes)", "--reason-file"))
+	taskCloseCmd.Flags().String("reason-file", "", safeFileInputHelp("closing reason"))
+	taskCloseCmd.MarkFlagsMutuallyExclusive("reason", "reason-file")
 	taskCmd.AddCommand(taskCloseCmd)
 }
 
@@ -33,7 +35,10 @@ type taskCloseFailure struct {
 }
 
 func runTaskClose(cmd *cobra.Command, args []string) error {
-	reason, _ := cmd.Flags().GetString("reason")
+	reason, _, err := resolveLongTextFlags(cmd, "reason", "reason-file")
+	if err != nil {
+		return err
+	}
 
 	client, _, err := resolveClientSelection()
 	if err != nil {
