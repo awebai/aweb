@@ -10,3 +10,9 @@ eyes are the point.
 - A release-time copy step does not keep a committed public mirror current.
   Gate canonical-to-mirror equality before merge, with a seeded stale-copy
   negative control.
+- In multi-stage bounded ranking, a final-order test is vacuous when every
+  fixture row fits inside the upstream candidate window or already follows its
+  proxy order. Force the fixture past that bound, put the desired row outside
+  preselection, and execute the counterexample against the authoritative
+  ranking signal. When that signal supplies candidate IDs, verify tenant,
+  authorization, and endpoint filters still apply before ordering.
