@@ -495,7 +495,7 @@ async def test_patch_agent_workspace_accepts_canonical_role_name(aweb_cloud_db):
         """
         INSERT INTO {{tables.workspaces}}
             (workspace_id, team_id, agent_id, alias, role, workspace_type)
-        VALUES ($1, $2, $3, 'alice', 'developer', 'agent')
+        VALUES ($1, $2, $3, 'alice', 'developer', 'manual')
         """,
         workspace_id,
         "backend:acme.com",
@@ -521,13 +521,14 @@ async def test_patch_agent_workspace_accepts_canonical_role_name(aweb_cloud_db):
 
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        SELECT role
+        SELECT role, workspace_type
         FROM {{tables.workspaces}}
         WHERE workspace_id = $1
         """,
         workspace_id,
     )
     assert row["role"] == "reviewer"
+    assert row["workspace_type"] == "manual"
 
 
 @pytest.mark.asyncio
@@ -562,7 +563,7 @@ async def test_patch_agent_workspace_repairs_ssh_over_443_repo_binding(aweb_clou
         """
         INSERT INTO {{tables.workspaces}}
             (workspace_id, team_id, agent_id, alias, workspace_type)
-        VALUES ($1, $2, $3, 'alice', 'agent')
+        VALUES ($1, $2, $3, 'alice', 'manual')
         """,
         workspace_id,
         "backend:acme.com",
@@ -594,7 +595,7 @@ async def test_patch_agent_workspace_repairs_ssh_over_443_repo_binding(aweb_clou
 
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        SELECT w.repo_id, r.canonical_origin
+        SELECT w.repo_id, w.workspace_type, r.canonical_origin
         FROM {{tables.workspaces}} w
         JOIN {{tables.repos}} r ON r.id = w.repo_id
         WHERE w.workspace_id = $1
@@ -603,6 +604,7 @@ async def test_patch_agent_workspace_repairs_ssh_over_443_repo_binding(aweb_clou
     )
     assert str(row["repo_id"]) == first.json()["repo_id"]
     assert row["canonical_origin"] == "github.com/acme/backend"
+    assert row["workspace_type"] == "agent"
 
 
 @pytest.mark.asyncio

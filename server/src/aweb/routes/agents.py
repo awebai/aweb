@@ -779,14 +779,17 @@ async def patch_agent_workspace(
         """
         UPDATE {{tables.workspaces}}
         SET hostname = $1, workspace_path = $2, role = $3,
-            human_name = $4, repo_id = $5, updated_at = NOW()
-        WHERE workspace_id = $6
+            human_name = $4, repo_id = $5::UUID,
+            workspace_type = CASE WHEN $6::BOOLEAN THEN 'agent' ELSE workspace_type END,
+            updated_at = NOW()
+        WHERE workspace_id = $7
         """,
         new_hostname,
         new_path,
         new_role,
         new_human_name,
         new_repo_id,
+        payload.repo_origin is not None,
         row["workspace_id"],
     )
 
