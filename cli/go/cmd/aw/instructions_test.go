@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -126,6 +127,71 @@ func TestAwInstructionsShowByIDMarksActiveVersion(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("instructions show-by-id output missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestAwInstructionsInjectTargetsExactDirectoryAndBackfills(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireCertificateAuthForTest(t, r)
+		switch r.URL.Path {
+		case "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_instructions_id": "instructions-3", "active_team_instructions_id": "instructions-3",
+				"team_id": "backend:proj-1", "version": 3,
+				"document": map[string]any{"body_md": "## Current Rules\n\nRead mail first.", "format": "markdown"},
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeTestConfig(t, tmp, server.URL)
+	target := filepath.Join(tmp, "cli", "go")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(target, "AGENTS.md")
+	if err := os.WriteFile(path, []byte("# Static guidance\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "instructions", "inject", filepath.Join("cli", "go"))
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+	if !strings.Contains(string(out), "Injected aw team instructions into AGENTS.md") {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.HasPrefix(text, "# Static guidance\n\n"+awDocsMarkerStart+"\n") {
+		t.Fatalf("inject changed static guidance around the marker:\n%s", text)
+	}
+	for _, want := range []string{"# Static guidance", awDocsMarkerStart, "## Current Rules", "Read mail first.", awDocsMarkerEnd} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("target instructions missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Count(text, awDocsMarkerStart) != 1 || strings.Count(text, awDocsMarkerEnd) != 1 {
+		t.Fatalf("target does not have exactly one marker pair:\n%s", text)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "AGENTS.md")); !os.IsNotExist(err) {
+		t.Fatalf("inject mutated repo root instead of exact target: %v", err)
 	}
 }
 

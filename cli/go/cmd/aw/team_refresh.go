@@ -20,12 +20,15 @@ var teamRefreshRuntime string
 
 var teamHumanRefreshCmd = &cobra.Command{
 	Use:   "refresh <name>",
-	Short: "Re-materialize a team member's home from the latest version of its Library profile",
+	Short: "Refresh a team member's profile and existing team-instructions block",
 	Long: "Re-materialize agents/instances/<name> from the latest version of the profile it was\n" +
 		"materialized from on the team's private Library shelf. This closes the learning loop: an\n" +
 		"approved profile proposal mints a new shelf version, and `aw team refresh` re-applies it\n" +
 		"locally and updates .aw/profile/ref.json - so the agent picks up the team's own improvement.\n" +
 		"It reads the recorded profile ref locally and never asks a remote service which profile to use.\n\n" +
+		"When the home already has exactly one complete AWEB:START/AWEB:END block, refresh also\n" +
+		"re-injects the active team instructions. It never creates that block in an unmarked home; use\n" +
+		"`aw instructions inject <directory>` when an explicit backfill is intended.\n\n" +
 		"Upstream blueprint updates are a separate, composable step: run `aw library update-from-source`\n" +
 		"first to pull them onto the shelf, then `aw team refresh` to re-materialize.",
 	Args: cobra.ExactArgs(1),
@@ -59,19 +62,46 @@ func runTeamRefresh(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	updateInstructions, err := hasSingleMarkedAgentDocs(home)
+	if err != nil {
+		return fmt.Errorf("inspect aw coordination docs: %w", err)
+	}
+	instructionsBody := ""
+	if updateInstructions {
+		instructionsBody, err = loadTeamInstructionsBody(home)
+		if err != nil {
+			return fmt.Errorf("refresh aw coordination docs: %w", err)
+		}
+	}
 	result, err := refreshLibraryProfileInHome(home, name, old, runtimeKind)
 	if err != nil {
 		return err
+	}
+	docsResult := &injectDocsResult{}
+	if updateInstructions {
+		docsResult = UpdateProvidedAgentDocs(home, instructionsBody)
+		if len(docsResult.Errors) > 0 {
+			return fmt.Errorf("refresh aw coordination docs: %s", strings.Join(docsResult.Errors, "; "))
+		}
+		if len(docsResult.Injected) == 0 {
+			return fmt.Errorf("refresh aw coordination docs: the complete marker pair disappeared during profile refresh")
+		}
 	}
 
 	out := cmd.OutOrStdout()
 	if jsonFlag {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
-		return enc.Encode(result)
+		return enc.Encode(struct {
+			*blueprint.MaterializeResult
+			InstructionsInjected []string `json:"instructions_injected,omitempty"`
+		}{MaterializeResult: result, InstructionsInjected: docsResult.Injected})
 	}
 	for _, warning := range result.Warnings {
 		fmt.Fprintf(out, "WARNING: %s\n", warning)
+	}
+	for _, name := range docsResult.Injected {
+		fmt.Fprintf(out, "Refreshed aw team instructions in %s\n", name)
 	}
 	source := "team Library shelf"
 	versionKind := "shelf"
