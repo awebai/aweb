@@ -40,6 +40,71 @@ numbers are meaningless here without the `c5650ecf` pin, since it moves
 independently of this one. A citation that cannot survive a merge is a claim
 with a short half-life, not evidence.
 
+## Convergence: one canonical capability on the OAS package train
+
+**This section governs. Where anything later in this document assumes
+`aweb.identity-attach` is the steady-state home for messaging, identity, or
+lifecycle, that assumption is superseded here.** Those sections are retained
+because their *findings* remain true and their code is the migration source —
+not because their destination is still correct.
+
+**Decision, approved by Juan 2026-07-27.** We adopt Pepe's OAS package
+architecture and the strict/package train, and converge on **one canonical
+`oas.aweb` capability**. `aweb.identity-attach` does not grow into a competing
+messaging surface; it becomes a **migration source**, marked experimental, until
+its useful receipt, identity-home, attach-existing, containment and
+cleanup-provenance work has moved.
+
+**Ownership split.** OAS owns package and config UX and kernel enforcement.
+aweb/`aw`/AC own sponsor-scoped identity, messaging, tasks, and the complete
+cleanup primitives. Organization configs such as `linux.engineering` select
+those capabilities and allow repository overrides. Library and remote dispatch
+follow the golden journeys; they do not paper over gaps in them.
+
+**Base train:** `origin/agents/cli-dev-strict-curriculum-spike` — verified to
+exist and to be 54 commits ahead of `origin/main`. The divergent eight-commit
+`working` branch is **not** a second base; its two useful changes are replayed
+onto the train.
+
+### What the train already provides, and what it does not
+
+Verified directly against the branch, not inferred:
+
+- **`oas.aweb` v1.8.0 already exists** (`capabilities/oas-aweb/`), declaring
+  layer `messaging`, `aw` plus both runtime channel packages as requirements,
+  the three aweb skills, `roster`/`setup` commands, and hooks
+  `spawn: { required: true }` and `retire`.
+- **The kernel has required-hook machinery** — `manifestRequiredHooks`,
+  a `requiredHooks` field, and an explicit note that trust gating previously let
+  an untrusted capability's required hook silently not run.
+  **Existence is not enforcement.** `.2` stays open until a failing required
+  hook is executed on the train and observed to leave **no model process**.
+- **The train does NOT carry the pi task-order fix.** It still places
+  contributed options before the task positional, so a contributed flag taking a
+  value consumes the task. Replay is required.
+- **The train has NO launch-environment contract** — no hook-env handling in
+  core, no `environment` in the manifest schema. Replay is required, or
+  `AWEB_IDENTITY_HOME` has no deterministic path into the launched process and
+  attachment stays merely *verified* rather than *real*.
+- **Required retire hooks are rejected by design.** `lib/core.mjs:671` throws:
+  a hook other than `spawn` *"cannot be required — only the spawn hook is
+  enforced (retire and soul-scaffold run outside a spawn transaction)"*. So
+  fail-closed retirement cannot be expressed as a required hook today, and
+  ordinary retirement only converts hook failure into retained retry state
+  inside the pre-existing quarantine path.
+
+### What convergence does not change
+
+The invariant below is unaffected, and so is the decision that **cleanup
+authority belongs to the spawner, never to the worker**. Membership is a team
+certificate; revoking it needs the team controller key; hook and model share a
+UID. That reasoning is independent of which capability owns the surface.
+
+Juan's standing constraint also holds: **no OAS-only aweb grant profile and no
+reduced aweb capability model.** Prefer the existing scoped, expiring,
+use-limited invitation provenance and a generic creator/spawner-owned cleanup
+primitive.
+
 ## The invariant
 
 > A principal's lifetime and cleanup ownership are an explicit recorded

@@ -159,10 +159,16 @@ with authority attached. Say plainly what you verified and what you did not.
 
 ## Boundaries
 
-- The aweb-owned adapter lives under `oas/` in this repo. Upstream OAS
+- **The steady-state home is the canonical `oas.aweb` capability on the OAS
+  package train, not the aweb-owned adapter.** The adapter under `oas/` in this
+  repo is a **migration source**: its receipt, identity-home, attach-existing,
+  containment and cleanup-provenance work moves into the canonical package, and
+  its competing messaging surface retires. Upstream OAS
   (`OAS-Framework/oas`) is a dependency, not ours — generic lifecycle
   improvements are proposed there, one small obviously-correct change at a
-  time, never bundled with our architecture.
+  time, never bundled with our architecture. An earlier version of this line
+  treated the adapter as the destination; that was true before convergence and
+  is not now.
 - **Never propose a change that breaks a fundamental feature. Before any
   upstream PR is opened or updated, EXECUTE the affected feature end to end
   against the real binary** — not the test suite, not the `--help` text, not

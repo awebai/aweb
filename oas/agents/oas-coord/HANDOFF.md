@@ -1,7 +1,7 @@
-# oas-coord recovery state — 2026-07-27
+# oas-coord state — 2026-07-27 (post-restart; convergence adopted)
 
-Written before a machine restart. Everything here is durable; nothing depends on
-tmux or model context.
+The restart has HAPPENED. Everything here is durable; nothing depends on tmux
+or model context.
 
 ## Resume
 
@@ -134,10 +134,11 @@ a second base; replay its two useful changes onto the train instead.
    it prevents a launch.** Execute a failing required hook and observe no model
    process before closing `.2`.
 
-**Deliberately not done tonight:** rewriting the normative seam document into the
-convergence shape. Rushing the design of record into a third direction hours
-before a restart is worse than doing it carefully first thing after. That is task
-one on resume.
+**DONE:** the normative seam document now opens with the convergence section as
+its governing frame, explicitly superseding every later assumption that
+`aweb.identity-attach` is the steady-state home. The epic and task
+descriptions are restructured to match. The soul's Boundaries entry is
+corrected the same way.
 
 **`.47` now has a real recipient:** `atext.aweb.ai/ac-coordinator` owns the hosted
 cleanup contract. It stops being a parked task on our board.
