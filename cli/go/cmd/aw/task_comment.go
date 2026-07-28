@@ -19,6 +19,7 @@ var taskCommentCmd = &cobra.Command{
 var taskCommentAddCmd = &cobra.Command{
 	Use:   "add <ref> [body]",
 	Short: "Add a comment to a task",
+	Long:  shellExpandedInlineHelp("Add a comment to a task", "--body-file"),
 	Args:  cobra.RangeArgs(1, 2),
 	RunE:  runTaskCommentAdd,
 }
@@ -31,8 +32,8 @@ var taskCommentListCmd = &cobra.Command{
 }
 
 func init() {
-	taskCommentAddCmd.Flags().String("body", "", "Comment body")
-	taskCommentAddCmd.Flags().String("body-file", "", "Read comment body from file")
+	taskCommentAddCmd.Flags().String("body", "", shellExpandedInlineHelp("Comment body", "--body-file"))
+	taskCommentAddCmd.Flags().String("body-file", "", safeFileInputHelp("comment body"))
 	taskCommentAddCmd.MarkFlagsMutuallyExclusive("body", "body-file")
 	taskCommentCmd.AddCommand(taskCommentAddCmd, taskCommentListCmd)
 	taskCmd.AddCommand(taskCommentCmd)

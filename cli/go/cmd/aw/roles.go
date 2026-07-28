@@ -136,8 +136,8 @@ func init() {
 	rolesSetCmd.Flags().StringVar(&rolesSetBundleJSON, "bundle-json", "", "Team roles bundle JSON")
 	rolesSetCmd.Flags().StringVar(&rolesSetBundleFile, "bundle-file", "", "Read team roles bundle JSON from file ('-' for stdin)")
 	rolesAddCmd.Flags().StringVar(&rolesAddTitle, "title", "", "Human-readable role title (defaults to role name)")
-	rolesAddCmd.Flags().StringVar(&rolesAddPlaybook, "playbook", "", "Role playbook Markdown body")
-	rolesAddCmd.Flags().StringVar(&rolesAddPlaybookFile, "playbook-file", "", "Read role playbook Markdown from file ('-' for stdin)")
+	rolesAddCmd.Flags().StringVar(&rolesAddPlaybook, "playbook", "", shellExpandedInlineHelp("Role playbook Markdown body", "--playbook-file"))
+	rolesAddCmd.Flags().StringVar(&rolesAddPlaybookFile, "playbook-file", "", "Read role playbook Markdown from a file ('-' for stdin); safe for Markdown or command examples")
 	rolesAddCmd.Flags().BoolVar(&rolesAddReplace, "replace", false, "Replace an existing role with the same name")
 
 	rolesCmd.AddCommand(rolesShowCmd)

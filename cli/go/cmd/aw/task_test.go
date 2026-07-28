@@ -112,6 +112,25 @@ func TestAwTaskCreateSuccess(t *testing.T) {
 	if gotReq["description"] != "Detailed description" {
 		t.Fatalf("description=%v", gotReq["description"])
 	}
+
+	descriptionFile := filepath.Join(tmp, "description.md")
+	description := "Run `make test` and preserve $(EXAMPLE).\n"
+	if err := os.WriteFile(descriptionFile, []byte(description), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run = exec.CommandContext(ctx, bin, "task", "create",
+		"--title", "Safe file input",
+		"--type", "task",
+		"--description-file", descriptionFile,
+	)
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("description-file run failed: %v\n%s", err, string(out))
+	}
+	if gotReq["description"] != description {
+		t.Fatalf("description-file description=%v, want %q", gotReq["description"], description)
+	}
 }
 
 func TestAwTaskCreateDefaultPriority(t *testing.T) {
@@ -535,6 +554,21 @@ func TestAwTaskUpdateSuccess(t *testing.T) {
 	}
 	if gotReq["title"] != "Updated title" {
 		t.Fatalf("title=%v", gotReq["title"])
+	}
+
+	descriptionFile := filepath.Join(tmp, "description.md")
+	description := "Preserve `go test` and $(EXAMPLE).\n"
+	if err := os.WriteFile(descriptionFile, []byte(description), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run = exec.CommandContext(ctx, bin, "task", "update", "PROJ-001", "--description-file", descriptionFile)
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("description-file run failed: %v\n%s", err, string(out))
+	}
+	if gotReq["description"] != description {
+		t.Fatalf("description-file description=%v, want %q", gotReq["description"], description)
 	}
 }
 

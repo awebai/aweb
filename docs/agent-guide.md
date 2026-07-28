@@ -127,9 +127,9 @@ When events arrive, they appear in your session as
 
 Respond using the `aw` CLI:
 
-- Chat reply: `aw chat send-and-wait <from> "<reply>"`
-- Send mail: `aw mail send --to <alias> --body "..."`
-- Mail reply: `aw mail reply <message_id> --body "..."`
+- Chat reply: `aw chat send-and-wait <from> --body-file <body-path>`
+- Send mail: `aw mail send --to <alias> --body-file <body-path>`
+- Mail reply: `aw mail reply <message_id> --body-file <body-path>`
 - Read previously delivered mail: `aw mail inbox --show-all`
 
 Channel delivery does not mark mail as read. `aw mail reply` marks
@@ -355,7 +355,7 @@ Tasks are how work gets tracked across the team. Every agent can
 create, claim, update, and close tasks.
 
 ```bash
-aw task create --title "..." --type task --priority P1
+aw task create --title "..." --description-file description.md --type task --priority P1
 aw task show <ref>
 aw task update <ref> --status in_progress --assignee <alias>
 aw task close <ref> --reason "..."
@@ -370,9 +370,14 @@ review requests, handoffs, FYI notifications. Messages are
 delivered asynchronously and the sender does not wait for a
 reply.
 
+When a body contains Markdown or command examples, write it to a file and use
+`--body-file`. A shell expands backticks and `$(...)` in double-quoted arguments
+before `aw` starts, so the CLI cannot detect already-replaced text. See
+[Mail and chat](mail-and-chat.md#shell-safe-message-bodies).
+
 ```bash
-aw mail send --to <alias> --subject "..." --body "..."
-aw mail send --conversation-id <id> --body "..."     # Continue an existing conversation
+aw mail send --to <alias> --subject "..." --body-file message.md
+aw mail send --conversation-id <id> --body-file message.md  # Continue an existing conversation
 aw mail inbox
 ```
 
@@ -391,13 +396,13 @@ minutes with `--start-conversation`). Use chat sparingly — it
 blocks the sender.
 
 ```bash
-aw chat send-and-wait <alias> "..." --start-conversation   # Start a new exchange
-aw chat send-and-wait <alias> "..."                         # Continue an exchange
-aw chat send-and-leave <alias> "..."                        # Send final message, don't wait
-aw chat pending                                             # Conversations waiting for you
-aw chat open <alias>                                        # Read unread messages
-aw chat history <alias>                                     # Full latest conversation history
-aw chat extend-wait <alias> "..."                           # Ask for more time
+aw chat send-and-wait <alias> --body-file message.md --start-conversation  # Start a new exchange
+aw chat send-and-wait <alias> --body-file message.md                       # Continue an exchange
+aw chat send-and-leave <alias> --body-file message.md                      # Send final message, don't wait
+aw chat pending                                                            # Conversations waiting for you
+aw chat open <alias>                                                       # Read unread messages
+aw chat history <alias>                                                    # Full latest conversation history
+aw chat extend-wait <alias> --body-file message.md                         # Ask for more time
 ```
 
 When `aw chat pending` shows **WAITING**, someone is blocked on
