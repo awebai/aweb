@@ -21,13 +21,17 @@ func TestHeartbeatRepairsWorkspaceRepoBinding(t *testing.T) {
 		requireCertificateAuthForTest(t, r)
 		switch {
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/agents/me":
-			patchCalls.Add(1)
+			call := patchCalls.Add(1)
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
 			}
 			if got := payload["repo_origin"]; got != "ssh://git@ssh.github.com:443/awebai/aweb.git" {
 				t.Fatalf("repo_origin=%v", got)
+			}
+			if call == 1 {
+				http.Error(w, "repo patch not deployed", http.StatusUnprocessableEntity)
+				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"agent_id":         "agent-noor",
@@ -76,14 +80,29 @@ func TestHeartbeatRepairsWorkspaceRepoBinding(t *testing.T) {
 	}
 
 	first := runHeartbeat()
-	if first["repo_status"] != "repaired" {
+	if first["repo_status"] != "repair_failed" {
 		t.Fatalf("first repo_status=%v", first["repo_status"])
 	}
-	if first["canonical_origin"] != "github.com/awebai/aweb" {
-		t.Fatalf("first canonical_origin=%v", first["canonical_origin"])
+	if first["repo_error"] == nil {
+		t.Fatalf("first heartbeat did not report repo_error: %#v", first)
 	}
-	if first["repo_id"] != "repo-canonical" {
-		t.Fatalf("first repo_id=%v", first["repo_id"])
+	unrepaired, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unrepaired.CanonicalOrigin != "ssh://git@ssh.github.com:443/awebai/aweb" || unrepaired.RepoID != "" {
+		t.Fatalf("failed repair changed local state: %#v", unrepaired)
+	}
+
+	second := runHeartbeat()
+	if second["repo_status"] != "repaired" {
+		t.Fatalf("second repo_status=%v", second["repo_status"])
+	}
+	if second["canonical_origin"] != "github.com/awebai/aweb" {
+		t.Fatalf("second canonical_origin=%v", second["canonical_origin"])
+	}
+	if second["repo_id"] != "repo-canonical" {
+		t.Fatalf("second repo_id=%v", second["repo_id"])
 	}
 
 	repaired, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
@@ -94,11 +113,11 @@ func TestHeartbeatRepairsWorkspaceRepoBinding(t *testing.T) {
 		t.Fatalf("workspace was not repaired: %#v", repaired)
 	}
 
-	second := runHeartbeat()
-	if second["repo_status"] != "current" {
-		t.Fatalf("second repo_status=%v", second["repo_status"])
+	third := runHeartbeat()
+	if third["repo_status"] != "current" {
+		t.Fatalf("third repo_status=%v", third["repo_status"])
 	}
-	if got := patchCalls.Load(); got != 1 {
-		t.Fatalf("repo repair PATCH calls=%d want 1", got)
+	if got := patchCalls.Load(); got != 2 {
+		t.Fatalf("repo repair PATCH calls=%d want 2", got)
 	}
 }
