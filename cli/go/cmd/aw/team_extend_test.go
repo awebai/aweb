@@ -80,14 +80,16 @@ func TestTeamAddAmbientAPIKeyKeepsActiveTeamAuthority(t *testing.T) {
 	}
 }
 
-func TestTeamExtendAmbientAPIKeyRefusesActiveTeam(t *testing.T) {
+func TestTeamExtendAmbientAPIKeyUsesActiveTeamAssertion(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
-	t.Setenv(initAPIKeyEnvVar, "aw_sk_forgotten_export")
+	const apiKey = "aw_sk_forgotten_export"
+	const activeTeamID = "active:acme.com"
+	t.Setenv(initAPIKeyEnvVar, apiKey)
 	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
-		ActiveTeam: "active:acme.com",
+		ActiveTeam: activeTeamID,
 		Memberships: []awconfig.TeamMembership{{
-			TeamID:   "active:acme.com",
+			TeamID:   activeTeamID,
 			Alias:    "captain",
 			CertPath: ".aw/team-certs/active.pem",
 		}},
@@ -95,14 +97,35 @@ func TestTeamExtendAmbientAPIKeyRefusesActiveTeam(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := resolveTeamExtendAuthority(root)
-	if err == nil {
-		t.Fatal("ambient API key silently overrode active team")
+	authority, err := resolveTeamExtendAuthority(root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, want := range []string{"active:acme.com", initAPIKeyEnvVar, "unset", "--api-key", "--team-id"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error missing %q: %v", want, err)
-		}
+	if authority.Tier != teamExtendAuthorityTierAPIKeyWorkspaceAsserted || authority.APIKey != apiKey {
+		t.Fatalf("authority=%+v", authority)
+	}
+	expectedTeamID, source := expectedTeamIDForExtend(authority)
+	if expectedTeamID != activeTeamID || source != teamIDAssertionSourceWorkspaceActiveTeam {
+		t.Fatalf("expected team/source=%q/%q", expectedTeamID, source)
+	}
+}
+
+func TestTeamExtendAmbientAPIKeyInCleanDirKeepsPlainAPIKeyTier(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	const apiKey = "aw_sk_clean_bootstrap"
+	t.Setenv(initAPIKeyEnvVar, apiKey)
+
+	authority, err := resolveTeamExtendAuthority(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authority.Tier != teamExtendAuthorityTierAPIKey || authority.APIKey != apiKey {
+		t.Fatalf("authority=%+v", authority)
+	}
+	expectedTeamID, source := expectedTeamIDForExtend(authority)
+	if expectedTeamID != "" || source != teamIDAssertionSourceNone {
+		t.Fatalf("clean-dir ambient key unexpectedly asserted team/source=%q/%q", expectedTeamID, source)
 	}
 }
 
@@ -126,8 +149,12 @@ func TestTeamExtendAmbientAPIKeyWithExplicitTeamIDIsIntentional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authority.Tier != "api-key" || authority.APIKey != "aw_sk_intentional_env" || authority.TeamID != teamHumanExtendTeamID {
+	if authority.Tier != teamExtendAuthorityTierAPIKey || authority.APIKey != "aw_sk_intentional_env" || authority.TeamID != teamHumanExtendTeamID {
 		t.Fatalf("authority=%+v", authority)
+	}
+	expectedTeamID, source := expectedTeamIDForExtend(authority)
+	if expectedTeamID != teamHumanExtendTeamID || source != teamIDAssertionSourceExplicitFlag {
+		t.Fatalf("expected team/source=%q/%q", expectedTeamID, source)
 	}
 }
 
@@ -151,8 +178,12 @@ func TestTeamExtendExplicitAPIKeyOverridesActiveTeamIntentionally(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authority.Tier != "api-key" || authority.APIKey != teamHumanExtendAPIKey {
+	if authority.Tier != teamExtendAuthorityTierAPIKey || authority.APIKey != teamHumanExtendAPIKey {
 		t.Fatalf("authority=%+v", authority)
+	}
+	expectedTeamID, source := expectedTeamIDForExtend(authority)
+	if expectedTeamID != "" || source != teamIDAssertionSourceNone {
+		t.Fatalf("explicit key unexpectedly asserted team/source=%q/%q", expectedTeamID, source)
 	}
 }
 
@@ -222,6 +253,195 @@ func TestTeamExtendDiscoveryScanAmbiguityAndTeamIDFilter(t *testing.T) {
 	}
 	if authority.Tier != "discovered-agent" || authority.TeamID != "beta:acme.com" || filepath.Base(authority.AnchorDir) != "b" {
 		t.Fatalf("authority=%+v", authority)
+	}
+}
+
+func TestFormatTeamHumanExtendIncludesTeamAndAuthority(t *testing.T) {
+	out := teamHumanAddOutput{
+		Status:        "extended",
+		AgentsRoot:    "/tmp/team/agents/instances",
+		TeamID:        "active:acme.com",
+		AuthorityTier: teamExtendAuthorityTierAPIKeyWorkspaceAsserted,
+		NoLibrary:     true,
+		NoProfile:     true,
+		Agents:        []teamHumanAddedAgent{{Name: "developer", HomeDir: "/tmp/team/agents/instances/developer"}},
+	}
+
+	human := formatTeamHumanAdd(out)
+	for _, want := range []string{"Extended with", "Team: active:acme.com", "Authority tier: " + teamExtendAuthorityTierAPIKeyWorkspaceAsserted} {
+		if !strings.Contains(human, want) {
+			t.Fatalf("human output missing %q:\n%s", want, human)
+		}
+	}
+	payload, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"status":"extended"`, `"team_id":"active:acme.com"`, `"authority_tier":"` + teamExtendAuthorityTierAPIKeyWorkspaceAsserted + `"`} {
+		if !strings.Contains(string(payload), want) {
+			t.Fatalf("JSON output missing %q: %s", want, payload)
+		}
+	}
+}
+
+func TestTeamExtendAmbientAPIKeyMatchingActiveTeamCreatesRoster(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	const apiKey = "aw_sk_ambient_extend"
+	const teamID = "active:workspace.aweb.ai"
+	t.Setenv(initAPIKeyEnvVar, apiKey)
+	t.Setenv("AW_CONFIG_PATH", "")
+	root := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(root)
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
+		ActiveTeam: teamID,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   teamID,
+			Alias:    "captain",
+			CertPath: ".aw/team-certs/active.pem",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+	var initCalls int
+	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
+			initCalls++
+			if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
+				t.Fatalf("workspace init Authorization=%q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := body["did"].(string)
+			alias, _ := body["alias"].(string)
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: alias, Lifetime: awid.LifetimeEphemeral})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"server_url": serverURL, "team_cert": encoded, "alias": alias, "team_id": teamID, "workspace_id": "ws-created", "did": didKey, "identity_scope": awid.IdentityModeLocal, "custody": awid.CustodySelf, "api_key": "aw_sk_returned_member"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "alias": "developer", "agent_id": "agent-created", "workspace_id": "ws-created", "repo_id": "repo-1", "team_did_key": teamDIDKey})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-created", teamID, "developer")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+	initAwebURL = server.URL
+
+	if err := runTeamHumanExtend(nil, []string{"developer"}); err != nil {
+		t.Fatalf("runTeamHumanExtend: %v", err)
+	}
+	if initCalls != 1 {
+		t.Fatalf("workspace init calls=%d want 1", initCalls)
+	}
+	if _, err := os.Stat(filepath.Join(root, "agents", "instances", "developer", ".aw", "workspace.yaml")); err != nil {
+		t.Fatalf("created workspace missing: %v", err)
+	}
+}
+
+func TestTeamExtendAmbientAPIKeyTeamMismatchRollsBackWithWorkspaceAssertion(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	const ambientKey = "aw_sk_ambient_extend"
+	t.Setenv(initAPIKeyEnvVar, ambientKey)
+	t.Setenv("AW_CONFIG_PATH", "")
+	root := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(root)
+	const expectedTeamID = "active:workspace.aweb.ai"
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
+		ActiveTeam: expectedTeamID,
+		Memberships: []awconfig.TeamMembership{{
+			TeamID:   expectedTeamID,
+			Alias:    "captain",
+			CertPath: ".aw/team-certs/active.pem",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+	const returnedKey = "aw_sk_returned_member"
+	const actualTeamID = "default:keyteam.aweb.ai"
+	var initCalls, connectCalls, removeCalls int
+	var server *httptest.Server
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
+			initCalls++
+			if got := r.Header.Get("Authorization"); got != "Bearer "+ambientKey {
+				t.Fatalf("workspace init Authorization=%q", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := body["did"].(string)
+			alias, _ := body["alias"].(string)
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: actualTeamID, MemberDIDKey: didKey, Alias: alias, Lifetime: awid.LifetimeEphemeral})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"server_url": serverURL, "team_cert": encoded, "alias": alias, "team_id": actualTeamID, "workspace_id": "ws-rollback", "did": didKey, "identity_scope": awid.IdentityModeLocal, "custody": awid.CustodySelf, "api_key": returnedKey})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			connectCalls++
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": actualTeamID, "alias": "rollback", "agent_id": "agent-rollback", "workspace_id": "ws-rollback", "repo_id": "repo-1", "team_did_key": teamDIDKey})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-rollback", actualTeamID, "rollback")
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/agents/remove-member"):
+			removeCalls++
+			if got := r.Header.Get("Authorization"); got != "Bearer "+ambientKey {
+				t.Fatalf("remove Authorization=%q want ambient key", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": actualTeamID, "certificate_id": "removed"})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+	initAwebURL = server.URL
+
+	err = runTeamHumanExtend(nil, []string{"rollback", "should-not-run"})
+	if err == nil {
+		t.Fatal("expected mismatch error")
+	}
+	if strings.Contains(err.Error(), "would silently use the API key's team") {
+		t.Fatalf("ambient API key was refused before bootstrap: %v", err)
+	}
+	if strings.Contains(err.Error(), "--team-id") || !strings.Contains(err.Error(), "workspace active team "+expectedTeamID) || !strings.Contains(err.Error(), "API key team "+actualTeamID) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if initCalls != 1 || connectCalls != 1 || removeCalls != 1 {
+		t.Fatalf("calls init/connect/remove=%d/%d/%d", initCalls, connectCalls, removeCalls)
+	}
+	if _, statErr := os.Lstat(filepath.Join(root, "agents", "instances", "rollback")); !os.IsNotExist(statErr) {
+		t.Fatalf("rollback home remains: %v", statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(root, "agents", "instances", "should-not-run")); !os.IsNotExist(statErr) {
+		t.Fatalf("second member attempted despite mismatch: %v", statErr)
 	}
 }
 
@@ -302,7 +522,8 @@ func TestTeamExtendAPIKeyTeamIDMismatchRollsBackWithExplicitAuth(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected mismatch error")
 	}
-	if !strings.Contains(err.Error(), "does not match API key team") || !strings.Contains(err.Error(), actualTeamID) || !strings.Contains(err.Error(), teamHumanExtendTeamID) {
+	wantMismatch := "--team-id " + teamHumanExtendTeamID + " does not match API key team " + actualTeamID
+	if !strings.Contains(err.Error(), wantMismatch) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if initCalls != 1 || connectCalls != 1 || removeCalls != 1 {

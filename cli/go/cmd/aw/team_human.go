@@ -1273,17 +1273,26 @@ func resolveOrCreateTeamMemberIdentity(inviteAnchorDir string, plan teamHumanAdd
 	return createAndAcceptTeamInviteForEmptyAgent(inviteAnchorDir, plan.HomeDir, plan.Name, globalAgent)
 }
 
+type teamIDAssertionSource string
+
+const (
+	teamIDAssertionSourceNone                teamIDAssertionSource = ""
+	teamIDAssertionSourceExplicitFlag        teamIDAssertionSource = "explicit-team-id"
+	teamIDAssertionSourceWorkspaceActiveTeam teamIDAssertionSource = "workspace-active-team"
+)
+
 type teamHumanAddRunOptions struct {
-	CWD                 string
-	InviteAnchorDir     string
-	AgentsRoot          string
-	WorktreeAnchorDir   string
-	APIKey              string
-	ForceAPIKey         bool
-	ExpectedTeamID      string
-	OutputStatus        string
-	OutputAuthorityTier string
-	Specs               []teamAgentSpec
+	CWD                   string
+	InviteAnchorDir       string
+	AgentsRoot            string
+	WorktreeAnchorDir     string
+	APIKey                string
+	ForceAPIKey           bool
+	ExpectedTeamID        string
+	TeamIDAssertionSource teamIDAssertionSource
+	OutputStatus          string
+	OutputAuthorityTier   string
+	Specs                 []teamAgentSpec
 }
 
 func runTeamHumanAdd(cmd *cobra.Command, args []string) error {
@@ -1476,7 +1485,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 			createdTeamID = strings.TrimSpace(plans[i].TeamID)
 		}
 		if expected := strings.TrimSpace(opts.ExpectedTeamID); expected != "" && !strings.EqualFold(strings.TrimSpace(plans[i].TeamID), expected) {
-			mismatchErr := usageError("--team-id %s does not match API key team %s", expected, strings.TrimSpace(plans[i].TeamID))
+			mismatchErr := teamIDAssertionMismatchError(expected, strings.TrimSpace(plans[i].TeamID), opts.TeamIDAssertionSource)
 			memberRollbackErr := rollbackJustCreatedTeamMemberWithExplicitHostedAuth(plans[i].HomeDir, acceptedProfileIdentity, opts.APIKey)
 			var homeRollbackErr error
 			if rollback != nil {
@@ -1517,6 +1526,13 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	}
 	printOutput(teamHumanAddOutput{Status: status, AgentsRoot: agentsRoot, TeamID: outputTeamID, AuthorityTier: strings.TrimSpace(opts.OutputAuthorityTier), HomeOverride: explicitHome != "", LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd)
 	return nil
+}
+
+func teamIDAssertionMismatchError(expectedTeamID, apiKeyTeamID string, source teamIDAssertionSource) error {
+	if source == teamIDAssertionSourceWorkspaceActiveTeam {
+		return usageError("workspace active team %s does not match API key team %s", expectedTeamID, apiKeyTeamID)
+	}
+	return usageError("--team-id %s does not match API key team %s", expectedTeamID, apiKeyTeamID)
 }
 
 func startTeamAddedAgent(cmd *cobra.Command, plan teamHumanAddedAgent, session string, attach bool) error {
@@ -2094,6 +2110,14 @@ func formatTeamHumanAdd(v any) string {
 		fmt.Fprintf(&b, "%s %d empty-profile agent(s) with explicit home\n", verb, len(out.Agents))
 	} else {
 		fmt.Fprintf(&b, "%s %d empty-profile agent(s) under %s\n", verb, len(out.Agents), out.AgentsRoot)
+	}
+	if strings.TrimSpace(out.Status) == "extended" {
+		if strings.TrimSpace(out.TeamID) != "" {
+			fmt.Fprintf(&b, "Team: %s\n", strings.TrimSpace(out.TeamID))
+		}
+		if strings.TrimSpace(out.AuthorityTier) != "" {
+			fmt.Fprintf(&b, "Authority tier: %s\n", strings.TrimSpace(out.AuthorityTier))
+		}
 	}
 	for _, agent := range out.Agents {
 		fmt.Fprintf(&b, "- %s: %s\n", agent.Name, agent.HomeDir)
