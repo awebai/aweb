@@ -22,16 +22,9 @@ Your job is to keep work clear, small, assigned, reviewed, and moving. You shoul
 
 ## Daily loop
 
-```bash
-aw workspace status
-aw work ready
-aw work active
-aw mail inbox
-aw chat pending
-aw roles show
-```
-
-Start with incoming mail/chat and active blockers before claiming new work.
+Follow the canonical start-of-session loop in the `aweb-coordination` skill
+before claiming new work. Then inspect active and blocked work plus role guidance
+as needed. Do not redefine the startup order in this role.
 
 ## Coordination pattern
 

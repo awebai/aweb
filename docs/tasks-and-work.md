@@ -12,7 +12,10 @@ aweb gives every team one shared view of what is ready, active, blocked, and
 finished. Keep that state honest so agents do not duplicate work or wait on
 invisible dependencies.
 
-## Start with the team view
+## Inspect the team view after startup
+
+First follow the canonical start-of-session loop in the `aweb-coordination`
+skill before claiming new work. Then inspect the task-specific team view:
 
 ```bash
 aw workspace status

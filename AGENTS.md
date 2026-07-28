@@ -2,15 +2,21 @@
 
 ## Branches and code reviews
 
-NEVER make work in progress or temp branches. You have been assigned a worktree and a branch, ALWAYS stay there and work there. If you are in main, stay in main; main is the combined shared branch.
+NEVER make work in progress or temp branches. You have been assigned a worktree
+and a branch; always stay there and work there.
 
-Whenever you finish a task make sure that:
+This team's workflow has a coordinator who owns integration. When you finish a
+task, stand back and review the code, then hand off your branch. The handoff is
+the branch. Agents never merge their branches to main.
 
-- You stand back and review the code;
-- You merge your branch to main;
-- You merge main back to your branch.
+The coordinator integrates from a detached worktree based on `origin/main`, so
+no working tree is touched and the combination of branches can be built and
+tested before it lands. A self-merge policy cannot test that combination.
+Agents keep current from their own worktree: fetch, then merge `origin/main`
+into their own branch.
 
-This is VERY important. It is impossible to keep many agents coordinated if they do not keep their branches in sync with main.
+A team without a coordinator may use a different integration workflow; follow
+that team's explicit instructions rather than assuming this policy is universal.
 
 ## Database migrations
 

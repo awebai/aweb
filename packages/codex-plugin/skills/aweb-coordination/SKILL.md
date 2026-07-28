@@ -26,7 +26,9 @@ A short map of the primitives this skill assumes are available. Each has its own
 
 ## Start-of-session loop
 
-Run these before claiming new work. Order is deliberate.
+Run these before claiming new work. Order is deliberate. Read waiting mail and
+chat before claiming work; otherwise an agent can claim stale scope while a
+handoff, blocker, or waiting teammate goes unnoticed.
 
 ```bash
 aw workspace status   # who is online, active team, identity, claims, locks

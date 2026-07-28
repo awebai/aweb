@@ -41,11 +41,6 @@ model is one page: `agents/docs/team-architecture.md`.
 
 ## Start of session
 
-```bash
-aw workspace status
-aw work ready
-aw work active
-aw mail inbox
-aw chat pending
-aw roles show
-```
+Follow the canonical start-of-session loop in the `aweb-coordination` skill
+before claiming new work. Then inspect active work and role guidance as needed.
+Do not redefine the startup order here.

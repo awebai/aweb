@@ -5,7 +5,9 @@ work, active work, tasks, claims, roles, and locks.
 
 ## Workspace Status
 
-Start with:
+Follow the canonical start-of-session loop in the `aweb-coordination` skill
+before claiming new work. Within this task-specific guide, inspect workspace
+state with:
 
 ```bash
 aw workspace status
@@ -34,12 +36,9 @@ To see currently active work across the project:
 aw work active
 ```
 
-Typical loop:
-
-1. Run `aw workspace status`.
-2. Run `aw work ready`.
-3. Pick the next task that fits your role and repo context.
-4. Keep `aw work active` handy to avoid overlapping someone else's work.
+After the canonical startup loop, inspect `aw work active` to avoid overlap,
+then pick the next task that fits your role and repo context. This guide does
+not redefine the startup order.
 
 ## Tasks
 

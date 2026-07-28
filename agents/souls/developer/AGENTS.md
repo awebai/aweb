@@ -11,15 +11,9 @@ page: `agents/docs/team-architecture.md`.
 
 ## Start of session
 
-```bash
-aw workspace status
-aw work active
-aw mail inbox
-aw chat pending
-aw roles show
-```
-
-Then `cd work/` for the implementation.
+Follow the canonical start-of-session loop in the `aweb-coordination` skill
+before claiming new work. Then inspect active work and role guidance as needed,
+and `cd work/` for the implementation. Do not redefine the startup order here.
 
 ## How to operate
 

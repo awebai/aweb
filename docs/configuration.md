@@ -242,14 +242,10 @@ The injector targets:
 
 If neither file exists, it creates `AGENTS.md`.
 
-The injected block includes the standard coordination starter commands:
-
-```bash
-aw roles show
-aw workspace status
-aw work ready
-aw mail inbox
-```
+The injected block tells agents to follow the canonical start-of-session loop
+in the `aweb-coordination` skill. The skill is the sole source for the command
+order, so injected instructions defer to it rather than embedding a copy that
+can drift.
 
 ## Network Timeouts and Hostile Venue WiFi
 
