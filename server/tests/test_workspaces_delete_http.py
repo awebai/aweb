@@ -1,4 +1,4 @@
-"""HTTP-level regression tests for DELETE /v1/workspaces/{workspace_id}."""
+"""HTTP-level regression tests for workspace coordination routes."""
 
 from __future__ import annotations
 
@@ -179,6 +179,149 @@ class _FakeRedis:
             ("delete", coordinates_key),
         ])
         return 1
+
+
+@pytest.mark.asyncio
+async def test_team_roster_prioritizes_live_presence_and_reports_truncation(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+    team_id = "backend:acme.com"
+    now = datetime.now(timezone.utc)
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id=team_id,
+        alias="live-0",
+        identity_scope="local",
+    )
+    headers = _signed_request(agent_sk, agent_did_key, team_id)
+    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        team_id,
+        "acme.com",
+        "backend",
+        team_did_key,
+    )
+
+    redis = _FakeRedis()
+    active_aliases = {f"live-{index}" for index in range(5)}
+    self_workspace_id = None
+    for index, alias in enumerate(sorted(active_aliases)):
+        workspace_id = uuid4()
+        agent_id = uuid4()
+        did_key = agent_did_key if alias == "live-0" else _make_keypair()[2]
+        if alias == "live-0":
+            self_workspace_id = workspace_id
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.agents}}
+                (agent_id, team_id, did_key, alias, identity_scope, status)
+            VALUES ($1, $2, $3, $4, 'local', 'active')
+            """,
+            agent_id,
+            team_id,
+            did_key,
+            alias,
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.workspaces}}
+                (workspace_id, team_id, agent_id, alias, last_seen_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $5)
+            """,
+            workspace_id,
+            team_id,
+            agent_id,
+            alias,
+            now - timedelta(seconds=index),
+        )
+        redis.presence[f"presence:{workspace_id}"] = {
+            "workspace_id": str(workspace_id),
+            "alias": alias,
+            "team_id": team_id,
+            "status": "active",
+            "last_seen": (now - timedelta(seconds=index)).isoformat(),
+        }
+
+    stale_seen_at = now - timedelta(days=60)
+    for index in range(10):
+        alias = f"stale-{index}"
+        workspace_id = uuid4()
+        agent_id = uuid4()
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.agents}}
+                (agent_id, team_id, did_key, alias, identity_scope, status)
+            VALUES ($1, $2, $3, $4, 'local', 'active')
+            """,
+            agent_id,
+            team_id,
+            _make_keypair()[2],
+            alias,
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.workspaces}}
+                (workspace_id, team_id, agent_id, alias, last_seen_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $5)
+            """,
+            workspace_id,
+            team_id,
+            agent_id,
+            alias,
+            stale_seen_at,
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.task_claims}}
+                (team_id, workspace_id, alias, human_name, task_ref, claimed_at)
+            VALUES ($1, $2, $3, '', $4, $5)
+            """,
+            team_id,
+            workspace_id,
+            alias,
+            f"backend-stale-{index}",
+            stale_seen_at,
+        )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=redis)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/v1/workspaces/team",
+            params={
+                "include_claims": "true",
+                "include_presence": "true",
+                "only_with_claims": "false",
+                "always_include_workspace_id": str(self_workspace_id),
+                "limit": 5,
+            },
+            headers=headers,
+        )
+        response_without_presence = await client.get(
+            "/v1/workspaces/team",
+            params={
+                "include_claims": "true",
+                "include_presence": "false",
+                "only_with_claims": "false",
+                "limit": 5,
+            },
+            headers=headers,
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["has_more"] is True
+    assert {workspace["alias"] for workspace in data["workspaces"]} == active_aliases
+    assert all(workspace["status"] == "active" for workspace in data["workspaces"])
+    assert response_without_presence.status_code == 200, response_without_presence.text
+    assert response_without_presence.json()["has_more"] is True
 
 
 @pytest.mark.asyncio

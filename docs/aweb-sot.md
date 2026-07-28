@@ -920,6 +920,13 @@ A member key — including the old key — cannot authorize this route.
 | `GET/POST /v1/repos/*` | Git repos |
 | `GET/POST/DELETE /v1/workspaces/*` | Workspace management |
 
+`GET /v1/workspaces/team` is a bounded coordination roster. Active presence
+ranks ahead of offline workspace history; recency ranks next, and claims are a
+tiebreaker rather than evidence that an offline workspace is currently
+relevant. When more matching workspaces exist than the requested limit, the
+response sets `has_more=true`. Human CLI output must state plainly when this
+bounded response is incomplete.
+
 `DELETE /v1/workspaces/{workspace_id}` soft-deletes a gone local
 workspace and its bound agent row, plus releases any task claims held by
 the workspace. It returns `409` if the bound agent is global

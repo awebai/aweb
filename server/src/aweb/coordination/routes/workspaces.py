@@ -1151,17 +1151,17 @@ async def list_team_workspaces(
     if only_with_claims:
         query += " AND claim_count > 0"
 
-    candidate_limit = limit
+    candidate_limit = limit + 1
     if include_presence:
         candidate_limit = min(
-            limit * TEAM_STATUS_CANDIDATE_MULTIPLIER,
+            max(limit * TEAM_STATUS_CANDIDATE_MULTIPLIER, limit + 1),
             TEAM_STATUS_CANDIDATE_MAX,
         )
 
     query += """
         ORDER BY
-            (claim_count > 0) DESC,
             last_seen_at DESC NULLS LAST,
+            (claim_count > 0) DESC,
             last_claimed_at DESC NULLS LAST,
             alias ASC
     """
@@ -1225,17 +1225,18 @@ async def list_team_workspaces(
 
     entries.sort(
         key=lambda item: (
-            -item[1],
             -item[4],
             -item[2],
+            -item[1],
             -item[3],
             item[0].alias,
         )
     )
 
+    has_more = len(entries) > limit
     workspaces = [entry[0] for entry in entries][:limit]
 
-    return ListWorkspacesResponse(workspaces=workspaces, has_more=False)
+    return ListWorkspacesResponse(workspaces=workspaces, has_more=has_more)
 
 
 # ---------------------------------------------------------------------------

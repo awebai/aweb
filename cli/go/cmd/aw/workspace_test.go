@@ -180,7 +180,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 						"workspace_path": "/Users/carol/unparseable-origin",
 					},
 				},
-				"has_more": false,
+				"has_more": true,
 			})
 		case "/v1/reservations":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -270,6 +270,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 		"reason: review follow-up",
 		"### Unknown repo",
 		"carol (developer) — active",
+		"Team roster incomplete: showing at most 50 workspaces.",
 		"Escalations pending: 2",
 		"Claim conflicts: 1",
 	} {
