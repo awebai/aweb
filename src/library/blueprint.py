@@ -426,6 +426,30 @@ def _compose_agents_md(doc: dict[str, Any], *, profile_ref: str, instructions: s
     return "\n\n".join(blocks) + "\n"
 
 
+def _entries_in_managed_order(
+    entries: list[dict[str, str]], managed_set: list[str]
+) -> list[dict[str, str]]:
+    if len(set(managed_set)) != len(managed_set):
+        raise ValueError("duplicate path in materialized managed set")
+
+    entries_by_path: dict[str, dict[str, str]] = {}
+    for entry in entries:
+        path = entry["path"]
+        if path in entries_by_path:
+            raise ValueError(f"duplicate materialized path: {path}")
+        entries_by_path[path] = entry
+
+    managed_paths = set(managed_set)
+    missing = [path for path in managed_set if path not in entries_by_path]
+    extra = [path for path in entries_by_path if path not in managed_paths]
+    if missing or extra:
+        raise ValueError(
+            f"materialized paths do not match managed set: missing={missing!r}, extra={extra!r}"
+        )
+
+    return [entries_by_path[path] for path in managed_set]
+
+
 def materialize_home(
     files: list[dict[str, str]],
     *,
@@ -549,5 +573,4 @@ def materialize_home(
         }
     )
 
-    entries.sort(key=lambda entry: entry["path"])
-    return entries
+    return _entries_in_managed_order(entries, managed_set)

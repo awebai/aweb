@@ -249,7 +249,11 @@ def _expected_home_entries(
                     .replace(fixture_blueprint.blueprint_ref, blueprint.blueprint_ref)
                     .replace(fixture_blueprint.digest, blueprint.digest)
                 )
-    return entries
+
+    entries_by_path = {entry["path"]: entry for entry in entries}
+    ref = json.loads(entries_by_path[".aw/profile/ref.json"]["content_utf8"])
+    assert set(entries_by_path) == set(ref["managed_set"])
+    return [entries_by_path[path] for path in ref["managed_set"]]
 
 
 def _home_file(entries: list[dict[str, Any]], path: str) -> str:

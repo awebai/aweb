@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +21,35 @@ from library.repository import (
 )
 
 _FIXTURE = Path(__file__).parent / "vectors" / "blueprints" / "engineering"
+
+_CLAUDE_CODE_PRODUCTION_ORDER = [
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".aw/profile/profile.yaml",
+    ".aw/profile/instructions.md",
+    "skills/implement/SKILL.md",
+    ".aw/profile/skills/implement/SKILL.md",
+    ".claude/skills/implement",
+    "skills/debug/SKILL.md",
+    ".aw/profile/skills/debug/SKILL.md",
+    ".claude/skills/debug",
+    "artifacts/handoff-template.md",
+    ".aw/profile/artifacts/handoff-template.md",
+    ".aw/profile/ref.json",
+]
+_PI_PRODUCTION_ORDER = [
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".aw/profile/profile.yaml",
+    ".aw/profile/instructions.md",
+    "skills/implement/SKILL.md",
+    ".aw/profile/skills/implement/SKILL.md",
+    "skills/debug/SKILL.md",
+    ".aw/profile/skills/debug/SKILL.md",
+    "artifacts/handoff-template.md",
+    ".aw/profile/artifacts/handoff-template.md",
+    ".aw/profile/ref.json",
+]
 
 
 async def test_materialize_requires_agent_or_profile_ref() -> None:
@@ -91,6 +121,70 @@ async def test_server_materialize_path_emits_same_ref_json_as_materializer() -> 
     assert ref["runtime_kind"] == "claude-code"
     assert "skills/implement/assets/checklist.md" in ref["managed_set"]
     assert ".claude/skills/implement" in ref["managed_set"]
+
+
+def _production_profile():
+    profile_yaml = """id: developer
+name: Developer
+version: 0.1.8
+instructions: instructions.md
+skills:
+  - path: skills/implement/SKILL.md
+    kind: skill
+  - path: skills/debug/SKILL.md
+    kind: skill
+artifacts:
+  - path: artifacts/handoff-template.md
+    kind: template
+"""
+    content_by_path = {
+        "profile.yaml": profile_yaml,
+        "instructions.md": "Implement one scoped task at a time.\n",
+        "skills/implement/SKILL.md": "# Implement\n",
+        "skills/debug/SKILL.md": "# Debug\n",
+        "artifacts/handoff-template.md": "# Handoff\n",
+    }
+    files = [
+        {
+            "path": path,
+            "content_utf8": content,
+            "sha256": "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        }
+        for path, content in content_by_path.items()
+    ]
+    return parse_profile_payload(files)
+
+
+@pytest.mark.parametrize(
+    ("runtime_kind", "expected_paths"),
+    [
+        ("claude-code", _CLAUDE_CODE_PRODUCTION_ORDER),
+        ("pi", _PI_PRODUCTION_ORDER),
+    ],
+)
+async def test_server_materialize_paths_match_managed_set_in_production_order(
+    runtime_kind: str, expected_paths: list[str]
+) -> None:
+    profile = _production_profile()
+    result = await materialize(
+        _MaterializeDB(profile),
+        principal=SimpleNamespace(team_id="default:atext.aweb.ai"),
+        request=MaterializeRequest(
+            profile_ref="developer",
+            profile_version=profile.version,
+            runtime_kind=runtime_kind,
+            target="local",
+        ),
+    )
+
+    home_paths = [entry["path"] for entry in result["home_files"]]
+    ref_entry = next(
+        entry for entry in result["home_files"] if entry["path"] == ".aw/profile/ref.json"
+    )
+    managed_set = json.loads(ref_entry["content_utf8"])["managed_set"]
+
+    assert managed_set == expected_paths
+    assert home_paths == managed_set
 
 
 def test_normalize_tags_lowercases_trims_dedups_and_sorts() -> None:
