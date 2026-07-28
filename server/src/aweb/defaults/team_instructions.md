@@ -4,12 +4,9 @@ This project uses `aw` for coordination.
 
 ## Start Here
 
-```bash
-aw workspace status
-aw work ready
-aw mail inbox
-aw roles show
-```
+Follow the canonical start-of-session loop in the `aweb-coordination` skill
+before claiming new work. That skill is the sole source for the command order;
+do not restate it here.
 
 ## Shared Rules
 

@@ -49,11 +49,9 @@ pnpm playwright test --debug   # Debug mode
 
 ### Daily Loop
 
-```bash
-aw workspace status
-aw mail inbox
-aw work ready
-```
+Follow the canonical start-of-session loop in the `aweb-coordination` skill
+before claiming new work. Then inspect frontend-specific context as needed. Do
+not redefine the startup order in this role.
 
 ### Work Patterns
 

@@ -14,15 +14,14 @@ you. Do not create another team or identity during routine startup.
 
 ## 1. Establish your context
 
-Run these commands from your agent home:
+From your agent home, load and follow the canonical start-of-session loop in
+the `aweb-coordination` skill before claiming new work. The skill is the sole
+source for that command order because waiting mail and chat must be handled
+before a new claim. Also read your role and team instructions before acting:
 
 ```bash
-aw workspace status
 aw roles show
 aw instructions show
-aw work ready
-aw mail inbox
-aw chat pending
 ```
 
 Use the results to answer five questions:

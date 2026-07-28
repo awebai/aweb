@@ -144,6 +144,93 @@ func TestInjectAgentDocsReplacesExistingInjectedSection(t *testing.T) {
 	}
 }
 
+func TestAwebOwnedStartupGuidanceHasSingleCanonicalOrder(t *testing.T) {
+	root := cmdMonorepoRootForTest(t)
+	read := func(rel string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	canonical := read("skills/aweb-coordination/SKILL.md")
+	previous := -1
+	for _, command := range []string{"aw workspace status", "aw mail inbox", "aw chat pending", "aw work ready"} {
+		position := strings.Index(canonical, command)
+		if position <= previous {
+			t.Fatalf("canonical startup command %q missing or out of order", command)
+		}
+		previous = position
+	}
+	if !strings.Contains(strings.Join(strings.Fields(canonical), " "), "Read waiting mail and chat before claiming work") {
+		t.Fatal("canonical startup loop must state why message checks precede work claims")
+	}
+
+	for _, rel := range []string{
+		"packages/codex-plugin/skills/aweb-coordination/SKILL.md",
+		"oas/.agents/capabilities/owned/aweb-tasks/skills/aweb-coordination/SKILL.md",
+	} {
+		if generated := read(rel); generated != canonical {
+			t.Errorf("generated skill copy %s differs from canonical skill", rel)
+		}
+	}
+
+	for _, rel := range []string{
+		"agents/instructions.md",
+		"agents/souls/consultant/AGENTS.md",
+		"agents/souls/coordinator/AGENTS.md",
+		"agents/souls/developer/AGENTS.md",
+		"docs/agent-guide.md",
+		"docs/configuration.md",
+		"docs/coordination.md",
+		"docs/start-working.md",
+		"docs/tasks-and-work.md",
+		"resource-packs/coord-workflows/resources/instructions.md",
+		"server/src/aweb/defaults/roles/backend.md",
+		"server/src/aweb/defaults/roles/coordinator.md",
+		"server/src/aweb/defaults/roles/developer.md",
+		"server/src/aweb/defaults/roles/frontend.md",
+		"server/src/aweb/defaults/roles/reviewer.md",
+		"server/src/aweb/defaults/team_instructions.md",
+	} {
+		guidance := strings.Join(strings.Fields(read(rel)), " ")
+		if !strings.Contains(guidance, "canonical start-of-session loop in the `aweb-coordination` skill") {
+			t.Errorf("startup guidance %s must defer to the canonical skill", rel)
+		}
+	}
+}
+
+func TestDefaultTeamInstructionsReinjectCanonicalStartupDeferral(t *testing.T) {
+	root := cmdMonorepoRootForTest(t)
+	body, err := os.ReadFile(filepath.Join(root, "server", "src", "aweb", "defaults", "team_instructions.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	path := filepath.Join(home, "AGENTS.md")
+	if err := os.WriteFile(path, []byte("# Local profile\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := InjectProvidedAgentDocs(home, string(body))
+	if len(result.Errors) != 0 {
+		t.Fatalf("reinject errors: %v", result.Errors)
+	}
+	injected, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(injected)
+	normalized := strings.Join(strings.Fields(text), " ")
+	if !strings.Contains(normalized, "canonical start-of-session loop in the `aweb-coordination` skill") {
+		t.Fatalf("re-injected home does not defer to canonical skill:\n%s", text)
+	}
+	if strings.Contains(text, "aw workspace status\naw work ready\naw mail inbox") {
+		t.Fatalf("re-injected home retains an independent startup order:\n%s", text)
+	}
+}
+
 func TestRootAgentInstructionsUseCoordinatorIntegrationWorkflow(t *testing.T) {
 	path := filepath.Join(cmdMonorepoRootForTest(t), "AGENTS.md")
 	body, err := os.ReadFile(path)

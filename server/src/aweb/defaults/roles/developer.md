@@ -23,17 +23,12 @@ Your job is to turn a clear task into a small, tested, reviewable change. Stay f
 
 ## Daily loop
 
-```bash
-aw workspace status
-aw mail inbox
-aw chat pending
-aw work ready
-aw work active
-aw roles show
-git status --short
-```
+Follow the canonical start-of-session loop in the `aweb-coordination` skill
+before claiming new work. Then inspect active work, role guidance, and git status
+as needed for the task. Do not redefine the startup order in this role.
 
-If this workspace is not currently editing code, start by checking mail/work before touching files.
+If this workspace is not currently editing code, check incoming coordination
+state before touching files.
 
 ## Work pattern
 

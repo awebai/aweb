@@ -62,14 +62,9 @@ encrypted messages unrecoverable by AC/aweb.
 
 ## First checks
 
-Run:
-
-```bash
-aw workspace status
-aw whoami
-aw work ready
-aw mail inbox
-```
+Follow the canonical start-of-session loop in the `aweb-coordination` skill
+before claiming new work. It is the sole source for the startup command order.
+Use `aw whoami` afterward when you need identity detail beyond workspace status.
 
 How to tell whether this directory is already initialized:
 - `.aw/teams.yaml` exists: this worktree has local awid team

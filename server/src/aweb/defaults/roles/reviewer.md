@@ -22,13 +22,9 @@ Your job is not to rewrite the change. Your job is to identify material issues, 
 
 ## Daily loop
 
-```bash
-aw workspace status
-aw mail inbox
-aw chat pending
-aw roles show
-git status --short
-```
+Follow the canonical start-of-session loop in the `aweb-coordination` skill
+before claiming new work. Then inspect role guidance and git status as needed for
+the review. Do not redefine the startup order in this role.
 
 ## Review pattern
 
