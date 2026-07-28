@@ -450,7 +450,7 @@ func TestTraceResponsePropagatesOriginalBodyCloseError(t *testing.T) {
 		},
 	}
 
-	if err := traceHTTPClientResponse(resp); !errors.Is(err, closeErr) {
+	if err := TraceHTTPResponse(resp); !errors.Is(err, closeErr) {
 		t.Fatalf("error=%v, want close error", err)
 	}
 	if closed != 1 {
@@ -467,7 +467,7 @@ func TestTraceResponseCannotReadPastResponseLimit(t *testing.T) {
 	counting := &countingReader{reader: bytes.NewReader(body)}
 	resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(counting)}
 
-	if err := traceHTTPClientResponse(resp); err == nil {
+	if err := TraceHTTPResponse(resp); err == nil {
 		t.Fatal("trace accepted an oversize response")
 	}
 	if counting.read > MaxResponseSize+1 {

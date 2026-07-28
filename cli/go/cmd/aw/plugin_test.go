@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -624,6 +625,149 @@ func TestInstalledManifestDispatchInvokesTeamAuthRequest(t *testing.T) {
 	}
 	if !sawSignedPayload {
 		t.Fatal("app endpoint was not called with signed payload")
+	}
+}
+
+func TestInstalledLibraryManifestDispatchTracesRequestsAndResponses(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+	manifestBytes := readLibraryManifestFixtureForTest(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/aweb-app.json":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(rewriteLibraryManifestOriginForTest(t, manifestBytes, serverOriginForTest(r)))
+		case "/v1/proposals":
+			if r.Method != http.MethodPost {
+				t.Fatalf("proposal method=%s", r.Method)
+			}
+			if r.Header.Get("Authorization") == "" {
+				t.Fatal("proposal request is missing Authorization")
+			}
+			w.Header().Set("X-Proposal-Result", "created")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"proposal_id":"proposal-1"}`))
+		case "/v1/blueprints":
+			if r.Method != http.MethodGet {
+				t.Fatalf("blueprints method=%s", r.Method)
+			}
+			if r.Header.Get("Authorization") != "" {
+				t.Fatal("public blueprint request must be unsigned")
+			}
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	install := exec.CommandContext(ctx, bin, "plugin", "install", server.URL)
+	install.Dir = tmp
+	install.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
+	if out, err := install.CombinedOutput(); err != nil {
+		t.Fatalf("library plugin install failed: %v\n%s", err, string(out))
+	}
+	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, server.URL, "default:acme.com", "alice", did, priv)
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "global flag before app",
+			args: []string{"--trace", "library", "propose", "--target", "profile", "--profile_ref", "developer", "--content", `{"assets":[]}`},
+		},
+		{
+			name: "global flag after verb",
+			args: []string{"library", "propose", "--trace", "--target", "profile", "--profile_ref", "developer", "--content", `{"assets":[]}`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.CommandContext(ctx, bin, tc.args...)
+			cmd.Dir = tmp
+			cmd.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("library propose failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stdout.String(), `"proposal_id":"proposal-1"`) {
+				t.Fatalf("proposal output missing response: %s", stdout.String())
+			}
+			trace := stderr.String()
+			for _, want := range []string{
+				"AW TRACE request: POST " + server.URL + "/v1/proposals",
+				"AW TRACE request header: Authorization: <redacted>",
+				"AW TRACE response: HTTP 201",
+				"AW TRACE response header: X-Proposal-Result: created",
+			} {
+				if !strings.Contains(trace, want) {
+					t.Fatalf("trace stderr missing %q:\n%s", want, trace)
+				}
+			}
+		})
+	}
+
+	unsigned := exec.CommandContext(ctx, bin, "library", "list-blueprints", "--trace")
+	unsigned.Dir = tmp
+	unsigned.Env = append(testCommandEnv(tmp), "AW_NO_UPDATE_CHECK=1")
+	var stdout, stderr bytes.Buffer
+	unsigned.Stdout = &stdout
+	unsigned.Stderr = &stderr
+	if err := unsigned.Run(); err != nil {
+		t.Fatalf("library list-blueprints failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if want := "AW TRACE request: GET " + server.URL + "/v1/blueprints"; !strings.Contains(stderr.String(), want) {
+		t.Fatalf("unsigned trace stderr missing %q:\n%s", want, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "AW TRACE response: HTTP 200") {
+		t.Fatalf("unsigned trace stderr missing response:\n%s", stderr.String())
+	}
+}
+
+func TestExternalPluginTraceReportsThatHTTPTracingIsUnavailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script plugin fixture is unix-only")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	home := filepath.Join(tmp, "home")
+	pluginsDir := filepath.Join(home, ".aw", "plugins")
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginsDir, "aw-hello"), []byte("#!/bin/sh\necho external-ran\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.CommandContext(ctx, bin, "hello", "--trace")
+	cmd.Env = append(os.Environ(), "HOME="+home, "AW_NO_UPDATE_CHECK=1")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("external plugin failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "external-ran") {
+		t.Fatalf("external plugin did not run: %s", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), `AW TRACE unavailable for external plugin "hello"`) {
+		t.Fatalf("trace limitation was silent: %s", stderr.String())
 	}
 }
 
