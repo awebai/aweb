@@ -806,14 +806,28 @@ func dispatchPluginIfRequested(args []string) (int, bool) {
 		fmt.Fprintln(os.Stderr, err)
 		return 1, true
 	}
+	pluginArgs := stripPluginTraceFlags(args[commandIndex+1:])
 	switch resolution.Kind {
 	case pluginResolutionManifest:
-		return dispatchInstalledManifestPlugin(commandName, args[commandIndex+1:])
+		return dispatchInstalledManifestPlugin(commandName, pluginArgs)
 	case pluginResolutionExternal:
-		return runExternalPlugin(resolution.Path, args[commandIndex+1:]), true
+		if argsContainTraceFlag(args) {
+			fmt.Fprintf(os.Stderr, "AW TRACE unavailable for external plugin %q: aw does not control the plugin HTTP client\n", commandName)
+		}
+		return runExternalPlugin(resolution.Path, pluginArgs), true
 	default:
 		return 0, false
 	}
+}
+
+func stripPluginTraceFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		if strings.TrimSpace(arg) != "--trace" {
+			out = append(out, arg)
+		}
+	}
+	return out
 }
 
 func firstNonFlagArg(args []string) (string, int) {
@@ -1104,6 +1118,7 @@ func executeUnsignedManifestRequest(method string, parsedURL *url.URL, bodyBytes
 		return nil, err
 	}
 	req.Header = headers.Clone()
+	awid.TraceHTTPRequest(req, bodyBytes)
 	client := &http.Client{
 		Timeout:   awid.APITimeout(),
 		Transport: awid.NewAPITransport(),
@@ -1116,6 +1131,9 @@ func executeUnsignedManifestRequest(method string, parsedURL *url.URL, bodyBytes
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if err := awid.TraceHTTPResponse(resp); err != nil {
+		return nil, err
+	}
 	responseBody, err := readAllBounded(resp.Body, maxResponseBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest tool response: %w", err)

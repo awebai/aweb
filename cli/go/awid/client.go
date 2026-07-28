@@ -1193,7 +1193,7 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 		if err != nil {
 			return nil, err
 		}
-		traceHTTPClientRequest(req, bodyBytes)
+		TraceHTTPRequest(req, bodyBytes)
 		resp, err := DoNoRedirectWithTimeout(c.httpClient, req, APITimeout())
 		if err != nil {
 			decorated := decorateTimeoutError(method, err)
@@ -1205,7 +1205,7 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 			}
 			return nil, decorated
 		}
-		if err := traceHTTPClientResponse(resp); err != nil {
+		if err := TraceHTTPResponse(resp); err != nil {
 			_ = resp.Body.Close()
 			return nil, err
 		}
@@ -1320,7 +1320,8 @@ func traceEnabled() bool {
 	}
 }
 
-func traceHTTPClientRequest(req *http.Request, body []byte) {
+// TraceHTTPRequest writes redacted request detail when AW_TRACE is enabled.
+func TraceHTTPRequest(req *http.Request, body []byte) {
 	if !traceEnabled() || req == nil {
 		return
 	}
@@ -1329,7 +1330,8 @@ func traceHTTPClientRequest(req *http.Request, body []byte) {
 	fmt.Fprintf(os.Stderr, "AW TRACE request body: %s\n", string(body))
 }
 
-func traceHTTPClientResponse(resp *http.Response) error {
+// TraceHTTPResponse writes redacted response detail when AW_TRACE is enabled.
+func TraceHTTPResponse(resp *http.Response) error {
 	if !traceEnabled() || resp == nil {
 		return nil
 	}

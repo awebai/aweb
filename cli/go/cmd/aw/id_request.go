@@ -165,6 +165,7 @@ func executeSignedIDRequest(method string, parsedURL *url.URL, identity *localSi
 		return nil, err
 	}
 	req.Header = headers.Clone()
+	awid.TraceHTTPRequest(req, bodyBytes)
 
 	client := &http.Client{
 		Timeout:   awid.APITimeout(),
@@ -178,6 +179,9 @@ func executeSignedIDRequest(method string, parsedURL *url.URL, identity *localSi
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if err := awid.TraceHTTPResponse(resp); err != nil {
+		return nil, err
+	}
 
 	responseBody, err := readAllBounded(resp.Body, maxResponseBytes)
 	if err != nil {
