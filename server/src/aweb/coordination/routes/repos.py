@@ -75,6 +75,12 @@ def canonicalize_git_url(origin_url: str) -> str:
         # For ssh:// format with user@host:port, parsed.path starts with /
         path = parsed.path.lstrip("/")
 
+    # GitHub documents ssh.github.com:443 as its SSH-over-HTTPS endpoint.
+    # Treat it as the same repository host as github.com so machines using
+    # different SSH transports share one canonical repo row.
+    if host.lower() == "ssh.github.com":
+        host = "github.com"
+
     # Remove .git extension
     if path.endswith(".git"):
         path = path[:-4]

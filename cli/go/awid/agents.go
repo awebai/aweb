@@ -9,9 +9,13 @@ import (
 
 // HeartbeatResponse is returned by POST /v1/agents/heartbeat.
 type HeartbeatResponse struct {
-	AgentID    string `json:"agent_id"`
-	Alias      string `json:"alias"`
-	LastSeenAt string `json:"last_seen_at"`
+	AgentID         string `json:"agent_id"`
+	Alias           string `json:"alias"`
+	LastSeenAt      string `json:"last_seen_at"`
+	RepoStatus      string `json:"repo_status,omitempty"`
+	CanonicalOrigin string `json:"canonical_origin,omitempty"`
+	RepoID          string `json:"repo_id,omitempty"`
+	RepoError       string `json:"repo_error,omitempty"`
 }
 
 type AgentView struct {
