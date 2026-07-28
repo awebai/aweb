@@ -94,7 +94,7 @@ func TestLaunchAgentWindowFailsClosedWhenGuardCannotBePrepared(t *testing.T) {
 	teamUpGuardedAgentPath = func() (string, error) { return "", errors.New("guard unavailable") }
 
 	agent := teamUpAgentPlan{Name: "developer", HomeDir: "/tmp/dev", Command: []string{"pi", "--approve"}}
-	err := launchAgentWindow(nil, "aw-team", agent)
+	err := launchAgentWindow(nil, teamUpConfiguredTmuxContext, "aw-team", agent)
 	if err == nil || !strings.Contains(err.Error(), "prepare tmux guard") {
 		t.Fatalf("error=%v", err)
 	}

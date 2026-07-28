@@ -379,10 +379,10 @@ func TestAttachTeamUpSessionUsesAttachWhenAwebTmuxTmpdirIsSetInsideTmux(t *testi
 		calls = append(calls, strings.Join(args, " "))
 		return nil
 	}
-	if err := attachTeamUpSession(&cobra.Command{}, "aw-team"); err != nil {
+	if err := attachTeamUpSession(&cobra.Command{}, teamUpConfiguredTmuxContext, "aw-team"); err != nil {
 		t.Fatalf("attachTeamUpSession: %v", err)
 	}
-	if len(calls) != 1 || calls[0] != "attach-session -t aw-team" {
+	if len(calls) != 1 || calls[0] != "attach-session -t aw-team:" {
 		t.Fatalf("isolated attach should not switch the inherited tmux client across sockets: %v", calls)
 	}
 }
@@ -396,11 +396,29 @@ func TestAttachTeamUpSessionPreservesSwitchClientWithoutAwebTmuxTmpdir(t *testin
 		calls = append(calls, strings.Join(args, " "))
 		return nil
 	}
-	if err := attachTeamUpSession(&cobra.Command{}, "aw-team"); err != nil {
+	if err := attachTeamUpSession(&cobra.Command{}, teamUpConfiguredTmuxContext, "aw-team"); err != nil {
 		t.Fatalf("attachTeamUpSession: %v", err)
 	}
-	if len(calls) != 1 || calls[0] != "switch-client -t aw-team" {
+	if len(calls) != 1 || calls[0] != "switch-client -t aw-team:" {
 		t.Fatalf("default-socket attach should preserve switch-client behavior inside tmux: %v", calls)
+	}
+}
+
+func TestAttachTeamUpCallerSessionPreservesContextWithAwebTmpdir(t *testing.T) {
+	resetTeamUpTmuxForTest(t)
+	logPath := installFakeTmuxForEnvTest(t)
+	callerTMUX := "/tmp/aary5-caller,123,0"
+	overrideTmpdir := filepath.Join(t.TempDir(), "override-socket")
+	t.Setenv(tmuxEnv, callerTMUX)
+	t.Setenv(tmuxTmpdirEnv, overrideTmpdir)
+	t.Setenv(teamUpTmuxTmpdirEnv, filepath.Join(t.TempDir(), "configured-socket"))
+
+	if err := attachTeamUpSession(&cobra.Command{}, teamUpCallerTmuxContext, "aary5.caller"); err != nil {
+		t.Fatalf("attachTeamUpSession: %v", err)
+	}
+	log := strings.TrimSpace(readFakeTmuxEnvLog(t, logPath))
+	if !strings.HasPrefix(log, "TMUX_TMPDIR="+overrideTmpdir+" TMUX="+callerTMUX+" args=switch-client -t aary5.caller:") {
+		t.Fatalf("caller attach left inherited tmux context: %s", log)
 	}
 }
 
@@ -412,7 +430,7 @@ func TestTeamUpRecreateRefusesSessionWithRunningAgentWindow(t *testing.T) {
 	plan := teamUpPlan{Session: "aw-team", Agents: []teamUpAgentPlan{{Name: "developer", HomeDir: home, RuntimeKind: "pi", Command: []string{"pi", "--approve"}, Action: teamUpActionStart}}}
 	teamUpSessionExists = func(string) bool { return true }
 	teamUpRunTmuxOutput = func(args ...string) (string, error) {
-		if strings.Join(args, " ") == "list-windows -t aw-team -F #W" {
+		if strings.Join(args, " ") == "list-windows -t aw-team: -F #W" {
 			return "developer\nzsh\n", nil
 		}
 		return "", nil
@@ -506,7 +524,7 @@ func TestLaunchAgentWindowCreatesSessionOrWindow(t *testing.T) {
 				return nil
 			}
 			agent := teamUpAgentPlan{Name: "developer", HomeDir: "/tmp/dev home", Command: []string{"claude", "--flag"}}
-			if err := launchAgentWindow(nil, "aw-team", agent); err != nil {
+			if err := launchAgentWindow(nil, teamUpConfiguredTmuxContext, "aw-team", agent); err != nil {
 				t.Fatalf("launchAgentWindow: %v", err)
 			}
 			if len(got) != 1 || !strings.HasPrefix(got[0], tc.wantPrefix) || !strings.Contains(got[0], "unset AWEB_TMUX_KILL_OK && export PATH='/guard/bin:/usr/bin:/bin' && cd '/tmp/dev home' && exec 'claude' '--flag'") {
@@ -541,7 +559,7 @@ func TestLaunchAgentWindowTargetsCollidingSessionName(t *testing.T) {
 	t.Setenv(tmuxEnv, "")
 
 	const session = "aary4-collision"
-	if output, err := teamUpTmuxCommand("new-session", "-d", "-s", session, "-n", session, "sleep 120").CombinedOutput(); err != nil {
+	if output, err := teamUpTmuxCommand(teamUpConfiguredTmuxContext, "new-session", "-d", "-s", session, "-n", session, "sleep 120").CombinedOutput(); err != nil {
 		t.Fatalf("create isolated colliding session: %v: %s", err, strings.TrimSpace(string(output)))
 	}
 	t.Cleanup(func() {
@@ -549,8 +567,8 @@ func TestLaunchAgentWindowTargetsCollidingSessionName(t *testing.T) {
 	})
 
 	agent := teamUpAgentPlan{Name: "developer", HomeDir: t.TempDir(), Command: []string{"sleep", "120"}}
-	if err := launchAgentWindow(nil, session, agent); err != nil {
-		diagnostic, _ := teamUpTmuxCommand("new-window", "-t", session, "-n", "diagnostic", "sleep 120").CombinedOutput()
+	if err := launchAgentWindow(nil, teamUpConfiguredTmuxContext, session, agent); err != nil {
+		diagnostic, _ := teamUpTmuxCommand(teamUpConfiguredTmuxContext, "new-window", "-t", session, "-n", "diagnostic", "sleep 120").CombinedOutput()
 		t.Fatalf("launch into session whose window shares its name: %v; bare-target diagnostic: %s", err, strings.TrimSpace(string(diagnostic)))
 	}
 	windows, err := teamUpRunTmuxOutput("list-windows", "-t", session, "-F", "#W")
@@ -575,10 +593,10 @@ func TestTeamUpWindowNameNormalizesDotsForTargetSafety(t *testing.T) {
 			t.Fatalf("teamUpWindowName(%q)=%q, want %q", tc.name, got, tc.want)
 		}
 	}
-	if got, want := teamUpWindowTarget("aw-team", "dev.team"), "aw-team:dev_team"; got != want {
+	if got, want := teamUpWindowTarget(teamUpConfiguredTmuxContext, "aw-team", "dev.team"), "aw-team:dev_team"; got != want {
 		t.Fatalf("window target=%q, want %q", got, want)
 	}
-	if got, want := teamUpWindowTarget("aweb-juan.aweb.ai", "dev.team"), "aweb-juan_aweb_ai:dev_team"; got != want {
+	if got, want := teamUpWindowTarget(teamUpConfiguredTmuxContext, "aweb-juan.aweb.ai", "dev.team"), "aweb-juan_aweb_ai:dev_team"; got != want {
 		t.Fatalf("window target with dotted session=%q, want %q", got, want)
 	}
 }
@@ -735,6 +753,189 @@ func TestConfirmClaudeChannelPromptDoesNotSendBlindBeforePrompt(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("timeout error missing %q:\n%v", want, err)
 		}
+	}
+}
+
+func TestTeamUpInsideTmuxFailsClosedWhenCallerSessionCannotBeResolved(t *testing.T) {
+	resetTeamUpDetectorsForTest(t)
+	root := t.TempDir()
+	writeMaterializedAgentForTeamUp(t, root, "developer", "pi")
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	oldSession, oldDryRun := teamUpSession, teamUpDryRun
+	t.Cleanup(func() {
+		teamUpSession = oldSession
+		teamUpDryRun = oldDryRun
+	})
+	teamUpSession = ""
+	teamUpDryRun = true
+	t.Setenv(tmuxEnv, "/tmp/nonexistent-aary5,123,0")
+	withFakeCommandOnPath(t, "tmux")
+
+	err = runTeamHumanUp(&cobra.Command{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "caller tmux session") {
+		t.Fatalf("expected caller-session resolution to fail closed, got %v", err)
+	}
+}
+
+func TestTeamUpOutsideTmuxKeepsTeamDerivedSessionDefault(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".aw", "workspace.yaml"), []byte("aweb_url: https://app.aweb.ai\nmemberships:\n  - team_id: backend:example.com\n    alias: owner\n    cert_path: team-certs/backend__example.com.pem\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".aw", "teams.yaml"), []byte("active_team: backend:example.com\nmemberships:\n  - team_id: backend:example.com\n    alias: owner\n    cert_path: team-certs/backend__example.com.pem\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(tmuxEnv, "")
+	selection, err := resolveTeamUpSession(root, "")
+	if err != nil {
+		t.Fatalf("resolveTeamUpSession: %v", err)
+	}
+	if selection.Session != teamUpTmuxName("backend:example.com") || selection.TmuxContext != teamUpConfiguredTmuxContext {
+		t.Fatalf("outside-tmux selection=%+v", selection)
+	}
+}
+
+func TestTeamUpExplicitSessionBypassesCallerSessionResolution(t *testing.T) {
+	resetTeamUpDetectorsForTest(t)
+	root := t.TempDir()
+	writeMaterializedAgentForTeamUp(t, root, "developer", "pi")
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	oldSession, oldDryRun := teamUpSession, teamUpDryRun
+	t.Cleanup(func() {
+		teamUpSession = oldSession
+		teamUpDryRun = oldDryRun
+	})
+	teamUpSession = "explicit.session"
+	teamUpDryRun = true
+	t.Setenv(tmuxEnv, "/tmp/nonexistent-aary5,123,0")
+	withFakeCommandOnPath(t, "tmux")
+
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	if err := runTeamHumanUp(cmd, nil); err != nil {
+		t.Fatalf("explicit session should bypass caller resolution: %v", err)
+	}
+	if !strings.Contains(out.String(), "tmux session: explicit_session") {
+		t.Fatalf("explicit session plan=%q", out.String())
+	}
+}
+
+func isolatedTeamUpTmuxCommand(tmpdir, tmuxValue string, args ...string) *exec.Cmd {
+	cmd := exec.Command("tmux", args...)
+	env := envWithValueAndUnset(os.Environ(), tmuxTmpdirEnv, tmpdir, tmuxEnv, teamUpTmuxTmpdirEnv)
+	if tmuxValue != "" {
+		env = envWithValueAndUnset(env, tmuxEnv, tmuxValue)
+	}
+	cmd.Env = env
+	return cmd
+}
+
+func isolatedTeamUpTmuxOutput(tmpdir, tmuxValue string, args ...string) (string, error) {
+	output, err := isolatedTeamUpTmuxCommand(tmpdir, tmuxValue, args...).CombinedOutput()
+	return string(output), err
+}
+
+func TestTeamUpInsideTmuxLaunchesIntoReachableCallerSession(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is required for the launcher integration test")
+	}
+	resetTeamUpTmuxForTest(t)
+	teamUpSessionExists = tmuxSessionExists
+	teamUpRunTmux = runTmux
+	teamUpRunTmuxOutput = runTmuxOutput
+
+	repoRoot := resolveRepoRoot(".")
+	guardDir := filepath.Join(repoRoot, "scripts", "guard-bin")
+	if _, err := os.Stat(filepath.Join(guardDir, "tmux")); err != nil {
+		t.Fatalf("tmux guard missing: %v", err)
+	}
+	t.Setenv("PATH", guardDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	callerSocketDir, err := os.MkdirTemp("/tmp", "awtmux-caller-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	overrideSocketDir, err := os.MkdirTemp("/tmp", "awtmux-override-")
+	if err != nil {
+		_ = os.RemoveAll(callerSocketDir)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(overrideSocketDir) })
+	t.Cleanup(func() { _ = os.RemoveAll(callerSocketDir) })
+
+	const requestedCallerSession = "aary5.caller"
+	tmuxValuePath := filepath.Join(callerSocketDir, "caller-tmux")
+	captureCallerEnv := "printf '%s' \"$TMUX\" > " + shellQuote(tmuxValuePath) + "; exec sleep 120"
+	if output, err := isolatedTeamUpTmuxCommand(callerSocketDir, "", "new-session", "-d", "-s", requestedCallerSession, "-n", "operator", captureCallerEnv).CombinedOutput(); err != nil {
+		t.Fatalf("create isolated caller session: %v: %s", err, strings.TrimSpace(string(output)))
+	}
+	t.Cleanup(func() {
+		_, _ = isolatedTeamUpTmuxOutput(callerSocketDir, "", "kill-session", "-t", requestedCallerSession)
+	})
+	t.Cleanup(func() {
+		_, _ = isolatedTeamUpTmuxOutput(overrideSocketDir, "", "kill-session", "-t", "aw-team")
+		_, _ = isolatedTeamUpTmuxOutput(overrideSocketDir, "", "kill-session", "-t", requestedCallerSession)
+	})
+
+	var callerTMUX string
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		data, readErr := os.ReadFile(tmuxValuePath)
+		if readErr == nil && strings.TrimSpace(string(data)) != "" {
+			callerTMUX = strings.TrimSpace(string(data))
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if callerTMUX == "" {
+		t.Fatal("caller pane did not capture its real TMUX environment value")
+	}
+	callerSessionOutput, err := isolatedTeamUpTmuxOutput(callerSocketDir, callerTMUX, "display-message", "-p", "#S")
+	if err != nil {
+		t.Fatalf("resolve isolated caller session: %v: %s", err, strings.TrimSpace(callerSessionOutput))
+	}
+	callerSession := strings.TrimSpace(callerSessionOutput)
+
+	t.Setenv(tmuxEnv, callerTMUX)
+	t.Setenv(tmuxTmpdirEnv, overrideSocketDir)
+	t.Setenv(teamUpTmuxTmpdirEnv, overrideSocketDir)
+	selection, err := resolveTeamUpSession(t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("select caller session: %v", err)
+	}
+	selectedSession := selection.Session
+	agent := teamUpAgentPlan{Name: "developer", HomeDir: t.TempDir(), Command: []string{"sleep", "120"}, Action: teamUpActionStart}
+	plan := teamUpPlan{Session: selectedSession, Agents: []teamUpAgentPlan{agent}, TmuxContext: selection.TmuxContext}
+	var launchOutput bytes.Buffer
+	launchCmd := &cobra.Command{}
+	launchCmd.SetOut(&launchOutput)
+	if _, err := executeTeamUpPlan(launchCmd, plan, false, false, false); err != nil {
+		t.Fatalf("launch developer window: %v", err)
+	}
+
+	callerWindows, callerErr := isolatedTeamUpTmuxOutput(callerSocketDir, callerTMUX, "list-windows", "-t", callerSession+":", "-F", "#W")
+	overrideSessions, overrideErr := isolatedTeamUpTmuxOutput(overrideSocketDir, "", "list-sessions", "-F", "#S")
+	if selectedSession != callerSession || callerErr != nil || !strings.Contains(callerWindows, "developer") || overrideErr == nil || !strings.Contains(launchOutput.String(), "tmux session \""+callerSession+"\"") {
+		t.Fatalf("caller launch selected=%q caller=%q output=%q caller_windows=%q caller_err=%v override_sessions=%q override_err=%v", selectedSession, callerSession, launchOutput.String(), callerWindows, callerErr, overrideSessions, overrideErr)
 	}
 }
 

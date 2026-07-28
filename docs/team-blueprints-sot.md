@@ -946,6 +946,9 @@ hosted runtime service; it only launches already-materialized local homes.
 
 Current behavior:
 
+- with no explicit session, a caller already inside tmux launches into that
+  exact caller session and socket context; outside tmux, the launcher retains
+  the active-team-derived session default (falling back to `aw-team`);
 - supported launch runtimes: `claude-code` and `pi`;
 - unsupported-by-launch but valid materialization runtimes: `codex` and
   `local-shell`;

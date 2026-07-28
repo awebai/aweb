@@ -157,7 +157,7 @@ func registerTeamMemberAddFlags(cmd *cobra.Command, includePlacementFlags bool) 
 	cmd.Flags().BoolVar(&teamHumanAddStart, "start", false, "Launch the added agent in tmux after materializing it")
 	cmd.Flags().BoolVar(&teamHumanAddAttach, "attach", true, "Attach or switch to the tmux session after --start launch")
 	cmd.Flags().BoolVar(&teamHumanAddNoAttach, "no-attach", false, "Do not attach or switch to the tmux session after --start launch")
-	cmd.Flags().StringVar(&teamHumanAddSession, "session", "", "tmux session name for --start (default: active team name or aw-team)")
+	cmd.Flags().StringVar(&teamHumanAddSession, "session", "", "tmux session name for --start (default: caller's session inside tmux, otherwise active team name or aw-team)")
 	if includePlacementFlags {
 		cmd.Flags().StringVar(&teamHumanAddHome, "home", "", "Agent home directory override for a single added agent (default: agents/instances/<name>)")
 	}
@@ -1530,12 +1530,12 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		}
 	}
 	if teamHumanAddStart && len(plans) == 1 {
-		session := strings.TrimSpace(teamHumanAddSession)
-		if session == "" {
-			session = defaultTeamUpSessionName(repoRoot)
+		selection, err := resolveTeamUpSession(repoRoot, teamHumanAddSession)
+		if err != nil {
+			return err
 		}
 		attach := teamHumanAddAttach && !teamHumanAddNoAttach
-		if err := startTeamAddedAgent(cmd, plans[0], session, attach); err != nil {
+		if err := startTeamAddedAgent(cmd, plans[0], selection, attach); err != nil {
 			return err
 		}
 	}
@@ -1663,7 +1663,7 @@ func teamIDAssertionMismatchError(expectedTeamID, apiKeyTeamID string, source te
 	return usageError("--team-id %s does not match API key team %s", expectedTeamID, apiKeyTeamID)
 }
 
-func startTeamAddedAgent(cmd *cobra.Command, plan teamHumanAddedAgent, session string, attach bool) error {
+func startTeamAddedAgent(cmd *cobra.Command, plan teamHumanAddedAgent, selection teamUpSessionSelection, attach bool) error {
 	runtimeKind, err := readTeamUpRuntimeKind(plan.HomeDir)
 	if err != nil {
 		return fmt.Errorf("%s: %w", plan.Name, err)
@@ -1683,7 +1683,7 @@ func startTeamAddedAgent(cmd *cobra.Command, plan teamHumanAddedAgent, session s
 		agent.RunningPID = proc.PID
 		agent.RunningCmd = proc.Command
 	}
-	launchPlan := teamUpPlan{Session: teamUpTmuxName(firstNonEmptyLibraryValue(session, "aw-team")), Agents: []teamUpAgentPlan{agent}}
+	launchPlan := teamUpPlan{Session: selectedTeamUpSessionName(selection), Agents: []teamUpAgentPlan{agent}, TmuxContext: selection.TmuxContext}
 	if agent.Action == teamUpActionStart {
 		if err := preflightTeamUpCommands(launchPlan); err != nil {
 			return err
@@ -1693,11 +1693,11 @@ func startTeamAddedAgent(cmd *cobra.Command, plan teamHumanAddedAgent, session s
 	if err != nil {
 		return err
 	}
-	if err := confirmStartedClaudeChannelPrompts(launchPlan.Session, started); err != nil {
+	if err := confirmStartedClaudeChannelPromptsInContext(launchPlan.TmuxContext, launchPlan.Session, started); err != nil {
 		return err
 	}
-	if attach && teamUpSessionExists(launchPlan.Session) {
-		return attachTeamUpSession(cmd, launchPlan.Session)
+	if attach && teamUpSessionExistsInContext(launchPlan.TmuxContext, launchPlan.Session) {
+		return attachTeamUpSession(cmd, launchPlan.TmuxContext, launchPlan.Session)
 	}
 	return nil
 }
