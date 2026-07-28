@@ -120,12 +120,12 @@ func TestInjectAgentDocsAppendsToExistingFile(t *testing.T) {
 	}
 }
 
-func TestInjectAgentDocsReplacesExistingInjectedSection(t *testing.T) {
+func TestInjectAgentDocsReplacesAndDeduplicatesExistingInjectedSections(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "AGENTS.md")
-	content := "Header\n\n" + awDocsMarkerStart + "\nold docs\n" + awDocsMarkerEnd + "\n"
+	content := "Header\n\n" + awDocsMarkerStart + "\nold docs\n" + awDocsMarkerEnd + "\n\n" + awDocsMarkerStart + "\nstale duplicate\n" + awDocsMarkerEnd + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestInjectAgentDocsReplacesExistingInjectedSection(t *testing.T) {
 	if strings.Count(text, awDocsMarkerStart) != 1 {
 		t.Fatalf("expected one injected section:\n%s", text)
 	}
-	if strings.Contains(text, "old docs") {
+	if strings.Contains(text, "old docs") || strings.Contains(text, "stale duplicate") {
 		t.Fatalf("old docs should be replaced:\n%s", text)
 	}
 }
