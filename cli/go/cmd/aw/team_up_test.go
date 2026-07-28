@@ -738,6 +738,159 @@ func TestConfirmClaudeChannelPromptDoesNotSendBlindBeforePrompt(t *testing.T) {
 	}
 }
 
+func TestTeamUpInsideTmuxFailsClosedWhenCallerSessionCannotBeResolved(t *testing.T) {
+	resetTeamUpDetectorsForTest(t)
+	root := t.TempDir()
+	writeMaterializedAgentForTeamUp(t, root, "developer", "pi")
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	oldSession, oldDryRun := teamUpSession, teamUpDryRun
+	t.Cleanup(func() {
+		teamUpSession = oldSession
+		teamUpDryRun = oldDryRun
+	})
+	teamUpSession = ""
+	teamUpDryRun = true
+	t.Setenv(tmuxEnv, "/tmp/nonexistent-aary5,123,0")
+	withFakeCommandOnPath(t, "tmux")
+
+	err = runTeamHumanUp(&cobra.Command{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "caller tmux session") {
+		t.Fatalf("expected caller-session resolution to fail closed, got %v", err)
+	}
+}
+
+func TestTeamUpExplicitSessionBypassesCallerSessionResolution(t *testing.T) {
+	resetTeamUpDetectorsForTest(t)
+	root := t.TempDir()
+	writeMaterializedAgentForTeamUp(t, root, "developer", "pi")
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	oldSession, oldDryRun := teamUpSession, teamUpDryRun
+	t.Cleanup(func() {
+		teamUpSession = oldSession
+		teamUpDryRun = oldDryRun
+	})
+	teamUpSession = "explicit.session"
+	teamUpDryRun = true
+	t.Setenv(tmuxEnv, "/tmp/nonexistent-aary5,123,0")
+	withFakeCommandOnPath(t, "tmux")
+
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	if err := runTeamHumanUp(cmd, nil); err != nil {
+		t.Fatalf("explicit session should bypass caller resolution: %v", err)
+	}
+	if !strings.Contains(out.String(), "tmux session: explicit_session") {
+		t.Fatalf("explicit session plan=%q", out.String())
+	}
+}
+
+func isolatedTeamUpTmuxCommand(tmpdir, tmuxValue string, args ...string) *exec.Cmd {
+	cmd := exec.Command("tmux", args...)
+	env := envWithValueAndUnset(os.Environ(), tmuxTmpdirEnv, tmpdir, tmuxEnv, teamUpTmuxTmpdirEnv)
+	if tmuxValue != "" {
+		env = envWithValueAndUnset(env, tmuxEnv, tmuxValue)
+	}
+	cmd.Env = env
+	return cmd
+}
+
+func isolatedTeamUpTmuxOutput(tmpdir, tmuxValue string, args ...string) (string, error) {
+	output, err := isolatedTeamUpTmuxCommand(tmpdir, tmuxValue, args...).CombinedOutput()
+	return string(output), err
+}
+
+func TestTeamUpInsideTmuxLaunchesIntoReachableCallerSession(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is required for the launcher integration test")
+	}
+	resetTeamUpTmuxForTest(t)
+	teamUpSessionExists = tmuxSessionExists
+	teamUpRunTmux = runTmux
+	teamUpRunTmuxOutput = runTmuxOutput
+
+	repoRoot := resolveRepoRoot(".")
+	guardDir := filepath.Join(repoRoot, "scripts", "guard-bin")
+	if _, err := os.Stat(filepath.Join(guardDir, "tmux")); err != nil {
+		t.Fatalf("tmux guard missing: %v", err)
+	}
+	t.Setenv("PATH", guardDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	callerSocketDir, err := os.MkdirTemp("/tmp", "awtmux-caller-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	overrideSocketDir, err := os.MkdirTemp("/tmp", "awtmux-override-")
+	if err != nil {
+		_ = os.RemoveAll(callerSocketDir)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(overrideSocketDir) })
+	t.Cleanup(func() { _ = os.RemoveAll(callerSocketDir) })
+
+	const requestedCallerSession = "aary5.caller"
+	tmuxValuePath := filepath.Join(callerSocketDir, "caller-tmux")
+	captureCallerEnv := "printf '%s' \"$TMUX\" > " + shellQuote(tmuxValuePath) + "; exec sleep 120"
+	if output, err := isolatedTeamUpTmuxCommand(callerSocketDir, "", "new-session", "-d", "-s", requestedCallerSession, "-n", "operator", captureCallerEnv).CombinedOutput(); err != nil {
+		t.Fatalf("create isolated caller session: %v: %s", err, strings.TrimSpace(string(output)))
+	}
+	t.Cleanup(func() {
+		_, _ = isolatedTeamUpTmuxOutput(callerSocketDir, "", "kill-session", "-t", requestedCallerSession)
+	})
+	t.Cleanup(func() {
+		_, _ = isolatedTeamUpTmuxOutput(overrideSocketDir, "", "kill-session", "-t", "aw-team")
+	})
+
+	var callerTMUX string
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		data, readErr := os.ReadFile(tmuxValuePath)
+		if readErr == nil && strings.TrimSpace(string(data)) != "" {
+			callerTMUX = strings.TrimSpace(string(data))
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if callerTMUX == "" {
+		t.Fatal("caller pane did not capture its real TMUX environment value")
+	}
+	callerSessionOutput, err := isolatedTeamUpTmuxOutput(callerSocketDir, callerTMUX, "display-message", "-p", "#S")
+	if err != nil {
+		t.Fatalf("resolve isolated caller session: %v: %s", err, strings.TrimSpace(callerSessionOutput))
+	}
+	callerSession := strings.TrimSpace(callerSessionOutput)
+
+	t.Setenv(tmuxEnv, callerTMUX)
+	t.Setenv(tmuxTmpdirEnv, overrideSocketDir)
+	t.Setenv(teamUpTmuxTmpdirEnv, overrideSocketDir)
+	selectedSession := defaultTeamUpSessionName(t.TempDir())
+	agent := teamUpAgentPlan{Name: "developer", HomeDir: t.TempDir(), Command: []string{"sleep", "120"}}
+	if err := launchAgentWindow(nil, selectedSession, agent); err != nil {
+		t.Fatalf("launch developer window: %v", err)
+	}
+
+	callerWindows, callerErr := isolatedTeamUpTmuxOutput(callerSocketDir, callerTMUX, "list-windows", "-t", callerSession, "-F", "#W")
+	overrideSessions, overrideErr := isolatedTeamUpTmuxOutput(overrideSocketDir, "", "list-sessions", "-F", "#S")
+	if selectedSession != callerSession || callerErr != nil || !strings.Contains(callerWindows, "developer") || overrideErr == nil || strings.TrimSpace(overrideSessions) != "" {
+		t.Fatalf("caller launch selected=%q caller=%q caller_windows=%q caller_err=%v override_sessions=%q override_err=%v", selectedSession, callerSession, callerWindows, callerErr, overrideSessions, overrideErr)
+	}
+}
+
 func TestTeamUpCommandRegistered(t *testing.T) {
 	cmd, _, err := teamHumanCmd.Find([]string{"up"})
 	if err != nil || cmd == nil || cmd.Name() != "up" {
