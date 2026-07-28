@@ -1345,10 +1345,7 @@ func formatWorkspaceClaimsSummary(claims []aweb.WorkspaceClaim) string {
 			part += fmt.Sprintf(" \"%s\"", title)
 		}
 		if strings.TrimSpace(claim.ClaimedAt) != "" {
-			part += fmt.Sprintf(" (%s)", formatTimeAgo(claim.ClaimedAt))
-			if isClaimStale(claim.ClaimedAt) {
-				part += " [stale]"
-			}
+			part += fmt.Sprintf(" (claim age: %s)", coordinationAgeBand(claim.ClaimedAt))
 		}
 		parts = append(parts, part)
 	}

@@ -35,15 +35,18 @@ var workBlockedCmd = &cobra.Command{
 }
 
 type workListItem struct {
-	TaskRef         string  `json:"task_ref"`
-	Title           string  `json:"title"`
-	TaskType        string  `json:"task_type"`
-	Priority        int     `json:"priority"`
-	Status          string  `json:"status,omitempty"`
-	OwnerAlias      *string `json:"owner_alias,omitempty"`
-	ClaimedAt       *string `json:"claimed_at,omitempty"`
-	CanonicalOrigin *string `json:"canonical_origin,omitempty"`
-	Branch          *string `json:"branch,omitempty"`
+	TaskRef                 string  `json:"task_ref"`
+	Title                   string  `json:"title"`
+	TaskType                string  `json:"task_type"`
+	Priority                int     `json:"priority"`
+	Status                  string  `json:"status,omitempty"`
+	OwnerAlias              *string `json:"owner_alias,omitempty"`
+	ClaimedAt               *string `json:"claimed_at,omitempty"`
+	OwnerLastSeenAt         *string `json:"owner_last_seen_at,omitempty"`
+	ClaimAgeBand            string  `json:"claim_age_band,omitempty"`
+	ClaimantActivityAgeBand string  `json:"claimant_activity_age_band,omitempty"`
+	CanonicalOrigin         *string `json:"canonical_origin,omitempty"`
+	Branch                  *string `json:"branch,omitempty"`
 }
 
 type workListOutput struct {
@@ -118,15 +121,18 @@ func runWorkActive(cmd *cobra.Command, args []string) error {
 	items := make([]workListItem, 0, len(resp.Tasks))
 	for _, task := range resp.Tasks {
 		items = append(items, workListItem{
-			TaskRef:         task.TaskRef,
-			Title:           task.Title,
-			TaskType:        task.TaskType,
-			Priority:        task.Priority,
-			Status:          task.Status,
-			OwnerAlias:      task.OwnerAlias,
-			ClaimedAt:       task.ClaimedAt,
-			CanonicalOrigin: task.CanonicalOrigin,
-			Branch:          task.Branch,
+			TaskRef:                 task.TaskRef,
+			Title:                   task.Title,
+			TaskType:                task.TaskType,
+			Priority:                task.Priority,
+			Status:                  task.Status,
+			OwnerAlias:              task.OwnerAlias,
+			ClaimedAt:               task.ClaimedAt,
+			OwnerLastSeenAt:         task.OwnerLastSeenAt,
+			ClaimAgeBand:            coordinationAgeBand(valueOrEmpty(task.ClaimedAt)),
+			ClaimantActivityAgeBand: coordinationAgeBand(valueOrEmpty(task.OwnerLastSeenAt)),
+			CanonicalOrigin:         task.CanonicalOrigin,
+			Branch:                  task.Branch,
 		})
 	}
 
@@ -233,7 +239,19 @@ func formatWorkList(v any) string {
 				owner,
 				formatOptionalBranch(item.Branch),
 			)
-			sb.WriteString(strings.TrimRight(line, " ") + "\n")
+			line = strings.TrimRight(line, " ")
+			if item.ClaimAgeBand != "" {
+				activityBand := item.ClaimantActivityAgeBand
+				if activityBand == "" {
+					activityBand = "unknown"
+				}
+				line += fmt.Sprintf(
+					"  [claim age: %s; claimant activity: %s]",
+					item.ClaimAgeBand,
+					activityBand,
+				)
+			}
+			sb.WriteString(line + "\n")
 		}
 		return sb.String()
 	}
@@ -244,10 +262,7 @@ func formatWorkList(v any) string {
 			sb.WriteString(fmt.Sprintf(" — %s", strings.TrimSpace(*item.OwnerAlias)))
 		}
 		if item.ClaimedAt != nil && strings.TrimSpace(*item.ClaimedAt) != "" {
-			sb.WriteString(fmt.Sprintf(" (%s)", formatTimeAgo(strings.TrimSpace(*item.ClaimedAt))))
-			if isClaimStale(strings.TrimSpace(*item.ClaimedAt)) {
-				sb.WriteString(" [stale]")
-			}
+			sb.WriteString(fmt.Sprintf(" (claim age: %s)", coordinationAgeBand(*item.ClaimedAt)))
 		}
 		sb.WriteString("\n")
 	}
@@ -273,12 +288,29 @@ func currentWorkspaceID(workingDir string, sel *awconfig.Selection) string {
 	return strings.TrimSpace(sel.WorkspaceID)
 }
 
-func isClaimStale(claimedAt string) bool {
-	ts, ok := parseTimeBestEffort(claimedAt)
-	if !ok {
-		return false
+func coordinationAgeBand(timestamp string) string {
+	if strings.TrimSpace(timestamp) == "" {
+		return ""
 	}
-	return time.Since(ts) > 24*time.Hour
+	return coordinationAgeBandAt(timestamp, time.Now().UTC())
+}
+
+func coordinationAgeBandAt(timestamp string, now time.Time) string {
+	ts, ok := parseTimeBestEffort(timestamp)
+	if !ok {
+		return "unknown"
+	}
+	age := now.Sub(ts)
+	if age < 24*time.Hour {
+		return "under a day"
+	}
+	if age < 7*24*time.Hour {
+		return "days"
+	}
+	if age < 30*24*time.Hour {
+		return "weeks"
+	}
+	return "months"
 }
 
 func formatWorkTaskTitle(taskType, title string) string {

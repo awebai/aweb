@@ -256,8 +256,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 		"- Branch: main",
 		"- Focus: aweb-aaaa \"Restore rich coordination status\"",
 		"- Epic: AWEB-AAAA (Restore rich coordination status)",
-		"- Claims: TASK-001 \"Own task\" (",
-		"[stale]",
+		"- Claims: TASK-001 \"Own task\" (claim age: months)",
 		"- Locks: src/main.go (TTL:",
 		"## Team",
 		"bob (reviewer) — idle, seen ",
@@ -277,6 +276,9 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("output missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "[stale]") {
+		t.Fatalf("workspace output must report claim age without a stale-policy verdict:\n%s", text)
 	}
 }
 

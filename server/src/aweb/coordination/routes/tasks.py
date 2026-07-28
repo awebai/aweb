@@ -86,6 +86,7 @@ class ActiveWorkTaskSummary(BaseModel):
     workspace_id: Optional[str] = None
     owner_alias: Optional[str] = None
     claimed_at: Optional[str] = None
+    owner_last_seen_at: Optional[str] = None
     canonical_origin: Optional[str] = None
     branch: Optional[str] = None
 

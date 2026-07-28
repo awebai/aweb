@@ -931,6 +931,28 @@ relevant. When more matching workspaces exist than the requested limit, the
 response sets `has_more=true`. Human CLI output must state plainly when this
 bounded response is incomplete.
 
+Task claims have no time-based expiry or implicit lease in v1.
+`GET /v1/tasks/active` includes `owner_last_seen_at` for claim-backed tasks.
+Active-work reads report claim age together with the claimant workspace's last
+activity; workspace status also exposes claim age alongside workspace presence
+recency.
+`aw work active` human and JSON output use neutral evidence bands: `under a
+day` (<24 hours), `days` (<7 days), `weeks` (<30 days), `months` (30 days or
+more), or `unknown`. These boundaries are display groupings, not ownership or
+release policy. Claim age alone never makes a claim stale: an old claim held by
+a live or recently active workspace is not a review candidate merely because
+of its age. The coordinating role considers claim age and claimant inactivity
+together, contacts the claimant when practical, and records the disposition in
+a task comment before any explicit status or assignment change. This lifecycle
+is visibility-only: no request, heartbeat, scheduled job, or read path
+silently releases claims.
+
+Any future automatic release requires a separate policy amendment defining an
+explicit per-claim renewal signal, grace and notification behavior, human
+override, a durable actor-and-reason audit record, and atomic updates to claim,
+task status, assignment, and workspace focus. Display age bands must not be
+reused as automatic-release thresholds.
+
 `DELETE /v1/workspaces/{workspace_id}` soft-deletes a gone local
 workspace and its bound agent row, plus releases any task claims held by
 the workspace. It returns `409` if the bound agent is global

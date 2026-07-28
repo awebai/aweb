@@ -399,9 +399,9 @@ async def test_list_active_work_allows_null_updated_at(aweb_cloud_db):
         """
         INSERT INTO {{tables.workspaces}} (
             workspace_id, team_id, agent_id, repo_id, alias, human_name,
-            role, hostname, workspace_path, created_at, updated_at
+            role, hostname, workspace_path, last_seen_at, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
         """,
         workspace_id,
         TEAM_ID,
@@ -412,6 +412,7 @@ async def test_list_active_work_allows_null_updated_at(aweb_cloud_db):
         "developer",
         "mac.local",
         "/tmp/backend",
+        datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc),
         datetime(2026, 4, 11, 12, 0, tzinfo=timezone.utc),
     )
     await aweb_cloud_db.aweb_db.execute(
@@ -436,6 +437,7 @@ async def test_list_active_work_allows_null_updated_at(aweb_cloud_db):
     assert tasks[0]["updated_at"] is None
     assert tasks[0]["workspace_id"] == str(workspace_id)
     assert tasks[0]["owner_alias"] == "alice"
+    assert tasks[0]["owner_last_seen_at"] == "2026-04-12T12:00:00+00:00"
     assert tasks[0]["canonical_origin"] == "backend"
     assert tasks[0]["branch"] is None
 
