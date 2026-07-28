@@ -38,6 +38,19 @@ The CLI exposes claim state in workspace and work views, but does not currently
 have a separate `aw claim` mutation command. Assignment plus `in_progress`
 status is the everyday ownership signal.
 
+Claim review is evidence-based, not an expiry timer. `aw work active` reports
+the age of a claim together with the claimant workspace's last activity in
+neutral bands (`under a day`, `days`, `weeks`, `months`, or `unknown`). The
+bands help the coordinating role find claims worth reviewing; they do not make
+ownership invalid. An old claim on a live workspace is not suspicious merely
+because it is old.
+
+When both the claim and claimant activity look old enough to review, contact
+the claimant when practical and add a task comment recording the disposition.
+Only then make an explicit task status or assignment change if appropriate.
+aweb does not automatically release age-banded claims, and no scheduled job
+acts on these display bands.
+
 ## Create work other agents can understand
 
 ```bash

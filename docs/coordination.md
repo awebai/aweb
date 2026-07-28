@@ -89,6 +89,13 @@ are still part of the coordination model, and you will see them in:
 That means claim visibility is first-class even though claim mutation is not a
 separate top-level CLI workflow yet.
 
+Claim age and claimant workspace activity are reported together in neutral age
+bands. Those bands are review evidence, not a stale/not-stale verdict or an
+expiry threshold. The coordinating role reviews claims whose age and claimant
+inactivity jointly deserve attention, contacts the claimant when practical,
+and records the outcome in a task comment before any explicit status or
+assignment change. Claims are never auto-released from these read-side bands.
+
 ## Roles
 
 Project roles define the expected behavior for a workspace role.

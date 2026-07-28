@@ -118,6 +118,7 @@ type ActiveTaskSummary struct {
 	WorkspaceID     *string  `json:"workspace_id,omitempty"`
 	OwnerAlias      *string  `json:"owner_alias,omitempty"`
 	ClaimedAt       *string  `json:"claimed_at,omitempty"`
+	OwnerLastSeenAt *string  `json:"owner_last_seen_at,omitempty"`
 	CanonicalOrigin *string  `json:"canonical_origin,omitempty"`
 	Branch          *string  `json:"branch,omitempty"`
 }
