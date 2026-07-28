@@ -77,6 +77,9 @@ type libraryImportToShelfResponse struct {
 	ProfileRef             string `json:"profile_ref"`
 	Version                string `json:"version"`
 	Digest                 string `json:"digest"`
+	SourceProfileRef       string `json:"source_profile_ref"`
+	SourceProfileVersion   string `json:"source_profile_version"`
+	SourceProfileDigest    string `json:"source_profile_digest"`
 	SourceBlueprintRef     string `json:"source_blueprint_ref"`
 	SourceBlueprintVersion string `json:"source_blueprint_version"`
 	SourceBlueprintDigest  string `json:"source_blueprint_digest"`

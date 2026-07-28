@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestTeamAdoptRepointsPublicPinToShelfAndRefreshUsesShelfMint(t *testing.T) {
+func TestTeamAdoptRepointsPublicPinToEvolvedShelfAndRefreshUsesShelfMint(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("AW_CONFIG_PATH", "")
@@ -51,7 +51,20 @@ func TestTeamAdoptRepointsPublicPinToShelfAndRefreshUsesShelfMint(t *testing.T) 
 			if err := json.NewDecoder(r.Body).Decode(&importBody); err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(libraryImportToShelfResponse{ProfileRef: "coordinator", Version: "0.1.0", Digest: publicDigest, SourceBlueprintRef: "aweb.team", SourceBlueprintVersion: "0.1.0", SourceBlueprintDigest: "sha256:shelf-source", Created: true})
+			// Re-import returns the existing shelf copy after an approved change
+			// advanced it beyond the public source version.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"profile_ref":              "coordinator",
+				"version":                  "0.2.0",
+				"digest":                   latestDigest,
+				"source_profile_ref":       "coordinator",
+				"source_profile_version":   "0.1.0",
+				"source_profile_digest":    publicDigest,
+				"source_blueprint_ref":     "aweb.team",
+				"source_blueprint_version": "0.1.0",
+				"source_blueprint_digest":  "sha256:shelf-source",
+				"created":                  false,
+			})
 		case "/v1/agents/coordinator/profile-binding":
 			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
 				t.Fatalf("bind must be team-signed: %#v", r.Header)
@@ -59,7 +72,7 @@ func TestTeamAdoptRepointsPublicPinToShelfAndRefreshUsesShelfMint(t *testing.T) 
 			if err := json.NewDecoder(r.Body).Decode(&bindBody); err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(libraryBindResponse{AgentID: "coordinator", ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: publicDigest})
+			_ = json.NewEncoder(w).Encode(libraryBindResponse{AgentID: "coordinator", ProfileRef: "coordinator", ProfileVersion: "0.2.0", ProfileDigest: latestDigest})
 		case "/v1/profiles/coordinator":
 			if r.Header.Get("Authorization") == "" || r.Header.Get("X-AWID-Team-Certificate") == "" {
 				t.Fatalf("get-shelf-profile must be team-signed: %#v", r.Header)
@@ -87,9 +100,11 @@ func TestTeamAdoptRepointsPublicPinToShelfAndRefreshUsesShelfMint(t *testing.T) 
 		t.Fatalf("test setup expected a public pin with library_url: %+v", publicRef)
 	}
 
-	oldHomeFlag := agentHomeFlag
-	agentHomeFlag = home
-	t.Cleanup(func() { agentHomeFlag = oldHomeFlag })
+	oldHomeFlag, oldJSONFlag, oldRefreshRuntime := agentHomeFlag, jsonFlag, teamRefreshRuntime
+	agentHomeFlag, jsonFlag, teamRefreshRuntime = home, false, "pi"
+	t.Cleanup(func() {
+		agentHomeFlag, jsonFlag, teamRefreshRuntime = oldHomeFlag, oldJSONFlag, oldRefreshRuntime
+	})
 	var out bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetOut(&out)
@@ -99,7 +114,7 @@ func TestTeamAdoptRepointsPublicPinToShelfAndRefreshUsesShelfMint(t *testing.T) 
 	if importBody["source_blueprint_ref"] != "aweb.team" || importBody["source_blueprint_version"] != "0.1.0" || importBody["profile_ref"] != "coordinator" {
 		t.Fatalf("import body=%#v", importBody)
 	}
-	if bindBody["profile_ref"] != "coordinator" || bindBody["profile_version"] != "0.1.0" || bindBody["profile_digest"] != publicDigest {
+	if bindBody["profile_ref"] != "coordinator" || bindBody["profile_version"] != "0.2.0" || bindBody["profile_digest"] != latestDigest {
 		t.Fatalf("bind body=%#v", bindBody)
 	}
 	if !strings.Contains(out.String(), "Adopted coordinator onto the team Library shelf") {
@@ -110,19 +125,21 @@ func TestTeamAdoptRepointsPublicPinToShelfAndRefreshUsesShelfMint(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if adoptedRef.LibraryURL != "" || adoptedRef.ProfileVersion != "0.1.0" || adoptedRef.ProfileDigest != publicDigest || adoptedRef.SourceBlueprintDigest != "sha256:shelf-source" || adoptedRef.RuntimeKind != "pi" {
+	if adoptedRef.LibraryURL != "" || adoptedRef.ProfileVersion != "0.2.0" || adoptedRef.ProfileDigest != latestDigest || adoptedRef.SourceBlueprintDigest != "sha256:shelf-source" || adoptedRef.RuntimeKind != "pi" {
 		t.Fatalf("adopted ref did not re-point to shelf: %+v", adoptedRef)
 	}
 
-	result, err := refreshLibraryProfileInHome(home, "coordinator", adoptedRef, "pi")
-	if err != nil {
+	var refreshOut bytes.Buffer
+	refreshCmd := &cobra.Command{}
+	refreshCmd.SetOut(&refreshOut)
+	if err := runTeamRefresh(refreshCmd, []string{"coordinator"}); err != nil {
 		t.Fatalf("refresh shelf mint: %v", err)
 	}
 	if !shelfSigned {
 		t.Fatal("refresh did not call get-shelf-profile")
 	}
-	if result.ProfileVersion != "0.2.0" || result.ProfileDigest != latestDigest {
-		t.Fatalf("refresh result=%+v", result)
+	if !strings.Contains(refreshOut.String(), "source: team Library shelf") {
+		t.Fatalf("refresh did not name its shelf source: %q", refreshOut.String())
 	}
 	data, err := os.ReadFile(filepath.Join(home, ".aw", "profile", "profile.yaml"))
 	if err != nil {
@@ -137,6 +154,49 @@ func TestTeamAdoptRepointsPublicPinToShelfAndRefreshUsesShelfMint(t *testing.T) 
 	}
 	if refreshedRef.LibraryURL != "" || refreshedRef.ProfileVersion != "0.2.0" || refreshedRef.ProfileDigest != latestDigest {
 		t.Fatalf("ref after refresh=%+v", refreshedRef)
+	}
+}
+
+func TestTeamAdoptRefusesShelfCopyFromDifferentSourceProfile(t *testing.T) {
+	old := recordedProfileRef{
+		ProfileRef:             "coordinator",
+		ProfileVersion:         "0.1.0",
+		ProfileDigest:          "sha256:public",
+		SourceBlueprintRef:     "aweb.team",
+		SourceBlueprintVersion: "0.1.0",
+	}
+	for _, tc := range []struct {
+		name                 string
+		sourceProfileRef     string
+		sourceProfileVersion string
+		want                 string
+	}{
+		{name: "profile ref", sourceProfileRef: "reviewer", sourceProfileVersion: "0.1.0", want: "source_profile_ref"},
+		{name: "profile version", sourceProfileRef: "coordinator", sourceProfileVersion: "0.2.0", want: "source_profile_version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(map[string]any{
+				"profile_ref":              "coordinator",
+				"version":                  "0.1.0",
+				"digest":                   "sha256:public",
+				"source_profile_ref":       tc.sourceProfileRef,
+				"source_profile_version":   tc.sourceProfileVersion,
+				"source_profile_digest":    "sha256:public",
+				"source_blueprint_ref":     "aweb.team",
+				"source_blueprint_version": "0.1.0",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var imported libraryImportToShelfResponse
+			if err := json.Unmarshal(raw, &imported); err != nil {
+				t.Fatal(err)
+			}
+			err = validateImportedShelfCopyMatchesPin(old, &imported)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v, want refusal for %s", err, tc.want)
+			}
+		})
 	}
 }
 
