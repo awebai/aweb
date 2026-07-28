@@ -5,7 +5,10 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from library.blueprint import (
+    _entries_in_managed_order,
     build_blueprint_payload,
     import_return,
     materialize_home,
@@ -329,6 +332,37 @@ artifacts:
     ]
 
 
+def test_materialize_home_rejects_missing_and_extra_output_paths() -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"materialized paths do not match managed set: "
+            r"missing=\['missing.md'\], extra=\['extra.md'\]"
+        ),
+    ):
+        _entries_in_managed_order(
+            [{"path": "extra.md", "kind": "file", "content_utf8": "extra\n"}],
+            ["missing.md"],
+        )
+
+
+def test_materialize_home_rejects_duplicate_output_paths() -> None:
+    profile = _profile_file(
+        "profile.yaml", "id: developer\nname: Developer\nversion: 0.1.0\n"
+    )
+
+    with pytest.raises(ValueError, match="duplicate materialized path"):
+        materialize_home(
+            [profile, profile],
+            profile_ref="developer",
+            profile_version="0.1.0",
+            profile_digest="sha256:d",
+            source_blueprint_ref=None,
+            source_blueprint_version=None,
+            source_blueprint_digest=None,
+        )
+
+
 def test_materialize_home_sibling_free_skill_keeps_files_and_uses_directory_harness_link() -> None:
     profile_yaml = """id: developer
 name: Developer
@@ -391,7 +425,5 @@ def test_materialize_home_interpolates_proposal_target() -> None:
 
 
 def test_parse_rejects_wrong_schema() -> None:
-    import pytest
-
     with pytest.raises(ValueError):
         parse_import_payload({"files": collect_files(_SOURCE), "schema": "bogus"})
