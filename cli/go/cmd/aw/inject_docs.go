@@ -155,7 +155,11 @@ func resolveAgentDocsCandidate(canonicalRoot, candidate, name string) (string, e
 		return "", fmt.Errorf("%s: %w", name, err)
 	}
 	if rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%s resolves outside target directory", name)
+		requestedRoot, absErr := filepath.Abs(filepath.Dir(candidate))
+		if absErr != nil {
+			requestedRoot = filepath.Dir(candidate)
+		}
+		return "", fmt.Errorf("%s resolves outside requested directory %s: %s", name, requestedRoot, resolved)
 	}
 	return resolved, nil
 }

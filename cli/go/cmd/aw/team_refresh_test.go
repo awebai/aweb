@@ -305,6 +305,47 @@ func TestTeamRefreshUpdatesExistingCoordinationBlockFromActiveInstructions(t *te
 	}
 }
 
+func TestTeamRefreshRejectsCoordinationDocsSymlinkOutsideHome(t *testing.T) {
+	skipIfNoSymlinkSupport(t)
+
+	home := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.md")
+	original := []byte(renderInjectedDocs("## Outside instructions\n\nDo not change."))
+	if err := os.WriteFile(outside, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(home, "CLAUDE.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordedProfileRef(home, recordedProfileRef{ProfileRef: "coordinator"}); err != nil {
+		t.Fatal(err)
+	}
+
+	oldHomeFlag, oldJSONFlag, oldRuntime := agentHomeFlag, jsonFlag, teamRefreshRuntime
+	agentHomeFlag, jsonFlag, teamRefreshRuntime = home, false, "claude-code"
+	t.Cleanup(func() {
+		agentHomeFlag, jsonFlag, teamRefreshRuntime = oldHomeFlag, oldJSONFlag, oldRuntime
+	})
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	err := runTeamRefresh(cmd, []string{"coordinator"})
+	if err == nil {
+		t.Fatal("expected refresh to reject coordination-doc symlink outside home")
+	}
+	for _, want := range []string{home, outside} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refresh escape error %q does not name %q", err, want)
+		}
+	}
+	data, readErr := os.ReadFile(outside)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("refresh modified outside file:\n%s", data)
+	}
+}
+
 func TestTeamRefreshLeavesUnmarkedHomeUnmarked(t *testing.T) {
 	home := t.TempDir()
 	oldFiles := refreshTestProfileFiles(false, "0.1.0")

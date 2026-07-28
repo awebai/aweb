@@ -277,6 +277,12 @@ func TestInjectAgentDocsRejectsSymlinkOutsideTarget(t *testing.T) {
 	if len(result.Errors) == 0 {
 		t.Fatal("expected injection to reject AGENTS.md symlink outside target")
 	}
+	errorText := strings.Join(result.Errors, "; ")
+	for _, want := range []string{target, outside} {
+		if !strings.Contains(errorText, want) {
+			t.Fatalf("escape error %q does not name %q", errorText, want)
+		}
+	}
 	data, err := os.ReadFile(outside)
 	if err != nil {
 		t.Fatal(err)
@@ -286,7 +292,7 @@ func TestInjectAgentDocsRejectsSymlinkOutsideTarget(t *testing.T) {
 	}
 }
 
-func TestInjectAgentDocsAvoidsDoubleWriteForSymlink(t *testing.T) {
+func TestInjectAgentDocsAllowsInDirectorySymlinkAndUpdatesOnce(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
@@ -299,13 +305,16 @@ func TestInjectAgentDocsAvoidsDoubleWriteForSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	InjectProvidedAgentDocs(tmp, "## Shared Rules\n\nUse `aw`.")
+	result := InjectProvidedAgentDocs(tmp, "## Shared Rules\n\nUse `aw`.")
+	if len(result.Errors) > 0 {
+		t.Fatalf("in-directory CLAUDE.md symlink was rejected: %v", result.Errors)
+	}
 	data, err := os.ReadFile(target)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if strings.Count(text, awDocsMarkerStart) != 1 {
-		t.Fatalf("expected one injected section:\n%s", text)
+	if strings.Count(text, awDocsMarkerStart) != 1 || strings.Count(text, awDocsMarkerEnd) != 1 || !strings.Contains(text, "Use `aw`.") {
+		t.Fatalf("expected exactly one updated injected section:\n%s", text)
 	}
 }
