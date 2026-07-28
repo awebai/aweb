@@ -48,6 +48,12 @@ uv run mypy src/library
 
 The e2e suite (`-m e2e`) is docker-backed and uses real `aw`/AWID tooling.
 
+## Production operations
+
+Reviewed Render deploy, verification, rollback, and recovery targets are documented in
+[`docs/production-operations.md`](docs/production-operations.md). Production mutations
+must use those checked-in Make targets rather than ad-hoc commands.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

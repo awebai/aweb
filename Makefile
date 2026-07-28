@@ -1,6 +1,22 @@
-.PHONY: test test-server lint compile run e2e e2e-up e2e-down api-serve api-stop
+.PHONY: test test-server lint compile run e2e e2e-up e2e-down api-serve api-stop \
+	prod-ops-test prod-status prod-deploy prod-wait prod-verify prod-rollback prod-recovery \
+	prod-gate-candidate prod-gate-recovery
 
 API_PORT ?= 8765
+PROD_CONFIG ?= ops/render-production.json
+RENDER_ENV_FILE ?= $(HOME)/.aweb-render/env
+PROD_COMMIT ?=
+PROD_DEPLOY_ID ?=
+ROLLBACK_DEPLOY_ID ?=
+ROLLBACK_COMMIT ?=
+CONFIRM_SERVICE_ID ?=
+AW_SOURCE_HOME ?=
+APPLY ?= 0
+
+# Export operational values instead of interpolating them into recipes. This keeps
+# operator-provided IDs and paths out of shell parsing; Python performs exact validation.
+export PROD_CONFIG RENDER_ENV_FILE PROD_COMMIT PROD_DEPLOY_ID ROLLBACK_DEPLOY_ID
+export ROLLBACK_COMMIT CONFIRM_SERVICE_ID AW_SOURCE_HOME APPLY
 
 test:
 	PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m pytest -q -m "not e2e"
@@ -38,3 +54,37 @@ api-serve:
 
 api-stop:
 	@[ -f .api.pid ] && { kill $$(cat .api.pid) 2>/dev/null || true; rm -f .api.pid; echo "api server stopped"; } || echo "api server not running"
+
+# Production Render operations are intentionally Make-only. Never replace these
+# targets with inline curl/shell mutations in a release session.
+prod-ops-test:
+	uv run pytest -q tests/test_render_ops.py tests/test_library_prod_gate.py
+
+prod-status:
+	uv run python scripts/render_ops.py status
+
+prod-deploy:
+	git fetch --quiet origin
+	uv run python scripts/render_ops.py deploy
+
+prod-wait:
+	uv run python scripts/render_ops.py wait
+
+prod-verify:
+	uv run python scripts/render_ops.py verify
+	uv run python scripts/library_prod_gate.py candidate
+
+prod-rollback:
+	uv run python scripts/render_ops.py rollback
+
+# This recovery fingerprint is specific to the pre-aasb rollback artifact. Future
+# releases must add and review their own exact recovery gate rather than reusing it.
+prod-recovery:
+	$(MAKE) prod-rollback
+	$(MAKE) prod-gate-recovery
+
+prod-gate-candidate:
+	uv run python scripts/library_prod_gate.py candidate
+
+prod-gate-recovery:
+	uv run python scripts/library_prod_gate.py legacy-aasb

@@ -1,0 +1,116 @@
+# Library production operations
+
+Production changes to Library are executed only through the checked-in Make targets in
+this repository. Do not substitute dashboard clicks, inline shell, `curl`, or a temporary
+script during a release. A production deploy still requires independent review and
+explicit human approval.
+
+## Ownership and profile assets
+
+The executable service tooling lives here with the service so it is versioned, tested,
+and available to every operator. The deployer's team-private shelf skill records how to
+use these targets. That skill is evolved through Library's reviewed
+`propose -> approve -> refresh` asset flow; a locally edited materialized skill is not a
+source of truth. The public deployer blueprint carries only the portable rule to use a
+service's reviewed targets rather than improvising production mutations.
+
+## Pinned production topology
+
+`ops/render-production.json` is the fail-closed topology allowlist. The tooling refuses
+to proceed if Render reports a different service ID, name, region, repository, branch,
+origin URL, suspension state, or auto-deploy setting.
+
+The Render API key is read from `~/.aweb-render/env`. The file must have mode `0600` and
+contain exactly one nonempty `RENDER_API_KEY`. Commands never print the key, headers, or
+raw authenticated materialization responses.
+
+## Required release record
+
+Before requesting production approval, record all of the following:
+
+- exact full lowercase 40-character candidate SHA, already at `origin/main`;
+- exact current live rollback deploy ID and full commit SHA;
+- expected rendered behavior for Claude Code and Pi;
+- the independent review verdict;
+- the human approval that names this service and candidate.
+
+Never deploy a tag, short SHA, local `HEAD`, or an unmerged commit. Never infer the
+rollback artifact after starting the deploy.
+
+## Targets
+
+| Target | Effect |
+|---|---|
+| `make prod-ops-test` | Mocked operations and gate tests; no network mutation. |
+| `make prod-status` | Read-only topology and current-live-deploy preflight. |
+| `make prod-deploy ... APPLY=1` | Validates topology and rollback pin, fetches and verifies exact `origin/main`, starts a clear-cache deploy, waits for `live`, then checks origin and public health. |
+| `make prod-wait ...` | Restartable read-only wait for one exact deploy ID and commit. |
+| `make prod-verify ...` | Requires the exact deploy to be the sole live artifact, checks origin/public health, then runs raw, released-client, and real-harness gates. |
+| `make prod-rollback ... APPLY=1` | Validates and rolls back to one exact deploy ID/commit, waits, and checks both health surfaces. |
+| `make prod-recovery ... APPLY=1` | Performs the pinned rollback and its explicitly selected recovery gate. |
+
+Run `make prod-ops-test` before release planning. The mutation targets deliberately
+require `APPLY=1` and `CONFIRM_SERVICE_ID=srv-d8qm4jvavr4c73dhrmgg` in addition to the
+artifact pins.
+
+Example variable shape (placeholders only):
+
+```text
+make prod-deploy \
+  APPLY=1 \
+  CONFIRM_SERVICE_ID=srv-... \
+  PROD_COMMIT=<40-char-candidate> \
+  ROLLBACK_DEPLOY_ID=dep-... \
+  ROLLBACK_COMMIT=<40-char-rollback>
+```
+
+After the command returns the new deployment ID, verification is separate and explicit:
+
+```text
+make prod-verify \
+  PROD_DEPLOY_ID=dep-... \
+  PROD_COMMIT=<40-char-candidate> \
+  AW_SOURCE_HOME=/absolute/path/to/certified-agent-home
+```
+
+`AW_SOURCE_HOME` must be an established agent home with the correct team certificate.
+The gate clones only into a private temporary directory and removes it on exit.
+
+## Verification surfaces
+
+Render metadata and health do not prove the functional release. Verification requires:
+
+1. Render reports the exact candidate deploy ID and commit as the sole `live` deploy.
+2. Generated origin `/health` returns the exact Library health payload.
+3. Public edge `/health` returns the same exact payload.
+4. Authenticated public `POST /v1/materialize` succeeds for `claude-code` and `pi`.
+5. `managed_set` is positionally identical to `home_files`, with no duplicates.
+6. The unchanged released `/opt/homebrew/bin/aw` strict client materializes both
+   runtimes into fresh homes.
+7. Real Claude Code and Pi harnesses load the generated title and provenance line.
+
+Do not send an authenticated materialization request signed for the generated Render
+origin. Library validates the signed audience against its canonical public origin, so a
+401 at the generated origin is expected and must not be "fixed" by weakening audience
+validation.
+
+## Rollback and recovery
+
+A failed functional gate means the release is not verified. Use the pre-recorded exact
+rollback ID and commit; do not choose a convenient artifact from the dashboard.
+
+For the `aweb-aasb` rollout only, `prod-recovery` has the explicit `legacy-aasb`
+fingerprint: both raw runtime responses omit `runtime_kind` and `managed_set`, and
+released strict materialization rejects both:
+
+```text
+make prod-recovery \
+  APPLY=1 \
+  CONFIRM_SERVICE_ID=srv-... \
+  ROLLBACK_DEPLOY_ID=dep-... \
+  ROLLBACK_COMMIT=<40-char-rollback> \
+  AW_SOURCE_HOME=/absolute/path/to/certified-agent-home
+```
+
+Do not reuse `legacy-aasb` for a later release. Add and review the later release's exact
+recovery fingerprint before its production approval.
