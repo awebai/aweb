@@ -889,6 +889,15 @@ auth for coordination routes. The request body is empty (`{}`). On
 success it returns `{ team_id, name_prefix }`. If no classic alias
 is available, it returns HTTP 409 with detail `alias_exhausted`.
 
+`PATCH /v1/agents/me` may carry `repo_origin` as mutable workspace metadata.
+The server canonicalizes the origin, ensures the team-scoped repo row, binds
+the calling workspace to it, and returns `repo_id` plus `canonical_origin`.
+The CLI uses this path during heartbeat to repair stale or missing repo
+bindings. `aw heartbeat` reports `repo_status` (`repaired`, `current`,
+`unavailable`, or `repair_failed`) and the canonical binding when available so
+the repair is observable. Repo association remains workspace state:
+`POST /v1/connect` stays repo-independent and does not carry `repo_origin`.
+
 `POST /v1/agents/{alias}/replace-key` is deliberately controller-authorized.
 Its signed payload binds team, alias, expected old and proposed new `did:key`,
 old/new certificate ids, operation, and timestamp. The server updates only a

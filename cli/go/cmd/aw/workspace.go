@@ -1155,7 +1155,7 @@ func formatWorkspaceStatus(v any) string {
 	if len(out.Team) == 0 {
 		sb.WriteString("No other workspaces.\n")
 	} else {
-		for _, workspace := range out.Team {
+		formatTeamWorkspace := func(workspace aweb.WorkspaceInfo) {
 			line := workspace.Alias
 			if workspace.Role != nil && strings.TrimSpace(*workspace.Role) != "" {
 				line += " (" + strings.TrimSpace(*workspace.Role) + ")"
@@ -1177,6 +1177,23 @@ func formatWorkspaceStatus(v any) string {
 			}
 			sb.WriteString(fmt.Sprintf("  Claims: %s\n", formatWorkspaceClaimsSummary(workspace.Claims)))
 			sb.WriteString(fmt.Sprintf("  Locks: %s\n", formatWorkspaceLocksSummary(out.TeamLocks[workspace.WorkspaceID], now, 3)))
+		}
+
+		for _, workspace := range out.Team {
+			if strings.TrimSpace(derefString(workspace.Repo)) != "" {
+				formatTeamWorkspace(workspace)
+			}
+		}
+		unknownRepoHeadingWritten := false
+		for _, workspace := range out.Team {
+			if strings.TrimSpace(derefString(workspace.Repo)) != "" {
+				continue
+			}
+			if !unknownRepoHeadingWritten {
+				sb.WriteString("### Unknown repo\n")
+				unknownRepoHeadingWritten = true
+			}
+			formatTeamWorkspace(workspace)
 		}
 	}
 

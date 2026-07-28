@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -301,26 +302,43 @@ func discoverRepoOrigin(workingDir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// canonicalizeGitOrigin strips .git suffix and normalizes git URLs to domain/path form.
+// canonicalizeGitOrigin strips credentials, ports, and .git suffixes and
+// normalizes git URLs to domain/path form.
 func canonicalizeGitOrigin(origin string) string {
 	origin = strings.TrimSpace(origin)
 	if origin == "" {
 		return ""
 	}
-	// Strip trailing .git
-	origin = strings.TrimSuffix(origin, ".git")
-	// Convert SSH URLs: git@github.com:org/repo → github.com/org/repo
-	if strings.HasPrefix(origin, "git@") {
-		origin = strings.TrimPrefix(origin, "git@")
-		origin = strings.Replace(origin, ":", "/", 1)
-	}
-	// Strip https:// or http://
-	for _, prefix := range []string{"https://", "http://"} {
-		if strings.HasPrefix(origin, prefix) {
-			origin = strings.TrimPrefix(origin, prefix)
+
+	if parsed, err := url.Parse(origin); err == nil && parsed.Scheme != "" && parsed.Hostname() != "" {
+		path := strings.TrimSuffix(strings.Trim(parsed.Path, "/"), ".git")
+		if path != "" {
+			return canonicalGitHost(parsed.Hostname()) + "/" + path
 		}
 	}
-	return origin
+
+	// Convert scp-like SSH URLs: user@host:org/repo.git → host/org/repo.
+	if !strings.Contains(origin, "://") {
+		if colon := strings.Index(origin, ":"); colon > 0 && colon < len(origin)-1 {
+			host := origin[:colon]
+			if at := strings.LastIndex(host, "@"); at >= 0 {
+				host = host[at+1:]
+			}
+			path := strings.TrimSuffix(strings.Trim(origin[colon+1:], "/"), ".git")
+			if host != "" && path != "" {
+				return canonicalGitHost(host) + "/" + path
+			}
+		}
+	}
+
+	return strings.TrimSuffix(origin, ".git")
+}
+
+func canonicalGitHost(host string) string {
+	if strings.EqualFold(strings.TrimSpace(host), "ssh.github.com") {
+		return "github.com"
+	}
+	return strings.TrimSpace(host)
 }
 
 func formatConnect(v any) string {
