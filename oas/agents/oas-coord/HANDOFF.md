@@ -106,3 +106,41 @@ already holds. Hosted differs at exactly one step: the credential used to revoke
 - Execute the affected feature against **every supported runtime** before
   proposing anything upstream. PR 37 passed 80+ green tests and seven review
   passes because nothing ever ran the command.
+
+
+## DIRECTION CHANGE — package convergence (accepted 2026-07-27, Juan-confirmed)
+
+We converge on Pepe's OAS package train and one canonical `oas.aweb`
+capability. `aweb.identity-attach` stops growing into a competing messaging
+surface and becomes a **migration source**, marked experimental, not deleted.
+Full deliverable — task graph, Pepe concept-review note, mine/retire list — is a
+comment on epic `aweb-oas-aaaa`.
+
+**Base train:** `origin/agents/cli-dev-strict-curriculum-spike` (verified: exists,
+54 commits ahead of `origin/main`). Do NOT treat the 8-commit `working` branch as
+a second base; replay its two useful changes onto the train instead.
+
+**Three verified findings that bear on sequencing:**
+
+1. **The train does NOT carry the pi task-order fix** (`lib/core.mjs:4046` still
+   puts contributed options before the task positional). PR 37 is the only place
+   that fix exists. Replay is required or the bug ships on the new train.
+2. **The train has NO launch-environment contract** — zero hook-env references in
+   core, no `environment` in the manifest schema. PR 48's content must be
+   replayed; convergence does not supply `.29`.
+3. **The train largely answers `.2`**: `oas.aweb` v1.8.0 declares
+   `spawn: { required: true }` and the kernel has `manifestRequiredHooks` /
+   `requiredHooks` machinery. **I verified the machinery EXISTS; I did NOT verify
+   it prevents a launch.** Execute a failing required hook and observe no model
+   process before closing `.2`.
+
+**Deliberately not done tonight:** rewriting the normative seam document into the
+convergence shape. Rushing the design of record into a third direction hours
+before a restart is worse than doing it carefully first thing after. That is task
+one on resume.
+
+**`.47` now has a real recipient:** `atext.aweb.ai/ac-coordinator` owns the hosted
+cleanup contract. It stops being a parked task on our board.
+
+**`.63` is unaffected by convergence** and remains the single blocker on a
+demonstrable resident.
