@@ -358,6 +358,46 @@ func TestTeamExtendAmbientAPIKeyMatchingActiveTeamCreatesRoster(t *testing.T) {
 	}
 }
 
+func TestTeamAddGlobalPreflightSuggestsSupportedExtendCommand(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Setenv(initAPIKeyEnvVar, "")
+	t.Chdir(root)
+
+	const teamID = "default:add-hosted.aweb.ai"
+	mutationCalls := 0
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": "", "registry_url": ""})
+		default:
+			mutationCalls++
+			t.Fatalf("unexpected mutation %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	writeWorkspaceBindingForTest(t, root, workspaceBinding(server.URL, teamID, "owner", "workspace-owner"))
+
+	err := runTeamHumanAdd(nil, []string{"probe:global"})
+	if err == nil {
+		t.Fatal("expected add global authority preflight error")
+	}
+	for _, want := range []string{"aw team add: agent probe", "run aw team extend from a fresh directory with --api-key <key>", "use probe:local"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("add error %q missing %q", err, want)
+		}
+	}
+	if mutationCalls != 0 {
+		t.Fatalf("mutation calls=%d", mutationCalls)
+	}
+	if _, statErr := os.Lstat(filepath.Join(root, "agents", "instances", "probe")); !os.IsNotExist(statErr) {
+		t.Fatalf("probe home created before add authority preflight: %v", statErr)
+	}
+}
+
 func TestTeamExtendCurrentWorkspaceGlobalPreflightHasZeroMutation(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()

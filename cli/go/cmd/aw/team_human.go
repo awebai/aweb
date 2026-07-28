@@ -1597,7 +1597,11 @@ func preflightTeamHumanAddRosterAuthority(inviteAnchorDir string, plans []teamHu
 	if globalPlan.Profile != nil && strings.TrimSpace(globalPlan.Profile.IdentityScope) == "" && !teamHumanAddGlobal {
 		profileSource = " (from profile " + strings.TrimSpace(globalPlan.Profile.SourceBlueprintRef) + "/" + strings.TrimSpace(globalPlan.Profile.ProfileRef) + ")"
 	}
-	return usageError("%s: agent %s resolves to global identity scope%s, but this workspace's authority (%s, team %s) cannot mint global identities.\n\nEither:\n  - run from a fresh directory with --api-key <key>, or\n  - use %s\n\nNo agents were created.", commandName, globalPlan.Name, profileSource, tier, teamID, teamHumanLocalOverrideSpec(*globalPlan))
+	apiKeyRecovery := "run from a fresh directory with --api-key <key>"
+	if commandName == "aw team add" {
+		apiKeyRecovery = "run aw team extend from a fresh directory with --api-key <key>"
+	}
+	return usageError("%s: agent %s resolves to global identity scope%s, but this workspace's authority (%s, team %s) cannot mint global identities.\n\nEither:\n  - %s, or\n  - use %s\n\nNo agents were created.", commandName, globalPlan.Name, profileSource, tier, teamID, apiKeyRecovery, teamHumanLocalOverrideSpec(*globalPlan))
 }
 
 func teamHumanLocalOverrideSpec(plan teamHumanAddedAgent) string {
