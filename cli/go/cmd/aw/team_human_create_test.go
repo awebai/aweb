@@ -1227,13 +1227,26 @@ func TestTeamHumanAddWithoutTeamContextGuidesToConnectNotInviteFlags(t *testing.
 	}
 }
 
-func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsAndMaterializesProfile(t *testing.T) {
+func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsMaterializesAndStartsInCallerTmux(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	t.Setenv("HOME", home)
 	t.Setenv("AW_CONFIG_PATH", "")
 	t.Setenv("AWEB_API_KEY", "aw_sk_owner")
+	callerTMUX := "/tmp/aary5-add-caller,123,0"
+	overrideTmpdir := filepath.Join(t.TempDir(), "override-socket")
+	configuredTmpdir := filepath.Join(t.TempDir(), "configured-socket")
+	t.Setenv(tmuxEnv, callerTMUX)
+	t.Setenv(tmuxTmpdirEnv, overrideTmpdir)
+	t.Setenv(teamUpTmuxTmpdirEnv, configuredTmpdir)
+	tmuxLogPath := installFakeTmuxForEnvTest(t)
+	withFakePiOnPath(t)
+	withFakePiExtensionRunner(t, func(args ...string) ([]byte, error) {
+		return []byte("User packages:\n  npm:@awebai/pi\n"), nil
+	})
+	teamHumanAddStart = true
+	teamHumanAddNoAttach = true
 	externalIdentityHome := filepath.Join(root, "external-principal")
 	if err := os.MkdirAll(externalIdentityHome, 0o700); err != nil {
 		t.Fatal(err)
@@ -1304,7 +1317,10 @@ func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsAndMaterializesProfile(t *testi
 	t.Setenv("AWEB_URL", server.URL+"/api")
 	t.Setenv(libraryURLEnvVar, server.URL)
 
-	if err := runTeamHumanAdd(nil, []string{"developer@aweb.engineering/coordinator=pi"}); err != nil {
+	var launchOutput bytes.Buffer
+	launchCmd := &cobra.Command{}
+	launchCmd.SetOut(&launchOutput)
+	if err := runTeamHumanAdd(launchCmd, []string{"developer@aweb.engineering/coordinator=pi"}); err != nil {
 		t.Fatalf("runTeamHumanAdd: %v", err)
 	}
 	if initCalls != 1 || connectCalls != 1 {
@@ -1312,6 +1328,18 @@ func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsAndMaterializesProfile(t *testi
 	}
 	if initBody["alias"] != "developer" || initBody["identity_scope"] != awid.IdentityModeLocal {
 		t.Fatalf("workspace init body=%v", initBody)
+	}
+	tmuxLog := readFakeTmuxEnvLog(t, tmuxLogPath)
+	if !strings.Contains(tmuxLog, "args=display-message -p #S") || !strings.Contains(tmuxLog, "args=new-window -t ok: -n developer") {
+		t.Fatalf("add --start did not resolve and launch in caller tmux session:\n%s", tmuxLog)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(tmuxLog), "\n") {
+		if !strings.HasPrefix(line, "TMUX_TMPDIR="+overrideTmpdir+" TMUX="+callerTMUX+" ") {
+			t.Fatalf("add --start left caller tmux context for configured tmpdir %q:\n%s", configuredTmpdir, tmuxLog)
+		}
+	}
+	if !strings.Contains(launchOutput.String(), "tmux session \"ok\"") {
+		t.Fatalf("add --start output does not name resolved caller session: %q", launchOutput.String())
 	}
 	agentHome := filepath.Join(root, "agents", "instances", "developer")
 	if _, err := os.Stat(filepath.Join(agentHome, ".aw", "profile", "ref.json")); err != nil {
