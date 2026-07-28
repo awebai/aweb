@@ -134,11 +134,22 @@ a second base; replay its two useful changes onto the train instead.
    it prevents a launch.** Execute a failing required hook and observe no model
    process before closing `.2`.
 
-**DONE:** the normative seam document now opens with the convergence section as
-its governing frame, explicitly superseding every later assumption that
-`aweb.identity-attach` is the steady-state home. The epic and task
-descriptions are restructured to match. The soul's Boundaries entry is
-corrected the same way.
+**DONE, and stated precisely because the first version of this sentence
+overclaimed.** The seam document is *consolidated*, not prefaced: the customer
+config selects canonical `oas.aweb`; the "deliberately distinct from
+destructive upstream" rationale is withdrawn on both halves; the metadata key,
+tasks-layer and interim-surface sections are reclassified as migration-source
+evidence; and the ordered plan is rewritten around train replay, required-spawn
+enforcement proof, blocking normal retirement, canonical package regeneration,
+`.44`, `.63`, `.45`.
+
+**Board state, exactly:** task **descriptions** were rewritten for `.10`,
+`.35`, `.36`, `.60`, `.61` — each now opens with a MIGRATION SOURCE header
+saying the behaviour is mined, not discarded. `.2` was **retitled and rescoped**
+by comment and title, and stays open. The epic carries a governing convergence
+comment. An earlier revision of this file said "descriptions are restructured"
+when only comments had been added; that was an overclaim about board state and
+is corrected here.
 
 **`.47` now has a real recipient:** `atext.aweb.ai/ac-coordinator` owns the hosted
 cleanup contract. It stops being a parked task on our board.

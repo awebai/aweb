@@ -307,7 +307,7 @@ team:
 capabilities:
   layers:
     messaging:
-      capability: aweb.identity-attach
+      capability: oas.aweb
       global:
         enabled: true
         settings: {}
@@ -327,11 +327,26 @@ to keep consistent.
 Inferring cleanup ownership from the presence of a `.aw` directory is rejected.
 That inference is the bug class that destroys durable identities.
 
-The `aweb.identity-attach` messaging capability lives under
-`oas/.agents/capabilities/owned/aweb-identity-attach`. Its ID is deliberately distinct from
-upstream OAS's destructive per-instance `oas.aweb` lifecycle. Explicit
-attach-existing settings remain an internal/development escape hatch; the
-ordinary team-selected path never asks a developer to write them.
+**The user contract is the canonical `oas.aweb` capability.** The staged stable
+identifiers stand: package/capability `oas.aweb`, plus the standalone OAS 0.19
+package skeleton. Its content is **regenerated from the strict 1.8.0
+implementation plus the migrated lifecycle work** — the staged 1.5.1 content is
+not released as-is.
+
+`aweb.identity-attach`, under
+`oas/.agents/capabilities/owned/aweb-identity-attach`, is the **migration
+source**. Everything below describing its receipts, modes, metadata keys and
+command names is **implementation evidence of a working mechanism, not the
+target user contract**; read it to learn what must move, not what a user
+selects.
+
+The earlier rationale here — that the ID was *deliberately distinct* from
+upstream's *destructive* per-instance `oas.aweb` lifecycle — is withdrawn on
+both halves. Distinctness was the premise convergence removes, and
+"destructive upstream" is stale against the strict train, whose `oas.aweb`
+v1.8.0 declares `spawn: { required: true }` and carries required-hook
+machinery. Explicit attach-existing settings remain an internal escape hatch;
+the ordinary team-selected path never asks a developer to write them.
 
 At the production `spawn` hook, it validates the selected declaration, resolves
 and rechecks the host store, and confirms that the credentials selected by
@@ -341,9 +356,12 @@ resolve the registry record, walk the DID log, call `aw id verify`, or verify
 rotation history. Independent proof observations may do those things, but must
 not attribute them to this hook.
 
-OAS persists the resulting non-secret reference at
-`instance.json.capabilityMeta["aweb.identity-attach"].identity_binding`,
-including `cleanup_owner: external`. It does not create an instance `.aw`
+OAS persists the resulting non-secret reference under the capability's own
+`instance.json.capabilityMeta[...].identity_binding` key, including
+`cleanup_owner: external`. **The key shown in the migration source is
+`aweb.identity-attach`; the canonical package writes under `oas.aweb`.** The
+*shape* — a non-secret reference carrying explicit cleanup ownership — is the
+part that migrates. It does not create an instance `.aw`
 directory or a second binding file.
 
 At the production `retire` hook, only a persisted v1 attach binding with
@@ -362,9 +380,12 @@ is accepted for this walking skeleton and is not solved by attach cleanup.
 
 The owned `aweb.tasks` capability under
 `oas/.agents/capabilities/owned/aweb-tasks` binds OAS's exclusive `tasks`
-layer to aweb. It is intentionally separate from the
-`aweb.identity-attach` messaging capability because one manifest may own only
-one fundamental layer. When selected, aweb is authoritative for the shared
+layer to aweb. It is separate from the messaging capability because one
+manifest may own only one fundamental layer — **and after convergence the
+messaging owner it sits beside is canonical `oas.aweb`, not the
+`aweb.identity-attach` migration source.** Whether `aweb.tasks` itself merges
+into the canonical package or stays a distinct layer owner is open, and is
+sequenced with the package regeneration rather than decided here. When selected, aweb is authoritative for the shared
 task queue, work discovery, ownership, status, and roster; task-like and
 roster features from the messaging layer or another integration stay off.
 Conversation still belongs to the messaging layer.
@@ -684,132 +705,62 @@ Library deliberate, never automatic.
 ## Ordered plan
 
 The **ordinary provisioned worker is the mainstream path**; the durable resident
-is the extension. An earlier revision of this document led with the resident,
-which is the exception — we built it first, and that ordering is corrected here.
+is the extension. An earlier revision led with the resident, which is the
+exception. This plan is rewritten around **convergence on the OAS package
+train**; the pre-convergence ordering it replaces led with our own competing
+capability and is withdrawn.
 
-1. **Prompt separator** (`aaaa.1`). Delimit the task prompt after
-   capability-contributed launch arguments. Written and merged in our source;
-   **not finished** — it is open upstream as OAS-Framework PR 37, and until that
-   merges the defect stands for every consumer but us.
-2. **Lifecycle policy, split into decision and execution.** `aaaa.4` is the
-   decision layer — the three binding modes, the receipt schema and validity
-   matrix, and a judgement that carries its own assurance level. It creates and
-   deletes nothing. `aaaa.33` is the execution layer that acts on that
-   judgement, and it waits on `aaaa.5` for minting authority and on `aaaa.40`
-   for whether a hosted grant can be reconciled after a lost response.
-   `provision-durable` has no production path today and must be **refused**
-   rather than half-executed; `aaaa.39` owns delivering it later.
-3. **Clean external customer proof** (`aaaa.28`). A fresh workspace, two
-   developers, duplicate local instance names — the ordinary
-   provision-and-retire journey end to end.
-4. **A working attached runtime**, which is three things and not one. A
-   pre-implementation review of what was originally scoped as a single step
-   found that propagation alone lands a variable on a runtime that ignores it,
-   to drive an agent that could not answer if it did:
-   - **Deterministic propagation** (`aaaa.29`) carrying the resolved identity
-     home into the launched process. A validated hook environment map upstream
-     is the *proposed* solution and the smallest one found; the requirement is
-     the deterministic propagation, not that shape.
-   - **Channel resolution at the selected principal** (`aaaa.35`).
-     `channel-core`'s `resolveConfig(workdir)` hardcodes
-     `join(workdir, ".aw", …)` for workspace, teams, identity and signing key
-     (`channel-core/src/config.ts:58-62`), so both Pi and Claude read the
-     disposable instance no matter what OAS places on the runtime.
-   - **Outbound messaging admitted** (`aaaa.36`). The external-home allowlist
-     (`cli/go/cmd/aw/identity_home_policy.go`) holds exactly one messaging
-     entry, the map key `"aw mail inbox"` — no reply, no send, no chat.
+1. **Replay the prompt order onto the train** (`aaaa.1`, `aaaa.62`). The train
+   still places contributed options before the task positional, so a
+   contributed flag taking a value consumes the task — reproduced on real
+   binaries: pi starts silently with no task, claude errors. The fix is the task
+   positional ahead of contributed options, with no separator, because pi has no
+   end-of-options marker. This exists nowhere but PR 37. **Not optional**: skip
+   it and the bug ships on the new train.
 
-   Only `.29` needs anything from upstream; the other two are ours.
-5. **Throwaway Pi attach proof** (`aaaa.30`) — positive wake, reply, ordinary
-   retire. It waits on all three parts of step 4, and it may not claim a broken
-   binding *prevents* a model process: OAS continues after a failed hook, so
-   until `.2` lands a bad binding is refused and observable, not fail-closed.
-6. **Explicit per-instance capability settings** (`aaaa.31`) and required-hook
-   fatal outcome with rollback (`aaaa.2`).
-7. **Migrate the first durable resident** (`aaaa.19`), and not before.
+2. **Replay the launch-environment contract onto the train** (`aaaa.29`). The
+   train has no hook-environment handling and no `environment` in the manifest
+   schema. Without it `AWEB_IDENTITY_HOME` has no deterministic path into the
+   launched process, and attachment stays *verified* rather than *real*. Content
+   is PR 48.
 
-This numbering is the **intended work order**, not a dependency chain: steps 3
-and 4 are independent, and either could run first without breaking anything.
+3. **Prove required-spawn enforcement** (`aaaa.2`). The train supplies the
+   machinery — `manifestRequiredHooks`, a `requiredHooks` field, `oas.aweb`
+   declaring `spawn: { required: true }`. Machinery is not enforcement. Execute
+   a failing required hook on the train and observe **no model process**. Only
+   that closes it.
 
-**The board is authoritative for dependencies, and this document deliberately
-does not mirror it.** Two earlier revisions enumerated the edges here, and both
-enumerations were wrong within the hour — which is this epic's recurring defect
-shape, a copy diverging from its source while both look authoritative, committed
-in the document that exists to name it. What is recorded below is the set of
-*ordering constraints the design requires*, which are stable; the board records
-them as edges, and `aw task dep list` is how you check them:
+4. **Define blocking normal retirement.** `lib/core.mjs:671` on the train
+   *rejects* required retire hooks by design — only spawn is enforced, because
+   retire and soul-scaffold run outside a spawn transaction — and ordinary
+   retirement converts hook failure into retained retry state only inside the
+   pre-existing quarantine path. So fail-closed retirement needs its own
+   blocking transaction, with backward-compatible advisory hooks. This is the
+   retirement half of the property step 3 covers for spawn.
 
-- lifecycle policy precedes the minting authority that provisioning uses, which
-  in turn precedes any proof of the provisioned journey;
-- the crash-recovery proof waits until the ordinary journey passes — hardening
-  a path before it works is effort spent on a shape that may still change;
-- the Pi wake-and-reply proof waits on deterministic propagation, because
-  without it there is nothing to wake as;
-- resident migration waits on that proof;
-- the per-instance settings contract waits on propagation, so that only one
-  contract addition is in front of the upstream maintainer at a time.
+5. **Regenerate the canonical package.** Keep the staged stable identifiers —
+   package/capability `oas.aweb` and the standalone OAS 0.19 skeleton — and
+   regenerate content from the **strict 1.8.0 implementation plus the migrated
+   lifecycle work**. Do not release staging 1.5.1 as-is. Mining targets are
+   listed under the convergence section: binding policy and receipt schema with
+   provisioning and cleanup ownership recorded independently, the provisioning
+   journal and opaque operation identity, identity-home resolution and
+   containment scans, honestly-labelled cleanup corroboration, the credential
+   detector with shape-varied controls, and the fail-closed tmux safety helper.
 
-Step 6 is two tasks: `.2` for required-hook fatality, `.31` for per-instance
-settings. Step 1 is merged in our source and **still open as `.1`**, because
-what remains is upstream acceptance of PR 37, and the defect is unfixed for
-every consumer but us until that lands.
+6. **GOLDEN JOURNEY 1 — ordinary worker** (`aaaa.44`). Must prove **zero
+   residue**: identity, certificate, organization membership, workspace,
+   process, home, worktree and claim. Hosted remains gated on `aaaa.47`, now
+   owned externally by `atext.aweb.ai/ac-coordinator`.
 
-**What is already delivered.** Two bounded *safety* results, both requiring no
-upstream change: ordinary retire of an attached instance preserves the principal
-(`.17`), and the attach path cannot register the disposable instance path, so
-the gone-workspace route is unreachable by construction (`.24`). This is *not*
-non-destruction in full — see *What is NOT yet proven*.
+7. **Attached-principal mail read** (`aaaa.63`). An attached principal can send
+   but cannot read its own mail, and the read path fails **silently**. This
+   blocks the resident journey and is untouched by convergence.
 
-Plus the *mechanism* those proofs guard, built since: identity resolution with
-default-deny admission (`.11`, `.22`, `.23`, `.34`, `.36`, `.10` — each command
-routed through the selected principal *before* it was admitted, never the
-reverse, and each admission proven load-bearing by removing it and requiring its
-own test to fail); the binding decision layer, whose judgement carries its own
-assurance level so a caller cannot mistake local accident-resistance for a
-security boundary (`.4`); minting authority declared and verified per path,
-hosted and local having opposite failure modes (`.5`); the runtime's own
-resolution — channel config at the selected principal (`.35`) and outbound
-messaging admitted (`.36`); and the exclusive **tasks** layer bound to aweb
-(`.10`), which completes the three bindings the founding scope named — identity,
-messaging, and tasks/work.
-
-Two supporting results are worth naming because they protect the rest.
-Diagnostics are rooted at the selected principal with an **enforced** export
-allowlist (`.34`): a support bundle is the one artifact designed to leave the
-machine, and a documented allowlist turned out to export an unknown field
-verbatim until enforcement was made structural. And the suites are hermetic with
-respect to the identity environment (`.37`) — the variable this epic exists to
-set was one that our own tests could not tolerate, which would have made a
-resident unable to distinguish a real regression from an environment artifact.
-
-**What is not:** fail-closed admission, which is impossible while hook failure
-is advisory. Until required hooks land, any attach is an **attended development
-experiment against controlled throwaway principals** — not a supported release
-and not valid for durable production principals.
-
-The interim surface is deliberately honest: the experimental/internal
-`aweb.identity-attach` package exposes the native, active/trust-gated
-`oas aweb-identity status --soul <name> --json` command. It validates the exact
-soul-resolved settings plus spawn's non-mutating principal/authority preflight
-and returns `ready`, `needs_setup` with one action, or `experimental` with
-nothing created. Missing configuration and the unavailable durable-resident
-journey are never reported healthy. The output explicitly says its admission
-authority is advisory and cannot prevent OAS from launching; `.2` remains the
-only owner of required-hook failure and rollback. Returning deliberately broken
-launch arguments so the command dies in the window was considered and rejected
-as a dishonest hack.
-
-**No longer deferred**, because the reframe put the provisioned worker on the
-mainstream path: the write-ahead provision journal is part of step 2 (`.4`), and
-the declared minting authority is `.5`, which step 3 waits on. An earlier
-revision of this list deferred both, which was correct when attach was the
-primary case and is wrong now.
-
-**Deferred, deliberately:** the provision crash-recovery proof (`.18`) until the
-ordinary journey passes, admission lease, true fencing, session start/end/resume,
-and resident GC. Each is real work and none is on the path to a first working
-resident; several would harden a mechanism whose positive capability is still
-unproven.
+8. **GOLDEN JOURNEY 2 — resident** (`aaaa.45`). Must prove the **same principal
+   and reviewed learning survive session replacement**. Needs per-instance
+   principal selection (`aaaa.31`) and, if "created" stays literal,
+   durable provisioning (`aaaa.39`).
 
 ## Proofs
 
