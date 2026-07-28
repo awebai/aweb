@@ -282,6 +282,9 @@ func TestFormatTeamHumanExtendIncludesTeamAndAuthority(t *testing.T) {
 			t.Fatalf("JSON output missing %q: %s", want, payload)
 		}
 	}
+	if strings.Contains(string(payload), `"outcome"`) || strings.Contains(string(payload), `"reason"`) || strings.Contains(human, "Roster outcome after failure") {
+		t.Fatalf("successful output changed to failure-report shape: human=%q JSON=%s", human, payload)
+	}
 }
 
 func TestTeamExtendAmbientAPIKeyMatchingActiveTeamCreatesRoster(t *testing.T) {
@@ -351,6 +354,130 @@ func TestTeamExtendAmbientAPIKeyMatchingActiveTeamCreatesRoster(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "agents", "instances", "developer", ".aw", "workspace.yaml")); err != nil {
 		t.Fatalf("created workspace missing: %v", err)
+	}
+}
+
+func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		json bool
+	}{
+		{name: "human"},
+		{name: "json", json: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetTeamHumanCreateGlobals(t)
+			const apiKey = "aw_sk_partial_roster"
+			const teamID = "active:workspace.aweb.ai"
+			t.Setenv(initAPIKeyEnvVar, apiKey)
+			t.Setenv("AW_CONFIG_PATH", "")
+			t.Setenv("HOME", t.TempDir())
+			root := t.TempDir()
+			t.Chdir(root)
+			jsonFlag = tc.json
+
+			teamPub, teamKey, err := awid.GenerateKeypair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			teamDIDKey := awid.ComputeDIDKey(teamPub)
+			var attempted []string
+			server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
+					if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
+						t.Fatalf("workspace init Authorization=%q", got)
+					}
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Fatal(err)
+					}
+					alias, _ := body["alias"].(string)
+					attempted = append(attempted, alias)
+					if alias == "second" {
+						http.Error(w, "injected middle-member failure", http.StatusServiceUnavailable)
+						return
+					}
+					if alias != "first" {
+						t.Fatalf("unexpected roster member attempted: %q", alias)
+					}
+					didKey, _ := body["did"].(string)
+					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: alias, Lifetime: awid.LifetimeEphemeral})
+					if err != nil {
+						t.Fatal(err)
+					}
+					encoded, err := awid.EncodeTeamCertificateHeader(cert)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"server_url": serverURL, "team_cert": encoded, "alias": alias, "team_id": teamID, "workspace_id": "ws-" + alias, "did": didKey, "identity_scope": awid.IdentityModeLocal, "custody": awid.CustodySelf, "api_key": "aw_sk_returned_member"})
+				case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+					requireCertificateAuthForTest(t, r)
+					_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "alias": "first", "agent_id": "agent-first", "workspace_id": "ws-first", "repo_id": "repo-1", "team_did_key": teamDIDKey})
+				case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+					writePublishEncryptionKeyResponseForTest(t, w, "agent-first", teamID, "first")
+				default:
+					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+			})
+			initAwebURL = server.URL
+
+			var runErr error
+			output := captureIDCommandStdout(t, func() {
+				runErr = runTeamHumanExtend(nil, []string{"first", "second", "third"})
+			})
+			if runErr == nil || !strings.Contains(runErr.Error(), "injected middle-member failure") {
+				t.Fatalf("error=%v", runErr)
+			}
+			if got := strings.Join(attempted, ","); got != "first,second" {
+				t.Fatalf("attempted=%q, want first,second", got)
+			}
+			if _, err := os.Stat(filepath.Join(root, "agents", "instances", "first", ".aw", "workspace.yaml")); err != nil {
+				t.Fatalf("successfully created first member was not kept: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "third")); !os.IsNotExist(err) {
+				t.Fatalf("not-attempted third member has local state: %v", err)
+			}
+
+			if tc.json {
+				var report struct {
+					Status string `json:"status"`
+					Agents []struct {
+						Name    string `json:"name"`
+						Outcome string `json:"outcome"`
+						Reason  string `json:"reason"`
+					} `json:"agents"`
+				}
+				if err := json.Unmarshal([]byte(output), &report); err != nil {
+					t.Fatalf("decode JSON report %q: %v", output, err)
+				}
+				if report.Status != "failed" || len(report.Agents) != 3 {
+					t.Fatalf("report=%+v", report)
+				}
+				wantOutcomes := []string{"created", "failed", "not_attempted"}
+				for i, want := range wantOutcomes {
+					if report.Agents[i].Name != []string{"first", "second", "third"}[i] || report.Agents[i].Outcome != want {
+						t.Fatalf("agent[%d]=%+v want outcome %q", i, report.Agents[i], want)
+					}
+				}
+				if !strings.Contains(report.Agents[1].Reason, "injected middle-member failure") || report.Agents[0].Reason != "" || report.Agents[2].Reason != "" {
+					t.Fatalf("failure reasons=%q/%q/%q", report.Agents[0].Reason, report.Agents[1].Reason, report.Agents[2].Reason)
+				}
+				return
+			}
+
+			positions := []int{
+				strings.Index(output, "- first: created"),
+				strings.Index(output, "- second: failed"),
+				strings.Index(output, "- third: not attempted"),
+			}
+			if positions[0] < 0 || positions[1] <= positions[0] || positions[2] <= positions[1] {
+				t.Fatalf("human report does not list all outcomes in input order:\n%s", output)
+			}
+			if !strings.Contains(output, "injected middle-member failure") {
+				t.Fatalf("human report missing failure reason:\n%s", output)
+			}
+		})
 	}
 }
 

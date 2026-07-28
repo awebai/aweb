@@ -1016,6 +1016,12 @@ type teamHumanAddOutput struct {
 	Agents        []teamHumanAddedAgent `json:"agents"`
 }
 
+const (
+	teamHumanRosterOutcomeCreated      = "created"
+	teamHumanRosterOutcomeFailed       = "failed"
+	teamHumanRosterOutcomeNotAttempted = "not_attempted"
+)
+
 type teamHumanAddedAgent struct {
 	Name              string                  `json:"name"`
 	HomeDir           string                  `json:"home_dir"`
@@ -1026,6 +1032,8 @@ type teamHumanAddedAgent struct {
 	Alias             string                  `json:"alias,omitempty"`
 	TeamID            string                  `json:"team_id,omitempty"`
 	CertPath          string                  `json:"cert_path,omitempty"`
+	Outcome           string                  `json:"outcome,omitempty"`
+	Reason            string                  `json:"reason,omitempty"`
 	Connected         bool                    `json:"-"`
 }
 
@@ -1383,18 +1391,34 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 			return err
 		}
 	}
+	noLibrary, noProfile := teamHumanAddProfileModes(plans)
 	createdTeamID := ""
+	reportRosterFailure := func(failedIndex int, failure error) error {
+		failedPlans := teamHumanAddFailurePlans(plans, failedIndex, failure)
+		printOutput(teamHumanAddOutput{
+			Status:        "failed",
+			AgentsRoot:    agentsRoot,
+			TeamID:        teamHumanAddResolvedTeamID(createdTeamID, failedPlans),
+			AuthorityTier: strings.TrimSpace(opts.OutputAuthorityTier),
+			HomeOverride:  explicitHome != "",
+			LayoutOnly:    teamHumanAddLayoutOnly,
+			NoLibrary:     noLibrary,
+			NoProfile:     noProfile,
+			Agents:        failedPlans,
+		}, formatTeamHumanAdd)
+		return failure
+	}
 	for i := range plans {
 		var rollback *agentHomeRollback
 		if plans[i].Profile != nil || strings.TrimSpace(opts.ExpectedTeamID) != "" {
 			var err error
 			rollback, err = captureAgentHomeRollback(plans[i].HomeDir)
 			if err != nil {
-				return err
+				return reportRosterFailure(i, err)
 			}
 		}
 		if err := os.MkdirAll(plans[i].HomeDir, 0o755); err != nil {
-			return err
+			return reportRosterFailure(i, err)
 		}
 		if teamHumanAddLayoutOnly {
 			continue
@@ -1412,7 +1436,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 					if rollback != nil {
 						_ = rollback.Rollback()
 					}
-					return err
+					return reportRosterFailure(i, err)
 				}
 				createdProfileIdentity = true
 				acceptedProfileIdentity = accepted
@@ -1427,7 +1451,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 				if rollback != nil {
 					_ = rollback.Rollback()
 				}
-				return err
+				return reportRosterFailure(i, err)
 			}
 			createdProfileIdentity = true
 			acceptedProfileIdentity = accepted
@@ -1460,10 +1484,10 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 			// materialize failure. (default-aabq.21)
 			if strings.TrimSpace(plans[i].LocalBlueprintDir) != "" {
 				if _, _, err := applyLocalBlueprintProfileToHome(plans[i].HomeDir, *plans[i].Profile, plans[i].LocalBlueprintDir, true); err != nil {
-					return rollbackOnErr(err)
+					return reportRosterFailure(i, rollbackOnErr(err))
 				}
 			} else if _, _, err := applyPublicLibraryProfileToHome(plans[i].HomeDir, *plans[i].Profile, true); err != nil {
-				return rollbackOnErr(err)
+				return reportRosterFailure(i, rollbackOnErr(err))
 			}
 			if !plans[i].Connected {
 				targetIdentityHome := awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(plans[i].HomeDir), ".aw"), Source: awconfig.IdentityHomeDefault}
@@ -1472,13 +1496,13 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 						Role:         strings.TrimSpace(plans[i].Profile.ProfileRef),
 						IdentityHome: targetIdentityHome.Root,
 					}); err != nil {
-						return rollbackOnErr(fmt.Errorf("connect agent to aweb service: %w", err))
+						return reportRosterFailure(i, rollbackOnErr(fmt.Errorf("connect agent to aweb service: %w", err)))
 					}
 				}
 			}
 			targetIdentityHome := awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(plans[i].HomeDir), ".aw"), Source: awconfig.IdentityHomeDefault}
 			if err := configureMaterializedAgentHome(plans[i].HomeDir, targetIdentityHome); err != nil {
-				return rollbackOnErr(err)
+				return reportRosterFailure(i, rollbackOnErr(err))
 			}
 		}
 		if createdTeamID == "" {
@@ -1491,19 +1515,10 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 			if rollback != nil {
 				homeRollbackErr = rollback.Rollback()
 			}
-			return addPostJoinRollbackError(mismatchErr, acceptedProfileIdentity, memberRollbackErr, homeRollbackErr)
+			return reportRosterFailure(i, addPostJoinRollbackError(mismatchErr, acceptedProfileIdentity, memberRollbackErr, homeRollbackErr))
 		}
 		if err := setupTeamAddedAgentWorktree(worktreeAnchorDir, plans[i], teamHumanAddWorkDir); err != nil {
-			return rollbackOnErr(err)
-		}
-	}
-	noLibrary := true
-	noProfile := true
-	for _, plan := range plans {
-		if plan.Profile != nil {
-			noLibrary = false
-			noProfile = false
-			break
+			return reportRosterFailure(i, rollbackOnErr(err))
 		}
 	}
 	if teamHumanAddStart && len(plans) == 1 {
@@ -1520,12 +1535,50 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	if status == "" {
 		status = "added"
 	}
-	outputTeamID := createdTeamID
-	if outputTeamID == "" && len(plans) > 0 {
-		outputTeamID = strings.TrimSpace(plans[0].TeamID)
-	}
+	outputTeamID := teamHumanAddResolvedTeamID(createdTeamID, plans)
 	printOutput(teamHumanAddOutput{Status: status, AgentsRoot: agentsRoot, TeamID: outputTeamID, AuthorityTier: strings.TrimSpace(opts.OutputAuthorityTier), HomeOverride: explicitHome != "", LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd)
 	return nil
+}
+
+func teamHumanAddProfileModes(plans []teamHumanAddedAgent) (noLibrary, noProfile bool) {
+	noLibrary = true
+	noProfile = true
+	for _, plan := range plans {
+		if plan.Profile != nil {
+			return false, false
+		}
+	}
+	return noLibrary, noProfile
+}
+
+func teamHumanAddResolvedTeamID(createdTeamID string, plans []teamHumanAddedAgent) string {
+	if teamID := strings.TrimSpace(createdTeamID); teamID != "" {
+		return teamID
+	}
+	for _, plan := range plans {
+		if teamID := strings.TrimSpace(plan.TeamID); teamID != "" {
+			return teamID
+		}
+	}
+	return ""
+}
+
+func teamHumanAddFailurePlans(plans []teamHumanAddedAgent, failedIndex int, failure error) []teamHumanAddedAgent {
+	reported := append([]teamHumanAddedAgent(nil), plans...)
+	for i := range reported {
+		switch {
+		case i < failedIndex:
+			reported[i].Outcome = teamHumanRosterOutcomeCreated
+		case i == failedIndex:
+			reported[i].Outcome = teamHumanRosterOutcomeFailed
+			if failure != nil {
+				reported[i].Reason = failure.Error()
+			}
+		default:
+			reported[i].Outcome = teamHumanRosterOutcomeNotAttempted
+		}
+	}
+	return reported
 }
 
 func teamIDAssertionMismatchError(expectedTeamID, apiKeyTeamID string, source teamIDAssertionSource) error {
@@ -2079,6 +2132,9 @@ func ensureAcceptedTeamWorkspaceBinding(homeDir string, output *teamAcceptInvite
 
 func formatTeamHumanAdd(v any) string {
 	out := v.(teamHumanAddOutput)
+	if strings.TrimSpace(out.Status) == "failed" {
+		return formatTeamHumanAddFailure(out)
+	}
 	verb := "Added"
 	if strings.TrimSpace(out.Status) == "extended" {
 		verb = "Extended with"
@@ -2126,6 +2182,28 @@ func formatTeamHumanAdd(v any) string {
 		b.WriteString("No Library profile was adopted; no profile home was materialized.\n")
 	} else {
 		b.WriteString("Library profile(s) adopted and materialized.\n")
+	}
+	return b.String()
+}
+
+func formatTeamHumanAddFailure(out teamHumanAddOutput) string {
+	var b strings.Builder
+	b.WriteString("Roster outcome after failure:\n")
+	if strings.TrimSpace(out.TeamID) != "" {
+		fmt.Fprintf(&b, "Team: %s\n", strings.TrimSpace(out.TeamID))
+	}
+	if strings.TrimSpace(out.AuthorityTier) != "" {
+		fmt.Fprintf(&b, "Authority tier: %s\n", strings.TrimSpace(out.AuthorityTier))
+	}
+	for _, agent := range out.Agents {
+		switch agent.Outcome {
+		case teamHumanRosterOutcomeCreated:
+			fmt.Fprintf(&b, "- %s: created (%s)\n", agent.Name, agent.HomeDir)
+		case teamHumanRosterOutcomeFailed:
+			fmt.Fprintf(&b, "- %s: failed: %s\n", agent.Name, agent.Reason)
+		case teamHumanRosterOutcomeNotAttempted:
+			fmt.Fprintf(&b, "- %s: not attempted\n", agent.Name)
+		}
 	}
 	return b.String()
 }

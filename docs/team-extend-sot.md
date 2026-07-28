@@ -213,6 +213,30 @@ default-aaeq.23, stricter because `extend` has no wizard):
   shape with `"status": "extended"` and the resolved team id and authority
   tier included, so callers can assert which path was used.
 
+## Batch roster failure outcomes
+
+Roster-wide facts that can be checked without creating a member are preflight
+work: spec and profile resolution, alias and home collisions, and whether the
+selected authority can create every effective identity scope. A preflight
+failure returns before any member is attempted.
+
+Once roster mutation begins, the first non-preflightable member failure still
+stops the batch and leaves the command exit status non-zero. Before returning,
+`extend` prints an ordered outcome for every input spec in both human and JSON
+modes:
+
+- `created` — the member completed before the failure and remains in the team;
+- `failed` — this spec failed, with its reason in the `reason` field;
+- `not_attempted` — the untouched tail was skipped after the failure.
+
+The `agents` array preserves command-line order and failure JSON uses
+`"status": "failed"`. The command does not roll back healthy members that
+completed before the failure; changing that to all-or-nothing requires a
+separate design decision because compensating membership removal can itself
+fail. The failing member keeps the existing per-member rollback behavior.
+A fully successful batch keeps the existing human and JSON output unchanged;
+per-agent outcome fields are omitted on that path.
+
 ## Cross-references between the verbs
 
 - `aw team create` with an active team membership in cwd (and no `--byot`):
