@@ -241,6 +241,92 @@ func TestSetupTeamAddedAgentWorktreeCreatesIsolatedBranchAndGitignore(t *testing
 	}
 }
 
+func TestSetupTeamAddedAgentWorktreeRollsBackNewRegistrationAfterLaterFailure(t *testing.T) {
+	repo := t.TempDir()
+	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/repo.git")
+	home := filepath.Join(repo, "agents", "instances", "retry")
+	rollback, err := captureAgentHomeRollback(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".aw", "profile"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	profilePath := filepath.Join(home, ".aw", "profile", "profile.yaml")
+	if err := os.WriteFile(profilePath, []byte("id: retry\nworks_on_main: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := teamHumanAddedAgent{Name: "retry", HomeDir: home}
+	setupErr := setupTeamAddedAgentWorktree(repo, plan, "")
+	if setupErr == nil || !strings.Contains(setupErr.Error(), "parse "+profilePath) {
+		t.Fatalf("post-worktree setup error=%v", setupErr)
+	}
+	if err := rollback.Rollback(); err != nil {
+		t.Fatalf("home rollback: %v", err)
+	}
+	if _, err := os.Lstat(home); !os.IsNotExist(err) {
+		t.Fatalf("failed home remains: %v", err)
+	}
+	worktreeDir := filepath.Join(home, "worktree")
+	worktreeList, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatalf("list worktrees: %v: %s", err, worktreeList)
+	}
+	if strings.Contains(string(worktreeList), canonicalTeamUpPath(worktreeDir)) {
+		t.Fatalf("failed worktree remains registered:\n%s", worktreeList)
+	}
+	if exec.Command("git", "-C", repo, "show-ref", "--verify", "--quiet", "refs/heads/retry").Run() == nil {
+		t.Fatal("branch created solely for failed setup remains")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(profilePath, []byte("id: retry\nworks_on_main: false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := setupTeamAddedAgentWorktree(repo, plan, ""); err != nil {
+		t.Fatalf("same-name worktree retry: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(worktreeDir, ".git")); err != nil {
+		t.Fatalf("retry worktree missing: %v", err)
+	}
+}
+
+func TestSetupTeamAddedAgentWorktreePreservesPreExistingRegistrationOnLaterFailure(t *testing.T) {
+	repo := t.TempDir()
+	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/repo.git")
+	home := filepath.Join(repo, "agents", "instances", "existing")
+	profilePath := filepath.Join(home, ".aw", "profile", "profile.yaml")
+	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(profilePath, []byte("id: existing\nworks_on_main: false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := teamHumanAddedAgent{Name: "existing", HomeDir: home}
+	if err := setupTeamAddedAgentWorktree(repo, plan, ""); err != nil {
+		t.Fatalf("initial setup: %v", err)
+	}
+	if err := os.WriteFile(profilePath, []byte("id: existing\nworks_on_main: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := setupTeamAddedAgentWorktree(repo, plan, ""); err == nil || !strings.Contains(err.Error(), "parse "+profilePath) {
+		t.Fatalf("later setup error=%v", err)
+	}
+	worktreeDir := filepath.Join(home, "worktree")
+	if _, err := os.Stat(filepath.Join(worktreeDir, ".git")); err != nil {
+		t.Fatalf("pre-existing worktree was removed: %v", err)
+	}
+	worktreeList, err := exec.Command("git", "-C", repo, "worktree", "list", "--porcelain").CombinedOutput()
+	if err != nil {
+		t.Fatalf("list worktrees: %v: %s", err, worktreeList)
+	}
+	if !strings.Contains(string(worktreeList), canonicalTeamUpPath(worktreeDir)) {
+		t.Fatalf("pre-existing worktree registration was removed:\n%s", worktreeList)
+	}
+}
+
 func TestSetupTeamAddedAgentWorktreeUsesSeparateWorkDir(t *testing.T) {
 	workRepo := t.TempDir()
 	initGitRepoWithOriginAndCommit(t, workRepo, "https://github.com/acme/work.git")

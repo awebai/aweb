@@ -1417,22 +1417,19 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		return failure
 	}
 	for i := range plans {
-		var rollback *agentHomeRollback
-		if plans[i].Profile != nil || strings.TrimSpace(opts.ExpectedTeamID) != "" {
-			var err error
-			rollback, err = captureAgentHomeRollback(plans[i].HomeDir)
-			if err != nil {
-				return reportRosterFailure(i, err)
-			}
+		rollback, err := captureAgentHomeRollback(plans[i].HomeDir)
+		if err != nil {
+			return reportRosterFailure(i, err)
 		}
 		if err := os.MkdirAll(plans[i].HomeDir, 0o755); err != nil {
-			return reportRosterFailure(i, err)
+			homeRollbackErr := rollback.Rollback()
+			return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
 		}
 		if teamHumanAddLayoutOnly {
 			continue
 		}
-		createdProfileIdentity := false
-		var acceptedProfileIdentity *acceptedTeamInvite
+		createdIdentity := false
+		var acceptedIdentity *acceptedTeamInvite
 		if plans[i].Profile != nil {
 			targetIdentityHome := awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(plans[i].HomeDir), ".aw"), Source: awconfig.IdentityHomeDefault}
 			if sel, err := resolveSelectionAtIdentityHome(plans[i].HomeDir, "", targetIdentityHome); err == nil && strings.TrimSpace(sel.TeamID) != "" {
@@ -1441,13 +1438,11 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 			} else {
 				accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
 				if err != nil {
-					if rollback != nil {
-						_ = rollback.Rollback()
-					}
-					return reportRosterFailure(i, err)
+					homeRollbackErr := rollback.Rollback()
+					return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
 				}
-				createdProfileIdentity = true
-				acceptedProfileIdentity = accepted
+				createdIdentity = true
+				acceptedIdentity = accepted
 				plans[i].Alias = accepted.Output.Alias
 				plans[i].TeamID = accepted.Output.TeamID
 				plans[i].CertPath = accepted.Output.CertPath
@@ -1456,33 +1451,25 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		} else {
 			accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
 			if err != nil {
-				if rollback != nil {
-					_ = rollback.Rollback()
-				}
-				return reportRosterFailure(i, err)
+				homeRollbackErr := rollback.Rollback()
+				return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
 			}
-			createdProfileIdentity = true
-			acceptedProfileIdentity = accepted
+			createdIdentity = true
+			acceptedIdentity = accepted
 			plans[i].Alias = accepted.Output.Alias
 			plans[i].TeamID = accepted.Output.TeamID
 			plans[i].CertPath = accepted.Output.CertPath
 			plans[i].Connected = apiKeyBootstrapMode
 		}
 		rollbackOnErr := func(err error) error {
-			return err
+			var memberRollbackErr error
+			if createdIdentity {
+				memberRollbackErr = rollbackJustCreatedTeamMemberWithExplicitHostedAuth(inviteAnchorDir, acceptedIdentity, opts.APIKey)
+			}
+			homeRollbackErr := rollback.Rollback()
+			return addPostJoinRollbackError(err, acceptedIdentity, memberRollbackErr, homeRollbackErr)
 		}
 		if plans[i].Profile != nil {
-			rollbackOnErr = func(err error) error {
-				if !createdProfileIdentity {
-					return err
-				}
-				memberRollbackErr := rollbackJustCreatedTeamMember(inviteAnchorDir, acceptedProfileIdentity)
-				var homeRollbackErr error
-				if rollback != nil {
-					homeRollbackErr = rollback.Rollback()
-				}
-				return addPostJoinRollbackError(err, acceptedProfileIdentity, memberRollbackErr, homeRollbackErr)
-			}
 			// Materialize the profile home, connect the member to the aweb service,
 			// then run the coordination configure step. Connect sits between the two:
 			// the configure step injects the team's active instructions, which the
@@ -1518,12 +1505,9 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		}
 		if expected := strings.TrimSpace(opts.ExpectedTeamID); expected != "" && !strings.EqualFold(strings.TrimSpace(plans[i].TeamID), expected) {
 			mismatchErr := teamIDAssertionMismatchError(expected, strings.TrimSpace(plans[i].TeamID), opts.TeamIDAssertionSource)
-			memberRollbackErr := rollbackJustCreatedTeamMemberWithExplicitHostedAuth(plans[i].HomeDir, acceptedProfileIdentity, opts.APIKey)
-			var homeRollbackErr error
-			if rollback != nil {
-				homeRollbackErr = rollback.Rollback()
-			}
-			return reportRosterFailure(i, addPostJoinRollbackError(mismatchErr, acceptedProfileIdentity, memberRollbackErr, homeRollbackErr))
+			memberRollbackErr := rollbackJustCreatedTeamMemberWithExplicitHostedAuth(plans[i].HomeDir, acceptedIdentity, opts.APIKey)
+			homeRollbackErr := rollback.Rollback()
+			return reportRosterFailure(i, addPostJoinRollbackError(mismatchErr, acceptedIdentity, memberRollbackErr, homeRollbackErr))
 		}
 		if err := setupTeamAddedAgentWorktree(worktreeAnchorDir, plans[i], teamHumanAddWorkDir); err != nil {
 			return reportRosterFailure(i, rollbackOnErr(err))
@@ -1736,17 +1720,50 @@ func setupTeamAddedAgentWorktree(anchorDir string, plan teamHumanAddedAgent, wor
 		}
 	}
 	worktreeDir := filepath.Join(plan.HomeDir, "worktree")
+	worktreeExisted := false
+	if _, statErr := os.Stat(filepath.Join(worktreeDir, ".git")); statErr == nil {
+		worktreeExisted = true
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+	branchExisted := exec.Command("git", "-C", workRepoRoot, "rev-parse", "--verify", "--quiet", "refs/heads/"+strings.TrimSpace(plan.Name)).Run() == nil
 	if err := ensureTeamAddGitWorktree(workRepoRoot, worktreeDir, plan.Name); err != nil {
 		return err
 	}
+	rollbackSetup := func(cause error) error {
+		if worktreeExisted {
+			return cause
+		}
+		rollbackErr := rollbackTeamAddedAgentWorktree(workRepoRoot, worktreeDir, plan.Name, !branchExisted)
+		if rollbackErr != nil {
+			return fmt.Errorf("%w; git worktree rollback failed: %v", cause, rollbackErr)
+		}
+		return cause
+	}
 	worksOnMain, err := teamAddedAgentWorksOnMain(plan)
 	if err != nil {
-		return err
+		return rollbackSetup(err)
 	}
 	if worksOnMain {
 		if err := ensureTeamAddWorkMainLink(plan.HomeDir, workRepoRoot); err != nil {
-			return err
+			return rollbackSetup(err)
 		}
+	}
+	return nil
+}
+
+func rollbackTeamAddedAgentWorktree(repoRoot, worktreeDir, branch string, removeBranch bool) error {
+	cmd := exec.Command("git", "-C", repoRoot, "worktree", "remove", "--force", worktreeDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git worktree remove %s: %w%s", worktreeDir, err, formatCommandOutput(out))
+	}
+	if !removeBranch {
+		return nil
+	}
+	branch = strings.TrimSpace(branch)
+	cmd = exec.Command("git", "-C", repoRoot, "branch", "-D", branch)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git branch -D %s: %w%s", branch, err, formatCommandOutput(out))
 	}
 	return nil
 }

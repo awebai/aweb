@@ -659,6 +659,9 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(root, "agents", "instances", "first", ".aw", "workspace.yaml")); err != nil {
 				t.Fatalf("successfully created first member was not kept: %v", err)
 			}
+			if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "second")); !os.IsNotExist(err) {
+				t.Fatalf("failed second member retained local state: %v", err)
+			}
 			if _, err := os.Lstat(filepath.Join(root, "agents", "instances", "third")); !os.IsNotExist(err) {
 				t.Fatalf("not-attempted third member has local state: %v", err)
 			}
@@ -702,6 +705,98 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 				t.Fatalf("human report missing failure reason:\n%s", output)
 			}
 		})
+	}
+}
+
+func TestTeamExtendFailedBootstrapAndWorktreeSetupRemoveHomeAndAllowSameNameRetry(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Setenv(initAPIKeyEnvVar, "")
+	teamHumanExtendAPIKey = "aw_sk_retry"
+	teamHumanAddWorkDir = filepath.Join(root, "missing-work-repo")
+	t.Chdir(root)
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+	const teamID = "default:retry.aweb.ai"
+	var initCalls, connectCalls, removeCalls int
+	var server *httptest.Server
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/workspaces/init":
+			initCalls++
+			if got := r.Header.Get("Authorization"); got != "Bearer "+teamHumanExtendAPIKey {
+				t.Fatalf("workspace init Authorization=%q", got)
+			}
+			if initCalls == 1 {
+				http.Error(w, `{"detail":"injected bootstrap failure"}`, http.StatusUnauthorized)
+				return
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := body["did"].(string)
+			alias, _ := body["alias"].(string)
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: alias, Lifetime: awid.LifetimeEphemeral})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"server_url": serverURL, "team_cert": encoded, "alias": alias, "team_id": teamID, "workspace_id": "ws-retry", "did": didKey, "identity_scope": awid.IdentityModeLocal, "custody": awid.CustodySelf, "api_key": "aw_sk_member_retry"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			connectCalls++
+			requireCertificateAuthForTest(t, r)
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "alias": "retry", "agent_id": "agent-retry", "workspace_id": "ws-retry", "repo_id": "repo-1", "team_did_key": teamDIDKey})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-retry", teamID, "retry")
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/agents/remove-member"):
+			removeCalls++
+			if got := r.Header.Get("Authorization"); got != "Bearer "+teamHumanExtendAPIKey {
+				t.Fatalf("remove Authorization=%q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "certificate_id": "removed"})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+	initAwebURL = server.URL
+
+	firstErr := runTeamHumanExtend(nil, []string{"retry"})
+	if firstErr == nil || !strings.Contains(firstErr.Error(), "injected bootstrap failure") {
+		t.Fatalf("first error=%v", firstErr)
+	}
+	agentHome := filepath.Join(root, "agents", "instances", "retry")
+	if _, statErr := os.Lstat(agentHome); !os.IsNotExist(statErr) {
+		t.Fatalf("failed bootstrap left agent home %s: %v", agentHome, statErr)
+	}
+	secondErr := runTeamHumanExtend(nil, []string{"retry"})
+	if secondErr == nil || !strings.Contains(secondErr.Error(), "is not inside a git repo") {
+		t.Fatalf("worktree setup error=%v", secondErr)
+	}
+	if _, statErr := os.Lstat(agentHome); !os.IsNotExist(statErr) {
+		t.Fatalf("failed worktree setup left agent home %s: %v", agentHome, statErr)
+	}
+	if removeCalls != 1 {
+		t.Fatalf("worktree failure member rollback calls=%d", removeCalls)
+	}
+	teamHumanAddWorkDir = ""
+	if err := runTeamHumanExtend(nil, []string{"retry"}); err != nil {
+		t.Fatalf("same-name retry after worktree failure: %v", err)
+	}
+	if initCalls != 3 || connectCalls != 2 {
+		t.Fatalf("calls init/connect=%d/%d", initCalls, connectCalls)
+	}
+	if _, statErr := os.Stat(filepath.Join(agentHome, ".aw", "workspace.yaml")); statErr != nil {
+		t.Fatalf("retry did not create agent workspace: %v", statErr)
 	}
 }
 
