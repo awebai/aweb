@@ -144,6 +144,34 @@ func TestInjectAgentDocsReplacesExistingInjectedSection(t *testing.T) {
 	}
 }
 
+func TestRootAgentInstructionsUseCoordinatorIntegrationWorkflow(t *testing.T) {
+	path := filepath.Join(cmdMonorepoRootForTest(t), "AGENTS.md")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staticInstructions := strings.Join(strings.Fields(strings.SplitN(string(body), awDocsMarkerStart, 2)[0]), " ")
+	for _, want := range []string{
+		"The handoff is the branch",
+		"Agents never merge their branches to main",
+		"detached worktree based on `origin/main`",
+		"merge `origin/main` into their own branch",
+		"A team without a coordinator may use a different integration workflow",
+	} {
+		if !strings.Contains(staticInstructions, want) {
+			t.Errorf("%s static instructions missing %q", path, want)
+		}
+	}
+	for _, stale := range []string{
+		"You merge your branch to main",
+		"You merge main back to your branch",
+	} {
+		if strings.Contains(staticInstructions, stale) {
+			t.Errorf("%s static instructions retain self-merge guidance %q", path, stale)
+		}
+	}
+}
+
 func TestInjectAgentDocsAvoidsDoubleWriteForSymlink(t *testing.T) {
 	t.Parallel()
 
