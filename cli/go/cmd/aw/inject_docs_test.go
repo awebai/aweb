@@ -259,6 +259,33 @@ func TestRootAgentInstructionsUseCoordinatorIntegrationWorkflow(t *testing.T) {
 	}
 }
 
+func TestInjectAgentDocsRejectsSymlinkOutsideTarget(t *testing.T) {
+	skipIfNoSymlinkSupport(t)
+	t.Parallel()
+
+	target := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.md")
+	original := []byte("# Outside file\n")
+	if err := os.WriteFile(outside, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(target, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	result := InjectProvidedAgentDocs(target, "## Shared Rules\n\nUse `aw`.")
+	if len(result.Errors) == 0 {
+		t.Fatal("expected injection to reject AGENTS.md symlink outside target")
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("outside file was modified:\n%s", data)
+	}
+}
+
 func TestInjectAgentDocsAvoidsDoubleWriteForSymlink(t *testing.T) {
 	t.Parallel()
 

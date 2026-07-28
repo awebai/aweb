@@ -55,8 +55,14 @@ func UpdateProvidedAgentDocs(repoRoot, body string) *injectDocsResult {
 
 func writeProvidedAgentDocs(repoRoot, body string, existingMarkedOnly bool) *injectDocsResult {
 	result := &injectDocsResult{}
+	canonicalRoot, err := canonicalAgentDocsTargetRoot(repoRoot)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("target directory: %v", err))
+		return result
+	}
 	candidates := []string{"CLAUDE.md", "AGENTS.md"}
 	processed := map[string]bool{}
+	foundCandidate := false
 	injectedDocs := renderInjectedDocs(body)
 
 	for _, name := range candidates {
@@ -69,14 +75,12 @@ func writeProvidedAgentDocs(repoRoot, body string, existingMarkedOnly bool) *inj
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", name, err))
 			continue
 		}
+		foundCandidate = true
 
-		resolved := path
-		if info.Mode()&os.ModeSymlink != 0 {
-			resolved, err = filepath.EvalSymlinks(path)
-			if err != nil {
-				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", name, err))
-				continue
-			}
+		resolved, err := resolveAgentDocsCandidate(canonicalRoot, path, name)
+		if err != nil {
+			result.Errors = append(result.Errors, err.Error())
+			continue
 		}
 		if processed[resolved] {
 			continue
@@ -105,7 +109,7 @@ func writeProvidedAgentDocs(repoRoot, body string, existingMarkedOnly bool) *inj
 		result.Injected = append(result.Injected, name)
 	}
 
-	if len(processed) == 0 && !existingMarkedOnly {
+	if !foundCandidate && !existingMarkedOnly {
 		path := filepath.Join(repoRoot, "AGENTS.md")
 		if err := os.WriteFile(path, []byte(renderAgentsTemplate(body)), 0o644); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("AGENTS.md: %v", err))
@@ -129,23 +133,51 @@ func writeProvidedAgentDocs(repoRoot, body string, existingMarkedOnly bool) *inj
 	return result
 }
 
+func canonicalAgentDocsTargetRoot(repoRoot string) (string, error) {
+	absolute, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(absolute)
+}
+
+func resolveAgentDocsCandidate(canonicalRoot, candidate, name string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", name, err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", name, err)
+	}
+	rel, err := filepath.Rel(canonicalRoot, resolved)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", name, err)
+	}
+	if rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s resolves outside target directory", name)
+	}
+	return resolved, nil
+}
+
 func hasSingleMarkedAgentDocs(repoRoot string) (bool, error) {
+	canonicalRoot, err := canonicalAgentDocsTargetRoot(repoRoot)
+	if err != nil {
+		return false, fmt.Errorf("target directory: %w", err)
+	}
 	processed := map[string]bool{}
 	for _, name := range []string{"CLAUDE.md", "AGENTS.md"} {
 		path := filepath.Join(repoRoot, name)
-		info, err := os.Lstat(path)
+		_, err := os.Lstat(path)
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
 			return false, fmt.Errorf("%s: %w", name, err)
 		}
-		resolved := path
-		if info.Mode()&os.ModeSymlink != 0 {
-			resolved, err = filepath.EvalSymlinks(path)
-			if err != nil {
-				return false, fmt.Errorf("%s: %w", name, err)
-			}
+		resolved, err := resolveAgentDocsCandidate(canonicalRoot, path, name)
+		if err != nil {
+			return false, err
 		}
 		if processed[resolved] {
 			continue
