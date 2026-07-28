@@ -13,7 +13,12 @@ Pinned canonical aweb release boundary: `55c01511382e6918620427d110422c4c1e9ef09
 
 Production baseline: AC `v0.7.8`, AC SHA `1f291a72`, embedded aweb SHA `1fb4ea88`, `server-v1.26.24`.
 
-The exact candidate AC image digest does not yet exist. Production inventory/dump and old-schema restoration can occur after plan approval, but final migration timing must wait for a reviewed candidate image—or another separately reviewed exact-source harness—containing the `55c0151` migration bytes. An unpinned image tag cannot complete the rehearsal.
+The exact candidate AC image digest does not yet exist. The runbook is therefore deliberately split:
+
+- **Digest-independent:** Phases 0–2 and 2A collect the production inventory/capacity, prove dump/restore, and produce a clone-only temporary-table estimate of new heap/index size. These can proceed after Tess approves the runbook.
+- **Digest-dependent:** Phase 3 establishes exact forward-migration timing, locking lower bound, final persistent size, and idempotence. It must wait for a reviewed candidate image—or another separately reviewed exact-source harness—containing the `55c0151` migration bytes.
+
+An unpinned image tag cannot complete Phase 3.
 
 ## Expected normalized manifest
 
@@ -160,6 +165,69 @@ Never run `EXPLAIN ANALYZE` or a migration command on production.
 
 This phase proves the data-only backup reconstructs the deployed old schema in isolation. It does not prove the forward migration.
 
+## Phase 2A: digest-independent clone size estimate
+
+Run this only on the disposable restored clone. It writes temporary relations in the operator's session and rolls them back; it must never be pointed at production. The probe reproduces the final column/primary-key/participant-index storage and the guarded backfill selection without modifying the canonical `aweb` schema. It estimates final heap/index bytes but does not reproduce persistent DDL locks, FKs, migration bookkeeping, or full migration timing.
+
+```sql
+BEGIN;
+SET LOCAL statement_timeout = '10min';
+
+CREATE TEMP TABLE aasn_chat_message_reads_probe (
+    session_id UUID NOT NULL,
+    did TEXT NOT NULL,
+    message_id UUID NOT NULL,
+    agent_id UUID,
+    read_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (session_id, did, message_id)
+) ON COMMIT DROP;
+CREATE INDEX aasn_chat_message_reads_participant_probe
+    ON aasn_chat_message_reads_probe (session_id, did);
+
+INSERT INTO aasn_chat_message_reads_probe
+    (session_id, did, message_id, agent_id, read_at)
+SELECT r.session_id, r.did, m.message_id, r.agent_id,
+       COALESCE(r.last_read_at, current_timestamp)
+FROM aweb.chat_read_receipts r
+JOIN aweb.chat_messages w
+  ON w.message_id=r.last_read_message_id AND w.session_id=r.session_id
+JOIN aweb.chat_messages m
+  ON m.session_id=r.session_id AND m.from_did<>r.did
+ AND m.created_at<=w.created_at
+WHERE EXISTS (SELECT 1 FROM aweb.chat_participants p
+              WHERE p.session_id=r.session_id AND p.did=r.did)
+ON CONFLICT DO NOTHING;
+
+CREATE TEMP TABLE aasn_session_admission_leases_probe (
+    team_id UUID NOT NULL,
+    principal_agent_id UUID NOT NULL,
+    session_key_hash TEXT NOT NULL,
+    generation BIGINT NOT NULL DEFAULT 1,
+    acquired_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    expires_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (team_id, principal_agent_id)
+) ON COMMIT DROP;
+CREATE INDEX aasn_session_admission_leases_expiry_probe
+    ON aasn_session_admission_leases_probe (expires_at);
+
+SELECT 'chat_message_reads_estimate' AS relation,
+       count(*) AS rows,
+       pg_relation_size('pg_temp.aasn_chat_message_reads_probe') AS heap_bytes,
+       pg_indexes_size('pg_temp.aasn_chat_message_reads_probe') AS index_bytes,
+       pg_total_relation_size('pg_temp.aasn_chat_message_reads_probe') AS total_bytes
+FROM aasn_chat_message_reads_probe
+UNION ALL
+SELECT 'session_admission_leases_empty_estimate', count(*),
+       pg_relation_size('pg_temp.aasn_session_admission_leases_probe'),
+       pg_indexes_size('pg_temp.aasn_session_admission_leases_probe'),
+       pg_total_relation_size('pg_temp.aasn_session_admission_leases_probe')
+FROM aasn_session_admission_leases_probe;
+
+ROLLBACK;
+```
+
+Record elapsed time, row count, heap bytes, index bytes, and total bytes. Confirm after rollback that both `to_regclass('pg_temp.aasn_chat_message_reads_probe')` and `to_regclass('pg_temp.aasn_session_admission_leases_probe')` are null. This estimate plus Neon remaining capacity is digest-independent evidence; Phase 3's persistent measured delta supersedes it.
+
 ## Phase 3: exact-byte forward rehearsal on clone only
 
 This phase is blocked until a reviewed candidate AC image digest exists. Reconfirm its embedded aweb identity and independently extract/recompute all normalized migration checksums from the image.
@@ -170,7 +238,7 @@ This phase is blocked until a reviewed candidate AC image digest exists. Reconfi
 4. Verify exactly `010`, `010a`, `011`, and `012` were added with expected checksums. No other module may gain an unplanned migration.
 5. Verify final shape: `session_admission_leases` and `chat_message_reads` exist; published unique constraint, FKs, and index exist; temporary `010a` trigger/function/constraint are absent.
 6. Verify `chat_message_reads` count equals the guarded candidate count and no row references an absent participant, agent, or message. Legacy receipt/message counts must remain unchanged.
-7. Record post-migration database size and heap/index/total sizes for both new tables. The measured before/after delta is the capacity estimate. A later decision must choose explicit additional headroom; this runbook does not pre-authorize a threshold.
+7. Record post-migration database size and heap/index/total sizes for both new tables. The measured before/after delta supersedes Phase 2A's temporary estimate. A later decision must choose explicit additional headroom; this runbook does not pre-authorize a threshold.
 8. Run the same migration command a second time on the clone. It must report up-to-date, add no rows, and preserve checksums/counts.
 9. Preserve only sanitized evidence. Securely delete the dump and clone after review and record deletion confirmation.
 
@@ -180,6 +248,6 @@ The rehearsal proves that the supported dump restores with exact counts; exact r
 
 Reserve up to **two hours** of credentialed operator time: 10–15 minutes setup/inventory, data-dependent dump and restore (the long pole), 10–20 minutes migration/verification, then cleanup and evidence packaging. Temporary storage cost is one private dump plus one disposable database copy. This is a planning budget, not a runtime claim; exact measured wall times become evidence. If the window is exceeded, stop and reschedule rather than compress verification.
 
-The sanitized evidence package contains timestamps; exact source/image SHAs and digests; tool versions; normalized migration status; counts/sizes/anomalies; provider used/free capacity; dump bytes/hash and dump/restore timing; restored-count verdict; per-migration and total clone timing; before/after table sizes; final-shape/idempotence verdict; and clone/dump deletion confirmation.
+The sanitized evidence package contains timestamps; exact source/image SHAs and digests; tool versions; normalized migration status; counts/sizes/anomalies; provider used/free capacity; dump bytes/hash and dump/restore timing; restored-count verdict; Phase 2A temporary heap/index estimate; per-migration and total clone timing once Phase 3 is unblocked; persistent before/after table sizes; final-shape/idempotence verdict; and clone/dump deletion confirmation.
 
 Never include URLs, credentials, customer rows, the dump, headers, or raw application data.
