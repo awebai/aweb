@@ -45,28 +45,22 @@ Start with incoming mail/chat and active blockers before claiming new work.
 
 ## Assignment guidance
 
-Use mail for normal handoffs:
+Use mail for normal handoffs. Write the goal, acceptance criteria, context, and reporting request to `assignment.md`, then send it without shell-expanding its Markdown:
 
 ```bash
-aw mail send --to dev --subject "Task: <short name>" --body "Goal: ...
-Acceptance criteria: ...
-Context: ...
-Please report summary/tests/risks when ready."
+aw mail send --to dev --subject "Task: <short name>" --body-file assignment.md
 ```
 
-Use chat only for synchronous blockers:
+Use chat only for synchronous blockers. Write the question to `blocker.md`, then send it:
 
 ```bash
-aw chat send-and-wait dev "Quick unblock: <question>" --start-conversation
+aw chat send-and-wait dev --body-file blocker.md --start-conversation
 ```
 
-Ask for review explicitly:
+Ask for review explicitly. Write the ref, goal, developer evidence, and known risks to `review.md`, then send it:
 
 ```bash
-aw mail send --to review --subject "Review request: <task/ref>" --body "Please review <ref>.
-Goal: ...
-Developer evidence: ...
-Known risks: ..."
+aw mail send --to review --subject "Review request: <task/ref>" --body-file review.md
 ```
 
 ## Decision rules
