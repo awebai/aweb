@@ -13,23 +13,30 @@ goreleaser + npm publish in that repo.
 
 ## Flow
 
-1. Determine the version.
-   The CLI version matches the server version in `server/pyproject.toml`.
-   Usually tagged alongside a server release.
+1. Determine and verify the version.
+   aw CLI releases have independent semver; never derive the CLI version from
+   `server/pyproject.toml`. The Makefile proposes the next patch after the
+   latest stable `aw-v*` tag published on `origin`:
+   ```bash
+   make release-cli-version-check
+   ```
+   The check fails unless the proposal is strictly greater than the latest
+   published CLI tag. Override `CLI_VERSION=X.Y.Z` only for an intentional
+   larger bump; the same monotonicity guard still applies.
 
 2. Run CLI tests.
    ```bash
    cd cli/go && GOCACHE=/tmp/go-build go test ./cmd/aw ./chat ./awid ./run ./internal/conformance -count=1
    ```
 
-3. Tag.
+3. Tag through the guarded helper.
    ```bash
-   git tag aw-v<VERSION>
+   make release-cli-tag
    ```
 
 4. Push the tag.
    ```bash
-   git push origin aw-v<VERSION>
+   make release-cli-push
    ```
 
 5. Verify publication.
@@ -43,7 +50,13 @@ goreleaser + npm publish in that repo.
 
 ## Notes
 
-- The CLI tag is usually created alongside the server tag in the same
-  release commit.
+- CLI and server tags may point at the same source commit, but their version
+  numbers are independent and must not be forced to match.
+- The proposal comes from published `origin` tag history, so a locally created
+  but unpushed candidate remains the version selected by the later push step.
+- A command-line override does not persist between Make invocations. For an
+  intentional minor/major release, pass the same value to both commands (or
+  export it): `make release-cli-tag CLI_VERSION=X.Y.Z`, then
+  `make release-cli-push CLI_VERSION=X.Y.Z`.
 - The `aw-release.yml` workflow requires the `AW_REPO_TOKEN` secret.
 - Do NOT retag — goreleaser creates GitHub Releases which are immutable.
