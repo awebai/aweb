@@ -123,6 +123,10 @@ class _FakeRedisPipeline:
         self.actions.append(("hgetall", key))
         return self
 
+    def exists(self, key):
+        self.actions.append(("exists", key))
+        return self
+
     def delete(self, key):
         self.actions.append(("delete", key))
         return self
@@ -133,7 +137,15 @@ class _FakeRedisPipeline:
 
     async def execute(self):
         self.redis.pipeline_actions.extend(self.actions)
-        return [self.redis.presence.get(action[1], {}) if action[0] == "hgetall" else 1 for action in self.actions]
+        results = []
+        for action, key, *_ in self.actions:
+            if action == "hgetall":
+                results.append(self.redis.presence.get(key, {}))
+            elif action == "exists":
+                results.append(int(key in self.redis.presence))
+            else:
+                results.append(1)
+        return results
 
 
 class _FakeRedis:
@@ -156,6 +168,15 @@ class _FakeRedis:
 
     async def sismember(self, key, member):
         return False
+
+    async def smembers(self, key):
+        if key.startswith("idx:team_workspaces:"):
+            return {
+                presence["workspace_id"]
+                for presence in self.presence.values()
+                if presence.get("workspace_id")
+            }
+        return set()
 
     async def get(self, key):
         return None
@@ -322,6 +343,115 @@ async def test_team_roster_prioritizes_live_presence_and_reports_truncation(aweb
     assert all(workspace["status"] == "active" for workspace in data["workspaces"])
     assert response_without_presence.status_code == 200, response_without_presence.text
     assert response_without_presence.json()["has_more"] is True
+
+
+@pytest.mark.asyncio
+async def test_team_roster_keeps_live_presence_outside_sql_candidate_window(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+    team_id = "backend:acme.com"
+    now = datetime.now(timezone.utc)
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id=team_id,
+        alias="live",
+        identity_scope="local",
+    )
+    headers = _signed_request(agent_sk, agent_did_key, team_id)
+    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        team_id,
+        "acme.com",
+        "backend",
+        team_did_key,
+    )
+
+    live_workspace_id = uuid4()
+    live_agent_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, 'live', 'local', 'active')
+        """,
+        live_agent_id,
+        team_id,
+        agent_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_id, agent_id, alias, last_seen_at, updated_at)
+        VALUES ($1, $2, $3, 'live', $4, $4)
+        """,
+        live_workspace_id,
+        team_id,
+        live_agent_id,
+        now - timedelta(days=60),
+    )
+
+    redis = _FakeRedis()
+    redis.presence[f"presence:{live_workspace_id}"] = {
+        "workspace_id": str(live_workspace_id),
+        "alias": "live",
+        "team_id": team_id,
+        "status": "active",
+        "last_seen": now.isoformat(),
+    }
+
+    for index in range(5):
+        alias = f"offline-{index}"
+        workspace_id = uuid4()
+        agent_id = uuid4()
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.agents}}
+                (agent_id, team_id, did_key, alias, identity_scope, status)
+            VALUES ($1, $2, $3, $4, 'local', 'active')
+            """,
+            agent_id,
+            team_id,
+            _make_keypair()[2],
+            alias,
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.workspaces}}
+                (workspace_id, team_id, agent_id, alias, last_seen_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $5)
+            """,
+            workspace_id,
+            team_id,
+            agent_id,
+            alias,
+            now - timedelta(seconds=index),
+        )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=redis)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/v1/workspaces/team",
+            params={
+                "include_presence": "true",
+                "only_with_claims": "false",
+                "limit": 1,
+            },
+            headers=headers,
+        )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["has_more"] is True
+    assert [workspace["alias"] for workspace in data["workspaces"]] == ["live"]
+    assert data["workspaces"][0]["status"] == "active"
 
 
 @pytest.mark.asyncio
