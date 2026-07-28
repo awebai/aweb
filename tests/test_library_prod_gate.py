@@ -7,12 +7,16 @@ import pytest
 
 from scripts import library_prod_gate as gate
 
+EXPECTED_VERSION = "0.1.8"
+EXPECTED_DIGEST = f"sha256:{'a' * 64}"
+
 
 def payload(runtime: str, *, managed: list[str] | None = None) -> dict:
     paths = [".aw/profile/ref.json", "AGENTS.md", "CLAUDE.md"]
     ref = {
         "profile_ref": "developer",
-        "profile_version": "0.1.8",
+        "profile_version": EXPECTED_VERSION,
+        "profile_digest": EXPECTED_DIGEST,
         "runtime_kind": runtime,
         "managed_set": paths if managed is None else managed,
         "source_blueprint_ref": "aweb.team",
@@ -28,19 +32,40 @@ def payload(runtime: str, *, managed: list[str] | None = None) -> dict:
 
 
 def test_candidate_requires_positional_managed_set() -> None:
-    summary = gate.validate_candidate_payload(payload("claude-code"), "claude-code")
+    summary = gate.validate_candidate_payload(
+        payload("claude-code"),
+        "claude-code",
+        expected_version=EXPECTED_VERSION,
+        expected_digest=EXPECTED_DIGEST,
+    )
     assert summary["managed_set_count"] == 3
     same_set_wrong_order = ["AGENTS.md", "CLAUDE.md", ".aw/profile/ref.json"]
     with pytest.raises(gate.GateError, match="index 0"):
         gate.validate_candidate_payload(
-            payload("claude-code", managed=same_set_wrong_order), "claude-code"
+            payload("claude-code", managed=same_set_wrong_order),
+            "claude-code",
+            expected_version=EXPECTED_VERSION,
+            expected_digest=EXPECTED_DIGEST,
+        )
+
+
+def test_candidate_rejects_unapproved_profile_pin() -> None:
+    with pytest.raises(gate.GateError, match="profile_digest"):
+        gate.validate_candidate_payload(
+            payload("pi"),
+            "pi",
+            expected_version=EXPECTED_VERSION,
+            expected_digest=f"sha256:{'b' * 64}",
         )
 
 
 def test_candidate_rejects_duplicates() -> None:
     with pytest.raises(gate.GateError, match="duplicate"):
         gate.validate_candidate_payload(
-            payload("pi", managed=[".aw/profile/ref.json", "AGENTS.md", "AGENTS.md"]), "pi"
+            payload("pi", managed=[".aw/profile/ref.json", "AGENTS.md", "AGENTS.md"]),
+            "pi",
+            expected_version=EXPECTED_VERSION,
+            expected_digest=EXPECTED_DIGEST,
         )
 
 
@@ -51,27 +76,62 @@ def test_recovery_requires_known_old_fingerprint() -> None:
     ref.pop("runtime_kind")
     ref.pop("managed_set")
     ref_entry["content_utf8"] = json.dumps(ref)
-    summary = gate.validate_recovery_payload(old, "pi")
+    summary = gate.validate_recovery_payload(
+        old,
+        "pi",
+        expected_version=EXPECTED_VERSION,
+        expected_digest=EXPECTED_DIGEST,
+    )
     assert summary["gate"] == "raw-recovery"
     with pytest.raises(gate.GateError, match="not the known"):
-        gate.validate_recovery_payload(payload("pi"), "pi")
+        gate.validate_recovery_payload(
+            payload("pi"),
+            "pi",
+            expected_version=EXPECTED_VERSION,
+            expected_digest=EXPECTED_DIGEST,
+        )
 
 
 def test_materialized_ref_is_strict(tmp_path: Path) -> None:
-    path = tmp_path / "ref.json"
+    path = tmp_path / ".aw" / "profile" / "ref.json"
+    path.parent.mkdir(parents=True)
+    (tmp_path / "AGENTS.md").write_text("# Developer\n")
     path.write_text(
         json.dumps(
             {
                 "profile_ref": "developer",
-                "profile_version": "0.1.8",
+                "profile_version": EXPECTED_VERSION,
+                "profile_digest": EXPECTED_DIGEST,
                 "runtime_kind": "pi",
-                "managed_set": ["AGENTS.md"],
+                "managed_set": ["AGENTS.md", ".aw/profile/ref.json"],
             }
         )
     )
-    assert gate.validate_materialized_ref(path, "pi")["runtime_kind"] == "pi"
+    assert (
+        gate.validate_materialized_ref(
+            path,
+            "pi",
+            expected_version=EXPECTED_VERSION,
+            expected_digest=EXPECTED_DIGEST,
+        )["runtime_kind"]
+        == "pi"
+    )
     with pytest.raises(gate.GateError, match="mismatch"):
-        gate.validate_materialized_ref(path, "claude-code")
+        gate.validate_materialized_ref(
+            path,
+            "claude-code",
+            expected_version=EXPECTED_VERSION,
+            expected_digest=EXPECTED_DIGEST,
+        )
+
+
+def test_released_aw_version_is_exact(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Completed:
+        stdout = "aw 1.34.1\n"
+
+    monkeypatch.setattr(gate.subprocess, "run", lambda *args, **kwargs: Completed())
+    with pytest.raises(gate.GateError, match="exactly aw 1.34.0"):
+        gate.verify_released_aw(Path("/opt/homebrew/bin/aw"))
 
 
 def test_clone_auth_home_removes_profile_and_delivery_state(tmp_path: Path) -> None:

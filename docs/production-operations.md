@@ -30,6 +30,7 @@ Before requesting production approval, record all of the following:
 
 - exact full lowercase 40-character candidate SHA, already at `origin/main`;
 - exact current live rollback deploy ID and full commit SHA;
+- exact expected developer shelf profile version and `sha256:` digest;
 - expected rendered behavior for Claude Code and Pi;
 - the independent review verdict;
 - the human approval that names this service and candidate.
@@ -70,7 +71,9 @@ After the command returns the new deployment ID, verification is separate and ex
 make prod-verify \
   PROD_DEPLOY_ID=dep-... \
   PROD_COMMIT=<40-char-candidate> \
-  AW_SOURCE_HOME=/absolute/path/to/certified-agent-home
+  AW_SOURCE_HOME=/absolute/path/to/certified-agent-home \
+  EXPECTED_PROFILE_VERSION=<approved-shelf-version> \
+  EXPECTED_PROFILE_DIGEST=sha256:<64-hex-digest>
 ```
 
 `AW_SOURCE_HOME` must be an established agent home with the correct team certificate.
@@ -109,7 +112,9 @@ make prod-recovery \
   CONFIRM_SERVICE_ID=srv-... \
   ROLLBACK_DEPLOY_ID=dep-... \
   ROLLBACK_COMMIT=<40-char-rollback> \
-  AW_SOURCE_HOME=/absolute/path/to/certified-agent-home
+  AW_SOURCE_HOME=/absolute/path/to/certified-agent-home \
+  EXPECTED_PROFILE_VERSION=<approved-shelf-version> \
+  EXPECTED_PROFILE_DIGEST=sha256:<64-hex-digest>
 ```
 
 Do not reuse `legacy-aasb` for a later release. Add and review the later release's exact

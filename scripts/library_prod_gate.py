@@ -10,14 +10,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 RUNTIMES = ("claude-code", "pi")
+REQUIRED_AW_VERSION = "aw 1.34.0"
 IGNORED_AUTH_FILES = (
     "interaction-log.jsonl",
     "channel-delivered-ids.json",
@@ -34,6 +36,13 @@ class GateError(RuntimeError):
     pass
 
 
+def validate_relative_paths(paths: list[str]) -> None:
+    for value in paths:
+        path = PurePosixPath(value)
+        if not value or "\\" in value or path.is_absolute() or ".." in path.parts:
+            raise GateError("materialize response contains an unsafe managed path")
+
+
 def ref_from_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     if not isinstance(payload, dict):
         raise GateError("materialize response is not a JSON object")
@@ -41,8 +50,7 @@ def ref_from_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]
     if not isinstance(files, list) or not files:
         raise GateError("materialize response has no home_files")
     paths = [str(entry.get("path") or "") for entry in files]
-    if any(not path for path in paths):
-        raise GateError("materialize response has an empty home_files path")
+    validate_relative_paths(paths)
     try:
         entry = next(item for item in files if item.get("path") == ".aw/profile/ref.json")
         ref = json.loads(entry["content_utf8"])
@@ -51,15 +59,32 @@ def ref_from_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]
     return ref, paths
 
 
-def validate_candidate_payload(payload: dict[str, Any], runtime: str) -> dict[str, Any]:
+def validate_profile_pin(
+    ref: dict[str, Any], *, expected_version: str, expected_digest: str
+) -> None:
+    if ref.get("profile_ref") != "developer":
+        raise GateError("profile_ref is not developer")
+    if ref.get("profile_version") != expected_version:
+        raise GateError("profile_version does not match the approved gate pin")
+    if ref.get("profile_digest") != expected_digest:
+        raise GateError("profile_digest does not match the approved gate pin")
+
+
+def validate_candidate_payload(
+    payload: dict[str, Any],
+    runtime: str,
+    *,
+    expected_version: str,
+    expected_digest: str,
+) -> dict[str, Any]:
     ref, paths = ref_from_payload(payload)
     managed = ref.get("managed_set")
-    if ref.get("profile_ref") != "developer":
-        raise GateError("candidate profile_ref is not developer")
+    validate_profile_pin(ref, expected_version=expected_version, expected_digest=expected_digest)
     if ref.get("runtime_kind") != runtime:
         raise GateError(f"candidate runtime_kind does not match {runtime}")
-    if not isinstance(managed, list) or not managed:
+    if not isinstance(managed, list) or not managed or not all(isinstance(p, str) for p in managed):
         raise GateError("candidate managed_set is missing")
+    validate_relative_paths(managed)
     if len(paths) != len(set(paths)) or len(managed) != len(set(managed)):
         raise GateError("candidate response contains duplicate managed paths")
     if managed != paths:
@@ -75,23 +100,47 @@ def validate_candidate_payload(payload: dict[str, Any], runtime: str) -> dict[st
     return sanitized_summary("raw-candidate", runtime, ref, len(managed))
 
 
-def validate_recovery_payload(payload: dict[str, Any], runtime: str) -> dict[str, Any]:
+def validate_recovery_payload(
+    payload: dict[str, Any],
+    runtime: str,
+    *,
+    expected_version: str,
+    expected_digest: str,
+) -> dict[str, Any]:
     ref, _ = ref_from_payload(payload)
+    validate_profile_pin(ref, expected_version=expected_version, expected_digest=expected_digest)
     if ref.get("runtime_kind") or ref.get("managed_set"):
         raise GateError("rollback fingerprint is not the known pre-fix behavior")
     return sanitized_summary("raw-recovery", runtime, ref, 0)
 
 
-def validate_materialized_ref(path: Path, runtime: str) -> dict[str, Any]:
+def validate_materialized_ref(
+    path: Path,
+    runtime: str,
+    *,
+    expected_version: str,
+    expected_digest: str,
+) -> dict[str, Any]:
     try:
         ref = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise GateError(f"strict client did not write a valid ref.json for {runtime}") from exc
     managed = ref.get("managed_set")
-    if ref.get("profile_ref") != "developer" or ref.get("runtime_kind") != runtime:
+    validate_profile_pin(ref, expected_version=expected_version, expected_digest=expected_digest)
+    if ref.get("runtime_kind") != runtime:
         raise GateError(f"strict client ref.json mismatch for {runtime}")
-    if not isinstance(managed, list) or not managed or len(managed) != len(set(managed)):
+    if (
+        not isinstance(managed, list)
+        or not managed
+        or not all(isinstance(p, str) for p in managed)
+        or len(managed) != len(set(managed))
+    ):
         raise GateError(f"strict client managed_set invalid for {runtime}")
+    validate_relative_paths(managed)
+    home = path.parents[2]
+    missing = [relative for relative in managed if not os.path.lexists(home / relative)]
+    if missing:
+        raise GateError(f"strict client omitted {len(missing)} managed paths for {runtime}")
     return sanitized_summary("released-strict-client", runtime, ref, len(managed))
 
 
@@ -107,12 +156,27 @@ def sanitized_summary(gate: str, runtime: str, ref: dict[str, Any], count: int) 
     }
 
 
+def verify_released_aw(aw_bin: Path) -> None:
+    try:
+        completed = subprocess.run(
+            [str(aw_bin), "version"],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise GateError("failed to identify the released aw binary") from exc
+    first_line = completed.stdout.splitlines()[0] if completed.stdout else ""
+    if first_line != REQUIRED_AW_VERSION:
+        raise GateError(f"released client must be exactly {REQUIRED_AW_VERSION}")
+
+
 def run_checked(command: list[str], *, cwd: Path, stdout: Path, stderr: Path, label: str) -> None:
     with stdout.open("wb") as out, stderr.open("wb") as err:
         completed = subprocess.run(command, cwd=cwd, stdout=out, stderr=err, check=False)
     if completed.returncode != 0:
         raise GateError(
-            f"{label} exited {completed.returncode}; stderr retained only in private temp data"
+            f"{label} exited {completed.returncode}; stderr was captured without printing"
         )
 
 
@@ -159,7 +223,15 @@ def clone_auth_home(source_home: Path, destination: Path) -> None:
         (destination / ".aw" / relative).unlink(missing_ok=True)
 
 
-def strict_materialize(aw_bin: Path, home: Path, runtime: str, root: Path) -> dict[str, Any]:
+def strict_materialize(
+    aw_bin: Path,
+    home: Path,
+    runtime: str,
+    root: Path,
+    *,
+    expected_version: str,
+    expected_digest: str,
+) -> dict[str, Any]:
     run_checked(
         [
             str(aw_bin),
@@ -177,7 +249,12 @@ def strict_materialize(aw_bin: Path, home: Path, runtime: str, root: Path) -> di
         stderr=root / f"strict-{runtime}.stderr",
         label=f"released strict client {runtime}",
     )
-    return validate_materialized_ref(home / ".aw" / "profile" / "ref.json", runtime)
+    return validate_materialized_ref(
+        home / ".aw" / "profile" / "ref.json",
+        runtime,
+        expected_version=expected_version,
+        expected_digest=expected_digest,
+    )
 
 
 def require_recovery_rejection(
@@ -273,12 +350,28 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
     homes: dict[str, Path] = {}
     for runtime in RUNTIMES:
         payload = raw_materialize(args.aw_bin, args.source_home, args.public_url, runtime, root)
-        summaries.append(validate_candidate_payload(payload, runtime))
+        summaries.append(
+            validate_candidate_payload(
+                payload,
+                runtime,
+                expected_version=args.expected_profile_version,
+                expected_digest=args.expected_profile_digest,
+            )
+        )
     for runtime in RUNTIMES:
         home = root / f"home-{runtime}"
         home.mkdir()
         clone_auth_home(args.source_home, home)
-        summaries.append(strict_materialize(args.aw_bin, home, runtime, root))
+        summaries.append(
+            strict_materialize(
+                args.aw_bin,
+                home,
+                runtime,
+                root,
+                expected_version=args.expected_profile_version,
+                expected_digest=args.expected_profile_digest,
+            )
+        )
         homes[runtime] = home
     for runtime in RUNTIMES:
         summaries.append(run_harness(homes[runtime], runtime, root, args.claude_bin, args.pi_bin))
@@ -289,7 +382,14 @@ def run_recovery(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     for runtime in RUNTIMES:
         payload = raw_materialize(args.aw_bin, args.source_home, args.public_url, runtime, root)
-        summaries.append(validate_recovery_payload(payload, runtime))
+        summaries.append(
+            validate_recovery_payload(
+                payload,
+                runtime,
+                expected_version=args.expected_profile_version,
+                expected_digest=args.expected_profile_digest,
+            )
+        )
         home = root / f"home-{runtime}"
         home.mkdir()
         clone_auth_home(args.source_home, home)
@@ -303,6 +403,14 @@ def parser() -> argparse.ArgumentParser:
     source_home = os.environ.get("AW_SOURCE_HOME")
     p.add_argument("--source-home", type=Path, default=Path(source_home) if source_home else None)
     p.add_argument("--public-url", default="https://library.aweb.ai")
+    p.add_argument(
+        "--expected-profile-version",
+        default=os.environ.get("EXPECTED_PROFILE_VERSION", ""),
+    )
+    p.add_argument(
+        "--expected-profile-digest",
+        default=os.environ.get("EXPECTED_PROFILE_DIGEST", ""),
+    )
     p.add_argument("--aw-bin", type=Path, default=Path("/opt/homebrew/bin/aw"))
     p.add_argument("--claude-bin", type=Path, default=Path("/opt/homebrew/bin/claude"))
     p.add_argument("--pi-bin", type=Path, default=Path("/opt/homebrew/bin/pi"))
@@ -314,6 +422,13 @@ def main() -> int:
     try:
         if args.source_home is None or not args.source_home.is_absolute():
             raise GateError("AW_SOURCE_HOME/--source-home must be an absolute path")
+        if not args.expected_profile_version:
+            raise GateError("EXPECTED_PROFILE_VERSION/--expected-profile-version is required")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", args.expected_profile_digest):
+            raise GateError(
+                "EXPECTED_PROFILE_DIGEST/--expected-profile-digest must be sha256-pinned"
+            )
+        verify_released_aw(args.aw_bin)
         with tempfile.TemporaryDirectory(prefix="library-prod-gate-") as temporary:
             root = Path(temporary)
             summaries = (
