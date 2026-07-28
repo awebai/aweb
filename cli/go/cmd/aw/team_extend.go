@@ -71,6 +71,8 @@ func runTeamHumanExtend(cmd *cobra.Command, args []string) error {
 		TeamIDAssertionSource: assertionSource,
 		OutputStatus:          "extended",
 		OutputAuthorityTier:   authority.Tier,
+		AuthorityTeamID:       authority.TeamID,
+		CommandName:           "aw team extend",
 	})
 }
 

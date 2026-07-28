@@ -491,7 +491,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			if !identityExists {
-				if err := bootstrapTeamCreateGlobalIdentity(wd, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL)); err != nil {
+				if err := bootstrapTeamCreateGlobalIdentity(wd, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), true); err != nil {
 					return err
 				}
 			}
@@ -770,7 +770,7 @@ func runTeamHumanCreateRosterAdd(specs []teamAgentSpec) error {
 	return runTeamHumanAddWithOptions(nil, args, teamHumanAddRunOptions{Specs: append([]teamAgentSpec(nil), specs...)})
 }
 
-func bootstrapTeamCreateGlobalIdentity(wd, alias, domain, registryURL string) error {
+func bootstrapTeamCreateGlobalIdentity(wd, alias, domain, registryURL string, allowCreateFlagGuidance bool) error {
 	domain = awconfig.NormalizeDomain(domain)
 	if domain == "" {
 		return usageError("--first-agent-global requires --namespace with --byot when no global identity exists")
@@ -780,7 +780,10 @@ func bootstrapTeamCreateGlobalIdentity(wd, alias, domain, registryURL string) er
 		return err
 	}
 	if !exists {
-		return usageError("--first-agent-global with --byot requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or use hosted onboarding", domain, domain, alias)
+		if allowCreateFlagGuidance {
+			return usageError("--first-agent-global with --byot requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or use hosted onboarding", domain, domain, alias)
+		}
+		return usageError("global identity creation requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or run aw team extend from a fresh directory with --api-key <key>", domain, domain, alias)
 	}
 	_, err = executeIDCreate(wd, idCreateOptions{
 		Name:        alias,
@@ -1300,6 +1303,8 @@ type teamHumanAddRunOptions struct {
 	TeamIDAssertionSource teamIDAssertionSource
 	OutputStatus          string
 	OutputAuthorityTier   string
+	AuthorityTeamID       string
+	CommandName           string
 	Specs                 []teamAgentSpec
 }
 
@@ -1390,6 +1395,9 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		if err := preflightEmptyAgentHome(plan.HomeDir); err != nil {
 			return err
 		}
+	}
+	if err := preflightTeamHumanAddRosterAuthority(inviteAnchorDir, plans, apiKeyBootstrapMode, opts); err != nil {
+		return err
 	}
 	noLibrary, noProfile := teamHumanAddProfileModes(plans)
 	createdTeamID := ""
@@ -1538,6 +1546,69 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	outputTeamID := teamHumanAddResolvedTeamID(createdTeamID, plans)
 	printOutput(teamHumanAddOutput{Status: status, AgentsRoot: agentsRoot, TeamID: outputTeamID, AuthorityTier: strings.TrimSpace(opts.OutputAuthorityTier), HomeOverride: explicitHome != "", LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd)
 	return nil
+}
+
+func preflightTeamHumanAddRosterAuthority(inviteAnchorDir string, plans []teamHumanAddedAgent, apiKeyBootstrapMode bool, opts teamHumanAddRunOptions) error {
+	if apiKeyBootstrapMode {
+		return nil
+	}
+	var globalPlan *teamHumanAddedAgent
+	for i := range plans {
+		if strings.TrimSpace(plans[i].Scope) == awid.IdentityModeGlobal {
+			globalPlan = &plans[i]
+			break
+		}
+	}
+	if globalPlan == nil {
+		return nil
+	}
+	teamID := strings.TrimSpace(opts.AuthorityTeamID)
+	var domain string
+	if teamID != "" {
+		var err error
+		domain, _, err = awid.ParseTeamID(teamID)
+		if err != nil {
+			return err
+		}
+	} else {
+		teamName, resolvedDomain, _, _, err := resolveTeamInviteTarget(inviteAnchorDir)
+		if err != nil {
+			return err
+		}
+		domain = resolvedDomain
+		teamID = awid.BuildTeamID(domain, teamName)
+	}
+	controllerExists, err := awconfig.ControllerKeyExists(domain)
+	if err != nil {
+		return err
+	}
+	if controllerExists {
+		return nil
+	}
+	tier := strings.TrimSpace(opts.OutputAuthorityTier)
+	if tier == "" {
+		tier = teamExtendAuthorityTierCurrentWorkspace
+	}
+	commandName := strings.TrimSpace(opts.CommandName)
+	if commandName == "" {
+		commandName = "aw team add"
+	}
+	profileSource := ""
+	if globalPlan.Profile != nil && strings.TrimSpace(globalPlan.Profile.IdentityScope) == "" && !teamHumanAddGlobal {
+		profileSource = " (from profile " + strings.TrimSpace(globalPlan.Profile.SourceBlueprintRef) + "/" + strings.TrimSpace(globalPlan.Profile.ProfileRef) + ")"
+	}
+	return usageError("%s: agent %s resolves to global identity scope%s, but this workspace's authority (%s, team %s) cannot mint global identities.\n\nEither:\n  - run from a fresh directory with --api-key <key>, or\n  - use %s\n\nNo agents were created.", commandName, globalPlan.Name, profileSource, tier, teamID, teamHumanLocalOverrideSpec(*globalPlan))
+}
+
+func teamHumanLocalOverrideSpec(plan teamHumanAddedAgent) string {
+	if plan.Profile == nil {
+		return strings.TrimSpace(plan.Name) + ":local"
+	}
+	spec := strings.TrimSpace(plan.Name) + "@" + strings.TrimSpace(plan.Profile.SourceBlueprintRef) + "/" + strings.TrimSpace(plan.Profile.ProfileRef) + ":local"
+	if runtimeKind := strings.TrimSpace(plan.Profile.RuntimeKind); runtimeKind != "" {
+		spec += "=" + runtimeKind
+	}
+	return spec
 }
 
 func teamHumanAddProfileModes(plans []teamHumanAddedAgent) (noLibrary, noProfile bool) {
@@ -2070,7 +2141,7 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 			return nil, err
 		}
 		if !identityExists {
-			if err := bootstrapTeamCreateGlobalIdentity(homeDir, alias, domain, registryURL); err != nil {
+			if err := bootstrapTeamCreateGlobalIdentity(homeDir, alias, domain, registryURL, false); err != nil {
 				return nil, err
 			}
 		}

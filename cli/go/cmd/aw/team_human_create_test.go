@@ -1736,8 +1736,8 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalWithoutAuthorityFailsBeforeRegister(
 	teamHumanCreateFirstGlobal = true
 
 	err := runTeamHumanCreate(nil, []string{"Ops"})
-	if err == nil || !strings.Contains(err.Error(), "requires namespace controller authority") || !strings.Contains(err.Error(), "aw id create") {
-		t.Fatalf("error=%v", err)
+	if err == nil || !strings.Contains(err.Error(), "--first-agent-global with --byot requires namespace controller authority") || !strings.Contains(err.Error(), "aw id create") {
+		t.Fatalf("create-specific authority error=%v", err)
 	}
 	if calledRegistry {
 		t.Fatal("registry called despite fail-closed --byot without namespace authority")
@@ -1747,6 +1747,18 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalWithoutAuthorityFailsBeforeRegister(
 	}
 	if _, statErr := os.Lstat(filepath.Join(root, ".aw", "teams.yaml")); !os.IsNotExist(statErr) {
 		t.Fatalf("team state created despite fail-closed --byot without namespace authority: %v", statErr)
+	}
+}
+
+func TestTeamHumanAddGlobalIdentityFallbackDoesNotNameCreateFlags(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	err := bootstrapTeamCreateGlobalIdentity(t.TempDir(), "aw-coord", "missing-controller.invalid", "https://api.awid.ai", false)
+	if err == nil || !strings.Contains(err.Error(), "global identity creation requires namespace controller authority") || !strings.Contains(err.Error(), "--api-key") {
+		t.Fatalf("add fallback error=%v", err)
+	}
+	if strings.Contains(err.Error(), "--first-agent-global") || strings.Contains(err.Error(), "--byot") {
+		t.Fatalf("add fallback names create-only flags: %v", err)
 	}
 }
 

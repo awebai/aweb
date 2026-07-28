@@ -215,9 +215,11 @@ default-aaeq.23, stricter because `extend` has no wizard):
 
 ## Batch roster failure outcomes
 
-Roster-wide facts already available before creating a member are preflight
-work: spec and profile resolution plus alias and home collisions. A failure in
-those checks returns before any member is attempted.
+Roster-wide facts available before creating a member are preflight work: spec
+and profile resolution, alias and home collisions, and whether the selected
+authority can mint every resolved effective identity scope. A failure in those
+checks returns before any member is attempted. Scope resolution includes both
+an explicit spec suffix and a profile's `profile.yaml` default.
 
 Once roster mutation begins, the first non-preflightable member failure still
 stops the batch and leaves the command exit status non-zero. Before returning,

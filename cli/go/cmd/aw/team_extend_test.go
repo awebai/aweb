@@ -14,6 +14,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/blueprint"
 )
 
 func TestTeamAddAPIKeyBootstrapRequiresActuallyMissingTeamState(t *testing.T) {
@@ -354,6 +355,164 @@ func TestTeamExtendAmbientAPIKeyMatchingActiveTeamCreatesRoster(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "agents", "instances", "developer", ".aw", "workspace.yaml")); err != nil {
 		t.Fatalf("created workspace missing: %v", err)
+	}
+}
+
+func TestTeamExtendCurrentWorkspaceGlobalPreflightHasZeroMutation(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Setenv(initAPIKeyEnvVar, "")
+	t.Chdir(root)
+
+	const teamID = "default:hosted.aweb.ai"
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutationCalls := 0
+	var server *httptest.Server
+	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
+			mutationCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "invite-1", "token": "aw_inv_hosted_rollback_token", "server_url": serverURL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
+			mutationCalls++
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			didKey, _ := req["did"].(string)
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: "first", Lifetime: awid.LifetimeEphemeral})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_slug": "default", "namespace": "hosted.aweb.ai", "alias": "first", "server_url": serverURL, "did": didKey, "custody": "self", "lifetime": "ephemeral", "team_cert": encoded})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-first", teamID, "first")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+	initAwebURL = server.URL
+	workspace := workspaceBinding(server.URL, teamID, "owner", "workspace-owner")
+	writeWorkspaceBindingForTest(t, root, workspace)
+
+	err = runTeamHumanExtend(nil, []string{"first:local", "aw-coord@aweb.team/coordinator:global=claude-code"})
+	if err == nil {
+		t.Fatal("expected global authority preflight error")
+	}
+	for _, want := range []string{
+		"aw team extend: agent aw-coord resolves to global identity scope",
+		"current-workspace, team " + teamID,
+		"cannot mint global identities",
+		"aw-coord@aweb.team/coordinator:local=claude-code",
+		"No agents were created",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "--byot") || strings.Contains(err.Error(), "--first-agent-global") {
+		t.Fatalf("error names flags the caller did not pass: %v", err)
+	}
+	if strings.Contains(err.Error(), "from profile") {
+		t.Fatalf("explicit :global suffix was misattributed to the profile: %v", err)
+	}
+	if mutationCalls != 0 {
+		t.Fatalf("membership mutation calls=%d; preflight ran after roster mutation", mutationCalls)
+	}
+	for _, name := range []string{"first", "aw-coord"} {
+		if _, statErr := os.Lstat(filepath.Join(root, "agents", "instances", name)); !os.IsNotExist(statErr) {
+			t.Fatalf("%s home created before authority preflight: %v", name, statErr)
+		}
+	}
+}
+
+func TestTeamExtendDiscoveredAgentGlobalPreflightHasZeroMutation(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AW_CONFIG_PATH", "")
+	t.Setenv(initAPIKeyEnvVar, "")
+	t.Chdir(root)
+
+	const teamID = "default:discovered.aweb.ai"
+	mutationCalls := 0
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/agents" {
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": "", "registry_url": ""})
+			return
+		}
+		mutationCalls++
+		t.Fatalf("unexpected mutation %s %s", r.Method, r.URL.Path)
+	}))
+	anchor := filepath.Join(root, "agents", "instances", "anchor")
+	writeWorkspaceBindingForTest(t, anchor, workspaceBinding(server.URL, teamID, "owner", "workspace-owner"))
+
+	err := runTeamHumanExtend(nil, []string{"aw-coord@aweb.team/coordinator:global=pi"})
+	if err == nil || !strings.Contains(err.Error(), teamExtendAuthorityTierDiscoveredAgent) || !strings.Contains(err.Error(), "aw-coord@aweb.team/coordinator:local=pi") {
+		t.Fatalf("discovered authority error=%v", err)
+	}
+	if mutationCalls != 0 {
+		t.Fatalf("mutation calls=%d", mutationCalls)
+	}
+	if _, statErr := os.Lstat(filepath.Join(root, "agents", "instances", "aw-coord")); !os.IsNotExist(statErr) {
+		t.Fatalf("global home created before discovered-authority preflight: %v", statErr)
+	}
+}
+
+func TestTeamExtendGlobalPreflightUsesProfileDefaultScope(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	files := withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
+		{Path: "profile.yaml", ContentUTF8: "id: coordinator\nname: Coordinator\nversion: 0.1.0\nscope: global\nmission: Coordinate.\naccepted_work: [coordination]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
+		{Path: "instructions.md", ContentUTF8: "Coordinate.\n"},
+	})
+	digest := testLibraryProfilePayloadDigestForProfile(t, "coordinator", files)
+	library := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/blueprints/aweb.team/profiles/coordinator" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"blueprint_ref": "aweb.team", "blueprint_version": "0.1.0", "profile_ref": "coordinator", "version": "0.1.0", "digest": digest, "files": files})
+	}))
+	defer library.Close()
+	t.Setenv(libraryURLEnvVar, library.URL)
+	t.Setenv("HOME", t.TempDir())
+
+	plans, err := resolveTeamHumanAddAgentSpecs(t.TempDir(), []string{"aw-coord@aweb.team/coordinator=claude-code"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || plans[0].Scope != awid.IdentityModeGlobal || plans[0].Profile == nil || plans[0].Profile.IdentityScope != "" {
+		t.Fatalf("profile-defaulted scope was not preserved: %+v", plans)
+	}
+	resolvedPlans := []teamHumanAddedAgent{{Name: plans[0].Name, Profile: plans[0].Profile, Scope: plans[0].Scope}}
+	err = preflightTeamHumanAddRosterAuthority(t.TempDir(), resolvedPlans, false, teamHumanAddRunOptions{
+		OutputAuthorityTier: teamExtendAuthorityTierDiscoveredAgent,
+		AuthorityTeamID:     "default:hosted.aweb.ai",
+		CommandName:         "aw team extend",
+	})
+	if err == nil {
+		t.Fatal("expected profile-defaulted global preflight error")
+	}
+	for _, want := range []string{"from profile aweb.team/coordinator", teamExtendAuthorityTierDiscoveredAgent, "aw-coord@aweb.team/coordinator:local=claude-code"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err, want)
+		}
 	}
 }
 
