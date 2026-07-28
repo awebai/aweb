@@ -884,7 +884,7 @@ func TestTeamUpInsideTmuxLaunchesIntoReachableCallerSession(t *testing.T) {
 		t.Fatalf("launch developer window: %v", err)
 	}
 
-	callerWindows, callerErr := isolatedTeamUpTmuxOutput(callerSocketDir, callerTMUX, "list-windows", "-t", callerSession, "-F", "#W")
+	callerWindows, callerErr := isolatedTeamUpTmuxOutput(callerSocketDir, callerTMUX, "list-windows", "-t", callerSession+":", "-F", "#W")
 	overrideSessions, overrideErr := isolatedTeamUpTmuxOutput(overrideSocketDir, "", "list-sessions", "-F", "#S")
 	if selectedSession != callerSession || callerErr != nil || !strings.Contains(callerWindows, "developer") || overrideErr == nil || strings.TrimSpace(overrideSessions) != "" {
 		t.Fatalf("caller launch selected=%q caller=%q caller_windows=%q caller_err=%v override_sessions=%q override_err=%v", selectedSession, callerSession, callerWindows, callerErr, overrideSessions, overrideErr)
