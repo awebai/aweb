@@ -21,6 +21,8 @@ CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plu
 # aw CLI releases have independent semver. Derive the next patch from the
 # published aw-v* history; the release guard below rejects stale overrides.
 CLI_VERSION = $(shell ./scripts/cli-release-version.sh next)
+# The A2A gateway workflow requires its tag to match server/pyproject.toml.
+A2A_GATEWAY_VERSION := $(SERVER_VERSION)
 # OAS seam tests intentionally measure the working sibling clone, including
 # unreleased integration primitives, rather than whichever CLI is global.
 OAS_TEST_ROOT ?= $(abspath $(shell git rev-parse --git-common-dir)/../../oas)
@@ -316,8 +318,8 @@ release-a2a-gateway-check:
 	./scripts/check-a2a-copy-guardrails.sh
 	cd cli/go && GOCACHE=/tmp/go-build go test ./a2a ./a2agw ./awid ./cmd/aweb-a2a-gw -count=1
 	docker build -f cli/go/Dockerfile.a2a-gw \
-		--build-arg VERSION=$(CLI_VERSION) \
-		--build-arg RELEASE_TAG=a2a-gw-v$(CLI_VERSION) \
+		--build-arg VERSION=$(A2A_GATEWAY_VERSION) \
+		--build-arg RELEASE_TAG=a2a-gw-v$(A2A_GATEWAY_VERSION) \
 		--build-arg COMMIT=$$(git rev-parse HEAD) \
 		--build-arg DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
 		-t a2a-gateway:release-test cli/go
@@ -330,12 +332,12 @@ release-a2a-gateway-check:
 	./scripts/e2e-a2a-gateway-docker.sh
 
 release-a2a-gateway-tag:
-	@git rev-parse --verify "a2a-gw-v$(CLI_VERSION)" >/dev/null 2>&1 && (echo "Tag a2a-gw-v$(CLI_VERSION) already exists."; exit 1) || true
-	git tag "a2a-gw-v$(CLI_VERSION)"
-	@echo "Created tag a2a-gw-v$(CLI_VERSION)."
+	@git rev-parse --verify "a2a-gw-v$(A2A_GATEWAY_VERSION)" >/dev/null 2>&1 && (echo "Tag a2a-gw-v$(A2A_GATEWAY_VERSION) already exists."; exit 1) || true
+	git tag "a2a-gw-v$(A2A_GATEWAY_VERSION)"
+	@echo "Created tag a2a-gw-v$(A2A_GATEWAY_VERSION)."
 
 release-a2a-gateway-push:
-	git push origin a2a-gw-v$(CLI_VERSION)
+	git push origin a2a-gw-v$(A2A_GATEWAY_VERSION)
 
 # ── Awid site deploy ────────────────────────────────────────────────
 

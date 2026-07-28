@@ -54,5 +54,9 @@ goreleaser + npm publish in that repo.
   numbers are independent and must not be forced to match.
 - The proposal comes from published `origin` tag history, so a locally created
   but unpushed candidate remains the version selected by the later push step.
+- A command-line override does not persist between Make invocations. For an
+  intentional minor/major release, pass the same value to both commands (or
+  export it): `make release-cli-tag CLI_VERSION=X.Y.Z`, then
+  `make release-cli-push CLI_VERSION=X.Y.Z`.
 - The `aw-release.yml` workflow requires the `AW_REPO_TOKEN` secret.
 - Do NOT retag — goreleaser creates GitHub Releases which are immutable.
