@@ -557,9 +557,11 @@ AWEB_URL=<url> AWEB_API_KEY=<key> aw team extend alice@aweb.team/developer=claud
 ```
 
 When the current workspace already has an active team, an ambient
-`AWEB_API_KEY` does not silently override it. Unset the variable to extend the
-active team, or state API-key intent with `--api-key` or `--team-id` (the latter
-also checks that the key enrolled the agent into the expected team).
+`AWEB_API_KEY` selects API-key authority and uses the active team as an assertion
+against the team returned by the server. A mismatch rolls back the first added
+member and stops before adding another. To deliberately extend a different team,
+pass an explicit `--api-key`, which bypasses the workspace assertion; add
+`--team-id` when the API key's team should be checked against a specific team.
 
 **Self-hosted (BYOT).** To create and populate a team you control end to end,
 add `--byot` and your namespace:
