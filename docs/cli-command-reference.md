@@ -209,7 +209,7 @@ Show coordination status for the current workspace/identity and team
 Flags:
 - `--all Show all local team memberships in addition to the selected team status`
 - `-h, --help help for status`
-- `--limit int Maximum team workspaces to show (default 15)`
+- `--limit int Maximum team workspaces to show (default 50)`
 
 ## `id`
 

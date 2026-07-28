@@ -22,6 +22,7 @@ from awid.pagination import encode_cursor, validate_pagination_params
 from ...presence import (
     DEFAULT_PRESENCE_TTL_SECONDS,
     clear_workspace_presence,
+    get_workspace_ids_by_team_id,
     list_agent_presences,
     list_agent_presences_by_workspace_ids,
     update_agent_presence,
@@ -1109,6 +1110,14 @@ async def list_team_workspaces(
 
     aweb_db = db_infra.get_manager("aweb")
 
+    live_workspace_ids: list[UUID] = []
+    if include_presence:
+        for workspace_id in await get_workspace_ids_by_team_id(redis, team_id):
+            try:
+                live_workspace_ids.append(UUID(workspace_id))
+            except ValueError:
+                logger.warning("Ignoring invalid workspace ID in team presence index: %s", workspace_id)
+
     params: list = [team_id]
     param_idx = 2
     claim_stats_where = "WHERE team_id = $1"
@@ -1151,17 +1160,21 @@ async def list_team_workspaces(
     if only_with_claims:
         query += " AND claim_count > 0"
 
-    candidate_limit = limit
+    candidate_limit = limit + 1
     if include_presence:
         candidate_limit = min(
-            limit * TEAM_STATUS_CANDIDATE_MULTIPLIER,
+            max(limit * TEAM_STATUS_CANDIDATE_MULTIPLIER, limit + 1),
             TEAM_STATUS_CANDIDATE_MAX,
         )
 
+    query += " ORDER BY"
+    if live_workspace_ids:
+        query += f" (workspace_id = ANY(${param_idx}::uuid[])) DESC,"
+        params.append(live_workspace_ids)
+        param_idx += 1
     query += """
-        ORDER BY
-            (claim_count > 0) DESC,
             last_seen_at DESC NULLS LAST,
+            (claim_count > 0) DESC,
             last_claimed_at DESC NULLS LAST,
             alias ASC
     """
@@ -1225,17 +1238,18 @@ async def list_team_workspaces(
 
     entries.sort(
         key=lambda item: (
-            -item[1],
             -item[4],
             -item[2],
+            -item[1],
             -item[3],
             item[0].alias,
         )
     )
 
+    has_more = len(entries) > limit
     workspaces = [entry[0] for entry in entries][:limit]
 
-    return ListWorkspacesResponse(workspaces=workspaces, has_more=False)
+    return ListWorkspacesResponse(workspaces=workspaces, has_more=has_more)
 
 
 # ---------------------------------------------------------------------------
