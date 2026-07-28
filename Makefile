@@ -7,6 +7,8 @@ PROD_CONFIG ?= ops/render-production.json
 RENDER_ENV_FILE ?= $(HOME)/.aweb-render/env
 PROD_COMMIT ?=
 PROD_DEPLOY_ID ?=
+CURRENT_DEPLOY_ID ?=
+CURRENT_COMMIT ?=
 ROLLBACK_DEPLOY_ID ?=
 ROLLBACK_COMMIT ?=
 CONFIRM_SERVICE_ID ?=
@@ -17,7 +19,8 @@ APPLY ?= 0
 
 # Export operational values instead of interpolating them into recipes. This keeps
 # operator-provided IDs and paths out of shell parsing; Python performs exact validation.
-export PROD_CONFIG RENDER_ENV_FILE PROD_COMMIT PROD_DEPLOY_ID ROLLBACK_DEPLOY_ID
+export PROD_CONFIG RENDER_ENV_FILE PROD_COMMIT PROD_DEPLOY_ID CURRENT_DEPLOY_ID CURRENT_COMMIT
+export ROLLBACK_DEPLOY_ID
 export ROLLBACK_COMMIT CONFIRM_SERVICE_ID AW_SOURCE_HOME EXPECTED_PROFILE_VERSION
 export EXPECTED_PROFILE_DIGEST APPLY
 

@@ -90,6 +90,45 @@ def test_recovery_requires_known_old_fingerprint() -> None:
             expected_version=EXPECTED_VERSION,
             expected_digest=EXPECTED_DIGEST,
         )
+    present_but_empty = payload("pi")
+    empty_ref_entry = present_but_empty["home_files"][0]
+    empty_ref = json.loads(empty_ref_entry["content_utf8"])
+    empty_ref["runtime_kind"] = ""
+    empty_ref["managed_set"] = []
+    empty_ref_entry["content_utf8"] = json.dumps(empty_ref)
+    with pytest.raises(gate.GateError, match="not the known"):
+        gate.validate_recovery_payload(
+            present_but_empty,
+            "pi",
+            expected_version=EXPECTED_VERSION,
+            expected_digest=EXPECTED_DIGEST,
+        )
+
+
+def test_recovery_rejects_unrelated_nonzero_exit(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    with pytest.raises(gate.GateError, match="expected schema rejection"):
+        gate.require_recovery_rejection(Path("/usr/bin/false"), home, "pi", tmp_path)
+
+
+def test_recovery_accepts_only_exact_schema_rejection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class Completed:
+        returncode = 1
+
+    def expected_failure(command, cwd, stdout, stderr, check):
+        stderr.write(
+            b'Error: library materialize response runtime_kind "pi" does not match ref.json ""\n'
+        )
+        return Completed()
+
+    monkeypatch.setattr(gate.subprocess, "run", expected_failure)
+    home = tmp_path / "home"
+    home.mkdir()
+    result = gate.require_recovery_rejection(Path("/released/aw"), home, "pi", tmp_path)
+    assert result["exit"] == 1
 
 
 def test_materialized_ref_is_strict(tmp_path: Path) -> None:

@@ -47,7 +47,7 @@ rollback artifact after starting the deploy.
 | `make prod-deploy ... APPLY=1` | Validates topology and rollback pin, fetches and verifies exact `origin/main`, starts a clear-cache deploy, waits for `live`, then checks origin and public health. |
 | `make prod-wait ...` | Restartable read-only wait for one exact deploy ID and commit. |
 | `make prod-verify ...` | Requires the exact deploy to be the sole live artifact, checks origin/public health, then runs raw, released-client, and real-harness gates. |
-| `make prod-rollback ... APPLY=1` | Validates and rolls back to one exact deploy ID/commit, waits, and checks both health surfaces. |
+| `make prod-rollback ... APPLY=1` | Pins the exact current live deployment, validates a distinct known-good rollback deploy ID/commit/state, rolls back, waits, re-checks the sole live artifact, and checks both health surfaces. |
 | `make prod-recovery ... APPLY=1` | Performs the pinned rollback and its explicitly selected recovery gate. |
 
 Run `make prod-ops-test` before release planning. The mutation targets deliberately
@@ -84,8 +84,8 @@ The gate clones only into a private temporary directory and removes it on exit.
 Render metadata and health do not prove the functional release. Verification requires:
 
 1. Render reports the exact candidate deploy ID and commit as the sole `live` deploy.
-2. Generated origin `/health` returns the exact Library health payload.
-3. Public edge `/health` returns the same exact payload.
+2. Generated origin `/health` returns the exact Library health payload without redirecting.
+3. Public edge `/health` returns the same exact payload without URL drift.
 4. Authenticated public `POST /v1/materialize` succeeds for `claude-code` and `pi`.
 5. `managed_set` is positionally identical to `home_files`, with no duplicates.
 6. The unchanged released `/opt/homebrew/bin/aw` strict client materializes both
@@ -99,17 +99,24 @@ validation.
 
 ## Rollback and recovery
 
-A failed functional gate means the release is not verified. Use the pre-recorded exact
-rollback ID and commit; do not choose a convenient artifact from the dashboard.
+A failed functional gate means the release is not verified. Pin both the exact candidate
+deployment currently being rolled away and the pre-recorded known-good rollback ID and
+commit; do not choose a convenient artifact from the dashboard. The rollback target
+must be a previously live artifact (`live` or Render's historical `deactivated` state),
+never a failed build with a matching commit.
 
 For the `aweb-aasb` rollout only, `prod-recovery` has the explicit `legacy-aasb`
-fingerprint: both raw runtime responses omit `runtime_kind` and `managed_set`, and
-released strict materialization rejects both:
+fingerprint: both raw runtime responses omit (rather than merely empty)
+`runtime_kind` and `managed_set`, and released strict materialization rejects both with
+the exact runtime-schema error. An unrelated auth, route, network, or process failure
+does not certify recovery:
 
 ```text
 make prod-recovery \
   APPLY=1 \
   CONFIRM_SERVICE_ID=srv-... \
+  CURRENT_DEPLOY_ID=dep-... \
+  CURRENT_COMMIT=<40-char-current-live> \
   ROLLBACK_DEPLOY_ID=dep-... \
   ROLLBACK_COMMIT=<40-char-rollback> \
   AW_SOURCE_HOME=/absolute/path/to/certified-agent-home \

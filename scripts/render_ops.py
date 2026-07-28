@@ -22,8 +22,16 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 API_BASE = "https://api.render.com/v1"
-ACTIVE_STATUSES = {"build_in_progress", "update_in_progress", "pre_deploy_in_progress"}
-FAILURE_STATUSES = {"build_failed", "update_failed", "pre_deploy_failed", "canceled", "deactivated"}
+IN_PROGRESS_STATUSES = {
+    "created",
+    "build_in_progress",
+    "update_in_progress",
+    "pre_deploy_in_progress",
+}
+FAILURE_STATUSES = {"build_failed", "update_failed", "pre_deploy_failed", "canceled"}
+TERMINAL_STATUSES = {"live", "deactivated", *FAILURE_STATUSES}
+KNOWN_STATUSES = {*IN_PROGRESS_STATUSES, *TERMINAL_STATUSES}
+ROLLBACK_ARTIFACT_STATUSES = {"live", "deactivated"}
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 DEPLOY_RE = re.compile(r"^dep-[a-z0-9]+$")
 SERVICE_RE = re.compile(r"^srv-[a-z0-9]+$")
@@ -245,7 +253,13 @@ def verify_git_target(
 
 
 def current_live(deploys: list[dict[str, Any]]) -> dict[str, Any]:
-    active = [deploy for deploy in deploys if deploy.get("status") in ACTIVE_STATUSES]
+    unknown = [deploy for deploy in deploys if deploy.get("status") not in KNOWN_STATUSES]
+    if unknown:
+        raise OpsError(
+            f"refusing unknown Render deploy state {unknown[0].get('status')!r}: "
+            f"{unknown[0].get('id')}"
+        )
+    active = [deploy for deploy in deploys if deploy.get("status") in IN_PROGRESS_STATUSES]
     if active:
         raise OpsError(f"another deploy is active: {active[0].get('id')}")
     live = [deploy for deploy in deploys if deploy.get("status") == "live"]
@@ -257,6 +271,12 @@ def current_live(deploys: list[dict[str, Any]]) -> dict[str, Any]:
 def require_deploy(deploy: dict[str, Any], *, deploy_id: str, commit: str) -> None:
     if deploy.get("id") != deploy_id or deploy_commit(deploy) != commit:
         raise OpsError("deploy ID/commit does not match the approved artifact")
+
+
+def require_rollback_artifact(deploy: dict[str, Any], *, deploy_id: str, commit: str) -> None:
+    require_deploy(deploy, deploy_id=deploy_id, commit=commit)
+    if deploy.get("status") not in ROLLBACK_ARTIFACT_STATUSES:
+        raise OpsError(f"rollback artifact is not known-good: {deploy.get('status')}")
 
 
 def wait_for_deploy(
@@ -281,8 +301,10 @@ def wait_for_deploy(
             last_status = status
         if status == "live":
             return deploy
-        if status in FAILURE_STATUSES:
+        if status in FAILURE_STATUSES or status == "deactivated":
             raise OpsError(f"Render deploy entered failure state: {status}")
+        if status not in IN_PROGRESS_STATUSES:
+            raise OpsError(f"Render deploy entered unknown state: {status!r}")
         sleep(interval_seconds)
     raise OpsError(f"timed out waiting for Render deploy {deploy_id}")
 
@@ -290,6 +312,8 @@ def wait_for_deploy(
 def verify_health(url: str, *, timeout: float = 20.0) -> dict[str, Any]:
     try:
         with urlopen(url, timeout=timeout) as response:
+            if response.geturl() != url:
+                raise OpsError(f"health check redirected away from exact surface {url}")
             if response.status != 200:
                 raise OpsError(f"health check returned HTTP {response.status}")
             payload = json.loads(response.read().decode("utf-8"))
@@ -356,12 +380,14 @@ def command_deploy(args: argparse.Namespace) -> dict[str, Any]:
     service = client.service(config.service_id)
     validate_service(service, config)
     live = current_live(client.deploys(config.service_id))
-    require_deploy(live, deploy_id=rollback_id, commit=rollback_commit)
+    require_rollback_artifact(live, deploy_id=rollback_id, commit=rollback_commit)
     created = client.deploy(config.service_id, commit)
     deploy_id = require_deploy_id(str(created.get("id") or ""), "created deploy ID")
     if deploy_commit(created) != commit:
         raise OpsError("Render created a deploy for the wrong commit")
     finished = wait_for_deploy(client, config, deploy_id, commit, timeout_seconds=args.timeout)
+    final_live = current_live(client.deploys(config.service_id))
+    require_deploy(final_live, deploy_id=deploy_id, commit=commit)
     health = verify_health_surfaces(config)
     return {"deploy": safe_deploy(finished), "rollback": safe_deploy(live), "health": health}
 
@@ -396,12 +422,18 @@ def command_rollback(args: argparse.Namespace) -> dict[str, Any]:
     _confirm_apply(args, config)
     rollback_commit = require_commit(args.rollback_commit, "rollback commit")
     rollback_id = require_deploy_id(args.rollback_deploy_id, "rollback deploy ID")
+    current_commit = require_commit(args.current_commit, "current live commit")
+    current_id = require_deploy_id(args.current_deploy_id, "current live deploy ID")
     if args.timeout <= 0:
         raise OpsError("timeout must be positive")
     service = client.service(config.service_id)
     validate_service(service, config)
+    live = current_live(client.deploys(config.service_id))
+    require_deploy(live, deploy_id=current_id, commit=current_commit)
+    if current_id == rollback_id:
+        raise OpsError("current live deploy and rollback artifact must be different")
     artifact = client.deploy_by_id(config.service_id, rollback_id)
-    require_deploy(artifact, deploy_id=rollback_id, commit=rollback_commit)
+    require_rollback_artifact(artifact, deploy_id=rollback_id, commit=rollback_commit)
     created = client.rollback(config.service_id, rollback_id)
     created_id = require_deploy_id(str(created.get("id") or ""), "created rollback deploy ID")
     if deploy_commit(created) != rollback_commit:
@@ -409,6 +441,8 @@ def command_rollback(args: argparse.Namespace) -> dict[str, Any]:
     finished = wait_for_deploy(
         client, config, created_id, rollback_commit, timeout_seconds=args.timeout
     )
+    final_live = current_live(client.deploys(config.service_id))
+    require_deploy(final_live, deploy_id=created_id, commit=rollback_commit)
     health = verify_health_surfaces(config)
     return {"rollback_deploy": safe_deploy(finished), "health": health}
 
@@ -437,6 +471,8 @@ def parser() -> argparse.ArgumentParser:
     rollback = sub.add_parser("rollback")
     rollback.add_argument("--rollback-deploy-id", default=os.environ.get("ROLLBACK_DEPLOY_ID", ""))
     rollback.add_argument("--rollback-commit", default=os.environ.get("ROLLBACK_COMMIT", ""))
+    rollback.add_argument("--current-deploy-id", default=os.environ.get("CURRENT_DEPLOY_ID", ""))
+    rollback.add_argument("--current-commit", default=os.environ.get("CURRENT_COMMIT", ""))
     rollback.add_argument("--confirm-service-id", default=os.environ.get("CONFIRM_SERVICE_ID", ""))
     rollback.add_argument("--timeout", type=int, default=900)
     rollback.add_argument("--apply", action="store_true", default=os.environ.get("APPLY") == "1")

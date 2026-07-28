@@ -113,6 +113,27 @@ def test_render_api_failure_never_exposes_key(monkeypatch: pytest.MonkeyPatch) -
     assert "do-not-print-this" not in str(raised.value)
 
 
+def test_health_rejects_redirected_surface(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://library.example/health"
+
+        def read(self) -> bytes:
+            return b'{"status":"ok","service":"library"}'
+
+    monkeypatch.setattr(render_ops, "urlopen", lambda url, timeout: Response())
+    with pytest.raises(render_ops.OpsError, match="redirected away"):
+        render_ops.verify_health("https://library-origin.example/health")
+
+
 def test_validate_service_fails_on_topology_drift(config: render_ops.ProductionConfig) -> None:
     observed = service(config)
     observed["serviceDetails"]["region"] = "oregon"
@@ -120,15 +141,30 @@ def test_validate_service_fails_on_topology_drift(config: render_ops.ProductionC
         render_ops.validate_service(observed, config)
 
 
-def test_current_live_rejects_active_deploy() -> None:
-    with pytest.raises(render_ops.OpsError, match="another deploy"):
-        render_ops.current_live([deploy("dep-new", "a" * 40, "build_in_progress")])
+def test_current_live_rejects_active_or_unknown_deploy() -> None:
+    for status in ("created", "build_in_progress"):
+        with pytest.raises(render_ops.OpsError, match="another deploy"):
+            render_ops.current_live(
+                [deploy("dep-new", "a" * 40, status), deploy("dep-live", "b" * 40)]
+            )
+    with pytest.raises(render_ops.OpsError, match="unknown Render deploy state"):
+        render_ops.current_live(
+            [deploy("dep-new", "a" * 40, "future_state"), deploy("dep-live", "b" * 40)]
+        )
 
 
 class FakeClient:
-    def __init__(self, config: render_ops.ProductionConfig, rollback: dict) -> None:
+    def __init__(
+        self,
+        config: render_ops.ProductionConfig,
+        rollback: dict,
+        *,
+        current: dict | None = None,
+    ) -> None:
         self.config = config
         self.rollback_artifact = rollback
+        self.current = current or rollback
+        self.final_live: dict | None = None
         self.posts: list[tuple[str, str]] = []
 
     def service(self, service_id: str) -> dict:
@@ -136,14 +172,21 @@ class FakeClient:
         return service(self.config)
 
     def deploys(self, service_id: str, limit: int = 20) -> list[dict]:
-        return [self.rollback_artifact]
+        if self.final_live is not None:
+            return [self.final_live, {**self.current, "status": "deactivated"}]
+        artifacts = [self.current]
+        if self.rollback_artifact["id"] != self.current["id"]:
+            artifacts.append(self.rollback_artifact)
+        return artifacts
 
     def deploy(self, service_id: str, commit: str) -> dict:
         self.posts.append(("deploy", commit))
+        self.final_live = deploy("dep-created", commit)
         return deploy("dep-created", commit, "build_in_progress")
 
     def rollback(self, service_id: str, deploy_id: str) -> dict:
         self.posts.append(("rollback", deploy_id))
+        self.final_live = deploy("dep-rolled", render_ops.deploy_commit(self.rollback_artifact))
         return deploy(
             "dep-rolled", render_ops.deploy_commit(self.rollback_artifact), "update_in_progress"
         )
@@ -151,6 +194,8 @@ class FakeClient:
     def deploy_by_id(self, service_id: str, deploy_id: str) -> dict:
         if deploy_id == self.rollback_artifact["id"]:
             return self.rollback_artifact
+        if deploy_id == self.current["id"]:
+            return self.current
         raise AssertionError(deploy_id)
 
 
@@ -161,6 +206,8 @@ def common_args(config: render_ops.ProductionConfig) -> SimpleNamespace:
         commit="b" * 40,
         rollback_commit="a" * 40,
         rollback_deploy_id="dep-rollback",
+        current_commit="b" * 40,
+        current_deploy_id="dep-candidate",
         repo_root=".",
         timeout=30,
     )
@@ -195,8 +242,9 @@ def test_command_deploy_pins_rollback_and_clears_through_client(
 def test_command_rollback_uses_exact_artifact(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
 ) -> None:
-    artifact = deploy("dep-rollback", "a" * 40)
-    client = FakeClient(config, artifact)
+    artifact = deploy("dep-rollback", "a" * 40, "deactivated")
+    current = deploy("dep-candidate", "b" * 40)
+    client = FakeClient(config, artifact, current=current)
     monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
     monkeypatch.setattr(
         render_ops,
@@ -212,8 +260,53 @@ def test_command_rollback_uses_exact_artifact(
 def test_command_rollback_requires_exact_artifact(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
 ) -> None:
-    artifact = deploy("dep-rollback", "c" * 40)
-    client = FakeClient(config, artifact)
+    artifact = deploy("dep-rollback", "c" * 40, "deactivated")
+    client = FakeClient(config, artifact, current=deploy("dep-candidate", "b" * 40))
+    monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
+    with pytest.raises(render_ops.OpsError, match="approved artifact"):
+        render_ops.command_rollback(common_args(config))
+    assert client.posts == []
+
+
+def test_command_rollback_rejects_failed_artifact_before_mutation(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
+) -> None:
+    artifact = deploy("dep-rollback", "a" * 40, "build_failed")
+    client = FakeClient(config, artifact, current=deploy("dep-candidate", "b" * 40))
+    monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
+    with pytest.raises(render_ops.OpsError, match="not known-good"):
+        render_ops.command_rollback(common_args(config))
+    assert client.posts == []
+
+
+def test_command_rollback_detects_competing_deploy_after_mutation(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
+) -> None:
+    class ConcurrentClient(FakeClient):
+        def deploys(self, service_id: str, limit: int = 20) -> list[dict]:
+            artifacts = super().deploys(service_id, limit)
+            if self.final_live is not None:
+                artifacts.append(deploy("dep-competing", "c" * 40, "created"))
+            return artifacts
+
+    artifact = deploy("dep-rollback", "a" * 40, "deactivated")
+    client = ConcurrentClient(config, artifact, current=deploy("dep-candidate", "b" * 40))
+    monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
+    monkeypatch.setattr(
+        render_ops,
+        "wait_for_deploy",
+        lambda c, cfg, deploy_id, commit, timeout_seconds: deploy(deploy_id, commit),
+    )
+    with pytest.raises(render_ops.OpsError, match="another deploy"):
+        render_ops.command_rollback(common_args(config))
+    assert client.posts == [("rollback", "dep-rollback")]
+
+
+def test_command_rollback_rejects_unpinned_current_live(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
+) -> None:
+    artifact = deploy("dep-rollback", "a" * 40, "deactivated")
+    client = FakeClient(config, artifact, current=deploy("dep-other", "c" * 40))
     monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
     with pytest.raises(render_ops.OpsError, match="approved artifact"):
         render_ops.command_rollback(common_args(config))

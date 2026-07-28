@@ -109,7 +109,7 @@ def validate_recovery_payload(
 ) -> dict[str, Any]:
     ref, _ = ref_from_payload(payload)
     validate_profile_pin(ref, expected_version=expected_version, expected_digest=expected_digest)
-    if ref.get("runtime_kind") or ref.get("managed_set"):
+    if "runtime_kind" in ref or "managed_set" in ref:
         raise GateError("rollback fingerprint is not the known pre-fix behavior")
     return sanitized_summary("raw-recovery", runtime, ref, 0)
 
@@ -280,8 +280,14 @@ def require_recovery_rejection(
             stderr=err,
             check=False,
         )
-    if completed.returncode == 0:
-        raise GateError(f"rollback strict client unexpectedly succeeded for {runtime}")
+    expected_error = (
+        f'library materialize response runtime_kind "{runtime}" does not match ref.json ""'
+    )
+    captured_error = stderr.read_text(encoding="utf-8", errors="replace")
+    if completed.returncode != 1 or expected_error not in captured_error:
+        raise GateError(
+            f"rollback strict client did not produce the expected schema rejection for {runtime}"
+        )
     return {
         "gate": "released-strict-client-recovery",
         "runtime_kind": runtime,
