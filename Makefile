@@ -8,7 +8,7 @@
 	release-awid-pypi-tag release-awid-pypi-push \
 	release-a2a-gateway-check release-a2a-gateway-tag release-a2a-gateway-push \
 	release-channel-check release-channel-tag release-channel-push \
-	release-cli-tag release-cli-push \
+	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
 	release-all-check release-all-tag release-all-push \
 	publish-skills \
@@ -18,7 +18,9 @@ SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.t
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
 CHANNEL_VERSION := $(shell node -p "require('./channel/package.json').version" 2>/dev/null)
 CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plugin.json').version" 2>/dev/null)
-CLI_VERSION := $(SERVER_VERSION)
+# aw CLI releases have independent semver. Derive the next patch from the
+# published aw-v* history; the release guard below rejects stale overrides.
+CLI_VERSION = $(shell ./scripts/cli-release-version.sh next)
 # OAS seam tests intentionally measure the working sibling clone, including
 # unreleased integration primitives, rather than whichever CLI is global.
 OAS_TEST_ROOT ?= $(abspath $(shell git rev-parse --git-common-dir)/../../oas)
@@ -74,14 +76,14 @@ help:
 	@echo "  release-awid-check / -tag / -push     awid service (GHCR Docker)"
 	@echo "  release-awid-pypi-tag / -push         awid service (PyPI)"
 	@echo "  release-a2a-gateway-check / -tag / -push  A2A gateway (GHCR Docker)"
-	@echo "  release-cli-tag / -push               aw CLI (goreleaser)"
+	@echo "  release-cli-version-check / -tag / -push  aw CLI (goreleaser)"
 	@echo "  release-awid-site                     deploy awid landing page"
 	@echo "  clean        Remove all build artifacts and caches"
 
 build:
 	cd cli/go && $(MAKE) build
 
-test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard
+test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
@@ -365,12 +367,18 @@ release-channel-push:
 
 # ── CLI release ──────────────────────────────────────────────────────
 
-release-cli-tag:
+test-release-cli-version:
+	bash scripts/check-cli-release-version-test.sh
+
+release-cli-version-check:
+	@./scripts/cli-release-version.sh check "$(CLI_VERSION)"
+
+release-cli-tag: release-cli-version-check
 	@git rev-parse --verify "aw-v$(CLI_VERSION)" >/dev/null 2>&1 && (echo "Tag aw-v$(CLI_VERSION) already exists."; exit 1) || true
 	git tag "aw-v$(CLI_VERSION)"
 	@echo "Created tag aw-v$(CLI_VERSION)."
 
-release-cli-push:
+release-cli-push: release-cli-version-check
 	git push origin aw-v$(CLI_VERSION)
 
 # ── Claude skills release (bump + tag + push; GH Actions publishes) ─
@@ -426,6 +434,7 @@ release-all-check:
 	@echo "  cli:     $(CLI_VERSION)"
 	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
 		(echo "ERROR: channel package.json != plugin.json"; exit 1)
+	$(MAKE) release-cli-version-check
 	@echo ""
 	@echo "=== Running all tests ==="
 	$(MAKE) test
@@ -495,7 +504,7 @@ ship: release-all-check
 	@echo ""
 	@echo "    Ready for tag-push."
 
-release-all-tag:
+release-all-tag: release-cli-version-check
 	@echo "=== Tagging all products ==="
 	git add server/pyproject.toml server/uv.lock channel/package.json channel/package-lock.json channel/.claude-plugin/plugin.json awid/pyproject.toml awid/uv.lock
 	git commit -m "release: aweb $(SERVER_VERSION), channel $(CHANNEL_VERSION), awid $(AWID_VERSION)"
@@ -506,7 +515,7 @@ release-all-tag:
 	git tag "awid-service-v$(AWID_VERSION)"
 	@echo "Created tags: server-v$(SERVER_VERSION) aw-v$(CLI_VERSION) channel-v$(CHANNEL_VERSION) awid-v$(AWID_VERSION) awid-service-v$(AWID_VERSION)"
 
-release-all-push:
+release-all-push: release-cli-version-check
 	git push origin main
 	git push origin server-v$(SERVER_VERSION)
 	git push origin aw-v$(CLI_VERSION)
