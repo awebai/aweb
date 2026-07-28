@@ -531,6 +531,81 @@ async def test_patch_agent_workspace_accepts_canonical_role_name(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_patch_agent_workspace_repairs_ssh_over_443_repo_binding(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+    )
+    cert_header = _encode_certificate(cert)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
+
+    agent_id = uuid4()
+    workspace_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, $4, 'local', 'active')
+        """,
+        agent_id,
+        "backend:acme.com",
+        agent_did_key,
+        "alice",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_id, agent_id, alias, workspace_type)
+        VALUES ($1, $2, $3, 'alice', 'agent')
+        """,
+        workspace_id,
+        "backend:acme.com",
+        agent_id,
+    )
+
+    body = {"repo_origin": "ssh://git@ssh.github.com:443/acme/backend.git"}
+    body_bytes = json.dumps(body, separators=(",", ":")).encode()
+    headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", body_bytes)
+    headers["X-AWID-Team-Certificate"] = cert_header
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.patch(
+            "/v1/agents/me",
+            content=body_bytes,
+            headers={**headers, "Content-Type": "application/json"},
+        )
+        second = await client.patch(
+            "/v1/agents/me",
+            content=body_bytes,
+            headers={**headers, "Content-Type": "application/json"},
+        )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["canonical_origin"] == "github.com/acme/backend"
+    assert second.json()["repo_id"] == first.json()["repo_id"]
+
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT w.repo_id, r.canonical_origin
+        FROM {{tables.workspaces}} w
+        JOIN {{tables.repos}} r ON r.id = w.repo_id
+        WHERE w.workspace_id = $1
+        """,
+        workspace_id,
+    )
+    assert str(row["repo_id"]) == first.json()["repo_id"]
+    assert row["canonical_origin"] == "github.com/acme/backend"
+
+
+@pytest.mark.asyncio
 async def test_get_my_inbound_mode_returns_current_global_agent_policy(aweb_cloud_db):
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
