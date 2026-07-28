@@ -1720,17 +1720,50 @@ func setupTeamAddedAgentWorktree(anchorDir string, plan teamHumanAddedAgent, wor
 		}
 	}
 	worktreeDir := filepath.Join(plan.HomeDir, "worktree")
+	worktreeExisted := false
+	if _, statErr := os.Stat(filepath.Join(worktreeDir, ".git")); statErr == nil {
+		worktreeExisted = true
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+	branchExisted := exec.Command("git", "-C", workRepoRoot, "rev-parse", "--verify", "--quiet", "refs/heads/"+strings.TrimSpace(plan.Name)).Run() == nil
 	if err := ensureTeamAddGitWorktree(workRepoRoot, worktreeDir, plan.Name); err != nil {
 		return err
 	}
+	rollbackSetup := func(cause error) error {
+		if worktreeExisted {
+			return cause
+		}
+		rollbackErr := rollbackTeamAddedAgentWorktree(workRepoRoot, worktreeDir, plan.Name, !branchExisted)
+		if rollbackErr != nil {
+			return fmt.Errorf("%w; git worktree rollback failed: %v", cause, rollbackErr)
+		}
+		return cause
+	}
 	worksOnMain, err := teamAddedAgentWorksOnMain(plan)
 	if err != nil {
-		return err
+		return rollbackSetup(err)
 	}
 	if worksOnMain {
 		if err := ensureTeamAddWorkMainLink(plan.HomeDir, workRepoRoot); err != nil {
-			return err
+			return rollbackSetup(err)
 		}
+	}
+	return nil
+}
+
+func rollbackTeamAddedAgentWorktree(repoRoot, worktreeDir, branch string, removeBranch bool) error {
+	cmd := exec.Command("git", "-C", repoRoot, "worktree", "remove", "--force", worktreeDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git worktree remove %s: %w%s", worktreeDir, err, formatCommandOutput(out))
+	}
+	if !removeBranch {
+		return nil
+	}
+	branch = strings.TrimSpace(branch)
+	cmd = exec.Command("git", "-C", repoRoot, "branch", "-D", branch)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git branch -D %s: %w%s", branch, err, formatCommandOutput(out))
 	}
 	return nil
 }
