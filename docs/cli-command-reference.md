@@ -930,7 +930,7 @@ Flags:
 - `--local Add a local team-scoped agent identity (default)`
 - `--no-attach Do not attach or switch to the tmux session after --start launch`
 - `--runtime string Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)`
-- `--session string tmux session name for --start (default: active team name or aw-team)`
+- `--session string tmux session name for --start (default: caller's session inside tmux, otherwise active team name or aw-team)`
 - `--start Launch the added agent in tmux after materializing it`
 - `--work-dir string Git repo to use for the agent's worktree (default: repo containing the home, if any)`
 
@@ -997,7 +997,7 @@ Flags:
 - `--local Add a local team-scoped agent identity (default)`
 - `--no-attach Do not attach or switch to the tmux session after --start launch`
 - `--runtime string Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)`
-- `--session string tmux session name for --start (default: active team name or aw-team)`
+- `--session string tmux session name for --start (default: caller's session inside tmux, otherwise active team name or aw-team)`
 - `--start Launch the added agent in tmux after materializing it`
 - `--team-id string Canonical team id (<name>:<namespace>) to extend when discovery is ambiguous or when asserting an API key's team`
 - `--work-dir string Git repo to use for the agent's worktree (default: repo containing the home, if any)`
@@ -1135,7 +1135,7 @@ Flags:
 - `-h, --help help for up`
 - `--no-attach Do not attach or switch to the tmux session after launch`
 - `--recreate Kill and recreate an existing tmux session`
-- `--session string tmux session name (default: active team name or aw-team)`
+- `--session string tmux session name (default: caller's session inside tmux, otherwise active team name or aw-team)`
 
 ## `whoami`
 

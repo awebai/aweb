@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -358,11 +359,49 @@ func TestStartTeamAddedAgentUsesTeamUpLaunchPrimitives(t *testing.T) {
 		return nil
 	}
 	plan := teamHumanAddedAgent{Name: "developer", HomeDir: home}
-	if err := startTeamAddedAgent(&cobra.Command{}, plan, "aw-team", false); err != nil {
+	if err := startTeamAddedAgent(&cobra.Command{}, plan, teamUpSessionSelection{Session: "aw-team"}, false); err != nil {
 		t.Fatalf("startTeamAddedAgent: %v", err)
 	}
 	if len(calls) != 1 || !strings.Contains(calls[0], "new-session -d -s aw-team -n developer") || !strings.Contains(calls[0], "exec 'pi' '--approve'") {
 		t.Fatalf("tmux calls=%v", calls)
+	}
+}
+
+func TestStartTeamAddedAgentPreservesCallerTmuxContext(t *testing.T) {
+	resetTeamUpDetectorsForTest(t)
+	resetTeamUpTmuxForTest(t)
+	logPath := installFakeTmuxForEnvTest(t)
+	withFakePiOnPath(t)
+	withFakePiExtensionRunner(t, func(args ...string) ([]byte, error) {
+		return []byte("User packages:\n  npm:@awebai/pi\n"), nil
+	})
+	callerTMUX := "/tmp/aary5-caller,123,0"
+	overrideTmpdir := filepath.Join(t.TempDir(), "override-socket")
+	t.Setenv(tmuxEnv, callerTMUX)
+	t.Setenv(tmuxTmpdirEnv, overrideTmpdir)
+	t.Setenv(teamUpTmuxTmpdirEnv, filepath.Join(t.TempDir(), "configured-socket"))
+
+	home := writeMaterializedAgentForTeamUp(t, t.TempDir(), "developer", "pi")
+	plan := teamHumanAddedAgent{Name: "developer", HomeDir: home}
+	selection := teamUpSessionSelection{Session: "aary5.caller", TmuxContext: teamUpCallerTmuxContext}
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	if err := startTeamAddedAgent(cmd, plan, selection, false); err != nil {
+		t.Fatalf("startTeamAddedAgent: %v", err)
+	}
+
+	log := readFakeTmuxEnvLog(t, logPath)
+	if !strings.Contains(log, "args=new-window -t aary5.caller: -n developer") {
+		t.Fatalf("caller session target not preserved:\n%s", log)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(log), "\n") {
+		if !strings.HasPrefix(line, "TMUX_TMPDIR="+overrideTmpdir+" TMUX="+callerTMUX+" ") {
+			t.Fatalf("add --start invocation left caller tmux context:\n%s", log)
+		}
+	}
+	if !strings.Contains(out.String(), "tmux session \"aary5.caller\"") {
+		t.Fatalf("start output does not name exact caller session: %q", out.String())
 	}
 }
 
@@ -378,7 +417,7 @@ func TestStartTeamAddedAgentSkipsWhenHomeAlreadyRunning(t *testing.T) {
 		return nil
 	}
 	plan := teamHumanAddedAgent{Name: "developer", HomeDir: home}
-	if err := startTeamAddedAgent(&cobra.Command{}, plan, "aw-team", false); err != nil {
+	if err := startTeamAddedAgent(&cobra.Command{}, plan, teamUpSessionSelection{Session: "aw-team"}, false); err != nil {
 		t.Fatalf("startTeamAddedAgent: %v", err)
 	}
 }

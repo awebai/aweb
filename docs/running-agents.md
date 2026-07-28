@@ -138,10 +138,12 @@ It does not start in `worktree/`. This is how the runtime loads the home's
 instructions and resolves the correct aweb identity. The agent changes into
 `worktree/` for Git, tests, and builds.
 
-By default, `aw team up` attaches your terminal to a tmux session with one
-window per launched agent, named after the agent. Use normal tmux window
-navigation to move between agents. `--no-attach` leaves the session running in
-the background; the command output names the session to attach to later.
+By default, `aw team up` launched from inside tmux uses the caller's current
+session, so each launched agent is immediately reachable as a new window there.
+Outside tmux, it uses the active-team-derived session name (or `aw-team`). Use
+normal tmux window navigation to move between agents. `--session` overrides
+both defaults. `--no-attach` leaves the session running in the background; the
+command output names the session to attach to later.
 
 If tmux is unavailable, the command prints the exact `cd <home> && <command>`
 line for each agent. Run those commands in separate terminals. The output of
@@ -175,12 +177,19 @@ running-process check. `--recreate` kills and recreates the tmux session only
 when the target session has no running agent windows; otherwise it refuses
 unless you pass `--force-kill`.
 
-Live-agent tmux is isolated from the human/default socket by setting
+For an explicit `--session`, or for the generated default outside tmux,
+live-agent tmux can be isolated from the human/default socket by setting
 `AWEB_TMUX_TMPDIR` before `aw team up`, `aw team add --start`, or
 `aw team extend --start`. The CLI maps that value to `TMUX_TMPDIR` for each
-tmux child and strips inherited `TMUX`, even when invoked inside another tmux
-client. The same value can be persisted as `aweb_tmux_tmpdir` in
-`.aw/workspace.yaml`; the environment variable wins.
+tmux child and strips inherited `TMUX`. The same value can be persisted as
+`aweb_tmux_tmpdir` in `.aw/workspace.yaml`; the environment variable wins.
+
+There is one deliberate exception: inside tmux with no explicit `--session`,
+the caller's current session is the destination. The CLI resolves that session
+before applying launcher socket configuration, then preserves the inherited
+`TMUX` context for every launch, inspection, prompt, and attach operation. If
+the caller session cannot be resolved, the command fails instead of falling
+back to a team-derived session on another socket.
 
 These names are deliberately different: **raw `tmux` ignores
 `AWEB_TMUX_TMPDIR`**. A direct tmux command must receive `TMUX_TMPDIR` (or an

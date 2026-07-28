@@ -38,8 +38,21 @@ var teamHumanUpCmd = &cobra.Command{
 }
 
 type teamUpPlan struct {
-	Session string            `json:"session"`
-	Agents  []teamUpAgentPlan `json:"agents"`
+	Session     string            `json:"session"`
+	Agents      []teamUpAgentPlan `json:"agents"`
+	TmuxContext teamUpTmuxContext `json:"-"`
+}
+
+type teamUpTmuxContext uint8
+
+const (
+	teamUpConfiguredTmuxContext teamUpTmuxContext = iota
+	teamUpCallerTmuxContext
+)
+
+type teamUpSessionSelection struct {
+	Session     string
+	TmuxContext teamUpTmuxContext
 }
 
 type teamUpAgentPlan struct {
@@ -79,7 +92,7 @@ var (
 
 func init() {
 	teamUpAttach = true
-	teamHumanUpCmd.Flags().StringVar(&teamUpSession, "session", "", "tmux session name (default: active team name or aw-team)")
+	teamHumanUpCmd.Flags().StringVar(&teamUpSession, "session", "", "tmux session name (default: caller's session inside tmux, otherwise active team name or aw-team)")
 	teamHumanUpCmd.Flags().BoolVar(&teamUpDryRun, "dry-run", false, "Print the tmux launch plan without running it")
 	teamHumanUpCmd.Flags().BoolVar(&teamUpAttach, "attach", true, "Attach or switch to the tmux session after launch")
 	teamHumanUpCmd.Flags().BoolVar(&teamUpNoAttach, "no-attach", false, "Do not attach or switch to the tmux session after launch")
@@ -95,11 +108,11 @@ func runTeamHumanUp(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	repoRoot := resolveRepoRoot(wd)
-	session := strings.TrimSpace(teamUpSession)
-	if session == "" {
-		session = defaultTeamUpSessionName(repoRoot)
+	selection, err := resolveTeamUpSession(repoRoot, teamUpSession)
+	if err != nil {
+		return err
 	}
-	plan, err := buildTeamUpPlan(repoRoot, session, teamUpForce, teamUpRecreate)
+	plan, err := buildTeamUpPlanForSession(repoRoot, selection, teamUpForce, teamUpRecreate)
 	if err != nil {
 		return err
 	}
@@ -114,13 +127,45 @@ func runTeamHumanUp(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := confirmStartedClaudeChannelPrompts(plan.Session, started); err != nil {
+	if err := confirmStartedClaudeChannelPromptsInContext(plan.TmuxContext, plan.Session, started); err != nil {
 		return err
 	}
-	if attach && teamUpSessionExists(plan.Session) {
-		return attachTeamUpSession(cmd, plan.Session)
+	if attach && teamUpSessionExistsInContext(plan.TmuxContext, plan.Session) {
+		return attachTeamUpSession(cmd, plan.TmuxContext, plan.Session)
 	}
 	return nil
+}
+
+func resolveTeamUpSession(repoRoot, explicitSession string) (teamUpSessionSelection, error) {
+	if session := strings.TrimSpace(explicitSession); session != "" {
+		return teamUpSessionSelection{Session: session, TmuxContext: teamUpConfiguredTmuxContext}, nil
+	}
+	if strings.TrimSpace(os.Getenv(tmuxEnv)) == "" {
+		return teamUpSessionSelection{Session: defaultTeamUpSessionName(repoRoot), TmuxContext: teamUpConfiguredTmuxContext}, nil
+	}
+	cmd := exec.Command("tmux", "display-message", "-p", "#S")
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail != "" {
+			return teamUpSessionSelection{}, fmt.Errorf("resolve caller tmux session before launch: %w: %s", err, detail)
+		}
+		return teamUpSessionSelection{}, fmt.Errorf("resolve caller tmux session before launch: %w", err)
+	}
+	session := strings.TrimRight(string(output), "\r\n")
+	if strings.TrimSpace(session) == "" {
+		return teamUpSessionSelection{}, fmt.Errorf("resolve caller tmux session before launch: tmux returned an empty session name")
+	}
+	return teamUpSessionSelection{Session: session, TmuxContext: teamUpCallerTmuxContext}, nil
+}
+
+func selectedTeamUpSessionName(selection teamUpSessionSelection) string {
+	session := firstNonEmptyLibraryValue(selection.Session, "aw-team")
+	if selection.TmuxContext == teamUpCallerTmuxContext {
+		return session
+	}
+	return teamUpTmuxName(session)
 }
 
 func defaultTeamUpSessionName(repoRoot string) string {
@@ -141,6 +186,10 @@ func defaultTeamUpSessionName(repoRoot string) string {
 }
 
 func buildTeamUpPlan(repoRoot, session string, force bool, recreate bool) (teamUpPlan, error) {
+	return buildTeamUpPlanForSession(repoRoot, teamUpSessionSelection{Session: session, TmuxContext: teamUpConfiguredTmuxContext}, force, recreate)
+}
+
+func buildTeamUpPlanForSession(repoRoot string, selection teamUpSessionSelection, force bool, recreate bool) (teamUpPlan, error) {
 	agentsDir := filepath.Join(repoRoot, "agents", "instances")
 	entries, err := os.ReadDir(agentsDir)
 	if err != nil {
@@ -149,7 +198,7 @@ func buildTeamUpPlan(repoRoot, session string, force bool, recreate bool) (teamU
 		}
 		return teamUpPlan{}, err
 	}
-	plan := teamUpPlan{Session: teamUpTmuxName(firstNonEmptyLibraryValue(session, "aw-team"))}
+	plan := teamUpPlan{Session: selectedTeamUpSessionName(selection), TmuxContext: selection.TmuxContext}
 	activeHomes := map[string]teamUpRunningProcess{}
 	if !(force || recreate) {
 		activeHomes, err = teamUpDetectActiveHomes(agentsDir)
@@ -258,14 +307,14 @@ func preflightTeamUpCommands(plan teamUpPlan) error {
 
 func executeTeamUpPlan(cmd *cobra.Command, plan teamUpPlan, recreate, forceKill, attach bool) ([]teamUpAgentPlan, error) {
 	starts := teamUpAgentsToStart(plan)
-	exists := teamUpSessionExists(plan.Session)
+	exists := teamUpSessionExistsInContext(plan.TmuxContext, plan.Session)
 	if exists && recreate {
 		if !forceKill {
 			if err := guardTeamUpRecreate(plan); err != nil {
 				return nil, err
 			}
 		}
-		if err := teamUpRunTmux(cmd, "kill-session", "-t", plan.Session); err != nil {
+		if err := teamUpRunTmuxInContext(plan.TmuxContext, cmd, "kill-session", "-t", plan.Session); err != nil {
 			return nil, err
 		}
 		exists = false
@@ -273,18 +322,18 @@ func executeTeamUpPlan(cmd *cobra.Command, plan teamUpPlan, recreate, forceKill,
 	if len(starts) == 0 {
 		fmt.Fprintf(cmd.OutOrStdout(), "aw team up: no missing agents to start in session %q\n", plan.Session)
 		if attach && exists {
-			return nil, attachTeamUpSession(cmd, plan.Session)
+			return nil, attachTeamUpSession(cmd, plan.TmuxContext, plan.Session)
 		}
 		return nil, nil
 	}
 	for _, agent := range starts {
-		if err := launchAgentWindow(cmd, plan.Session, agent); err != nil {
+		if err := launchAgentWindow(cmd, plan.TmuxContext, plan.Session, agent); err != nil {
 			return nil, err
 		}
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "aw team up: started %d missing agent(s) in tmux session %q\n", len(starts), plan.Session)
 	if attach {
-		return starts, attachTeamUpSession(cmd, plan.Session)
+		return starts, attachTeamUpSession(cmd, plan.TmuxContext, plan.Session)
 	}
 	return starts, nil
 }
@@ -304,7 +353,7 @@ func liveTeamUpAgentsInSession(plan teamUpPlan) ([]string, error) {
 	if len(plan.Agents) == 0 {
 		return nil, nil
 	}
-	windows, err := teamUpSessionWindowNames(plan.Session)
+	windows, err := teamUpSessionWindowNames(plan.TmuxContext, plan.Session)
 	if err != nil {
 		return nil, fmt.Errorf("inspect tmux session %q before --recreate: %w", plan.Session, err)
 	}
@@ -335,8 +384,8 @@ func liveTeamUpAgentsInSession(plan teamUpPlan) ([]string, error) {
 	return live, nil
 }
 
-func teamUpSessionWindowNames(session string) (map[string]bool, error) {
-	out, err := teamUpRunTmuxOutput("list-windows", "-t", session, "-F", "#W")
+func teamUpSessionWindowNames(tmuxContext teamUpTmuxContext, session string) (map[string]bool, error) {
+	out, err := teamUpRunTmuxOutputInContext(tmuxContext, "list-windows", "-t", session+":", "-F", "#W")
 	if err != nil {
 		return nil, err
 	}
@@ -360,21 +409,32 @@ func teamUpAgentsToStart(plan teamUpPlan) []teamUpAgentPlan {
 	return starts
 }
 
-func launchAgentWindow(cmd *cobra.Command, session string, agent teamUpAgentPlan) error {
+func launchAgentWindow(cmd *cobra.Command, tmuxContext teamUpTmuxContext, session string, agent teamUpAgentPlan) error {
 	guardedPath, err := teamUpGuardedAgentPath()
 	if err != nil {
 		return fmt.Errorf("prepare tmux guard for agent %q: %w", agent.Name, err)
 	}
 	shellCmd := teamUpShellCommand(agent, guardedPath)
 	windowName := teamUpWindowName(agent.Name)
-	if !teamUpSessionExists(session) {
-		return teamUpRunTmux(cmd, "new-session", "-d", "-s", session, "-n", windowName, shellCmd)
+	if !teamUpSessionExistsInContext(tmuxContext, session) {
+		return teamUpRunTmuxInContext(tmuxContext, cmd, "new-session", "-d", "-s", session, "-n", windowName, shellCmd)
 	}
-	return teamUpRunTmux(cmd, "new-window", "-t", session+":", "-n", windowName, shellCmd)
+	return teamUpRunTmuxInContext(tmuxContext, cmd, "new-window", "-t", session+":", "-n", windowName, shellCmd)
 }
 
 func tmuxSessionExists(session string) bool {
-	return teamUpTmuxCommand("has-session", "-t", session).Run() == nil
+	return tmuxSessionExistsInContext(teamUpConfiguredTmuxContext, session)
+}
+
+func tmuxSessionExistsInContext(tmuxContext teamUpTmuxContext, session string) bool {
+	return teamUpTmuxCommand(tmuxContext, "has-session", "-t", session+":").Run() == nil
+}
+
+func teamUpSessionExistsInContext(tmuxContext teamUpTmuxContext, session string) bool {
+	if tmuxContext == teamUpConfiguredTmuxContext {
+		return teamUpSessionExists(session)
+	}
+	return tmuxSessionExistsInContext(tmuxContext, session)
 }
 
 func detectTeamUpActiveHomes(agentsDir string) (map[string]teamUpRunningProcess, error) {
@@ -467,15 +527,19 @@ func canonicalTeamUpPath(path string) string {
 	return clean
 }
 
-func attachTeamUpSession(cmd *cobra.Command, session string) error {
-	if strings.TrimSpace(os.Getenv(tmuxEnv)) != "" && resolveTeamUpTmuxTmpdir() == "" {
-		return teamUpRunTmux(cmd, "switch-client", "-t", session)
+func attachTeamUpSession(cmd *cobra.Command, tmuxContext teamUpTmuxContext, session string) error {
+	if tmuxContext == teamUpCallerTmuxContext || (strings.TrimSpace(os.Getenv(tmuxEnv)) != "" && resolveTeamUpTmuxTmpdir() == "") {
+		return teamUpRunTmuxInContext(tmuxContext, cmd, "switch-client", "-t", session+":")
 	}
-	return teamUpRunTmux(cmd, "attach-session", "-t", session)
+	return teamUpRunTmuxInContext(tmuxContext, cmd, "attach-session", "-t", session+":")
 }
 
 func runTmux(cmd *cobra.Command, args ...string) error {
-	c := teamUpTmuxCommand(args...)
+	return runTmuxInContext(teamUpConfiguredTmuxContext, cmd, args...)
+}
+
+func runTmuxInContext(tmuxContext teamUpTmuxContext, cmd *cobra.Command, args ...string) error {
+	c := teamUpTmuxCommand(tmuxContext, args...)
 	if cmd != nil {
 		c.Stdin = cmd.InOrStdin()
 		c.Stdout = cmd.OutOrStdout()
@@ -488,17 +552,37 @@ func runTmux(cmd *cobra.Command, args ...string) error {
 }
 
 func runTmuxOutput(args ...string) (string, error) {
-	data, err := teamUpTmuxCommand(args...).CombinedOutput()
+	return runTmuxOutputInContext(teamUpConfiguredTmuxContext, args...)
+}
+
+func runTmuxOutputInContext(tmuxContext teamUpTmuxContext, args ...string) (string, error) {
+	data, err := teamUpTmuxCommand(tmuxContext, args...).CombinedOutput()
 	if err != nil {
 		return string(data), fmt.Errorf("tmux %s: %w", strings.Join(args, " "), err)
 	}
 	return string(data), nil
 }
 
-func teamUpTmuxCommand(args ...string) *exec.Cmd {
+func teamUpRunTmuxInContext(tmuxContext teamUpTmuxContext, cmd *cobra.Command, args ...string) error {
+	if tmuxContext == teamUpConfiguredTmuxContext {
+		return teamUpRunTmux(cmd, args...)
+	}
+	return runTmuxInContext(tmuxContext, cmd, args...)
+}
+
+func teamUpRunTmuxOutputInContext(tmuxContext teamUpTmuxContext, args ...string) (string, error) {
+	if tmuxContext == teamUpConfiguredTmuxContext {
+		return teamUpRunTmuxOutput(args...)
+	}
+	return runTmuxOutputInContext(tmuxContext, args...)
+}
+
+func teamUpTmuxCommand(tmuxContext teamUpTmuxContext, args ...string) *exec.Cmd {
 	cmd := exec.Command("tmux", args...)
-	if tmpdir := resolveTeamUpTmuxTmpdir(); tmpdir != "" {
-		cmd.Env = envWithValueAndUnset(os.Environ(), tmuxTmpdirEnv, tmpdir, tmuxEnv)
+	if tmuxContext != teamUpCallerTmuxContext {
+		if tmpdir := resolveTeamUpTmuxTmpdir(); tmpdir != "" {
+			cmd.Env = envWithValueAndUnset(os.Environ(), tmuxTmpdirEnv, tmpdir, tmuxEnv)
+		}
 	}
 	return cmd
 }
@@ -572,24 +656,28 @@ func envWithValueAndUnset(env []string, key, value string, unsetKeys ...string) 
 }
 
 func confirmStartedClaudeChannelPrompts(session string, started []teamUpAgentPlan) error {
+	return confirmStartedClaudeChannelPromptsInContext(teamUpConfiguredTmuxContext, session, started)
+}
+
+func confirmStartedClaudeChannelPromptsInContext(tmuxContext teamUpTmuxContext, session string, started []teamUpAgentPlan) error {
 	deadline := time.Now().Add(teamUpConfirmClaudePromptWait)
 	for _, agent := range started {
 		if agent.RuntimeKind != "claude-code" {
 			continue
 		}
-		if err := confirmClaudeChannelPrompt(session, agent, deadline); err != nil {
+		if err := confirmClaudeChannelPrompt(tmuxContext, session, agent, deadline); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func confirmClaudeChannelPrompt(session string, agent teamUpAgentPlan, deadline time.Time) error {
-	target := teamUpWindowTarget(session, agent.Name)
+func confirmClaudeChannelPrompt(tmuxContext teamUpTmuxContext, session string, agent teamUpAgentPlan, deadline time.Time) error {
+	target := teamUpWindowTarget(tmuxContext, session, agent.Name)
 	var last string
 	answeredPrompt := ""
 	for time.Now().Before(deadline) {
-		pane, err := teamUpRunTmuxOutput("capture-pane", "-t", target, "-p")
+		pane, err := teamUpRunTmuxOutputInContext(tmuxContext, "capture-pane", "-t", target, "-p")
 		if err == nil {
 			last = pane
 			if claudeChannelPromptComplete(pane) {
@@ -599,7 +687,7 @@ func confirmClaudeChannelPrompt(session string, agent teamUpAgentPlan, deadline 
 			if prompt == "" {
 				answeredPrompt = ""
 			} else if prompt != answeredPrompt {
-				if err := teamUpRunTmux(nil, "send-keys", "-t", target, "Enter"); err != nil {
+				if err := teamUpRunTmuxInContext(tmuxContext, nil, "send-keys", "-t", target, "Enter"); err != nil {
 					return err
 				}
 				answeredPrompt = prompt
@@ -610,8 +698,11 @@ func confirmClaudeChannelPrompt(session string, agent teamUpAgentPlan, deadline 
 	return fmt.Errorf("timed out waiting for Claude Code to load the aweb channel in tmux window %q within %s; no known prompt (trust-folder / dev-channel) reached completion. Claude's prompt wording may have changed; update the prompt signatures in team_up.go (claudeChannelPromptVisible / claudeTrustFolderPromptVisible). Last pane output:\n%s", target, teamUpConfirmClaudePromptWait, last)
 }
 
-func teamUpWindowTarget(session, agentName string) string {
-	return teamUpTmuxName(session) + ":" + teamUpWindowName(agentName)
+func teamUpWindowTarget(tmuxContext teamUpTmuxContext, session, agentName string) string {
+	if tmuxContext != teamUpCallerTmuxContext {
+		session = teamUpTmuxName(session)
+	}
+	return session + ":" + teamUpWindowName(agentName)
 }
 
 func teamUpWindowName(agentName string) string {
