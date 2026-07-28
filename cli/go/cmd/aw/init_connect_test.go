@@ -103,8 +103,8 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Initialize a git repo so canonical_origin is available
-	initGitRepoWithOrigin(t, tmp, "https://github.com/acme/backend.git")
+	// Exercise the port-443 SSH form used when GitHub's port 22 is blocked.
+	initGitRepoWithOrigin(t, tmp, "ssh://git@ssh.github.com:443/acme/backend.git")
 
 	run := exec.CommandContext(ctx, bin, "init", "--url", server.URL, "--role", "developer", "--json")
 	run.Env = idCreateCommandEnv(tmp)
@@ -172,6 +172,9 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	if ws.AwebURL != server.URL {
 		t.Fatalf("workspace aweb_url=%q want %q", ws.AwebURL, server.URL)
 	}
+	if ws.CanonicalOrigin != "github.com/acme/backend" {
+		t.Fatalf("workspace canonical_origin=%q want %q", ws.CanonicalOrigin, "github.com/acme/backend")
+	}
 	teamState, err := awconfig.LoadTeamState(tmp)
 	if err != nil {
 		t.Fatalf("load teams state: %v", err)
@@ -188,10 +191,28 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	if gotConnectPayload["hostname"] == nil || gotConnectPayload["hostname"] == "" {
 		t.Fatal("connect payload missing hostname")
 	}
+	if _, ok := gotConnectPayload["repo_origin"]; ok {
+		t.Fatalf("identity connect must remain repo-independent: %#v", gotConnectPayload)
+	}
 	// macOS /tmp → /private/tmp symlink; check suffix instead of exact match
 	wsPath, _ := gotConnectPayload["workspace_path"].(string)
 	if !strings.HasSuffix(wsPath, filepath.Base(tmp)) {
 		t.Fatalf("connect payload workspace_path=%v", gotConnectPayload["workspace_path"])
+	}
+}
+
+func TestCanonicalizeGitOriginSSHWithPort(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"ssh://git@ssh.github.com:443/acme/backend.git":  "github.com/acme/backend",
+		"ssh://git@ssh.github.com:443/acme/backend":      "github.com/acme/backend",
+		"ssh://deploy@git.example.com:2222/acme/backend": "git.example.com/acme/backend",
+	}
+	for origin, want := range tests {
+		if got := canonicalizeGitOrigin(origin); got != want {
+			t.Errorf("canonicalizeGitOrigin(%q)=%q want %q", origin, got, want)
+		}
 	}
 }
 

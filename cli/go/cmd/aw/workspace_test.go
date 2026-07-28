@@ -171,6 +171,14 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 							{"task_ref": "TASK-002", "title": "Peer task", "claimed_at": "2026-03-10T10:01:00Z"},
 						},
 					},
+					{
+						"workspace_id":   "55555555-5555-5555-5555-555555555555",
+						"alias":          "carol",
+						"role":           "developer",
+						"status":         "active",
+						"hostname":       "buildbox",
+						"workspace_path": "/Users/carol/unparseable-origin",
+					},
 				},
 				"has_more": false,
 			})
@@ -260,6 +268,8 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 		"Claims: TASK-002 \"Peer task\" (",
 		"Locks: src/review.go (TTL:",
 		"reason: review follow-up",
+		"### Unknown repo",
+		"carol (developer) — active",
 		"Escalations pending: 2",
 		"Claim conflicts: 1",
 	} {
