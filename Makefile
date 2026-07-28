@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-channel test-channel-core test-channel-core-process-guard test-pi-extension check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
 	freshness check-go-vulnerability-audit check-node-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -139,6 +139,16 @@ test-awid:
 
 test-cli:
 	cd cli/go && GOCACHE=/tmp/go-build go test ./... -count=1
+
+# The Node suites have separate lockfiles and a local file: dependency from the
+# host adapters to channel-core. Install all three before any Node test target
+# so both `make test` and focused Node targets work from a clean checkout.
+test-node-deps:
+	cd channel-core && npm ci --no-audit --no-fund
+	cd channel && npm ci --no-audit --no-fund
+	cd pi-extension && npm ci --no-audit --no-fund
+
+test-channel test-channel-core test-pi-extension: test-node-deps
 
 test-channel:
 	cd channel && npm test
