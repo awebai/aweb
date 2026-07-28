@@ -1907,8 +1907,8 @@ Flags:
 Create and activate a new team roles bundle version
 
 Flags:
-- `--bundle-file string Read team roles bundle JSON from file ('-' for stdin)`
-- `--bundle-json string Team roles bundle JSON`
+- `--bundle-file string Read team roles bundle JSON from a file ('-' for stdin); safe for Markdown playbooks or command examples`
+- `--bundle-json string Team roles bundle JSON. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --bundle-file for Markdown or command examples`
 - `-h, --help help for set`
 
 ## `roles show`
@@ -1992,7 +1992,8 @@ Close one or more tasks
 
 Flags:
 - `-h, --help help for close`
-- `--reason string Reason for closing (replaces notes)`
+- `--reason string Reason for closing (replaces notes). Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --reason-file for Markdown or command examples`
+- `--reason-file string Read closing reason from a file; safe for Markdown or command examples`
 
 ## `task comment`
 

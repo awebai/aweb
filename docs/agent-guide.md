@@ -358,7 +358,7 @@ create, claim, update, and close tasks.
 aw task create --title "..." --description-file description.md --type task --priority P1
 aw task show <ref>
 aw task update <ref> --status in_progress --assignee <alias>
-aw task close <ref> --reason "..."
+aw task close <ref> --reason-file reason.md
 ```
 
 ### Messaging

@@ -852,11 +852,17 @@ func TestAwTaskCloseSuccess(t *testing.T) {
 	t.Parallel()
 
 	var closedRefs []string
+	var closedNotes []any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/v1/tasks/"):
 			ref := strings.TrimPrefix(r.URL.Path, "/v1/tasks/")
 			closedRefs = append(closedRefs, ref)
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			closedNotes = append(closedNotes, req["notes"])
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"task_id":     "tid-" + ref,
 				"task_ref":    ref,
@@ -898,6 +904,21 @@ func TestAwTaskCloseSuccess(t *testing.T) {
 	}
 	if len(closedRefs) != 2 {
 		t.Fatalf("expected 2 close calls, got %d", len(closedRefs))
+	}
+
+	reasonFile := filepath.Join(tmp, "reason.md")
+	reason := "Validated with `go test`; preserve $(EXAMPLE).\n"
+	if err := os.WriteFile(reasonFile, []byte(reason), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run = exec.CommandContext(ctx, bin, "task", "close", "PROJ-003", "--reason-file", reasonFile)
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("reason-file run failed: %v\n%s", err, string(out))
+	}
+	if got := closedNotes[len(closedNotes)-1]; got != reason {
+		t.Fatalf("reason-file notes=%v, want %q", got, reason)
 	}
 }
 
