@@ -779,7 +779,8 @@ async def patch_agent_workspace(
         """
         UPDATE {{tables.workspaces}}
         SET hostname = $1, workspace_path = $2, role = $3,
-            human_name = $4, repo_id = $5::UUID,
+            human_name = $4,
+            repo_id = CASE WHEN $6::BOOLEAN THEN $5::UUID ELSE repo_id END,
             workspace_type = CASE WHEN $6::BOOLEAN THEN 'agent' ELSE workspace_type END,
             updated_at = NOW()
         WHERE workspace_id = $7
