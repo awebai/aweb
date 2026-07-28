@@ -120,6 +120,14 @@ func runWorkActive(cmd *cobra.Command, args []string) error {
 
 	items := make([]workListItem, 0, len(resp.Tasks))
 	for _, task := range resp.Tasks {
+		claimAgeBand := coordinationAgeBand(valueOrEmpty(task.ClaimedAt))
+		claimantActivityAgeBand := ""
+		if claimAgeBand != "" {
+			claimantActivityAgeBand = coordinationAgeBand(valueOrEmpty(task.OwnerLastSeenAt))
+			if claimantActivityAgeBand == "" {
+				claimantActivityAgeBand = "unknown"
+			}
+		}
 		items = append(items, workListItem{
 			TaskRef:                 task.TaskRef,
 			Title:                   task.Title,
@@ -129,8 +137,8 @@ func runWorkActive(cmd *cobra.Command, args []string) error {
 			OwnerAlias:              task.OwnerAlias,
 			ClaimedAt:               task.ClaimedAt,
 			OwnerLastSeenAt:         task.OwnerLastSeenAt,
-			ClaimAgeBand:            coordinationAgeBand(valueOrEmpty(task.ClaimedAt)),
-			ClaimantActivityAgeBand: coordinationAgeBand(valueOrEmpty(task.OwnerLastSeenAt)),
+			ClaimAgeBand:            claimAgeBand,
+			ClaimantActivityAgeBand: claimantActivityAgeBand,
 			CanonicalOrigin:         task.CanonicalOrigin,
 			Branch:                  task.Branch,
 		})

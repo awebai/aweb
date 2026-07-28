@@ -147,6 +147,78 @@ func TestAwWorkActiveGroupsByRepo(t *testing.T) {
 	}
 }
 
+func TestAwWorkActiveJSONReportsUnknownClaimantActivity(t *testing.T) {
+	t.Parallel()
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireCertificateAuthForTest(t, r)
+		switch r.URL.Path {
+		case "/v1/tasks/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"tasks": []map[string]any{
+					{
+						"task_ref":    "TASK-CLAIM",
+						"title":       "Claim with unknown activity",
+						"priority":    1,
+						"task_type":   "task",
+						"status":      "in_progress",
+						"owner_alias": "alice",
+						"claimed_at":  "2026-03-10T10:00:00Z",
+					},
+					{
+						"task_ref":    "TASK-ASSIGNEE",
+						"title":       "Assigned without a claim",
+						"priority":    2,
+						"task_type":   "task",
+						"status":      "in_progress",
+						"owner_alias": "bob",
+					},
+				},
+			})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "self", "agent-self"))
+
+	run := exec.CommandContext(ctx, bin, "--json", "work", "active")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, string(out))
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &payload); err != nil {
+		t.Fatalf("invalid work JSON: %v\n%s", err, string(out))
+	}
+	items := payload["items"].([]any)
+	claim := items[0].(map[string]any)
+	if claim["claim_age_band"] != "months" {
+		t.Fatalf("claim_age_band=%v", claim["claim_age_band"])
+	}
+	if claim["claimant_activity_age_band"] != "unknown" {
+		t.Fatalf("claimant_activity_age_band=%v", claim["claimant_activity_age_band"])
+	}
+	assigneeOnly := items[1].(map[string]any)
+	if _, ok := assigneeOnly["claim_age_band"]; ok {
+		t.Fatalf("assignee-only item unexpectedly has claim evidence: %#v", assigneeOnly)
+	}
+	if _, ok := assigneeOnly["claimant_activity_age_band"]; ok {
+		t.Fatalf("assignee-only item unexpectedly has claimant activity evidence: %#v", assigneeOnly)
+	}
+}
+
 func TestCoordinationAgeBandAt(t *testing.T) {
 	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
