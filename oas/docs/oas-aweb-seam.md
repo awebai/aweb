@@ -724,11 +724,25 @@ capability and is withdrawn.
    launched process, and attachment stays *verified* rather than *real*. Content
    is PR 48.
 
-3. **Prove required-spawn enforcement** (`aaaa.2`). The train supplies the
-   machinery — `manifestRequiredHooks`, a `requiredHooks` field, `oas.aweb`
-   declaring `spawn: { required: true }`. Machinery is not enforcement. Execute
-   a failing required hook on the train and observe **no model process**. Only
-   that closes it.
+3. **Required-spawn enforcement — PROVEN BY EXECUTION** (`aaaa.2`). Run on the
+   train at `6ac3386` with a purpose-built capability whose required spawn hook
+   exits 1. OAS refused with *"the capability declares this hook required, so the
+   instance would have started without it — spawn rolled back"*, exit status 1.
+   **No model process ran** — a fake `pi` ahead of the real one on PATH left no
+   marker, which makes this a positive observation rather than an inference — and
+   **no tmux socket was ever created** under the proof-owned `TMUX_TMPDIR`, so
+   OAS refused before invoking tmux at all. Rollback removed the scaffolded
+   instance home and left no worktree, branch, or quarantine descriptor;
+   quarantine correctly did not trigger, because it is the remediable
+   non-success for compensation that cannot finish, and this compensation
+   finished.
+
+   **Still open, and separate:** the retirement half. `lib/core.mjs:671` on the
+   same train *rejects* required retire hooks — only spawn is enforced, because
+   retire and soul-scaffold run outside a spawn transaction — so step 4 below is
+   not made redundant by this result. Also unproven here: the untrusted-surface
+   refusal, which core handles by a different path (`:2462`) and which this proof
+   deliberately avoided by trusting the fixture.
 
 4. **Define blocking normal retirement.** `lib/core.mjs:671` on the train
    *rejects* required retire hooks by design — only spawn is enforced, because
