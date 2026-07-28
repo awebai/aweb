@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -494,7 +495,7 @@ func TestLaunchAgentWindowCreatesSessionOrWindow(t *testing.T) {
 		wantPrefix    string
 	}{
 		{name: "new-session", sessionExists: false, wantPrefix: "new-session -d -s aw-team -n developer "},
-		{name: "new-window", sessionExists: true, wantPrefix: "new-window -t aw-team -n developer "},
+		{name: "new-window", sessionExists: true, wantPrefix: "new-window -t aw-team: -n developer "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resetTeamUpTmuxForTest(t)
@@ -512,6 +513,52 @@ func TestLaunchAgentWindowCreatesSessionOrWindow(t *testing.T) {
 				t.Fatalf("tmux calls=%v", got)
 			}
 		})
+	}
+}
+
+func TestLaunchAgentWindowTargetsCollidingSessionName(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is required for the launcher integration test")
+	}
+	resetTeamUpTmuxForTest(t)
+	teamUpSessionExists = tmuxSessionExists
+	teamUpRunTmux = runTmux
+	teamUpRunTmuxOutput = runTmuxOutput
+
+	repoRoot := resolveRepoRoot(".")
+	guardDir := filepath.Join(repoRoot, "scripts", "guard-bin")
+	if _, err := os.Stat(filepath.Join(guardDir, "tmux")); err != nil {
+		t.Fatalf("tmux guard missing: %v", err)
+	}
+	t.Setenv("PATH", guardDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	socketDir, err := os.MkdirTemp("/tmp", "awtmux-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	t.Setenv(teamUpTmuxTmpdirEnv, socketDir)
+	t.Setenv(tmuxTmpdirEnv, socketDir)
+	t.Setenv(tmuxEnv, "")
+
+	const session = "aary4-collision"
+	if output, err := teamUpTmuxCommand("new-session", "-d", "-s", session, "-n", session, "sleep 120").CombinedOutput(); err != nil {
+		t.Fatalf("create isolated colliding session: %v: %s", err, strings.TrimSpace(string(output)))
+	}
+	t.Cleanup(func() {
+		_ = teamUpRunTmux(nil, "kill-session", "-t", session)
+	})
+
+	agent := teamUpAgentPlan{Name: "developer", HomeDir: t.TempDir(), Command: []string{"sleep", "120"}}
+	if err := launchAgentWindow(nil, session, agent); err != nil {
+		diagnostic, _ := teamUpTmuxCommand("new-window", "-t", session, "-n", "diagnostic", "sleep 120").CombinedOutput()
+		t.Fatalf("launch into session whose window shares its name: %v; bare-target diagnostic: %s", err, strings.TrimSpace(string(diagnostic)))
+	}
+	windows, err := teamUpRunTmuxOutput("list-windows", "-t", session, "-F", "#W")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(windows, session) || !strings.Contains(windows, "developer") {
+		t.Fatalf("windows=%q, want colliding original plus developer", windows)
 	}
 }
 
