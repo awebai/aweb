@@ -73,11 +73,19 @@ func runTeamRefresh(cmd *cobra.Command, args []string) error {
 	for _, warning := range result.Warnings {
 		fmt.Fprintf(out, "WARNING: %s\n", warning)
 	}
+	source := "team Library shelf"
+	versionKind := "shelf"
+	if libraryURL := strings.TrimSpace(old.LibraryURL); libraryURL != "" {
+		source = "public catalog " + libraryURL
+		versionKind = "public profile"
+	}
 	if result.ProfileVersion == old.ProfileVersion && result.ProfileDigest == old.ProfileDigest && len(result.FilesWritten) == 0 {
-		fmt.Fprintf(out, "%s is already at the latest shelf version: %s@%s\n", name, result.ProfileRef, result.ProfileVersion)
+		fmt.Fprintf(out, "%s is already at the latest %s version: %s@%s\n", name, versionKind, result.ProfileRef, result.ProfileVersion)
+		fmt.Fprintf(out, "  source: %s\n", source)
 		return nil
 	}
 	fmt.Fprintf(out, "Refreshed %s: %s@%s -> @%s\n", name, result.ProfileRef, old.ProfileVersion, result.ProfileVersion)
+	fmt.Fprintf(out, "  source: %s\n", source)
 	fmt.Fprintf(out, "  profile digest: %s -> %s\n", old.ProfileDigest, result.ProfileDigest)
 	fmt.Fprintf(out, "  re-materialized %d files\n", len(result.FilesWritten))
 	return nil

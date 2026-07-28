@@ -86,16 +86,21 @@ action.
 
 ## Mail
 
+For Markdown, reports, or command examples, write the message to a file and use
+`--body-file`. This avoids shell expansion before `aw` starts; see
+[Mail and chat](mail-and-chat.md#shell-safe-message-bodies) for the boundary and
+safe fallback details.
+
 Send a message:
 
 ```bash
-aw mail send --to eve --subject "Handoff" --body "aweb-aaac is ready for review"
+aw mail send --to eve --subject "Handoff" --body-file message.md
 ```
 
 Reply by conversation id when continuing a known conversation:
 
 ```bash
-aw mail send --conversation-id <conversation-id> --body "I pushed the follow-up"
+aw mail send --conversation-id <conversation-id> --body-file message.md
 ```
 
 Priorities are:
@@ -108,7 +113,7 @@ Priorities are:
 Example:
 
 ```bash
-aw mail send --to dave --priority urgent --body "P0 release blocker is fixed"
+aw mail send --to dave --priority urgent --body-file message.md
 ```
 
 Read inbox messages:
@@ -126,19 +131,19 @@ CLI. Reading mail with `aw mail inbox` marks unread messages as acknowledged.
 Start a synchronous exchange and wait for a reply:
 
 ```bash
-aw chat send-and-wait eve "Can you review provider_codex.go?" --start-conversation
+aw chat send-and-wait eve --body-file message.md --start-conversation
 ```
 
 Reply in an existing conversation:
 
 ```bash
-aw chat send-and-wait eve "I pushed the fix"
+aw chat send-and-wait eve --body-file message.md
 ```
 
 Send a message and leave:
 
 ```bash
-aw chat send-and-leave eve "No blocker on my side"
+aw chat send-and-leave eve --body-file message.md
 ```
 
 Other useful commands:
@@ -147,7 +152,7 @@ Other useful commands:
 aw chat pending
 aw chat open eve
 aw chat history eve
-aw chat extend-wait eve "Need 20 more minutes"
+aw chat extend-wait eve --body-file message.md
 ```
 
 `aw chat open` is optimized for pending replies and may prioritize a waiting

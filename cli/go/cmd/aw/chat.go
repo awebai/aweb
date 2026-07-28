@@ -125,9 +125,12 @@ var (
 	chatSendAndWaitWait               int
 	chatSendAndWaitStartConversation  bool
 	chatSendAndLeaveStartConversation bool
+	chatSendAndWaitBodyFile           string
+	chatSendAndLeaveBodyFile          string
 	chatSendAndWaitE2EE               bool
 	chatSendAndLeaveE2EE              bool
 	chatSendE2EE                      bool
+	chatExtendWaitBodyFile            string
 	chatExtendWaitE2EE                bool
 	chatSendAndWaitPlaintext          bool
 	chatSendAndLeavePlaintext         bool
@@ -147,17 +150,22 @@ var (
 )
 
 var chatSendAndWaitCmd = &cobra.Command{
-	Use:   "send-and-wait <recipient> <message>",
+	Use:   "send-and-wait <recipient> [message]",
 	Short: "Send a message and wait for a reply",
-	Args:  cobra.ExactArgs(2),
+	Long:  shellExpandedInlineHelp("Send a message and wait for a reply", "--body-file"),
+	Args:  exactArgsWithBodyFile,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("e2ee") && chatSendAndWaitPlaintext {
 			return usageError("--e2ee and --plaintext are mutually exclusive")
 		}
+		message, err := resolvePositionalMessage(cmd, args)
+		if err != nil {
+			return err
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), chat.MaxSendTimeout)
 		defer cancel()
 
-		result, sel, err := chatSend(ctx, args[0], args[1], chat.SendOptions{
+		result, sel, err := chatSend(ctx, args[0], message, chat.SendOptions{
 			Wait:              chatSendAndWaitWait,
 			WaitExplicit:      cmd.Flags().Changed("wait"),
 			StartConversation: chatSendAndWaitStartConversation,
@@ -177,14 +185,14 @@ var chatSendAndWaitCmd = &cobra.Command{
 			SessionID: result.SessionID,
 			From:      myAddr,
 			To:        args[0],
-			Body:      args[1],
+			Body:      message,
 		})
 		appendInteractionLogForCWD(&InteractionEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Kind:      interactionKindChatOut,
 			SessionID: result.SessionID,
 			To:        args[0],
-			Text:      args[1],
+			Text:      message,
 		})
 		// Log any reply events.
 		logChatEvents(logsDir, logName, myAddr, result.Events, selectionIdentityDIDs(sel)...)
@@ -196,17 +204,22 @@ var chatSendAndWaitCmd = &cobra.Command{
 // chat send-and-leave
 
 var chatSendAndLeaveCmd = &cobra.Command{
-	Use:   "send-and-leave <recipient> <message>",
+	Use:   "send-and-leave <recipient> [message]",
 	Short: "Send a message and leave the conversation",
-	Args:  cobra.ExactArgs(2),
+	Long:  shellExpandedInlineHelp("Send a message and leave the conversation", "--body-file"),
+	Args:  exactArgsWithBodyFile,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("e2ee") && chatSendAndLeavePlaintext {
 			return usageError("--e2ee and --plaintext are mutually exclusive")
 		}
+		message, err := resolvePositionalMessage(cmd, args)
+		if err != nil {
+			return err
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), chat.MaxSendTimeout)
 		defer cancel()
 
-		result, sel, err := chatSend(ctx, args[0], args[1], chat.SendOptions{
+		result, sel, err := chatSend(ctx, args[0], message, chat.SendOptions{
 			Wait:              0,
 			Leaving:           true,
 			StartConversation: chatSendAndLeaveStartConversation,
@@ -223,14 +236,14 @@ var chatSendAndLeaveCmd = &cobra.Command{
 			SessionID: result.SessionID,
 			From:      selectionAddress(sel),
 			To:        args[0],
-			Body:      args[1],
+			Body:      message,
 		})
 		appendInteractionLogForCWD(&InteractionEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Kind:      interactionKindChatOut,
 			SessionID: result.SessionID,
 			To:        args[0],
-			Text:      args[1],
+			Text:      message,
 		})
 		printOutput(result, formatChatSend)
 		return nil
@@ -437,12 +450,17 @@ var chatReadCmd = &cobra.Command{
 // chat extend-wait
 
 var chatExtendWaitCmd = &cobra.Command{
-	Use:   "extend-wait <recipient> <message>",
+	Use:   "extend-wait <recipient> [message]",
 	Short: "Ask the other party to wait longer",
-	Args:  cobra.ExactArgs(2),
+	Long:  shellExpandedInlineHelp("Ask the other party to wait longer", "--body-file"),
+	Args:  exactArgsWithBodyFile,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("e2ee") && chatExtendWaitPlaintext {
 			return usageError("--e2ee and --plaintext are mutually exclusive")
+		}
+		message, err := resolvePositionalMessage(cmd, args)
+		if err != nil {
+			return err
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -457,7 +475,7 @@ var chatExtendWaitCmd = &cobra.Command{
 				return err
 			}
 		}
-		result, err := chat.ExtendWait(ctx, c.Client, args[0], args[1], encryptE2EE)
+		result, err := chat.ExtendWait(ctx, c.Client, args[0], message, encryptE2EE)
 		if err != nil {
 			return err
 		}
@@ -469,14 +487,14 @@ var chatExtendWaitCmd = &cobra.Command{
 			SessionID: result.SessionID,
 			From:      selectionAddress(sel),
 			To:        result.TargetAgent,
-			Body:      args[1],
+			Body:      message,
 		})
 		appendInteractionLogForCWD(&InteractionEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Kind:      interactionKindChatOut,
 			SessionID: result.SessionID,
 			To:        result.TargetAgent,
-			Text:      args[1],
+			Text:      message,
 		})
 		printOutput(result, formatChatExtendWait)
 		return nil
@@ -543,17 +561,20 @@ func init() {
 	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitStartConversation, "start-conversation", false, "Start conversation (5min default wait)")
 	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (currently the default)")
 	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
+	chatSendAndWaitCmd.Flags().StringVar(&chatSendAndWaitBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveStartConversation, "start-conversation", false, "Start a new conversation instead of continuing an existing one")
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeavePlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (currently the default)")
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
+	chatSendAndLeaveCmd.Flags().StringVar(&chatSendAndLeaveBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	chatSendCmd.Flags().StringVar(&chatSendSessionID, "session-id", "", "Existing chat session id")
-	chatSendCmd.Flags().StringVar(&chatSendBody, "body", "", "Body (mutually exclusive with --body-file)")
-	chatSendCmd.Flags().StringVar(&chatSendBodyFile, "body-file", "", "Read body from file")
+	chatSendCmd.Flags().StringVar(&chatSendBody, "body", "", shellExpandedInlineHelp("Body", "--body-file"))
+	chatSendCmd.Flags().StringVar(&chatSendBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	chatSendCmd.Flags().BoolVar(&chatSendLeave, "leave", false, "Leave the conversation after sending")
 	chatSendCmd.Flags().BoolVar(&chatSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (currently the default)")
 	chatSendCmd.Flags().BoolVar(&chatSendE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
 	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext wait extension (currently the default)")
 	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitE2EE, "e2ee", false, "Send E2E encrypted wait extension; fails closed if encryption keys are missing")
+	chatExtendWaitCmd.Flags().StringVar(&chatExtendWaitBodyFile, "body-file", "", safeFileInputHelp("message body"))
 
 	chatHistoryCmd.Flags().StringVar(&chatHistorySessionID, "session-id", "", "Fetch chat history by session id instead of recipient")
 	chatHistoryCmd.Flags().StringVar(&chatHistoryMessageID, "message-id", "", "Fetch one message by id when using --session-id")

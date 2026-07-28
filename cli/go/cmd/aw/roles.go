@@ -133,11 +133,11 @@ type namedRoleDefinition struct {
 func init() {
 	addRolesShowFlags(rolesShowCmd)
 	rolesHistoryCmd.Flags().IntVar(&rolesHistoryLimit, "limit", 20, "Max role bundle versions")
-	rolesSetCmd.Flags().StringVar(&rolesSetBundleJSON, "bundle-json", "", "Team roles bundle JSON")
-	rolesSetCmd.Flags().StringVar(&rolesSetBundleFile, "bundle-file", "", "Read team roles bundle JSON from file ('-' for stdin)")
+	rolesSetCmd.Flags().StringVar(&rolesSetBundleJSON, "bundle-json", "", shellExpandedInlineHelp("Team roles bundle JSON", "--bundle-file"))
+	rolesSetCmd.Flags().StringVar(&rolesSetBundleFile, "bundle-file", "", "Read team roles bundle JSON from a file ('-' for stdin); safe for Markdown playbooks or command examples")
 	rolesAddCmd.Flags().StringVar(&rolesAddTitle, "title", "", "Human-readable role title (defaults to role name)")
-	rolesAddCmd.Flags().StringVar(&rolesAddPlaybook, "playbook", "", "Role playbook Markdown body")
-	rolesAddCmd.Flags().StringVar(&rolesAddPlaybookFile, "playbook-file", "", "Read role playbook Markdown from file ('-' for stdin)")
+	rolesAddCmd.Flags().StringVar(&rolesAddPlaybook, "playbook", "", shellExpandedInlineHelp("Role playbook Markdown body", "--playbook-file"))
+	rolesAddCmd.Flags().StringVar(&rolesAddPlaybookFile, "playbook-file", "", "Read role playbook Markdown from a file ('-' for stdin); safe for Markdown or command examples")
 	rolesAddCmd.Flags().BoolVar(&rolesAddReplace, "replace", false, "Replace an existing role with the same name")
 
 	rolesCmd.AddCommand(rolesShowCmd)

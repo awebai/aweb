@@ -652,8 +652,7 @@ var mailReplyCmd = &cobra.Command{
 }
 
 // resolveMailBody returns the message body, sourcing it from --body or
-// --body-file. Reading from a file bypasses shell interpolation and is the
-// only safe way to send markdown that contains backticks. Exactly one
+// --body-file. Reading from a file bypasses shell interpolation. Exactly one
 // trailing newline is stripped from file contents (editors and heredocs add
 // it; users almost never want it on the wire).
 func resolveMailBody(bodyArg, bodyFileArg string) (string, error) {
@@ -668,7 +667,7 @@ func resolveMailBody(bodyArg, bodyFileArg string) (string, error) {
 	if !fileSet {
 		return "", usageError("missing required flag: --body or --body-file")
 	}
-	contents, err := os.ReadFile(bodyFileArg)
+	contents, err := readFileBounded(bodyFileArg, maxBodyFileBytes)
 	if err != nil {
 		return "", fmt.Errorf("read body file %q: %w", bodyFileArg, err)
 	}
@@ -1011,8 +1010,8 @@ func init() {
 	mailSendCmd.Flags().StringVar(&mailSendToDID, "to-did", "", "Recipient stable identity (did:aw:...)")
 	mailSendCmd.Flags().StringVar(&mailSendToAddress, "to-address", "", "Recipient address (domain/name)")
 	mailSendCmd.Flags().StringVar(&mailSendSubject, "subject", "", "Subject")
-	mailSendCmd.Flags().StringVar(&mailSendBody, "body", "", "Body (mutually exclusive with --body-file)")
-	mailSendCmd.Flags().StringVar(&mailSendBodyFile, "body-file", "", "Read body from file (use this for markdown with backticks; bypasses shell interpolation)")
+	mailSendCmd.Flags().StringVar(&mailSendBody, "body", "", shellExpandedInlineHelp("Body", "--body-file"))
+	mailSendCmd.Flags().StringVar(&mailSendBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	mailSendCmd.Flags().StringVar(&mailSendPriority, "priority", "normal", "Priority: low|normal|high|urgent")
 	mailSendCmd.Flags().StringVar(&mailSendConversationID, "conversation-id", "", "Existing mail conversation to continue")
 	mailSendCmd.Flags().BoolVar(&mailSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext mail (currently the default)")
@@ -1023,8 +1022,8 @@ func init() {
 	mailInboxCmd.Flags().BoolVar(&mailInboxShowAll, "show-all", false, "Show all messages including already-read")
 	mailInboxCmd.Flags().IntVar(&mailInboxLimit, "limit", 50, "Max messages")
 	mailReplyCmd.Flags().StringVar(&mailReplySubject, "subject", "", "Subject")
-	mailReplyCmd.Flags().StringVar(&mailReplyBody, "body", "", "Body (mutually exclusive with --body-file)")
-	mailReplyCmd.Flags().StringVar(&mailReplyBodyFile, "body-file", "", "Read body from file")
+	mailReplyCmd.Flags().StringVar(&mailReplyBody, "body", "", shellExpandedInlineHelp("Body", "--body-file"))
+	mailReplyCmd.Flags().StringVar(&mailReplyBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	mailReplyCmd.Flags().StringVar(&mailReplyPriority, "priority", "normal", "Priority: low|normal|high|urgent")
 	mailReplyCmd.Flags().BoolVar(&mailReplyPlaintext, "plaintext", false, "Send explicit server-readable plaintext mail (currently the default)")
 	mailReplyCmd.Flags().BoolVar(&mailReplyE2EE, "e2ee", false, "Send E2E encrypted mail; fails closed if encryption keys are missing")

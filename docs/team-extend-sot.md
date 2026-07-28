@@ -56,8 +56,10 @@ classic name; omitted scope comes from `profile.yaml`.
 
 Flags (all reused from `add` where they exist there):
 
-- `--api-key <key>` — explicit team API key; wins over discovery. New flag;
-  the `AWEB_API_KEY` env var is the equivalent (flag wins over env).
+- `--api-key <key>` — explicit team API key; wins over discovery and bypasses
+  any assertion inferred from the current workspace. The `AWEB_API_KEY` env var
+  selects the same API-key authority tier, but when cwd has an active team that
+  team is asserted against the server response (flag wins over env).
 - `--team-id <name>:<namespace>` — disambiguate when discovery finds
   invite-capable agents in more than one team.
 - `--local` / `--global` — identity-scope override for all listed specs
@@ -76,19 +78,33 @@ concerns; a caller who needs them has a workspace and should use `add`).
 Precedence is deterministic and overridable. The first tier that can
 select an anchor wins; lower tiers are not consulted after that:
 
-1. **Explicit team API key** — `--api-key`, else `AWEB_API_KEY`. Used
+1. **Team API key** — explicit `--api-key`, else `AWEB_API_KEY`. Used
    directly via the API-key bootstrap path (`runAPIKeyBootstrapInit` per
    member, as `add` does in API-key mode). The key itself determines the
-   team; no scan happens. `--team-id` alongside a key is an assertion, and
-   it must be side-effect-safe: the key's team is only learned from the
-   server response of the bootstrap call, so the contract is that the FIRST
-   member is bootstrapped, its response team id is compared to `--team-id`,
-   and on mismatch that just-created member is rolled back — server-side
-   membership revoked and the local home removed, via the same rollback
-   machinery the roster path already uses (`rollbackJustCreatedTeamMember`
-   + home rollback) — and `extend` errors naming both team ids before any
-   further member is attempted. A mismatch never leaves a partial roster in
-   the key's team. (If a key-introspection preflight endpoint becomes
+   team. An explicit `--api-key` does not consult workspace team state; it is
+   the opt-out when the caller deliberately wants to extend a different team.
+
+   There is one deliberate exception for an ambient `AWEB_API_KEY`: when cwd
+   has an active team and the caller did not pass `--team-id`, that active team
+   becomes an assertion against the key's team. This disk lookup does not
+   replace API-key authority or guess a team. It makes a forgotten ambient key
+   safe by checking the workspace's explicit membership context against the
+   server's authoritative answer. The output authority tier is
+   `api-key-workspace-asserted`; explicit-key and clean-directory API-key runs
+   remain `api-key`.
+
+   An explicit `--team-id` alongside either kind of key is also an assertion
+   and wins over any workspace-derived assertion. Assertions are
+   side-effect-safe: the key's team is only learned from the server response
+   of the bootstrap call, so the FIRST member is bootstrapped, its response
+   team id is compared to the asserted team, and on mismatch that just-created
+   member is rolled back — server-side membership revoked and the local home
+   removed, via the same rollback machinery the roster path already uses
+   (`rollbackJustCreatedTeamMember` + home rollback) — and `extend` errors
+   naming both team ids before any further member is attempted. An implicit
+   mismatch says `workspace active team X does not match API key team Y`; it
+   never names an unpassed `--team-id` flag. A mismatch never leaves a partial
+   roster in the key's team. (If a key-introspection preflight endpoint becomes
    available, it replaces the bootstrap-then-rollback check; the observable
    contract stays the same.)
 2. **The current workspace, if invite-capable** — cwd has a `.aw` workspace
@@ -140,7 +156,10 @@ Ambiguity is judged WITHIN a tier, and only after every higher tier has
 failed to select an anchor. A lower tier never re-opens or overrides a
 higher one:
 
-- Tier 1: the key names the team; nothing on disk is consulted.
+- Tier 1: the key names the team. Explicit `--api-key` consults nothing on
+  disk. Ambient `AWEB_API_KEY` consults only cwd's active team for the
+  side-effect-safe assertion described above; it does not scan candidate homes
+  or select authority from disk.
 - Tier 2: if the current workspace is invite-capable (and its active team
   matches `--team-id` when given), it is selected even when sibling homes
   under the agents root belong to other teams. Standing in a workspace is
@@ -194,6 +213,31 @@ default-aaeq.23, stricter because `extend` has no wizard):
   shape with `"status": "extended"` and the resolved team id and authority
   tier included, so callers can assert which path was used.
 
+## Batch roster failure outcomes
+
+Roster-wide facts available before creating a member are preflight work: spec
+and profile resolution, alias and home collisions, and whether the selected
+authority can mint every resolved effective identity scope. A failure in those
+checks returns before any member is attempted. Scope resolution includes both
+an explicit spec suffix and a profile's `profile.yaml` default.
+
+Once roster mutation begins, the first non-preflightable member failure still
+stops the batch and leaves the command exit status non-zero. Before returning,
+`extend` prints an ordered outcome for every input spec in both human and JSON
+modes:
+
+- `created` — the member completed before the failure and remains in the team;
+- `failed` — this spec failed, with its reason in the `reason` field;
+- `not_attempted` — the untouched tail was skipped after the failure.
+
+The `agents` array preserves command-line order and failure JSON uses
+`"status": "failed"`. The command does not roll back healthy members that
+completed before the failure; changing that to all-or-nothing requires a
+separate design decision because compensating membership removal can itself
+fail. The failing member keeps the existing per-member rollback behavior.
+A fully successful batch keeps the existing human and JSON output unchanged;
+per-agent outcome fields are omitted on that path.
+
 ## Cross-references between the verbs
 
 - `aw team create` with an active team membership in cwd (and no `--byot`):
@@ -219,7 +263,9 @@ default-aaeq.23, stricter because `extend` has no wizard):
   avoid churn on `team_human.go`.
 - The `--api-key` flag is new surface (today the key is env-only); it feeds
   the same `resolveInitAPIKey`-consuming bootstrap path, with the flag
-  taking precedence over the env var.
+  taking precedence over the env var and bypassing only the ambient key's
+  workspace-derived assertion. Explicit `--team-id` remains independent and
+  is always enforced when supplied.
 - Dogfooding: a throwaway team only; exercise all three call sites (team
   root, agent home, clean dir + API key), plus the ambiguity error and the
   tier-4 error. A tmux experiment (`--start`) must be a committed, reviewed

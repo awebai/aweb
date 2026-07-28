@@ -17,8 +17,12 @@ var taskCreateCmd = &cobra.Command{
 
 func init() {
 	taskCreateCmd.Flags().String("title", "", "Task title (required)")
-	taskCreateCmd.Flags().String("description", "", "Task description")
-	taskCreateCmd.Flags().String("notes", "", "Task notes")
+	taskCreateCmd.Flags().String("description", "", shellExpandedInlineHelp("Task description", "--description-file"))
+	taskCreateCmd.Flags().String("description-file", "", safeFileInputHelp("task description"))
+	taskCreateCmd.Flags().String("notes", "", shellExpandedInlineHelp("Task notes", "--notes-file"))
+	taskCreateCmd.Flags().String("notes-file", "", safeFileInputHelp("task notes"))
+	taskCreateCmd.MarkFlagsMutuallyExclusive("description", "description-file")
+	taskCreateCmd.MarkFlagsMutuallyExclusive("notes", "notes-file")
 	taskCreateCmd.Flags().String("type", "", "Task type (task, bug, feature, epic)")
 	taskCreateCmd.Flags().String("priority", "", "Priority 0-4 (accepts P0-P4)")
 	taskCreateCmd.Flags().String("labels", "", "Comma-separated labels")
@@ -33,6 +37,15 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--title is required")
 	}
 
+	description, descriptionSet, err := resolveLongTextFlags(cmd, "description", "description-file")
+	if err != nil {
+		return err
+	}
+	notes, notesSet, err := resolveLongTextFlags(cmd, "notes", "notes-file")
+	if err != nil {
+		return err
+	}
+
 	client, _, err := resolveClientSelection()
 	if err != nil {
 		return err
@@ -45,11 +58,11 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		Priority: defaultPriority,
 	}
 
-	if v, _ := cmd.Flags().GetString("description"); v != "" {
-		req.Description = v
+	if descriptionSet && description != "" {
+		req.Description = description
 	}
-	if v, _ := cmd.Flags().GetString("notes"); v != "" {
-		req.Notes = v
+	if notesSet && notes != "" {
+		req.Notes = notes
 	}
 	if v, _ := cmd.Flags().GetString("type"); v != "" {
 		req.TaskType = v

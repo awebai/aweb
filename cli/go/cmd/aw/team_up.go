@@ -370,7 +370,7 @@ func launchAgentWindow(cmd *cobra.Command, session string, agent teamUpAgentPlan
 	if !teamUpSessionExists(session) {
 		return teamUpRunTmux(cmd, "new-session", "-d", "-s", session, "-n", windowName, shellCmd)
 	}
-	return teamUpRunTmux(cmd, "new-window", "-t", session, "-n", windowName, shellCmd)
+	return teamUpRunTmux(cmd, "new-window", "-t", session+":", "-n", windowName, shellCmd)
 }
 
 func tmuxSessionExists(session string) bool {

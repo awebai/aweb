@@ -25,6 +25,7 @@ var (
 	a2aCardAddress   string
 	a2aCardRegistry  string
 	a2aContextID     string
+	a2aSendBodyFile  string
 	a2aWait          bool
 	a2aNoWait        bool
 	a2aDataJSON      string
@@ -115,16 +116,21 @@ var a2aCardCmd = &cobra.Command{
 }
 
 var a2aSendCmd = &cobra.Command{
-	Use:   "send <card-url> <message>",
+	Use:   "send <card-url> [message]",
 	Short: "Send a task message to an A2A agent",
-	Args:  cobra.ExactArgs(2),
+	Long:  shellExpandedInlineHelp("Send a task message to an A2A agent", "--body-file"),
+	Args:  exactArgsWithBodyFile,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if a2aWait && a2aNoWait {
 			return usageError("--wait and --no-wait are mutually exclusive")
 		}
+		message, err := resolvePositionalMessage(cmd, args)
+		if err != nil {
+			return err
+		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 90*time.Second)
 		defer cancel()
-		task, err := runA2ASend(ctx, args[0], args[1])
+		task, err := runA2ASend(ctx, args[0], message)
 		if err != nil {
 			return err
 		}
@@ -204,6 +210,7 @@ func init() {
 	a2aCardCmd.Flags().StringVar(&a2aCardAddress, "address", "", "aweb address to verify through AWID, e.g. acme.com/help")
 	a2aCardCmd.Flags().StringVar(&a2aCardRegistry, "registry-url", "", "AWID registry URL for verification")
 	a2aSendCmd.Flags().StringVar(&a2aContextID, "context", "", "A2A context ID")
+	a2aSendCmd.Flags().StringVar(&a2aSendBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	a2aSendCmd.Flags().BoolVar(&a2aWait, "wait", false, "Wait for terminal or interrupted task state")
 	a2aSendCmd.Flags().BoolVar(&a2aNoWait, "no-wait", false, "Return immediately after task creation")
 	a2aSendCmd.Flags().StringVar(&a2aDataJSON, "data", "", "Additional JSON metadata object")

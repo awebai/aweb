@@ -15,6 +15,8 @@ from awid.e2ee_keys import validate_encryption_key_assertion
 from awid.team_ids import parse_team_id
 from aweb.alias_allocator import candidate_name_prefixes, used_name_prefixes
 from aweb.coordination.roles import ROLE_MAX_LENGTH
+from aweb.coordination.routes.repos import canonicalize_git_url
+from aweb.coordination.workspace_registry import ensure_repo
 from aweb.deps import get_db, get_redis
 from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
@@ -152,6 +154,7 @@ class PatchWorkspaceRequest(BaseModel):
     role: Optional[str] = Field(None, max_length=ROLE_MAX_LENGTH)
     role_name: Optional[str] = Field(None, max_length=ROLE_MAX_LENGTH)
     human_name: Optional[str] = Field(None, max_length=64)
+    repo_origin: Optional[str] = Field(None, max_length=2048)
 
     @field_validator("role", "role_name")
     @classmethod
@@ -174,6 +177,8 @@ class PatchWorkspaceResponse(BaseModel):
     role: Optional[str] = None
     role_name: Optional[str] = None
     human_name: Optional[str] = None
+    repo_id: Optional[str] = None
+    canonical_origin: Optional[str] = None
 
     @model_validator(mode="after")
     def sync_role_aliases(self):
@@ -742,9 +747,10 @@ async def patch_agent_workspace(
     row = await aweb_db.fetch_one(
         """
         SELECT w.workspace_id, w.hostname, w.workspace_path, w.role,
-               w.human_name
+               w.human_name, w.repo_id, r.canonical_origin
         FROM {{tables.workspaces}} w
         JOIN {{tables.agents}} a ON a.agent_id = w.agent_id
+        LEFT JOIN {{tables.repos}} r ON r.id = w.repo_id AND r.deleted_at IS NULL
         WHERE w.team_id = $1
           AND a.agent_id = $2::UUID
           AND a.deleted_at IS NULL
@@ -760,18 +766,27 @@ async def patch_agent_workspace(
     new_path = payload.workspace_path if payload.workspace_path is not None else row["workspace_path"]
     new_role = payload.role if payload.role is not None else row["role"]
     new_human_name = payload.human_name if payload.human_name is not None else row["human_name"]
+    new_repo_id = row["repo_id"]
+    canonical_origin = row["canonical_origin"]
+    if payload.repo_origin is not None:
+        try:
+            canonical_origin = canonicalize_git_url(payload.repo_origin)
+            new_repo_id = await ensure_repo(db, identity.team_id, payload.repo_origin)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"invalid repo_origin: {exc}") from exc
 
     await aweb_db.execute(
         """
         UPDATE {{tables.workspaces}}
         SET hostname = $1, workspace_path = $2, role = $3,
-            human_name = $4, updated_at = NOW()
-        WHERE workspace_id = $5
+            human_name = $4, repo_id = $5, updated_at = NOW()
+        WHERE workspace_id = $6
         """,
         new_hostname,
         new_path,
         new_role,
         new_human_name,
+        new_repo_id,
         row["workspace_id"],
     )
 
@@ -783,6 +798,8 @@ async def patch_agent_workspace(
         role=new_role,
         role_name=new_role,
         human_name=new_human_name,
+        repo_id=str(new_repo_id) if new_repo_id else None,
+        canonical_origin=canonical_origin,
     )
 
 

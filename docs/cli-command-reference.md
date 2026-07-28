@@ -209,7 +209,7 @@ Show coordination status for the current workspace/identity and team
 Flags:
 - `--all Show all local team memberships in addition to the selected team status`
 - `-h, --help help for status`
-- `--limit int Maximum team workspaces to show (default 15)`
+- `--limit int Maximum team workspaces to show (default 50)`
 
 ## `id`
 
@@ -515,8 +515,8 @@ Flags:
 Make a DIDKey-signed HTTP request with the local identity key
 
 Flags:
-- `--body string Request body to send`
-- `--body-file string Read the request body from a file`
+- `--body string Request body to send. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
+- `--body-file string Read request body from a file; safe for Markdown or command examples`
 - `--header stringArray Additional header in 'Name: Value' form`
 - `-h, --help help for request`
 - `--raw Print only the upstream response body`
@@ -985,7 +985,7 @@ Flags:
 
 ### `team extend`
 
-Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key or --team-id with AWEB_API_KEY wins. An ambient AWEB_API_KEY bootstraps only when this workspace has no active team; otherwise the current workspace or an invite-capable agents/instances home is used.
+Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key or --team-id with AWEB_API_KEY wins. An ambient AWEB_API_KEY in a workspace with an active team uses that team as an assertion against the API key's team; explicit --api-key bypasses the workspace assertion.
 
 Flags:
 - `--api-key string Team API key for extending a team (overrides AWEB_API_KEY)`
@@ -1206,9 +1206,10 @@ Flags:
 
 ### `a2a send`
 
-Send a task message to an A2A agent
+Send a task message to an A2A agent. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
 
 Flags:
+- `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--context string A2A context ID`
 - `--data string Additional JSON metadata object`
 - `-h, --help help for send`
@@ -1251,9 +1252,10 @@ Flags:
 
 ### `chat extend-wait`
 
-Ask the other party to wait longer
+Ask the other party to wait longer. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
 
 Flags:
+- `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted wait extension; fails closed if encryption keys are missing`
 - `-h, --help help for extend-wait`
 - `--plaintext Send explicit server-readable plaintext wait extension (currently the default)`
@@ -1317,8 +1319,8 @@ Flags:
 Send a message to an exact chat session
 
 Flags:
-- `--body string Body (mutually exclusive with --body-file)`
-- `--body-file string Read body from file`
+- `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
+- `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send`
 - `--leave Leave the conversation after sending`
@@ -1329,9 +1331,10 @@ Flags:
 
 ### `chat send-and-leave`
 
-Send a message and leave the conversation
+Send a message and leave the conversation. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
 
 Flags:
+- `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send-and-leave`
 - `--plaintext Send explicit server-readable plaintext chat (currently the default)`
@@ -1341,9 +1344,10 @@ Flags:
 
 ### `chat send-and-wait`
 
-Send a message and wait for a reply
+Send a message and wait for a reply. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
 
 Flags:
+- `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send-and-wait`
 - `--plaintext Send explicit server-readable plaintext chat (currently the default)`
@@ -1561,8 +1565,8 @@ Flags:
 Reply to an existing mail conversation
 
 Flags:
-- `--body string Body (mutually exclusive with --body-file)`
-- `--body-file string Read body from file`
+- `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
+- `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted mail; fails closed if encryption keys are missing`
 - `-h, --help help for reply`
 - `--plaintext Send explicit server-readable plaintext mail (currently the default)`
@@ -1576,8 +1580,8 @@ Flags:
 Send a message to another agent
 
 Flags:
-- `--body string Body (mutually exclusive with --body-file)`
-- `--body-file string Read body from file (use this for markdown with backticks; bypasses shell interpolation)`
+- `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
+- `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--conversation-id string Existing mail conversation to continue`
 - `--e2ee Send E2E encrypted mail; fails closed if encryption keys are missing`
 - `-h, --help help for send`
@@ -1686,8 +1690,8 @@ Flags:
 Create and activate a new shared team instructions version
 
 Flags:
-- `--body string Instructions markdown body`
-- `--body-file string Read instructions markdown from file ('-' for stdin)`
+- `--body string Instructions Markdown body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
+- `--body-file string Read instructions Markdown from a file ('-' for stdin); safe for Markdown or command examples`
 - `-h, --help help for set`
 
 ## `instructions show`
@@ -1854,8 +1858,8 @@ role, creates a new bundle version, and activates it.
 
 Flags:
 - `-h, --help help for add`
-- `--playbook string Role playbook Markdown body`
-- `--playbook-file string Read role playbook Markdown from file ('-' for stdin)`
+- `--playbook string Role playbook Markdown body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --playbook-file for Markdown or command examples`
+- `--playbook-file string Read role playbook Markdown from a file ('-' for stdin); safe for Markdown or command examples`
 - `--replace Replace an existing role with the same name`
 - `--title string Human-readable role title (defaults to role name)`
 
@@ -1903,8 +1907,8 @@ Flags:
 Create and activate a new team roles bundle version
 
 Flags:
-- `--bundle-file string Read team roles bundle JSON from file ('-' for stdin)`
-- `--bundle-json string Team roles bundle JSON`
+- `--bundle-file string Read team roles bundle JSON from a file ('-' for stdin); safe for Markdown playbooks or command examples`
+- `--bundle-json string Team roles bundle JSON. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --bundle-file for Markdown or command examples`
 - `-h, --help help for set`
 
 ## `roles show`
@@ -1988,7 +1992,8 @@ Close one or more tasks
 
 Flags:
 - `-h, --help help for close`
-- `--reason string Reason for closing (replaces notes)`
+- `--reason string Reason for closing (replaces notes). Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --reason-file for Markdown or command examples`
+- `--reason-file string Read closing reason from a file; safe for Markdown or command examples`
 
 ## `task comment`
 
@@ -2007,11 +2012,11 @@ Flags:
 
 ### `task comment add`
 
-Add a comment to a task
+Add a comment to a task. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
 
 Flags:
-- `--body string Comment body`
-- `--body-file string Read comment body from file`
+- `--body string Comment body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
+- `--body-file string Read comment body from a file; safe for Markdown or command examples`
 - `-h, --help help for add`
 
 ## `task comment list`
@@ -2031,10 +2036,12 @@ Create a new task
 
 Flags:
 - `--assignee string Assignee agent name`
-- `--description string Task description`
+- `--description string Task description. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --description-file for Markdown or command examples`
+- `--description-file string Read task description from a file; safe for Markdown or command examples`
 - `-h, --help help for create`
 - `--labels string Comma-separated labels`
-- `--notes string Task notes`
+- `--notes string Task notes. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --notes-file for Markdown or command examples`
+- `--notes-file string Read task notes from a file; safe for Markdown or command examples`
 - `--parent string Parent task ref`
 - `--priority string Priority 0-4 (accepts P0-P4)`
 - `--title string Task title (required)`
@@ -2140,10 +2147,12 @@ Update a task
 
 Flags:
 - `--assignee string Assignee agent name (empty to unassign)`
-- `--description string Description`
+- `--description string Description. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --description-file for Markdown or command examples`
+- `--description-file string Read task description from a file; safe for Markdown or command examples`
 - `-h, --help help for update`
 - `--labels string Comma-separated labels`
-- `--notes string Notes`
+- `--notes string Notes. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --notes-file for Markdown or command examples`
+- `--notes-file string Read task notes from a file; safe for Markdown or command examples`
 - `--parent string Parent task ref (empty to make root)`
 - `--priority string Priority 0-4 (accepts P0-P4)`
 - `--status string Status (open, in_progress, closed)`

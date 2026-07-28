@@ -73,8 +73,8 @@ type teamInstructionsActivateOutput struct {
 
 func init() {
 	instructionsHistoryCmd.Flags().IntVar(&instructionsHistoryLimit, "limit", 20, "Max instruction versions")
-	instructionsSetCmd.Flags().StringVar(&instructionsSetBody, "body", "", "Instructions markdown body")
-	instructionsSetCmd.Flags().StringVar(&instructionsSetBodyFile, "body-file", "", "Read instructions markdown from file ('-' for stdin)")
+	instructionsSetCmd.Flags().StringVar(&instructionsSetBody, "body", "", shellExpandedInlineHelp("Instructions Markdown body", "--body-file"))
+	instructionsSetCmd.Flags().StringVar(&instructionsSetBodyFile, "body-file", "", "Read instructions Markdown from a file ('-' for stdin); safe for Markdown or command examples")
 
 	instructionsCmd.AddCommand(instructionsShowCmd)
 	instructionsCmd.AddCommand(instructionsHistoryCmd)

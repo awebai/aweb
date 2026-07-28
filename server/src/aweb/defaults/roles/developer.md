@@ -47,13 +47,10 @@ If this workspace is not currently editing code, start by checking mail/work bef
 
 ## Review handoff
 
-When work is ready, send a concise packet to the coordinator or reviewer:
+When work is ready, write the concise packet to `review.md`, then send it to the coordinator or reviewer without shell-expanding its Markdown:
 
 ```bash
-aw mail send --to <alias> --subject "Review request: <task>" --body "Summary: ...
-Files: ...
-Tests: ...
-Risks/follow-ups: ..."
+aw mail send --to <alias> --subject "Review request: <task>" --body-file review.md
 ```
 
 Include:
@@ -69,14 +66,16 @@ Include:
 
 Use chat only for synchronous blockers:
 
+Write the question to `blocker.md`, then send it:
+
 ```bash
-aw chat send-and-wait <alias> "Blocked on <task>: <question>" --start-conversation
+aw chat send-and-wait <alias> --body-file blocker.md --start-conversation
 ```
 
-Use mail for async status:
+Use mail for async status. Write the status to `status.md`, then send it:
 
 ```bash
-aw mail send --to <alias> --body "Status on <task>: blocked by <reason>. Next step: <plan>."
+aw mail send --to <alias> --body-file status.md
 ```
 
 Escalate when the task needs product direction, security/authorization judgment, migration/deployment authority, credentials, or a scope decision.

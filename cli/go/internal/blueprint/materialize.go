@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/awebai/aw/internal/agentdocs"
 	"github.com/awebai/aw/internal/pathpreflight"
 	"gopkg.in/yaml.v3"
 )
@@ -844,7 +845,18 @@ func writeMaterializedFiles(targetRoot string, ops []materializeWriteOp) ([]stri
 				return nil, err
 			}
 		} else {
-			if err := os.WriteFile(path, op.Data, 0o644); err != nil {
+			data := op.Data
+			// The profile owns the generated AGENTS.md body; team doc injection owns
+			// only its marker-delimited region inside that file.
+			if filepath.ToSlash(op.Rel) == "AGENTS.md" {
+				existing, err := os.ReadFile(path)
+				if err == nil {
+					data = []byte(agentdocs.PreserveMarkedBlock(string(existing), string(data)))
+				} else if !os.IsNotExist(err) {
+					return nil, err
+				}
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
 				return nil, err
 			}
 		}

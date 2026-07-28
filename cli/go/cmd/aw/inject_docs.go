@@ -9,11 +9,12 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/internal/agentdocs"
 )
 
 const (
-	awDocsMarkerStart = "<!-- AWEB:START -->"
-	awDocsMarkerEnd   = "<!-- AWEB:END -->"
+	awDocsMarkerStart = agentdocs.MarkerStart
+	awDocsMarkerEnd   = agentdocs.MarkerEnd
 )
 
 type injectDocsResult struct {
@@ -134,11 +135,7 @@ func loadTeamInstructionsBody(workingDir string) (string, error) {
 }
 
 func renderInjectedDocs(body string) string {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return awDocsMarkerStart + "\n" + awDocsMarkerEnd + "\n"
-	}
-	return awDocsMarkerStart + "\n" + body + "\n" + awDocsMarkerEnd + "\n"
+	return agentdocs.Render(body)
 }
 
 func renderAgentsTemplate(body string) string {
@@ -146,22 +143,7 @@ func renderAgentsTemplate(body string) string {
 }
 
 func removeInjectedDocs(content string) string {
-	start := strings.Index(content, awDocsMarkerStart)
-	end := strings.Index(content, awDocsMarkerEnd)
-	if start == -1 || end == -1 || end < start {
-		return content
-	}
-	end += len(awDocsMarkerEnd)
-	before := strings.TrimRight(content[:start], "\n")
-	after := strings.TrimLeft(content[end:], "\n")
-	switch {
-	case before == "":
-		return after
-	case after == "":
-		return before
-	default:
-		return before + "\n\n" + after
-	}
+	return agentdocs.Remove(content)
 }
 
 func printInjectDocsResult(result *injectDocsResult) {

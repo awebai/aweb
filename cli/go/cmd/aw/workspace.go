@@ -73,6 +73,8 @@ type workspaceStatusOutput struct {
 	ContextKind        string                            `json:"context_kind"`
 	Locks              []aweb.ReservationView            `json:"locks,omitempty"`
 	Team               []aweb.WorkspaceInfo              `json:"team,omitempty"`
+	TeamHasMore        bool                              `json:"team_has_more"`
+	TeamLimit          int                               `json:"team_limit"`
 	TeamLocks          map[string][]aweb.ReservationView `json:"team_locks,omitempty"`
 	EscalationsPending int                               `json:"escalations_pending"`
 	ConflictCount      int                               `json:"conflict_count"`
@@ -111,7 +113,7 @@ type workspaceDeleteOutput struct {
 var saveWorktreeWorkspaceTo = awconfig.SaveWorktreeWorkspaceTo
 
 func init() {
-	workspaceStatusCmd.Flags().IntVar(&workspaceStatusLimit, "limit", 15, "Maximum team workspaces to show")
+	workspaceStatusCmd.Flags().IntVar(&workspaceStatusLimit, "limit", 50, "Maximum team workspaces to show")
 	workspaceStatusCmd.Flags().BoolVar(&workspaceStatusAll, "all", false, "Show all local team memberships in addition to the selected team status")
 	workspaceAddWorktreeCmd.Flags().StringVar(&workspaceAddAlias, "name", "", "Override the default workspace/member name")
 	workspaceAddWorktreeCmd.Flags().StringVar(&workspaceAddAlias, "alias", "", "Deprecated alias for --name")
@@ -228,6 +230,8 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		ContextKind:        inferWorkspaceContextKind(self, state),
 		Locks:              locksByWorkspace[workspaceID],
 		Team:               team,
+		TeamHasMore:        teamResp.HasMore,
+		TeamLimit:          workspaceStatusLimit,
 		TeamLocks:          teamLocks,
 		EscalationsPending: statusResp.EscalationsPending,
 		ConflictCount:      len(statusResp.Conflicts),
@@ -1155,7 +1159,7 @@ func formatWorkspaceStatus(v any) string {
 	if len(out.Team) == 0 {
 		sb.WriteString("No other workspaces.\n")
 	} else {
-		for _, workspace := range out.Team {
+		formatTeamWorkspace := func(workspace aweb.WorkspaceInfo) {
 			line := workspace.Alias
 			if workspace.Role != nil && strings.TrimSpace(*workspace.Role) != "" {
 				line += " (" + strings.TrimSpace(*workspace.Role) + ")"
@@ -1178,6 +1182,26 @@ func formatWorkspaceStatus(v any) string {
 			sb.WriteString(fmt.Sprintf("  Claims: %s\n", formatWorkspaceClaimsSummary(workspace.Claims)))
 			sb.WriteString(fmt.Sprintf("  Locks: %s\n", formatWorkspaceLocksSummary(out.TeamLocks[workspace.WorkspaceID], now, 3)))
 		}
+
+		for _, workspace := range out.Team {
+			if strings.TrimSpace(derefString(workspace.Repo)) != "" {
+				formatTeamWorkspace(workspace)
+			}
+		}
+		unknownRepoHeadingWritten := false
+		for _, workspace := range out.Team {
+			if strings.TrimSpace(derefString(workspace.Repo)) != "" {
+				continue
+			}
+			if !unknownRepoHeadingWritten {
+				sb.WriteString("### Unknown repo\n")
+				unknownRepoHeadingWritten = true
+			}
+			formatTeamWorkspace(workspace)
+		}
+	}
+	if out.TeamHasMore {
+		sb.WriteString(fmt.Sprintf("Team roster incomplete: showing at most %d workspaces.\n", out.TeamLimit))
 	}
 
 	sb.WriteString(fmt.Sprintf("\nEscalations pending: %d\n", out.EscalationsPending))

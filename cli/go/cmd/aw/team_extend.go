@@ -13,21 +13,29 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	teamExtendAuthorityTierAPIKey                  = "api-key"
+	teamExtendAuthorityTierAPIKeyWorkspaceAsserted = "api-key-workspace-asserted"
+	teamExtendAuthorityTierCurrentWorkspace        = "current-workspace"
+	teamExtendAuthorityTierDiscoveredAgent         = "discovered-agent"
+)
+
 var teamHumanExtendCmd = &cobra.Command{
 	Use:   "extend <agent-spec>...",
 	Short: "Add agents to an existing team by discovering membership authority",
-	Long:  "Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key or --team-id with AWEB_API_KEY wins. An ambient AWEB_API_KEY bootstraps only when this workspace has no active team; otherwise the current workspace or an invite-capable agents/instances home is used.",
+	Long:  "Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key or --team-id with AWEB_API_KEY wins. An ambient AWEB_API_KEY in a workspace with an active team uses that team as an assertion against the API key's team; explicit --api-key bypasses the workspace assertion.",
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runTeamHumanExtend,
 }
 
 type teamExtendAuthority struct {
-	Tier       string
-	AnchorDir  string
-	AgentsRoot string
-	APIKey     string
-	TeamID     string
-	Checked    int
+	Tier                  string
+	AnchorDir             string
+	AgentsRoot            string
+	APIKey                string
+	TeamID                string
+	TeamIDAssertionSource teamIDAssertionSource
+	Checked               int
 }
 
 type teamExtendCandidate struct {
@@ -51,24 +59,28 @@ func runTeamHumanExtend(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	expectedTeamID, assertionSource := expectedTeamIDForExtend(authority)
 	return runTeamHumanAddWithOptions(cmd, args, teamHumanAddRunOptions{
-		CWD:                 wd,
-		InviteAnchorDir:     authority.AnchorDir,
-		AgentsRoot:          authority.AgentsRoot,
-		WorktreeAnchorDir:   wd,
-		APIKey:              authority.APIKey,
-		ForceAPIKey:         strings.TrimSpace(authority.APIKey) != "",
-		ExpectedTeamID:      expectedTeamIDForExtend(authority),
-		OutputStatus:        "extended",
-		OutputAuthorityTier: authority.Tier,
+		CWD:                   wd,
+		InviteAnchorDir:       authority.AnchorDir,
+		AgentsRoot:            authority.AgentsRoot,
+		WorktreeAnchorDir:     wd,
+		APIKey:                authority.APIKey,
+		ForceAPIKey:           strings.TrimSpace(authority.APIKey) != "",
+		ExpectedTeamID:        expectedTeamID,
+		TeamIDAssertionSource: assertionSource,
+		OutputStatus:          "extended",
+		OutputAuthorityTier:   authority.Tier,
+		AuthorityTeamID:       authority.TeamID,
+		CommandName:           "aw team extend",
 	})
 }
 
-func expectedTeamIDForExtend(authority teamExtendAuthority) string {
+func expectedTeamIDForExtend(authority teamExtendAuthority) (string, teamIDAssertionSource) {
 	if strings.TrimSpace(authority.APIKey) == "" {
-		return ""
+		return "", teamIDAssertionSourceNone
 	}
-	return strings.TrimSpace(teamHumanExtendTeamID)
+	return strings.TrimSpace(authority.TeamID), authority.TeamIDAssertionSource
 }
 
 func resolveTeamExtendAuthority(wd string) (teamExtendAuthority, error) {
@@ -83,21 +95,24 @@ func resolveTeamExtendAuthority(wd string) (teamExtendAuthority, error) {
 	}
 	teamID := strings.TrimSpace(teamHumanExtendTeamID)
 	if apiKey != "" {
-		if explicitAPIKey == "" && teamID == "" {
+		if teamID != "" {
+			return teamExtendAuthority{Tier: teamExtendAuthorityTierAPIKey, AnchorDir: wd, AgentsRoot: agentsRoot, APIKey: apiKey, TeamID: teamID, TeamIDAssertionSource: teamIDAssertionSourceExplicitFlag}, nil
+		}
+		if explicitAPIKey == "" {
 			activeTeamID, found, err := activeTeamIDForExtend(wd)
 			if err != nil {
 				return teamExtendAuthority{}, err
 			}
 			if found {
-				return teamExtendAuthority{}, usageError("active team %s is selected, but %s is set in the environment and would silently use the API key's team; unset %s to extend active team %s, or pass --api-key or --team-id explicitly to intentionally use API-key team authority", activeTeamID, initAPIKeyEnvVar, initAPIKeyEnvVar, activeTeamID)
+				return teamExtendAuthority{Tier: teamExtendAuthorityTierAPIKeyWorkspaceAsserted, AnchorDir: wd, AgentsRoot: agentsRoot, APIKey: apiKey, TeamID: activeTeamID, TeamIDAssertionSource: teamIDAssertionSourceWorkspaceActiveTeam}, nil
 			}
 		}
-		return teamExtendAuthority{Tier: "api-key", AnchorDir: wd, AgentsRoot: agentsRoot, APIKey: apiKey, TeamID: teamID}, nil
+		return teamExtendAuthority{Tier: teamExtendAuthorityTierAPIKey, AnchorDir: wd, AgentsRoot: agentsRoot, APIKey: apiKey}, nil
 	}
 	if candidate, ok, err := resolveTeamExtendCandidate(wd, teamID); err != nil {
 		return teamExtendAuthority{}, err
 	} else if ok {
-		return teamExtendAuthority{Tier: "current-workspace", AnchorDir: candidate.HomeDir, AgentsRoot: agentsRoot, TeamID: candidate.TeamID}, nil
+		return teamExtendAuthority{Tier: teamExtendAuthorityTierCurrentWorkspace, AnchorDir: candidate.HomeDir, AgentsRoot: agentsRoot, TeamID: candidate.TeamID}, nil
 	}
 	candidates, checked, err := scanTeamExtendCandidates(agentsRoot, teamID)
 	if err != nil {
@@ -122,7 +137,7 @@ func resolveTeamExtendAuthority(wd string) (teamExtendAuthority, error) {
 		return teamExtendAuthority{}, usageError("multiple teams found under %s: %s; pass --team-id to choose one", agentsRoot, strings.Join(teamIDs, ", "))
 	}
 	winner := candidates[0]
-	return teamExtendAuthority{Tier: "discovered-agent", AnchorDir: winner.HomeDir, AgentsRoot: agentsRoot, TeamID: winner.TeamID, Checked: checked}, nil
+	return teamExtendAuthority{Tier: teamExtendAuthorityTierDiscoveredAgent, AnchorDir: winner.HomeDir, AgentsRoot: agentsRoot, TeamID: winner.TeamID, Checked: checked}, nil
 }
 
 func activeTeamIDForExtend(wd string) (string, bool, error) {

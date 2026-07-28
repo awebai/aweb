@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/awebai/aw/internal/agentdocs"
 )
 
 func TestWriteLibraryHomeFilesWritesEvolvableHome(t *testing.T) {
@@ -30,6 +32,43 @@ func TestWriteLibraryHomeFilesWritesEvolvableHome(t *testing.T) {
 	link, err := os.Readlink(filepath.Join(target, "CLAUDE.md"))
 	if err != nil || link != "AGENTS.md" {
 		t.Fatalf("CLAUDE.md link=%q err=%v", link, err)
+	}
+}
+
+func TestWriteLibraryHomeFilesPreservesExistingCoordinationBlock(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		existing   string
+		wantMarker bool
+	}{
+		{name: "marked", existing: "# Old\n\n" + agentdocs.Render("## Shared Rules\n\nCoordinate."), wantMarker: true},
+		{name: "unmarked", existing: "# Old\n", wantMarker: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := t.TempDir()
+			path := filepath.Join(target, "AGENTS.md")
+			if err := os.WriteFile(path, []byte(tc.existing), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := WriteLibraryHomeFiles(target, []LibraryHomeFile{{Path: "AGENTS.md", Kind: "file", ContentUTF8: "# Updated\n"}}, true); err != nil {
+				t.Fatalf("WriteLibraryHomeFiles: %v", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := string(data)
+			if !strings.HasPrefix(text, "# Updated\n") || strings.Contains(text, "# Old") {
+				t.Fatalf("profile-managed body was not replaced:\n%s", text)
+			}
+			hasMarker := strings.Contains(text, agentdocs.MarkerEnd)
+			if hasMarker != tc.wantMarker {
+				t.Fatalf("AWEB:END present=%t, want %t:\n%s", hasMarker, tc.wantMarker, text)
+			}
+			if tc.wantMarker && !strings.Contains(text, agentdocs.Render("## Shared Rules\n\nCoordinate.")) {
+				t.Fatalf("complete coordination block was not preserved:\n%s", text)
+			}
+		})
 	}
 }
 

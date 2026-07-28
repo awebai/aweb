@@ -17,6 +17,17 @@ def test_canonicalize_ssh_scheme_with_port():
     assert canonicalize_git_url("ssh://git@github.com:22/org/repo.git") == "github.com/org/repo"
 
 
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "ssh://git@ssh.github.com:443/org/repo.git",
+        "ssh://git@ssh.github.com:443/org/repo",
+    ],
+)
+def test_canonicalize_github_ssh_over_443_hostname(origin):
+    assert canonicalize_git_url(origin) == "github.com/org/repo"
+
+
 def test_canonicalize_ssh_config_alias():
     """SSH-config host aliases (Host github-co-aweb blocks routing to deploy
     keys) are legitimate scp-like git remotes and must canonicalize, not 422."""
