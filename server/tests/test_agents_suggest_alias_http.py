@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -103,6 +104,23 @@ def _signed_request(agent_sk, agent_did_key, team_id, body_bytes=b""):
         "Authorization": f"DIDKey {agent_did_key} {sig}",
         "X-AWEB-Timestamp": timestamp,
     }
+
+
+class _PauseAfterWorkspaceRead:
+    def __init__(self, manager) -> None:
+        self._manager = manager
+        self.workspace_read = asyncio.Event()
+        self.resume = asyncio.Event()
+
+    def __getattr__(self, name):
+        return getattr(self._manager, name)
+
+    async def fetch_one(self, query, *args):
+        row = await self._manager.fetch_one(query, *args)
+        if "SELECT w.workspace_id, w.hostname" in query:
+            self.workspace_read.set()
+            await asyncio.wait_for(self.resume.wait(), timeout=5)
+        return row
 
 
 def _build_test_app(aweb_db, team_did_key):
@@ -495,7 +513,7 @@ async def test_patch_agent_workspace_accepts_canonical_role_name(aweb_cloud_db):
         """
         INSERT INTO {{tables.workspaces}}
             (workspace_id, team_id, agent_id, alias, role, workspace_type)
-        VALUES ($1, $2, $3, 'alice', 'developer', 'agent')
+        VALUES ($1, $2, $3, 'alice', 'developer', 'manual')
         """,
         workspace_id,
         "backend:acme.com",
@@ -521,13 +539,103 @@ async def test_patch_agent_workspace_accepts_canonical_role_name(aweb_cloud_db):
 
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        SELECT role
+        SELECT role, workspace_type
         FROM {{tables.workspaces}}
         WHERE workspace_id = $1
         """,
         workspace_id,
     )
     assert row["role"] == "reviewer"
+    assert row["workspace_type"] == "manual"
+
+
+@pytest.mark.asyncio
+async def test_patch_agent_workspace_omission_preserves_concurrent_repo_binding(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id="backend:acme.com",
+        alias="alice",
+    )
+    cert_header = _encode_certificate(cert)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com", team_did_key)
+
+    agent_id = uuid4()
+    workspace_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, status)
+        VALUES ($1, $2, $3, 'alice', 'local', 'active')
+        """,
+        agent_id,
+        "backend:acme.com",
+        agent_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_id, agent_id, alias, role, workspace_type)
+        VALUES ($1, $2, $3, 'alice', 'developer', 'manual')
+        """,
+        workspace_id,
+        "backend:acme.com",
+        agent_id,
+    )
+
+    role_body = json.dumps({"role_name": "Reviewer"}, separators=(",", ":")).encode()
+    role_headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", role_body)
+    role_headers["X-AWID-Team-Certificate"] = cert_header
+    repair_body = json.dumps(
+        {"repo_origin": "https://github.com/acme/backend.git"},
+        separators=(",", ":"),
+    ).encode()
+    repair_headers = _signed_request(agent_sk, agent_did_key, "backend:acme.com", repair_body)
+    repair_headers["X-AWID-Team-Certificate"] = cert_header
+
+    paused_db = _PauseAfterWorkspaceRead(aweb_cloud_db.aweb_db)
+    role_app = _build_test_app(paused_db, team_did_key)
+    repair_app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with (
+        AsyncClient(transport=ASGITransport(app=role_app), base_url="http://test") as role_client,
+        AsyncClient(transport=ASGITransport(app=repair_app), base_url="http://test") as repair_client,
+    ):
+        role_request = asyncio.create_task(
+            role_client.patch(
+                "/v1/agents/me",
+                content=role_body,
+                headers={**role_headers, "Content-Type": "application/json"},
+            )
+        )
+        await asyncio.wait_for(paused_db.workspace_read.wait(), timeout=5)
+        repair = await repair_client.patch(
+            "/v1/agents/me",
+            content=repair_body,
+            headers={**repair_headers, "Content-Type": "application/json"},
+        )
+        paused_db.resume.set()
+        role = await role_request
+
+    assert repair.status_code == 200, repair.text
+    assert role.status_code == 200, role.text
+
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT w.role, w.repo_id, w.workspace_type, r.canonical_origin
+        FROM {{tables.workspaces}} w
+        LEFT JOIN {{tables.repos}} r ON r.id = w.repo_id
+        WHERE w.workspace_id = $1
+        """,
+        workspace_id,
+    )
+    assert row["role"] == "reviewer"
+    assert str(row["repo_id"]) == repair.json()["repo_id"]
+    assert row["workspace_type"] == "agent"
+    assert row["canonical_origin"] == "github.com/acme/backend"
 
 
 @pytest.mark.asyncio
@@ -562,7 +670,7 @@ async def test_patch_agent_workspace_repairs_ssh_over_443_repo_binding(aweb_clou
         """
         INSERT INTO {{tables.workspaces}}
             (workspace_id, team_id, agent_id, alias, workspace_type)
-        VALUES ($1, $2, $3, 'alice', 'agent')
+        VALUES ($1, $2, $3, 'alice', 'manual')
         """,
         workspace_id,
         "backend:acme.com",
@@ -594,7 +702,7 @@ async def test_patch_agent_workspace_repairs_ssh_over_443_repo_binding(aweb_clou
 
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        SELECT w.repo_id, r.canonical_origin
+        SELECT w.repo_id, w.workspace_type, r.canonical_origin
         FROM {{tables.workspaces}} w
         JOIN {{tables.repos}} r ON r.id = w.repo_id
         WHERE w.workspace_id = $1
@@ -603,6 +711,7 @@ async def test_patch_agent_workspace_repairs_ssh_over_443_repo_binding(aweb_clou
     )
     assert str(row["repo_id"]) == first.json()["repo_id"]
     assert row["canonical_origin"] == "github.com/acme/backend"
+    assert row["workspace_type"] == "agent"
 
 
 @pytest.mark.asyncio

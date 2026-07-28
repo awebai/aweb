@@ -891,8 +891,12 @@ is available, it returns HTTP 409 with detail `alias_exhausted`.
 
 `PATCH /v1/agents/me` may carry `repo_origin` as mutable workspace metadata.
 The server canonicalizes the origin, ensures the team-scoped repo row, binds
-the calling workspace to it, and returns `repo_id` plus `canonical_origin`.
-The CLI uses this path during heartbeat to repair stale or missing repo
+the calling workspace to it, transitions stored `workspace_type` to `agent`
+(rendered as `repo_worktree` context), and returns `repo_id` plus
+`canonical_origin`. Omitting `repo_origin` preserves both repo binding and
+workspace type; empty or invalid origins are rejected, and there is no repo
+unbind operation in this path. The CLI uses this path during heartbeat to
+repair stale or missing repo
 bindings. `aw heartbeat` reports `repo_status` (`repaired`, `current`,
 `unavailable`, or `repair_failed`) and the canonical binding when available so
 the repair is observable. Repo association remains workspace state:
