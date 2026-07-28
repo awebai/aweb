@@ -212,6 +212,82 @@ func TestRefreshPublicLibraryProfilePrunesRemovedManagedFilesOnly(t *testing.T) 
 	}
 }
 
+func TestTeamRefreshUpdatesExistingCoordinationBlockFromActiveInstructions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+	oldFiles := refreshTestProfileFiles(false, "0.1.0")
+	newFiles := refreshTestProfileFiles(false, "0.2.0")
+	oldDigest := testLibraryProfilePayloadDigest(t, oldFiles)
+	newDigest := testLibraryProfilePayloadDigest(t, newFiles)
+	currentInstructions := "## Current instructions\n\nRead mail before claiming work."
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/profiles/coordinator":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"profile_ref": "coordinator", "version": "0.2.0", "digest": newDigest,
+				"source_blueprint_ref": "aweb.engineering", "source_blueprint_version": "0.1.0",
+				"source_blueprint_digest": "sha256:blueprint", "files": newFiles,
+			})
+		case "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_instructions_id": "instructions-v3", "active_team_instructions_id": "instructions-v3",
+				"team_id": "default:acme.com", "version": 3,
+				"document": map[string]any{"body_md": currentInstructions, "format": "markdown"},
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	writeLocalTeamSignedRequestWorkspaceForTest(t, home, server.URL, "default:acme.com", "coordinator", did, priv)
+	writeLibraryShelfManifestPluginForTest(t, home, server.URL)
+
+	if _, err := blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
+		TargetDir: home, BlueprintRef: "aweb.engineering", BlueprintVersion: "0.1.0", BlueprintDigest: "sha256:blueprint",
+		ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: oldDigest,
+		RuntimeKind: "claude-code", Files: oldFiles, Force: true,
+	}); err != nil {
+		t.Fatalf("initial materialize: %v", err)
+	}
+	staleInstructions := "## Superseded instructions\n\nClaim work before reading mail."
+	if result := InjectProvidedAgentDocs(home, staleInstructions); len(result.Errors) > 0 {
+		t.Fatalf("inject stale coordination block: %v", result.Errors)
+	}
+
+	oldHomeFlag, oldJSONFlag, oldRuntime := agentHomeFlag, jsonFlag, teamRefreshRuntime
+	agentHomeFlag, jsonFlag, teamRefreshRuntime = home, false, "claude-code"
+	t.Cleanup(func() {
+		agentHomeFlag, jsonFlag, teamRefreshRuntime = oldHomeFlag, oldJSONFlag, oldRuntime
+	})
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	if err := runTeamRefresh(cmd, []string{"coordinator"}); err != nil {
+		t.Fatalf("runTeamRefresh: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Coordinate 0.2.0.") || strings.Contains(text, "Coordinate 0.1.0.") {
+		t.Fatalf("refresh did not advance profile-managed content:\n%s", text)
+	}
+	if !strings.Contains(text, currentInstructions) || strings.Contains(text, staleInstructions) {
+		t.Fatalf("refresh did not replace stale coordination instructions:\n%s", text)
+	}
+	if strings.Count(text, awDocsMarkerStart) != 1 || strings.Count(text, awDocsMarkerEnd) != 1 {
+		t.Fatalf("refresh did not leave exactly one complete marker pair:\n%s", text)
+	}
+}
+
 func TestRefreshShelfProfilePreservesInjectedCoordinationBlockWithoutInventingOne(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
