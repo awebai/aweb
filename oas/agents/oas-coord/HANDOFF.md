@@ -156,3 +156,35 @@ cleanup contract. It stops being a parked task on our board.
 
 **`.63` is unaffected by convergence** and remains the single blocker on a
 demonstrable resident.
+
+
+## `.64` retirement half — reviewed, proposal drafted, upstream UNPUSHED
+
+**Property:** normal retirement must not delete an instance home whose cleanup did
+not finish. It deliberately does **not** ask for required retire hooks — upstream's
+rejection at `lib/core.mjs:671` is correct, since `required` means *fatal to a
+spawn* and retire runs outside a spawn transaction.
+
+**Where the code is:** branch `upstream/retire-blocks-on-incomplete-cleanup` in a
+local worktree, base `6ac3386949b2b97787522e679a4369bca936d1ef`, tip
+`7b4fe6471fe875d1ac9c3339f582791061ff91f3`. **On no remote.** Not to be pushed
+upstream pending Juan and Pepe.
+
+**The proposal is durable in this repo** at
+`oas/docs/proposals/upstream-retire-blocks-on-incomplete-cleanup.md`,
+SHA-256 `9959cd1bde989c2ee39881836017c2d5e45b70931005290abd817d948bae643d` — the
+exact text reviewed and ACKed. It was drafted in scratchpad, which does not
+survive; this copy is byte-identical and is the one to send.
+
+**Review:** two rounds by an independent agent. Round one on `5c8b724` returned
+*amendments required* and caught a real defect — the blocking path reached
+self-retire, which I had claimed it did not. They established it with a
+fixed-vs-control regression, not by reading the diff; my own mirror case could
+never have caught it, because I wrote it around the ordinary path only. Round two
+on `7b4fe64`: **ACK, no blocking issues, no non-blocking suggestions.**
+
+**Evidence attribution matters here:** the full fixed-vs-control suite comparison
+(437/436/0 vs 436/434/1) was run at **`5c8b724`** and was *not* repeated at the
+tip. `7b4fe64` carries the reviewer's two regressions (2/2) and a scoped suite of
+460/459/0/1. The control-only failure is a pre-existing upstream load-sensitive
+flake — 5/5 passes in isolation — and is not attributed to this change.
