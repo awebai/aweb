@@ -904,7 +904,7 @@ Subcommands:
 - `join` Join a team from an invite token
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
-- `refresh` Re-materialize a team member's home from the latest version of its Library profile
+- `refresh` Refresh a team member's profile and existing team-instructions block
 - `remove-agent` Remove an agent from a team
 - `replace-key` Replace a local agent identity key under team-controller authority
 - `switch` Switch the active team for this identity
@@ -1063,6 +1063,10 @@ materialized from on the team's private Library shelf. This closes the learning 
 approved profile proposal mints a new shelf version, and `aw team refresh` re-applies it
 locally and updates .aw/profile/ref.json - so the agent picks up the team's own improvement.
 It reads the recorded profile ref locally and never asks a remote service which profile to use.
+
+When the home already has exactly one complete AWEB:START/AWEB:END block, refresh also
+re-injects the active team instructions. It never creates that block in an unmarked home; use
+`aw instructions inject <directory>` when an explicit backfill is intended.
 
 Upstream blueprint updates are a separate, composable step: run `aw library update-from-source`
 first to pull them onto the shelf, then `aw team refresh` to re-materialize.
@@ -1647,6 +1651,7 @@ Read and manage shared team instructions
 Subcommands:
 - `activate` Activate an existing shared team instructions version
 - `history` List shared team instructions history
+- `inject` Inject current team instructions into agent docs
 - `reset` Reset shared team instructions to the server default
 - `set` Create and activate a new shared team instructions version
 - `show` Show shared team instructions
@@ -1673,6 +1678,17 @@ List shared team instructions history
 Flags:
 - `-h, --help help for history`
 - `--limit int Max instruction versions (default 20)`
+
+## `instructions inject`
+
+### `instructions inject`
+
+Fetch the active team instructions through the current workspace and replace the
+target's marker-delimited block. The exact target defaults to the current directory. This
+explicit operation also adds the block when the target is not yet marked.
+
+Flags:
+- `-h, --help help for inject`
 
 ## `instructions reset`
 

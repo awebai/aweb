@@ -212,6 +212,188 @@ func TestRefreshPublicLibraryProfilePrunesRemovedManagedFilesOnly(t *testing.T) 
 	}
 }
 
+func TestTeamRefreshUpdatesExistingCoordinationBlockFromActiveInstructions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AW_CONFIG_PATH", "")
+
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+	oldFiles := refreshTestProfileFiles(false, "0.1.0")
+	newFiles := refreshTestProfileFiles(false, "0.2.0")
+	oldDigest := testLibraryProfilePayloadDigest(t, oldFiles)
+	newDigest := testLibraryProfilePayloadDigest(t, newFiles)
+	currentInstructions := "## Current instructions\n\nRead mail before claiming work."
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/profiles/coordinator":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"profile_ref": "coordinator", "version": "0.2.0", "digest": newDigest,
+				"source_blueprint_ref": "aweb.engineering", "source_blueprint_version": "0.1.0",
+				"source_blueprint_digest": "sha256:blueprint", "files": newFiles,
+			})
+		case "/v1/instructions/active":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_instructions_id": "instructions-v3", "active_team_instructions_id": "instructions-v3",
+				"team_id": "default:acme.com", "version": 3,
+				"document": map[string]any{"body_md": currentInstructions, "format": "markdown"},
+			})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	writeLocalTeamSignedRequestWorkspaceForTest(t, home, server.URL, "default:acme.com", "coordinator", did, priv)
+	writeLibraryShelfManifestPluginForTest(t, home, server.URL)
+
+	if _, err := blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
+		TargetDir: home, BlueprintRef: "aweb.engineering", BlueprintVersion: "0.1.0", BlueprintDigest: "sha256:blueprint",
+		ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: oldDigest,
+		RuntimeKind: "claude-code", Files: oldFiles, Force: true,
+	}); err != nil {
+		t.Fatalf("initial materialize: %v", err)
+	}
+	staleInstructions := "## Superseded instructions\n\nClaim work before reading mail."
+	if result := InjectProvidedAgentDocs(home, staleInstructions); len(result.Errors) > 0 {
+		t.Fatalf("inject stale coordination block: %v", result.Errors)
+	}
+
+	oldHomeFlag, oldJSONFlag, oldRuntime := agentHomeFlag, jsonFlag, teamRefreshRuntime
+	agentHomeFlag, jsonFlag, teamRefreshRuntime = home, false, "claude-code"
+	t.Cleanup(func() {
+		agentHomeFlag, jsonFlag, teamRefreshRuntime = oldHomeFlag, oldJSONFlag, oldRuntime
+	})
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	if err := runTeamRefresh(cmd, []string{"coordinator"}); err != nil {
+		t.Fatalf("runTeamRefresh: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Coordinate 0.2.0.") || strings.Contains(text, "Coordinate 0.1.0.") {
+		t.Fatalf("refresh did not advance profile-managed content:\n%s", text)
+	}
+	if !strings.Contains(text, currentInstructions) || strings.Contains(text, staleInstructions) {
+		t.Fatalf("refresh did not replace stale coordination instructions:\n%s", text)
+	}
+	if strings.Count(text, awDocsMarkerStart) != 1 || strings.Count(text, awDocsMarkerEnd) != 1 {
+		t.Fatalf("refresh did not leave exactly one complete marker pair:\n%s", text)
+	}
+
+	newerInstructions := "## Newer instructions\n\nRead all waiting messages first."
+	currentInstructions = newerInstructions
+	if err := runTeamRefresh(cmd, []string{"coordinator"}); err != nil {
+		t.Fatalf("runTeamRefresh with unchanged profile: %v", err)
+	}
+	data, err = os.ReadFile(filepath.Join(home, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text = string(data)
+	if !strings.Contains(text, newerInstructions) || strings.Contains(text, "## Current instructions") {
+		t.Fatalf("unchanged-profile refresh did not advance team instructions:\n%s", text)
+	}
+	if strings.Count(text, awDocsMarkerStart) != 1 || strings.Count(text, awDocsMarkerEnd) != 1 {
+		t.Fatalf("unchanged-profile refresh did not leave exactly one complete marker pair:\n%s", text)
+	}
+}
+
+func TestTeamRefreshRejectsCoordinationDocsSymlinkOutsideHome(t *testing.T) {
+	skipIfNoSymlinkSupport(t)
+
+	home := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.md")
+	original := []byte(renderInjectedDocs("## Outside instructions\n\nDo not change."))
+	if err := os.WriteFile(outside, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(home, "CLAUDE.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecordedProfileRef(home, recordedProfileRef{ProfileRef: "coordinator"}); err != nil {
+		t.Fatal(err)
+	}
+
+	oldHomeFlag, oldJSONFlag, oldRuntime := agentHomeFlag, jsonFlag, teamRefreshRuntime
+	agentHomeFlag, jsonFlag, teamRefreshRuntime = home, false, "claude-code"
+	t.Cleanup(func() {
+		agentHomeFlag, jsonFlag, teamRefreshRuntime = oldHomeFlag, oldJSONFlag, oldRuntime
+	})
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	err := runTeamRefresh(cmd, []string{"coordinator"})
+	if err == nil {
+		t.Fatal("expected refresh to reject coordination-doc symlink outside home")
+	}
+	for _, want := range []string{home, outside} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refresh escape error %q does not name %q", err, want)
+		}
+	}
+	data, readErr := os.ReadFile(outside)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("refresh modified outside file:\n%s", data)
+	}
+}
+
+func TestTeamRefreshLeavesUnmarkedHomeUnmarked(t *testing.T) {
+	home := t.TempDir()
+	oldFiles := refreshTestProfileFiles(false, "0.1.0")
+	newFiles := refreshTestProfileFiles(false, "0.2.0")
+	oldDigest := testLibraryProfilePayloadDigest(t, oldFiles)
+	newDigest := testLibraryProfilePayloadDigest(t, newFiles)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/blueprints/aweb.engineering/profiles/coordinator" {
+			t.Fatalf("unmarked refresh made unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"blueprint_ref": "aweb.engineering", "blueprint_version": "0.1.0",
+			"profile_ref": "coordinator", "version": "0.2.0", "digest": newDigest, "files": newFiles,
+		})
+	}))
+	defer server.Close()
+	if _, err := blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
+		TargetDir: home, LibraryURL: server.URL, BlueprintRef: "aweb.engineering", BlueprintVersion: "0.1.0",
+		ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: oldDigest,
+		RuntimeKind: "claude-code", Files: oldFiles, Force: true,
+	}); err != nil {
+		t.Fatalf("initial materialize: %v", err)
+	}
+
+	oldHomeFlag, oldJSONFlag, oldRuntime := agentHomeFlag, jsonFlag, teamRefreshRuntime
+	agentHomeFlag, jsonFlag, teamRefreshRuntime = home, false, "claude-code"
+	t.Cleanup(func() {
+		agentHomeFlag, jsonFlag, teamRefreshRuntime = oldHomeFlag, oldJSONFlag, oldRuntime
+	})
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+	if err := runTeamRefresh(cmd, []string{"coordinator"}); err != nil {
+		t.Fatalf("runTeamRefresh: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Coordinate 0.2.0.") || strings.Contains(text, "Coordinate 0.1.0.") {
+		t.Fatalf("refresh did not advance profile-managed content:\n%s", text)
+	}
+	if strings.Contains(text, awDocsMarkerStart) || strings.Contains(text, awDocsMarkerEnd) {
+		t.Fatalf("refresh invented a coordination block in an unmarked home:\n%s", text)
+	}
+}
+
 func TestRefreshShelfProfilePreservesInjectedCoordinationBlockWithoutInventingOne(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

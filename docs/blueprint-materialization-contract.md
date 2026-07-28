@@ -241,8 +241,15 @@ managed set. Homes update
 
 - **Public-blueprint refresh** re-pulls the profile from the **pinned**
   `library_url` + `source_blueprint_ref` (never a remote-chosen ref),
-  recomputes the profile digest, and rewrites the home + pin. It is a **no-op**
-  when `profile_digest` is unchanged and updates on change.
+  recomputes the profile digest, and rewrites the home + pin. The profile
+  materialization is a **no-op** when `profile_digest` is unchanged and updates
+  on change.
+- **Team instructions remain separately owned.** The profile owns the generated
+  `AGENTS.md` body; instruction injection owns only the `AWEB:START` / `AWEB:END`
+  region. `aw team refresh` re-fetches and replaces that region only when the
+  home had exactly one complete marker pair before refresh. An unmarked home
+  stays unmarked. `aw instructions inject [directory]` is the explicit operation
+  that may create or backfill the region.
 - **Refresh prunes only the managed set.** A file present in the old managed set
   (§6) but absent from the new payload is deleted; local/runtime state outside
   the managed set (the rest of `.aw/`, local edits) is preserved. When a newly

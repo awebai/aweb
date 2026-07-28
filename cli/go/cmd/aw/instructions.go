@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -27,6 +30,16 @@ var instructionsHistoryCmd = &cobra.Command{
 	Use:   "history",
 	Short: "List shared team instructions history",
 	RunE:  runInstructionsHistory,
+}
+
+var instructionsInjectCmd = &cobra.Command{
+	Use:   "inject [directory]",
+	Short: "Inject current team instructions into agent docs",
+	Long: "Fetch the active team instructions through the current workspace and replace the\n" +
+		"target's marker-delimited block. The exact target defaults to the current directory. This\n" +
+		"explicit operation also adds the block when the target is not yet marked.",
+	Args: cobra.MaximumNArgs(1),
+	RunE: runInstructionsInject,
 }
 
 var instructionsSetCmd = &cobra.Command{
@@ -78,6 +91,7 @@ func init() {
 
 	instructionsCmd.AddCommand(instructionsShowCmd)
 	instructionsCmd.AddCommand(instructionsHistoryCmd)
+	instructionsCmd.AddCommand(instructionsInjectCmd)
 	instructionsCmd.AddCommand(instructionsSetCmd)
 	instructionsCmd.AddCommand(instructionsActivateCmd)
 	instructionsCmd.AddCommand(instructionsResetCmd)
@@ -121,6 +135,47 @@ func runInstructionsShow(cmd *cobra.Command, args []string) error {
 		IsActive:         isActive,
 		TeamInstructions: resp,
 	}, formatTeamInstructionsShow)
+	return nil
+}
+
+func runInstructionsInject(cmd *cobra.Command, args []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	target := cwd
+	if len(args) == 1 {
+		target = strings.TrimSpace(args[0])
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(cwd, target)
+		}
+	}
+	target = filepath.Clean(target)
+	info, err := os.Stat(target)
+	if err != nil {
+		return fmt.Errorf("target directory: %w", err)
+	}
+	if !info.IsDir() {
+		return usageError("target must be a directory: %s", target)
+	}
+
+	body, err := loadTeamInstructionsBody(cwd)
+	if err != nil {
+		return err
+	}
+	result := InjectProvidedAgentDocs(target, body)
+	if len(result.Errors) > 0 {
+		return fmt.Errorf("inject aw coordination docs: %s", strings.Join(result.Errors, "; "))
+	}
+	if jsonFlag {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+	}
+	for _, name := range result.Created {
+		fmt.Fprintf(cmd.OutOrStdout(), "Created %s with aw team instructions\n", name)
+	}
+	for _, name := range result.Injected {
+		fmt.Fprintf(cmd.OutOrStdout(), "Injected aw team instructions into %s\n", name)
+	}
 	return nil
 }
 

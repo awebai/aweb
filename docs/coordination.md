@@ -159,6 +159,18 @@ Create and activate a new instructions version:
 aw instructions set --body-file instructions.md
 ```
 
+Publishing cannot push into offline local files. Explicitly inject the active
+version into an exact directory (the current directory by default):
+
+```bash
+aw instructions inject
+aw instructions inject cli/go
+```
+
+This explicit operation may add a missing `AWEB:START` / `AWEB:END` block. By
+contrast, `aw team refresh <name>` updates the block only when that home already
+has exactly one complete marker pair; an unmarked home stays unmarked.
+
 Activate an existing instructions version:
 
 ```bash

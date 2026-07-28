@@ -140,7 +140,7 @@ the categories stable unless this document is updated.
 | `aw id encryption-key setup|rotate|show` | Agent primitive for E2E readiness | Keep in identity skills; not a team setup happy path. |
 | `aw service init` | Agent primitive / service-oriented connect workspace | Connects an existing identity+cert to a service; does not create team/identity/membership. |
 | `aw roles add|set|activate|show|list` | Agent primitive for team context | Publishing roles is a team-context mutation, not template bootstrap side effect. Prefer `add` for one-role-at-a-time resource-pack application; use `set` for full-bundle replacement. |
-| `aw instructions set|activate|show` | Agent primitive for team context | Publishing instructions is a team-context mutation, not template bootstrap side effect. |
+| `aw instructions set|activate|show|inject` | Agent primitive for team context | Publishing instructions is a team-context mutation, not template bootstrap side effect. `inject [directory]` explicitly renders the active version into an exact local target and may backfill a missing marker block. |
 | `aw contacts`, `aw inbound-mode` | Agent primitives for addressability policy | Keep in identity/messaging skills. |
 
 ### Protocol/admin primitives

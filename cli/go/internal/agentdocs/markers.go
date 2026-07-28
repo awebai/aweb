@@ -36,6 +36,25 @@ func Remove(content string) string {
 	}
 }
 
+// RemoveAll removes every complete marker-delimited coordination block.
+func RemoveAll(content string) string {
+	for {
+		updated := Remove(content)
+		if updated == content {
+			return content
+		}
+		content = updated
+	}
+}
+
+// HasSingleMarkedBlock reports whether content contains exactly one complete
+// coordination-owned region.
+func HasSingleMarkedBlock(content string) bool {
+	return strings.Count(content, MarkerStart) == 1 &&
+		strings.Count(content, MarkerEnd) == 1 &&
+		strings.Index(content, MarkerStart) < strings.Index(content, MarkerEnd)
+}
+
 // PreserveMarkedBlock carries the existing coordination-owned region into newly
 // generated profile content. An unmarked document remains unmarked.
 func PreserveMarkedBlock(existing, generated string) string {
