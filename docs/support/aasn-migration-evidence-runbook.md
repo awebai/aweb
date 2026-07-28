@@ -20,6 +20,13 @@ The exact candidate AC image digest does not yet exist. The runbook is therefore
 
 An unpinned image tag cannot complete Phase 3.
 
+The production-accessing database tools are separately pinned to AC `v0.7.8` commit `1f291a727c0df68633c97aee542903b2cae8efe0`. Raw file SHA-256 values at that commit are:
+
+- `scripts/prod_db_reset.py`: `34016a8e81fba0e8c5eedb22886e1071208efeea4e9f7f8abc8b9f3fd5c17a19`
+- `scripts/verify_db_reset_roundtrip.py`: `9ce6e35c93f16f05af35be3e6ca3067771c40704a73633b3d9d922295fdfa5c5`
+
+These tool files are byte-identical on the AC main revision independently reviewed by Tess, but the operator must still use the exact pinned commit above.
+
 ## Expected normalized manifest
 
 These values use pgdbm's `sha256(content.replace("\r\n", "\n").strip())`. They are **not** raw `sha256sum` file hashes.
@@ -46,12 +53,22 @@ Expected production state is `001`–`009` `MATCH` and all four later files `PEN
 
 No database access yet.
 
-1. Use a private clean AC worktree, never a dirty shared checkout. Record its full SHA.
+1. Create a private detached AC worktree at exactly `1f291a727c0df68633c97aee542903b2cae8efe0`, never a dirty shared checkout. Before access, require `git rev-parse HEAD` to equal that full SHA and `git status --porcelain` to be empty. Compute raw SHA-256 for both tool files and require the two values pinned above. Any difference is a stop.
 2. Record `psql`, `pg_dump`, Docker, and `/usr/bin/time` versions. PostgreSQL client major version must be compatible with the server.
 3. Create a mode-`0700` evidence directory on encrypted private storage and set `umask 077`.
 4. Configure separate mode-`0600` PostgreSQL service/password files for production and clone. Logs and commands identify service names only, never URLs/passwords. Visually label separate environment files `READ-ONLY PROD` and `DISPOSABLE CLONE`.
-5. Obtain direct/unpooled endpoints for dump and migration operations. Record only provider project/branch identifiers.
-6. Record the production image by immutable digest from Render and verify `/health`. Later record the candidate image by immutable digest and source attestation. Mutable tags fail the gate.
+5. The dedicated env file passed to `prod_db_reset.py` must contain exactly one effective database setting of the form `DATABASE_URL=service=<safe-name>`. Set `DB_ENV` to that file and run both fail-closed checks immediately before each dump or restore:
+
+   ```sh
+   test "$(grep -Ec '^DATABASE_URL=service=[A-Za-z0-9_.-]+$' "$DB_ENV")" -eq 1
+   test "$(grep -Ec '^[[:space:]]*(export[[:space:]]+)?DATABASE_URL[[:space:]]*=' "$DB_ENV")" -eq 1
+   ! grep -Eiq '(postgres(ql)?://|password[[:space:]]*=|host[[:space:]]*=)' "$DB_ENV"
+   ```
+
+   Any failure stops access. This is mandatory because the tool prints its database argument; an accidental URL could disclose credentials.
+6. Obtain direct/unpooled endpoints for dump and migration operations. Keep their details only in the protected service/password files. Record only provider project/branch identifiers.
+7. Record the production image by immutable digest from Render and verify `/health`. Later record the candidate image by immutable digest and source attestation. Mutable tags fail the gate.
+8. Before creating a dump, name both a primary data custodian and a second cleanup custodian, record the dump path and clone identifier, and set an alarm for a hard expiry no later than four hours after dump start. On every success, stop, timeout, failure, disconnection, or reschedule path, the primary operator must destroy the dump and clone before ending the session; if the primary operator disconnects, the second custodian owns immediate cleanup. Evidence is invalid until deletion is independently confirmed. If Phase 3 cannot start in the same bounded session, clean up after Phase 2A and later repeat Phase 2 with a fresh dump/clone.
 
 ## Phase 1: production read-only inventory
 
@@ -94,6 +111,85 @@ SELECT COALESCE(e.filename,a.filename) AS filename,
             ELSE 'CHECKSUM_DRIFT' END AS status
 FROM expected e FULL JOIN actual a USING(filename)
 ORDER BY COALESCE(e.ord,999), COALESCE(e.filename,a.filename);
+
+-- All 010-012 target and temporary objects must be absent on production.
+SELECT 'table' AS object_type, 'aweb.session_admission_leases' AS object_name,
+       to_regclass('aweb.session_admission_leases') IS NOT NULL AS present
+UNION ALL SELECT 'table','aweb.chat_message_reads',
+       to_regclass('aweb.chat_message_reads') IS NOT NULL
+UNION ALL SELECT 'index','aweb.idx_session_admission_leases_expiry',
+       to_regclass('aweb.idx_session_admission_leases_expiry') IS NOT NULL
+UNION ALL SELECT 'index','aweb.idx_chat_message_reads_participant',
+       to_regclass('aweb.idx_chat_message_reads_participant') IS NOT NULL
+UNION ALL SELECT 'constraint-index','aweb.aapc_chat_messages_session_message_unique',
+       to_regclass('aweb.aapc_chat_messages_session_message_unique') IS NOT NULL
+UNION ALL SELECT 'constraint-index','aweb.chat_messages_session_message_unique',
+       to_regclass('aweb.chat_messages_session_message_unique') IS NOT NULL
+UNION ALL SELECT 'temporary-function','aweb.aapc_skip_orphan_chat_message_read()',
+       to_regprocedure('aweb.aapc_skip_orphan_chat_message_read()') IS NOT NULL;
+
+SELECT c.conrelid::regclass AS relation, c.conname, c.contype,
+       pg_get_constraintdef(c.oid) AS definition
+FROM pg_constraint c
+WHERE c.connamespace='aweb'::regnamespace
+  AND c.conname IN (
+    'aapc_chat_messages_session_message_unique',
+    'chat_messages_session_message_unique',
+    'chat_message_reads_pkey',
+    'chat_message_reads_agent_id_fkey',
+    'chat_message_reads_session_id_did_fkey',
+    'chat_message_reads_session_id_message_id_fkey'
+  )
+ORDER BY c.conrelid::regclass::text,c.conname;
+
+SELECT t.tgrelid::regclass AS relation, t.tgname
+FROM pg_trigger t
+WHERE NOT t.tgisinternal
+  AND t.tgname='trg_aapc_skip_orphan_chat_message_reads';
+
+-- Record and validate prerequisite deployed constraints/indexes.
+SELECT c.conrelid::regclass AS relation, c.conname, c.contype,
+       pg_get_constraintdef(c.oid) AS definition
+FROM pg_constraint c
+WHERE c.conrelid IN (
+  'aweb.chat_messages'::regclass,
+  'aweb.chat_participants'::regclass,
+  'aweb.chat_read_receipts'::regclass
+)
+ORDER BY c.conrelid::regclass::text,c.conname;
+
+SELECT 'aweb.chat_messages' AS relation,
+       to_regclass('aweb.chat_messages') IS NOT NULL AS table_present,
+       to_regclass('aweb.chat_messages_pkey') IS NOT NULL AS primary_index_present,
+       to_regclass('aweb.idx_chat_messages_session') IS NOT NULL AS session_index_present
+UNION ALL SELECT 'aweb.chat_participants',
+       to_regclass('aweb.chat_participants') IS NOT NULL,
+       to_regclass('aweb.chat_participants_pkey') IS NOT NULL,
+       NULL
+UNION ALL SELECT 'aweb.chat_read_receipts',
+       to_regclass('aweb.chat_read_receipts') IS NOT NULL,
+       to_regclass('aweb.chat_read_receipts_pkey') IS NOT NULL,
+       NULL;
+
+SELECT c.conrelid::regclass AS relation, c.conname, c.contype,
+       pg_get_constraintdef(c.oid) AS definition
+FROM pg_constraint c
+WHERE c.connamespace='aweb'::regnamespace
+  AND c.conname IN (
+    'agents_pkey',
+    'chat_sessions_pkey',
+    'chat_messages_pkey',
+    'chat_messages_session_id_fkey',
+    'chat_messages_from_agent_id_fkey',
+    'chat_participants_pkey',
+    'chat_participants_session_id_fkey',
+    'chat_participants_agent_id_fkey',
+    'chat_read_receipts_pkey',
+    'chat_read_receipts_session_id_fkey',
+    'chat_read_receipts_agent_id_fkey',
+    'chat_read_receipts_last_read_message_id_fkey'
+  )
+ORDER BY c.conrelid::regclass::text,c.conname;
 
 SELECT 'chat_messages' AS relation, count(*) AS rows,
        pg_total_relation_size('aweb.chat_messages') AS total_bytes FROM aweb.chat_messages
@@ -140,6 +236,8 @@ FROM candidate;
 COMMIT;
 ```
 
+The prerequisite constraint inventory must contain the following deployed definitions: primary keys on `agents(agent_id)`, `chat_sessions(session_id)`, `chat_messages(message_id)`, `chat_participants(session_id,did)`, and `chat_read_receipts(session_id,did)`; session FKs from messages/participants/receipts to `chat_sessions(session_id)`; agent FKs from messages/participants/receipts to `agents(agent_id)`; and the receipt watermark FK to `chat_messages(message_id)`. `idx_chat_messages_session` must index `(session_id,created_at)`. Record `pg_get_constraintdef` output and stop if any name, referenced relation/column, key column/order, or action differs.
+
 PostgreSQL relation sizes do not reveal provider quota. Separately record Neon storage used, plan/quota, and remaining headroom from the console/API. Do not call tablespace size “free capacity.”
 
 ### Production stop conditions
@@ -150,6 +248,8 @@ Stop without further production access if:
 - any NULL-module row, `CHECKSUM_DRIFT`, or `UNEXPECTED_APPLIED` appears;
 - `001`–`009` are not all `MATCH`, or any of `010`/`010a`/`011`/`012` is already applied;
 - duplicate, cross-session-watermark, missing-watermark, or missing-agent count is nonzero;
+- either new table, either new named index, either new unique constraint/index, any `chat_message_reads` constraint, the temporary trigger, or the temporary function is present;
+- prerequisite old tables, primary keys, `idx_chat_messages_session`, receipt watermark/agent FKs, or participant/message session FKs are absent or differ from the recorded deployed definitions;
 - query timeout, connection instability, or material production load occurs;
 - provider remaining capacity cannot be established.
 
@@ -157,11 +257,11 @@ Never run `EXPLAIN ANALYZE` or a migration command on production.
 
 ## Phase 2: data-only dump and old-schema clone restore
 
-1. Reconfirm production and clone service names differ. The clone database/branch name must contain an explicit rehearsal marker. A second person reads the target before restore.
-2. With `umask 077`, use AC's audited `prod_db_reset.py dump` path from the pinned clean worktree, configured with `DATABASE_URL=service=<production-service>`. It runs `pg_dump --data-only` for `aweb`, `aweb_cloud`, and `server`. The private dump includes migration metadata, but the supported restore path filters that metadata so the target's freshly applied migration records remain authoritative. Wrap the dump with `/usr/bin/time -p`. Record wall time, dump bytes, and the dump artifact SHA-256. Never publish the dump or credential-bearing output.
+1. Reconfirm production and clone service names differ. The clone database/branch name must contain an explicit rehearsal marker. A second person reads the target before restore. Start the four-hour retention clock and write its expiry into the evidence record.
+2. With `umask 077`, use the pinned AC `prod_db_reset.py dump` path after repeating the clean-SHA, file-digest, and service-only-DSN checks from Phase 0. Configure it with `DATABASE_URL=service=<production-service>`. It runs `pg_dump --data-only` for `aweb`, `aweb_cloud`, and `server`. The private dump includes migration metadata, but the supported restore path filters that metadata so the target's freshly applied migration records remain authoritative. Wrap the dump with `/usr/bin/time -p`. Record wall time, dump bytes, and the dump artifact SHA-256. Never publish the dump or credential-bearing output.
 3. Provision a fresh disposable clone. Run `python -m aweb_cloud.cli migrate` from the production `v0.7.8` image by immutable digest against **only** the clone to create the deployed old schema.
 4. Use AC `prod_db_reset.py restore` against **only** the clone. It filters migration metadata, checks COPY shape, truncates clone application tables, restores atomically, and compares all application-table counts. Wrap it with `/usr/bin/time -p`. Any count mismatch is a hard stop.
-5. Run the Phase-1 read-only inventory on the clone. Counts and `001`–`009` migration state must match the production snapshot.
+5. Use the dump's COPY counts and `prod_db_reset.py` count verification as the restore source of truth. Run the Phase-1 read-only inventory on the clone and use that restored state as the exact candidate/backfill baseline. Do **not** require it to equal the earlier live Phase-1 counts: those observations use different snapshots while production remains writable, so ordinary intervening writes are expected. If one-snapshot equality is ever required, redesign this phase around one explicitly exported snapshot and obtain a new review first.
 
 This phase proves the data-only backup reconstructs the deployed old schema in isolation. It does not prove the forward migration.
 
@@ -199,11 +299,12 @@ WHERE EXISTS (SELECT 1 FROM aweb.chat_participants p
 ON CONFLICT DO NOTHING;
 
 CREATE TEMP TABLE aasn_session_admission_leases_probe (
-    team_id UUID NOT NULL,
+    team_id TEXT NOT NULL,
     principal_agent_id UUID NOT NULL,
-    session_key_hash TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    session_key_hash BYTEA NOT NULL,
     generation BIGINT NOT NULL DEFAULT 1,
-    acquired_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    acquired_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (team_id, principal_agent_id)
 ) ON COMMIT DROP;
@@ -228,6 +329,8 @@ ROLLBACK;
 
 Record elapsed time, row count, heap bytes, index bytes, and total bytes. Confirm after rollback that both `to_regclass('pg_temp.aasn_chat_message_reads_probe')` and `to_regclass('pg_temp.aasn_session_admission_leases_probe')` are null. This estimate plus Neon remaining capacity is digest-independent evidence; Phase 3's persistent measured delta supersedes it.
 
+If Phase 3 is still blocked, immediately destroy the clone and dump after capturing sanitized Phase 2A evidence. Never retain them while waiting for a tag, pin, image, approval, reschedule, or review. If Phase 3 is ready in the same session, it must still complete before the recorded four-hour expiry; otherwise clean up and later start from a fresh dump.
+
 ## Phase 3: exact-byte forward rehearsal on clone only
 
 This phase is blocked until a reviewed candidate AC image digest exists. Reconfirm its embedded aweb identity and independently extract/recompute all normalized migration checksums from the image.
@@ -240,13 +343,13 @@ This phase is blocked until a reviewed candidate AC image digest exists. Reconfi
 6. Verify `chat_message_reads` count equals the guarded candidate count and no row references an absent participant, agent, or message. Legacy receipt/message counts must remain unchanged.
 7. Record post-migration database size and heap/index/total sizes for both new tables. The measured before/after delta supersedes Phase 2A's temporary estimate. A later decision must choose explicit additional headroom; this runbook does not pre-authorize a threshold.
 8. Run the same migration command a second time on the clone. It must report up-to-date, add no rows, and preserve checksums/counts.
-9. Preserve only sanitized evidence. Securely delete the dump and clone after review and record deletion confirmation.
+9. Preserve only sanitized evidence. Securely delete the dump and clone immediately after evidence capture and record deletion confirmation. Cleanup is mandatory before the operator ends the session and on every stop, timeout, failure, or reschedule path; the four-hour expiry is an absolute maximum, not a target.
 
 ## Meaning, cost, and evidence package
 
 The rehearsal proves that the supported dump restores with exact counts; exact release bytes advance a production-shaped old schema; backfill cardinality, storage delta, per-file/overall runtime, final constraints, and idempotence are known. It does **not** prove production lock wait under live traffic, remove provider variance, authorize production apply, or make a database restore a routine rollback.
 
-Reserve up to **two hours** of credentialed operator time: 10–15 minutes setup/inventory, data-dependent dump and restore (the long pole), 10–20 minutes migration/verification, then cleanup and evidence packaging. Temporary storage cost is one private dump plus one disposable database copy. This is a planning budget, not a runtime claim; exact measured wall times become evidence. If the window is exceeded, stop and reschedule rather than compress verification.
+Reserve up to **two hours** of credentialed operator time: 10–15 minutes setup/inventory, data-dependent dump and restore (the long pole), 10–20 minutes migration/verification, then cleanup and evidence packaging. Temporary storage cost is one private dump plus one disposable database copy. This is a planning budget, not a runtime claim; exact measured wall times become evidence. If the window is exceeded, clean up immediately and reschedule rather than compress verification. Regardless of progress, dump and clone retention may never exceed four hours.
 
 The sanitized evidence package contains timestamps; exact source/image SHAs and digests; tool versions; normalized migration status; counts/sizes/anomalies; provider used/free capacity; dump bytes/hash and dump/restore timing; restored-count verdict; Phase 2A temporary heap/index estimate; per-migration and total clone timing once Phase 3 is unblocked; persistent before/after table sizes; final-shape/idempotence verdict; and clone/dump deletion confirmation.
 
