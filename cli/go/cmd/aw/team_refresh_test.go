@@ -212,6 +212,91 @@ func TestRefreshPublicLibraryProfilePrunesRemovedManagedFilesOnly(t *testing.T) 
 	}
 }
 
+func TestRefreshShelfProfilePreservesInjectedCoordinationBlockWithoutInventingOne(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		injectDocs bool
+	}{
+		{name: "preserves marker-delimited block", injectDocs: true},
+		{name: "does not inject an absent block", injectDocs: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("AW_CONFIG_PATH", "")
+			_, priv, err := awid.GenerateKeypair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+			writeLocalTeamSignedRequestWorkspaceForTest(t, home, "https://library.invalid", "default:acme.com", "coordinator", did, priv)
+
+			oldFiles := refreshTestProfileFiles(false, "0.1.0")
+			newFiles := refreshTestProfileFiles(false, "0.2.0")
+			oldDigest := testLibraryProfilePayloadDigest(t, oldFiles)
+			newDigest := testLibraryProfilePayloadDigest(t, newFiles)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/v1/profiles/coordinator" {
+					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+				if r.Header.Get("X-AWID-Team-Certificate") == "" {
+					t.Fatal("shelf refresh must be team-signed")
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"profile_ref": "coordinator", "version": "0.2.0", "digest": newDigest,
+					"source_blueprint_ref": "aweb.engineering", "source_blueprint_version": "0.1.0",
+					"source_blueprint_digest": "sha256:blueprint", "files": newFiles,
+				})
+			}))
+			defer server.Close()
+			writeLibraryShelfManifestPluginForTest(t, home, server.URL)
+
+			_, err = blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
+				TargetDir:    home,
+				BlueprintRef: "aweb.engineering", BlueprintVersion: "0.1.0", BlueprintDigest: "sha256:blueprint",
+				ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: oldDigest,
+				RuntimeKind: "claude-code", Files: oldFiles, Force: true,
+			})
+			if err != nil {
+				t.Fatalf("initial materialize: %v", err)
+			}
+			old, err := readRecordedProfileRef(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			coordination := "## Coordination sentinel\n\nUse `aw`."
+			if tc.injectDocs {
+				result := InjectProvidedAgentDocs(home, coordination)
+				if len(result.Errors) > 0 {
+					t.Fatalf("inject coordination block: %v", result.Errors)
+				}
+			}
+
+			if _, err := refreshLibraryProfileInHome(home, "coordinator", old, "claude-code"); err != nil {
+				t.Fatalf("refreshLibraryProfileInHome: %v", err)
+			}
+			data, err := os.ReadFile(filepath.Join(home, "AGENTS.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := string(data)
+			if !strings.Contains(text, "Coordinate 0.2.0.") || strings.Contains(text, "Coordinate 0.1.0.") {
+				t.Fatalf("refresh did not update profile-managed content:\n%s", text)
+			}
+			if tc.injectDocs {
+				if !strings.Contains(text, awDocsMarkerEnd) {
+					t.Fatalf("refresh stripped complete coordination block (missing AWEB:END):\n%s", text)
+				}
+				if strings.Count(text, awDocsMarkerStart) != 1 || strings.Count(text, awDocsMarkerEnd) != 1 || !strings.Contains(text, renderInjectedDocs(coordination)) {
+					t.Fatalf("refresh did not preserve exactly one complete coordination block:\n%s", text)
+				}
+			} else if strings.Contains(text, awDocsMarkerStart) || strings.Contains(text, awDocsMarkerEnd) {
+				t.Fatalf("refresh invented a coordination block in an unmarked home:\n%s", text)
+			}
+		})
+	}
+}
+
 func TestMaterializeAndPruneMigratesLegacyClaudeSkillLinkAndIsIdempotent(t *testing.T) {
 	home := t.TempDir()
 	legacyDir := filepath.Join(home, ".claude", "skills", "implement")
