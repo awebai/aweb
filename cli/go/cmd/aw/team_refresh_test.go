@@ -49,22 +49,29 @@ func TestRefreshPublicLibraryProfileNoOpsWhenDigestUnchanged(t *testing.T) {
 	}))
 	defer server.Close()
 	old := recordedProfileRef{LibraryURL: server.URL, ProfileRef: "coordinator", ProfileVersion: "0.1.0", ProfileDigest: digest, SourceBlueprintRef: "aweb.engineering", SourceBlueprintVersion: "0.1.0", ManagedSet: []string{"AGENTS.md", ".aw/profile/ref.json"}}
-	if err := os.MkdirAll(filepath.Join(home, ".aw", "profile"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".aw", "profile", "ref.json"), []byte("recorded pin\n"), 0o644); err != nil {
+	if err := writeRecordedProfileRef(home, old); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, "AGENTS.md"), []byte("local existing\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	oldHomeFlag, oldJSONFlag, oldRuntime := agentHomeFlag, jsonFlag, teamRefreshRuntime
+	agentHomeFlag, jsonFlag, teamRefreshRuntime = home, false, "claude-code"
+	t.Cleanup(func() {
+		agentHomeFlag, jsonFlag, teamRefreshRuntime = oldHomeFlag, oldJSONFlag, oldRuntime
+	})
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
 
-	result, err := refreshLibraryProfileInHome(home, "coordinator", old, "claude-code")
-	if err != nil {
-		t.Fatalf("refreshLibraryProfileInHome: %v", err)
+	if err := runTeamRefresh(cmd, []string{"coordinator"}); err != nil {
+		t.Fatalf("runTeamRefresh: %v", err)
 	}
-	if gets != 1 || len(result.FilesWritten) != 0 || result.ProfileDigest != digest {
-		t.Fatalf("no-op result gets=%d result=%+v", gets, result)
+	if gets != 1 {
+		t.Fatalf("public profile gets=%d, want 1", gets)
+	}
+	if !strings.Contains(out.String(), "latest public profile version") || !strings.Contains(out.String(), "source: public catalog "+server.URL) || strings.Contains(out.String(), "shelf version") {
+		t.Fatalf("public no-op refresh described the wrong source: %q", out.String())
 	}
 	data, err := os.ReadFile(filepath.Join(home, "AGENTS.md"))
 	if err != nil || string(data) != "local existing\n" {

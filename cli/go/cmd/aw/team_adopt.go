@@ -134,8 +134,9 @@ func validateImportedShelfCopyMatchesPin(old recordedProfileRef, imported *libra
 		want  string
 	}{
 		{"profile_ref", imported.ProfileRef, old.ProfileRef},
-		{"profile_version", imported.Version, old.ProfileVersion},
-		{"profile_digest", imported.Digest, old.ProfileDigest},
+		{"source_profile_ref", imported.SourceProfileRef, old.ProfileRef},
+		{"source_profile_version", imported.SourceProfileVersion, old.ProfileVersion},
+		{"source_profile_digest", imported.SourceProfileDigest, old.ProfileDigest},
 		{"source_blueprint_ref", imported.SourceBlueprintRef, old.SourceBlueprintRef},
 	}
 	if strings.TrimSpace(old.SourceBlueprintVersion) != "" {
