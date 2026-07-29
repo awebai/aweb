@@ -54,6 +54,29 @@ def test_ci_break_glass_requires_visible_protection_restoration() -> None:
     assert "re-enable" in readme
 
 
+def test_ci_documents_when_the_gate_is_integration_authority() -> None:
+    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    policy = readme.index("### Gate-authorized integration")
+    break_glass = readme.index("The break-glass path")
+    revisit = readme.index("Re-evaluate whether this repository-specific policy")
+
+    assert policy < break_glass < revisit
+    for required_text in (
+        "exactly matches the independently reviewed head",
+        "strict branch protection",
+        "GitHub Actions app with ID `15368`",
+        "protection is enforced for administrators",
+        "30437187502",
+        "5137334ae2b88c7515c6c080c427fafaf1e71faa",
+        "conflict or manual recombination",
+        "release tag",
+        "deployment boundary moves",
+        "does not by itself authorize a release, production mutation, or deployment",
+        "aweb-aatq",
+    ):
+        assert required_text in readme
+
+
 def test_ci_runs_every_make_gate_on_push_and_pull_request() -> None:
     workflow = _workflow()
 
