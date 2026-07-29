@@ -1,8 +1,10 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
 	freshness check-go-vulnerability-audit check-node-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
+	check-server-locked-suite release-server-gate \
+	check-awid-locked-suite release-awid-pypi-gate release-awid-image-gate \
 	release-server-check release-server-tag release-server-push \
 	release-awid-check release-awid-tag release-awid-push \
 	release-awid-pypi-tag release-awid-pypi-push \
@@ -92,7 +94,7 @@ help:
 build:
 	cd cli/go && $(MAKE) build
 
-test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-ship-ci-contract test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version
+test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-ship-ci-contract test-release-gate-contract test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
@@ -182,6 +184,9 @@ test-pi-extension:
 
 test-ship-ci-contract:
 	python3 scripts/e2e/test_ship_ci_contract.py
+
+test-release-gate-contract:
+	python3 scripts/e2e/test_release_gate_contract.py
 
 prepare-oas-test-root:
 	@if [ "$(abspath $(OAS_TEST_ROOT))" = "$(abspath $(OAS_PINNED_ROOT))" ]; then \
@@ -283,6 +288,52 @@ awid-prod-restore:
 
 awid-prod-migrate:
 	cd awid && uv run python scripts/prod_db_reset.py migrate --env-file $(AWID_PROD_ENV_FILE)
+
+# ── Publish gates ───────────────────────────────────────────────────
+# PyPI refuses a re-upload and a pulled image tag cannot be recalled, so these
+# three publishes each run their artifact's own suite first, from the tag
+# workflow, against the commit being published.
+#
+# They are separate from the release-*-check targets below on purpose. A check
+# prepares a release and may repair what it finds - release-awid-check runs
+# `uv lock` because a stale lock broke the awid 0.2.5 image build. A gate runs
+# after the human committed that repair, where repairing is the wrong answer:
+# the lock committed at this commit is the lock the suite must run against and
+# the lock the published artifact is built from, so `uv lock --check` fails on
+# a stale one instead of quietly resolving a different set of dependencies
+# under the artifact.
+#
+# Every step in a gate has to answer two questions - can it fail, and is the
+# thing it exercises the thing being published. That is why the version-bump
+# guard is absent: on the commit a server-v* tag points at it compares that tag
+# against itself and always passes. It stays in server-ci.yml, where the
+# change-time question it asks is the one being asked.
+
+check-server-locked-suite:
+	cd server && uv lock --check
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
+
+release-server-gate: check-server-locked-suite
+	rm -rf server/dist/
+	cd server && uv build
+	test -f server/dist/aweb-$(SERVER_VERSION).tar.gz
+	test -f server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
+
+check-awid-locked-suite:
+	cd awid && uv lock --check
+	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
+
+release-awid-pypi-gate: check-awid-locked-suite
+	rm -rf awid/dist/
+	cd awid && uv build
+	test -f awid/dist/awid_service-$(AWID_VERSION).tar.gz
+	test -f awid/dist/awid_service-$(AWID_VERSION)-py3-none-any.whl
+
+# No image build here. The publishing build already gates - it cannot push an
+# image that fails - and it is the only one covering both published platforms,
+# so a second local one would verify amd64 while arm64 ships unverified.
+release-awid-image-gate: check-awid-locked-suite
+	@echo "awid image gate: committed lock verified, awid suite green at this commit."
 
 release-server-check:
 	./scripts/check-server-version-bump.sh

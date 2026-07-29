@@ -8,7 +8,38 @@ argument-hint: [version]
 
 The PyPI release is triggered by pushing a `server-vX.Y.Z` git tag. GitHub
 Actions then runs [`.github/workflows/server-release.yml`](../../../.github/workflows/server-release.yml),
-which builds from `server/` and publishes with `uv publish`.
+which runs `make release-server-gate` against the tagged commit and publishes
+with `uv publish` only if it passes.
+
+## The publish refuses unless the suite passed on the tagged commit
+
+PyPI never lets a version be re-uploaded, so the workflow runs the aweb suite in
+the same job as the publish, against the tree the tag points at. `uv publish`
+uploads the `server/dist` that gate produced, so the artifact tested and the
+artifact published are the same build.
+
+The gate is `make release-server-gate`: `uv lock --check`, the aweb suite
+against that committed lock, then `uv build` and an assertion that both
+artifacts exist. It **verifies** the lockfile rather than repairing it — a stale
+`server/uv.lock` fails the release instead of being resolved into something the
+suite never ran against. Commit the lock before you tag.
+
+Steps 3 to 5 below are what makes that pass. If the gate fails at release time,
+the fix is the same work done earlier, not a bypass.
+
+### What the gate does not cover
+
+A tag push is the only trigger, and re-running the workflow re-runs the gate, so
+this route is covered. Two routes are not, and neither can be closed from inside
+this repository:
+
+- A `server-v*` tag cut at a commit where the gate step was edited out. A
+  tag-triggered workflow runs the file as it exists at the tagged commit, and
+  `main` cannot be branch-protected here.
+- A direct `uv publish` from anywhere, by anyone holding a PyPI token for the
+  `aweb` project. Scoping that credential is `aweb-aaun.2`.
+
+Publishing off-CI is not a supported path. Use the tag.
 
 ## Flow
 
@@ -68,7 +99,13 @@ whole gate rather than resuming from the failure.
 ## Notes
 
 - Keep the git tag format as `server-vX.Y.Z`.
-- The workflow rejects tags that do not match `server/pyproject.toml`.
+- The workflow rejects tags that do not match `server/pyproject.toml`. That
+  comparison is a string comparison of the tag name against the manifest, and
+  apart from the gate it is the only automated check the workflow makes.
+- `scripts/check-server-version-bump.sh` is not in the release gate. On the
+  commit a `server-v*` tag points at it compares that tag against itself and
+  always passes. It runs where its question is meaningful: `server-ci.yml` on
+  every push and PR touching `server/`, and `make release-server-check` here.
 - `server/uv.lock` should stay aligned with the package version metadata.
 - CI requires every `server/` change to carry a version bump
   (`scripts/check-server-version-bump.sh`), so by release time
