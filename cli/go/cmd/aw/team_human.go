@@ -2402,8 +2402,32 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	out := retireTeamAgent(ctx, client, teamID, teamRemoveMember, alias, func(ctx context.Context) (certificateStoreResult, error) {
-		return revokeTeamCertificate(ctx, domain, name, teamID, teamRemoveMember)
+	// Establish WHICH principal this is about before anything is written.
+	//
+	// Only a customer-controlled team can: the registry resolve says which member
+	// the alias belongs to, so a typed namespace that names someone else is caught
+	// before the first mutation. A hosted team has no read that can answer it at
+	// all - see aweb-aaum.9 - so the retirement proceeds on the alias and says so
+	// in its result rather than refusing a verification it cannot perform. Nothing
+	// printed asserts more than the evidence supports, which is the property; a
+	// refusal is one way to honour it and an accurate disclosure is the other.
+	var verified *verifiedMember
+	if !isAwebHostedNamespace(domain) {
+		registry, regErr := newConfiguredRegistryClient(nil, "")
+		if regErr != nil {
+			return regErr
+		}
+		verified, err = verifyRetirementTarget(
+			ctx, client, registry, resolveTeamRemoveRegistryURL(registry),
+			domain, name, teamRemoveMember, alias,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	out := retireTeamAgent(ctx, client, teamID, teamRemoveMember, alias, verified != nil, func(ctx context.Context) (certificateStoreResult, error) {
+		return revokeTeamCertificate(ctx, domain, name, teamID, teamRemoveMember, verified)
 	})
 	printOutput(out, formatTeamRemoveAgent)
 	if !retirementSucceeded(out.Status) {
@@ -2414,7 +2438,7 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 
 // revokeTeamCertificate revokes the member's certificate through whichever
 // authority owns the namespace.
-func revokeTeamCertificate(ctx context.Context, domain, team, teamID, memberAddress string) (certificateStoreResult, error) {
+func revokeTeamCertificate(ctx context.Context, domain, team, teamID, memberAddress string, verified *verifiedMember) (certificateStoreResult, error) {
 	if isAwebHostedNamespace(domain) {
 		return revokeHostedTeamCertificate(ctx, teamID, memberAddress, "")
 	}
@@ -2429,33 +2453,20 @@ func revokeTeamCertificate(ctx context.Context, domain, team, teamID, memberAddr
 	}
 	registryURL := resolveTeamRemoveRegistryURL(registry)
 
-	// Same deliberate gap as the copy in id_team.go runTeamRemoveMember: the typed
-	// namespace is discarded and the alias resolved against the team's own, with
-	// nothing checking that the member it resolves to is the one named. aweb-aaum.7
-	// owns the verification and covers both sites. This one matters more, because
-	// aw team remove-agent is the documented retirement path.
-	_, memberName, err := parseAddress(memberAddress)
-	if err != nil {
-		return certificateStoreResult{}, err
-	}
-	memberRef, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, memberName)
-	if err != nil {
-		return certificateStoreResult{}, fmt.Errorf("resolve team member %s in %s: %w", memberName, teamID, err)
-	}
-	if err := verifyNamedMember(memberAddress, domain, memberRef); err != nil {
-		return certificateStoreResult{}, err
+	// No lookup here. The member was resolved and verified once, before anything
+	// was written, and its certificate id was carried forward - see verifiedMember.
+	if verified == nil {
+		return certificateStoreResult{}, fmt.Errorf("refusing to revoke on %s without an established member", teamID)
 	}
 	result, err := revokeRegistryTeamCertificate(
-		ctx, registry, registryURL, domain, team,
-		strings.TrimSpace(memberRef.CertificateID), teamKey,
+		ctx, registry, registryURL, domain, team, verified.CertificateID, teamKey,
 	)
 	if err != nil {
 		return certificateStoreResult{}, err
 	}
 	// Report the address the registry returned for the certificate that was
-	// revoked, not the string that was typed. They are equal by the check above;
-	// reporting the resolved one keeps that true if the check ever changes.
-	result.MemberAddress = strings.TrimSpace(memberRef.MemberAddress)
+	// revoked, not the string that was typed.
+	result.MemberAddress = verified.MemberAddress
 	return result, nil
 }
 

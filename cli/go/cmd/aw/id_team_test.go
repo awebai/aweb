@@ -3661,6 +3661,66 @@ func TestTeamRemoveMemberFlow(t *testing.T) {
 	}
 }
 
+// CALL SITE, through the real binary. The verification's own unit tests would all
+// pass with nothing in production calling it, so this drives the actual command
+// and asserts the revoke endpoint is never reached. Removing the verifyNamedMember
+// call from runTeamRemoveMember reds this and nothing else.
+func TestTeamRemoveMemberFlowRefusesAMemberThatIsNotTheOneNamed(t *testing.T) {
+	t.Parallel()
+
+	var revokeAttempted bool
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/teams/backend/members/bob":
+			// The alias resolves to a member of a different namespace than the
+			// one the operator typed.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":        "backend:acme.com",
+				"certificate_id": "cert-cross",
+				"member_did_key": "did:key:z6MkBob",
+				"member_address": "partner.com/bob",
+				"alias":          "bob",
+				"issued_at":      "2026-04-06T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates/revoke"):
+			revokeAttempted = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "remove-member",
+		"--team", "backend",
+		"--namespace", "acme.com",
+		"--member", "acme.com/bob",
+		"--json")
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("removing acme.com/bob succeeded for a member who is partner.com/bob\n%s", string(out))
+	}
+	if revokeAttempted {
+		t.Fatalf("a certificate was revoked after the named member did not match\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "partner.com/bob") {
+		t.Fatalf("refusal does not name the principal it actually resolved to\n%s", string(out))
+	}
+}
+
 func TestTeamRemoveMemberFlowCrossNamespaceMember(t *testing.T) {
 	t.Parallel()
 

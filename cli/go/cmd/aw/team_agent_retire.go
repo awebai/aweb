@@ -137,6 +137,7 @@ func retireTeamAgent(
 	teamID string,
 	memberAddress string,
 	alias string,
+	targetVerified bool,
 	revoke revokeCertificateFunc,
 ) teamRemoveAgentOutput {
 	out := teamRemoveAgentOutput{
@@ -146,6 +147,12 @@ func retireTeamAgent(
 	}
 
 	coordination, deleted := releaseCoordinationState(ctx, client, alias)
+	if !targetVerified {
+		// Say so in the result rather than implying the workspace was the one
+		// named. On a hosted team no read can establish which principal an alias
+		// belongs to, so this selected by alias alone.
+		coordination.Detail += " (selected by alias: the typed namespace could not be verified on this team, see aweb-aaum.9)"
+	}
 	out.Stores = append(out.Stores, coordination)
 	if deleted != nil {
 		out.WorkspaceID = deleted.WorkspaceID
@@ -334,14 +341,38 @@ func verifyRetirementTarget(
 	client *aweb.Client,
 	registry *awid.RegistryClient,
 	registryURL, domain, team, memberAddress, alias string,
-) error {
+) (*verifiedMember, error) {
 	resolveCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	memberRef, err := registry.ResolveTeamMember(resolveCtx, registryURL, domain, team, alias)
 	cancel()
 	if err != nil {
-		return unresolvedRetirementTargetError(ctx, client, memberAddress, alias, err)
+		return nil, unresolvedRetirementTargetError(ctx, client, memberAddress, alias, err)
 	}
-	return verifyNamedMember(memberAddress, domain, memberRef)
+	if err := verifyNamedMember(memberAddress, domain, memberRef); err != nil {
+		return nil, err
+	}
+	return &verifiedMember{
+		CertificateID: strings.TrimSpace(memberRef.CertificateID),
+		MemberAddress: strings.TrimSpace(memberRef.MemberAddress),
+	}, nil
+}
+
+// verifiedMember is a member this command has established is the one the operator
+// named, carried forward so nothing looks it up a second time.
+//
+// Resolving once is not only tidier. With a resolve for the verification and
+// another inside the revoke, the coordination delete lands between them: if the
+// certificate changes in that window - a concurrent revoke by another holder of
+// the team key, which the 409 handling exists to tolerate - the second resolve
+// 404s and the command ends having cleared coordination and revoked nothing.
+// That is the split state the ordering exists to prevent, reachable through a
+// window that does not exist while there is only one lookup. Threading the id
+// through also makes the verification and the revoke agree by construction about
+// which certificate they mean, rather than by assuming two lookups returned the
+// same thing.
+type verifiedMember struct {
+	CertificateID string
+	MemberAddress string
 }
 
 // unresolvedRetirementTargetError explains a refusal the operator cannot act on
