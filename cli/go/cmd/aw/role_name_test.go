@@ -14,6 +14,33 @@ import (
 	"github.com/awebai/aw/awconfig"
 )
 
+func TestRoleNameHelpExplainsOperatingRoleIsIndependentOfProfile(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(ctx, bin, "role-name", "set", "--help")
+	run.Env = testCommandEnv(tmp)
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("role-name help failed: %v\n%s", err, out)
+	}
+	help := string(out)
+	for _, want := range []string{
+		"operating responsibility on this team",
+		"initialized from the materialized profile",
+		"does not change which profile the workspace runs",
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("role-name help missing %q:\n%s", want, help)
+		}
+	}
+}
+
 func TestRoleNameSetPatchesCurrentWorkspace(t *testing.T) {
 	t.Parallel()
 
