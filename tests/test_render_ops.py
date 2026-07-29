@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import hashlib
 import json
@@ -2032,6 +2033,56 @@ def test_command_verify_emits_four_child_capability_transcripts_from_real_health
     assert {
         child["subject_artifact_sha256"] for child in transcript["children"]
     } == {expected_body_sha}
+
+
+@pytest.mark.parametrize(
+    ("mutate", "code", "location"),
+    [
+        (
+            lambda value: value["observed_components"].append("render-ops.unentered"),
+            "capability-components",
+            "capability.observed_components",
+        ),
+        (
+            lambda value: value["children"].__setitem__(
+                slice(0, 2), list(reversed(value["children"][:2]))
+            ),
+            "capability-child-order",
+            "capability.children",
+        ),
+        (
+            lambda value: value["children"][0]["terminal"].__setitem__(
+                "assertion_code", "process.passed"
+            ),
+            "capability-assertion",
+            "capability.children[0].terminal.assertion_code",
+        ),
+    ],
+)
+def test_capability_schema_rejects_unentered_ordered_or_forged_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+    mutate,
+    code: str,
+    location: str,
+) -> None:
+    stub_command_evidence(monkeypatch)
+    _stub_capability_identity(monkeypatch)
+    _stub_capability_http(monkeypatch, config)
+    artifact = deploy("dep-candidate", "b" * 40)
+    monkeypatch.setattr(
+        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
+    )
+    output = tmp_path / code
+    render_ops.command_verify(_capability_verify_args(output))
+    transcript = _capability_transcript(output)
+    changed = copy.deepcopy(transcript)
+    mutate(changed)
+    with pytest.raises(aatk.AATKError) as raised:
+        aatk.validate_capability_transcript(changed)
+    assert raised.value.code == code
+    assert raised.value.location == location
 
 
 @pytest.mark.parametrize(

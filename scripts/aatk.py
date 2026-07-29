@@ -528,6 +528,25 @@ def validate_capability_transcript(value: Any) -> dict[str, Any]:
             "capability.observed_components",
             "must be unique stable entered components",
         )
+    allowed_component_paths = [
+        [render_ops.CAPABILITY_COMPONENT_COMMAND],
+        [
+            render_ops.CAPABILITY_COMPONENT_COMMAND,
+            render_ops.CAPABILITY_COMPONENT_SURFACES,
+        ],
+        [
+            render_ops.CAPABILITY_COMPONENT_COMMAND,
+            render_ops.CAPABILITY_COMPONENT_SURFACES,
+            render_ops.CAPABILITY_COMPONENT_ORIGIN,
+        ],
+        [
+            render_ops.CAPABILITY_COMPONENT_COMMAND,
+            render_ops.CAPABILITY_COMPONENT_SURFACES,
+            render_ops.CAPABILITY_COMPONENT_ORIGIN,
+            render_ops.CAPABILITY_COMPONENT_PUBLIC,
+        ],
+    ]
+    component_path_valid = components in allowed_component_paths
     children = transcript["children"]
     if not isinstance(children, list):
         fail("capability-children", "capability.children", "must be a list")
@@ -593,6 +612,17 @@ def validate_capability_transcript(value: Any) -> dict[str, Any]:
             location=f"{location}.terminal.assertion_code",
             code="capability-child",
         )
+        expected_assertion = (
+            f"{predicate_id}.capability-pass"
+            if terminal["outcome"] == "passed"
+            else f"{predicate_id}.rejected"
+        )
+        if terminal["assertion_code"] != expected_assertion:
+            fail(
+                "capability-assertion",
+                f"{location}.terminal.assertion_code",
+                f"expected {expected_assertion}",
+            )
         if terminal["count"] != 1 or isinstance(terminal["count"], bool):
             fail("capability-child", f"{location}.terminal.count", "must equal one")
         if not isinstance(child["subject_artifact_sha256"], str) or not SHA_RE.fullmatch(
@@ -611,7 +641,20 @@ def validate_capability_transcript(value: Any) -> dict[str, Any]:
         fail("capability-terminal", "capability.terminal.error_code", "must be a string")
     if terminal["count"] != 1 or isinstance(terminal["count"], bool):
         fail("capability-terminal", "capability.terminal.count", "must equal one")
+    if terminal["outcome"] == "failed" and not component_path_valid:
+        if terminal["error_code"] != "capability-path-mismatch":
+            fail(
+                "capability-components",
+                "capability.observed_components",
+                "invalid path requires the exact path-mismatch terminal code",
+            )
     if terminal["outcome"] == "passed":
+        if components != allowed_component_paths[-1]:
+            fail(
+                "capability-components",
+                "capability.observed_components",
+                "passing slice requires the complete exact subject path",
+            )
         if mutation_id != "":
             fail(
                 "capability-mutation",
@@ -622,6 +665,18 @@ def validate_capability_transcript(value: Any) -> dict[str, Any]:
             fail("capability-incomplete", "capability.children", "passing slice requires all five children")
         if any(child["terminal"]["outcome"] != "passed" for child in children):
             fail("capability-incomplete", "capability.children", "passing slice cannot contain a negative")
+        expected_child_order = [
+            "health.origin.http-200",
+            "health.origin.payload-contract",
+            "health.public.http-200",
+            "health.public.payload-contract",
+        ]
+        if [child["predicate_id"] for child in children] != expected_child_order:
+            fail(
+                "capability-child-order",
+                "capability.children",
+                "passing children must preserve exact parallel execution order",
+            )
         if terminal["error_code"] != "":
             fail("capability-terminal", "capability.terminal.error_code", "passing transcript has no error")
     return transcript
@@ -688,7 +743,12 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     if ci["events"] != ["pull_request", "push:main"]:
         fail("ci-contract", "manifest.protected_ci.events", "must bind pull requests and main pushes")
 
-    validate_capability_coverage(manifest["capability_coverage"])
+    capability_coverage = validate_capability_coverage(manifest["capability_coverage"])
+    candidate_coverage_owner = {
+        row["id"]: row["owner"]
+        for row in capability_coverage
+        if row["domain"] == "candidate-postdeploy"
+    }
 
     registry = manifest["requirement_registry"]
     if not isinstance(registry, list) or not registry:
@@ -777,7 +837,18 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         predicate_id = require_stable_id(
             row["id"], location=f"{location}.id", code="invalid-predicate-id"
         )
-        require_stable_id(row["owner"], location=f"{location}.owner", code="invalid-owner")
+        owner = require_stable_id(
+            row["owner"], location=f"{location}.owner", code="invalid-owner"
+        )
+        if (
+            predicate_id in candidate_coverage_owner
+            and candidate_coverage_owner[predicate_id] != owner
+        ):
+            fail(
+                "capability-owner",
+                f"{location}.owner",
+                "predicate owner must equal source-owned capability coverage",
+            )
         if predicate_id in row_by_id:
             fail("duplicate-predicate", f"{location}.id", predicate_id)
         row_by_id[predicate_id] = row

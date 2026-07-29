@@ -356,6 +356,17 @@ def test_predicate_owner_rejects_untyped_value() -> None:
     )
 
 
+def test_predicate_owner_must_equal_source_coverage_owner() -> None:
+    value = manifest()
+    value["predicates"][0]["owner"] = "another-owner"
+    assert_error(
+        "capability-owner",
+        "manifest.predicates[0].owner",
+        aatk.validate_manifest,
+        value,
+    )
+
+
 def test_proof_object_rejects_unknown_authoritative_field() -> None:
     value = manifest()
     value["predicates"][0]["postdeploy"]["passed"] = True
