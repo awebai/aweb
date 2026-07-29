@@ -205,22 +205,158 @@ for _runtime in RUNTIMES:
         _continuation_predicate,
     )
 CURRENT_INCUMBENT_PREDICATES = frozenset(CURRENT_INCUMBENT_PREDICATE_PATHS)
+CURRENT_INCUMBENT_IDENTICAL_PREDICATES = frozenset(
+    {f"materialize.public.{runtime}.http-200" for runtime in RUNTIMES}
+    | {f"materialize.profile-pin.{runtime}" for runtime in RUNTIMES}
+)
+CANDIDATE_SEMANTIC_PREDICATES = frozenset(
+    CURRENT_INCUMBENT_IDENTICAL_PREDICATES
+    | {f"materialize.response-contract.{runtime}" for runtime in RUNTIMES}
+)
+CURRENT_INCUMBENT_RESPONSE_CONTRACT_PREDICATES = frozenset(
+    {f"materialize.origin.response-contract.{runtime}" for runtime in RUNTIMES}
+    | {f"materialize.response-contract.{runtime}" for runtime in RUNTIMES}
+)
+CURRENT_INCUMBENT_BASE_BLOCKERS = (
+    "controls.executed-same-path",
+    "execution.capability-obligation",
+    "orchestrator.falsification",
+    "runtime.path-fidelity",
+    "safety.boundary-invocation",
+)
 
 
 def current_incumbent_predicate_inventory() -> list[str]:
-    """Return source-owned preplan IDs for AATK increment-2 mapping."""
+    """Return source-owned current-incumbent predicate IDs."""
     return sorted(CURRENT_INCUMBENT_PREDICATES)
 
 
+def candidate_semantic_predicate_inventory() -> list[str]:
+    """Return candidate predicates with source semantic descriptors."""
+    return sorted(CANDIDATE_SEMANTIC_PREDICATES)
+
+
 def current_incumbent_predicate_paths() -> dict[str, list[str]]:
-    """Return each preplan predicate's exact ordered executor path."""
+    """Return each current-incumbent predicate's exact ordered executor path."""
     return {
         predicate: list(CURRENT_INCUMBENT_PREDICATE_PATHS[predicate])
         for predicate in current_incumbent_predicate_inventory()
     }
+
+
+def _current_incumbent_owner(predicate_id: str) -> str:
+    if predicate_id.startswith("origin-route.") or predicate_id.startswith(
+        "materialize.public-continuation."
+    ):
+        return "release-infrastructure"
+    return "library-service"
+
+
+def _current_incumbent_mapping(predicate_id: str) -> dict[str, Any]:
+    if predicate_id in CURRENT_INCUMBENT_IDENTICAL_PREDICATES:
+        return {"state": "identical", "candidate_predicate_id": predicate_id}
+    blockers = list(CURRENT_INCUMBENT_BASE_BLOCKERS)
+    if predicate_id in CURRENT_INCUMBENT_RESPONSE_CONTRACT_PREDICATES:
+        blockers.append("candidate-only.runtime-proof")
+    return {"state": "deferred", "blocked_obligation_ids": sorted(blockers)}
+
+
+def _semantic_descriptor(
+    domain: str,
+    predicate_id: str,
+    runtime: str,
+    surface: str,
+    assertion: str,
+) -> dict[str, str]:
+    return {
+        "domain": domain,
+        "id": predicate_id,
+        "runtime": runtime,
+        "surface": surface,
+        "assertion": assertion,
+    }
+
+
+def aatk_semantic_descriptors() -> list[dict[str, str]]:
+    """Return source semantics used to prove exact cross-domain identities."""
+    rows: list[dict[str, str]] = []
+    for runtime in RUNTIMES:
+        shared = {
+            f"materialize.public.{runtime}.http-200": "exact-http-200",
+            f"materialize.profile-pin.{runtime}": "exact-profile-pin",
+        }
+        for predicate_id, assertion in shared.items():
+            for domain in ("candidate-postdeploy", "current-incumbent"):
+                rows.append(
+                    _semantic_descriptor(
+                        domain, predicate_id, runtime, "canonical-public", assertion
+                    )
+                )
+        response_id = f"materialize.response-contract.{runtime}"
+        rows.append(
+            _semantic_descriptor(
+                "candidate-postdeploy",
+                response_id,
+                runtime,
+                "canonical-public",
+                "strict-candidate-response-shape",
+            )
+        )
+        rows.append(
+            _semantic_descriptor(
+                "current-incumbent",
+                response_id,
+                runtime,
+                "canonical-public",
+                "legacy-incumbent-response-shape",
+            )
+        )
+        current_descriptors = {
+            f"origin-route.{runtime}.dns-public-disjoint": (
+                "generated-origin",
+                "numeric-origin-public-disjoint",
+            ),
+            f"origin-route.{runtime}.ambient-proxy-isolated": (
+                "generated-origin",
+                "ambient-proxy-isolated",
+            ),
+            f"origin-route.{runtime}.no-post-start-dns": (
+                "generated-origin",
+                "startup-only-dns",
+            ),
+            f"origin-route.{runtime}.kernel-peer-selected": (
+                "generated-origin",
+                "kernel-peer-equals-selected",
+            ),
+            f"origin-route.{runtime}.canonical-authority": (
+                "generated-origin",
+                "canonical-security-authority",
+            ),
+            f"materialize.origin.{runtime}.http-200": (
+                "generated-origin",
+                "exact-http-200",
+            ),
+            f"materialize.origin.response-contract.{runtime}": (
+                "generated-origin",
+                "legacy-incumbent-response-shape",
+            ),
+            f"materialize.public-continuation.{runtime}.fatal": (
+                "generated-origin-and-canonical-public",
+                "mandatory-public-continuation",
+            ),
+        }
+        rows.extend(
+            _semantic_descriptor(
+                "current-incumbent", predicate_id, runtime, surface, assertion
+            )
+            for predicate_id, (surface, assertion) in current_descriptors.items()
+        )
+    return sorted(rows, key=lambda row: (row["domain"], row["id"]))
+
+
 def aatk_predicate_coverage() -> list[dict[str, Any]]:
     """Return source-owned per-obligation capability coverage for this executor."""
-    return [
+    candidate_rows = [
         {
             "domain": "candidate-postdeploy",
             "id": predicate_id,
@@ -230,6 +366,19 @@ def aatk_predicate_coverage() -> list[dict[str, Any]]:
         }
         for predicate_id, (owner, state) in sorted(AATK_PREDICATE_COVERAGE.items())
     ]
+    current_rows = [
+        {
+            "domain": "current-incumbent",
+            "id": predicate_id,
+            "owner": _current_incumbent_owner(predicate_id),
+            "candidate_mapping": _current_incumbent_mapping(predicate_id),
+            "obligations": {
+                obligation: "deferred" for obligation in AATK_CAPABILITY_OBLIGATIONS
+            },
+        }
+        for predicate_id in current_incumbent_predicate_inventory()
+    ]
+    return candidate_rows + current_rows
 
 
 class GateError(RuntimeError):
@@ -1069,6 +1218,8 @@ def run_current_incumbent(args: argparse.Namespace, root: Path) -> list[dict[str
             "predicate_paths": current_incumbent_predicate_paths(),
         }
     )
+    for summary in summaries:
+        summary["output_class"] = "current-incumbent-debug"
     return summaries
 
 

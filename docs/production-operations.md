@@ -302,13 +302,19 @@ fatal after origin success. Candidate mode remains separate and still requires e
 candidate identity plus `runtime_kind`, positional `managed_set`, strict-client success,
 and real-harness success; incumbent compatibility never relaxes it.
 
-The target emits a source-owned current-incumbent predicate inventory and each predicate's
-exact ordered path. It deliberately does **not** query Render to prove that the asserted
-deploy is currently live, enforce same-path receipt execution, publish an AATK receipt,
-authorize a plan, or grant live-execution authority. Those identity, receipt,
-orchestration, and authority controls belong to later AATK enforcement. The mode and its
-legacy fingerprint expire when this exact incumbent can no longer be the serving or
-approved rollback artifact; do not repoint the constants to another artifact.
+The target emits a source-owned 22-predicate current-incumbent inventory and each predicate's
+exact ordered path. AATK registers all 22 by domain and owner. Its source-owned semantic
+comparator proves only four one-to-one candidate identities: public HTTP-200 and profile-pin
+for each runtime. The other 18 mappings remain deferred, including all legacy response-shape
+checks. Target output is diagnostic class `current-incumbent-debug`, which lifecycle validation
+forbids as evidence alongside capability fixtures.
+
+The target deliberately does **not** query Render to prove that the asserted deploy is currently
+live, enforce same-path receipt execution, publish an AATK receipt, authorize a plan, or grant
+live-execution authority. Those identity, receipt, orchestration, and authority controls belong
+to later AATK enforcement. The mode and its legacy fingerprint expire when this exact incumbent
+can no longer be the serving or approved rollback artifact; do not repoint the constants to
+another artifact.
 
 ## Rollback and recovery
 

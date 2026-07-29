@@ -847,8 +847,12 @@ def test_current_incumbent_runs_pinned_origin_then_mandatory_public_for_both_run
         "raw-current-incumbent-public",
         "current-incumbent-predicate-inventory",
     ]
+    assert {summary["output_class"] for summary in summaries} == {
+        "current-incumbent-debug"
+    }
     assert summaries[0] == {
         "gate": "current-incumbent-identity",
+        "output_class": "current-incumbent-debug",
         "service_id": "srv-d8qm4jvavr4c73dhrmgg",
         "deploy_id": "dep-d9koecdbedkc73b582vg",
         "commit": "3376af7ee4a571488441794047018af94b06057f",
