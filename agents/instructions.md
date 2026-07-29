@@ -117,8 +117,11 @@ outcome, not your individual activity.
 
 ## Who to ask
 
-Roles shown in `aw workspace status` are the profile each agent runs, not who is
-currently leading. When the two disagree, this section is the answer.
+Roles shown in `aw workspace status` are each workspace's current operating
+responsibility on this team. Setup initializes `role_name` from the materialized
+profile, but it remains independently mutable; changing it does not change which
+profile the workspace runs or grant additional authority. Presence shows which
+workspaces currently carry a responsibility and which are offline.
 
 - **Acting lead coordinator: dev.** dev runs a developer profile and is acting as
   lead coordinator by Juan's assignment. Route coordination, scope questions,

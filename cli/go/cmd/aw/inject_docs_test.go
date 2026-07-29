@@ -215,6 +215,27 @@ func TestAwebOwnedStartupGuidanceHasSingleCanonicalOrder(t *testing.T) {
 	}
 }
 
+func TestAwebTeamInstructionsExplainRosterResponsibility(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(cmdMonorepoRootForTest(t), "agents", "instructions.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	guidance := strings.Join(strings.Fields(string(body)), " ")
+	for _, want := range []string{
+		"Roles shown in `aw workspace status` are each workspace's current operating responsibility on this team.",
+		"Setup initializes `role_name` from the materialized profile, but it remains independently mutable",
+		"changing it does not change which profile the workspace runs or grant additional authority",
+		"Presence shows which workspaces currently carry a responsibility and which are offline.",
+	} {
+		if !strings.Contains(guidance, want) {
+			t.Errorf("team instructions missing roster guidance %q", want)
+		}
+	}
+	if strings.Contains(guidance, "Roles shown in `aw workspace status` are the profile each agent runs") {
+		t.Error("team instructions still equate mutable roles with materialized profiles")
+	}
+}
+
 func TestDefaultTeamInstructionsReinjectCanonicalStartupDeferral(t *testing.T) {
 	root := cmdMonorepoRootForTest(t)
 	body, err := os.ReadFile(filepath.Join(root, "server", "src", "aweb", "defaults", "team_instructions.md"))
