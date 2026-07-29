@@ -265,6 +265,28 @@ def test_wrong_interpreter_or_entrypoint_artifact_is_refused(tmp_path: Path) -> 
             )
 
 
+def test_harness_artifact_overrides_are_not_exposed() -> None:
+    with pytest.raises(SystemExit):
+        gate.parser().parse_args(["candidate", "--pi-bin", "/tmp/fake-pi"])
+
+
+def test_fake_pi_printing_expected_lines_is_refused(tmp_path: Path) -> None:
+    fake_pi = tmp_path / "pi"
+    fake_pi.write_text(
+        "#!/bin/sh\n"
+        "echo '# Developer'\n"
+        "echo '> Profile developer v0.1.8 · blueprint aweb.team v0.1.12'\n"
+    )
+    fake_pi.chmod(0o755)
+    with pytest.raises(gate.GateError, match="path must be exactly"):
+        gate.verify_file_artifact(
+            fake_pi,
+            expected_path=gate.REQUIRED_PI_PATH,
+            expected_sha256=gate.REQUIRED_PI_SHA256,
+            label="Pi entry script",
+        )
+
+
 def test_claude_artifact_shape_is_native_macho(tmp_path: Path) -> None:
     gate.verify_native_claude(gate.REQUIRED_CLAUDE_PATH)
     script = tmp_path / "claude"
@@ -323,6 +345,29 @@ def test_pi_harness_bypasses_fake_path_node(
     assert str(fake_bin) not in captured["path"]
     assert "UNREVIEWED_INTERCEPT" not in captured["environment"]
     assert set(captured["environment"]) <= {*gate.HARNESS_ENV_KEYS, "PATH"}
+
+
+def test_node_options_preload_cannot_intercept_pi(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    marker = tmp_path / "node-options-intercepted"
+    preload = tmp_path / "intercept.cjs"
+    preload.write_text(
+        "require('fs').writeFileSync(" + json.dumps(str(marker)) + ", 'intercepted');\n"
+    )
+    monkeypatch.setenv("NODE_OPTIONS", f"--require={preload}")
+    monkeypatch.setenv("NODE_PATH", str(tmp_path / "fake-modules"))
+    completed = gate.subprocess.run(
+        [str(gate.REQUIRED_NODE_PATH), str(gate.REQUIRED_PI_PATH), "--version"],
+        check=True,
+        text=True,
+        capture_output=True,
+        env=gate.controlled_harness_environment(),
+    )
+    assert completed.stdout.strip() == "0.82.1"
+    assert not marker.exists()
+    assert "NODE_OPTIONS" not in gate.controlled_harness_environment()
+    assert "NODE_PATH" not in gate.controlled_harness_environment()
 
 
 def test_clone_auth_home_removes_profile_and_delivery_state(tmp_path: Path) -> None:

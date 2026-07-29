@@ -456,7 +456,9 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     homes: dict[str, Path] = {}
     for runtime in RUNTIMES:
-        payload = raw_materialize(args.aw_bin, args.source_home, args.public_url, runtime, root)
+        payload = raw_materialize(
+            REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root
+        )
         summaries.append(
             validate_candidate_payload(
                 payload,
@@ -471,7 +473,7 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
         clone_auth_home(args.source_home, home)
         summaries.append(
             strict_materialize(
-                args.aw_bin,
+                REQUIRED_AW_PATH,
                 home,
                 runtime,
                 root,
@@ -486,9 +488,9 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
                 homes[runtime],
                 runtime,
                 root,
-                args.claude_bin,
-                args.pi_bin,
-                args.node_bin,
+                REQUIRED_CLAUDE_PATH,
+                REQUIRED_PI_PATH,
+                REQUIRED_NODE_PATH,
             )
         )
     return summaries
@@ -497,7 +499,9 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
 def run_recovery(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     for runtime in RUNTIMES:
-        payload = raw_materialize(args.aw_bin, args.source_home, args.public_url, runtime, root)
+        payload = raw_materialize(
+            REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root
+        )
         summaries.append(
             validate_recovery_payload(
                 payload,
@@ -509,7 +513,7 @@ def run_recovery(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
         home = root / f"home-{runtime}"
         home.mkdir()
         clone_auth_home(args.source_home, home)
-        summaries.append(require_recovery_rejection(args.aw_bin, home, runtime, root))
+        summaries.append(require_recovery_rejection(REQUIRED_AW_PATH, home, runtime, root))
     return summaries
 
 
@@ -527,10 +531,6 @@ def parser() -> argparse.ArgumentParser:
         "--expected-profile-digest",
         default=os.environ.get("EXPECTED_PROFILE_DIGEST", ""),
     )
-    p.add_argument("--aw-bin", type=Path, default=REQUIRED_AW_PATH)
-    p.add_argument("--claude-bin", type=Path, default=REQUIRED_CLAUDE_PATH)
-    p.add_argument("--pi-bin", type=Path, default=REQUIRED_PI_PATH)
-    p.add_argument("--node-bin", type=Path, default=REQUIRED_NODE_PATH)
     return p
 
 
@@ -547,23 +547,23 @@ def main() -> int:
             raise GateError(
                 "EXPECTED_PROFILE_DIGEST/--expected-profile-digest must be sha256-pinned"
             )
-        verify_released_aw(args.aw_bin)
+        verify_released_aw(REQUIRED_AW_PATH)
         if args.mode == "candidate":
             verify_file_artifact(
-                args.claude_bin,
+                REQUIRED_CLAUDE_PATH,
                 expected_path=REQUIRED_CLAUDE_PATH,
                 expected_sha256=REQUIRED_CLAUDE_SHA256,
                 label="Claude Code binary",
             )
-            verify_native_claude(args.claude_bin)
+            verify_native_claude(REQUIRED_CLAUDE_PATH)
             verify_file_artifact(
-                args.pi_bin,
+                REQUIRED_PI_PATH,
                 expected_path=REQUIRED_PI_PATH,
                 expected_sha256=REQUIRED_PI_SHA256,
                 label="Pi entry script",
             )
             verify_file_artifact(
-                args.node_bin,
+                REQUIRED_NODE_PATH,
                 expected_path=REQUIRED_NODE_PATH,
                 expected_sha256=REQUIRED_NODE_SHA256,
                 label="Node interpreter",
