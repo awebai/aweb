@@ -167,11 +167,12 @@ if [[ "${1:-}" == "--self-test" ]]; then
   for mover in "${MOVERS[@]}"; do
     IFS=':' read -r src dest ref <<< "$mover"
     name="$(basename "$src")"
+    label="${dest//\//-}"
     if ! git -C "$src" show "$ref:.gitignore" 2>/dev/null | grep -q '^!'; then
       printf '  --   %-12s carries no ignore negations; nothing to strip\n' "$name"
       continue
     fi
-    if compare_mover "$src" "$dest" "strip-negations" "selftest-$name" "$ref"; then
+    if compare_mover "$src" "$dest" "strip-negations" "selftest-$label" "$ref"; then
       printf 'FAIL: %s still arrived intact with its ignore negations stripped; this check cannot see the loss it exists to catch\n' "$name" >&2
       exit 1
     fi
@@ -199,12 +200,13 @@ if [[ "${1:-}" == "--self-test" ]]; then
   for mover in "${MOVERS[@]}"; do
     IFS=':' read -r src dest ref <<< "$mover"
     name="$(basename "$src")"
+    label="${dest//\//-}"
     git -C "$src" ls-tree -r "$ref" | awk '$1 == "120000" { print $4 }' | sort > "$WORK/symlinks"
     if [[ ! -s "$WORK/symlinks" ]]; then
       printf '  --   %-12s tracks no symlinks; nothing to dereference\n' "$name"
       continue
     fi
-    if compare_mover "$src" "$dest" "deref-symlinks" "deref-$name" "$ref"; then
+    if compare_mover "$src" "$dest" "deref-symlinks" "deref-$label" "$ref"; then
       printf 'FAIL: %s arrived intact with its symlinks dereferenced; this check is blind to mode changes\n' "$name" >&2
       exit 1
     fi
@@ -239,6 +241,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   for mover in "${MOVERS[@]}"; do
     IFS=':' read -r src dest ref <<< "$mover"
     name="$(basename "$src")"
+    label="${dest//\//-}"
     # What the probe rule adds, rather than everything aweb's rules match: the
     # rest is rescued by the movers' own negations, which are still in place here.
     root_rule_casualties "$src" "$dest" "$ref" "$aweb_rules" > "$WORK/casualties-probe"
@@ -248,7 +251,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
       printf '  --   %-12s the probe rule matches nothing it tracks\n' "$name"
       continue
     fi
-    if compare_mover "$src" "$dest" "none" "rootrule-$name" "$ref" "$aweb_rules"; then
+    if compare_mover "$src" "$dest" "none" "rootrule-$label" "$ref" "$aweb_rules"; then
       printf 'FAIL: %s arrived intact with a root rule matching %s of its files; this check does not see aweb'"'"'s own rules\n' \
         "$name" "$(wc -l < "$WORK/predicted-root" | tr -d ' ')" >&2
       exit 1
@@ -276,7 +279,8 @@ status=0
 for mover in "${MOVERS[@]}"; do
   IFS=':' read -r src dest ref <<< "$mover"
   name="$(basename "$src")"
-  if compare_mover "$src" "$dest" "none" "check-$name" "$ref"; then
+  label="${dest//\//-}"
+  if compare_mover "$src" "$dest" "none" "check-$label" "$ref"; then
     printf '  ok   %-12s -> %-14s %s tracked entries arrive intact\n' "$name" "$dest" "$MOVER_TRACKED"
   else
     status=1
