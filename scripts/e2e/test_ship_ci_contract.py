@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-all-check.yml"
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ship.yml"
 CONTRIBUTING = REPO_ROOT / "docs" / "contributing.md"
 
 

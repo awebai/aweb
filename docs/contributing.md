@@ -171,7 +171,7 @@ runs that exact target for every pull request and every push to `main`; no perso
 chooses whether the journeys run.
 
 The workflow checks out Library and blueprints at the exact public commits in
-`.github/workflows/release-all-check.yml`. Advance either pin deliberately after
+`.github/workflows/ship.yml`. Advance either pin deliberately after
 proving the combined stack. Local `make ship` still accepts the sibling checkouts
 and `LIBRARY_E2E_LIBRARY_CONTEXT` / `LIBRARY_E2E_BLUEPRINT_SRC` overrides as
 additional leading-edge integration evidence, but mutable siblings are not the

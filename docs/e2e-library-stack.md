@@ -33,7 +33,7 @@ This harness depends on two checkouts sitting beside the aweb repo:
 
 The hosted `Comprehensive ship gate` does not consume mutable repository heads:
 it checks out Library and blueprints at the exact reviewed commits recorded in
-`.github/workflows/release-all-check.yml` and points these overrides at them.
+`.github/workflows/ship.yml` and points these overrides at them.
 Sibling working checkouts remain the local default for deliberate leading-edge
 integration only.
 

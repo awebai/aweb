@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
 PIN_FILE = REPO_ROOT / "oas" / "upstream-test-pin.json"
 PREPARE_SCRIPT = REPO_ROOT / "scripts" / "prepare-pinned-oas.mjs"
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-all-check.yml"
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ship.yml"
 
 
 class OASPinnedCheckoutContractTests(unittest.TestCase):
