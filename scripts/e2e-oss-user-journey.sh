@@ -2302,7 +2302,13 @@ else
   wrong_ns_exit=$?
 fi
 assert_eq "retiring a wrong-namespace address refuses" "1" "$wrong_ns_exit"
-assert_contains "refusal names the team namespace" "$wrong_ns_out" "test.local"
+# Assert the VERIFICATION refused, not merely that the command exited non-zero.
+# With the verification unwired the command still fails - the revoke declines
+# without an established member - so a bare exit-status check passes while the
+# workspace has already been deleted. The wording below is only produced before
+# anything is written.
+assert_contains "the verification is what refused" "$wrong_ns_out" "is a member of this team only"
+assert_contains "refusal names the team namespace" "$wrong_ns_out" "not evil.local"
 
 claims_after_refusal="$(psql_scalar "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$NOKEY_WORKSPACE_ID';")"
 assert_eq "refused retirement released no claim" "1" "$claims_after_refusal"
