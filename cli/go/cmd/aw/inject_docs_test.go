@@ -178,7 +178,6 @@ func TestAwebOwnedStartupGuidanceHasSingleCanonicalOrder(t *testing.T) {
 	}
 
 	for _, rel := range []string{
-		"agents/instructions.md",
 		"agents/souls/consultant/AGENTS.md",
 		"agents/souls/coordinator/AGENTS.md",
 		"agents/souls/developer/AGENTS.md",
@@ -199,6 +198,41 @@ func TestAwebOwnedStartupGuidanceHasSingleCanonicalOrder(t *testing.T) {
 		if !strings.Contains(guidance, "canonical start-of-session loop in the `aweb-coordination` skill") {
 			t.Errorf("startup guidance %s must defer to the canonical skill", rel)
 		}
+	}
+
+	teamCopy := strings.Join(strings.Fields(read("agents/instructions.md")), " ")
+	for _, want := range []string{
+		"The canonical source for this order is the `aweb-coordination` skill.",
+		"This block reproduces it so it is available without loading the skill.",
+		"If the two ever disagree, the skill wins and this block is stale.",
+	} {
+		if !strings.Contains(teamCopy, want) {
+			t.Errorf("team-instructions convenience copy missing %q", want)
+		}
+	}
+	if strings.Contains(teamCopy, "This order is canonical") {
+		t.Error("team-instructions convenience copy independently claims canonicality")
+	}
+}
+
+func TestAwebTeamInstructionsExplainRosterResponsibility(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(cmdMonorepoRootForTest(t), "agents", "instructions.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	guidance := strings.Join(strings.Fields(string(body)), " ")
+	for _, want := range []string{
+		"Roles shown in `aw workspace status` are each workspace's current operating responsibility on this team.",
+		"Setup initializes `role_name` from the materialized profile, but it remains independently mutable",
+		"changing it does not change which profile the workspace runs or grant additional authority",
+		"Presence shows which workspaces currently carry a responsibility and which are offline.",
+	} {
+		if !strings.Contains(guidance, want) {
+			t.Errorf("team instructions missing roster guidance %q", want)
+		}
+	}
+	if strings.Contains(guidance, "Roles shown in `aw workspace status` are the profile each agent runs") {
+		t.Error("team instructions still equate mutable roles with materialized profiles")
 	}
 }
 
@@ -231,30 +265,43 @@ func TestDefaultTeamInstructionsReinjectCanonicalStartupDeferral(t *testing.T) {
 	}
 }
 
-func TestRootAgentInstructionsUseCoordinatorIntegrationWorkflow(t *testing.T) {
-	path := filepath.Join(cmdMonorepoRootForTest(t), "AGENTS.md")
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+func TestAwebProjectAndTeamInstructionsCarryCurrentIntegrationPolicy(t *testing.T) {
+	root := cmdMonorepoRootForTest(t)
+	readNormalized := func(rel string, beforeMarker bool) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(body)
+		if beforeMarker {
+			text = strings.SplitN(text, awDocsMarkerStart, 2)[0]
+		}
+		return strings.Join(strings.Fields(text), " ")
 	}
-	staticInstructions := strings.Join(strings.Fields(strings.SplitN(string(body), awDocsMarkerStart, 2)[0]), " ")
+
+	projectCopy := readNormalized("AGENTS.md", true)
+	teamAuthority := readNormalized("agents/instructions.md", false)
 	for _, want := range []string{
-		"The handoff is the branch",
-		"Agents never merge their branches to main",
-		"detached worktree based on `origin/main`",
-		"merge `origin/main` into their own branch",
-		"A team without a coordinator may use a different integration workflow",
+		"Ordinary single-repo work: merge it yourself.",
+		"merge your branch to main and merge main back into your branch",
+		"Ask the coordinator to integrate when the change spans repositories, cuts a release tag, or touches production tooling.",
+		"never merge work your reviewer has not ACKed",
+		"always merge `origin/main` into your branch before handing off",
 	} {
-		if !strings.Contains(staticInstructions, want) {
-			t.Errorf("%s static instructions missing %q", path, want)
+		if !strings.Contains(projectCopy, want) {
+			t.Errorf("project instruction copy missing %q", want)
+		}
+		if !strings.Contains(teamAuthority, want) {
+			t.Errorf("authoritative team instructions missing %q", want)
 		}
 	}
-	for _, stale := range []string{
-		"You merge your branch to main",
-		"You merge main back to your branch",
+	for _, want := range []string{
+		"Active team instructions are authoritative for this team's branch and integration workflow.",
+		"If a repository or profile copy disagrees, the active team instructions win and the copy is stale.",
 	} {
-		if strings.Contains(staticInstructions, stale) {
-			t.Errorf("%s static instructions retain self-merge guidance %q", path, stale)
+		if !strings.Contains(teamAuthority, want) {
+			t.Errorf("authoritative team instructions missing %q", want)
 		}
 	}
 }

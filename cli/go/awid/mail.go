@@ -667,10 +667,19 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 				}
 			}
 		}
-		m.VerificationStatus = c.checkRecipientBinding(m.VerificationStatus, m.ToDID, m.ToStableID)
+		// Recipient binding is a receiver-side check. Compare the author only to
+		// this client's authenticated did:key so a claimed stable ID cannot exempt a record.
+		if !c.messageAuthoredByClientDID(m.FromDID) {
+			m.VerificationStatus = c.checkRecipientBinding(m.VerificationStatus, m.ToDID, m.ToStableID)
+		}
 		m.VerificationStatus, m.IsContact = c.NormalizeSenderTrust(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
 	}
 	return out, nil
+}
+
+func (c *Client) messageAuthoredByClientDID(fromDID string) bool {
+	clientDID := strings.TrimSpace(c.did)
+	return clientDID != "" && strings.TrimSpace(fromDID) == clientDID
 }
 
 // signedMailPriority normalizes "" and "normal" to the same empty signed value.
