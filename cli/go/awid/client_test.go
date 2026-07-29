@@ -4881,6 +4881,141 @@ func TestInboxRecipientBindingMismatch(t *testing.T) {
 	}
 }
 
+func TestInboxSenderViewVerifiesOutgoingMessageWithoutRecipientSelfCheck(t *testing.T) {
+	t.Parallel()
+
+	senderPub, senderPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderDID := ComputeDIDKey(senderPub)
+	recipientPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientDID := ComputeDIDKey(recipientPub)
+
+	conversationID := "77777777-7777-4777-8777-777777777777"
+	env := &MessageEnvelope{
+		From:           "team/sender",
+		FromDID:        senderDID,
+		To:             "team/recipient",
+		ToDID:          recipientDID,
+		Type:           "mail",
+		Body:           "delivered outgoing message",
+		Timestamp:      "2026-07-29T00:00:00Z",
+		MessageID:      "msg-outgoing-1",
+		ConversationID: conversationID,
+	}
+	signature, err := SignMessage(senderPriv, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedPayload := CanonicalJSON(env)
+
+	message := InboxMessage{
+		MessageID:      env.MessageID,
+		FromAlias:      env.From,
+		ToAlias:        env.To,
+		Body:           env.Body,
+		CreatedAt:      env.Timestamp,
+		FromDID:        senderDID,
+		ToDID:          recipientDID,
+		Signature:      signature,
+		SigningKeyID:   senderDID,
+		SignedPayload:  signedPayload,
+		ConversationID: conversationID,
+	}
+	invalid := message
+	invalid.MessageID = "msg-outgoing-invalid"
+	invalid.Signature = "invalid"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(InboxResponse{Messages: []InboxMessage{message, invalid}})
+	}))
+	defer server.Close()
+
+	client, err := NewWithIdentity(server.URL, senderPriv, senderDID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Inbox(context.Background(), InboxParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := response.Messages[0].VerificationStatus; got != Verified {
+		t.Fatalf("valid sender-view status=%q, want %q", got, Verified)
+	}
+	if got := response.Messages[1].VerificationStatus; got != Failed {
+		t.Fatalf("invalid sender-view status=%q, want %q", got, Failed)
+	}
+}
+
+func TestInboxClaimedViewerStableIDDoesNotExemptWrongRecipientBinding(t *testing.T) {
+	t.Parallel()
+
+	viewerPub, viewerPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewerDID := ComputeDIDKey(viewerPub)
+	viewerStableID := ComputeStableID(viewerPub)
+	attackerPub, attackerPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attackerDID := ComputeDIDKey(attackerPub)
+	wrongRecipientPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongRecipientDID := ComputeDIDKey(wrongRecipientPub)
+
+	env := &MessageEnvelope{
+		From:         "team/attacker",
+		FromDID:      attackerDID,
+		FromStableID: viewerStableID,
+		To:           "team/someone-else",
+		ToDID:        wrongRecipientDID,
+		Type:         "mail",
+		Body:         "claimed viewer stable id",
+		Timestamp:    "2026-07-29T00:00:00Z",
+		MessageID:    "msg-stable-id-spoof",
+	}
+	signature, err := SignMessage(attackerPriv, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(InboxResponse{Messages: []InboxMessage{{
+			MessageID:     env.MessageID,
+			FromAlias:     env.From,
+			ToAlias:       env.To,
+			Body:          env.Body,
+			CreatedAt:     env.Timestamp,
+			FromDID:       attackerDID,
+			FromStableID:  viewerStableID,
+			ToDID:         wrongRecipientDID,
+			Signature:     signature,
+			SigningKeyID:  attackerDID,
+			SignedPayload: CanonicalJSON(env),
+		}}})
+	}))
+	defer server.Close()
+
+	client, err := NewWithIdentity(server.URL, viewerPriv, viewerDID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetStableID(viewerStableID)
+	response, err := client.Inbox(context.Background(), InboxParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := response.Messages[0].VerificationStatus; got != IdentityMismatch {
+		t.Fatalf("claimed stable-id status=%q, want %q", got, IdentityMismatch)
+	}
+}
+
 func TestSendMessageNoResolverLeavesToDIDEmpty(t *testing.T) {
 	t.Parallel()
 
