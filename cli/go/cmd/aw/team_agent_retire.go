@@ -107,17 +107,29 @@ type revokeCertificateFunc func(ctx context.Context) (certificateStoreResult, er
 
 // retireTeamAgent clears the coordination store, then the certificate store.
 //
-// The order is not interchangeable. Releasing claims means deleting the
-// workspace record, and the hosted remove-member endpoint soft-deletes that same
-// record itself without releasing anything, so revoking first leaves the claims
-// permanently held. It is also the only order that keeps a recovery path: an
-// agent that still holds claims can release them itself until its certificate is
-// revoked, and not a moment after.
+// INVARIANT: the coordination store is cleared first. Two independent reasons
+// require it, and they do not expire together.
 //
-// For the same reason a blocked coordination store stops the sequence rather
+// The first is that the hosted remove-member endpoint soft-deletes the workspace
+// record itself without releasing anything, and the delete route will not run the
+// cascade for a record already deleted. So revoking first leaves every claim held
+// forever. This reason has an expiry: it stops applying once the hosted removal
+// releases claims of its own.
+//
+// The second does not expire. An agent that still holds claims can release them
+// itself right up until its certificate is revoked, and not a moment after.
+// Revoking first destroys the credential needed for the cheapest way out of the
+// state it just created, leaving only the cascade that the same call declined to
+// run. That is true of any retirement on any team, whatever the services do.
+//
+// So if you are here because the hosted side now releases claims and this looks
+// like it can be simplified: the first reason is gone, the second is not, and the
+// order stays. Reordering on the strength of the first alone reintroduces the
+// unrecoverable case.
+//
+// For the second reason a blocked coordination store stops the sequence rather
 // than proceeding to the revoke. Revoking anyway would produce exactly the
-// split state this command exists to prevent, and would destroy the credential
-// needed for the cheapest way out of it.
+// split state this command exists to prevent.
 func retireTeamAgent(
 	ctx context.Context,
 	client *aweb.Client,
