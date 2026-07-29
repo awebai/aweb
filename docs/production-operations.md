@@ -134,6 +134,35 @@ make prod-verify \
 `AW_SOURCE_HOME` must be an established agent home with the correct team certificate.
 The gate clones only into a private temporary directory and removes it on exit.
 
+## AATK verification contract
+
+`ops/aatk-manifest.json` is the checked-in static coverage specification. The actual
+postdeploy executors own stable child predicate IDs in `scripts/render_ops.py` and
+`scripts/library_prod_gate.py`; `make aatk-predicate-inventory` exposes those IDs and
+`make aatk-spec-check` requires exact equality with the manifest rows. The required CI
+workflow invokes the structural check directly.
+
+Runtime proof never lives in that manifest. A future run ledger is external, immutable,
+and bound to the manifest digest and exact candidate SHA. `make aatk-validate-preplan
+AATK_EVIDENCE_INDEX=...` and `make aatk-validate-release AATK_EVIDENCE_INDEX=...` are
+separate lifecycle validators. In the current first honest increment they both fail with
+`unenforced-obligation` and enumerate every deferred enforcement ID. Only static schema
+validation can pass. Therefore this increment cannot authorize a deployment plan or close
+a release, even if a syntactically complete fixture ledger is supplied.
+
+Every predicate row structurally requires a typed positive, a same-declared-path faithful
+negative, strict postdeploy obligation, owner, rollback disposition, and machine expiry.
+Candidate-only absence is source-allowlisted to semantics the exact incumbent cannot emit;
+it requires an exact-source positive and cannot waive shared transport or environment.
+The deferred registry machine-blocks preplan and release until runtime path fidelity,
+actual execution obligations, separate incumbent/rollback identity semantics, immutable
+fresh receipts, lifecycle transitions, safe boundary invocation, executed same-path
+controls, candidate-only runtime proof, and orchestrator falsification are implemented and
+tested. A status edit cannot clear those blockers because the validator cross-checks the
+registry against source-owned enforcement IDs. The enforced claims, dedicated negative
+tests, and explicit nonclaims for this increment are mapped in
+[`aatk-increment-1.md`](aatk-increment-1.md).
+
 ## Verification surfaces
 
 The isolated stack does not prove production routing, Cloudflare policy, deployed identity, or shelf state; production preflight does not prove candidate bytes are live; only exact-ID post-deploy verification can close a deployment.

@@ -1,0 +1,4569 @@
+{
+  "postdeploy_entrypoint": {
+    "executor_contracts": [
+      "scripts.render_ops.POSTDEPLOY_PREDICATES",
+      "scripts.library_prod_gate.POSTDEPLOY_PREDICATES"
+    ],
+    "make_target": "prod-verify"
+  },
+  "predicates": [
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "client.aw.artifact-sha.incumbent-pass",
+          "layer": "released-client-identity",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.verify-released-aw",
+            "client.aw.artifact-sha"
+          ],
+          "safety_class": "read-only",
+          "surface": "operator-host"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "client.aw.artifact-sha",
+      "negative_controls": [
+        {
+          "expected_error_code": "client.aw.artifact-sha.rejected",
+          "mutation_id": "client.aw.artifact-sha.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "client.aw.artifact-sha.negative-control",
+            "layer": "released-client-identity",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.verify-released-aw",
+              "client.aw.artifact-sha"
+            ],
+            "safety_class": "isolated",
+            "surface": "operator-host"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "client.aw.artifact-sha.postdeploy-pass",
+        "layer": "released-client-identity",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.verify-released-aw",
+          "client.aw.artifact-sha"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "operator-host"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "client.aw.artifact-sha.rollback-pass",
+          "layer": "released-client-identity",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.verify-released-aw",
+            "client.aw.artifact-sha"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "operator-host"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "client.aw.version-metadata.incumbent-pass",
+          "layer": "released-client-identity",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.verify-released-aw",
+            "client.aw.version-metadata"
+          ],
+          "safety_class": "read-only",
+          "surface": "operator-host"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "client.aw.version-metadata",
+      "negative_controls": [
+        {
+          "expected_error_code": "client.aw.version-metadata.rejected",
+          "mutation_id": "client.aw.version-metadata.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "client.aw.version-metadata.negative-control",
+            "layer": "released-client-identity",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.verify-released-aw",
+              "client.aw.version-metadata"
+            ],
+            "safety_class": "isolated",
+            "surface": "operator-host"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "client.aw.version-metadata.postdeploy-pass",
+        "layer": "released-client-identity",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.verify-released-aw",
+          "client.aw.version-metadata"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "operator-host"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "client.aw.version-metadata.rollback-pass",
+          "layer": "released-client-identity",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.verify-released-aw",
+            "client.aw.version-metadata"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "operator-host"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "gate.profile-pin.arguments.incumbent-pass",
+          "layer": "released-client-identity",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.main",
+            "gate.profile-pin.arguments"
+          ],
+          "safety_class": "read-only",
+          "surface": "operator-host"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "gate.profile-pin.arguments",
+      "negative_controls": [
+        {
+          "expected_error_code": "gate.profile-pin.arguments.rejected",
+          "mutation_id": "gate.profile-pin.arguments.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "gate.profile-pin.arguments.negative-control",
+            "layer": "released-client-identity",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.main",
+              "gate.profile-pin.arguments"
+            ],
+            "safety_class": "isolated",
+            "surface": "operator-host"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "gate.profile-pin.arguments.postdeploy-pass",
+        "layer": "released-client-identity",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.main",
+          "gate.profile-pin.arguments"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "operator-host"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "gate.profile-pin.arguments.rollback-pass",
+          "layer": "released-client-identity",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.main",
+            "gate.profile-pin.arguments"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "operator-host"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "gate.public-url.exact.incumbent-pass",
+          "layer": "released-client-identity",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.main",
+            "gate.public-url.exact"
+          ],
+          "safety_class": "read-only",
+          "surface": "operator-host"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "gate.public-url.exact",
+      "negative_controls": [
+        {
+          "expected_error_code": "gate.public-url.exact.rejected",
+          "mutation_id": "gate.public-url.exact.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "gate.public-url.exact.negative-control",
+            "layer": "released-client-identity",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.main",
+              "gate.public-url.exact"
+            ],
+            "safety_class": "isolated",
+            "surface": "operator-host"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "gate.public-url.exact.postdeploy-pass",
+        "layer": "released-client-identity",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.main",
+          "gate.public-url.exact"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "operator-host"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "gate.public-url.exact.rollback-pass",
+          "layer": "released-client-identity",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.main",
+            "gate.public-url.exact"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "operator-host"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "gate.source-home.absolute.incumbent-pass",
+          "layer": "released-client-identity",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.main",
+            "gate.source-home.absolute"
+          ],
+          "safety_class": "read-only",
+          "surface": "operator-host"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "gate.source-home.absolute",
+      "negative_controls": [
+        {
+          "expected_error_code": "gate.source-home.absolute.rejected",
+          "mutation_id": "gate.source-home.absolute.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "gate.source-home.absolute.negative-control",
+            "layer": "released-client-identity",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.main",
+              "gate.source-home.absolute"
+            ],
+            "safety_class": "isolated",
+            "surface": "operator-host"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "gate.source-home.absolute.postdeploy-pass",
+        "layer": "released-client-identity",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.main",
+          "gate.source-home.absolute"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "operator-host"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "gate.source-home.absolute.rollback-pass",
+          "layer": "released-client-identity",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.main",
+            "gate.source-home.absolute"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "operator-host"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "harness.claude-code.artifact.incumbent-pass",
+          "layer": "real-harness",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.run-harness",
+            "harness.claude-code.artifact"
+          ],
+          "safety_class": "read-only",
+          "surface": "claude-code"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "candidate-or-incumbent-artifact-changed",
+        "kind": "incumbent-change"
+      },
+      "id": "harness.claude-code.artifact",
+      "negative_controls": [
+        {
+          "expected_error_code": "harness.claude-code.artifact.rejected",
+          "mutation_id": "harness.claude-code.artifact.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "harness.claude-code.artifact.negative-control",
+            "layer": "real-harness",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.run-harness",
+              "harness.claude-code.artifact"
+            ],
+            "safety_class": "isolated",
+            "surface": "claude-code"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "harness.claude-code.artifact.postdeploy-pass",
+        "layer": "real-harness",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.run-harness",
+          "harness.claude-code.artifact"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "claude-code"
+      },
+      "rollback": {
+        "reason_code": "legacy-recovery-stops-before-real-harness",
+        "state": "mechanically-not-applicable"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "harness.claude-code.command.exact-source-pass",
+          "layer": "real-harness",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.run-harness",
+            "harness.claude-code.command"
+          ],
+          "safety_class": "isolated",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "candidate-or-incumbent-artifact-changed",
+        "kind": "incumbent-change"
+      },
+      "id": "harness.claude-code.command",
+      "negative_controls": [
+        {
+          "expected_error_code": "harness.claude-code.command.rejected",
+          "mutation_id": "harness.claude-code.command.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "harness.claude-code.command.negative-control",
+            "layer": "real-harness",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.run-harness",
+              "harness.claude-code.command"
+            ],
+            "safety_class": "isolated",
+            "surface": "claude-code"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "harness.claude-code.command.postdeploy-pass",
+        "layer": "real-harness",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.run-harness",
+          "harness.claude-code.command"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "claude-code"
+      },
+      "rollback": {
+        "reason_code": "legacy-recovery-stops-before-real-harness",
+        "state": "mechanically-not-applicable"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "harness.claude-code.instructions.exact-source-pass",
+          "layer": "real-harness",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.run-harness",
+            "harness.claude-code.instructions"
+          ],
+          "safety_class": "isolated",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "candidate-or-incumbent-artifact-changed",
+        "kind": "incumbent-change"
+      },
+      "id": "harness.claude-code.instructions",
+      "negative_controls": [
+        {
+          "expected_error_code": "harness.claude-code.instructions.rejected",
+          "mutation_id": "harness.claude-code.instructions.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "harness.claude-code.instructions.negative-control",
+            "layer": "real-harness",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.run-harness",
+              "harness.claude-code.instructions"
+            ],
+            "safety_class": "isolated",
+            "surface": "claude-code"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "harness.claude-code.instructions.postdeploy-pass",
+        "layer": "real-harness",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.run-harness",
+          "harness.claude-code.instructions"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "claude-code"
+      },
+      "rollback": {
+        "reason_code": "legacy-recovery-stops-before-real-harness",
+        "state": "mechanically-not-applicable"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "harness.pi.artifacts.incumbent-pass",
+          "layer": "real-harness",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.run-harness",
+            "harness.pi.artifacts"
+          ],
+          "safety_class": "read-only",
+          "surface": "pi"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "candidate-or-incumbent-artifact-changed",
+        "kind": "incumbent-change"
+      },
+      "id": "harness.pi.artifacts",
+      "negative_controls": [
+        {
+          "expected_error_code": "harness.pi.artifacts.rejected",
+          "mutation_id": "harness.pi.artifacts.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "harness.pi.artifacts.negative-control",
+            "layer": "real-harness",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.run-harness",
+              "harness.pi.artifacts"
+            ],
+            "safety_class": "isolated",
+            "surface": "pi"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "harness.pi.artifacts.postdeploy-pass",
+        "layer": "real-harness",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.run-harness",
+          "harness.pi.artifacts"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "pi"
+      },
+      "rollback": {
+        "reason_code": "legacy-recovery-stops-before-real-harness",
+        "state": "mechanically-not-applicable"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "harness.pi.command.exact-source-pass",
+          "layer": "real-harness",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.run-harness",
+            "harness.pi.command"
+          ],
+          "safety_class": "isolated",
+          "surface": "pi"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "candidate-or-incumbent-artifact-changed",
+        "kind": "incumbent-change"
+      },
+      "id": "harness.pi.command",
+      "negative_controls": [
+        {
+          "expected_error_code": "harness.pi.command.rejected",
+          "mutation_id": "harness.pi.command.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "harness.pi.command.negative-control",
+            "layer": "real-harness",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.run-harness",
+              "harness.pi.command"
+            ],
+            "safety_class": "isolated",
+            "surface": "pi"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "harness.pi.command.postdeploy-pass",
+        "layer": "real-harness",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.run-harness",
+          "harness.pi.command"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "pi"
+      },
+      "rollback": {
+        "reason_code": "legacy-recovery-stops-before-real-harness",
+        "state": "mechanically-not-applicable"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "harness.pi.instructions.exact-source-pass",
+          "layer": "real-harness",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.run-harness",
+            "harness.pi.instructions"
+          ],
+          "safety_class": "isolated",
+          "surface": "pi"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "candidate-or-incumbent-artifact-changed",
+        "kind": "incumbent-change"
+      },
+      "id": "harness.pi.instructions",
+      "negative_controls": [
+        {
+          "expected_error_code": "harness.pi.instructions.rejected",
+          "mutation_id": "harness.pi.instructions.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "harness.pi.instructions.negative-control",
+            "layer": "real-harness",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.run-harness",
+              "harness.pi.instructions"
+            ],
+            "safety_class": "isolated",
+            "surface": "pi"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "harness.pi.instructions.postdeploy-pass",
+        "layer": "real-harness",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.run-harness",
+          "harness.pi.instructions"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "pi"
+      },
+      "rollback": {
+        "reason_code": "legacy-recovery-stops-before-real-harness",
+        "state": "mechanically-not-applicable"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "build"
+          ],
+          "incumbent_shape": "library-health-v0.two-key",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "health.origin.build-sha.exact-source-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.origin.build-sha"
+          ],
+          "safety_class": "isolated",
+          "surface": "generated-origin"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.origin.build-sha",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.origin.build-sha.rejected",
+          "mutation_id": "health.origin.build-sha.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.origin.build-sha.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "render.verify-health-surfaces",
+              "render.verify-health",
+              "health.origin.build-sha"
+            ],
+            "safety_class": "isolated",
+            "surface": "generated-origin"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.origin.build-sha.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health-surfaces",
+          "render.verify-health",
+          "health.origin.build-sha"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "generated-origin"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.origin.build-sha.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.origin.build-sha"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "generated-origin"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.origin.evidence-complete.incumbent-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-health-client-proof",
+          "path_fingerprint": [
+            "make.prod-health-client-proof",
+            "render.verify-health",
+            "health.origin.evidence-complete"
+          ],
+          "safety_class": "read-only",
+          "surface": "generated-origin"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.origin.evidence-complete",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.origin.evidence-complete.rejected",
+          "mutation_id": "health.origin.evidence-complete.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.origin.evidence-complete.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-health-client-proof",
+              "render.verify-health",
+              "health.origin.evidence-complete"
+            ],
+            "safety_class": "isolated",
+            "surface": "generated-origin"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.origin.evidence-complete.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health",
+          "health.origin.evidence-complete"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "generated-origin"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.origin.evidence-complete.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health",
+            "health.origin.evidence-complete"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "generated-origin"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.origin.exact-url-no-redirect.incumbent-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-health-client-proof",
+          "path_fingerprint": [
+            "make.prod-health-client-proof",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.origin.exact-url-no-redirect"
+          ],
+          "safety_class": "read-only",
+          "surface": "generated-origin"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.origin.exact-url-no-redirect",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.origin.exact-url-no-redirect.rejected",
+          "mutation_id": "health.origin.exact-url-no-redirect.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.origin.exact-url-no-redirect.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-health-client-proof",
+              "render.verify-health-surfaces",
+              "render.verify-health",
+              "health.origin.exact-url-no-redirect"
+            ],
+            "safety_class": "isolated",
+            "surface": "generated-origin"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.origin.exact-url-no-redirect.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health-surfaces",
+          "render.verify-health",
+          "health.origin.exact-url-no-redirect"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "generated-origin"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.origin.exact-url-no-redirect.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.origin.exact-url-no-redirect"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "generated-origin"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.origin.http-200.incumbent-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-health-client-proof",
+          "path_fingerprint": [
+            "make.prod-health-client-proof",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.origin.http-200"
+          ],
+          "safety_class": "read-only",
+          "surface": "generated-origin"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.origin.http-200",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.origin.http-200.rejected",
+          "mutation_id": "health.origin.http-200.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.origin.http-200.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-health-client-proof",
+              "render.verify-health-surfaces",
+              "render.verify-health",
+              "health.origin.http-200"
+            ],
+            "safety_class": "isolated",
+            "surface": "generated-origin"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.origin.http-200.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health-surfaces",
+          "render.verify-health",
+          "health.origin.http-200"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "generated-origin"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.origin.http-200.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.origin.http-200"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "generated-origin"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.origin.payload-contract.incumbent-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-health-client-proof",
+          "path_fingerprint": [
+            "make.prod-health-client-proof",
+            "render.verify-health",
+            "health.origin.payload-contract"
+          ],
+          "safety_class": "read-only",
+          "surface": "generated-origin"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.origin.payload-contract",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.origin.payload-contract.rejected",
+          "mutation_id": "health.origin.payload-contract.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.origin.payload-contract.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-health-client-proof",
+              "render.verify-health",
+              "health.origin.payload-contract"
+            ],
+            "safety_class": "isolated",
+            "surface": "generated-origin"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.origin.payload-contract.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health",
+          "health.origin.payload-contract"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "generated-origin"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.origin.payload-contract.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health",
+            "health.origin.payload-contract"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "generated-origin"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.origin.user-agent.incumbent-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-health-client-proof",
+          "path_fingerprint": [
+            "make.prod-health-client-proof",
+            "render.verify-health",
+            "health.origin.user-agent"
+          ],
+          "safety_class": "read-only",
+          "surface": "generated-origin"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.origin.user-agent",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.origin.user-agent.rejected",
+          "mutation_id": "health.origin.user-agent.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.origin.user-agent.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-health-client-proof",
+              "render.verify-health",
+              "health.origin.user-agent"
+            ],
+            "safety_class": "isolated",
+            "surface": "generated-origin"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.origin.user-agent.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health",
+          "health.origin.user-agent"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "generated-origin"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.origin.user-agent.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health",
+            "health.origin.user-agent"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "generated-origin"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "build"
+          ],
+          "incumbent_shape": "library-health-v0.two-key",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "health.public.build-sha.exact-source-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.public.build-sha"
+          ],
+          "safety_class": "isolated",
+          "surface": "canonical-public"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.public.build-sha",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.public.build-sha.rejected",
+          "mutation_id": "health.public.build-sha.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.public.build-sha.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "render.verify-health-surfaces",
+              "render.verify-health",
+              "health.public.build-sha"
+            ],
+            "safety_class": "isolated",
+            "surface": "canonical-public"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.public.build-sha.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health-surfaces",
+          "render.verify-health",
+          "health.public.build-sha"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "canonical-public"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.public.build-sha.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.public.build-sha"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "canonical-public"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.public.evidence-complete.incumbent-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-health-client-proof",
+          "path_fingerprint": [
+            "make.prod-health-client-proof",
+            "render.verify-health",
+            "health.public.evidence-complete"
+          ],
+          "safety_class": "read-only",
+          "surface": "canonical-public"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.public.evidence-complete",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.public.evidence-complete.rejected",
+          "mutation_id": "health.public.evidence-complete.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.public.evidence-complete.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-health-client-proof",
+              "render.verify-health",
+              "health.public.evidence-complete"
+            ],
+            "safety_class": "isolated",
+            "surface": "canonical-public"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.public.evidence-complete.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health",
+          "health.public.evidence-complete"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "canonical-public"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.public.evidence-complete.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health",
+            "health.public.evidence-complete"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "canonical-public"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.public.exact-url-no-redirect.incumbent-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-health-client-proof",
+          "path_fingerprint": [
+            "make.prod-health-client-proof",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.public.exact-url-no-redirect"
+          ],
+          "safety_class": "read-only",
+          "surface": "canonical-public"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.public.exact-url-no-redirect",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.public.exact-url-no-redirect.rejected",
+          "mutation_id": "health.public.exact-url-no-redirect.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.public.exact-url-no-redirect.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-health-client-proof",
+              "render.verify-health-surfaces",
+              "render.verify-health",
+              "health.public.exact-url-no-redirect"
+            ],
+            "safety_class": "isolated",
+            "surface": "canonical-public"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.public.exact-url-no-redirect.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health-surfaces",
+          "render.verify-health",
+          "health.public.exact-url-no-redirect"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "canonical-public"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.public.exact-url-no-redirect.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.public.exact-url-no-redirect"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "canonical-public"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.public.http-200.incumbent-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-health-client-proof",
+          "path_fingerprint": [
+            "make.prod-health-client-proof",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.public.http-200"
+          ],
+          "safety_class": "read-only",
+          "surface": "canonical-public"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.public.http-200",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.public.http-200.rejected",
+          "mutation_id": "health.public.http-200.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.public.http-200.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-health-client-proof",
+              "render.verify-health-surfaces",
+              "render.verify-health",
+              "health.public.http-200"
+            ],
+            "safety_class": "isolated",
+            "surface": "canonical-public"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.public.http-200.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health-surfaces",
+          "render.verify-health",
+          "health.public.http-200"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "canonical-public"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.public.http-200.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.public.http-200"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "canonical-public"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.public.payload-contract.incumbent-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-health-client-proof",
+          "path_fingerprint": [
+            "make.prod-health-client-proof",
+            "render.verify-health",
+            "health.public.payload-contract"
+          ],
+          "safety_class": "read-only",
+          "surface": "canonical-public"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.public.payload-contract",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.public.payload-contract.rejected",
+          "mutation_id": "health.public.payload-contract.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.public.payload-contract.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-health-client-proof",
+              "render.verify-health",
+              "health.public.payload-contract"
+            ],
+            "safety_class": "isolated",
+            "surface": "canonical-public"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.public.payload-contract.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health",
+          "health.public.payload-contract"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "canonical-public"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.public.payload-contract.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health",
+            "health.public.payload-contract"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "canonical-public"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.public.user-agent.incumbent-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-health-client-proof",
+          "path_fingerprint": [
+            "make.prod-health-client-proof",
+            "render.verify-health",
+            "health.public.user-agent"
+          ],
+          "safety_class": "read-only",
+          "surface": "canonical-public"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.public.user-agent",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.public.user-agent.rejected",
+          "mutation_id": "health.public.user-agent.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.public.user-agent.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-health-client-proof",
+              "render.verify-health",
+              "health.public.user-agent"
+            ],
+            "safety_class": "isolated",
+            "surface": "canonical-public"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.public.user-agent.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health",
+          "health.public.user-agent"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "canonical-public"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.public.user-agent.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health",
+            "health.public.user-agent"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "canonical-public"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.readiness.bounded.incumbent-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-health-client-proof",
+          "path_fingerprint": [
+            "make.prod-health-client-proof",
+            "render.verify-health",
+            "health.readiness.bounded"
+          ],
+          "safety_class": "read-only",
+          "surface": "operator-host"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.readiness.bounded",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.readiness.bounded.rejected",
+          "mutation_id": "health.readiness.bounded.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.readiness.bounded.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-health-client-proof",
+              "render.verify-health",
+              "health.readiness.bounded"
+            ],
+            "safety_class": "isolated",
+            "surface": "operator-host"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.readiness.bounded.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health",
+          "health.readiness.bounded"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "operator-host"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.readiness.bounded.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health",
+            "health.readiness.bounded"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "operator-host"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.surfaces.payload-equal.incumbent-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-health-client-proof",
+          "path_fingerprint": [
+            "make.prod-health-client-proof",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.surfaces.payload-equal"
+          ],
+          "safety_class": "read-only",
+          "surface": "operator-host"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "health.surfaces.payload-equal",
+      "negative_controls": [
+        {
+          "expected_error_code": "health.surfaces.payload-equal.rejected",
+          "mutation_id": "health.surfaces.payload-equal.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "health.surfaces.payload-equal.negative-control",
+            "layer": "health-transport-contract",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-health-client-proof",
+              "render.verify-health-surfaces",
+              "render.verify-health",
+              "health.surfaces.payload-equal"
+            ],
+            "safety_class": "isolated",
+            "surface": "operator-host"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "health.surfaces.payload-equal.postdeploy-pass",
+        "layer": "health-transport-contract",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.verify-health-surfaces",
+          "render.verify-health",
+          "health.surfaces.payload-equal"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "operator-host"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "health.surfaces.payload-equal.rollback-pass",
+          "layer": "health-transport-contract",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.verify-health-surfaces",
+            "render.verify-health",
+            "health.surfaces.payload-equal"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "operator-host"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "materialize.managed-set.claude-code.exact-source-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.raw-materialize",
+            "materialize.managed-set.claude-code"
+          ],
+          "safety_class": "isolated",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "materialize.managed-set.claude-code",
+      "negative_controls": [
+        {
+          "expected_error_code": "materialize.managed-set.claude-code.rejected",
+          "mutation_id": "materialize.managed-set.claude-code.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "materialize.managed-set.claude-code.negative-control",
+            "layer": "raw-materialization",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.raw-materialize",
+              "materialize.managed-set.claude-code"
+            ],
+            "safety_class": "isolated",
+            "surface": "claude-code"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "materialize.managed-set.claude-code.postdeploy-pass",
+        "layer": "raw-materialization",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.raw-materialize",
+          "materialize.managed-set.claude-code"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "claude-code"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.managed-set.claude-code.rollback-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.managed-set.claude-code"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "materialize.managed-set.pi.exact-source-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.raw-materialize",
+            "materialize.managed-set.pi"
+          ],
+          "safety_class": "isolated",
+          "surface": "pi"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "materialize.managed-set.pi",
+      "negative_controls": [
+        {
+          "expected_error_code": "materialize.managed-set.pi.rejected",
+          "mutation_id": "materialize.managed-set.pi.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "materialize.managed-set.pi.negative-control",
+            "layer": "raw-materialization",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.raw-materialize",
+              "materialize.managed-set.pi"
+            ],
+            "safety_class": "isolated",
+            "surface": "pi"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "materialize.managed-set.pi.postdeploy-pass",
+        "layer": "raw-materialization",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.raw-materialize",
+          "materialize.managed-set.pi"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "pi"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.managed-set.pi.rollback-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.managed-set.pi"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "pi"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.profile-pin.claude-code.incumbent-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.profile-pin.claude-code"
+          ],
+          "safety_class": "read-only",
+          "surface": "claude-code"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "materialize.profile-pin.claude-code",
+      "negative_controls": [
+        {
+          "expected_error_code": "materialize.profile-pin.claude-code.rejected",
+          "mutation_id": "materialize.profile-pin.claude-code.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "materialize.profile-pin.claude-code.negative-control",
+            "layer": "raw-materialization",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.raw-materialize",
+              "materialize.profile-pin.claude-code"
+            ],
+            "safety_class": "isolated",
+            "surface": "claude-code"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "materialize.profile-pin.claude-code.postdeploy-pass",
+        "layer": "raw-materialization",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.raw-materialize",
+          "materialize.profile-pin.claude-code"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "claude-code"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.profile-pin.claude-code.rollback-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.profile-pin.claude-code"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.profile-pin.pi.incumbent-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.profile-pin.pi"
+          ],
+          "safety_class": "read-only",
+          "surface": "pi"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "materialize.profile-pin.pi",
+      "negative_controls": [
+        {
+          "expected_error_code": "materialize.profile-pin.pi.rejected",
+          "mutation_id": "materialize.profile-pin.pi.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "materialize.profile-pin.pi.negative-control",
+            "layer": "raw-materialization",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.raw-materialize",
+              "materialize.profile-pin.pi"
+            ],
+            "safety_class": "isolated",
+            "surface": "pi"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "materialize.profile-pin.pi.postdeploy-pass",
+        "layer": "raw-materialization",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.raw-materialize",
+          "materialize.profile-pin.pi"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "pi"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.profile-pin.pi.rollback-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.profile-pin.pi"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "pi"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.public.claude-code.http-200.incumbent-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.public.claude-code.http-200"
+          ],
+          "safety_class": "read-only",
+          "surface": "canonical-public"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "materialize.public.claude-code.http-200",
+      "negative_controls": [
+        {
+          "expected_error_code": "materialize.public.claude-code.http-200.rejected",
+          "mutation_id": "materialize.public.claude-code.http-200.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "materialize.public.claude-code.http-200.negative-control",
+            "layer": "raw-materialization",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.raw-materialize",
+              "materialize.public.claude-code.http-200"
+            ],
+            "safety_class": "isolated",
+            "surface": "canonical-public"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "materialize.public.claude-code.http-200.postdeploy-pass",
+        "layer": "raw-materialization",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.raw-materialize",
+          "materialize.public.claude-code.http-200"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "canonical-public"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.public.claude-code.http-200.rollback-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.public.claude-code.http-200"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "canonical-public"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.public.pi.http-200.incumbent-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.public.pi.http-200"
+          ],
+          "safety_class": "read-only",
+          "surface": "canonical-public"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "materialize.public.pi.http-200",
+      "negative_controls": [
+        {
+          "expected_error_code": "materialize.public.pi.http-200.rejected",
+          "mutation_id": "materialize.public.pi.http-200.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "materialize.public.pi.http-200.negative-control",
+            "layer": "raw-materialization",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.raw-materialize",
+              "materialize.public.pi.http-200"
+            ],
+            "safety_class": "isolated",
+            "surface": "canonical-public"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "materialize.public.pi.http-200.postdeploy-pass",
+        "layer": "raw-materialization",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.raw-materialize",
+          "materialize.public.pi.http-200"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "canonical-public"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.public.pi.http-200.rollback-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.public.pi.http-200"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "canonical-public"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.response-contract.claude-code.incumbent-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.response-contract.claude-code"
+          ],
+          "safety_class": "read-only",
+          "surface": "claude-code"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "materialize.response-contract.claude-code",
+      "negative_controls": [
+        {
+          "expected_error_code": "materialize.response-contract.claude-code.rejected",
+          "mutation_id": "materialize.response-contract.claude-code.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "materialize.response-contract.claude-code.negative-control",
+            "layer": "raw-materialization",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.raw-materialize",
+              "materialize.response-contract.claude-code"
+            ],
+            "safety_class": "isolated",
+            "surface": "claude-code"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "materialize.response-contract.claude-code.postdeploy-pass",
+        "layer": "raw-materialization",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.raw-materialize",
+          "materialize.response-contract.claude-code"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "claude-code"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.response-contract.claude-code.rollback-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.response-contract.claude-code"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.response-contract.pi.incumbent-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-gate-recovery",
+          "path_fingerprint": [
+            "make.prod-gate-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.response-contract.pi"
+          ],
+          "safety_class": "read-only",
+          "surface": "pi"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "materialize.response-contract.pi",
+      "negative_controls": [
+        {
+          "expected_error_code": "materialize.response-contract.pi.rejected",
+          "mutation_id": "materialize.response-contract.pi.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "materialize.response-contract.pi.negative-control",
+            "layer": "raw-materialization",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-gate-recovery",
+              "library-prod-gate.raw-materialize",
+              "materialize.response-contract.pi"
+            ],
+            "safety_class": "isolated",
+            "surface": "pi"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "materialize.response-contract.pi.postdeploy-pass",
+        "layer": "raw-materialization",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.raw-materialize",
+          "materialize.response-contract.pi"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "pi"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.response-contract.pi.rollback-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.response-contract.pi"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "pi"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "materialize.runtime-kind.claude-code.exact-source-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.raw-materialize",
+            "materialize.runtime-kind.claude-code"
+          ],
+          "safety_class": "isolated",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "materialize.runtime-kind.claude-code",
+      "negative_controls": [
+        {
+          "expected_error_code": "materialize.runtime-kind.claude-code.rejected",
+          "mutation_id": "materialize.runtime-kind.claude-code.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "materialize.runtime-kind.claude-code.negative-control",
+            "layer": "raw-materialization",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.raw-materialize",
+              "materialize.runtime-kind.claude-code"
+            ],
+            "safety_class": "isolated",
+            "surface": "claude-code"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "materialize.runtime-kind.claude-code.postdeploy-pass",
+        "layer": "raw-materialization",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.raw-materialize",
+          "materialize.runtime-kind.claude-code"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "claude-code"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.runtime-kind.claude-code.rollback-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.runtime-kind.claude-code"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "materialize.runtime-kind.pi.exact-source-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.raw-materialize",
+            "materialize.runtime-kind.pi"
+          ],
+          "safety_class": "isolated",
+          "surface": "pi"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "materialize.runtime-kind.pi",
+      "negative_controls": [
+        {
+          "expected_error_code": "materialize.runtime-kind.pi.rejected",
+          "mutation_id": "materialize.runtime-kind.pi.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "materialize.runtime-kind.pi.negative-control",
+            "layer": "raw-materialization",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.raw-materialize",
+              "materialize.runtime-kind.pi"
+            ],
+            "safety_class": "isolated",
+            "surface": "pi"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "materialize.runtime-kind.pi.postdeploy-pass",
+        "layer": "raw-materialization",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.raw-materialize",
+          "materialize.runtime-kind.pi"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "pi"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "materialize.runtime-kind.pi.rollback-pass",
+          "layer": "raw-materialization",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.raw-materialize",
+            "materialize.runtime-kind.pi"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "pi"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "render.deploy.exact-commit.incumbent-pass",
+          "layer": "render-control-plane",
+          "make_target": "prod-status",
+          "path_fingerprint": [
+            "make.prod-status",
+            "render.command",
+            "render.deploy.exact-commit"
+          ],
+          "safety_class": "read-only",
+          "surface": "render-api"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "render.deploy.exact-commit",
+      "negative_controls": [
+        {
+          "expected_error_code": "render.deploy.exact-commit.rejected",
+          "mutation_id": "render.deploy.exact-commit.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "render.deploy.exact-commit.negative-control",
+            "layer": "render-control-plane",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-status",
+              "render.command",
+              "render.deploy.exact-commit"
+            ],
+            "safety_class": "isolated",
+            "surface": "render-api"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "render.deploy.exact-commit.postdeploy-pass",
+        "layer": "render-control-plane",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.command",
+          "render.deploy.exact-commit"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "render-api"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "render.deploy.exact-commit.rollback-pass",
+          "layer": "render-control-plane",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-verify",
+            "render.command",
+            "render.deploy.exact-commit"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "render-api"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "render.deploy.sole-live-id.incumbent-pass",
+          "layer": "render-control-plane",
+          "make_target": "prod-status",
+          "path_fingerprint": [
+            "make.prod-status",
+            "render.command",
+            "render.deploy.sole-live-id"
+          ],
+          "safety_class": "read-only",
+          "surface": "render-api"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "render.deploy.sole-live-id",
+      "negative_controls": [
+        {
+          "expected_error_code": "render.deploy.sole-live-id.rejected",
+          "mutation_id": "render.deploy.sole-live-id.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "render.deploy.sole-live-id.negative-control",
+            "layer": "render-control-plane",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-status",
+              "render.command",
+              "render.deploy.sole-live-id"
+            ],
+            "safety_class": "isolated",
+            "surface": "render-api"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "render.deploy.sole-live-id.postdeploy-pass",
+        "layer": "render-control-plane",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.command",
+          "render.deploy.sole-live-id"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "render-api"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "render.deploy.sole-live-id.rollback-pass",
+          "layer": "render-control-plane",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-verify",
+            "render.command",
+            "render.deploy.sole-live-id"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "render-api"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "render.topology.exact.incumbent-pass",
+          "layer": "render-control-plane",
+          "make_target": "prod-status",
+          "path_fingerprint": [
+            "make.prod-status",
+            "render.command",
+            "render.topology.exact"
+          ],
+          "safety_class": "read-only",
+          "surface": "render-api"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "render.topology.exact",
+      "negative_controls": [
+        {
+          "expected_error_code": "render.topology.exact.rejected",
+          "mutation_id": "render.topology.exact.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "render.topology.exact.negative-control",
+            "layer": "render-control-plane",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-status",
+              "render.command",
+              "render.topology.exact"
+            ],
+            "safety_class": "isolated",
+            "surface": "render-api"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "render.topology.exact.postdeploy-pass",
+        "layer": "render-control-plane",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.command",
+          "render.topology.exact"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "render-api"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "render.topology.exact.rollback-pass",
+          "layer": "render-control-plane",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-verify",
+            "render.command",
+            "render.topology.exact"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "render-api"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "strict-client.claude-code.managed-paths.exact-source-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.strict-materialize",
+            "strict-client.claude-code.managed-paths"
+          ],
+          "safety_class": "isolated",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "strict-client.claude-code.managed-paths",
+      "negative_controls": [
+        {
+          "expected_error_code": "strict-client.claude-code.managed-paths.rejected",
+          "mutation_id": "strict-client.claude-code.managed-paths.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "strict-client.claude-code.managed-paths.negative-control",
+            "layer": "released-strict-client",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.strict-materialize",
+              "strict-client.claude-code.managed-paths"
+            ],
+            "safety_class": "isolated",
+            "surface": "claude-code"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "strict-client.claude-code.managed-paths.postdeploy-pass",
+        "layer": "released-strict-client",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.strict-materialize",
+          "strict-client.claude-code.managed-paths"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "claude-code"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "strict-client.claude-code.managed-paths.rollback-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.strict-materialize",
+            "strict-client.claude-code.managed-paths"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "strict-client.claude-code.managed-set.exact-source-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.strict-materialize",
+            "strict-client.claude-code.managed-set"
+          ],
+          "safety_class": "isolated",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "strict-client.claude-code.managed-set",
+      "negative_controls": [
+        {
+          "expected_error_code": "strict-client.claude-code.managed-set.rejected",
+          "mutation_id": "strict-client.claude-code.managed-set.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "strict-client.claude-code.managed-set.negative-control",
+            "layer": "released-strict-client",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.strict-materialize",
+              "strict-client.claude-code.managed-set"
+            ],
+            "safety_class": "isolated",
+            "surface": "claude-code"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "strict-client.claude-code.managed-set.postdeploy-pass",
+        "layer": "released-strict-client",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.strict-materialize",
+          "strict-client.claude-code.managed-set"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "claude-code"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "strict-client.claude-code.managed-set.rollback-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.strict-materialize",
+            "strict-client.claude-code.managed-set"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "strict-client.claude-code.materialize.exact-source-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.strict-materialize",
+            "strict-client.claude-code.materialize"
+          ],
+          "safety_class": "isolated",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "strict-client.claude-code.materialize",
+      "negative_controls": [
+        {
+          "expected_error_code": "strict-client.claude-code.materialize.rejected",
+          "mutation_id": "strict-client.claude-code.materialize.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "strict-client.claude-code.materialize.negative-control",
+            "layer": "released-strict-client",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.strict-materialize",
+              "strict-client.claude-code.materialize"
+            ],
+            "safety_class": "isolated",
+            "surface": "claude-code"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "strict-client.claude-code.materialize.postdeploy-pass",
+        "layer": "released-strict-client",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.strict-materialize",
+          "strict-client.claude-code.materialize"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "claude-code"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "strict-client.claude-code.materialize.rollback-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.strict-materialize",
+            "strict-client.claude-code.materialize"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "strict-client.claude-code.profile-pin.exact-source-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.strict-materialize",
+            "strict-client.claude-code.profile-pin"
+          ],
+          "safety_class": "isolated",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "strict-client.claude-code.profile-pin",
+      "negative_controls": [
+        {
+          "expected_error_code": "strict-client.claude-code.profile-pin.rejected",
+          "mutation_id": "strict-client.claude-code.profile-pin.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "strict-client.claude-code.profile-pin.negative-control",
+            "layer": "released-strict-client",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.strict-materialize",
+              "strict-client.claude-code.profile-pin"
+            ],
+            "safety_class": "isolated",
+            "surface": "claude-code"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "strict-client.claude-code.profile-pin.postdeploy-pass",
+        "layer": "released-strict-client",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.strict-materialize",
+          "strict-client.claude-code.profile-pin"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "claude-code"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "strict-client.claude-code.profile-pin.rollback-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.strict-materialize",
+            "strict-client.claude-code.profile-pin"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "strict-client.claude-code.runtime-kind.exact-source-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.strict-materialize",
+            "strict-client.claude-code.runtime-kind"
+          ],
+          "safety_class": "isolated",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "strict-client.claude-code.runtime-kind",
+      "negative_controls": [
+        {
+          "expected_error_code": "strict-client.claude-code.runtime-kind.rejected",
+          "mutation_id": "strict-client.claude-code.runtime-kind.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "strict-client.claude-code.runtime-kind.negative-control",
+            "layer": "released-strict-client",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.strict-materialize",
+              "strict-client.claude-code.runtime-kind"
+            ],
+            "safety_class": "isolated",
+            "surface": "claude-code"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "strict-client.claude-code.runtime-kind.postdeploy-pass",
+        "layer": "released-strict-client",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.strict-materialize",
+          "strict-client.claude-code.runtime-kind"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "claude-code"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "strict-client.claude-code.runtime-kind.rollback-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.strict-materialize",
+            "strict-client.claude-code.runtime-kind"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "claude-code"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "strict-client.pi.managed-paths.exact-source-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.strict-materialize",
+            "strict-client.pi.managed-paths"
+          ],
+          "safety_class": "isolated",
+          "surface": "pi"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "strict-client.pi.managed-paths",
+      "negative_controls": [
+        {
+          "expected_error_code": "strict-client.pi.managed-paths.rejected",
+          "mutation_id": "strict-client.pi.managed-paths.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "strict-client.pi.managed-paths.negative-control",
+            "layer": "released-strict-client",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.strict-materialize",
+              "strict-client.pi.managed-paths"
+            ],
+            "safety_class": "isolated",
+            "surface": "pi"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "strict-client.pi.managed-paths.postdeploy-pass",
+        "layer": "released-strict-client",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.strict-materialize",
+          "strict-client.pi.managed-paths"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "pi"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "strict-client.pi.managed-paths.rollback-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.strict-materialize",
+            "strict-client.pi.managed-paths"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "pi"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "strict-client.pi.managed-set.exact-source-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.strict-materialize",
+            "strict-client.pi.managed-set"
+          ],
+          "safety_class": "isolated",
+          "surface": "pi"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "strict-client.pi.managed-set",
+      "negative_controls": [
+        {
+          "expected_error_code": "strict-client.pi.managed-set.rejected",
+          "mutation_id": "strict-client.pi.managed-set.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "strict-client.pi.managed-set.negative-control",
+            "layer": "released-strict-client",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.strict-materialize",
+              "strict-client.pi.managed-set"
+            ],
+            "safety_class": "isolated",
+            "surface": "pi"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "strict-client.pi.managed-set.postdeploy-pass",
+        "layer": "released-strict-client",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.strict-materialize",
+          "strict-client.pi.managed-set"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "pi"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "strict-client.pi.managed-set.rollback-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.strict-materialize",
+            "strict-client.pi.managed-set"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "pi"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "strict-client.pi.materialize.exact-source-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.strict-materialize",
+            "strict-client.pi.materialize"
+          ],
+          "safety_class": "isolated",
+          "surface": "pi"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "strict-client.pi.materialize",
+      "negative_controls": [
+        {
+          "expected_error_code": "strict-client.pi.materialize.rejected",
+          "mutation_id": "strict-client.pi.materialize.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "strict-client.pi.materialize.negative-control",
+            "layer": "released-strict-client",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.strict-materialize",
+              "strict-client.pi.materialize"
+            ],
+            "safety_class": "isolated",
+            "surface": "pi"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "strict-client.pi.materialize.postdeploy-pass",
+        "layer": "released-strict-client",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.strict-materialize",
+          "strict-client.pi.materialize"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "pi"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "strict-client.pi.materialize.rollback-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.strict-materialize",
+            "strict-client.pi.materialize"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "pi"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "strict-client.pi.profile-pin.exact-source-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.strict-materialize",
+            "strict-client.pi.profile-pin"
+          ],
+          "safety_class": "isolated",
+          "surface": "pi"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "strict-client.pi.profile-pin",
+      "negative_controls": [
+        {
+          "expected_error_code": "strict-client.pi.profile-pin.rejected",
+          "mutation_id": "strict-client.pi.profile-pin.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "strict-client.pi.profile-pin.negative-control",
+            "layer": "released-strict-client",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.strict-materialize",
+              "strict-client.pi.profile-pin"
+            ],
+            "safety_class": "isolated",
+            "surface": "pi"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "strict-client.pi.profile-pin.postdeploy-pass",
+        "layer": "released-strict-client",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.strict-materialize",
+          "strict-client.pi.profile-pin"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "pi"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "strict-client.pi.profile-pin.rollback-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.strict-materialize",
+            "strict-client.pi.profile-pin"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "pi"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "absence": {
+          "absent_paths": [
+            "ref.runtime_kind",
+            "ref.managed_set"
+          ],
+          "incumbent_shape": "library-materialize.pre-aasb.no-runtime-managed",
+          "mechanical_reason_code": "incumbent-schema-predates-candidate-field",
+          "shared_transport_waived": false
+        },
+        "state": "candidate-only-absent"
+      },
+      "exact_source": {
+        "proof": {
+          "allowed_substitutions": [
+            "http.fixture",
+            "render.fixture"
+          ],
+          "assertion_code": "strict-client.pi.runtime-kind.exact-source-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-ops-test",
+          "path_fingerprint": [
+            "make.prod-ops-test",
+            "library-prod-gate.strict-materialize",
+            "strict-client.pi.runtime-kind"
+          ],
+          "safety_class": "isolated",
+          "surface": "pi"
+        },
+        "state": "required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "strict-client.pi.runtime-kind",
+      "negative_controls": [
+        {
+          "expected_error_code": "strict-client.pi.runtime-kind.rejected",
+          "mutation_id": "strict-client.pi.runtime-kind.dedicated-negative",
+          "polarity": "forbidden-permissive-path",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "strict-client.pi.runtime-kind.negative-control",
+            "layer": "released-strict-client",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-ops-test",
+              "library-prod-gate.strict-materialize",
+              "strict-client.pi.runtime-kind"
+            ],
+            "safety_class": "isolated",
+            "surface": "pi"
+          }
+        }
+      ],
+      "owner": "library-service",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "strict-client.pi.runtime-kind.postdeploy-pass",
+        "layer": "released-strict-client",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "library-prod-gate.strict-materialize",
+          "strict-client.pi.runtime-kind"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "pi"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "strict-client.pi.runtime-kind.rollback-pass",
+          "layer": "released-strict-client",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "library-prod-gate.strict-materialize",
+            "strict-client.pi.runtime-kind"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "pi"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "verifier.evidence-private-no-replace.incumbent-pass",
+          "layer": "render-control-plane",
+          "make_target": "prod-status",
+          "path_fingerprint": [
+            "make.prod-status",
+            "render.command",
+            "verifier.evidence-private-no-replace"
+          ],
+          "safety_class": "read-only",
+          "surface": "render-api"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "verifier.evidence-private-no-replace",
+      "negative_controls": [
+        {
+          "expected_error_code": "verifier.evidence-private-no-replace.rejected",
+          "mutation_id": "verifier.evidence-private-no-replace.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "verifier.evidence-private-no-replace.negative-control",
+            "layer": "render-control-plane",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-status",
+              "render.command",
+              "verifier.evidence-private-no-replace"
+            ],
+            "safety_class": "isolated",
+            "surface": "render-api"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "verifier.evidence-private-no-replace.postdeploy-pass",
+        "layer": "render-control-plane",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.command",
+          "verifier.evidence-private-no-replace"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "render-api"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "verifier.evidence-private-no-replace.rollback-pass",
+          "layer": "render-control-plane",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.command",
+            "verifier.evidence-private-no-replace"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "render-api"
+        },
+        "state": "required"
+      }
+    },
+    {
+      "current_production": {
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "verifier.source-clean.incumbent-pass",
+          "layer": "render-control-plane",
+          "make_target": "prod-status",
+          "path_fingerprint": [
+            "make.prod-status",
+            "render.command",
+            "verifier.source-clean"
+          ],
+          "safety_class": "read-only",
+          "surface": "render-api"
+        },
+        "state": "applicable"
+      },
+      "exact_source": {
+        "reason_code": "current-production-exercises-predicate",
+        "state": "not-required"
+      },
+      "expiry": {
+        "condition_code": "approved-rollback-artifact-replaced",
+        "kind": "rollback-artifact-change"
+      },
+      "id": "verifier.source-clean",
+      "negative_controls": [
+        {
+          "expected_error_code": "verifier.source-clean.rejected",
+          "mutation_id": "verifier.source-clean.dedicated-negative",
+          "polarity": "single-variable",
+          "proof": {
+            "allowed_substitutions": [
+              "http.fixture",
+              "render.fixture"
+            ],
+            "assertion_code": "verifier.source-clean.negative-control",
+            "layer": "render-control-plane",
+            "make_target": "prod-ops-test",
+            "path_fingerprint": [
+              "make.prod-status",
+              "render.command",
+              "verifier.source-clean"
+            ],
+            "safety_class": "isolated",
+            "surface": "render-api"
+          }
+        }
+      ],
+      "owner": "release-infrastructure",
+      "postdeploy": {
+        "allowed_substitutions": [],
+        "assertion_code": "verifier.source-clean.postdeploy-pass",
+        "layer": "render-control-plane",
+        "make_target": "prod-verify",
+        "path_fingerprint": [
+          "make.prod-verify",
+          "render.command",
+          "verifier.source-clean"
+        ],
+        "safety_class": "postdeploy-read-only",
+        "surface": "render-api"
+      },
+      "rollback": {
+        "artifact_identity": {
+          "commit_argument": "ROLLBACK_COMMIT",
+          "deploy_id_argument": "ROLLBACK_DEPLOY_ID",
+          "shape_code": "approved-rollback-artifact-shape"
+        },
+        "proof": {
+          "allowed_substitutions": [],
+          "assertion_code": "verifier.source-clean.rollback-pass",
+          "layer": "render-control-plane",
+          "make_target": "prod-recovery",
+          "path_fingerprint": [
+            "make.prod-recovery",
+            "render.command",
+            "verifier.source-clean"
+          ],
+          "safety_class": "rollback-mutation",
+          "surface": "render-api"
+        },
+        "state": "required"
+      }
+    }
+  ],
+  "protected_ci": {
+    "app_id": 15368,
+    "context": "Lint, test, and real-stack e2e",
+    "events": [
+      "pull_request",
+      "push:main"
+    ],
+    "workflow": ".github/workflows/ci.yml"
+  },
+  "requirement_registry": [
+    {
+      "blocked_lifecycle_stages": [],
+      "enforcement_target": "increment-1",
+      "id": "architecture.static-dynamic-separation",
+      "nonclaim_code": "implemented-structural-enforcement",
+      "owner": "release-infrastructure",
+      "status": "implemented"
+    },
+    {
+      "blocked_lifecycle_stages": [],
+      "enforcement_target": "increment-1",
+      "id": "predicates.exact-universe",
+      "nonclaim_code": "implemented-structural-enforcement",
+      "owner": "release-infrastructure",
+      "status": "implemented"
+    },
+    {
+      "blocked_lifecycle_stages": [],
+      "enforcement_target": "increment-1",
+      "id": "schema.typed-contracts",
+      "nonclaim_code": "implemented-structural-enforcement",
+      "owner": "release-infrastructure",
+      "status": "implemented"
+    },
+    {
+      "blocked_lifecycle_stages": [],
+      "enforcement_target": "increment-1",
+      "id": "controls.structural-positive-negative-pair",
+      "nonclaim_code": "implemented-structural-enforcement",
+      "owner": "release-infrastructure",
+      "status": "implemented"
+    },
+    {
+      "blocked_lifecycle_stages": [],
+      "enforcement_target": "increment-1",
+      "id": "candidate-only.structural-allowlist",
+      "nonclaim_code": "implemented-structural-enforcement",
+      "owner": "release-infrastructure",
+      "status": "implemented"
+    },
+    {
+      "blocked_lifecycle_stages": [],
+      "enforcement_target": "increment-1",
+      "id": "validator.falsification",
+      "nonclaim_code": "implemented-structural-enforcement",
+      "owner": "release-infrastructure",
+      "status": "implemented"
+    },
+    {
+      "blocked_lifecycle_stages": [
+        "preplan",
+        "release-close"
+      ],
+      "enforcement_target": "increment-2-or-later",
+      "id": "runtime.path-fidelity",
+      "nonclaim_code": "runtime.path-fidelity.not-yet-enforced",
+      "owner": "release-infrastructure",
+      "status": "deferred"
+    },
+    {
+      "blocked_lifecycle_stages": [
+        "preplan",
+        "release-close"
+      ],
+      "enforcement_target": "increment-2-or-later",
+      "id": "execution.capability-obligation",
+      "nonclaim_code": "execution.capability-obligation.not-yet-enforced",
+      "owner": "release-infrastructure",
+      "status": "deferred"
+    },
+    {
+      "blocked_lifecycle_stages": [
+        "preplan",
+        "release-close"
+      ],
+      "enforcement_target": "increment-2-or-later",
+      "id": "identity.incumbent-rollback-semantics",
+      "nonclaim_code": "identity.incumbent-rollback-semantics.not-yet-enforced",
+      "owner": "release-infrastructure",
+      "status": "deferred"
+    },
+    {
+      "blocked_lifecycle_stages": [
+        "preplan",
+        "release-close"
+      ],
+      "enforcement_target": "increment-2-or-later",
+      "id": "receipts.freshness-immutability",
+      "nonclaim_code": "receipts.freshness-immutability.not-yet-enforced",
+      "owner": "release-infrastructure",
+      "status": "deferred"
+    },
+    {
+      "blocked_lifecycle_stages": [
+        "preplan",
+        "release-close"
+      ],
+      "enforcement_target": "increment-2-or-later",
+      "id": "lifecycle.transitions",
+      "nonclaim_code": "lifecycle.transitions.not-yet-enforced",
+      "owner": "release-infrastructure",
+      "status": "deferred"
+    },
+    {
+      "blocked_lifecycle_stages": [
+        "preplan",
+        "release-close"
+      ],
+      "enforcement_target": "increment-2-or-later",
+      "id": "safety.boundary-invocation",
+      "nonclaim_code": "safety.boundary-invocation.not-yet-enforced",
+      "owner": "release-infrastructure",
+      "status": "deferred"
+    },
+    {
+      "blocked_lifecycle_stages": [
+        "preplan",
+        "release-close"
+      ],
+      "enforcement_target": "increment-2-or-later",
+      "id": "controls.executed-same-path",
+      "nonclaim_code": "controls.executed-same-path.not-yet-enforced",
+      "owner": "release-infrastructure",
+      "status": "deferred"
+    },
+    {
+      "blocked_lifecycle_stages": [
+        "preplan",
+        "release-close"
+      ],
+      "enforcement_target": "increment-2-or-later",
+      "id": "candidate-only.runtime-proof",
+      "nonclaim_code": "candidate-only.runtime-proof.not-yet-enforced",
+      "owner": "library-service",
+      "status": "deferred"
+    },
+    {
+      "blocked_lifecycle_stages": [
+        "preplan",
+        "release-close"
+      ],
+      "enforcement_target": "increment-2-or-later",
+      "id": "orchestrator.falsification",
+      "nonclaim_code": "orchestrator.falsification.not-yet-enforced",
+      "owner": "release-infrastructure",
+      "status": "deferred"
+    }
+  ],
+  "schema": "library.aatk-manifest.v1",
+  "service": {
+    "id": "srv-d8qm4jvavr4c73dhrmgg",
+    "name": "library",
+    "repository": "https://github.com/awebai/library"
+  }
+}

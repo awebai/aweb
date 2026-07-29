@@ -45,6 +45,72 @@ PROMPT = (
     "the first Markdown title and the profile provenance line immediately below it."
 )
 
+# Stable child predicates evaluated by the functional half of `make prod-verify`.
+# They are intentionally finer grained than command names so a composite command
+# cannot conceal an unproved child check in AATK's coverage manifest.
+POSTDEPLOY_PREDICATES = frozenset(
+    {
+        "gate.source-home.absolute",
+        "gate.public-url.exact",
+        "gate.profile-pin.arguments",
+        "client.aw.artifact-sha",
+        "client.aw.version-metadata",
+        "materialize.public.claude-code.http-200",
+        "materialize.public.pi.http-200",
+        "materialize.response-contract.claude-code",
+        "materialize.response-contract.pi",
+        "materialize.profile-pin.claude-code",
+        "materialize.profile-pin.pi",
+        "materialize.runtime-kind.claude-code",
+        "materialize.runtime-kind.pi",
+        "materialize.managed-set.claude-code",
+        "materialize.managed-set.pi",
+        "strict-client.claude-code.materialize",
+        "strict-client.pi.materialize",
+        "strict-client.claude-code.profile-pin",
+        "strict-client.pi.profile-pin",
+        "strict-client.claude-code.runtime-kind",
+        "strict-client.pi.runtime-kind",
+        "strict-client.claude-code.managed-set",
+        "strict-client.pi.managed-set",
+        "strict-client.claude-code.managed-paths",
+        "strict-client.pi.managed-paths",
+        "harness.claude-code.artifact",
+        "harness.pi.artifacts",
+        "harness.claude-code.command",
+        "harness.pi.command",
+        "harness.claude-code.instructions",
+        "harness.pi.instructions",
+    }
+)
+CANDIDATE_ONLY_POSTDEPLOY_PREDICATES = frozenset(
+    {
+        "materialize.runtime-kind.claude-code",
+        "materialize.runtime-kind.pi",
+        "materialize.managed-set.claude-code",
+        "materialize.managed-set.pi",
+        "strict-client.claude-code.materialize",
+        "strict-client.pi.materialize",
+        "strict-client.claude-code.profile-pin",
+        "strict-client.pi.profile-pin",
+        "strict-client.claude-code.runtime-kind",
+        "strict-client.pi.runtime-kind",
+        "strict-client.claude-code.managed-set",
+        "strict-client.pi.managed-set",
+        "strict-client.claude-code.managed-paths",
+        "strict-client.pi.managed-paths",
+        "harness.claude-code.command",
+        "harness.pi.command",
+        "harness.claude-code.instructions",
+        "harness.pi.instructions",
+    }
+)
+
+
+def postdeploy_predicate_inventory() -> list[str]:
+    """Return stable child IDs emitted by the candidate postdeploy executor."""
+    return sorted(POSTDEPLOY_PREDICATES)
+
 
 class GateError(RuntimeError):
     pass
@@ -575,6 +641,16 @@ def main() -> int:
             )
         for summary in summaries:
             print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+        if args.mode == "candidate":
+            print(
+                json.dumps(
+                    {
+                        "gate": "postdeploy-predicate-inventory",
+                        "predicate_ids": postdeploy_predicate_inventory(),
+                    },
+                    sort_keys=True,
+                )
+            )
         print(f"PASS: Library production {args.mode} gate")
         return 0
     except GateError as exc:

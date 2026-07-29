@@ -1913,6 +1913,7 @@ def test_command_verify_requires_exact_current_live(
     args = SimpleNamespace(deploy_id="dep-candidate", commit="b" * 40)
     result = render_ops.command_verify(args)
     assert result["deploy"]["status"] == "live"
+    assert result["predicate_ids"] == render_ops.postdeploy_predicate_inventory()
     assert health_checks == [{"expected_commit": "b" * 40, "evidence": evidence}]
 
 

@@ -1,6 +1,6 @@
 .PHONY: test test-server lint compile run e2e e2e-up e2e-down api-serve api-stop \
 	prod-ops-test prod-status prod-health-client-proof prod-deploy prod-wait prod-verify prod-rollback prod-recovery \
-	prod-gate-candidate prod-gate-recovery
+	prod-gate-candidate prod-gate-recovery aatk-predicate-inventory aatk-spec-check aatk-validate-preplan aatk-validate-release
 
 API_PORT ?= 8765
 PROD_CONFIG ?= ops/render-production.json
@@ -18,6 +18,7 @@ EXPECTED_PROFILE_DIGEST ?=
 ALLOW_LEGACY_MISSING_BUILD_FOR ?=
 APPLY ?= 0
 PROD_EVIDENCE_DIR ?=
+AATK_EVIDENCE_INDEX ?=
 
 # Export operational values instead of interpolating them into recipes. This keeps
 # operator-provided IDs and paths out of shell parsing; Python performs exact validation.
@@ -99,3 +100,17 @@ prod-gate-candidate:
 
 prod-gate-recovery:
 	uv run python scripts/library_prod_gate.py legacy-aasb
+
+aatk-predicate-inventory:
+	uv run python scripts/aatk.py inventory
+
+aatk-spec-check:
+	uv run python scripts/aatk.py spec
+
+aatk-validate-preplan:
+	@[ -n "$(AATK_EVIDENCE_INDEX)" ] || { echo "AATK_EVIDENCE_INDEX is required"; exit 2; }
+	uv run python scripts/aatk.py preplan --index "$(AATK_EVIDENCE_INDEX)"
+
+aatk-validate-release:
+	@[ -n "$(AATK_EVIDENCE_INDEX)" ] || { echo "AATK_EVIDENCE_INDEX is required"; exit 2; }
+	uv run python scripts/aatk.py release --index "$(AATK_EVIDENCE_INDEX)"
