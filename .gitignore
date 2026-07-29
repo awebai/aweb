@@ -43,20 +43,9 @@ channel/node_modules/
 
 # Generated package assets
 pi-extension/skills/
+
+# Agent instance homes are disposable runtime state; souls and the deployment
+# config are not.
 /agents/instances/
 /cli/agents/instances/
-/cli/agents/instances/aw-developer-onboarding/
-/cli/agents/instances/aw-reviewer-onboarding/
-/cli/agents/instances/aw-developer-2/
-/cli/agents/instances/aw-reviewer-2/
-/cli/agents/instances/aw-sec-dev/
-/cli/agents/instances/aw-sec-rev/
-/cli/agents/instances/oas-coordinator/
-/cli/agents/instances/oas-developer/
-/cli/agents/instances/oas-reviewer/
-/agents/instances/oas-seam-dev/
-/agents/instances/oas-seam-rev/
-/cli/agents/instances/aw-sec-dev-2/
-
-# OAS instance homes are disposable runtime state; souls and the deployment config are not.
 /oas/agents/*/instances/
