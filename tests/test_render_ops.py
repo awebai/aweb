@@ -658,6 +658,135 @@ def test_health_proof_records_terminal_outcome_for_each_failure_stage(
     assert gate_outcome["stage"] == "honest-gate"
 
 
+@pytest.mark.parametrize(
+    ("stage", "failure"),
+    [
+        ("blocked-baseline", render_ops.OpsError("wrong baseline payload")),
+        ("blocked-baseline", render_ops.PermanentHealthHTTPError("wrong status", status=401)),
+        ("honest-gate", render_ops.TransientHealthError("transport")),
+        ("honest-gate", render_ops.PermanentHealthHTTPError("HTTP", status=401)),
+        ("honest-gate", render_ops.OpsError("wrong payload")),
+    ],
+)
+def test_health_proof_has_one_last_terminal_outcome_for_contract_and_http_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+    stage: str,
+    failure: Exception,
+) -> None:
+    config_path = tmp_path / "production.json"
+    write_config(config_path, config)
+    monkeypatch.setattr(
+        render_ops,
+        "_verifier_identity",
+        lambda: {
+            "verifier_source_sha": "a" * 40,
+            "verifier_script_sha256": "b" * 64,
+            "verifier_script_path": "scripts/render_ops.py",
+        },
+    )
+    calls = 0
+
+    def fail_at_stage(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if stage == "honest-gate" and calls == 1:
+            raise render_ops.PermanentHealthHTTPError("expected", status=403)
+        raise failure
+
+    monkeypatch.setattr(render_ops, "verify_health", fail_at_stage)
+    evidence_path = tmp_path / "evidence"
+    with pytest.raises(type(failure)):
+        render_ops.command_health_client_proof(
+            SimpleNamespace(config=str(config_path), evidence_dir=str(evidence_path))
+        )
+    artifacts = [json.loads(path.read_text()) for path in sorted(evidence_path.glob("*.json"))]
+    outcomes = [item for item in artifacts if item["probe_kind"] == "run-outcome"]
+    assert len(outcomes) == 1
+    assert outcomes[0] is artifacts[-1]
+    assert outcomes[0]["outcome"] == "failed"
+    assert outcomes[0]["stage"] == stage
+
+
+@pytest.mark.parametrize(
+    ("body_kind", "expected_complete", "expected_outcome"),
+    [("exact", True, "red-green-pass"), ("oversized", False, "failed"), ("interrupted", False, "failed")],
+)
+def test_health_proof_body_bounds_and_terminal_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+    body_kind: str,
+    expected_complete: bool,
+    expected_outcome: str,
+) -> None:
+    config_path = tmp_path / "production.json"
+    write_config(config_path, config)
+    monkeypatch.setattr(
+        render_ops,
+        "_verifier_identity",
+        lambda: {
+            "verifier_source_sha": "a" * 40,
+            "verifier_script_sha256": "b" * 64,
+            "verifier_script_path": "scripts/render_ops.py",
+        },
+    )
+    exact = b'{"status":"ok","service":"library"}'
+    exact += b" " * (render_ops.HEALTH_BODY_CAPTURE_LIMIT - len(exact))
+    captured = exact if body_kind != "interrupted" else b'{"status":"ok"}'
+
+    class Response:
+        status = 200
+        headers = Message()
+
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return self.url
+
+        def read(self, limit: int) -> bytes:
+            if body_kind == "interrupted":
+                raise IncompleteRead(captured, 20)
+            if body_kind == "oversized":
+                return exact + b"x"
+            return exact
+
+    blocked_headers = Message()
+    blocked_headers.add_header("Content-Type", "text/plain")
+    blocked_headers.add_header("Server", "cloudflare")
+
+    def open_for_proof(url: str, timeout: float, user_agent: str):
+        if user_agent == render_ops.BLOCKED_BASELINE_USER_AGENT:
+            raise HTTPError(url, 403, "Forbidden", blocked_headers, BytesIO(b"error code: 1010"))
+        return Response(url)
+
+    monkeypatch.setattr(render_ops, "open_health_url", open_for_proof)
+    evidence_path = tmp_path / "evidence"
+    args = SimpleNamespace(config=str(config_path), evidence_dir=str(evidence_path))
+    if expected_outcome == "red-green-pass":
+        render_ops.command_health_client_proof(args)
+    else:
+        with pytest.raises(render_ops.OpsError, match="exceeded evidence bound"):
+            render_ops.command_health_client_proof(args)
+    artifacts = [json.loads(path.read_text()) for path in sorted(evidence_path.glob("*.json"))]
+    response = [item for item in artifacts if item.get("phase") == "response"][-1]
+    assert response["captured_body_bytes"] == len(captured)
+    assert response["captured_body_sha256"] == hashlib.sha256(captured).hexdigest()
+    assert response["body_complete"] is expected_complete
+    outcomes = [item for item in artifacts if item["probe_kind"] == "run-outcome"]
+    assert len(outcomes) == 1
+    assert outcomes[0] is artifacts[-1]
+    assert outcomes[0]["outcome"] == expected_outcome
+
+
 def test_health_client_proof_requires_same_path_red_then_green(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig, tmp_path: Path
 ) -> None:
@@ -700,7 +829,11 @@ def test_health_client_proof_requires_same_path_red_then_green(
     ]
     assert result["baseline_user_agent_status"] == 403
     assert result["gate_user_agent_status"] == 200
-    assert json.loads((evidence_path / "004.json").read_text())["outcome"] == "red-green-pass"
+    artifacts = [json.loads(path.read_text()) for path in sorted(evidence_path.glob("*.json"))]
+    outcomes = [item for item in artifacts if item["probe_kind"] == "run-outcome"]
+    assert len(outcomes) == 1
+    assert outcomes[0] is artifacts[-1]
+    assert outcomes[0]["outcome"] == "red-green-pass"
 
 
 def test_health_invalid_utf8_is_bounded_transient(

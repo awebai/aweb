@@ -126,7 +126,14 @@ The gate clones only into a private temporary directory and removes it on exit.
 
 ## Verification surfaces
 
-The isolated stack does not prove production routing, Cloudflare policy, deployed identity or shelf state; the preflight does not prove candidate bytes are live; only exact-ID post-deploy verification can close a deployment.
+The isolated stack does not prove production routing, Cloudflare policy, deployed identity, or shelf state; the production preflight does not prove candidate bytes are live; only exact-ID post-deploy verification can close a deployment.
+
+Real Claude Code and Pi harnesses run against the isolated exact-source signed stack before
+planning. The fast production preflight validates the installed harness identities but does
+not require candidate semantics from legacy production. A production-backed fresh-home harness
+is reserved for exact-ID post-deploy verification. Real harness launches consume bounded
+provider requests, and authenticated materialization consumes team-authorized requests; these
+probes do not mutate Render state, but they are not free and their budget must be explicit.
 
 Render metadata and health do not prove the functional release. Verification requires:
 
