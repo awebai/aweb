@@ -20,6 +20,8 @@ from packaging.version import Version
 
 AWEB_MIGRATIONS = files("aweb") / "migrations" / "aweb"
 AWID_ENCRYPTION_KEY_API_VERSION = Version("0.5.9")
+MCP_FASTMCP_API_VERSION = Version("1.26.0")
+MCP_INCOMPATIBLE_API_VERSION = Version("2.0.0")
 
 
 def test_defaults_migrations_and_reserved_app_ids_are_packaged():
@@ -69,6 +71,15 @@ def test_awid_service_floor_covers_encryption_key_api():
     ]
     assert lower_bounds
     assert max(lower_bounds) >= AWID_ENCRYPTION_KEY_API_VERSION
+
+
+def test_mcp_dependency_excludes_api_incompatible_v2():
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    dependencies = pyproject["project"]["dependencies"]
+    mcp_req = next(Requirement(dep) for dep in dependencies if Requirement(dep).name == "mcp")
+
+    assert MCP_FASTMCP_API_VERSION in mcp_req.specifier
+    assert MCP_INCOMPATIBLE_API_VERSION not in mcp_req.specifier
 
 
 def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
