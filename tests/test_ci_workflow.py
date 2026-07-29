@@ -7,6 +7,10 @@ import yaml
 _REPO_ROOT = Path(__file__).parents[1]
 
 
+def test_deliberate_ci_rejection_probe() -> None:
+    assert False, "deliberate aweb-aatn defect: CI must reject this PR head"
+
+
 def _workflow() -> dict:
     path = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
     assert path.is_file(), "Library has no pull-request CI workflow"
