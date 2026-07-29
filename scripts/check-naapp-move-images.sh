@@ -27,11 +27,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SIBLINGS="${AWEB_SIBLING_REPOS:-$HOME/prj/awebai}"
-LIBRARY_REPO="${AWEB_LIBRARY_REPO:-$SIBLINGS/library}"
-FOLIO_REPO="${AWEB_FOLIO_REPO:-$SIBLINGS/folio}"
-NAAPP_REPO="${AWEB_NAAPP_REPO:-$SIBLINGS/aweb-naapp}"
 MODE="${1:-both}"
+
+# shellcheck source=scripts/lib/naapp-movers.sh
+source "$ROOT/scripts/lib/naapp-movers.sh"
 
 if ! docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then
   echo "FAIL: no reachable Docker daemon; this check builds real images and cannot be satisfied without one" >&2
@@ -41,27 +40,33 @@ fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# The aweb tree as committed, plus each mover at its destination. Sources are
-# taken at origin/main, and aweb-naapp at the commit both services pin, for the
-# reasons in check-naapp-move-addable.sh.
+# The aweb tree as committed, plus each mover at its destination.
+#
+# aweb itself is archived at HEAD, not at a fixed ref, so every figure below
+# describes the runner's own checkout. Two runs on different branches will report
+# different context sizes for that reason; the properties asserted do not depend
+# on it.
+#
+# The movers and their refs come from scripts/lib/naapp-movers.sh, and
+# naapp_assert_pin_agreement has already refused to run if the aweb-naapp commit
+# being archived is not the one both live services pin.
 materialize() {
-  local layout="$1"
+  local layout="$1" mover src dest ref n
   mkdir -p "$layout"
   git -C "$ROOT" archive HEAD | tar -x -C "$layout"
-  mkdir -p "$layout/naapp/library" "$layout/naapp/folio" "$layout/naapp-lib"
-  git -C "$LIBRARY_REPO" archive origin/main | tar -x -C "$layout/naapp/library"
-  git -C "$FOLIO_REPO"   archive origin/main | tar -x -C "$layout/naapp/folio"
-  git -C "$NAAPP_REPO"   archive origin/main | tar -x -C "$layout/naapp-lib"
 
-  # The layout is only meaningful if the movers actually landed in it.
-  local n
-  for d in naapp/library naapp/folio naapp-lib; do
-    n="$(find "$layout/$d" -type f -o -type l | wc -l | tr -d ' ')"
+  while IFS= read -r mover; do
+    IFS=':' read -r src dest ref <<< "$mover"
+    mkdir -p "$layout/$dest"
+    git -C "$src" archive "$ref" | tar -x -C "$layout/$dest"
+
+    # The layout is only meaningful if the mover actually landed in it.
+    n="$(find "$layout/$dest" -type f -o -type l | wc -l | tr -d ' ')"
     if [[ "$n" -lt 10 ]]; then
-      printf 'FAIL: %s holds only %s entries; the layout was not materialized\n' "$d" "$n" >&2
+      printf 'FAIL: %s holds only %s entries; the layout was not materialized\n' "$dest" "$n" >&2
       return 1
     fi
-  done
+  done < <(naapp_movers)
 }
 
 build_one() {
@@ -80,9 +85,32 @@ build_one() {
     tail -25 "$WORK/$name.build.log" | sed 's/^/         /'
     return 1
   fi
-  printf '  ok   %-8s image built; daemon received %s\n' "$name" \
-    "$(grep -o 'transferring context: [0-9.]*[kMG]*B' "$WORK/$name.build.log" | tail -1 | sed 's/transferring context: //')"
+  # Reported, not asserted, and not comparable between runs: buildkit reports only
+  # what it actually sent, so a warm context cache shows a few kB where a cold one
+  # shows megabytes. Nothing gates on the figure. If buildkit's wording changes it
+  # reads "unparsed" rather than silently emptying. The context arrangement below
+  # builds --no-cache precisely so its two figures are comparable to each other.
+  local transferred
+  transferred="$(grep -o 'transferring context: [0-9.]*[kMG]*B' "$WORK/$name.build.log" \
+    | tail -1 | sed 's/transferring context: //')"
+  printf '  ok   %-8s image built; daemon received %s\n' "$name" "${transferred:-unparsed}"
   verify_image "$name" "$tag" "$venv"
+}
+
+# The control on this whole check is verify_image, so it needs both directions
+# like every other arm: red for an image without the dependencies, green for the
+# real ones. An arm that only ever meets the bare image proves the assertion
+# fires, not that it discriminates - which is the distinction it exists to make
+# about the build.
+verify_control_discriminates() {
+  local bare="python:3.12-slim"
+  printf '     control: %s must fail the same import check the real images pass\n' "$bare"
+  if verify_image "bare" "$bare" "/usr/local" >/dev/null 2>&1; then
+    printf 'FAIL: %s passed the dependency check, so that check cannot tell a resolved image from an unresolved one\n' \
+      "$bare" >&2
+    return 1
+  fi
+  printf '  ok   control    %s is rejected, so the check discriminates\n' "$bare"
 }
 
 # A build that succeeds without resolving awid and aweb-naapp proves nothing
@@ -283,6 +311,11 @@ oas/agents
 **/.agents
 IGNORE
 }
+
+naapp_require_movers
+naapp_assert_pin_agreement
+verify_control_discriminates
+echo
 
 status=0
 case "$MODE" in

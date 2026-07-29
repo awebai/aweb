@@ -31,23 +31,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-SIBLINGS="${AWEB_SIBLING_REPOS:-$HOME/prj/awebai}"
+# shellcheck source=scripts/lib/naapp-movers.sh
+source "$ROOT/scripts/lib/naapp-movers.sh"
 
-# Source repo : destination path inside aweb : source ref, from epic aweb-aauv.
-#
-# The ref is origin/main rather than the checkout's HEAD on purpose. A local
-# checkout is not a reliable source: aweb-naapp's local main sits behind the
-# commit both live services build on, and its checked-out branch is a third ref
-# again, so reading HEAD would measure whichever branch someone last looked at.
-#
-# aweb-naapp's destination inside aweb is not yet decided. It is checked at the
-# candidate path below, and the result does not depend on that choice: none of
-# its tracked files match an aweb ignore rule at any candidate path.
-MOVERS=(
-  "${AWEB_LIBRARY_REPO:-$SIBLINGS/library}:naapp/library:origin/main"
-  "${AWEB_FOLIO_REPO:-$SIBLINGS/folio}:naapp/folio:origin/main"
-  "${AWEB_NAAPP_REPO:-$SIBLINGS/aweb-naapp}:naapp-lib:origin/main"
-)
+mapfile -t MOVERS < <(naapp_movers)
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -170,56 +157,9 @@ compare_mover() {
   [[ ! -s "$WORK/loss" && ! -s "$WORK/changed" ]]
 }
 
-for mover in "${MOVERS[@]}"; do
-  IFS=':' read -r src dest ref <<< "$mover"
-  if [[ ! -d "$src/.git" ]]; then
-    printf 'FAIL: mover repository not found at %s\n' "$src" >&2
-    printf '      set AWEB_SIBLING_REPOS, or the per-repo override, to the checkout root.\n' >&2
-    printf '      A missing mover fails rather than skips: a skipped mover reads as a proven one.\n' >&2
-    exit 1
-  fi
-  if ! git -C "$src" rev-parse --verify --quiet "$ref^{commit}" >/dev/null; then
-    printf 'FAIL: %s has no ref %s to move\n' "$src" "$ref" >&2
-    exit 1
-  fi
-  # The two sides of the comparison are read differently: the expected side from
-  # ls-tree, the placed side from git archive, which honors export-ignore. A
-  # mover carrying that attribute would make them disagree and report a loss that
-  # is really an export rule, so say so rather than reporting a false LOST.
-  if git -C "$src" ls-tree -r --name-only "$ref" | grep -q '\.gitattributes$'; then
-    if git -C "$src" grep -q 'export-ignore' "$ref" -- '*.gitattributes' 2>/dev/null; then
-      printf 'FAIL: %s carries export-ignore in .gitattributes at %s.\n' "$src" "$ref" >&2
-      printf '      git archive honors it and ls-tree does not, so this comparison would report\n' >&2
-      printf '      an export rule as a lost file. Read both sides the same way before trusting it.\n' >&2
-      exit 1
-    fi
-  fi
-done
-
-# Both live services build on one pinned aweb-naapp commit. The move must carry
-# that commit: a mover ref that resolves elsewhere downgrades or upgrades the
-# shared library under both services, and every other check here still passes,
-# because a different but coherent aweb-naapp loses no files.
-naapp_src="$(IFS=':' read -r s _ _ <<< "${MOVERS[2]}"; echo "$s")"
-naapp_ref="$(IFS=':' read -r _ _ r <<< "${MOVERS[2]}"; echo "$r")"
-naapp_moving="$(git -C "$naapp_src" rev-parse "$naapp_ref^{commit}")"
-pins=()
-for mover in "${MOVERS[0]}" "${MOVERS[1]}"; do
-  IFS=':' read -r src _ ref <<< "$mover"
-  pin="$(git -C "$src" show "$ref:pyproject.toml" \
-    | sed -n 's/.*aweb-naapp[[:space:]]*=[[:space:]]*{.*rev[[:space:]]*=[[:space:]]*"\([0-9a-f]\{7,40\}\)".*/\1/p' | head -1)"
-  if [[ -z "$pin" ]]; then
-    printf 'FAIL: no aweb-naapp git pin found in %s at %s; this check cannot confirm which commit production builds on\n' "$src" "$ref" >&2
-    exit 1
-  fi
-  pins+=("$(basename "$src")=$pin")
-  if [[ "$naapp_moving" != "$pin"* ]]; then
-    printf 'FAIL: the aweb-naapp commit being moved is not the one %s pins.\n' "$(basename "$src")" >&2
-    printf '      moving %s (%s)\n      pinned %s\n' "$naapp_moving" "$naapp_ref" "$pin" >&2
-    exit 1
-  fi
-done
-printf 'aweb-naapp: moving %s, which matches both pins (%s)\n\n' "${naapp_moving:0:12}" "${pins[*]}"
+naapp_require_movers
+naapp_assert_pin_agreement
+echo
 
 if [[ "${1:-}" == "--self-test" ]]; then
   echo "self-test: with each mover's own ignore negations stripped, this check must name exactly the files aweb's rules swallow"
