@@ -55,15 +55,19 @@ trap 'rm -rf "$WORK"' EXIT
 # A scratch repository carrying aweb's ignore rules and nothing else, so the
 # comparison measures the destination's rules rather than aweb's own contents.
 build_scratch() {
-  local scratch="$1" ignore_file
+  local scratch="$1" rules_root="${2:-$ROOT}" ignore_file source
   mkdir -p "$scratch"
   git -C "$scratch" init -q .
   git -C "$scratch" config core.fileMode true
   git -C "$scratch" config core.autocrlf false
 
+  # $rules_root may hold only a mutated copy of the root .gitignore, so any file
+  # it does not carry is taken from the repository as committed.
   while IFS= read -r ignore_file; do
+    source="$rules_root/$ignore_file"
+    [[ -f "$source" ]] || source="$ROOT/$ignore_file"
     mkdir -p "$scratch/$(dirname "$ignore_file")"
-    cp -f "$ROOT/$ignore_file" "$scratch/$ignore_file"
+    cp -f "$source" "$scratch/$ignore_file"
   done < <(git -C "$ROOT" ls-files '*.gitignore' '.gitignore')
 
   # A silent copy failure would leave the scratch repo with no rules at all,
@@ -74,9 +78,12 @@ build_scratch() {
   fi
 }
 
-# The (mode, blob, path) triples a mover carries at $ref.
+# The (path, mode, blob) triples a mover carries at $ref, tab-separated and keyed
+# on path. Tab-separated rather than space-separated so a path containing a space
+# cannot be misread as a field boundary; git's own output is read with --format
+# for the same reason.
 mover_index() {
-  git -C "$1" ls-tree -r "$2" | awk '{printf "%s %s %s\n", $1, $3, $4}' | sort
+  git -C "$1" ls-tree -r --format='%(path)	%(objectmode)	%(objectname)' "$2" | sort
 }
 
 # The same triples after the tree at $ref is placed at $dest and added.
@@ -109,8 +116,8 @@ placed_index() {
   fi
 
   git -C "$scratch" add -A -- "$dest"
-  git -C "$scratch" ls-files -s -- "$dest" \
-    | awk -v d="$dest/" '{sub("^" d, "", $4); printf "%s %s %s\n", $1, $2, $4}' \
+  git -C "$scratch" ls-files --format='%(path)	%(objectmode)	%(objectname)' -- "$dest" \
+    | sed "s|^$dest/||" \
     | sort
 }
 
@@ -123,22 +130,27 @@ placed_index() {
 # counting its output reports files as ignored when the true answer is none.
 # The plain form prints only genuinely ignored paths. --no-index is required
 # because check-ignore skips paths already in the index.
+# check-ignore exits 1 when it matched nothing, which here is the good case and
+# not an error, so its status is deliberately discarded rather than allowed to
+# trip pipefail.
 root_rule_casualties() {
-  local src="$1" dest="$2" ref="$3"
+  local src="$1" dest="$2" ref="$3" rules_root="${4:-$ROOT}"
   git -C "$src" ls-tree -r --name-only "$ref" \
     | sed "s|^|$dest/|" \
-    | git -C "$ROOT" check-ignore --no-index --stdin \
-    | sed "s|^$dest/||" \
-    | sort
+    > "$WORK/casualty-candidates"
+  git -C "$rules_root" check-ignore --no-index --stdin \
+    < "$WORK/casualty-candidates" \
+    > "$WORK/casualty-hits" || true
+  sed "s|^$dest/||" "$WORK/casualty-hits" | sort
 }
 
 # Writes the missing and changed paths to $WORK/loss; returns 1 on any difference.
 compare_mover() {
-  local src="$1" dest="$2" mutate="$3" label="$4" ref="$5"
+  local src="$1" dest="$2" mutate="$3" label="$4" ref="$5" rules_root="${6:-$ROOT}"
   local scratch="$WORK/$label"
   local expected="$WORK/$label.expected" actual="$WORK/$label.actual"
 
-  build_scratch "$scratch"
+  build_scratch "$scratch" "$rules_root"
   mover_index "$src" "$ref" > "$expected"
   placed_index "$src" "$dest" "$scratch" "$mutate" "$ref" > "$actual"
 
@@ -150,14 +162,10 @@ compare_mover() {
   fi
   MOVER_TRACKED="$n_expected"
 
-  # comm and join both require input ordered by the path key, and $expected and
-  # $actual are ordered by mode and blob.
-  awk '{print $3, $1, $2}' "$expected" | sort > "$WORK/by-path.expected"
-  awk '{print $3, $1, $2}' "$actual" | sort > "$WORK/by-path.actual"
-
-  comm -23 <(cut -d' ' -f1 "$WORK/by-path.expected") <(cut -d' ' -f1 "$WORK/by-path.actual") > "$WORK/loss"
-  join -j 1 "$WORK/by-path.expected" "$WORK/by-path.actual" \
-    | awk '$2 != $4 || $3 != $5 {print $1}' > "$WORK/changed"
+  # Both files are already keyed on path and sorted, which comm and join require.
+  comm -23 <(cut -f1 "$expected") <(cut -f1 "$actual") > "$WORK/loss"
+  join -t"$(printf '\t')" -j 1 "$expected" "$actual" \
+    | awk -F'\t' '$2 != $4 || $3 != $5 { print $1 }' > "$WORK/changed"
 
   [[ ! -s "$WORK/loss" && ! -s "$WORK/changed" ]]
 }
@@ -173,6 +181,18 @@ for mover in "${MOVERS[@]}"; do
   if ! git -C "$src" rev-parse --verify --quiet "$ref^{commit}" >/dev/null; then
     printf 'FAIL: %s has no ref %s to move\n' "$src" "$ref" >&2
     exit 1
+  fi
+  # The two sides of the comparison are read differently: the expected side from
+  # ls-tree, the placed side from git archive, which honors export-ignore. A
+  # mover carrying that attribute would make them disagree and report a loss that
+  # is really an export rule, so say so rather than reporting a false LOST.
+  if git -C "$src" ls-tree -r --name-only "$ref" | grep -q '\.gitattributes$'; then
+    if git -C "$src" grep -q 'export-ignore' "$ref" -- '*.gitattributes' 2>/dev/null; then
+      printf 'FAIL: %s carries export-ignore in .gitattributes at %s.\n' "$src" "$ref" >&2
+      printf '      git archive honors it and ls-tree does not, so this comparison would report\n' >&2
+      printf '      an export rule as a lost file. Read both sides the same way before trusting it.\n' >&2
+      exit 1
+    fi
   fi
 done
 
@@ -263,7 +283,51 @@ if [[ "${1:-}" == "--self-test" ]]; then
     exit 1
   fi
 
-  echo "self-test passed: the check goes red, and names the right files, for both a lost path and a changed mode"
+  # The two arms above mutate the movers. The realistic future regression is the
+  # other way in: aweb's root .gitignore gaining a rule no mover negates. aweb's
+  # rules are edited far more often than the movers' are, so this direction is
+  # the one most likely to be exercised for real.
+  echo "self-test: a new rule in aweb's own root .gitignore must be reported as losing the files it matches"
+  # check-ignore needs a repository to run in, so the mutated rules live in one.
+  aweb_rules="$WORK/aweb-rules"
+  mkdir -p "$aweb_rules"
+  git -C "$aweb_rules" init -q .
+  cp -f "$ROOT/.gitignore" "$aweb_rules/.gitignore"
+  printf '\n# self-test probe\ndocs/\n' >> "$aweb_rules/.gitignore"
+
+  exercised=0
+  for mover in "${MOVERS[@]}"; do
+    IFS=':' read -r src dest ref <<< "$mover"
+    name="$(basename "$src")"
+    # What the probe rule adds, rather than everything aweb's rules match: the
+    # rest is rescued by the movers' own negations, which are still in place here.
+    root_rule_casualties "$src" "$dest" "$ref" "$aweb_rules" > "$WORK/casualties-probe"
+    root_rule_casualties "$src" "$dest" "$ref" "$ROOT" > "$WORK/casualties-base"
+    comm -23 "$WORK/casualties-probe" "$WORK/casualties-base" > "$WORK/predicted-root"
+    if [[ ! -s "$WORK/predicted-root" ]]; then
+      printf '  --   %-12s the probe rule matches nothing it tracks\n' "$name"
+      continue
+    fi
+    if compare_mover "$src" "$dest" "none" "rootrule-$name" "$ref" "$aweb_rules"; then
+      printf 'FAIL: %s arrived intact with a root rule matching %s of its files; this check does not see aweb'"'"'s own rules\n' \
+        "$name" "$(wc -l < "$WORK/predicted-root" | tr -d ' ')" >&2
+      exit 1
+    fi
+    if ! diff -u "$WORK/predicted-root" "$WORK/loss" > "$WORK/rootrule.diff"; then
+      printf 'FAIL: %s lost a different set of files than the probe rule predicts.\n' "$name" >&2
+      cat "$WORK/rootrule.diff" >&2
+      exit 1
+    fi
+    printf '  ok   %-12s a root docs/ rule loses exactly the %s paths it matches\n' \
+      "$name" "$(wc -l < "$WORK/loss" | tr -d ' ')"
+    exercised=$((exercised + 1))
+  done
+  if [[ "$exercised" -eq 0 ]]; then
+    printf 'FAIL: the probe rule matched nothing in any mover, so aweb-side regressions were never exercised\n' >&2
+    exit 1
+  fi
+
+  echo "self-test passed: the check goes red, and names the right files, for a lost path, a changed mode, and a new rule on aweb's side"
   echo
 fi
 
