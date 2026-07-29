@@ -2442,10 +2442,21 @@ func revokeTeamCertificate(ctx context.Context, domain, team, teamID, memberAddr
 	if err != nil {
 		return certificateStoreResult{}, fmt.Errorf("resolve team member %s in %s: %w", memberName, teamID, err)
 	}
-	return revokeRegistryTeamCertificate(
+	if err := verifyNamedMember(memberAddress, domain, memberRef); err != nil {
+		return certificateStoreResult{}, err
+	}
+	result, err := revokeRegistryTeamCertificate(
 		ctx, registry, registryURL, domain, team,
 		strings.TrimSpace(memberRef.CertificateID), teamKey,
 	)
+	if err != nil {
+		return certificateStoreResult{}, err
+	}
+	// Report the address the registry returned for the certificate that was
+	// revoked, not the string that was typed. They are equal by the check above;
+	// reporting the resolved one keeps that true if the check ever changes.
+	result.MemberAddress = strings.TrimSpace(memberRef.MemberAddress)
+	return result, nil
 }
 
 func activeTeamIDForHumanTeamCommand() (string, error) {

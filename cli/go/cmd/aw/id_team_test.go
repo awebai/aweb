@@ -4611,3 +4611,78 @@ func TestRevokeHostedTeamCertificateRefusesAnEmptyStatus(t *testing.T) {
 		t.Fatalf("an empty status reported a revocation")
 	}
 }
+
+// SET BRANCH, PERMITS, and the normalization case. member_address is populated on
+// purpose: the empty branch compares only the domain, so this fixture would prove
+// nothing about name normalization if it were left unset.
+//
+// The verification must compare what the two sides MEAN, not the strings they
+// arrived as. parseAddress normalizes the typed address; the stored
+// member_address is a raw TEXT column that nothing guarantees to be normalized.
+// Comparing raw strings would refuse a correct address over case or whitespace,
+// and a verification that refuses valid retirements is one that gets turned off.
+func TestVerifyNamedMemberAcceptsTheSameAddressDifferentlyCased(t *testing.T) {
+	ref := &awid.TeamMemberReference{Alias: "bob", MemberAddress: "Partner.COM/Bob "}
+	if err := verifyNamedMember("partner.com/bob", "acme.com", ref); err != nil {
+		t.Fatalf("a correct address differing only in case was refused: %v", err)
+	}
+}
+
+// SET BRANCH, REFUSES. member_address is populated so the mismatch is caught by
+// the set-branch comparison rather than falling through to the empty branch - the
+// fixture that would silently make this test vacuous is one that omits it.
+func TestVerifyNamedMemberSetBranchRefusesADifferentPrincipal(t *testing.T) {
+	ref := &awid.TeamMemberReference{Alias: "bob", MemberAddress: "partner.com/bob"}
+	err := verifyNamedMember("acme.com/bob", "acme.com", ref)
+	if err == nil {
+		t.Fatalf("naming acme.com/bob for a member who is partner.com/bob was accepted")
+	}
+	if !strings.Contains(err.Error(), "partner.com/bob") || !strings.Contains(err.Error(), "acme.com/bob") {
+		t.Fatalf("refusal must name both the typed and the resolved address: %v", err)
+	}
+}
+
+// The rule has two branches and both refuse a mismatch, so a fixture decides which
+// one a test exercises. Each test below pins its branch by whether member_address
+// is populated, and says so in its name - otherwise a test written for one branch
+// can pass entirely through the other, and the branch it was written for could be
+// deleted with the test still green.
+
+// SET BRANCH, PERMITS. Cross-namespace membership is real: a member of another
+// namespace holding an alias here must still be removable by its own address.
+func TestVerifyNamedMemberSetBranchPermitsTheMembersOwnAddress(t *testing.T) {
+	ref := &awid.TeamMemberReference{Alias: "bob", MemberAddress: "partner.com/bob"}
+	if err := verifyNamedMember("partner.com/bob", "acme.com", ref); err != nil {
+		t.Fatalf("a cross-namespace member named by its own address was refused: %v", err)
+	}
+}
+
+// EMPTY BRANCH, PERMITS. A local member named in the only namespace that means
+// anything for it.
+func TestVerifyNamedMemberEmptyBranchPermitsTheTeamNamespace(t *testing.T) {
+	ref := &awid.TeamMemberReference{Alias: "nokey", MemberAddress: ""}
+	if err := verifyNamedMember("test.local/nokey", "test.local", ref); err != nil {
+		t.Fatalf("a local member named in its own team namespace was refused: %v", err)
+	}
+}
+
+// EMPTY BRANCH, REFUSES. Naming any other namespace for an address-less member.
+func TestVerifyNamedMemberEmptyBranchRefusesAForeignNamespace(t *testing.T) {
+	ref := &awid.TeamMemberReference{Alias: "nokey", MemberAddress: ""}
+	err := verifyNamedMember("evil.com/nokey", "test.local", ref)
+	if err == nil {
+		t.Fatalf("naming evil.com for a local member of test.local was accepted")
+	}
+	if !strings.Contains(err.Error(), "evil.com") || !strings.Contains(err.Error(), "test.local") {
+		t.Fatalf("refusal must name both namespaces: %v", err)
+	}
+}
+
+// The alias is the key within a team, so a resolved member whose alias differs
+// from the one asked for is a different principal regardless of addresses.
+func TestVerifyNamedMemberRefusesAResolvedAliasThatIsNotTheOneNamed(t *testing.T) {
+	ref := &awid.TeamMemberReference{Alias: "carol", MemberAddress: "acme.com/carol"}
+	if err := verifyNamedMember("acme.com/bob", "acme.com", ref); err == nil {
+		t.Fatalf("a resolve that returned a different alias was accepted")
+	}
+}

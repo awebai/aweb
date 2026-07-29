@@ -7,6 +7,7 @@ import (
 	"time"
 
 	aweb "github.com/awebai/aw"
+	"github.com/awebai/aw/awid"
 )
 
 // Retiring an agent has to reach two stores that fail independently: the
@@ -312,6 +313,77 @@ func releaseCoordinationState(
 		Result: storeChanged,
 		Detail: fmt.Sprintf("deleted workspace %s and released %d task claim(s)", deleted.WorkspaceID, *deleted.ClaimsReleased),
 	}, deleted
+}
+
+// verifyRetirementTarget establishes that the alias about to be acted on names the
+// member the operator typed, BEFORE anything is written.
+//
+// This is a read placed ahead of both mutations, not a change to the order of
+// them. The invariant on retireTeamAgent orders the two WRITES; a registry
+// resolve soft-deletes nothing and destroys no credential, so it moves neither.
+// It is the stronger form of the same goal: the invariant preserves a recovery
+// path from a bad state, and verifying first means there is no bad state.
+//
+// Failing closed here has a cost worth knowing. An agent whose certificate was
+// already revoked - by aw id team remove-member, which this command's own blocked
+// message recommends - no longer resolves, so retirement will now refuse to clean
+// up its leftover coordination state. The guidance below is what makes that
+// navigable, and it has to distinguish two arrivals that need different remedies.
+func verifyRetirementTarget(
+	ctx context.Context,
+	client *aweb.Client,
+	registry *awid.RegistryClient,
+	registryURL, domain, team, memberAddress, alias string,
+) error {
+	resolveCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	memberRef, err := registry.ResolveTeamMember(resolveCtx, registryURL, domain, team, alias)
+	cancel()
+	if err != nil {
+		return unresolvedRetirementTargetError(ctx, client, memberAddress, alias, err)
+	}
+	return verifyNamedMember(memberAddress, domain, memberRef)
+}
+
+// unresolvedRetirementTargetError explains a refusal the operator cannot act on
+// without knowing which state they are in.
+//
+// The workspace lookup here is read-only and is the whole point: the remedy
+// differs by whether the record still exists, and the two cases are reached by
+// different routes. After a customer-controlled remove-member the record is live
+// and the delete cascade still works, so naming the workspace id is a real
+// remedy. After a hosted removal the record is already soft-deleted, and pointing
+// at aw workspace delete would send the operator at a command that reports
+// success and releases nothing - that is aweb-aaum.6. There the working route is
+// the status transition, which does not need the record to exist.
+func unresolvedRetirementTargetError(
+	ctx context.Context,
+	client *aweb.Client,
+	memberAddress, alias string,
+	resolveErr error,
+) error {
+	base := fmt.Sprintf(
+		"refusing to retire %s: it does not resolve to a member of this team, so which principal the name refers to cannot be established, and retiring on the bare alias is what revokes the wrong one (%v)",
+		memberAddress, resolveErr,
+	)
+
+	listCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	resp, listErr := client.WorkspaceList(listCtx, aweb.WorkspaceListParams{Alias: alias, Limit: 2})
+	cancel()
+	if listErr != nil {
+		return fmt.Errorf("%s", base)
+	}
+	for _, ws := range resp.Workspaces {
+		if strings.EqualFold(strings.TrimSpace(ws.Alias), alias) {
+			return fmt.Errorf(
+				"%s. A workspace record for %s is still present; if you know it is the one you mean, delete it by id with aw workspace delete %s, which names a record rather than an ambiguous alias",
+				base, alias, ws.WorkspaceID,
+			)
+		}
+	}
+	return fmt.Errorf(
+		"%s. No workspace record remains for %s, so aw workspace delete has nothing to act on; any task claims left behind are released by moving each claimed task out of in_progress, which does not need the record to exist",
+		base, alias,
+	)
 }
 
 // claimsHeldByAlias lists the task refs still claimed under an alias.
