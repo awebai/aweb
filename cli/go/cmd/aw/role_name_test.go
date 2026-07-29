@@ -14,6 +14,33 @@ import (
 	"github.com/awebai/aw/awconfig"
 )
 
+func TestRoleNameHelpExplainsOperatingRoleIsIndependentOfProfile(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	run := exec.CommandContext(ctx, bin, "role-name", "set", "--help")
+	run.Env = testCommandEnv(tmp)
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("role-name help failed: %v\n%s", err, out)
+	}
+	help := string(out)
+	for _, want := range []string{
+		"operating responsibility on this team",
+		"initialized from the materialized profile",
+		"does not change which profile the workspace runs",
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("role-name help missing %q:\n%s", want, help)
+		}
+	}
+}
+
 func TestRoleNameSetPatchesCurrentWorkspace(t *testing.T) {
 	t.Parallel()
 
@@ -93,6 +120,14 @@ func runRoleNameSetPatchTest(t *testing.T, patchResponse map[string]any) {
 	binding := workspaceBinding(server.URL, "backend:demo", "alice", "workspace-1")
 	binding.Memberships[0].RoleName = "developer"
 	writeWorkspaceBindingForTest(t, repo, binding)
+	profilePinPath := filepath.Join(repo, ".aw", "profile", "ref.json")
+	if err := os.MkdirAll(filepath.Dir(profilePinPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	profilePin := []byte(`{"profile_ref":"developer","profile_version":"0.1.0","profile_digest":"sha256:profile"}` + "\n")
+	if err := os.WriteFile(profilePinPath, profilePin, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	run := exec.CommandContext(ctx, bin, "role-name", "set", "reviewer")
 	run.Env = testCommandEnv(tmp)
@@ -111,5 +146,12 @@ func runRoleNameSetPatchTest(t *testing.T, patchResponse map[string]any) {
 	}
 	if activeMembershipForTest(t, state).RoleName != "reviewer" {
 		t.Fatalf("role_name=%q", activeMembershipForTest(t, state).RoleName)
+	}
+	profileAfter, err := os.ReadFile(profilePinPath)
+	if err != nil {
+		t.Fatalf("read profile provenance after role change: %v", err)
+	}
+	if string(profileAfter) != string(profilePin) {
+		t.Fatalf("role change rewrote profile provenance:\n%s", profileAfter)
 	}
 }

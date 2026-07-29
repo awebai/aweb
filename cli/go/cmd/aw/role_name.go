@@ -12,14 +12,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const roleNameExplanation = "The role name is this workspace's operating responsibility on this team. It is\n" +
+	"initialized from the materialized profile during setup, but remains independently mutable.\n" +
+	"Changing it does not change which profile the workspace runs or grant additional authority."
+
 var roleNameCmd = &cobra.Command{
 	Use:   "role-name",
-	Short: "Manage the current workspace role name",
+	Short: "Manage the current workspace operating role",
+	Long:  roleNameExplanation,
 }
 
 var roleNameSetCmd = &cobra.Command{
 	Use:   "set [role-name]",
-	Short: "Set the current workspace role name",
+	Short: "Set the current workspace operating role",
+	Long:  "Set the current workspace operating role.\n\n" + roleNameExplanation,
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runRoleNameSet,
 }

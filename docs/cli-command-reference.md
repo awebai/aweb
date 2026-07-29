@@ -1815,10 +1815,12 @@ Flags:
 
 ### `role-name`
 
-Manage the current workspace role name
+The role name is this workspace's operating responsibility on this team. It is
+initialized from the materialized profile during setup, but remains independently mutable.
+Changing it does not change which profile the workspace runs or grant additional authority.
 
 Subcommands:
-- `set` Set the current workspace role name
+- `set` Set the current workspace operating role
 
 Flags:
 - `-h, --help help for role-name`
@@ -1828,7 +1830,11 @@ Flags:
 
 ### `role-name set`
 
-Set the current workspace role name
+Set the current workspace operating role.
+
+The role name is this workspace's operating responsibility on this team. It is
+initialized from the materialized profile during setup, but remains independently mutable.
+Changing it does not change which profile the workspace runs or grant additional authority.
 
 Flags:
 - `-h, --help help for set`

@@ -1292,7 +1292,10 @@ when the identity needs one. The credentials live under `team-certs/`.
 identity-level team membership view. `workspace.yaml` is an aweb
 coordination binding only: it carries the aweb server URL, per-team
 workspace bindings such as `workspace_id` and `role_name`, and local
-repo/workspace metadata. It does not carry awid-specific URL fields,
+repo/workspace metadata. `role_name` selects the workspace's current operating
+responsibility and team playbook. Setup may initialize it from a materialized
+profile ref, but it is independently mutable and does not change profile
+provenance or grant authority. It does not carry awid-specific URL fields,
 hosted-specific URL fields, identity key material, or the active team
 selection.
 

@@ -190,11 +190,17 @@ Reset instructions to the server default:
 aw instructions reset
 ```
 
-Set the current workspace role name:
+Set the current workspace operating role:
 
 ```bash
 aw role-name set reviewer
 ```
+
+`role_name` is the responsibility this workspace currently performs for the team.
+Setup initializes it from the materialized profile, but changing it later does not
+change the pinned profile or grant authority. Acting coordinators should select the
+coordinator role so peers can discover the active responsibility in `aw workspace
+status`; multiple workspaces may legitimately select the same role.
 
 Use `role_name` consistently in your automation and workspace state.
 
