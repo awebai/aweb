@@ -2322,6 +2322,13 @@ capture_success retire_out "retire_out" run_aw_in "$ALICE_DIR" team remove-agent
 RETIRE_STATUS="$(echo "$retire_out" | jq_field status)"
 assert_eq "nokey retired" "retired" "$RETIRE_STATUS"
 
+# A customer-controlled team CAN establish which principal an alias names, so a
+# retirement here must not carry the disclosure that it could not. Nothing else
+# asserts that the flag is driven by the verification rather than set by hand:
+# the Go tests pass it in directly, so they hold whatever production does.
+retire_disclosure_count="$(echo "$retire_out" | grep -c "selected by alias" || true)"
+assert_eq "a verified retirement carries no unverified disclosure" "0" "$retire_disclosure_count"
+
 # The load-bearing assertion: the rows are gone, read from the store itself.
 claims_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$NOKEY_WORKSPACE_ID';")"
 assert_eq "retirement released nokey's claim" "0" "$claims_after"
