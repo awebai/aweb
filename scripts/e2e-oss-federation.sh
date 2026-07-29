@@ -188,6 +188,31 @@ psql_scalar() {
   compose exec -T "$service" psql -U aweb -d aweb -At -c "$sql" 2>/dev/null | tr -d '[:space:]'
 }
 
+lock_package_version() {
+  local lock_file="$1" package_name="$2"
+  python3 - "$lock_file" "$package_name" <<'PY'
+import sys
+import tomllib
+
+lock_file, package_name = sys.argv[1:]
+with open(lock_file, "rb") as f:
+    lock = tomllib.load(f)
+for package in lock["package"]:
+    if package["name"] == package_name:
+        print(package["version"])
+        break
+else:
+    raise SystemExit(f"package {package_name!r} missing from {lock_file}")
+PY
+}
+
+container_package_version() {
+  local service="$1" package_name="$2"
+  compose exec -T "$service" python -c \
+    'import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))' \
+    "$package_name"
+}
+
 run_aw_in() {
   local workdir="$1"
   shift
@@ -432,6 +457,12 @@ compose up -d
 wait_health "awid" "$AWID_URL"
 wait_health "alpha" "$ALPHA_URL"
 wait_health "beta" "$BETA_URL"
+locked_server_mcp="$(lock_package_version "$SERVER_DIR/uv.lock" mcp)"
+installed_server_mcp="$(container_package_version aweb-alpha mcp)"
+assert_eq "aweb image installs locked mcp" "$locked_server_mcp" "$installed_server_mcp"
+locked_awid_fastapi="$(lock_package_version "$REPO_ROOT/awid/uv.lock" fastapi)"
+installed_awid_fastapi="$(container_package_version awid fastapi)"
+assert_eq "awid image installs locked fastapi" "$locked_awid_fastapi" "$installed_awid_fastapi"
 echo ""
 
 echo "=== Phase 2: Create alpha and beta identities/teams ==="

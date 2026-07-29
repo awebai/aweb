@@ -10,13 +10,13 @@ COPY --from=uv /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-COPY server/pyproject.toml server/README.md ./
+COPY server/pyproject.toml server/uv.lock server/README.md ./
 COPY awid/pyproject.toml awid/README.md /awid/
-RUN uv sync --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY server/src ./src/
 COPY awid/src /awid/src
-RUN uv sync --no-dev
+RUN uv sync --frozen --no-dev
 
 
 FROM python:3.12-slim AS runtime
