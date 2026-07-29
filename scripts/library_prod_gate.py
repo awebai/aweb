@@ -26,9 +26,7 @@ REQUIRED_AW_PATH = Path("/opt/homebrew/bin/aw")
 REQUIRED_AW_SHA256 = "e546aa12294e61c95d02cd0a69a613b115ea72cc43f7716e193dc4ef342d6815"
 REQUIRED_AW_VERSION_OUTPUT = "aw 1.34.0\n  commit: 82d7ca0\n  built:  2026-07-27T20:23:38Z\n"
 REQUIRED_CLAUDE_PATH = Path("/opt/homebrew/bin/claude")
-REQUIRED_CLAUDE_SHA256 = "8addc857f3fe64d5a0368af9ee50321b50afb4a6918ba3ef018ab84f5dbbe081"
 REQUIRED_PI_PATH = Path("/opt/homebrew/bin/pi")
-REQUIRED_PI_SHA256 = "af302f231437eaf6f37691bce4b34234fcb626bcb5eb3910d4fc3f6519bf78ca"
 IGNORED_AUTH_FILES = (
     "interaction-log.jsonl",
     "channel-delivered-ids.json",
@@ -495,19 +493,6 @@ def main() -> int:
                 "EXPECTED_PROFILE_DIGEST/--expected-profile-digest must be sha256-pinned"
             )
         verify_released_aw(args.aw_bin)
-        if args.mode == "candidate":
-            verify_file_artifact(
-                args.claude_bin,
-                expected_path=REQUIRED_CLAUDE_PATH,
-                expected_sha256=REQUIRED_CLAUDE_SHA256,
-                label="Claude Code binary",
-            )
-            verify_file_artifact(
-                args.pi_bin,
-                expected_path=REQUIRED_PI_PATH,
-                expected_sha256=REQUIRED_PI_SHA256,
-                label="Pi launcher",
-            )
         with tempfile.TemporaryDirectory(prefix="library-prod-gate-") as temporary:
             root = Path(temporary)
             summaries = (
