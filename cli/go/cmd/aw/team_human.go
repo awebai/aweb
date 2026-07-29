@@ -53,6 +53,7 @@ var (
 	teamHumanExtendAPIKey      string
 	teamHumanExtendTeamID      string
 	teamHumanRemoveTeamID      string
+	teamHumanAgentStatusTeamID string
 	teamHumanRemoveRegistryURL string
 	teamHumanRemoveAwebURL     string
 	teamHumanRemoveAPIKey      string
@@ -220,6 +221,9 @@ func init() {
 	teamHumanCmd.AddCommand(teamHumanListCmd)
 	teamHumanCmd.AddCommand(teamHumanSwitchCmd)
 	teamHumanCmd.AddCommand(teamHumanLeaveCmd)
+	teamHumanAgentStatusCmd.Flags().StringVar(&teamHumanAgentStatusTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to read from (defaults to active team)")
+	teamHumanCmd.AddCommand(teamHumanAgentStatusCmd)
+
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to remove from (defaults to active team)")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveRegistryURL, "registry", "", "Registry origin override")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveAwebURL, "aweb-url", "", "Hosted aweb API URL override for cloud-mediated removal")
@@ -2363,7 +2367,7 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 		return revokeTeamCertificate(ctx, domain, name, teamID, teamRemoveMember)
 	})
 	printOutput(out, formatTeamRemoveAgent)
-	if out.Status != retirementRetired {
+	if !retirementSucceeded(out.Status) {
 		return &cliError{code: 1, msg: fmt.Sprintf("%s is not fully retired; see the per-store results above", teamRemoveMember)}
 	}
 	return nil

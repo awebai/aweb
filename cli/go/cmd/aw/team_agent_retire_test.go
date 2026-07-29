@@ -236,8 +236,11 @@ func TestRetireTeamAgentConvergesWhenTheAgentIsAlreadyRetired(t *testing.T) {
 	stores.certificateStatus = "not_found"
 	out := stores.retire(t)
 
-	if out.Status != retirementRetired {
-		t.Fatalf("status=%q, want %q", out.Status, retirementRetired)
+	if out.Status != retirementReported {
+		t.Fatalf("status=%q, want %q", out.Status, retirementReported)
+	}
+	if !retirementSucceeded(out.Status) {
+		t.Fatalf("a converging retry must succeed; status=%q", out.Status)
 	}
 	if got := storeOutcome(t, out, storeCoordination); got.Result != storeUnchanged {
 		t.Fatalf("coordination=%+v, want %q", got, storeUnchanged)
@@ -246,8 +249,8 @@ func TestRetireTeamAgentConvergesWhenTheAgentIsAlreadyRetired(t *testing.T) {
 	if certificate.Result != storeUnchanged {
 		t.Fatalf("certificate=%+v, want %q", certificate, storeUnchanged)
 	}
-	if out.CertificateResult != certificateNoneActive {
-		t.Fatalf("certificate_result=%q, want %q", out.CertificateResult, certificateNoneActive)
+	if out.CertificateResult != certificateNothingReported {
+		t.Fatalf("certificate_result=%q, want %q", out.CertificateResult, certificateNothingReported)
 	}
 	if strings.Contains(strings.ToLower(certificate.Detail), "already removed") {
 		t.Fatalf("a call that revoked nothing must not assert a prior removal: %q", certificate.Detail)
@@ -259,15 +262,15 @@ func TestRetireTeamAgentConvergesWhenTheAgentIsAlreadyRetired(t *testing.T) {
 func TestRetireTeamAgentReportsWhetherItRevokedAnything(t *testing.T) {
 	for wireStatus, want := range map[string]string{
 		"removed":   certificateRevoked,
-		"not_found": certificateNoneActive,
+		"not_found": certificateNothingReported,
 	} {
 		t.Run(wireStatus, func(t *testing.T) {
 			stores := newRetirementStores(t)
 			stores.certificateStatus = wireStatus
 			out := stores.retire(t)
 
-			if out.Status != retirementRetired {
-				t.Fatalf("status=%q, want %q", out.Status, retirementRetired)
+			if !retirementSucceeded(out.Status) {
+				t.Fatalf("status=%q, want a succeeding status", out.Status)
 			}
 			if out.CertificateResult != want {
 				t.Fatalf("certificate_result=%q, want %q", out.CertificateResult, want)
@@ -309,5 +312,61 @@ func TestRetireTeamAgentReportsAFailedRevokeWithoutClaimingRetirement(t *testing
 	}
 	if got := storeOutcome(t, out, storeCertificate); got.Result != storeFailed {
 		t.Fatalf("certificate=%+v, want %q", got, storeFailed)
+	}
+}
+
+// The hosted service answers not_found from its own membership records and may
+// never consult the registry, so a member holding a live certificate with no
+// hosted record is reported this way. The command must therefore not turn that
+// answer into a claim about certificates - doing so would be the same defect as
+// the word it replaced, asserting more than was established.
+func TestRetireTeamAgentDoesNotTurnAReportedNoOpIntoACertificateClaim(t *testing.T) {
+	stores := newRetirementStores(t)
+	stores.workspaceMissing = true
+	stores.certificateStatus = "not_found"
+	out := stores.retire(t)
+
+	if out.CertificateResult != certificateNothingReported {
+		t.Fatalf("certificate_result=%q, want %q", out.CertificateResult, certificateNothingReported)
+	}
+	if out.Status != retirementReported {
+		t.Fatalf("status=%q, want %q; a retirement resting on a reported no-op must not claim the stronger word", out.Status, retirementReported)
+	}
+	if !retirementSucceeded(out.Status) {
+		t.Fatalf("a reported no-op must still exit zero so retries converge; status=%q", out.Status)
+	}
+
+	detail := strings.ToLower(storeOutcome(t, out, storeCertificate).Detail)
+	for _, forbidden := range []string{
+		"holds no active certificate",
+		"no active certificate exists",
+		"already removed",
+		"already revoked",
+	} {
+		if strings.Contains(detail, forbidden) {
+			t.Fatalf("a reported no-op must not assert %q; detail=%q", forbidden, detail)
+		}
+	}
+	if !strings.Contains(detail, "reported") {
+		t.Fatalf("a reported no-op must say it is what the service reported; detail=%q", detail)
+	}
+	if !strings.Contains(detail, "aw team agent-status") {
+		t.Fatalf("a reported no-op must name the read that can establish the certificate state; detail=%q", detail)
+	}
+}
+
+// A registry 409 is different evidence: the registry states the certificate
+// exists and was already revoked. That one may say so.
+func TestRetireTeamAgentReportsAnAlreadyRevokedCertificateAsEstablished(t *testing.T) {
+	stores := newRetirementStores(t)
+	out := stores.retire(t)
+	_ = out
+
+	result := certificateStoreResult{Result: certificateAlreadyRevoked}
+	if result.Result == certificateNothingReported {
+		t.Fatalf("the registry-established result must not be the reported one")
+	}
+	if certificateAlreadyRevoked == certificateNothingReported {
+		t.Fatalf("the two no-op results must stay distinguishable")
 	}
 }

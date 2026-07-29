@@ -457,7 +457,7 @@ func TestPostHostedTeamRemoveMemberPreservesTheStatusItReceived(t *testing.T) {
 func TestRevokeHostedTeamCertificateDistinguishesRevokedFromNothingRevoked(t *testing.T) {
 	for wireStatus, wantResult := range map[string]string{
 		"removed":   certificateRevoked,
-		"not_found": certificateNoneActive,
+		"not_found": certificateNothingReported,
 	} {
 		t.Run(wireStatus, func(t *testing.T) {
 			resetTeamRemoveMemberGlobals(t)
@@ -476,7 +476,7 @@ func TestRevokeHostedTeamCertificateDistinguishesRevokedFromNothingRevoked(t *te
 			if result.Result != wantResult {
 				t.Fatalf("result=%q, want %q", result.Result, wantResult)
 			}
-			if result.Result == certificateNoneActive && strings.Contains(result.Result, "removed") {
+			if result.Result == certificateNothingReported && strings.Contains(result.Result, "removed") {
 				t.Fatalf("a result for a revoke that revoked nothing must not claim a removal: %q", result.Result)
 			}
 		})

@@ -33,19 +33,39 @@ const (
 	storeNotAttempted = "not_attempted"
 )
 
-// Certificate store results. no_active_certificate says only what the registry
-// established: the member holds no active certificate now. It deliberately does
-// not say a removal happened earlier, because this command cannot establish that
-// and a word that claimed it turned calls against names that were never members
-// into reports of successful removals.
+// Certificate store results. Each says what its evidence supports and no more.
+// The defect being fixed here was one word standing for several situations and
+// asserting a removal none of them established, so these are kept apart even
+// though all three end the call successfully.
 const (
-	certificateRevoked    = "revoked"
-	certificateNoneActive = "no_active_certificate"
+	// certificateRevoked: this call revoked a certificate.
+	certificateRevoked = "revoked"
+	// certificateAlreadyRevoked: the registry stated the certificate exists and
+	// was already revoked. Only the registry establishes this; it is never
+	// inferred from an absence.
+	certificateAlreadyRevoked = "already_revoked"
+	// certificateNothingReported: the service reported it had nothing to revoke.
+	// It does not follow that no certificate exists. The hosted service answers
+	// from its own membership records and may never consult the registry, so a
+	// member with a live certificate and no hosted record is reported this way.
+	// Establishing the certificate state needs a direct read: aw team agent-status.
+	certificateNothingReported = "reported_nothing_to_revoke"
 )
 
 // Overall retirement status.
+//
+// retired and reported_retired differ in what backs them, not in whether the
+// command succeeded. Both exit zero: nothing went wrong and a retry converges.
+// The distinction is kept because collapsing evidence of different strength into
+// one confident word is the defect this command exists to remove.
 const (
-	retirementRetired    = "retired"
+	// retirementRetired: every store established the state retirement wants.
+	retirementRetired = "retired"
+	// retirementReported: every store reached that state, but at least one of
+	// them rests on a service reporting a no-op rather than on the state being
+	// established. Confirm with aw team agent-status, which reads the registry.
+	retirementReported = "reported_retired"
+	// retirementIncomplete: a store did not reach that state.
 	retirementIncomplete = "incomplete"
 )
 
@@ -145,11 +165,17 @@ func retireTeamAgent(
 			Result: storeChanged,
 			Detail: "revoked the member certificate",
 		})
+	case certificate.Result == certificateAlreadyRevoked:
+		out.Stores = append(out.Stores, retireStoreOutcome{
+			Store:  storeCertificate,
+			Result: storeUnchanged,
+			Detail: "revoked nothing: the registry states this certificate was already revoked",
+		})
 	default:
 		out.Stores = append(out.Stores, retireStoreOutcome{
 			Store:  storeCertificate,
 			Result: storeUnchanged,
-			Detail: "revoked nothing: the member holds no active certificate",
+			Detail: "revoked nothing: the service reported it had nothing to revoke, which does not establish that no certificate exists; confirm with aw team agent-status",
 		})
 	}
 
@@ -163,8 +189,19 @@ func retireTeamAgent(
 	if strings.TrimSpace(certificate.WorkspaceID) != "" && out.WorkspaceID == "" {
 		out.WorkspaceID = certificate.WorkspaceID
 	}
-	out.Status = retirementRetired
+	if certificate.Result == certificateNothingReported {
+		out.Status = retirementReported
+	} else {
+		out.Status = retirementRetired
+	}
 	return out
+}
+
+// retirementSucceeded reports whether the command should exit zero. Both terminal
+// statuses do: nothing went wrong and a retry converges. Only a store that did
+// not reach its terminal state is a failure.
+func retirementSucceeded(status string) bool {
+	return status == retirementRetired || status == retirementReported
 }
 
 // releaseCoordinationState deletes the retiring agent's workspace record, which

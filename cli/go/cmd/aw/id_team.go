@@ -2314,7 +2314,7 @@ func revokeRegistryTeamCertificate(
 		return result, nil
 	}
 	if registryReportsCertificateAlreadyRevoked(err) {
-		result.Result = certificateNoneActive
+		result.Result = certificateAlreadyRevoked
 		return result, nil
 	}
 	return certificateStoreResult{}, fmt.Errorf("revoke certificate: %w", err)
@@ -2393,7 +2393,7 @@ func revokeHostedTeamCertificate(ctx context.Context, teamID, memberAddress, cer
 	case "removed", "":
 		result.Result = certificateRevoked
 	case "not_found":
-		result.Result = certificateNoneActive
+		result.Result = certificateNothingReported
 	default:
 		return certificateStoreResult{}, fmt.Errorf(
 			"hosted remove-member returned unrecognised status %q; refusing to report the certificate revoked",

@@ -3,6 +3,7 @@ package aweb
 import "context"
 
 type ClaimView struct {
+	TaskRef     string `json:"task_ref"`
 	BeadID      string `json:"bead_id"`
 	WorkspaceID string `json:"workspace_id"`
 	Alias       string `json:"alias"`
