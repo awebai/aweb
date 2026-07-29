@@ -470,6 +470,12 @@ Roles are opt-in. The two server flavors differ in what they ship:
 If your team has no roles bundle, `aw roles show` and `aw role-name set`
 will report the empty state instead of returning an error.
 
+A workspace's `role_name` is its current operating responsibility, not its
+materialized profile identity. Setup initializes the role name from the profile,
+but later role changes leave `.aw/profile/ref.json` untouched and grant no new
+authority. This lets an agent keep its pinned developer profile while taking the
+coordinator responsibility, which peers can discover through `aw workspace status`.
+
 ```bash
 aw roles show                          # Your current role's playbook
 aw roles show --all-roles              # All roles in the team
