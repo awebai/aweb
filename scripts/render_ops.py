@@ -16,10 +16,11 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from http.client import HTTPException
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 API_BASE = "https://api.render.com/v1"
 IN_PROGRESS_STATUSES = {
@@ -35,10 +36,37 @@ ROLLBACK_ARTIFACT_STATUSES = {"live", "deactivated"}
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 DEPLOY_RE = re.compile(r"^dep-[a-z0-9]+$")
 SERVICE_RE = re.compile(r"^srv-[a-z0-9]+$")
+HEALTH_READINESS_TIMEOUT_SECONDS = 90.0
+HEALTH_RETRY_INTERVAL_SECONDS = 5.0
+HEALTH_REQUEST_TIMEOUT_SECONDS = 20.0
+RETRYABLE_HEALTH_HTTP_STATUSES = {404, 408, 425, 429, 500, 502, 503, 504}
 
 
 class OpsError(RuntimeError):
     """A safe-to-print operational failure."""
+
+
+class TransientHealthError(OpsError):
+    """A health failure that may be caused by a live-transition readiness window."""
+
+
+class NoHealthRedirects(HTTPRedirectHandler):
+    """Reject health redirects before requesting their Location target."""
+
+    def redirect_request(
+        self,
+        req: Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> None:
+        return None
+
+
+def open_health_url(url: str, *, timeout: float):
+    return build_opener(NoHealthRedirects()).open(url, timeout=timeout)
 
 
 @dataclass(frozen=True)
@@ -309,25 +337,104 @@ def wait_for_deploy(
     raise OpsError(f"timed out waiting for Render deploy {deploy_id}")
 
 
-def verify_health(url: str, *, timeout: float = 20.0) -> dict[str, Any]:
+def verify_health(url: str, *, timeout: float = HEALTH_REQUEST_TIMEOUT_SECONDS) -> dict[str, Any]:
     try:
-        with urlopen(url, timeout=timeout) as response:
+        with open_health_url(url, timeout=timeout) as response:
             if response.geturl() != url:
                 raise OpsError(f"health check redirected away from exact surface {url}")
             if response.status != 200:
-                raise OpsError(f"health check returned HTTP {response.status}")
+                message = f"health check failed for {url}: HTTP {response.status}"
+                if response.status in RETRYABLE_HEALTH_HTTP_STATUSES:
+                    raise TransientHealthError(message)
+                raise OpsError(message)
             payload = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise OpsError(f"health check failed for {url}: {type(exc).__name__}") from exc
+    except HTTPError as exc:
+        message = f"health check failed for {url}: HTTP {exc.code}"
+        if exc.code in RETRYABLE_HEALTH_HTTP_STATUSES:
+            raise TransientHealthError(message) from exc
+        raise OpsError(message) from exc
+    except (URLError, TimeoutError, ConnectionError, HTTPException) as exc:
+        raise TransientHealthError(
+            f"health check failed for {url}: {type(exc).__name__}"
+        ) from exc
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise TransientHealthError(f"health check returned invalid JSON from {url}") from exc
     if payload != {"status": "ok", "service": "library"}:
         raise OpsError(f"unexpected Library health payload from {url}")
     return payload
 
 
-def verify_health_surfaces(config: ProductionConfig) -> dict[str, Any]:
-    origin = verify_health(f"{config.origin_url}{config.health_path}")
-    public = verify_health(f"{config.public_url}{config.health_path}")
-    return {"origin": origin, "public": public}
+def verify_health_surfaces(
+    config: ProductionConfig,
+    *,
+    readiness_timeout: float = HEALTH_READINESS_TIMEOUT_SECONDS,
+    retry_interval: float = HEALTH_RETRY_INTERVAL_SECONDS,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> dict[str, Any]:
+    if readiness_timeout <= 0 or retry_interval <= 0:
+        raise OpsError("health readiness timing must be positive")
+    started_at = monotonic()
+    deadline = started_at + readiness_timeout
+    attempts = 0
+    last_error: TransientHealthError | None = None
+    origin_url = f"{config.origin_url}{config.health_path}"
+    public_url = f"{config.public_url}{config.health_path}"
+    while True:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            break
+        attempts += 1
+        try:
+            origin = verify_health(
+                origin_url, timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining)
+            )
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TransientHealthError("health readiness deadline elapsed after origin check")
+            public = verify_health(
+                public_url, timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining)
+            )
+            finished_at = monotonic()
+            if finished_at > deadline:
+                raise TransientHealthError("health readiness deadline elapsed after public check")
+            print(
+                json.dumps(
+                    {
+                        "health": "ready",
+                        "attempts": attempts,
+                        "elapsed_seconds": round(finished_at - started_at, 3),
+                    }
+                ),
+                file=sys.stderr,
+            )
+            return {"origin": origin, "public": public}
+        except TransientHealthError as exc:
+            last_error = exc
+            now = monotonic()
+            remaining = max(0.0, deadline - now)
+            exhausted = remaining <= 0
+            retry_in = 0.0 if exhausted else min(retry_interval, remaining)
+            print(
+                json.dumps(
+                    {
+                        "health": "not_ready",
+                        "attempt": attempts,
+                        "elapsed_seconds": round(now - started_at, 3),
+                        "retry_in_seconds": retry_in,
+                        "exhausted": exhausted,
+                        "error": str(exc),
+                    }
+                ),
+                file=sys.stderr,
+            )
+            if exhausted:
+                break
+            sleep(retry_in)
+    detail = f": {last_error}" if last_error is not None else ""
+    raise OpsError(
+        f"health readiness failed after {readiness_timeout:g} seconds and {attempts} attempts{detail}"
+    )
 
 
 def _client(args: argparse.Namespace) -> tuple[RenderClient, ProductionConfig]:

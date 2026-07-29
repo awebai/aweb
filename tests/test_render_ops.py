@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+from http.client import IncompleteRead
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError
@@ -129,9 +132,332 @@ def test_health_rejects_redirected_surface(monkeypatch: pytest.MonkeyPatch) -> N
         def read(self) -> bytes:
             return b'{"status":"ok","service":"library"}'
 
-    monkeypatch.setattr(render_ops, "urlopen", lambda url, timeout: Response())
+    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout: Response())
     with pytest.raises(render_ops.OpsError, match="redirected away"):
         render_ops.verify_health("https://library-origin.example/health")
+
+
+def test_health_readiness_retries_transient_http_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class Response:
+        status = 200
+
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return self.url
+
+        def read(self) -> bytes:
+            return b'{"status":"ok","service":"library"}'
+
+    calls: list[str] = []
+
+    def fake_urlopen(url: str, timeout: float):
+        calls.append(url)
+        if len(calls) == 1:
+            raise HTTPError(url, 503, "warming", {}, None)
+        return Response(url)
+
+    now = [0.0]
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(render_ops, "open_health_url", fake_urlopen)
+    result = render_ops.verify_health_surfaces(
+        config,
+        readiness_timeout=20,
+        retry_interval=5,
+        sleep=fake_sleep,
+        monotonic=lambda: now[0],
+    )
+    assert result["origin"] == {"status": "ok", "service": "library"}
+    assert result["public"] == {"status": "ok", "service": "library"}
+    assert calls == [
+        f"{config.origin_url}/health",
+        f"{config.origin_url}/health",
+        f"{config.public_url}/health",
+    ]
+    assert sleeps == [5]
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert events == [
+        {
+            "health": "not_ready",
+            "attempt": 1,
+            "elapsed_seconds": 0.0,
+            "retry_in_seconds": 5,
+            "exhausted": False,
+            "error": f"health check failed for {config.origin_url}/health: HTTP 503",
+        },
+        {"health": "ready", "attempts": 2, "elapsed_seconds": 5.0},
+    ]
+
+
+def test_health_readiness_fails_closed_after_bound(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
+) -> None:
+    now = [0.0]
+    sleeps: list[float] = []
+
+    def transient(url: str, *, timeout: float):
+        raise render_ops.TransientHealthError("still warming")
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(render_ops, "verify_health", transient)
+    with pytest.raises(render_ops.OpsError, match="after 11 seconds and 3 attempts"):
+        render_ops.verify_health_surfaces(
+            config,
+            readiness_timeout=11,
+            retry_interval=5,
+            sleep=fake_sleep,
+            monotonic=lambda: now[0],
+        )
+    assert sleeps == [5, 5, 1]
+
+
+def test_health_readiness_does_not_retry_permanent_http_error(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
+) -> None:
+    calls = 0
+
+    def forbidden(url: str, timeout: float):
+        nonlocal calls
+        calls += 1
+        raise HTTPError(url, 403, "forbidden", {}, None)
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(render_ops, "open_health_url", forbidden)
+    with pytest.raises(render_ops.OpsError, match="HTTP 403"):
+        render_ops.verify_health_surfaces(config, sleep=sleeps.append)
+    assert calls == 1
+    assert sleeps == []
+
+
+def test_health_readiness_does_not_retry_wrong_payload(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
+) -> None:
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return f"{config.origin_url}/health"
+
+        def read(self) -> bytes:
+            return b'{"status":"ok","service":"other"}'
+
+    calls = 0
+
+    def wrong(url: str, timeout: float):
+        nonlocal calls
+        calls += 1
+        return Response()
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(render_ops, "open_health_url", wrong)
+    with pytest.raises(render_ops.OpsError, match="unexpected Library health payload"):
+        render_ops.verify_health_surfaces(config, sleep=sleeps.append)
+    assert calls == 1
+    assert sleeps == []
+
+
+def test_health_redirect_location_is_never_requested() -> None:
+    requests: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append(self.path)
+            if self.path == "/health":
+                self.send_response(302)
+                self.send_header("Location", "/target")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok","service":"library"}')
+
+        def log_message(self, format: str, *args) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/health"
+        with pytest.raises(render_ops.OpsError, match="HTTP 302"):
+            render_ops.verify_health(url)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    assert requests == ["/health"]
+
+
+def test_health_invalid_utf8_is_bounded_transient(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
+) -> None:
+    class Response:
+        status = 200
+
+        def __init__(self, url: str, body: bytes) -> None:
+            self.url = url
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return self.url
+
+        def read(self) -> bytes:
+            return self.body
+
+    calls = 0
+
+    def fake_open(url: str, timeout: float):
+        nonlocal calls
+        calls += 1
+        body = b"\xff" if calls == 1 else b'{"status":"ok","service":"library"}'
+        return Response(url, body)
+
+    now = [0.0]
+
+    def fake_sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    monkeypatch.setattr(render_ops, "open_health_url", fake_open)
+    result = render_ops.verify_health_surfaces(
+        config,
+        readiness_timeout=10,
+        retry_interval=1,
+        sleep=fake_sleep,
+        monotonic=lambda: now[0],
+    )
+    assert result["public"] == {"status": "ok", "service": "library"}
+    assert calls == 3
+    assert now[0] == 1
+
+
+def test_health_interrupted_body_read_is_transient(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://library.example/health"
+
+        def read(self) -> bytes:
+            raise IncompleteRead(b"partial", 20)
+
+    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout: Response())
+    with pytest.raises(render_ops.TransientHealthError, match="IncompleteRead"):
+        render_ops.verify_health("https://library.example/health")
+
+
+def test_health_late_public_success_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    now = [0.0]
+    calls: list[tuple[str, float]] = []
+
+    def late_public(url: str, *, timeout: float):
+        calls.append((url, timeout))
+        if url.startswith(config.origin_url):
+            now[0] = 89.0
+        else:
+            assert timeout == 1.0
+            now[0] = 91.0
+        return {"status": "ok", "service": "library"}
+
+    monkeypatch.setattr(render_ops, "verify_health", late_public)
+    with pytest.raises(render_ops.OpsError, match="after 90 seconds and 1 attempts"):
+        render_ops.verify_health_surfaces(config, monotonic=lambda: now[0], sleep=lambda _: None)
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert events == [
+        {
+            "health": "not_ready",
+            "attempt": 1,
+            "elapsed_seconds": 91.0,
+            "retry_in_seconds": 0.0,
+            "exhausted": True,
+            "error": "health readiness deadline elapsed after public check",
+        }
+    ]
+    assert len(calls) == 2
+
+
+def test_health_deadline_crossing_before_origin_never_starts_request(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
+) -> None:
+    times = iter([0.0, 91.0])
+    calls = 0
+
+    def must_not_run(url: str, *, timeout: float):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("health request started after deadline")
+
+    monkeypatch.setattr(render_ops, "verify_health", must_not_run)
+    with pytest.raises(render_ops.OpsError, match="after 90 seconds and 0 attempts"):
+        render_ops.verify_health_surfaces(config, monotonic=lambda: next(times))
+    assert calls == 0
+
+
+def test_health_final_transient_attempt_is_logged_as_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    now = [0.0]
+
+    def consumes_deadline(url: str, *, timeout: float):
+        now[0] = 90.0
+        raise render_ops.TransientHealthError("request timed out")
+
+    monkeypatch.setattr(render_ops, "verify_health", consumes_deadline)
+    with pytest.raises(render_ops.OpsError, match="after 90 seconds and 1 attempts"):
+        render_ops.verify_health_surfaces(config, monotonic=lambda: now[0])
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert events == [
+        {
+            "health": "not_ready",
+            "attempt": 1,
+            "elapsed_seconds": 90.0,
+            "retry_in_seconds": 0.0,
+            "exhausted": True,
+            "error": "request timed out",
+        }
+    ]
 
 
 def test_validate_service_fails_on_topology_drift(config: render_ops.ProductionConfig) -> None:
