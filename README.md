@@ -26,6 +26,8 @@ model, real endpoint bodies, and domain tables arrive in later tasks.
 Public (no auth):
 
 - `GET /` — landing page
+- `GET /health`, `GET /live`, `GET /ready` — service state plus non-secret
+  `build.git_sha` (`null` when no source identity is injected)
 - `GET /llms.txt`, `GET /skills/`
 - `GET /aweb-app.json`, `GET /.well-known/aweb-app.json` — app manifest
 - `GET /v1/blueprints`, `GET /v1/blueprints/{blueprint_id}`, `GET /v1/profiles/{profile_id}`
@@ -47,6 +49,18 @@ uv run mypy src/library
 ```
 
 The e2e suite (`-m e2e`) is docker-backed and uses real `aw`/AWID tooling.
+
+## Continuous integration
+
+Pull requests and pushes to `main` run the `Lint, test, and real-stack e2e`
+check. Branch protection requires that exact check before merging to `main`,
+including for administrators.
+
+The break-glass path for an emergency fix while CI itself is broken is to get
+repository-owner approval, temporarily disable the required protection, land
+only the emergency fix, and immediately re-enable the same protection. Record
+both the disable and re-enable actions, with their timestamps and reason, in a
+shared task or incident. Administrator bypass is not the break-glass path.
 
 ## Production operations
 

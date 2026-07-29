@@ -11,6 +11,7 @@ from pgdbm import AsyncDatabaseManager
 from library import browse, browse_views
 from library.auth import AWIDTeamCache, Principal, authenticate_request
 from library.aweb_manifest import read_manifest_bytes
+from library.build_identity import resolve_build_identity
 from library.config import Settings, get_settings
 from library.db import LibraryDatabase
 from library.models import (
@@ -72,6 +73,7 @@ _FONT_FILES = {
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or get_settings()
+    build_identity = resolve_build_identity()
     holder: dict[str, object] = {}
 
     @asynccontextmanager
@@ -261,8 +263,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/health")
     @app.get("/live")
     @app.get("/ready")
-    async def health() -> dict[str, str]:
-        return {"status": "ok", "service": "library"}
+    async def health() -> dict[str, object]:
+        return {"status": "ok", "service": "library", "build": build_identity}
 
     # --- Public catalog: blueprints are always public; ?tags filter -------------------
 
