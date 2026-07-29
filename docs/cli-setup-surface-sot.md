@@ -127,7 +127,7 @@ the categories stable unless this document is updated.
 | `aw workspace status` | Everyday check/doctor | Keep prominent. It should explain active team, identity, claims, locks, service binding, and mismatch symptoms. |
 | `aw check` / `aw doctor` | Everyday check/repair | Keep prominent. `aw check` is the everyday diagnostic verb; `aw doctor` remains the support/deeper diagnostics name. |
 | `aw id team list` / `switch` / `leave` | Everyday membership management backed by primitives | Keep discoverable; consider human-facing aliases if taxonomy implementation adds `aw team ...`. |
-| `aw roles`, `aw role-name`, `aw instructions` | Everyday team context + agent primitives | Keep prominent for team operating context. `aw roles add ... --playbook-file` is the novice/resource-pack path; `aw roles set --bundle-file` remains the bulk/scripted path. |
+| `aw roles`, `aw role-name`, `aw instructions` | Everyday team context + agent primitives | Keep prominent for team operating context. `role_name` is a mutable operating responsibility initialized from, but independent of, the materialized profile; it does not grant authority. `aw roles add ... --playbook-file` is the novice/resource-pack path; `aw roles set --bundle-file` remains the bulk/scripted path. |
 | `aw mail`, `aw chat`, `aw work`, `aw task`, `aw lock` | Everyday coordination | Out of setup scope, but remain primary day-to-day commands. |
 
 ### Agent primitives to keep sharp

@@ -120,6 +120,14 @@ func runRoleNameSetPatchTest(t *testing.T, patchResponse map[string]any) {
 	binding := workspaceBinding(server.URL, "backend:demo", "alice", "workspace-1")
 	binding.Memberships[0].RoleName = "developer"
 	writeWorkspaceBindingForTest(t, repo, binding)
+	profilePinPath := filepath.Join(repo, ".aw", "profile", "ref.json")
+	if err := os.MkdirAll(filepath.Dir(profilePinPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	profilePin := []byte(`{"profile_ref":"developer","profile_version":"0.1.0","profile_digest":"sha256:profile"}` + "\n")
+	if err := os.WriteFile(profilePinPath, profilePin, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	run := exec.CommandContext(ctx, bin, "role-name", "set", "reviewer")
 	run.Env = testCommandEnv(tmp)
@@ -138,5 +146,12 @@ func runRoleNameSetPatchTest(t *testing.T, patchResponse map[string]any) {
 	}
 	if activeMembershipForTest(t, state).RoleName != "reviewer" {
 		t.Fatalf("role_name=%q", activeMembershipForTest(t, state).RoleName)
+	}
+	profileAfter, err := os.ReadFile(profilePinPath)
+	if err != nil {
+		t.Fatalf("read profile provenance after role change: %v", err)
+	}
+	if string(profileAfter) != string(profilePin) {
+		t.Fatalf("role change rewrote profile provenance:\n%s", profileAfter)
 	}
 }
