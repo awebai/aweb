@@ -2341,7 +2341,63 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 	teamRemoveRegistryURL = teamHumanRemoveRegistryURL
 	teamRemoveAwebURL = teamHumanRemoveAwebURL
 	teamRemoveAPIKey = teamHumanRemoveAPIKey
-	return runTeamRemoveMember(cmd, nil)
+
+	_, alias, err := parseAddress(teamRemoveMember)
+	if err != nil {
+		return err
+	}
+
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	client, _, err := resolveClientSelectionForDir(workingDir)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	out := retireTeamAgent(ctx, client, teamID, teamRemoveMember, alias, func(ctx context.Context) (certificateStoreResult, error) {
+		return revokeTeamCertificate(ctx, domain, name, teamID, teamRemoveMember)
+	})
+	printOutput(out, formatTeamRemoveAgent)
+	if out.Status != retirementRetired {
+		return &cliError{code: 1, msg: fmt.Sprintf("%s is not fully retired; see the per-store results above", teamRemoveMember)}
+	}
+	return nil
+}
+
+// revokeTeamCertificate revokes the member's certificate through whichever
+// authority owns the namespace.
+func revokeTeamCertificate(ctx context.Context, domain, team, teamID, memberAddress string) (certificateStoreResult, error) {
+	if isAwebHostedNamespace(domain) {
+		return revokeHostedTeamCertificate(ctx, teamID, memberAddress, "")
+	}
+
+	teamKey, err := awconfig.LoadTeamKey(domain, team)
+	if err != nil {
+		return certificateStoreResult{}, fmt.Errorf("load team key for %s: %w", teamID, err)
+	}
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return certificateStoreResult{}, err
+	}
+	registryURL := resolveTeamRemoveRegistryURL(registry)
+
+	_, memberName, err := parseAddress(memberAddress)
+	if err != nil {
+		return certificateStoreResult{}, err
+	}
+	memberRef, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, memberName)
+	if err != nil {
+		return certificateStoreResult{}, fmt.Errorf("resolve team member %s in %s: %w", memberName, teamID, err)
+	}
+	return revokeRegistryTeamCertificate(
+		ctx, registry, registryURL, domain, team,
+		strings.TrimSpace(memberRef.CertificateID), teamKey,
+	)
 }
 
 func activeTeamIDForHumanTeamCommand() (string, error) {

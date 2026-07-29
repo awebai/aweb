@@ -58,6 +58,7 @@ type DeleteWorkspaceResponse struct {
 	Alias           string `json:"alias"`
 	DeletedAt       string `json:"deleted_at"`
 	IdentityDeleted bool   `json:"identity_deleted"`
+	ClaimsReleased  int    `json:"claims_released"`
 }
 
 type WorkspaceTeamParams struct {
