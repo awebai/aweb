@@ -9,19 +9,30 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
+import select
 import shutil
+import socket
+import socketserver
 import subprocess
 import sys
 import tempfile
+import threading
 import unicodedata
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 RUNTIMES = ("claude-code", "pi")
 REQUIRED_PUBLIC_URL = "https://library.aweb.ai"
+REQUIRED_ORIGIN_URL = "https://library-02jf.onrender.com"
+REQUIRED_INCUMBENT_SERVICE_ID = "srv-d8qm4jvavr4c73dhrmgg"
+REQUIRED_INCUMBENT_DEPLOY_ID = "dep-d9koecdbedkc73b582vg"
+REQUIRED_INCUMBENT_COMMIT = "3376af7ee4a571488441794047018af94b06057f"
+REQUIRED_INCUMBENT_SHAPE = "library-materialize.pre-aasb.no-runtime-managed"
 REQUIRED_AW_PATH = Path("/opt/homebrew/bin/aw")
 REQUIRED_AW_SHA256 = "e546aa12294e61c95d02cd0a69a613b115ea72cc43f7716e193dc4ef342d6815"
 REQUIRED_AW_VERSION_OUTPUT = "aw 1.34.0\n  commit: 82d7ca0\n  built:  2026-07-27T20:23:38Z\n"
@@ -152,9 +163,200 @@ def postdeploy_predicate_inventory() -> list[str]:
     return sorted(POSTDEPLOY_PREDICATES)
 
 
+_CURRENT_INCUMBENT_PATH_PREFIX = (
+    "make.prod-gate-current-incumbent",
+    "library-prod-gate.current-incumbent",
+)
+CURRENT_INCUMBENT_PREDICATE_PATHS: dict[str, tuple[str, ...]] = {}
+for _runtime in RUNTIMES:
+    _origin_component = f"library-prod-gate.materialize.origin.{_runtime}"
+    _public_component = f"library-prod-gate.materialize.public.{_runtime}"
+    for _predicate in (
+        f"origin-route.{_runtime}.dns-public-disjoint",
+        f"origin-route.{_runtime}.ambient-proxy-isolated",
+        f"origin-route.{_runtime}.no-post-start-dns",
+        f"origin-route.{_runtime}.kernel-peer-selected",
+        f"origin-route.{_runtime}.canonical-authority",
+        f"materialize.origin.{_runtime}.http-200",
+        f"materialize.origin.response-contract.{_runtime}",
+    ):
+        CURRENT_INCUMBENT_PREDICATE_PATHS[_predicate] = (
+            *_CURRENT_INCUMBENT_PATH_PREFIX,
+            "library-prod-gate.origin-route",
+            _origin_component,
+            _predicate,
+        )
+    for _predicate in (
+        f"materialize.public.{_runtime}.http-200",
+        f"materialize.response-contract.{_runtime}",
+        f"materialize.profile-pin.{_runtime}",
+    ):
+        CURRENT_INCUMBENT_PREDICATE_PATHS[_predicate] = (
+            *_CURRENT_INCUMBENT_PATH_PREFIX,
+            _public_component,
+            _predicate,
+        )
+    _continuation_predicate = f"materialize.public-continuation.{_runtime}.fatal"
+    CURRENT_INCUMBENT_PREDICATE_PATHS[_continuation_predicate] = (
+        *_CURRENT_INCUMBENT_PATH_PREFIX,
+        "library-prod-gate.origin-route",
+        _origin_component,
+        _public_component,
+        _continuation_predicate,
+    )
+CURRENT_INCUMBENT_PREDICATES = frozenset(CURRENT_INCUMBENT_PREDICATE_PATHS)
+CURRENT_INCUMBENT_IDENTICAL_PREDICATES = frozenset(
+    {f"materialize.public.{runtime}.http-200" for runtime in RUNTIMES}
+    | {f"materialize.profile-pin.{runtime}" for runtime in RUNTIMES}
+)
+CANDIDATE_SEMANTIC_PREDICATES = frozenset(
+    CURRENT_INCUMBENT_IDENTICAL_PREDICATES
+    | {f"materialize.response-contract.{runtime}" for runtime in RUNTIMES}
+)
+CURRENT_INCUMBENT_RESPONSE_CONTRACT_PREDICATES = frozenset(
+    {f"materialize.origin.response-contract.{runtime}" for runtime in RUNTIMES}
+    | {f"materialize.response-contract.{runtime}" for runtime in RUNTIMES}
+)
+CURRENT_INCUMBENT_BASE_BLOCKERS = (
+    "controls.executed-same-path",
+    "execution.capability-obligation",
+    "orchestrator.falsification",
+    "runtime.path-fidelity",
+    "safety.boundary-invocation",
+)
+
+
+def current_incumbent_predicate_inventory() -> list[str]:
+    """Return source-owned current-incumbent predicate IDs."""
+    return sorted(CURRENT_INCUMBENT_PREDICATES)
+
+
+def candidate_semantic_predicate_inventory() -> list[str]:
+    """Return candidate predicates with source semantic descriptors."""
+    return sorted(CANDIDATE_SEMANTIC_PREDICATES)
+
+
+def current_incumbent_predicate_paths() -> dict[str, list[str]]:
+    """Return each current-incumbent predicate's exact ordered executor path."""
+    return {
+        predicate: list(CURRENT_INCUMBENT_PREDICATE_PATHS[predicate])
+        for predicate in current_incumbent_predicate_inventory()
+    }
+
+
+def _current_incumbent_owner(predicate_id: str) -> str:
+    if predicate_id.startswith("origin-route.") or predicate_id.startswith(
+        "materialize.public-continuation."
+    ):
+        return "release-infrastructure"
+    return "library-service"
+
+
+def _current_incumbent_mapping(predicate_id: str) -> dict[str, Any]:
+    if predicate_id in CURRENT_INCUMBENT_IDENTICAL_PREDICATES:
+        return {"state": "identical", "candidate_predicate_id": predicate_id}
+    blockers = list(CURRENT_INCUMBENT_BASE_BLOCKERS)
+    if predicate_id in CURRENT_INCUMBENT_RESPONSE_CONTRACT_PREDICATES:
+        blockers.append("candidate-only.runtime-proof")
+    return {"state": "deferred", "blocked_obligation_ids": sorted(blockers)}
+
+
+def _semantic_descriptor(
+    domain: str,
+    predicate_id: str,
+    runtime: str,
+    surface: str,
+    assertion: str,
+) -> dict[str, str]:
+    return {
+        "domain": domain,
+        "id": predicate_id,
+        "runtime": runtime,
+        "surface": surface,
+        "assertion": assertion,
+    }
+
+
+def aatk_semantic_descriptors() -> list[dict[str, str]]:
+    """Return source semantics used to prove exact cross-domain identities."""
+    rows: list[dict[str, str]] = []
+    for runtime in RUNTIMES:
+        shared = {
+            f"materialize.public.{runtime}.http-200": "exact-http-200",
+            f"materialize.profile-pin.{runtime}": "exact-profile-pin",
+        }
+        for predicate_id, assertion in shared.items():
+            for domain in ("candidate-postdeploy", "current-incumbent"):
+                rows.append(
+                    _semantic_descriptor(
+                        domain, predicate_id, runtime, "canonical-public", assertion
+                    )
+                )
+        response_id = f"materialize.response-contract.{runtime}"
+        rows.append(
+            _semantic_descriptor(
+                "candidate-postdeploy",
+                response_id,
+                runtime,
+                "canonical-public",
+                "strict-candidate-response-shape",
+            )
+        )
+        rows.append(
+            _semantic_descriptor(
+                "current-incumbent",
+                response_id,
+                runtime,
+                "canonical-public",
+                "legacy-incumbent-response-shape",
+            )
+        )
+        current_descriptors = {
+            f"origin-route.{runtime}.dns-public-disjoint": (
+                "generated-origin",
+                "numeric-origin-public-disjoint",
+            ),
+            f"origin-route.{runtime}.ambient-proxy-isolated": (
+                "generated-origin",
+                "ambient-proxy-isolated",
+            ),
+            f"origin-route.{runtime}.no-post-start-dns": (
+                "generated-origin",
+                "startup-only-dns",
+            ),
+            f"origin-route.{runtime}.kernel-peer-selected": (
+                "generated-origin",
+                "kernel-peer-equals-selected",
+            ),
+            f"origin-route.{runtime}.canonical-authority": (
+                "generated-origin",
+                "canonical-security-authority",
+            ),
+            f"materialize.origin.{runtime}.http-200": (
+                "generated-origin",
+                "exact-http-200",
+            ),
+            f"materialize.origin.response-contract.{runtime}": (
+                "generated-origin",
+                "legacy-incumbent-response-shape",
+            ),
+            f"materialize.public-continuation.{runtime}.fatal": (
+                "generated-origin-and-canonical-public",
+                "mandatory-public-continuation",
+            ),
+        }
+        rows.extend(
+            _semantic_descriptor(
+                "current-incumbent", predicate_id, runtime, surface, assertion
+            )
+            for predicate_id, (surface, assertion) in current_descriptors.items()
+        )
+    return sorted(rows, key=lambda row: (row["domain"], row["id"]))
+
+
 def aatk_predicate_coverage() -> list[dict[str, Any]]:
     """Return source-owned per-obligation capability coverage for this executor."""
-    return [
+    candidate_rows = [
         {
             "domain": "candidate-postdeploy",
             "id": predicate_id,
@@ -164,10 +366,277 @@ def aatk_predicate_coverage() -> list[dict[str, Any]]:
         }
         for predicate_id, (owner, state) in sorted(AATK_PREDICATE_COVERAGE.items())
     ]
+    current_rows = [
+        {
+            "domain": "current-incumbent",
+            "id": predicate_id,
+            "owner": _current_incumbent_owner(predicate_id),
+            "candidate_mapping": _current_incumbent_mapping(predicate_id),
+            "obligations": {
+                obligation: "deferred" for obligation in AATK_CAPABILITY_OBLIGATIONS
+            },
+        }
+        for predicate_id in current_incumbent_predicate_inventory()
+    ]
+    return candidate_rows + current_rows
 
 
 class GateError(RuntimeError):
     pass
+
+
+def _https_authority(url: str, *, label: str) -> tuple[str, int, str]:
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise GateError(f"{label} must be an https origin without path, query, or credentials")
+    try:
+        port = parsed.port or 443
+    except ValueError as exc:
+        raise GateError(f"{label} has an invalid port") from exc
+    host = parsed.hostname
+    authority_host = f"[{host}]" if ":" in host else host
+    return host, port, f"{authority_host}:{port}"
+
+
+def _resolve_stream_addresses(
+    host: str, port: int, *, label: str
+) -> tuple[tuple[int, int, int, tuple[Any, ...], str], ...]:
+    try:
+        results = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise GateError(f"failed to resolve {label}") from exc
+    addresses: dict[
+        tuple[int, tuple[Any, ...]], tuple[int, int, int, tuple[Any, ...], str]
+    ] = {}
+    for family, socktype, protocol, _, sockaddr in results:
+        normalized_ip = str(ipaddress.ip_address(sockaddr[0]))
+        key = (family, tuple(sockaddr))
+        addresses[key] = (family, socktype, protocol, tuple(sockaddr), normalized_ip)
+    if not addresses:
+        raise GateError(f"{label} resolved to no stream addresses")
+    return tuple(sorted(addresses.values(), key=lambda item: (item[4], item[0])))
+
+
+class _OriginProxyServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def __init__(
+        self,
+        address: tuple[str, int],
+        *,
+        allowed_authority: str,
+        selected_origin: tuple[int, int, int, tuple[Any, ...], str],
+        public_ips: frozenset[str],
+    ) -> None:
+        self.allowed_authority = allowed_authority
+        self.selected_origin = selected_origin
+        self.public_ips = public_ips
+        self._connection_attempts = 0
+        self._successful_connections = 0
+        self._peer_ip = ""
+        self._connection_lock = threading.Lock()
+        super().__init__(address, _OriginProxyHandler)
+
+    @property
+    def connection_attempts(self) -> int:
+        with self._connection_lock:
+            return self._connection_attempts
+
+    @property
+    def successful_connections(self) -> int:
+        with self._connection_lock:
+            return self._successful_connections
+
+    @property
+    def peer_ip(self) -> str:
+        with self._connection_lock:
+            return self._peer_ip
+
+    def record_connection_attempt(self) -> None:
+        with self._connection_lock:
+            self._connection_attempts += 1
+
+    def record_successful_connection(self, peer_ip: str) -> None:
+        with self._connection_lock:
+            self._successful_connections += 1
+            self._peer_ip = peer_ip
+
+    def connect_to_selected_origin(self) -> tuple[socket.socket, str]:
+        family, socktype, protocol, sockaddr, selected_ip = self.selected_origin
+        upstream = socket.socket(family, socktype, protocol)
+        upstream.settimeout(10)
+        try:
+            upstream.connect(sockaddr)
+            peer_ip = str(ipaddress.ip_address(upstream.getpeername()[0]))
+            if peer_ip != selected_ip or peer_ip in self.public_ips:
+                raise OSError("origin socket peer did not match the selected generated address")
+            return upstream, peer_ip
+        except OSError:
+            upstream.close()
+            raise
+
+
+class _OriginProxyHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        server: _OriginProxyServer = self.server  # type: ignore[assignment]
+        server.record_connection_attempt()
+        request = b""
+        try:
+            while b"\r\n\r\n" not in request:
+                chunk = self.request.recv(4096)
+                if not chunk or len(request) + len(chunk) > 16384:
+                    self.request.sendall(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
+                    return
+                request += chunk
+            request_line = request.split(b"\r\n", 1)[0].decode("ascii")
+        except (OSError, UnicodeDecodeError):
+            return
+        parts = request_line.split()
+        if len(parts) != 3 or parts[0] != "CONNECT" or parts[1] != server.allowed_authority:
+            try:
+                self.request.sendall(b"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+            return
+
+        try:
+            upstream, peer_ip = server.connect_to_selected_origin()
+        except OSError:
+            try:
+                self.request.sendall(b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+            return
+        with upstream:
+            try:
+                self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                server.record_successful_connection(peer_ip)
+                self._relay(upstream)
+            except OSError:
+                return
+
+    def _relay(self, upstream: socket.socket) -> None:
+        peers = (self.request, upstream)
+        while True:
+            readable, _, _ = select.select(peers, (), (), 35)
+            if not readable:
+                return
+            for source in readable:
+                data = source.recv(65536)
+                if not data:
+                    return
+                destination = upstream if source is self.request else self.request
+                destination.sendall(data)
+
+
+class OriginConnectTunnel:
+    """Route canonical TLS bytes to one captured generated-origin address."""
+
+    def __init__(self, *, canonical_url: str, origin_url: str) -> None:
+        public_host, public_port, self._allowed_authority = _https_authority(
+            canonical_url, label="canonical public URL"
+        )
+        origin_host, origin_port, _ = _https_authority(origin_url, label="generated origin URL")
+        public_addresses = _resolve_stream_addresses(
+            public_host, public_port, label="canonical public URL"
+        )
+        origin_addresses = _resolve_stream_addresses(
+            origin_host, origin_port, label="generated origin URL"
+        )
+        public_ips = frozenset(item[4] for item in public_addresses)
+        origin_ips = frozenset(item[4] for item in origin_addresses)
+        if public_ips & origin_ips:
+            raise GateError(
+                "generated-origin and canonical-public DNS addresses overlap; "
+                "origin bypass cannot be proven"
+            )
+        self._public_ips = public_ips
+        self._selected_origin = origin_addresses[0]
+        self._server: _OriginProxyServer | None = None
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> OriginConnectTunnel:
+        self._server = _OriginProxyServer(
+            ("127.0.0.1", 0),
+            allowed_authority=self._allowed_authority,
+            selected_origin=self._selected_origin,
+            public_ips=self._public_ips,
+        )
+        self._thread = threading.Thread(
+            target=self._server.serve_forever,
+            name="library-origin-connect-tunnel",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    @property
+    def address(self) -> tuple[str, int]:
+        if self._server is None:
+            raise GateError("origin tunnel is not running")
+        host, port = self._server.server_address
+        return str(host), int(port)
+
+    @property
+    def proxy_url(self) -> str:
+        host, port = self.address
+        return f"http://{host}:{port}"
+
+    @property
+    def selected_origin_ip(self) -> str:
+        return self._selected_origin[4]
+
+    @property
+    def connection_attempts(self) -> int:
+        if self._server is None:
+            return 0
+        return self._server.connection_attempts
+
+    @property
+    def successful_connections(self) -> int:
+        if self._server is None:
+            return 0
+        return self._server.successful_connections
+
+    @property
+    def peer_ip(self) -> str:
+        if self._server is None:
+            return ""
+        return self._server.peer_ip
+
+
+def origin_proxy_environment(proxy_url: str) -> dict[str, str]:
+    environment = os.environ.copy()
+    for key in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+    ):
+        environment.pop(key, None)
+    environment["HTTPS_PROXY"] = proxy_url
+    environment["NO_PROXY"] = ""
+    return environment
 
 
 def validate_relative_paths(paths: list[str]) -> None:
@@ -382,7 +851,13 @@ def run_checked(
 
 
 def raw_materialize(
-    aw_bin: Path, source_home: Path, public_url: str, runtime: str, root: Path
+    aw_bin: Path,
+    source_home: Path,
+    public_url: str,
+    runtime: str,
+    root: Path,
+    *,
+    origin_tunnel: OriginConnectTunnel | None = None,
 ) -> dict[str, Any]:
     request = root / f"raw-{runtime}.request.json"
     response = root / f"raw-{runtime}.response.json"
@@ -391,6 +866,10 @@ def raw_materialize(
         json.dumps({"profile_ref": "developer", "runtime_kind": runtime, "target": "local"}) + "\n",
         encoding="utf-8",
     )
+    if origin_tunnel is not None and (
+        origin_tunnel.connection_attempts != 0 or origin_tunnel.successful_connections != 0
+    ):
+        raise GateError("origin tunnel must be unused before each functional probe")
     run_checked(
         [
             str(aw_bin),
@@ -407,7 +886,22 @@ def raw_materialize(
         stdout=response,
         stderr=stderr,
         label=f"raw materialize {runtime}",
+        env=(
+            origin_proxy_environment(origin_tunnel.proxy_url)
+            if origin_tunnel is not None
+            else None
+        ),
     )
+    if stderr.read_text(encoding="utf-8", errors="replace") != "HTTP 200\n":
+        raise GateError(f"raw materialize {runtime} did not return exact HTTP 200")
+    if origin_tunnel is not None and (
+        origin_tunnel.connection_attempts != 1
+        or origin_tunnel.successful_connections != 1
+        or origin_tunnel.peer_ip != origin_tunnel.selected_origin_ip
+    ):
+        raise GateError(
+            f"raw materialize {runtime} did not traverse exactly one pinned origin socket"
+        )
     try:
         return json.loads(response.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -576,17 +1070,39 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     homes: dict[str, Path] = {}
     for runtime in RUNTIMES:
-        payload = raw_materialize(
-            REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root
-        )
-        summaries.append(
-            validate_candidate_payload(
+        with OriginConnectTunnel(
+            canonical_url=args.public_url, origin_url=args.origin_url
+        ) as origin_tunnel:
+            payload = raw_materialize(
+                REQUIRED_AW_PATH,
+                args.source_home,
+                args.public_url,
+                runtime,
+                root,
+                origin_tunnel=origin_tunnel,
+            )
+            summary = validate_candidate_payload(
                 payload,
                 runtime,
                 expected_version=args.expected_profile_version,
                 expected_digest=args.expected_profile_digest,
             )
+            summary["gate"] = "raw-candidate-origin"
+            summary["transport_route"] = "generated-origin-direct"
+            summary["transport_peer_ip"] = origin_tunnel.peer_ip
+            summaries.append(summary)
+    for runtime in RUNTIMES:
+        payload = raw_materialize(
+            REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root
         )
+        summary = validate_candidate_payload(
+            payload,
+            runtime,
+            expected_version=args.expected_profile_version,
+            expected_digest=args.expected_profile_digest,
+        )
+        summary["gate"] = "raw-candidate-public"
+        summaries.append(summary)
     for runtime in RUNTIMES:
         home = root / f"home-{runtime}"
         home.mkdir()
@@ -616,6 +1132,97 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
     return summaries
 
 
+def validate_current_incumbent_identity(args: argparse.Namespace) -> dict[str, str]:
+    expected = {
+        "incumbent_service_id": REQUIRED_INCUMBENT_SERVICE_ID,
+        "incumbent_deploy_id": REQUIRED_INCUMBENT_DEPLOY_ID,
+        "incumbent_commit": REQUIRED_INCUMBENT_COMMIT,
+    }
+    for field, required in expected.items():
+        if str(getattr(args, field, "") or "").strip() != required:
+            label = field.replace("_", "-")
+            raise GateError(f"current-incumbent {label} must be exactly {required}")
+    return {
+        "gate": "current-incumbent-identity",
+        "service_id": REQUIRED_INCUMBENT_SERVICE_ID,
+        "deploy_id": REQUIRED_INCUMBENT_DEPLOY_ID,
+        "commit": REQUIRED_INCUMBENT_COMMIT,
+        "shape": REQUIRED_INCUMBENT_SHAPE,
+    }
+
+
+def _current_incumbent_origin_predicates(runtime: str) -> list[str]:
+    return sorted(
+        predicate
+        for predicate in CURRENT_INCUMBENT_PREDICATES
+        if predicate.startswith(f"origin-route.{runtime}.")
+        or predicate in {
+            f"materialize.origin.{runtime}.http-200",
+            f"materialize.origin.response-contract.{runtime}",
+        }
+    )
+
+
+def _current_incumbent_public_predicates(runtime: str) -> list[str]:
+    return sorted(
+        {
+            f"materialize.public.{runtime}.http-200",
+            f"materialize.response-contract.{runtime}",
+            f"materialize.profile-pin.{runtime}",
+            f"materialize.public-continuation.{runtime}.fatal",
+        }
+    )
+
+
+def run_current_incumbent(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = [validate_current_incumbent_identity(args)]
+    for runtime in RUNTIMES:
+        with OriginConnectTunnel(
+            canonical_url=args.public_url, origin_url=args.origin_url
+        ) as origin_tunnel:
+            payload = raw_materialize(
+                REQUIRED_AW_PATH,
+                args.source_home,
+                args.public_url,
+                runtime,
+                root,
+                origin_tunnel=origin_tunnel,
+            )
+            summary = validate_recovery_payload(
+                payload,
+                runtime,
+                expected_version=args.expected_profile_version,
+                expected_digest=args.expected_profile_digest,
+            )
+            summary["gate"] = "raw-current-incumbent-origin"
+            summary["transport_route"] = "generated-origin-direct"
+            summary["transport_peer_ip"] = origin_tunnel.peer_ip
+            summary["predicate_ids"] = _current_incumbent_origin_predicates(runtime)
+            summaries.append(summary)
+    for runtime in RUNTIMES:
+        payload = raw_materialize(
+            REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root
+        )
+        summary = validate_recovery_payload(
+            payload,
+            runtime,
+            expected_version=args.expected_profile_version,
+            expected_digest=args.expected_profile_digest,
+        )
+        summary["gate"] = "raw-current-incumbent-public"
+        summary["predicate_ids"] = _current_incumbent_public_predicates(runtime)
+        summaries.append(summary)
+    summaries.append(
+        {
+            "gate": "current-incumbent-predicate-inventory",
+            "predicate_paths": current_incumbent_predicate_paths(),
+        }
+    )
+    for summary in summaries:
+        summary["output_class"] = "current-incumbent-debug"
+    return summaries
+
+
 def run_recovery(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     for runtime in RUNTIMES:
@@ -639,10 +1246,23 @@ def run_recovery(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("mode", choices=("candidate", "legacy-aasb"))
+    p.add_argument("mode", choices=("candidate", "legacy-aasb", "current-incumbent"))
     source_home = os.environ.get("AW_SOURCE_HOME")
     p.add_argument("--source-home", type=Path, default=Path(source_home) if source_home else None)
     p.add_argument("--public-url", default=REQUIRED_PUBLIC_URL)
+    p.add_argument("--origin-url", default=REQUIRED_ORIGIN_URL)
+    p.add_argument(
+        "--incumbent-service-id",
+        default=os.environ.get("INCUMBENT_SERVICE_ID", ""),
+    )
+    p.add_argument(
+        "--incumbent-deploy-id",
+        default=os.environ.get("INCUMBENT_DEPLOY_ID", ""),
+    )
+    p.add_argument(
+        "--incumbent-commit",
+        default=os.environ.get("INCUMBENT_COMMIT", ""),
+    )
     p.add_argument(
         "--expected-profile-version",
         default=os.environ.get("EXPECTED_PROFILE_VERSION", ""),
@@ -661,12 +1281,16 @@ def main() -> int:
             raise GateError("AW_SOURCE_HOME/--source-home must be an absolute path")
         if args.public_url != REQUIRED_PUBLIC_URL:
             raise GateError(f"production public URL must be exactly {REQUIRED_PUBLIC_URL}")
+        if args.origin_url != REQUIRED_ORIGIN_URL:
+            raise GateError(f"production origin URL must be exactly {REQUIRED_ORIGIN_URL}")
         if not args.expected_profile_version:
             raise GateError("EXPECTED_PROFILE_VERSION/--expected-profile-version is required")
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", args.expected_profile_digest):
             raise GateError(
                 "EXPECTED_PROFILE_DIGEST/--expected-profile-digest must be sha256-pinned"
             )
+        if args.mode == "current-incumbent":
+            validate_current_incumbent_identity(args)
         verify_released_aw(REQUIRED_AW_PATH)
         if args.mode == "candidate":
             verify_file_artifact(
@@ -690,9 +1314,12 @@ def main() -> int:
             )
         with tempfile.TemporaryDirectory(prefix="library-prod-gate-") as temporary:
             root = Path(temporary)
-            summaries = (
-                run_candidate(args, root) if args.mode == "candidate" else run_recovery(args, root)
-            )
+            if args.mode == "candidate":
+                summaries = run_candidate(args, root)
+            elif args.mode == "current-incumbent":
+                summaries = run_current_incumbent(args, root)
+            else:
+                summaries = run_recovery(args, root)
         for summary in summaries:
             print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
         if args.mode == "candidate":

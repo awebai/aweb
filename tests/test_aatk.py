@@ -29,6 +29,14 @@ def row_by_id(value: dict, predicate_id: str) -> dict:
     return next(row for row in value["predicates"] if row["id"] == predicate_id)
 
 
+def coverage_row(value: dict, domain: str, predicate_id: str) -> dict:
+    return next(
+        row
+        for row in value["capability_coverage"]
+        if row["domain"] == domain and row["id"] == predicate_id
+    )
+
+
 def proof_for(row: dict, kind: str, mutation_id: str = "") -> tuple[dict, str]:
     if kind == "current-production":
         return row["current_production"]["proof"], ""
@@ -157,7 +165,18 @@ def test_canonical_partial_manifest_is_spec_valid_and_matches_executor_universe(
     assert {row["id"] for row in value["predicates"]} == aatk.source_predicates()
     assert sum(map(len, inventory.values())) == 50
     assert value["capability_coverage"] == aatk.source_capability_coverage()
-    assert len(value["capability_coverage"]) == 50
+    assert len(value["capability_coverage"]) == 72
+    candidate_rows = [
+        row for row in value["capability_coverage"] if row["domain"] == "candidate-postdeploy"
+    ]
+    current_rows = [
+        row for row in value["capability_coverage"] if row["domain"] == "current-incumbent"
+    ]
+    assert len(candidate_rows) == 50
+    assert {row["id"] for row in current_rows} == set(
+        aatk.library_prod_gate.current_incumbent_predicate_inventory()
+    )
+    assert len(current_rows) == 22
     instrumented = {
         row["id"]
         for row in value["capability_coverage"]
@@ -206,38 +225,198 @@ def test_capability_coverage_rejects_unknown_or_renamed_id() -> None:
     )
 
 
-def test_identical_mapping_rejects_typed_but_unproved_semantics(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_current_incumbent_registration_has_four_identities_and_18_deferred() -> None:
     value = manifest()
-    row = {
-        "domain": "current-incumbent",
-        "id": "health.origin.http-200",
-        "owner": "release-infrastructure",
-        "candidate_mapping": {
-            "state": "identical",
-            "candidate_predicate_id": "health.origin.http-200",
-            "runtime": "unrelated-runtime",
-            "surface": "unrelated-surface",
-            "assertion_code": "unrelated-assertion",
-        },
-        "obligations": {
-            obligation_id: "deferred"
-            for obligation_id in sorted(aatk.CAPABILITY_OBLIGATION_IDS)
-        },
+    current_rows = [
+        row for row in value["capability_coverage"] if row["domain"] == "current-incumbent"
+    ]
+    identical = {
+        row["id"]: row["candidate_mapping"]["candidate_predicate_id"]
+        for row in current_rows
+        if row["candidate_mapping"]["state"] == "identical"
     }
-    value["capability_coverage"].append(row)
-    monkeypatch.setattr(
-        aatk,
-        "source_capability_coverage",
-        lambda: copy.deepcopy(value["capability_coverage"]),
+    assert identical == {
+        "materialize.profile-pin.claude-code": "materialize.profile-pin.claude-code",
+        "materialize.profile-pin.pi": "materialize.profile-pin.pi",
+        "materialize.public.claude-code.http-200": "materialize.public.claude-code.http-200",
+        "materialize.public.pi.http-200": "materialize.public.pi.http-200",
+    }
+    release_owned = {
+        row["id"] for row in current_rows if row["owner"] == "release-infrastructure"
+    }
+    assert release_owned == {
+        predicate_id
+        for predicate_id in aatk.library_prod_gate.current_incumbent_predicate_inventory()
+        if predicate_id.startswith("origin-route.")
+        or predicate_id.startswith("materialize.public-continuation.")
+    }
+    assert {row["owner"] for row in current_rows} == {
+        "library-service",
+        "release-infrastructure",
+    }
+    deferred = [
+        row for row in current_rows if row["candidate_mapping"]["state"] == "deferred"
+    ]
+    assert len(deferred) == 18
+    base = {
+        "runtime.path-fidelity",
+        "execution.capability-obligation",
+        "safety.boundary-invocation",
+        "controls.executed-same-path",
+        "orchestrator.falsification",
+    }
+    response_contracts = {
+        "materialize.origin.response-contract.claude-code",
+        "materialize.origin.response-contract.pi",
+        "materialize.response-contract.claude-code",
+        "materialize.response-contract.pi",
+    }
+    for row in deferred:
+        expected = base | ({"candidate-only.runtime-proof"} if row["id"] in response_contracts else set())
+        assert set(row["candidate_mapping"]["blocked_obligation_ids"]) == expected
+
+
+def test_current_incumbent_semantic_descriptors_cover_both_domains() -> None:
+    descriptors = aatk.source_semantic_descriptors()
+    keys = {(row["domain"], row["id"]) for row in descriptors}
+    current_ids = set(aatk.library_prod_gate.current_incumbent_predicate_inventory())
+    assert {predicate_id for domain, predicate_id in keys if domain == "current-incumbent"} == current_ids
+    assert {
+        predicate_id for domain, predicate_id in keys if domain == "candidate-postdeploy"
+    } == {
+        "materialize.profile-pin.claude-code",
+        "materialize.profile-pin.pi",
+        "materialize.public.claude-code.http-200",
+        "materialize.public.pi.http-200",
+        "materialize.response-contract.claude-code",
+        "materialize.response-contract.pi",
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("runtime", "pi"),
+        ("surface", "generated-origin"),
+        ("assertion", "strict-candidate-response-shape"),
+    ],
+)
+def test_identical_mapping_rejects_source_semantic_mismatch(
+    monkeypatch: pytest.MonkeyPatch, field: str, replacement: str
+) -> None:
+    descriptors = copy.deepcopy(aatk.source_semantic_descriptors())
+    current = next(
+        row
+        for row in descriptors
+        if row["domain"] == "current-incumbent"
+        and row["id"] == "materialize.public.claude-code.http-200"
     )
-    index = len(value["capability_coverage"]) - 1
+    current[field] = replacement
+    monkeypatch.setattr(
+        aatk.library_prod_gate,
+        "aatk_semantic_descriptors",
+        lambda: copy.deepcopy(descriptors),
+    )
     assert_error(
-        "candidate-mapping-unimplemented",
-        f"manifest.capability_coverage[{index}].candidate_mapping.state",
+        "candidate-semantic-mismatch",
+        f"source.semantic_descriptors.current-incumbent.materialize.public.claude-code.http-200.{field}",
+        aatk.validate_manifest,
+        manifest(),
+    )
+
+
+def test_identical_mapping_rejects_unknown_target() -> None:
+    value = manifest()
+    row = coverage_row(
+        value, "current-incumbent", "materialize.public.claude-code.http-200"
+    )
+    row["candidate_mapping"]["candidate_predicate_id"] = "orphaned.candidate.target"
+    row_index = value["capability_coverage"].index(row)
+    assert_error(
+        "candidate-mapping-target",
+        f"manifest.capability_coverage[{row_index}].candidate_mapping.candidate_predicate_id",
         aatk.validate_manifest,
         value,
+    )
+
+
+def test_identical_mapping_rejects_duplicate_flattened_target() -> None:
+    value = manifest()
+    first = coverage_row(
+        value, "current-incumbent", "materialize.profile-pin.claude-code"
+    )
+    second = coverage_row(value, "current-incumbent", "materialize.profile-pin.pi")
+    second["candidate_mapping"]["candidate_predicate_id"] = first["candidate_mapping"][
+        "candidate_predicate_id"
+    ]
+    second_index = value["capability_coverage"].index(second)
+    assert_error(
+        "duplicate-candidate-mapping-target",
+        f"manifest.capability_coverage[{second_index}].candidate_mapping.candidate_predicate_id",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+@pytest.mark.parametrize("mutation", ["omitted", "unknown", "renamed"])
+def test_current_incumbent_registration_rejects_inventory_mismatch(mutation: str) -> None:
+    value = manifest()
+    row = next(
+        item for item in value["capability_coverage"] if item["domain"] == "current-incumbent"
+    )
+    if mutation == "omitted":
+        value["capability_coverage"].remove(row)
+    else:
+        prefix = "orphaned" if mutation == "unknown" else mutation
+        row["id"] = f"{prefix}.current-incumbent.predicate"
+    assert_error(
+        "current-incumbent-universe",
+        "manifest.capability_coverage",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+def test_semantic_descriptors_reject_duplicate_domain_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    descriptors = copy.deepcopy(aatk.source_semantic_descriptors())
+    descriptors.append(copy.deepcopy(descriptors[0]))
+    monkeypatch.setattr(
+        aatk.library_prod_gate,
+        "aatk_semantic_descriptors",
+        lambda: copy.deepcopy(descriptors),
+    )
+    assert_error(
+        "duplicate-semantic-descriptor",
+        f"source.semantic_descriptors[{len(descriptors) - 1}].id",
+        aatk.validate_manifest,
+        manifest(),
+    )
+
+
+@pytest.mark.parametrize("domain", ["candidate-postdeploy", "current-incumbent"])
+@pytest.mark.parametrize("mutation", ["omitted", "unknown", "renamed"])
+def test_semantic_descriptors_reject_inventory_mismatch(
+    monkeypatch: pytest.MonkeyPatch, domain: str, mutation: str
+) -> None:
+    descriptors = copy.deepcopy(aatk.source_semantic_descriptors())
+    row = next(item for item in descriptors if item["domain"] == domain)
+    if mutation == "omitted":
+        descriptors.remove(row)
+    else:
+        prefix = "orphaned" if mutation == "unknown" else mutation
+        row["id"] = f"{prefix}.semantic.predicate"
+    monkeypatch.setattr(
+        aatk.library_prod_gate,
+        "aatk_semantic_descriptors",
+        lambda: copy.deepcopy(descriptors),
+    )
+    assert_error(
+        "semantic-descriptor-universe",
+        f"source.semantic_descriptors.{domain}",
+        aatk.validate_manifest,
+        manifest(),
     )
 
 
@@ -344,12 +523,15 @@ def test_lifecycle_validation_machine_blocks_on_every_deferred_obligation(mode: 
         assert obligation_id in str(error)
 
 
-def test_capability_fixture_is_forbidden_as_lifecycle_evidence() -> None:
+@pytest.mark.parametrize("proof_kind", ["capability-fixture", "current-incumbent-debug"])
+def test_debug_and_capability_output_are_forbidden_as_lifecycle_evidence(
+    proof_kind: str,
+) -> None:
     value = manifest()
     row = value["predicates"][0]
     candidate_index = evidence_index(value)
     candidate_receipt = receipt(value, row, "current-production")
-    candidate_receipt["proof_kind"] = "capability-fixture"
+    candidate_receipt["proof_kind"] = proof_kind
     assert_error(
         "capability-not-lifecycle-evidence",
         "index.receipts[0].proof_kind",

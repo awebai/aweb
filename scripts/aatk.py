@@ -146,6 +146,11 @@ def source_capability_coverage() -> list[dict[str, Any]]:
     )
 
 
+def source_semantic_descriptors() -> list[dict[str, str]]:
+    """Return source-owned semantics for cross-domain mapping comparisons."""
+    return library_prod_gate.aatk_semantic_descriptors()
+
+
 def source_predicates() -> frozenset[str]:
     inventory = source_predicates_by_executor()
     flattened = [predicate for predicates in inventory.values() for predicate in predicates]
@@ -267,6 +272,85 @@ CAPABILITY_OBLIGATION_IDS = frozenset(
         "controls.executed-same-path",
     }
 )
+SEMANTIC_DESCRIPTOR_FIELDS = frozenset({"runtime", "surface", "assertion"})
+
+
+def validate_source_semantic_descriptors() -> dict[tuple[str, str], dict[str, str]]:
+    """Validate and index the executor-owned semantics used by identical mappings."""
+    rows = source_semantic_descriptors()
+    if not isinstance(rows, list) or not rows:
+        fail("semantic-descriptor", "source.semantic_descriptors", "must be a nonempty list")
+    index: dict[tuple[str, str], dict[str, str]] = {}
+    for row_index, raw_row in enumerate(rows):
+        location = f"source.semantic_descriptors[{row_index}]"
+        row = require_exact_keys(
+            raw_row,
+            {"domain", "id", *SEMANTIC_DESCRIPTOR_FIELDS},
+            location=location,
+            code="semantic-descriptor",
+        )
+        domain = row["domain"]
+        if domain not in {"candidate-postdeploy", "current-incumbent"}:
+            fail("semantic-descriptor", f"{location}.domain", "invalid predicate domain")
+        predicate_id = require_stable_id(
+            row["id"], location=f"{location}.id", code="semantic-descriptor"
+        )
+        key = (domain, predicate_id)
+        if key in index:
+            fail("duplicate-semantic-descriptor", f"{location}.id", str(key))
+        for field in sorted(SEMANTIC_DESCRIPTOR_FIELDS):
+            require_stable_id(
+                row[field], location=f"{location}.{field}", code="semantic-descriptor"
+            )
+        index[key] = row
+    current_ids = {
+        predicate_id for (domain, predicate_id) in index if domain == "current-incumbent"
+    }
+    expected_current_ids = set(library_prod_gate.current_incumbent_predicate_inventory())
+    if current_ids != expected_current_ids:
+        fail(
+            "semantic-descriptor-universe",
+            "source.semantic_descriptors.current-incumbent",
+            f"missing={sorted(expected_current_ids - current_ids)} extra={sorted(current_ids - expected_current_ids)}",
+        )
+    candidate_ids = {
+        predicate_id for (domain, predicate_id) in index if domain == "candidate-postdeploy"
+    }
+    expected_candidate_ids = set(
+        library_prod_gate.candidate_semantic_predicate_inventory()
+    )
+    if candidate_ids != expected_candidate_ids:
+        fail(
+            "semantic-descriptor-universe",
+            "source.semantic_descriptors.candidate-postdeploy",
+            f"missing={sorted(expected_candidate_ids - candidate_ids)} extra={sorted(candidate_ids - expected_candidate_ids)}",
+        )
+    return index
+
+
+def require_identical_semantics(
+    descriptors: dict[tuple[str, str], dict[str, str]],
+    *,
+    current_predicate_id: str,
+    candidate_predicate_id: str,
+    mapping_location: str,
+) -> None:
+    """Require an exact source-owned runtime/surface/assertion identity."""
+    current = descriptors.get(("current-incumbent", current_predicate_id))
+    candidate = descriptors.get(("candidate-postdeploy", candidate_predicate_id))
+    if current is None or candidate is None:
+        fail(
+            "candidate-mapping-target",
+            f"{mapping_location}.candidate_predicate_id",
+            "mapping target lacks source-owned semantics",
+        )
+    for field in sorted(SEMANTIC_DESCRIPTOR_FIELDS):
+        if current[field] != candidate[field]:
+            fail(
+                "candidate-semantic-mismatch",
+                f"source.semantic_descriptors.current-incumbent.{current_predicate_id}.{field}",
+                f"current={current[field]!r} candidate={candidate[field]!r}",
+            )
 
 
 def validate_capability_coverage(rows: Any) -> list[dict[str, Any]]:
@@ -275,6 +359,9 @@ def validate_capability_coverage(rows: Any) -> list[dict[str, Any]]:
         fail("capability-coverage", "manifest.capability_coverage", "must be a nonempty list")
     seen: set[tuple[str, str]] = set()
     candidate_ids: set[str] = set()
+    current_ids: set[str] = set()
+    identical_targets: set[str] = set()
+    semantic_descriptors = validate_source_semantic_descriptors()
     for index, raw_row in enumerate(rows):
         location = f"manifest.capability_coverage[{index}]"
         row = require_exact_keys(
@@ -331,6 +418,7 @@ def validate_capability_coverage(rows: Any) -> list[dict[str, Any]]:
                 )
             candidate_ids.add(predicate_id)
         else:
+            current_ids.add(predicate_id)
             if not isinstance(mapping, dict):
                 fail("candidate-mapping", f"{location}.candidate_mapping", "must be an object")
             state = mapping.get("state")
@@ -355,10 +443,29 @@ def validate_capability_coverage(rows: Any) -> list[dict[str, Any]]:
                         "must be unique deferred global obligation IDs",
                     )
             elif state == "identical":
-                fail(
-                    "candidate-mapping-unimplemented",
-                    f"{location}.candidate_mapping.state",
-                    "2A has no source-owned semantic comparator for identical mappings",
+                mapping = require_exact_keys(
+                    mapping,
+                    {"state", "candidate_predicate_id"},
+                    location=f"{location}.candidate_mapping",
+                    code="candidate-mapping",
+                )
+                target = require_stable_id(
+                    mapping["candidate_predicate_id"],
+                    location=f"{location}.candidate_mapping.candidate_predicate_id",
+                    code="candidate-mapping-target",
+                )
+                if target in identical_targets:
+                    fail(
+                        "duplicate-candidate-mapping-target",
+                        f"{location}.candidate_mapping.candidate_predicate_id",
+                        target,
+                    )
+                identical_targets.add(target)
+                require_identical_semantics(
+                    semantic_descriptors,
+                    current_predicate_id=predicate_id,
+                    candidate_predicate_id=target,
+                    mapping_location=f"{location}.candidate_mapping",
                 )
             else:
                 fail(
@@ -371,6 +478,13 @@ def validate_capability_coverage(rows: Any) -> list[dict[str, Any]]:
             "capability-universe",
             "manifest.capability_coverage",
             f"candidate coverage differs from source: missing={sorted(source_predicates() - candidate_ids)} extra={sorted(candidate_ids - source_predicates())}",
+        )
+    expected_current_ids = set(library_prod_gate.current_incumbent_predicate_inventory())
+    if current_ids != expected_current_ids:
+        fail(
+            "current-incumbent-universe",
+            "manifest.capability_coverage",
+            f"missing={sorted(expected_current_ids - current_ids)} extra={sorted(current_ids - expected_current_ids)}",
         )
     if rows != source_capability_coverage():
         fail(
@@ -1115,7 +1229,10 @@ def validate_receipt(
     if missing:
         fail("missing-receipt-field", location, f"missing fields {missing}")
     proof_kind = receipt["proof_kind"]
-    if proof_kind == "capability-fixture":
+    if isinstance(proof_kind, str) and proof_kind in {
+        "capability-fixture",
+        "current-incumbent-debug",
+    }:
         fail(
             "capability-not-lifecycle-evidence",
             f"{location}.proof_kind",
