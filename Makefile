@@ -25,7 +25,7 @@ export ROLLBACK_COMMIT CONFIRM_SERVICE_ID AW_SOURCE_HOME EXPECTED_PROFILE_VERSIO
 export EXPECTED_PROFILE_DIGEST APPLY
 
 test:
-	PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m pytest -q -m "not e2e"
+	uv run pytest -q -m "not e2e"
 
 test-server:
 	uv run pytest -q -m "not e2e"

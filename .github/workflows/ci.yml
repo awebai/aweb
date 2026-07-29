@@ -1,0 +1,90 @@
+name: Library CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  AW_VERSION: "1.34.0"
+
+concurrency:
+  group: library-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, test, and real-stack e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout Library
+        uses: actions/checkout@v7
+        with:
+          path: library
+
+      - name: Resolve the pinned aweb source
+        id: aweb-ref
+        working-directory: library
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+
+          sources = tomllib.load(open("pyproject.toml", "rb"))["tool"]["uv"]["sources"]
+          print("rev=" + sources["awid-service"]["rev"])
+          PY
+
+      - name: Checkout pinned aweb
+        uses: actions/checkout@v7
+        with:
+          repository: awebai/aweb
+          ref: ${{ steps.aweb-ref.outputs.rev }}
+          path: aweb
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: library/uv.lock
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Route Docker Hub pulls through a mirror
+        run: |
+          sudo mkdir -p /etc/docker
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Install locked Library dependencies
+        working-directory: library
+        run: uv sync --locked
+
+      - name: Install the pinned released aw client used by e2e
+        run: |
+          npm install --global "@awebai/aw@$AW_VERSION"
+          aw version
+
+      - name: Lint and type-check
+        working-directory: library
+        run: make lint
+
+      - name: Run unit and contract tests
+        working-directory: library
+        run: make test
+
+      - name: Run real-stack e2e
+        working-directory: library
+        run: make e2e
