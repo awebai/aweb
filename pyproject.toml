@@ -47,8 +47,8 @@ packages = ["src/library"]
 # it is pinned by git commit for reproducible (and Docker-buildable) installs.
 # aweb-naapp is the sibling toolkit repo, pinned the same way by git commit so the
 # Docker build fetches it without auth (the repo is public). pgdbm resolves from
-# PyPI. Local cross-repo development still imports the sibling checkouts via the
-# pytest pythonpath below.
+# PyPI. Local source overrides are explicit opt-ins through PYTHONPATH; tests use
+# the locked environment by default.
 [tool.uv.sources]
 awid-service = { git = "https://github.com/awebai/aweb.git", subdirectory = "awid", rev = "0de73deb73c133c7fb85ad3de3d5827616e19500" }
 aweb-naapp = { git = "https://github.com/awebai/aweb-naapp.git", rev = "4dbeb4bc08e941f44d91971bb8cbe7448e28a4ed" }
@@ -59,10 +59,13 @@ dev = [
   "pytest-asyncio>=1.2.0",
   "ruff>=0.14.0",
   "mypy>=1.18.0",
+  "httpx2>=2.9.1",
 ]
 
 [tool.pytest.ini_options]
-pythonpath = [".", "src", "../aweb-naapp/src", "../aweb/awid/src", "../pgdbm/src"]
+pythonpath = [".", "src"]
+filterwarnings = ["error"]
+addopts = ["--basetemp=.pytest_tmp"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [

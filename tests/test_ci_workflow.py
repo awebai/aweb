@@ -16,10 +16,14 @@ def _workflow() -> dict:
     return loaded
 
 
-def test_pytest_imports_checked_in_operational_modules_without_shell_state() -> None:
+def test_pytest_uses_locked_dependencies_and_rejects_warnings() -> None:
     pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pytest_options = pyproject["tool"]["pytest"]["ini_options"]
 
-    assert "." in pyproject["tool"]["pytest"]["ini_options"]["pythonpath"]
+    assert pytest_options["pythonpath"] == [".", "src"]
+    assert pytest_options["filterwarnings"] == ["error"]
+    assert pytest_options["addopts"] == ["--basetemp=.pytest_tmp"]
+    assert any(dependency.startswith("httpx2") for dependency in pyproject["dependency-groups"]["dev"])
 
 
 def test_make_test_uses_the_locked_uv_environment() -> None:
@@ -40,6 +44,14 @@ def test_ci_provides_postgres_so_database_tests_cannot_skip() -> None:
         for step in job["steps"]
     )
     assert "systemctl restart docker" not in commands
+
+
+def test_ci_break_glass_requires_visible_protection_restoration() -> None:
+    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "Lint, test, and real-stack e2e" in readme
+    assert "temporarily disable" in readme
+    assert "re-enable" in readme
 
 
 def test_ci_runs_every_make_gate_on_push_and_pull_request() -> None:
