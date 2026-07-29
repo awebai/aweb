@@ -21,6 +21,7 @@ import pytest
 from scripts import render_ops
 
 _SHA_A = "a" * 40
+_SHA_B = "b" * 40
 
 
 def health_payload(git_sha: str | None = _SHA_A) -> dict:
@@ -1490,6 +1491,43 @@ def stub_command_evidence(monkeypatch: pytest.MonkeyPatch) -> RecordingEvidence:
     return evidence
 
 
+def stub_exact_health_payload(
+    monkeypatch: pytest.MonkeyPatch, payload: dict
+) -> list[str]:
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    calls: list[str] = []
+
+    class Response:
+        status = 200
+        headers = Message()
+
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return self.url
+
+        def read(self, *args) -> bytes:
+            return body
+
+    def open_fixture(url: str, timeout: float, user_agent: str) -> Response:
+        calls.append(url)
+        return Response(url)
+
+    monkeypatch.setattr(render_ops, "open_health_url", open_fixture)
+    return calls
+
+
+def terminal_outcomes(evidence: RecordingEvidence) -> list[dict]:
+    return [event for event in evidence.events if event.get("probe_kind") == "run-outcome"]
+
+
 def common_args(config: render_ops.ProductionConfig) -> SimpleNamespace:
     return SimpleNamespace(
         apply=True,
@@ -1649,6 +1687,136 @@ def test_command_rollback_uses_exact_artifact(
             "allow_legacy_missing_build": True,
             "evidence": evidence,
         }
+    ]
+
+
+def test_command_rollback_real_surfaces_accept_exact_pinned_legacy_fixture(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
+) -> None:
+    evidence = stub_command_evidence(monkeypatch)
+    legacy_payload = {"status": "ok", "service": "library"}
+    health_calls = stub_exact_health_payload(monkeypatch, legacy_payload)
+    artifact = deploy("dep-rollback", _SHA_A, "deactivated")
+    current = deploy("dep-candidate", _SHA_B)
+    client = FakeClient(config, artifact, current=current)
+    monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
+    monkeypatch.setattr(
+        render_ops,
+        "wait_for_deploy",
+        lambda c, cfg, deploy_id, commit, timeout_seconds: deploy(deploy_id, commit),
+    )
+    args = common_args(config)
+    args.allow_legacy_missing_build_for = _SHA_A
+
+    result = render_ops.command_rollback(args)
+
+    assert client.posts == [("rollback", "dep-rollback")]
+    assert health_calls == [
+        f"{config.origin_url}{config.health_path}",
+        f"{config.public_url}{config.health_path}",
+    ]
+    assert result["health"] == {"origin": legacy_payload, "public": legacy_payload}
+    assert terminal_outcomes(evidence) == [
+        {"probe_kind": "run-outcome", "outcome": "passed", "stage": "rollback"}
+    ]
+
+
+@pytest.mark.parametrize("command_name", ["deploy", "verify"])
+def test_candidate_commands_real_surfaces_refuse_exact_legacy_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    command_name: str,
+) -> None:
+    evidence = stub_command_evidence(monkeypatch)
+    health_calls = stub_exact_health_payload(
+        monkeypatch, {"status": "ok", "service": "library"}
+    )
+    rollback_artifact = deploy(
+        "dep-rollback", _SHA_A, "live" if command_name == "deploy" else "deactivated"
+    )
+    current = (
+        rollback_artifact
+        if command_name == "deploy"
+        else deploy("dep-candidate", _SHA_B)
+    )
+    client = FakeClient(config, rollback_artifact, current=current)
+    monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
+    monkeypatch.setattr(render_ops, "verify_git_target", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        render_ops,
+        "wait_for_deploy",
+        lambda c, cfg, deploy_id, commit, timeout_seconds: deploy(deploy_id, commit),
+    )
+    args = common_args(config)
+    args.deploy_id = "dep-candidate"
+    command = render_ops.command_deploy if command_name == "deploy" else render_ops.command_verify
+
+    with pytest.raises(render_ops.OpsError, match="missing build identity"):
+        command(args)
+
+    assert health_calls == [f"{config.origin_url}{config.health_path}"]
+    assert terminal_outcomes(evidence) == [
+        {"probe_kind": "run-outcome", "outcome": "failed", "stage": command_name,
+         "error_class": "OpsError"}
+    ]
+
+
+def test_command_rollback_real_surfaces_refuse_legacy_fixture_without_pin(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
+) -> None:
+    evidence = stub_command_evidence(monkeypatch)
+    health_calls = stub_exact_health_payload(
+        monkeypatch, {"status": "ok", "service": "library"}
+    )
+    artifact = deploy("dep-rollback", _SHA_A, "deactivated")
+    current = deploy("dep-candidate", _SHA_B)
+    client = FakeClient(config, artifact, current=current)
+    monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
+    monkeypatch.setattr(
+        render_ops,
+        "wait_for_deploy",
+        lambda c, cfg, deploy_id, commit, timeout_seconds: deploy(deploy_id, commit),
+    )
+
+    with pytest.raises(render_ops.OpsError, match="missing build identity"):
+        render_ops.command_rollback(common_args(config))
+
+    assert client.posts == [("rollback", "dep-rollback")]
+    assert health_calls == [f"{config.origin_url}{config.health_path}"]
+    assert terminal_outcomes(evidence) == [
+        {"probe_kind": "run-outcome", "outcome": "failed", "stage": "rollback",
+         "error_class": "OpsError"}
+    ]
+
+
+def test_command_rollback_real_surfaces_refuse_null_fixture_even_when_pinned(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
+) -> None:
+    evidence = stub_command_evidence(monkeypatch)
+    health_calls = stub_exact_health_payload(
+        monkeypatch,
+        {"status": "ok", "service": "library", "build": {"git_sha": None}},
+    )
+    artifact = deploy("dep-rollback", _SHA_A, "deactivated")
+    current = deploy("dep-candidate", _SHA_B)
+    client = FakeClient(config, artifact, current=current)
+    monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
+    monkeypatch.setattr(
+        render_ops,
+        "wait_for_deploy",
+        lambda c, cfg, deploy_id, commit, timeout_seconds: deploy(deploy_id, commit),
+    )
+    args = common_args(config)
+    args.allow_legacy_missing_build_for = _SHA_A
+
+    with pytest.raises(render_ops.OpsError, match="null build identity"):
+        render_ops.command_rollback(args)
+
+    assert client.posts == [("rollback", "dep-rollback")]
+    assert health_calls == [f"{config.origin_url}{config.health_path}"]
+    assert terminal_outcomes(evidence) == [
+        {"probe_kind": "run-outcome", "outcome": "failed", "stage": "rollback",
+         "error_class": "OpsError"}
     ]
 
 

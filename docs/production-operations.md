@@ -177,9 +177,10 @@ Render metadata and health do not prove the functional release. Verification req
    `{status: "ok", service: "library", build: {git_sha: <full lowercase 40-hex SHA>}}`.
    The SHA must equal the approved commit. Render's documented `RENDER_GIT_COMMIT` is
    authoritative; `LIBRARY_GIT_SHA` is only a validated non-Render fallback, and
-   conflicting values make the service fail configuration validation. A null SHA means
-   no source identity was injected (normal in local development and true of legacy
-   production artifacts); it never means the artifact agrees with an approved commit.
+   conflicting values make the service fail configuration validation. A null SHA is a
+   current-shape local/uninjected failure state, normal only in local development; it never
+   means the artifact agrees with an approved commit. Deployed pre-AASR artifacts instead
+   omit `build` entirely and serve the exact two-key legacy shape described below.
 3. Public edge `/health` returns the same exact payload without URL drift, and its
    `build.git_sha` independently equals the approved commit. A different valid SHA is
    treated as bounded stale-transition evidence; malformed or null identity fails
