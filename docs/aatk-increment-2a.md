@@ -28,9 +28,11 @@ The driver records entered components and terminal assertions inside checked-in 
 cannot supply an observed path or outcome. Public negatives first pass origin, then fail at the
 exact public child. Failed transcripts use closed variants: four exact dedicated-negative
 recipes, nonclaiming incomplete/path/subject failures, and one deferred null-build control.
-Arbitrary exception classes cannot accompany a dedicated mutation. Output is bounded, outside
-the repository, operator-private, atomic no-replace, and bound to the clean source and captured
-config/body bytes.
+Arbitrary exception classes cannot accompany a dedicated mutation. Capability setup and
+finalization are inside the command's guarded evidence path: setup/no-replace/metadata failures
+and secondary capability-finalization failures still attempt exactly one terminal primary
+health outcome. Output is bounded, outside the repository, operator-private, atomic no-replace,
+and bound to the clean source and captured config/body bytes.
 
 ## Explicit nonclaims
 
@@ -63,4 +65,5 @@ surface and a strict three-key shape on the other, making equality independently
 | Failed transcript variants are closed | each dedicated negative has exact prerequisites, one terminal negative, and a stable top code | empty-child `TypeError` with a dedicated public mutation is rejected |
 | Cross-domain identity is not inferred | deferred current mappings remain representable | typed but unrelated `identical` runtime/surface/assertion mapping is rejected until a comparator exists |
 | Fixture evidence is bounded/private/no-replace | exact mode and captured-byte digest assertions | dirty source prevents output; second output creation is refused |
+| Primary evidence is terminal across capability failures | normal command emits one final primary outcome | pre-existing output, invalid metadata, and capability finish failure each still produce exactly one failed primary terminal |
 | Fixture output cannot authorize lifecycle | transcript schema validates as capability only | lifecycle receipt validation rejects `capability-fixture` |

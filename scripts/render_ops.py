@@ -1545,15 +1545,16 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
     deploy_id = require_deploy_id(args.deploy_id)
     commit = require_commit(args.commit)
     evidence = _command_health_evidence(args, label="verify-health", config=config)
-    capability = _command_capability_fixture(
-        args,
-        config=config,
-        deploy_id=deploy_id,
-        commit=commit,
-    )
-    if capability is not None:
-        capability.enter(CAPABILITY_COMPONENT_COMMAND)
+    capability: CapabilityFixtureRecorder | None = None
     try:
+        capability = _command_capability_fixture(
+            args,
+            config=config,
+            deploy_id=deploy_id,
+            commit=commit,
+        )
+        if capability is not None:
+            capability.enter(CAPABILITY_COMPONENT_COMMAND)
         validate_service(client.service(config.service_id), config)
         artifact = client.deploy_by_id(config.service_id, deploy_id)
         require_deploy(artifact, deploy_id=deploy_id, commit=commit)
@@ -1570,19 +1571,34 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
         if capability is not None:
             capability.finish(outcome="passed")
     except Exception as exc:
+        capability_finish_error: Exception | None = None
         if capability is not None:
-            capability.finish(
-                outcome="failed",
-                error_code=capability.failure_code(exc),
+            try:
+                capability.finish(
+                    outcome="failed",
+                    error_code=capability.failure_code(exc),
+                )
+            except Exception as finish_exc:
+                capability_finish_error = finish_exc
+        try:
+            evidence.finish(
+                {
+                    "probe_kind": "run-outcome",
+                    "outcome": "failed",
+                    "stage": "verify",
+                    "error_class": type(exc).__name__,
+                }
             )
-        evidence.finish(
-            {
-                "probe_kind": "run-outcome",
-                "outcome": "failed",
-                "stage": "verify",
-                "error_class": type(exc).__name__,
-            }
-        )
+        except Exception as primary_finish_error:
+            if capability_finish_error is not None:
+                primary_finish_error.add_note(
+                    f"capability finalization also failed: {type(capability_finish_error).__name__}"
+                )
+            raise
+        if capability_finish_error is not None:
+            exc.add_note(
+                f"capability finalization failed: {type(capability_finish_error).__name__}"
+            )
         raise
     evidence.finish({"probe_kind": "run-outcome", "outcome": "passed", "stage": "verify"})
     return {

@@ -2253,6 +2253,94 @@ def test_capability_reordered_parallel_components_fail_with_local_path_code(
     assert transcript["terminal"]["error_code"] == "capability-path-mismatch"
 
 
+def _primary_terminal_events(path: Path) -> tuple[list[dict], list[dict]]:
+    artifacts = [json.loads(item.read_text()) for item in sorted(path.glob("*.json"))]
+    terminals = [item for item in artifacts if item.get("probe_kind") == "run-outcome"]
+    return artifacts, terminals
+
+
+def test_preexisting_capability_output_terminalizes_real_primary_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+) -> None:
+    _stub_capability_identity(monkeypatch)
+    artifact = deploy("dep-candidate", "b" * 40)
+    monkeypatch.setattr(
+        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
+    )
+    capability = tmp_path / "preexisting-capability"
+    capability.mkdir(mode=0o700)
+    marker = capability / "retained"
+    marker.write_text("original")
+    marker.chmod(0o600)
+    primary = tmp_path / "primary"
+    args = _capability_verify_args(capability)
+    args.evidence_dir = str(primary)
+    with pytest.raises(render_ops.OpsError, match="must not already exist"):
+        render_ops.command_verify(args)
+    artifacts, terminals = _primary_terminal_events(primary)
+    assert len(terminals) == 1
+    assert terminals[0] is artifacts[-1]
+    assert terminals[0]["outcome"] == "failed"
+    assert terminals[0]["error_class"] == "OpsError"
+    assert marker.read_text() == "original"
+    assert list(capability.iterdir()) == [marker]
+
+
+def test_invalid_capability_metadata_terminalizes_real_primary_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+) -> None:
+    _stub_capability_identity(monkeypatch)
+    artifact = deploy("dep-candidate", "b" * 40)
+    monkeypatch.setattr(
+        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
+    )
+    capability = tmp_path / "invalid-capability"
+    primary = tmp_path / "invalid-primary"
+    args = _capability_verify_args(capability)
+    args.capability_correlation_id = "invalid correlation"
+    args.evidence_dir = str(primary)
+    with pytest.raises(render_ops.OpsError, match="correlation ID"):
+        render_ops.command_verify(args)
+    artifacts, terminals = _primary_terminal_events(primary)
+    assert len(terminals) == 1
+    assert terminals[0] is artifacts[-1]
+    assert terminals[0]["outcome"] == "failed"
+    assert not capability.exists()
+
+
+def test_capability_finish_failure_still_terminalizes_real_primary_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+) -> None:
+    _stub_capability_identity(monkeypatch)
+    _stub_capability_http(monkeypatch, config)
+    artifact = deploy("dep-candidate", "b" * 40)
+    monkeypatch.setattr(
+        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
+    )
+
+    def fail_finish(self, *, outcome: str, error_code: str = "") -> None:
+        raise render_ops.OpsError("forced capability finish failure")
+
+    monkeypatch.setattr(render_ops.CapabilityFixtureRecorder, "finish", fail_finish)
+    capability = tmp_path / "finish-failure-capability"
+    primary = tmp_path / "finish-failure-primary"
+    args = _capability_verify_args(capability)
+    args.evidence_dir = str(primary)
+    with pytest.raises(render_ops.OpsError, match="forced capability finish failure"):
+        render_ops.command_verify(args)
+    artifacts, terminals = _primary_terminal_events(primary)
+    assert len(terminals) == 1
+    assert terminals[0] is artifacts[-1]
+    assert terminals[0]["outcome"] == "failed"
+    assert terminals[0]["error_class"] == "OpsError"
+
+
 def test_capability_output_is_atomic_no_replace(
     monkeypatch: pytest.MonkeyPatch,
     config: render_ops.ProductionConfig,
