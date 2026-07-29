@@ -131,7 +131,11 @@ root_rule_casualties() {
   sed "s|^$dest/||" "$WORK/casualty-hits" | sort
 }
 
-# Writes the missing and changed paths to $WORK/loss; returns 1 on any difference.
+# Returns 0 when the mover arrives intact, 1 when it was compared and differed,
+# and 2 when the comparison could not be made at all. Callers must tell 1 from 2:
+# only 1 means $WORK/loss and $WORK/changed exist and describe a real difference.
+# Reading 2 as a difference is how a harness that cannot run reads as a passing
+# mutation test.
 compare_mover() {
   local src="$1" dest="$2" mutate="$3" label="$4" ref="$5" rules_root="${6:-$ROOT}"
   local scratch="$WORK/$label"
@@ -176,8 +180,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
       printf '  --   %-12s carries no ignore negations; nothing to strip\n' "$name"
       continue
     fi
-    if compare_mover "$src" "$dest" "strip-negations" "selftest-$label" "$ref"; then
+    compare_mover "$src" "$dest" "strip-negations" "selftest-$label" "$ref" && compared=0 || compared=$?
+    if [[ "$compared" -eq 0 ]]; then
       printf 'FAIL: %s still arrived intact with its ignore negations stripped; this check cannot see the loss it exists to catch\n' "$name" >&2
+      exit 1
+    fi
+    if [[ "$compared" -ne 1 ]]; then
+      printf 'FAIL: %s could not be compared at all (status %s), so this arm proves nothing\n' \
+        "$name" "$compared" >&2
       exit 1
     fi
     root_rule_casualties "$src" "$dest" "$ref" > "$WORK/predicted"
@@ -210,8 +220,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
       printf '  --   %-12s tracks no symlinks; nothing to dereference\n' "$name"
       continue
     fi
-    if compare_mover "$src" "$dest" "deref-symlinks" "deref-$label" "$ref"; then
+    compare_mover "$src" "$dest" "deref-symlinks" "deref-$label" "$ref" && compared=0 || compared=$?
+    if [[ "$compared" -eq 0 ]]; then
       printf 'FAIL: %s arrived intact with its symlinks dereferenced; this check is blind to mode changes\n' "$name" >&2
+      exit 1
+    fi
+    if [[ "$compared" -ne 1 ]]; then
+      printf 'FAIL: %s could not be compared at all (status %s), so this arm proves nothing\n' \
+        "$name" "$compared" >&2
       exit 1
     fi
     if ! diff -u "$WORK/symlinks" "$WORK/changed" > "$WORK/deref.diff"; then
@@ -255,9 +271,15 @@ if [[ "${1:-}" == "--self-test" ]]; then
       printf '  --   %-12s the probe rule matches nothing it tracks\n' "$name"
       continue
     fi
-    if compare_mover "$src" "$dest" "none" "rootrule-$label" "$ref" "$aweb_rules"; then
+    compare_mover "$src" "$dest" "none" "rootrule-$label" "$ref" "$aweb_rules" && compared=0 || compared=$?
+    if [[ "$compared" -eq 0 ]]; then
       printf 'FAIL: %s arrived intact with a root rule matching %s of its files; this check does not see aweb'"'"'s own rules\n' \
         "$name" "$(wc -l < "$WORK/predicted-root" | tr -d ' ')" >&2
+      exit 1
+    fi
+    if [[ "$compared" -ne 1 ]]; then
+      printf 'FAIL: %s could not be compared at all (status %s), so this arm proves nothing\n' \
+        "$name" "$compared" >&2
       exit 1
     fi
     if ! diff -u "$WORK/predicted-root" "$WORK/loss" > "$WORK/rootrule.diff"; then
@@ -295,7 +317,16 @@ if [[ "${1:-}" == "--self-test" ]]; then
     printf '%s\n' "$notarepo_out" | tail -6 | sed 's/^/         /' >&2
     exit 1
   fi
-  printf '  ok   refuses when aweb'"'"'s ignore rules cannot be read, instead of reporting every file intact\n'
+  # A nonzero exit is not enough: the other three arms assert the identity of the
+  # failure and this one has to as well. Plenty of unrelated faults exit nonzero
+  # before build_scratch is ever reached - a missing mover, an unresolvable ref -
+  # and accepting those would make this arm green while testing nothing.
+  if ! grep -Fq 'aweb ignore rules were not applied' <<< "$notarepo_out"; then
+    printf 'FAIL: the check refused, but not because aweb'"'"'s ignore rules were unreadable, so this arm did not reach the guard. Its output was:\n' >&2
+    printf '%s\n' "$notarepo_out" | tail -6 | sed 's/^/         /' >&2
+    exit 1
+  fi
+  printf '  ok   refuses for the stated reason when aweb'"'"'s ignore rules cannot be read, instead of reporting every file intact\n'
 
   echo "self-test passed: the check goes red for a lost path, a changed mode, a new rule on aweb's side, and unreadable rules"
   echo
@@ -307,13 +338,17 @@ for mover in "${MOVERS[@]}"; do
   IFS=':' read -r src dest ref <<< "$mover"
   name="$(basename "$src")"
   label="${dest//\//-}"
-  if compare_mover "$src" "$dest" "none" "check-$label" "$ref"; then
+  compare_mover "$src" "$dest" "none" "check-$label" "$ref" && compared=0 || compared=$?
+  if [[ "$compared" -eq 0 ]]; then
     printf '  ok   %-12s -> %-14s %s tracked entries arrive intact\n' "$name" "$dest" "$MOVER_TRACKED"
-  else
+  elif [[ "$compared" -eq 1 ]]; then
     status=1
     printf '  LOST %-12s -> %-14s\n' "$name" "$dest"
     sed 's|^|         missing: |' "$WORK/loss"
     sed 's|^|         mode or content changed: |' "$WORK/changed"
+  else
+    status=1
+    printf '  ??   %-12s -> %-14s could not be compared; see the refusal above\n' "$name" "$dest"
   fi
 done
 
