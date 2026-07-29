@@ -442,6 +442,11 @@ func TestRetireTeamAgentWillNotReportRetiredWhileClaimsSurviveAMissingWorkspace(
 	if !strings.Contains(coordination.Detail, "in_progress") {
 		t.Fatalf("blocked coordination store does not say how to release them: %q", coordination.Detail)
 	}
+	// A count is not actionable on its own. The operator has to be able to find
+	// which tasks are holding the retirement open.
+	if !strings.Contains(coordination.Detail, "aw work active") {
+		t.Fatalf("blocked coordination store does not say where to find the claimed tasks: %q", coordination.Detail)
+	}
 }
 
 // The same path with no claims is a genuine convergence and must stay terminal,

@@ -331,6 +331,13 @@ func releaseCoordinationState(
 // the struct is shared with the already-claimed filter in aw work ready. The
 // count is what decides whether a retirement may call itself complete, so the
 // correctness of this path does not wait on that.
+//
+// Which tasks they are is answerable today by aw work active. Its query reads
+// task_claims with no join to workspaces (coordination/tasks_service.py
+// list_active_work), so it lists claims whose workspace has been deleted, and it
+// selects tasks with status in_progress - which is every claimed task, since a
+// claim exists only while its task is in_progress. So the set it shows and the
+// set counted here are the same set.
 func claimsHeldByAlias(ctx context.Context, client *aweb.Client, alias string) (held int, complete bool, err error) {
 	listCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -380,7 +387,7 @@ func coordinationOutcomeWithoutWorkspace(ctx context.Context, client *aweb.Clien
 			Store:  storeCoordination,
 			Result: storeBlocked,
 			Detail: fmt.Sprintf(
-				"released nothing: %s holds no workspace record but still holds %d task claim(s). The record they are keyed to is gone, so deleting it cannot release them. Move each claimed task out of in_progress, which releases every claim on it, then retire again.",
+				"released nothing: %s holds no workspace record but still holds %d task claim(s). The record they are keyed to is gone, so deleting it cannot release them. Run aw work active to see which tasks they are - it lists claims by alias and does not hide ones whose workspace is deleted - then move each out of in_progress, which releases every claim on it, and retire again.",
 				alias, held,
 			),
 		}
