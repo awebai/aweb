@@ -43,4 +43,6 @@ eyes are the point.
   mutating all links at once can be caught by a half-blind test. Break each link
   independently, restore it before mutating the next, and require the regression
   to fail at that exact surface for the intended reason rather than merely
-  returning nonzero.
+  returning nonzero. For fail-closed contracts, test the symmetric direction too:
+  enable each forbidden permissive path independently and require its dedicated
+  negative control to fail.
