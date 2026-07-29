@@ -55,8 +55,9 @@ eyes are the point.
   than leaking a language-level exception.
 - An internally consistent evidence record does not prove its provenance. An
   untrusted producer can copy or recompute source SHAs, digests, path IDs, and
-  terminal claims while forging the whole record. Without a trust anchor such
-  as a signed run envelope or controlled append-only ledger, label the output a
-  capability transcript rather than a receipt. Independently verify the actual
+  terminal claims while forging the whole record. Without an independently
+  established trust anchor, such as an envelope signed by a trusted runner or
+  an independently controlled append-only ledger, label the output a capability
+  transcript rather than a receipt. Independently verify the actual
   driver, observed subject path, and allowed substitutions; never infer them
   from caller-supplied fields.
