@@ -29,6 +29,10 @@ from urllib.parse import urlsplit
 RUNTIMES = ("claude-code", "pi")
 REQUIRED_PUBLIC_URL = "https://library.aweb.ai"
 REQUIRED_ORIGIN_URL = "https://library-02jf.onrender.com"
+REQUIRED_INCUMBENT_SERVICE_ID = "srv-d8qm4jvavr4c73dhrmgg"
+REQUIRED_INCUMBENT_DEPLOY_ID = "dep-d9koecdbedkc73b582vg"
+REQUIRED_INCUMBENT_COMMIT = "3376af7ee4a571488441794047018af94b06057f"
+REQUIRED_INCUMBENT_SHAPE = "library-materialize.pre-aasb.no-runtime-managed"
 REQUIRED_AW_PATH = Path("/opt/homebrew/bin/aw")
 REQUIRED_AW_SHA256 = "e546aa12294e61c95d02cd0a69a613b115ea72cc43f7716e193dc4ef342d6815"
 REQUIRED_AW_VERSION_OUTPUT = "aw 1.34.0\n  commit: 82d7ca0\n  built:  2026-07-27T20:23:38Z\n"
@@ -117,6 +121,63 @@ CANDIDATE_ONLY_POSTDEPLOY_PREDICATES = frozenset(
 def postdeploy_predicate_inventory() -> list[str]:
     """Return stable child IDs emitted by the candidate postdeploy executor."""
     return sorted(POSTDEPLOY_PREDICATES)
+
+
+_CURRENT_INCUMBENT_PATH_PREFIX = (
+    "make.prod-gate-current-incumbent",
+    "library-prod-gate.current-incumbent",
+)
+CURRENT_INCUMBENT_PREDICATE_PATHS: dict[str, tuple[str, ...]] = {}
+for _runtime in RUNTIMES:
+    _origin_component = f"library-prod-gate.materialize.origin.{_runtime}"
+    _public_component = f"library-prod-gate.materialize.public.{_runtime}"
+    for _predicate in (
+        f"origin-route.{_runtime}.dns-public-disjoint",
+        f"origin-route.{_runtime}.ambient-proxy-isolated",
+        f"origin-route.{_runtime}.no-post-start-dns",
+        f"origin-route.{_runtime}.kernel-peer-selected",
+        f"origin-route.{_runtime}.canonical-authority",
+        f"materialize.origin.{_runtime}.http-200",
+        f"materialize.origin.response-contract.{_runtime}",
+    ):
+        CURRENT_INCUMBENT_PREDICATE_PATHS[_predicate] = (
+            *_CURRENT_INCUMBENT_PATH_PREFIX,
+            "library-prod-gate.origin-route",
+            _origin_component,
+            _predicate,
+        )
+    for _predicate in (
+        f"materialize.public.{_runtime}.http-200",
+        f"materialize.response-contract.{_runtime}",
+        f"materialize.profile-pin.{_runtime}",
+    ):
+        CURRENT_INCUMBENT_PREDICATE_PATHS[_predicate] = (
+            *_CURRENT_INCUMBENT_PATH_PREFIX,
+            _public_component,
+            _predicate,
+        )
+    _continuation_predicate = f"materialize.public-continuation.{_runtime}.fatal"
+    CURRENT_INCUMBENT_PREDICATE_PATHS[_continuation_predicate] = (
+        *_CURRENT_INCUMBENT_PATH_PREFIX,
+        "library-prod-gate.origin-route",
+        _origin_component,
+        _public_component,
+        _continuation_predicate,
+    )
+CURRENT_INCUMBENT_PREDICATES = frozenset(CURRENT_INCUMBENT_PREDICATE_PATHS)
+
+
+def current_incumbent_predicate_inventory() -> list[str]:
+    """Return source-owned preplan IDs for AATK increment-2 mapping."""
+    return sorted(CURRENT_INCUMBENT_PREDICATES)
+
+
+def current_incumbent_predicate_paths() -> dict[str, list[str]]:
+    """Return each preplan predicate's exact ordered executor path."""
+    return {
+        predicate: list(CURRENT_INCUMBENT_PREDICATE_PATHS[predicate])
+        for predicate in current_incumbent_predicate_inventory()
+    }
 
 
 class GateError(RuntimeError):
@@ -870,6 +931,95 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
     return summaries
 
 
+def validate_current_incumbent_identity(args: argparse.Namespace) -> dict[str, str]:
+    expected = {
+        "incumbent_service_id": REQUIRED_INCUMBENT_SERVICE_ID,
+        "incumbent_deploy_id": REQUIRED_INCUMBENT_DEPLOY_ID,
+        "incumbent_commit": REQUIRED_INCUMBENT_COMMIT,
+    }
+    for field, required in expected.items():
+        if str(getattr(args, field, "") or "").strip() != required:
+            label = field.replace("_", "-")
+            raise GateError(f"current-incumbent {label} must be exactly {required}")
+    return {
+        "gate": "current-incumbent-identity",
+        "service_id": REQUIRED_INCUMBENT_SERVICE_ID,
+        "deploy_id": REQUIRED_INCUMBENT_DEPLOY_ID,
+        "commit": REQUIRED_INCUMBENT_COMMIT,
+        "shape": REQUIRED_INCUMBENT_SHAPE,
+    }
+
+
+def _current_incumbent_origin_predicates(runtime: str) -> list[str]:
+    return sorted(
+        predicate
+        for predicate in CURRENT_INCUMBENT_PREDICATES
+        if predicate.startswith(f"origin-route.{runtime}.")
+        or predicate in {
+            f"materialize.origin.{runtime}.http-200",
+            f"materialize.origin.response-contract.{runtime}",
+        }
+    )
+
+
+def _current_incumbent_public_predicates(runtime: str) -> list[str]:
+    return sorted(
+        {
+            f"materialize.public.{runtime}.http-200",
+            f"materialize.response-contract.{runtime}",
+            f"materialize.profile-pin.{runtime}",
+            f"materialize.public-continuation.{runtime}.fatal",
+        }
+    )
+
+
+def run_current_incumbent(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = [validate_current_incumbent_identity(args)]
+    for runtime in RUNTIMES:
+        with OriginConnectTunnel(
+            canonical_url=args.public_url, origin_url=args.origin_url
+        ) as origin_tunnel:
+            payload = raw_materialize(
+                REQUIRED_AW_PATH,
+                args.source_home,
+                args.public_url,
+                runtime,
+                root,
+                origin_tunnel=origin_tunnel,
+            )
+            summary = validate_recovery_payload(
+                payload,
+                runtime,
+                expected_version=args.expected_profile_version,
+                expected_digest=args.expected_profile_digest,
+            )
+            summary["gate"] = "raw-current-incumbent-origin"
+            summary["transport_route"] = "generated-origin-direct"
+            summary["transport_peer_ip"] = origin_tunnel.peer_ip
+            summary["predicate_ids"] = _current_incumbent_origin_predicates(runtime)
+            summaries.append(summary)
+    for runtime in RUNTIMES:
+        payload = raw_materialize(
+            REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root
+        )
+        summary = validate_recovery_payload(
+            payload,
+            runtime,
+            expected_version=args.expected_profile_version,
+            expected_digest=args.expected_profile_digest,
+        )
+        summary["gate"] = "raw-current-incumbent-public"
+        summary["predicate_ids"] = _current_incumbent_public_predicates(runtime)
+        summaries.append(summary)
+    summaries.append(
+        {
+            "gate": "current-incumbent-predicate-inventory",
+            "predicate_paths": current_incumbent_predicate_paths(),
+        }
+    )
+    return summaries
+
+
 def run_recovery(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     for runtime in RUNTIMES:
@@ -893,11 +1043,23 @@ def run_recovery(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("mode", choices=("candidate", "legacy-aasb"))
+    p.add_argument("mode", choices=("candidate", "legacy-aasb", "current-incumbent"))
     source_home = os.environ.get("AW_SOURCE_HOME")
     p.add_argument("--source-home", type=Path, default=Path(source_home) if source_home else None)
     p.add_argument("--public-url", default=REQUIRED_PUBLIC_URL)
     p.add_argument("--origin-url", default=REQUIRED_ORIGIN_URL)
+    p.add_argument(
+        "--incumbent-service-id",
+        default=os.environ.get("INCUMBENT_SERVICE_ID", ""),
+    )
+    p.add_argument(
+        "--incumbent-deploy-id",
+        default=os.environ.get("INCUMBENT_DEPLOY_ID", ""),
+    )
+    p.add_argument(
+        "--incumbent-commit",
+        default=os.environ.get("INCUMBENT_COMMIT", ""),
+    )
     p.add_argument(
         "--expected-profile-version",
         default=os.environ.get("EXPECTED_PROFILE_VERSION", ""),
@@ -924,6 +1086,8 @@ def main() -> int:
             raise GateError(
                 "EXPECTED_PROFILE_DIGEST/--expected-profile-digest must be sha256-pinned"
             )
+        if args.mode == "current-incumbent":
+            validate_current_incumbent_identity(args)
         verify_released_aw(REQUIRED_AW_PATH)
         if args.mode == "candidate":
             verify_file_artifact(
@@ -947,9 +1111,12 @@ def main() -> int:
             )
         with tempfile.TemporaryDirectory(prefix="library-prod-gate-") as temporary:
             root = Path(temporary)
-            summaries = (
-                run_candidate(args, root) if args.mode == "candidate" else run_recovery(args, root)
-            )
+            if args.mode == "candidate":
+                summaries = run_candidate(args, root)
+            elif args.mode == "current-incumbent":
+                summaries = run_current_incumbent(args, root)
+            else:
+                summaries = run_recovery(args, root)
         for summary in summaries:
             print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
         if args.mode == "candidate":

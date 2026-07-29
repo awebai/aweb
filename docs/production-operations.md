@@ -78,6 +78,7 @@ rollback artifact after starting the deploy.
 | `make prod-ops-test` | Mocked operations and gate tests; no network mutation. |
 | `make prod-status` | Read-only topology and current-live-deploy preflight. |
 | `make prod-health-client-proof ...` | Makes exactly two bounded canonical health requests: the known-blocked baseline UA must return 403 and the honest gate UA must return the exact 200 payload; persists both artifacts. |
+| `make prod-gate-current-incumbent ...` | Read-only semantic probe of the exact pinned pre-aasb incumbent: authenticated generated-origin then mandatory public materialization for both runtimes, validating only the pinned legacy response shape. It does not prove the asserted deploy is live or emit AATK receipts. |
 | `make prod-deploy ... APPLY=1` | Validates topology and rollback pin, fetches and verifies exact `origin/main`, starts a clear-cache deploy, waits for `live`, then waits boundedly for exact origin and public health readiness. |
 | `make prod-wait ...` | Restartable read-only wait for one exact deploy ID and commit. |
 | `make prod-verify ...` | Requires the exact deploy to be the sole live artifact, checks origin/public health, then runs generated-origin raw, public raw, released-client, and real-harness gates. |
@@ -281,6 +282,33 @@ audience rejection is not evidence that the product failed at the origin. The su
 origin probe instead keeps the canonical URL and audience and changes only the pinned
 socket route. Never add the generated origin as an allowed audience or weaken the
 canonical audience comparison.
+
+### Exact current-incumbent semantic probe
+
+`prod-gate-current-incumbent` exists so the AATK preplan system can later replay the same
+AATD transport and public-continuation semantics against untouched known-good production.
+It requires all three identity assertions on every invocation, with no drifting defaults:
+
+- service `srv-d8qm4jvavr4c73dhrmgg`;
+- deploy `dep-d9koecdbedkc73b582vg`;
+- commit `3376af7ee4a571488441794047018af94b06057f`.
+
+Any missing or different assertion fails before a functional request. The mode then uses
+the canonical signed URL through the numeric generated-origin route for `claude-code` and
+`pi`, followed by mandatory canonical-public materialization for both runtimes. Every
+response must match the exact pre-aasb fingerprint: the approved profile pin is present,
+while `runtime_kind` and `managed_set` are absent rather than empty. A public failure is
+fatal after origin success. Candidate mode remains separate and still requires exact
+candidate identity plus `runtime_kind`, positional `managed_set`, strict-client success,
+and real-harness success; incumbent compatibility never relaxes it.
+
+The target emits a source-owned current-incumbent predicate inventory and each predicate's
+exact ordered path. It deliberately does **not** query Render to prove that the asserted
+deploy is currently live, enforce same-path receipt execution, publish an AATK receipt,
+authorize a plan, or grant live-execution authority. Those identity, receipt,
+orchestration, and authority controls belong to later AATK enforcement. The mode and its
+legacy fingerprint expire when this exact incumbent can no longer be the serving or
+approved rollback artifact; do not repoint the constants to another artifact.
 
 ## Rollback and recovery
 

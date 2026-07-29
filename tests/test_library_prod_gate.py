@@ -5,6 +5,7 @@ import json
 import shutil
 import socket
 import socketserver
+import subprocess
 import threading
 from argparse import Namespace
 from pathlib import Path
@@ -35,6 +36,31 @@ def payload(runtime: str, *, managed: list[str] | None = None) -> dict:
             {"path": paths[2], "kind": "symlink", "target": "AGENTS.md"},
         ]
     }
+
+
+def legacy_payload(runtime: str) -> dict:
+    value = payload(runtime)
+    ref_entry = value["home_files"][0]
+    ref = json.loads(ref_entry["content_utf8"])
+    ref.pop("runtime_kind")
+    ref.pop("managed_set")
+    ref_entry["content_utf8"] = json.dumps(ref)
+    return value
+
+
+def current_incumbent_args(tmp_path: Path, **overrides) -> Namespace:
+    values = {
+        "source_home": tmp_path,
+        "public_url": "https://library.example",
+        "origin_url": "https://library-origin.example",
+        "expected_profile_version": EXPECTED_VERSION,
+        "expected_profile_digest": EXPECTED_DIGEST,
+        "incumbent_service_id": "srv-d8qm4jvavr4c73dhrmgg",
+        "incumbent_deploy_id": "dep-d9koecdbedkc73b582vg",
+        "incumbent_commit": "3376af7ee4a571488441794047018af94b06057f",
+    }
+    values.update(overrides)
+    return Namespace(**values)
 
 
 def test_candidate_requires_positional_managed_set() -> None:
@@ -94,12 +120,7 @@ def test_candidate_rejects_duplicates() -> None:
 
 
 def test_recovery_requires_known_old_fingerprint() -> None:
-    old = payload("pi")
-    ref_entry = old["home_files"][0]
-    ref = json.loads(ref_entry["content_utf8"])
-    ref.pop("runtime_kind")
-    ref.pop("managed_set")
-    ref_entry["content_utf8"] = json.dumps(ref)
+    old = legacy_payload("pi")
     summary = gate.validate_recovery_payload(
         old,
         "pi",
@@ -699,6 +720,262 @@ def test_candidate_cannot_pass_when_canonical_public_probe_fails(
         ("claude-code", True),
         ("pi", True),
         ("claude-code", False),
+    ]
+
+
+def test_current_incumbent_source_inventory_and_paths_are_exact() -> None:
+    expected = {
+        "materialize.origin.claude-code.http-200",
+        "materialize.origin.pi.http-200",
+        "materialize.origin.response-contract.claude-code",
+        "materialize.origin.response-contract.pi",
+        "materialize.public-continuation.claude-code.fatal",
+        "materialize.public-continuation.pi.fatal",
+        "materialize.public.claude-code.http-200",
+        "materialize.public.pi.http-200",
+        "materialize.response-contract.claude-code",
+        "materialize.response-contract.pi",
+        "materialize.profile-pin.claude-code",
+        "materialize.profile-pin.pi",
+        "origin-route.claude-code.dns-public-disjoint",
+        "origin-route.pi.dns-public-disjoint",
+        "origin-route.claude-code.ambient-proxy-isolated",
+        "origin-route.pi.ambient-proxy-isolated",
+        "origin-route.claude-code.no-post-start-dns",
+        "origin-route.pi.no-post-start-dns",
+        "origin-route.claude-code.kernel-peer-selected",
+        "origin-route.pi.kernel-peer-selected",
+        "origin-route.claude-code.canonical-authority",
+        "origin-route.pi.canonical-authority",
+    }
+    assert set(gate.current_incumbent_predicate_inventory()) == expected
+    postdeploy = set(gate.postdeploy_predicate_inventory())
+    assert not any(item.startswith("origin-route.") for item in postdeploy)
+    assert not any(item.startswith("materialize.origin.") for item in postdeploy)
+    assert {
+        "materialize.public.claude-code.http-200",
+        "materialize.public.pi.http-200",
+    } <= postdeploy
+    paths = gate.current_incumbent_predicate_paths()
+    assert set(paths) == expected
+    for predicate_id, path in paths.items():
+        assert path[0] == "make.prod-gate-current-incumbent"
+        assert path[1] == "library-prod-gate.current-incumbent"
+        assert path[-1] == predicate_id
+        assert len(path) == len(set(path))
+        runtime = "claude-code" if "claude-code" in predicate_id else "pi"
+        assert any(runtime in component for component in path[2:])
+
+
+def test_current_incumbent_identity_has_no_drifting_parser_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for key in ("INCUMBENT_SERVICE_ID", "INCUMBENT_DEPLOY_ID", "INCUMBENT_COMMIT"):
+        monkeypatch.delenv(key, raising=False)
+    args = gate.parser().parse_args(["current-incumbent"])
+    assert args.incumbent_service_id == ""
+    assert args.incumbent_deploy_id == ""
+    assert args.incumbent_commit == ""
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("incumbent_service_id", "srv-other"),
+        ("incumbent_deploy_id", "dep-other"),
+        ("incumbent_commit", "a" * 40),
+        ("incumbent_service_id", ""),
+        ("incumbent_deploy_id", ""),
+        ("incumbent_commit", ""),
+    ],
+)
+def test_current_incumbent_identity_mismatch_fails_before_functional_calls(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    calls: list[str] = []
+
+    def must_not_materialize(*args, **kwargs):
+        calls.append("materialize")
+        raise AssertionError("functional call ran before identity validation")
+
+    monkeypatch.setattr(gate, "raw_materialize", must_not_materialize)
+    args = current_incumbent_args(tmp_path, **{field: value})
+    with pytest.raises(gate.GateError, match=field.replace("_", "-")):
+        gate.run_current_incumbent(args, tmp_path)
+    assert calls == []
+
+
+def test_current_incumbent_runs_pinned_origin_then_mandatory_public_for_both_runtimes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    class FakeTunnel:
+        peer_ip = "192.0.2.10"
+
+        def __init__(self, *, canonical_url: str, origin_url: str) -> None:
+            assert canonical_url == "https://library.example"
+            assert origin_url == "https://library-origin.example"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_raw(aw_bin, source_home, public_url, runtime, root, *, origin_tunnel=None):
+        calls.append((runtime, origin_tunnel is not None))
+        return legacy_payload(runtime)
+
+    monkeypatch.setattr(gate, "OriginConnectTunnel", FakeTunnel)
+    monkeypatch.setattr(gate, "raw_materialize", fake_raw)
+    summaries = gate.run_current_incumbent(current_incumbent_args(tmp_path), tmp_path)
+    assert calls == [
+        ("claude-code", True),
+        ("pi", True),
+        ("claude-code", False),
+        ("pi", False),
+    ]
+    assert [summary["gate"] for summary in summaries] == [
+        "current-incumbent-identity",
+        "raw-current-incumbent-origin",
+        "raw-current-incumbent-origin",
+        "raw-current-incumbent-public",
+        "raw-current-incumbent-public",
+        "current-incumbent-predicate-inventory",
+    ]
+    assert summaries[0] == {
+        "gate": "current-incumbent-identity",
+        "service_id": "srv-d8qm4jvavr4c73dhrmgg",
+        "deploy_id": "dep-d9koecdbedkc73b582vg",
+        "commit": "3376af7ee4a571488441794047018af94b06057f",
+        "shape": "library-materialize.pre-aasb.no-runtime-managed",
+    }
+    assert summaries[1]["predicate_ids"] == [
+        "materialize.origin.claude-code.http-200",
+        "materialize.origin.response-contract.claude-code",
+        "origin-route.claude-code.ambient-proxy-isolated",
+        "origin-route.claude-code.canonical-authority",
+        "origin-route.claude-code.dns-public-disjoint",
+        "origin-route.claude-code.kernel-peer-selected",
+        "origin-route.claude-code.no-post-start-dns",
+    ]
+    assert summaries[3]["predicate_ids"] == [
+        "materialize.profile-pin.claude-code",
+        "materialize.public-continuation.claude-code.fatal",
+        "materialize.public.claude-code.http-200",
+        "materialize.response-contract.claude-code",
+    ]
+    assert summaries[-1]["predicate_paths"] == gate.current_incumbent_predicate_paths()
+    emitted = {
+        predicate_id
+        for summary in summaries[1:-1]
+        for predicate_id in summary["predicate_ids"]
+    }
+    assert emitted == set(gate.current_incumbent_predicate_inventory())
+
+
+@pytest.mark.parametrize(
+    ("failing_runtime", "expected_calls"),
+    [
+        (
+            "claude-code",
+            [
+                ("claude-code", True),
+                ("pi", True),
+                ("claude-code", False),
+            ],
+        ),
+        (
+            "pi",
+            [
+                ("claude-code", True),
+                ("pi", True),
+                ("claude-code", False),
+                ("pi", False),
+            ],
+        ),
+    ],
+)
+def test_current_incumbent_public_failure_is_fatal_per_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failing_runtime: str,
+    expected_calls: list[tuple[str, bool]],
+) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    class FakeTunnel:
+        peer_ip = "192.0.2.10"
+
+        def __init__(self, *, canonical_url: str, origin_url: str) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def injected_public_failure(
+        aw_bin, source_home, public_url, runtime, root, *, origin_tunnel=None
+    ):
+        is_origin = origin_tunnel is not None
+        calls.append((runtime, is_origin))
+        if not is_origin and runtime == failing_runtime:
+            raise gate.GateError(f"canonical public {runtime} failed")
+        return legacy_payload(runtime)
+
+    monkeypatch.setattr(gate, "OriginConnectTunnel", FakeTunnel)
+    monkeypatch.setattr(gate, "raw_materialize", injected_public_failure)
+    with pytest.raises(gate.GateError, match=f"canonical public {failing_runtime} failed"):
+        gate.run_current_incumbent(current_incumbent_args(tmp_path), tmp_path)
+    assert calls == expected_calls
+
+
+def test_current_incumbent_rejects_candidate_semantics_on_origin_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class FakeTunnel:
+        peer_ip = "192.0.2.10"
+
+        def __init__(self, *, canonical_url: str, origin_url: str) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(gate, "OriginConnectTunnel", FakeTunnel)
+    monkeypatch.setattr(gate, "raw_materialize", lambda *args, **kwargs: payload("claude-code"))
+    with pytest.raises(gate.GateError, match="not the known pre-fix behavior"):
+        gate.run_current_incumbent(current_incumbent_args(tmp_path), tmp_path)
+
+
+def test_current_incumbent_make_target_does_not_shell_interpolate_identity() -> None:
+    root = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(
+        [
+            "make",
+            "-n",
+            "prod-gate-current-incumbent",
+            "INCUMBENT_SERVICE_ID='; echo INJECTED; #'",
+            "INCUMBENT_DEPLOY_ID=dep-x",
+            f"INCUMBENT_COMMIT={'a' * 40}",
+        ],
+        cwd=root,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    assert "INJECTED" not in completed.stdout
+    assert completed.stdout.splitlines() == [
+        "uv run python scripts/library_prod_gate.py current-incumbent"
     ]
 
 

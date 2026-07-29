@@ -1,6 +1,7 @@
 .PHONY: test test-server lint compile run e2e e2e-up e2e-down api-serve api-stop \
 	prod-ops-test prod-status prod-health-client-proof prod-deploy prod-wait prod-verify prod-rollback prod-recovery \
-	prod-gate-candidate prod-gate-recovery aatk-predicate-inventory aatk-spec-check aatk-validate-preplan aatk-validate-release
+	prod-gate-candidate prod-gate-recovery prod-gate-current-incumbent \
+	aatk-predicate-inventory aatk-spec-check aatk-validate-preplan aatk-validate-release
 
 API_PORT ?= 8765
 PROD_CONFIG ?= ops/render-production.json
@@ -15,6 +16,9 @@ CONFIRM_SERVICE_ID ?=
 AW_SOURCE_HOME ?=
 EXPECTED_PROFILE_VERSION ?=
 EXPECTED_PROFILE_DIGEST ?=
+INCUMBENT_SERVICE_ID ?=
+INCUMBENT_DEPLOY_ID ?=
+INCUMBENT_COMMIT ?=
 ALLOW_LEGACY_MISSING_BUILD_FOR ?=
 APPLY ?= 0
 PROD_EVIDENCE_DIR ?=
@@ -25,7 +29,8 @@ AATK_EVIDENCE_INDEX ?=
 export PROD_CONFIG RENDER_ENV_FILE PROD_COMMIT PROD_DEPLOY_ID CURRENT_DEPLOY_ID CURRENT_COMMIT
 export ROLLBACK_DEPLOY_ID
 export ROLLBACK_COMMIT CONFIRM_SERVICE_ID AW_SOURCE_HOME EXPECTED_PROFILE_VERSION
-export EXPECTED_PROFILE_DIGEST ALLOW_LEGACY_MISSING_BUILD_FOR APPLY PROD_EVIDENCE_DIR
+export EXPECTED_PROFILE_DIGEST INCUMBENT_SERVICE_ID INCUMBENT_DEPLOY_ID INCUMBENT_COMMIT
+export ALLOW_LEGACY_MISSING_BUILD_FOR APPLY PROD_EVIDENCE_DIR
 export AATK_EVIDENCE_INDEX
 
 test:
@@ -101,6 +106,11 @@ prod-gate-candidate:
 
 prod-gate-recovery:
 	uv run python scripts/library_prod_gate.py legacy-aasb
+
+# Read-only semantic probe for the exact pre-aasb incumbent. It does not query Render
+# identity or authorize AATK receipts; later orchestration binds these asserted pins.
+prod-gate-current-incumbent:
+	uv run python scripts/library_prod_gate.py current-incumbent
 
 aatk-predicate-inventory:
 	uv run python scripts/aatk.py inventory
