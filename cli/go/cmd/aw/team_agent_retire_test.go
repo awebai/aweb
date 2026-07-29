@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	aweb "github.com/awebai/aw"
+	"github.com/awebai/aw/awid"
 )
 
 // retirementStores is a pair of stand-in stores that records the order it was
@@ -685,5 +689,83 @@ func TestRetirementRefusalNamesTheStatusRouteWhenNoRecordRemains(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "in_progress") {
 		t.Fatalf("refusal does not name the route that works without a record: %v", err)
+	}
+}
+
+// CALL SITE, through the real binary, for the coordination store.
+//
+// This exists because the rest of the Go suite cannot see the verification being
+// unwired from aw team remove-agent: every other test reaches the helper
+// directly, so removing the call from the command reds nothing. That leaves the
+// most destructive of the four sites - it deletes a workspace and releases its
+// claims, and it runs first - protected only by the OSS journey, which nothing
+// in CI obliges anyone to run.
+//
+// Naming a namespace that is not this team's must refuse before any write, so
+// the assertion is that no workspace delete was ever issued.
+func TestTeamRemoveAgentBinaryRefusesAForeignNamespaceBeforeDeletingAnything(t *testing.T) {
+	t.Parallel()
+
+	var deleteIssued bool
+	var mu sync.Mutex
+	aweb := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/workspaces/"):
+			deleteIssued = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id": "ws-1", "alias": "retiree",
+				"deleted_at": "2026-07-29T00:00:00Z", "identity_deleted": true,
+			})
+		case r.URL.Path == "/v1/workspaces":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workspaces": []map[string]any{{
+				"workspace_id": "11111111-2222-3333-4444-555555555555", "alias": "retiree",
+			}}, "has_more": false})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		}
+	}))
+
+	registry := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/members/retiree") {
+			// A local member: no address of its own, so the namespace that names
+			// it is the team's, which is acme.com and not evil.com.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id": "backend:acme.com", "certificate_id": "cert-retiree",
+				"member_did_key": "did:key:z6MkRetiree", "alias": "retiree",
+				"identity_scope": "local", "issued_at": "2026-07-29T00:00:00Z",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	pub, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, aweb.URL, "backend:acme.com", "operator", did, signingKey)
+
+	run := exec.CommandContext(ctx, bin, "team", "remove-agent", "evil.com/retiree",
+		"--team-id", "backend:acme.com", "--registry", registry.URL, "--json")
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+registry.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("remove-agent accepted a namespace that is not this team's\n%s", string(out))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if deleteIssued {
+		t.Fatalf("a workspace was deleted despite the named namespace not being this team's\n%s", string(out))
 	}
 }
