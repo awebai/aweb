@@ -97,154 +97,68 @@ class OASPinnedCheckoutContractTests(unittest.TestCase):
                 "",
             )
 
-    def test_materializer_refuses_symlink_target_without_touching_referent(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            repository = root / "upstream"
-            referent = root / "referent"
-            target = root / "cache-link"
-            pin_file = root / "pin.json"
-            repository.mkdir()
-            referent.mkdir()
-            sentinel = referent / "uncommitted-work"
-            sentinel.write_text("keep me\n", encoding="utf-8")
-            target.symlink_to(referent, target_is_directory=True)
-            pin_file.write_text(
-                json.dumps({"repository": str(repository), "commit": "1" * 40}) + "\n",
-                encoding="utf-8",
-            )
+    def test_materializer_refusal_guards_preserve_existing_bytes(self) -> None:
+        cases = (
+            ("symlink", "refusing symlinked OAS cache"),
+            ("missing-marker", "refusing to reset unowned directory"),
+            ("different-marker-repository", "cache marker names a different repository"),
+            ("wrong-origin", "origin is"),
+        )
+        for case, expected_error in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                expected_repository = str(root / "expected-upstream")
+                target = root / "cache"
+                pin_file = root / "pin.json"
 
-            result = subprocess.run(
-                [
-                    "node",
-                    str(PREPARE_SCRIPT),
-                    "--pin-file",
-                    str(pin_file),
-                    "--target",
-                    str(target),
-                ],
-                cwd=REPO_ROOT,
-                capture_output=True,
-                text=True,
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("refusing symlinked OAS cache", result.stderr)
-            self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
+                if case == "symlink":
+                    referent = root / "referent"
+                    referent.mkdir()
+                    sentinel = referent / "uncommitted-work"
+                    target.symlink_to(referent, target_is_directory=True)
+                else:
+                    subprocess.run(["git", "init", "-q", str(target)], check=True)
+                    sentinel = target / "uncommitted-work"
+                    if case != "missing-marker":
+                        marker_repository = (
+                            str(root / "different-upstream")
+                            if case == "different-marker-repository"
+                            else expected_repository
+                        )
+                        (target / ".git" / "aweb-oas-pin-cache.json").write_text(
+                            json.dumps({"repository": marker_repository}) + "\n",
+                            encoding="utf-8",
+                        )
+                    if case == "wrong-origin":
+                        subprocess.run(
+                            [
+                                "git", "-C", str(target), "remote", "add", "origin",
+                                str(root / "wrong-upstream"),
+                            ],
+                            check=True,
+                        )
 
-    def test_materializer_refuses_marker_for_different_repository_without_reset(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            target = root / "cache"
-            pin_file = root / "pin.json"
-            subprocess.run(["git", "init", "-q", str(target)], check=True)
-            marker = target / ".git" / "aweb-oas-pin-cache.json"
-            marker.write_text(
-                json.dumps({"repository": str(root / "different-upstream")}) + "\n",
-                encoding="utf-8",
-            )
-            sentinel = target / "uncommitted-work"
-            sentinel.write_text("keep me\n", encoding="utf-8")
-            pin_file.write_text(
-                json.dumps({"repository": str(root / "expected-upstream"), "commit": "1" * 40}) + "\n",
-                encoding="utf-8",
-            )
+                sentinel.write_text("keep me\n", encoding="utf-8")
+                pin_file.write_text(
+                    json.dumps({
+                        "repository": expected_repository,
+                        "commit": "1" * 40,
+                    }) + "\n",
+                    encoding="utf-8",
+                )
+                result = subprocess.run(
+                    [
+                        "node", str(PREPARE_SCRIPT), "--pin-file", str(pin_file),
+                        "--target", str(target),
+                    ],
+                    cwd=REPO_ROOT,
+                    capture_output=True,
+                    text=True,
+                )
 
-            result = subprocess.run(
-                [
-                    "node",
-                    str(PREPARE_SCRIPT),
-                    "--pin-file",
-                    str(pin_file),
-                    "--target",
-                    str(target),
-                ],
-                cwd=REPO_ROOT,
-                capture_output=True,
-                text=True,
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("cache marker names a different repository", result.stderr)
-            self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
-
-    def test_materializer_refuses_wrong_origin_without_reset(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            expected_repository = str(root / "expected-upstream")
-            target = root / "cache"
-            pin_file = root / "pin.json"
-            subprocess.run(["git", "init", "-q", str(target)], check=True)
-            subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(target),
-                    "remote",
-                    "add",
-                    "origin",
-                    str(root / "wrong-upstream"),
-                ],
-                check=True,
-            )
-            marker = target / ".git" / "aweb-oas-pin-cache.json"
-            marker.write_text(
-                json.dumps({"repository": expected_repository}) + "\n",
-                encoding="utf-8",
-            )
-            sentinel = target / "uncommitted-work"
-            sentinel.write_text("keep me\n", encoding="utf-8")
-            pin_file.write_text(
-                json.dumps({"repository": expected_repository, "commit": "1" * 40}) + "\n",
-                encoding="utf-8",
-            )
-
-            result = subprocess.run(
-                [
-                    "node",
-                    str(PREPARE_SCRIPT),
-                    "--pin-file",
-                    str(pin_file),
-                    "--target",
-                    str(target),
-                ],
-                cwd=REPO_ROOT,
-                capture_output=True,
-                text=True,
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("origin is", result.stderr)
-            self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
-
-    def test_materializer_refuses_an_unowned_existing_directory(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            upstream = root / "upstream"
-            target = root / "not-a-cache"
-            pin_file = root / "pin.json"
-            subprocess.run(["git", "init", "-q", str(upstream)], check=True)
-            subprocess.run(["git", "init", "-q", str(target)], check=True)
-            sentinel = target / "uncommitted-work"
-            sentinel.write_text("keep me\n", encoding="utf-8")
-            pin_file.write_text(
-                json.dumps({"repository": str(upstream), "commit": "1" * 40}) + "\n",
-                encoding="utf-8",
-            )
-
-            result = subprocess.run(
-                [
-                    "node",
-                    str(PREPARE_SCRIPT),
-                    "--pin-file",
-                    str(pin_file),
-                    "--target",
-                    str(target),
-                ],
-                cwd=REPO_ROOT,
-                capture_output=True,
-                text=True,
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("refusing to reset unowned directory", result.stderr)
-            self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected_error, result.stderr)
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
 
     def test_explicit_local_override_is_not_materialized_or_cleaned(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
