@@ -231,30 +231,43 @@ func TestDefaultTeamInstructionsReinjectCanonicalStartupDeferral(t *testing.T) {
 	}
 }
 
-func TestRootAgentInstructionsUseCoordinatorIntegrationWorkflow(t *testing.T) {
-	path := filepath.Join(cmdMonorepoRootForTest(t), "AGENTS.md")
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+func TestAwebProjectAndTeamInstructionsCarryCurrentIntegrationPolicy(t *testing.T) {
+	root := cmdMonorepoRootForTest(t)
+	readNormalized := func(rel string, beforeMarker bool) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(body)
+		if beforeMarker {
+			text = strings.SplitN(text, awDocsMarkerStart, 2)[0]
+		}
+		return strings.Join(strings.Fields(text), " ")
 	}
-	staticInstructions := strings.Join(strings.Fields(strings.SplitN(string(body), awDocsMarkerStart, 2)[0]), " ")
+
+	projectCopy := readNormalized("AGENTS.md", true)
+	teamAuthority := readNormalized("agents/instructions.md", false)
 	for _, want := range []string{
-		"The handoff is the branch",
-		"Agents never merge their branches to main",
-		"detached worktree based on `origin/main`",
-		"merge `origin/main` into their own branch",
-		"A team without a coordinator may use a different integration workflow",
+		"Ordinary single-repo work: merge it yourself.",
+		"merge your branch to main and merge main back into your branch",
+		"Ask the coordinator to integrate when the change spans repositories, cuts a release tag, or touches production tooling.",
+		"never merge work your reviewer has not ACKed",
+		"always merge `origin/main` into your branch before handing off",
 	} {
-		if !strings.Contains(staticInstructions, want) {
-			t.Errorf("%s static instructions missing %q", path, want)
+		if !strings.Contains(projectCopy, want) {
+			t.Errorf("project instruction copy missing %q", want)
+		}
+		if !strings.Contains(teamAuthority, want) {
+			t.Errorf("authoritative team instructions missing %q", want)
 		}
 	}
-	for _, stale := range []string{
-		"You merge your branch to main",
-		"You merge main back to your branch",
+	for _, want := range []string{
+		"Active team instructions are authoritative for this team's branch and integration workflow.",
+		"If a repository or profile copy disagrees, the active team instructions win and the copy is stale.",
 	} {
-		if strings.Contains(staticInstructions, stale) {
-			t.Errorf("%s static instructions retain self-merge guidance %q", path, stale)
+		if !strings.Contains(teamAuthority, want) {
+			t.Errorf("authoritative team instructions missing %q", want)
 		}
 	}
 }

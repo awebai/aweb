@@ -258,7 +258,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			t.Fatalf("first listed create agent home missing %s under agents/instances: %v", rel, err)
 		}
 	}
-	assertMaterializedHomeHasAwebCoordination(t, coordinatorHome)
+	assertMaterializedHomeHasAwebCoordination(t, coordinatorHome, "Use aw.")
 	if _, err := os.Readlink(filepath.Join(coordinatorHome, "CLAUDE.md")); err != nil {
 		t.Fatalf("coordinator claude-code home missing CLAUDE.md symlink: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			t.Fatalf("profile-bound roster home reviewer missing %s: %v", rel, err)
 		}
 	}
-	assertMaterializedHomeHasAwebCoordination(t, reviewerHome)
+	assertMaterializedHomeHasAwebCoordination(t, reviewerHome, "Use aw.")
 	if _, err := os.Lstat(filepath.Join(reviewerHome, "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("reviewer pi home unexpectedly has CLAUDE.md (first supported runtime_hints should choose pi), stat err=%v", err)
 	}
@@ -311,7 +311,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			t.Fatalf("profile-bound agent home missing %s: %v", rel, err)
 		}
 	}
-	assertMaterializedHomeHasAwebCoordination(t, agentHome)
+	assertMaterializedHomeHasAwebCoordination(t, agentHome, "Use aw.")
 	if _, err := os.Lstat(filepath.Join(agentHome, "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("auditor local-shell home unexpectedly has CLAUDE.md, stat err=%v", err)
 	}
@@ -398,9 +398,14 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	teamInstructions, err := os.ReadFile(filepath.Join(cmdMonorepoRootForTest(t), "agents", "instructions.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleProfilePolicy := "The handoff is the branch. Never merge your own work from main."
 	profileFiles := withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
 		{Path: "profile.yaml", ContentUTF8: "id: reviewer\nname: Reviewer\nversion: 0.1.0\nmission: Review work.\naccepted_work: [review]\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
-		{Path: "instructions.md", ContentUTF8: "Review carefully.\n"},
+		{Path: "instructions.md", ContentUTF8: "Review carefully.\n\n" + staleProfilePolicy + "\n"},
 	})
 	profileDigest := testLibraryProfilePayloadDigestForProfile(t, "reviewer", profileFiles)
 
@@ -473,7 +478,7 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "alias": "rev", "agent_id": "agent-rev", "workspace_id": "workspace-rev", "repo_id": "", "team_did_key": "did:key:z6MkiTeam"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/instructions/active":
-			_ = json.NewEncoder(w).Encode(map[string]any{"team_instructions_id": "instructions-1", "active_team_instructions_id": "instructions-1", "version": 1, "document": map[string]any{"body_md": "Use aw."}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_instructions_id": "instructions-1", "active_team_instructions_id": "instructions-1", "version": 1, "document": map[string]any{"body_md": string(teamInstructions)}})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-rev", "gracehosted.aweb.ai", "rev")
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
@@ -537,7 +542,14 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 			t.Fatalf("profile-bound agent home missing %s: %v", rel, err)
 		}
 	}
-	assertMaterializedHomeHasAwebCoordination(t, agentHome)
+	assertMaterializedHomeHasAwebCoordination(t, agentHome, "Active team instructions are authoritative for this team's branch and integration workflow.")
+	agentsBody, err := os.ReadFile(filepath.Join(agentHome, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(agentsBody), staleProfilePolicy) {
+		t.Fatalf("test fixture did not preserve the deliberately stale profile policy:\n%s", agentsBody)
+	}
 	// =pi runtime applied: the pi runtime must not write a claude-code CLAUDE.md.
 	if _, err := os.Lstat(filepath.Join(agentHome, "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("=pi runtime unexpectedly wrote CLAUDE.md, stat err=%v", err)
@@ -552,17 +564,24 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 	}
 }
 
-func assertMaterializedHomeHasAwebCoordination(t *testing.T, home string) {
+func assertMaterializedHomeHasAwebCoordination(t *testing.T, home, expectedBody string) {
 	t.Helper()
 	agents, err := os.ReadFile(filepath.Join(home, "AGENTS.md"))
 	if err != nil {
 		t.Fatalf("read AGENTS.md: %v", err)
 	}
 	text := string(agents)
-	for _, want := range []string{awDocsMarkerStart, "Use aw.", awDocsMarkerEnd} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("AGENTS.md missing coordination block %q:\n%s", want, text)
-		}
+	if strings.Count(text, awDocsMarkerStart) != 1 || strings.Count(text, awDocsMarkerEnd) != 1 {
+		t.Fatalf("AGENTS.md does not contain exactly one coordination marker pair:\n%s", text)
+	}
+	start := strings.Index(text, awDocsMarkerStart) + len(awDocsMarkerStart)
+	end := strings.Index(text, awDocsMarkerEnd)
+	if end < start {
+		t.Fatalf("AGENTS.md coordination markers are reversed:\n%s", text)
+	}
+	markedBody := strings.Join(strings.Fields(text[start:end]), " ")
+	if want := strings.Join(strings.Fields(expectedBody), " "); !strings.Contains(markedBody, want) {
+		t.Fatalf("AGENTS.md marked coordination block missing %q:\n%s", expectedBody, text)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".mcp.json")); !os.IsNotExist(err) {
 		t.Fatalf("materialized home unexpectedly has per-home channel .mcp.json: %v", err)
