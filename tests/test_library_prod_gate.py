@@ -241,6 +241,38 @@ def test_spoofed_same_version_aw_fails_artifact_identity(
         gate.verify_released_aw(fake)
 
 
+def test_wrong_interpreter_or_entrypoint_artifact_is_refused(tmp_path: Path) -> None:
+    fake = tmp_path / "fake"
+    fake.write_text("#!/bin/sh\necho fake\n")
+    fake.chmod(0o755)
+    for expected_path, expected_digest, label in (
+        (gate.REQUIRED_NODE_PATH, gate.REQUIRED_NODE_SHA256, "Node interpreter"),
+        (gate.REQUIRED_PI_PATH, gate.REQUIRED_PI_SHA256, "Pi entry script"),
+    ):
+        with pytest.raises(gate.GateError, match="path must be exactly"):
+            gate.verify_file_artifact(
+                fake,
+                expected_path=expected_path,
+                expected_sha256=expected_digest,
+                label=label,
+            )
+        with pytest.raises(gate.GateError, match="SHA-256"):
+            gate.verify_file_artifact(
+                fake,
+                expected_path=fake,
+                expected_sha256=expected_digest,
+                label=label,
+            )
+
+
+def test_claude_artifact_shape_is_native_macho(tmp_path: Path) -> None:
+    gate.verify_native_claude(gate.REQUIRED_CLAUDE_PATH)
+    script = tmp_path / "claude"
+    script.write_text("#!/bin/sh\n")
+    with pytest.raises(gate.GateError, match="native Mach-O"):
+        gate.verify_native_claude(script)
+
+
 def test_pi_harness_bypasses_fake_path_node(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -249,6 +281,7 @@ def test_pi_harness_bypasses_fake_path_node(
     (fake_bin / "node").write_text("#!/bin/sh\necho FAKE_NODE_INTERCEPTED_PI\n")
     (fake_bin / "node").chmod(0o755)
     monkeypatch.setenv("PATH", f"{fake_bin}:{gate.HARNESS_PATH}")
+    monkeypatch.setenv("UNREVIEWED_INTERCEPT", "must-not-pass")
     home = tmp_path / "home"
     ref_path = home / ".aw" / "profile" / "ref.json"
     ref_path.parent.mkdir(parents=True)
@@ -270,6 +303,7 @@ def test_pi_harness_bypasses_fake_path_node(
     def fake_run_checked(command, *, cwd, stdout, stderr, label, env=None):
         captured["command"] = command
         captured["path"] = env["PATH"]
+        captured["environment"] = env
         stdout.write_text("# Developer\n> Profile developer v0.1.8 · blueprint aweb.team v0.1.12\n")
 
     monkeypatch.setattr(gate, "run_checked", fake_run_checked)
@@ -287,6 +321,8 @@ def test_pi_harness_bypasses_fake_path_node(
     ]
     assert captured["path"] == gate.HARNESS_PATH
     assert str(fake_bin) not in captured["path"]
+    assert "UNREVIEWED_INTERCEPT" not in captured["environment"]
+    assert set(captured["environment"]) <= {*gate.HARNESS_ENV_KEYS, "PATH"}
 
 
 def test_clone_auth_home_removes_profile_and_delivery_state(tmp_path: Path) -> None:

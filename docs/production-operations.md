@@ -96,7 +96,9 @@ Render metadata and health do not prove the functional release. Verification req
 
 The harness artifact check has a deliberate boundary. It proves the exact reviewed
 Claude native executable and the exact Pi entry script, run by the exact reviewed Node
-interpreter through absolute paths and a controlled minimal `PATH`. This prevents
+interpreter through absolute paths and an allowlisted minimal environment and `PATH`.
+Claude's pinned artifact is separately verified as a native Mach-O executable with no
+interpreter lookup layer. These checks prevent
 accidental interpreter interception and half-installed operator environments. It does
 not claim per-run integrity of Pi's installed dependency tree; that tree is trusted as
 part of the reviewed package installation. This gate does not defend a compromised local
