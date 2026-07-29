@@ -134,7 +134,7 @@ verify_image() {
 # service directory as its context and its Dockerfile unchanged.
 run_pinned() {
   local layout="$WORK/pinned"
-  materialize "$layout"
+  materialize "$layout" || return 1
   echo "pinned: movers keep today's git pins; context stays the service directory"
 
   local status=0
@@ -149,7 +149,7 @@ run_pinned() {
 # Converting the pins to path sources forces the context up to the aweb root.
 run_path() {
   local layout="$WORK/path"
-  materialize "$layout"
+  materialize "$layout" || return 1
   echo "path: awid and aweb-naapp become in-repo path sources; context becomes the aweb root"
 
   # Without this, the context is the entire repository. aweb has no root
@@ -241,7 +241,7 @@ DOCKER
 # measurement never puts a real key into a build context.
 run_context() {
   local layout="$WORK/context"
-  materialize "$layout"
+  materialize "$layout" || return 1
   echo "context: what a root context sends, with and without a root .dockerignore"
 
   local planted="agents/instances/probe/.aw/signing.key"

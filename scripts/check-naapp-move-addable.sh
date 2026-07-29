@@ -137,9 +137,13 @@ compare_mover() {
   local scratch="$WORK/$label"
   local expected="$WORK/$label.expected" actual="$WORK/$label.actual"
 
-  build_scratch "$scratch" "$rules_root"
-  mover_index "$src" "$ref" > "$expected"
-  placed_index "$src" "$dest" "$scratch" "$mutate" "$ref" > "$actual"
+  # Each of these is checked explicitly. compare_mover is only ever evaluated as
+  # a condition, and that suppresses set -e for every function it calls, so a
+  # bare call here would discard the callee's refusal and carry on to compare
+  # against a scratch repo that has no ignore rules in it.
+  build_scratch "$scratch" "$rules_root" || return 2
+  mover_index "$src" "$ref" > "$expected" || return 2
+  placed_index "$src" "$dest" "$scratch" "$mutate" "$ref" > "$actual" || return 2
 
   local n_expected
   n_expected="$(wc -l < "$expected" | tr -d ' ')"
@@ -270,7 +274,30 @@ if [[ "${1:-}" == "--self-test" ]]; then
     exit 1
   fi
 
-  echo "self-test passed: the check goes red, and names the right files, for a lost path, a changed mode, and a new rule on aweb's side"
+  # The three arms above all assume aweb's ignore rules reached the scratch repo.
+  # If they do not, every file trivially survives and the comparison passes for
+  # exactly the reason build_scratch refuses to continue - so the refusal has to
+  # be shown to stop the run, not merely to print. Running a copy from a directory
+  # that is not a repository is how that state is reached in practice: it is what
+  # happens whenever someone runs the check from outside the checkout.
+  echo "self-test: with aweb's ignore rules unreachable, this check must refuse rather than report intact"
+  notarepo="$WORK/notarepo"
+  mkdir -p "$notarepo/scripts/lib"
+  cp "$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")" "$notarepo/scripts/"
+  cp "$ROOT/scripts/lib/naapp-movers.sh" "$notarepo/scripts/lib/"
+  if git -C "$notarepo" rev-parse --git-dir >/dev/null 2>&1; then
+    printf 'FAIL: %s is inside a git repository, so this arm cannot create the state it tests\n' "$notarepo" >&2
+    exit 1
+  fi
+  # Invoked without --self-test, or it would recurse.
+  if notarepo_out="$(bash "$notarepo/scripts/$(basename "${BASH_SOURCE[0]}")" 2>&1)"; then
+    printf 'FAIL: the check reported success with aweb'"'"'s ignore rules unreachable. Its output was:\n' >&2
+    printf '%s\n' "$notarepo_out" | tail -6 | sed 's/^/         /' >&2
+    exit 1
+  fi
+  printf '  ok   refuses when aweb'"'"'s ignore rules cannot be read, instead of reporting every file intact\n'
+
+  echo "self-test passed: the check goes red for a lost path, a changed mode, a new rule on aweb's side, and unreadable rules"
   echo
 fi
 
