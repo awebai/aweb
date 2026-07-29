@@ -26,6 +26,7 @@ export PROD_CONFIG RENDER_ENV_FILE PROD_COMMIT PROD_DEPLOY_ID CURRENT_DEPLOY_ID 
 export ROLLBACK_DEPLOY_ID
 export ROLLBACK_COMMIT CONFIRM_SERVICE_ID AW_SOURCE_HOME EXPECTED_PROFILE_VERSION
 export EXPECTED_PROFILE_DIGEST ALLOW_LEGACY_MISSING_BUILD_FOR APPLY PROD_EVIDENCE_DIR
+export AATK_EVIDENCE_INDEX
 
 test:
 	uv run pytest -q -m "not e2e"
@@ -108,9 +109,9 @@ aatk-spec-check:
 	uv run python scripts/aatk.py spec
 
 aatk-validate-preplan:
-	@[ -n "$(AATK_EVIDENCE_INDEX)" ] || { echo "AATK_EVIDENCE_INDEX is required"; exit 2; }
-	uv run python scripts/aatk.py preplan --index "$(AATK_EVIDENCE_INDEX)"
+	@[ -n "$$AATK_EVIDENCE_INDEX" ] || { echo "AATK_EVIDENCE_INDEX is required"; exit 2; }
+	uv run python scripts/aatk.py preplan --index "$$AATK_EVIDENCE_INDEX"
 
 aatk-validate-release:
-	@[ -n "$(AATK_EVIDENCE_INDEX)" ] || { echo "AATK_EVIDENCE_INDEX is required"; exit 2; }
-	uv run python scripts/aatk.py release --index "$(AATK_EVIDENCE_INDEX)"
+	@[ -n "$$AATK_EVIDENCE_INDEX" ] || { echo "AATK_EVIDENCE_INDEX is required"; exit 2; }
+	uv run python scripts/aatk.py release --index "$$AATK_EVIDENCE_INDEX"

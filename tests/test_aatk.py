@@ -245,6 +245,14 @@ def test_duplicate_predicate_row_is_rejected_before_set_collapse() -> None:
     )
 
 
+def test_lifecycle_index_path_is_exported_not_make_interpolated() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    lifecycle_recipes = makefile.split("aatk-validate-preplan:\n", 1)[1]
+    assert "export AATK_EVIDENCE_INDEX" in makefile
+    assert "$(AATK_EVIDENCE_INDEX)" not in lifecycle_recipes
+    assert lifecycle_recipes.count('"$$AATK_EVIDENCE_INDEX"') == 4
+
+
 def test_nonchecked_entrypoint_is_rejected() -> None:
     value = manifest()
     value["predicates"][0]["current_production"]["proof"]["make_target"] = "curl-production"
