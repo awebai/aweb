@@ -62,7 +62,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "../aweb-naapp/src", "../aweb/awid/src", "../pgdbm/src"]
+pythonpath = [".", "src", "../aweb-naapp/src", "../aweb/awid/src", "../pgdbm/src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [

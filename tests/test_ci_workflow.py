@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import yaml
@@ -13,6 +14,12 @@ def _workflow() -> dict:
     loaded = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     assert isinstance(loaded, dict)
     return loaded
+
+
+def test_pytest_imports_checked_in_operational_modules_without_shell_state() -> None:
+    pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "." in pyproject["tool"]["pytest"]["ini_options"]["pythonpath"]
 
 
 def test_make_test_uses_the_locked_uv_environment() -> None:
