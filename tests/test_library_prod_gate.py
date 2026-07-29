@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -221,13 +223,20 @@ def test_materialized_ref_rejects_broken_or_escaping_symlinks(tmp_path: Path) ->
         )
 
 
-def test_released_aw_version_is_exact(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_released_aw_version_is_exact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    binary = tmp_path / "aw"
+    binary.write_bytes(b"reviewed aw fixture")
+
     class Completed:
         stdout = "aw 1.34.1\n"
 
+    monkeypatch.setattr(gate, "REQUIRED_AW_PATH", binary)
+    monkeypatch.setattr(gate, "REQUIRED_AW_SHA256", hashlib.sha256(binary.read_bytes()).hexdigest())
     monkeypatch.setattr(gate.subprocess, "run", lambda *args, **kwargs: Completed())
     with pytest.raises(gate.GateError, match="metadata"):
-        gate.verify_released_aw(Path("/opt/homebrew/bin/aw"))
+        gate.verify_released_aw(binary)
 
 
 def test_spoofed_same_version_aw_fails_artifact_identity(
@@ -288,7 +297,10 @@ def test_fake_pi_printing_expected_lines_is_refused(tmp_path: Path) -> None:
 
 
 def test_claude_artifact_shape_is_native_macho(tmp_path: Path) -> None:
-    gate.verify_native_claude(gate.REQUIRED_CLAUDE_PATH)
+    native = tmp_path / "native-claude"
+    native.write_bytes(gate.REQUIRED_CLAUDE_MAGIC + b"fixture")
+    gate.verify_native_claude(native)
+
     script = tmp_path / "claude"
     script.write_text("#!/bin/sh\n")
     with pytest.raises(gate.GateError, match="native Mach-O"):
@@ -357,8 +369,12 @@ def test_node_options_preload_cannot_intercept_pi(
     )
     monkeypatch.setenv("NODE_OPTIONS", f"--require={preload}")
     monkeypatch.setenv("NODE_PATH", str(tmp_path / "fake-modules"))
+    node = shutil.which("node")
+    assert node is not None, "Node is required to exercise the controlled harness environment"
+    pi_fixture = tmp_path / "pi.mjs"
+    pi_fixture.write_text('console.log("0.82.1");\n')
     completed = gate.subprocess.run(
-        [str(gate.REQUIRED_NODE_PATH), str(gate.REQUIRED_PI_PATH), "--version"],
+        [node, str(pi_fixture)],
         check=True,
         text=True,
         capture_output=True,

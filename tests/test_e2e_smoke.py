@@ -320,9 +320,14 @@ def library() -> Iterator[RunningLibrary]:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=10)
-        if proc.returncode not in (0, -15, -9, None):
-            stdout = proc.stdout.read() if proc.stdout else ""
-            stderr = proc.stderr.read() if proc.stderr else ""
+        failed = proc.returncode not in (0, -15, -9, None)
+        stdout = proc.stdout.read() if failed and proc.stdout else ""
+        stderr = proc.stderr.read() if failed and proc.stderr else ""
+        if proc.stdout:
+            proc.stdout.close()
+        if proc.stderr:
+            proc.stderr.close()
+        if failed:
             raise RuntimeError(f"uvicorn exited with {proc.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}")
 
 

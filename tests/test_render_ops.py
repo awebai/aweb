@@ -1460,7 +1460,10 @@ def test_make_mutation_recipe_does_not_shell_interpolate_values() -> None:
         capture_output=True,
     )
     assert "INJECTED" not in completed.stdout
-    assert completed.stdout.splitlines() == [
+    recipe_lines = [
+        line for line in completed.stdout.splitlines() if not line.startswith("make[")
+    ]
+    assert recipe_lines == [
         "git fetch --quiet origin",
         "uv run python scripts/render_ops.py deploy",
     ]
