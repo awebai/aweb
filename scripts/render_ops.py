@@ -724,6 +724,8 @@ def _bounded_health_body(stream: Any) -> tuple[bytes, bool]:
 def verify_health(
     url: str,
     *,
+    expected_commit: str,
+    allow_legacy_missing_build: bool = False,
     timeout: float = HEALTH_REQUEST_TIMEOUT_SECONDS,
     user_agent: str = HEALTH_USER_AGENT,
     evidence: HealthEvidenceRun | None = None,
@@ -803,14 +805,36 @@ def verify_health(
         ) from exc
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise TransientHealthError(f"health check returned invalid JSON from {url}") from exc
-    if payload != {"status": "ok", "service": "library"}:
+    expected = require_commit(expected_commit, "expected health commit")
+    if payload == {"status": "ok", "service": "library"}:
+        if allow_legacy_missing_build:
+            return payload
+        raise OpsError(f"Library health returned missing build identity from {url}")
+    if not isinstance(payload, dict) or set(payload) != {"status", "service", "build"}:
         raise OpsError(f"unexpected Library health payload from {url}")
+    if payload["status"] != "ok" or payload["service"] != "library":
+        raise OpsError(f"unexpected Library health payload from {url}")
+    build = payload["build"]
+    if not isinstance(build, dict) or set(build) != {"git_sha"}:
+        raise OpsError(f"unexpected Library health build payload from {url}")
+
+    observed = build["git_sha"]
+    if observed is None:
+        raise OpsError(f"Library health returned null build identity from {url}")
+    if not isinstance(observed, str) or not COMMIT_RE.fullmatch(observed):
+        raise OpsError(f"Library health returned invalid build identity from {url}")
+    if observed != expected:
+        raise TransientHealthError(
+            f"Library health build mismatch from {url}: observed {observed}, expected {expected}"
+        )
     return payload
 
 
 def verify_health_surfaces(
     config: ProductionConfig,
     *,
+    expected_commit: str,
+    allow_legacy_missing_build: bool = False,
     evidence: HealthEvidenceRun | None = None,
     readiness_timeout: float = HEALTH_READINESS_TIMEOUT_SECONDS,
     retry_interval: float = HEALTH_RETRY_INTERVAL_SECONDS,
@@ -833,6 +857,8 @@ def verify_health_surfaces(
         try:
             origin = verify_health(
                 origin_url,
+                expected_commit=expected_commit,
+                allow_legacy_missing_build=allow_legacy_missing_build,
                 timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining),
                 evidence=evidence,
             )
@@ -841,9 +867,13 @@ def verify_health_surfaces(
                 raise TransientHealthError("health readiness deadline elapsed after origin check")
             public = verify_health(
                 public_url,
+                expected_commit=expected_commit,
+                allow_legacy_missing_build=allow_legacy_missing_build,
                 timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining),
                 evidence=evidence,
             )
+            if origin != public:
+                raise OpsError("origin and public Library health payloads differ")
             finished_at = monotonic()
             if finished_at > deadline:
                 raise TransientHealthError("health readiness deadline elapsed after public check")
@@ -949,7 +979,9 @@ def _command_health_evidence(
         "config_sha256": config.source_sha256,
         "service_id": config.service_id,
         "expected_commit": str(
-            getattr(args, "commit", "") or getattr(args, "rollback_commit", "")
+            getattr(args, "commit", "")
+            or getattr(args, "rollback_commit", "")
+            or getattr(args, "expected_commit", "")
         ),
     }
     return HealthEvidenceRun(Path(value), label=label, metadata=metadata)
@@ -957,11 +989,22 @@ def _command_health_evidence(
 
 def command_health_client_proof(args: argparse.Namespace) -> dict[str, Any]:
     config = ProductionConfig.load(Path(args.config))
+    expected_commit = require_commit(args.expected_commit, "expected health commit")
+    allow_legacy_missing_build = _legacy_missing_build_allowed(
+        args.allow_legacy_missing_build_for,
+        expected_commit=expected_commit,
+    )
     evidence = _command_health_evidence(args, label="health-client-proof", config=config)
     url = f"{config.public_url}{config.health_path}"
     proof_minute = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M")
     try:
-        verify_health(url, user_agent=BLOCKED_BASELINE_USER_AGENT, evidence=evidence)
+        verify_health(
+            url,
+            expected_commit=expected_commit,
+            allow_legacy_missing_build=allow_legacy_missing_build,
+            user_agent=BLOCKED_BASELINE_USER_AGENT,
+            evidence=evidence,
+        )
     except PermanentHealthHTTPError as exc:
         if exc.status != 403:
             evidence.finish(
@@ -994,7 +1037,13 @@ def command_health_client_proof(args: argparse.Namespace) -> dict[str, Any]:
         )
         raise OpsError("blocked baseline User-Agent did not return HTTP 403")
     try:
-        payload = verify_health(url, user_agent=HEALTH_USER_AGENT, evidence=evidence)
+        payload = verify_health(
+            url,
+            expected_commit=expected_commit,
+            allow_legacy_missing_build=allow_legacy_missing_build,
+            user_agent=HEALTH_USER_AGENT,
+            evidence=evidence,
+        )
     except Exception as exc:
         evidence.finish(
             {
@@ -1035,6 +1084,20 @@ def _confirm_apply(args: argparse.Namespace, config: ProductionConfig) -> None:
         raise OpsError("mutation refused: pass --apply (Makefile requires APPLY=1)")
     if args.confirm_service_id != config.service_id:
         raise OpsError("mutation refused: exact service-ID confirmation does not match")
+
+
+def _legacy_missing_build_allowed(value: str, *, expected_commit: str) -> bool:
+    """Temporary AASB bridge for exact pre-AASR artifacts.
+
+    Stop using it for preflight once the candidate is live; delete it after no pre-AASR
+    artifact remains an approved rollback target.
+    """
+    if not value:
+        return False
+    approved = require_commit(value, "legacy missing-build commit")
+    if approved != expected_commit:
+        raise OpsError("legacy missing-build commit does not match the approved target")
+    return True
 
 
 def command_status(args: argparse.Namespace) -> dict[str, Any]:
@@ -1084,7 +1147,7 @@ def command_deploy(args: argparse.Namespace) -> dict[str, Any]:
         finished = wait_for_deploy(client, config, deploy_id, commit, timeout_seconds=args.timeout)
         final_live = current_live(client.deploys(config.service_id))
         require_deploy(final_live, deploy_id=deploy_id, commit=commit)
-        health = verify_health_surfaces(config, evidence=evidence)
+        health = verify_health_surfaces(config, expected_commit=commit, evidence=evidence)
     except Exception as exc:
         evidence.finish(
             {
@@ -1123,7 +1186,7 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
             raise OpsError(f"expected deploy is not live: {artifact.get('status')}")
         live = current_live(client.deploys(config.service_id))
         require_deploy(live, deploy_id=deploy_id, commit=commit)
-        health = verify_health_surfaces(config, evidence=evidence)
+        health = verify_health_surfaces(config, expected_commit=commit, evidence=evidence)
     except Exception as exc:
         evidence.finish(
             {
@@ -1142,6 +1205,10 @@ def command_rollback(args: argparse.Namespace) -> dict[str, Any]:
     client, config = _client(args)
     _confirm_apply(args, config)
     rollback_commit = require_commit(args.rollback_commit, "rollback commit")
+    allow_legacy_missing_build = _legacy_missing_build_allowed(
+        args.allow_legacy_missing_build_for,
+        expected_commit=rollback_commit,
+    )
     rollback_id = require_deploy_id(args.rollback_deploy_id, "rollback deploy ID")
     current_commit = require_commit(args.current_commit, "current live commit")
     current_id = require_deploy_id(args.current_deploy_id, "current live deploy ID")
@@ -1166,7 +1233,12 @@ def command_rollback(args: argparse.Namespace) -> dict[str, Any]:
         )
         final_live = current_live(client.deploys(config.service_id))
         require_deploy(final_live, deploy_id=created_id, commit=rollback_commit)
-        health = verify_health_surfaces(config, evidence=evidence)
+        health = verify_health_surfaces(
+            config,
+            expected_commit=rollback_commit,
+            allow_legacy_missing_build=allow_legacy_missing_build,
+            evidence=evidence,
+        )
     except Exception as exc:
         evidence.finish(
             {
@@ -1188,6 +1260,11 @@ def parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("status")
     proof = sub.add_parser("health-client-proof")
+    proof.add_argument("--expected-commit", default=os.environ.get("CURRENT_COMMIT", ""))
+    proof.add_argument(
+        "--allow-legacy-missing-build-for",
+        default=os.environ.get("ALLOW_LEGACY_MISSING_BUILD_FOR", ""),
+    )
     proof.add_argument("--evidence-dir", default=os.environ.get("PROD_EVIDENCE_DIR", ""))
     deploy = sub.add_parser("deploy")
     deploy.add_argument("--commit", default=os.environ.get("PROD_COMMIT", ""))
@@ -1212,6 +1289,10 @@ def parser() -> argparse.ArgumentParser:
     rollback.add_argument("--current-deploy-id", default=os.environ.get("CURRENT_DEPLOY_ID", ""))
     rollback.add_argument("--current-commit", default=os.environ.get("CURRENT_COMMIT", ""))
     rollback.add_argument("--confirm-service-id", default=os.environ.get("CONFIRM_SERVICE_ID", ""))
+    rollback.add_argument(
+        "--allow-legacy-missing-build-for",
+        default=os.environ.get("ALLOW_LEGACY_MISSING_BUILD_FOR", ""),
+    )
     rollback.add_argument("--timeout", type=int, default=900)
     rollback.add_argument("--evidence-dir", default=os.environ.get("PROD_EVIDENCE_DIR", ""))
     rollback.add_argument("--apply", action="store_true", default=os.environ.get("APPLY") == "1")
