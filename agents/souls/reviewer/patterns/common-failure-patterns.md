@@ -39,3 +39,17 @@ eyes are the point.
   Compatibility exceptions must be layer-specific, artifact-and-commit pinned
   per invocation, forbidden on the candidate path, and carry an explicit
   artifact-based expiry condition.
+- When a guarantee depends on parallel surfaces or multiple pass-throughs,
+  mutating all links at once can be caught by a half-blind test. Break each link
+  independently, restore it before mutating the next, and require the regression
+  to fail at that exact surface for the intended reason rather than merely
+  returning nonzero. For fail-closed contracts, test the symmetric direction too:
+  enable each forbidden permissive path independently and require its dedicated
+  negative control to fail.
+- A validator that checks only for missing required fields is an open schema
+  wearing a typed label: it rejects incompleteness while accepting wrong types
+  and arbitrary authoritative-looking keys. Require exact key sets (including
+  explicit variant-specific keys), independently feed every declared field a
+  wrong type, and add unknown claim-like fields such as `passed`. Malformed
+  nested containers must return the validator's stable code and location rather
+  than leaking a language-level exception.
