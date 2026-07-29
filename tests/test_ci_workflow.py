@@ -34,6 +34,12 @@ def test_ci_provides_postgres_so_database_tests_cannot_skip() -> None:
     workflow = _workflow()
 
     assert any("postgres" in job.get("services", {}) for job in workflow["jobs"].values())
+    commands = "\n".join(
+        step.get("run", "")
+        for job in workflow["jobs"].values()
+        for step in job["steps"]
+    )
+    assert "systemctl restart docker" not in commands
 
 
 def test_ci_runs_every_make_gate_on_push_and_pull_request() -> None:
