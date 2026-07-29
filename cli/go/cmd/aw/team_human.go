@@ -150,16 +150,40 @@ var teamHumanRemoveAgentCmd = &cobra.Command{
 		"which store changed and which did not, rather than leaving an agent with no\n" +
 		"credential and claims nobody can clear. To revoke access immediately and\n" +
 		"accept that outcome, use `aw id team remove-member`.\n\n" +
-		"The result names what each store did. On a hosted team a revoke that revoked\n" +
-		"nothing is reported as what the service said, not as a statement about the\n" +
-		"certificate: the hosted service answers from its own membership records and\n" +
-		"may never consult the registry. Read the certificate state with\n" +
-		"`aw team agent-status`.\n\n" +
 		"Customer-controlled teams revoke with the local team controller key; hosted\n" +
-		"aweb.ai teams call the cloud-mediated controller revoke endpoint. On a\n" +
+		"aweb.ai teams call the cloud-mediated controller revoke endpoint.\n\n" +
+		"STATUS VALUES. These are a contract; branch on them rather than on the prose.\n" +
+		"Each says what its evidence supports, and the second column is the part that\n" +
+		"matters, because the defect this command was built to remove was a status word\n" +
+		"asserting more than the service had established.\n\n" +
+		"  status (whole retirement)\n" +
+		"    retired           every store reached the state retirement wants, and each\n" +
+		"                      one established it. Exit 0.\n" +
+		"    reported_retired  every store reached that state, but the certificate part\n" +
+		"                      rests on a service reporting a no-op. It does NOT mean no\n" +
+		"                      certificate exists. Exit 0. Confirm with agent-status.\n" +
+		"    incomplete        a store did not reach that state; the per-store results\n" +
+		"                      say which. Exit non-zero.\n\n" +
+		"  certificate_result\n" +
+		"    revoked                     this call revoked a certificate.\n" +
+		"    already_revoked             the registry stated the certificate exists and\n" +
+		"                                was already revoked. Only a registry says this;\n" +
+		"                                it is never inferred from an absence.\n" +
+		"    reported_nothing_to_revoke  the service reported it had nothing to revoke.\n" +
+		"                                This says NOTHING about whether a certificate\n" +
+		"                                exists: the hosted service answers from its own\n" +
+		"                                membership records and may never consult the\n" +
+		"                                registry, so a member holding a live certificate\n" +
+		"                                with no hosted record is reported this way.\n\n" +
+		"  per-store result: changed, unchanged, blocked, failed, not_attempted.\n" +
+		"    changed and unchanged are terminal; the other three are not.\n\n" +
+		"  claims_released is null when the server did not report a count, which is what\n" +
+		"    a server older than that field does. Null is not zero.\n\n" +
+		"Exit status answers one question only: did the request reach the service and get\n" +
+		"an answer. It never carries a claim about certificate state. So on a\n" +
 		"customer-controlled team, retiring a name that no longer resolves is an error\n" +
 		"rather than a no-op, because that answer is indistinguishable from a request\n" +
-		"that never reached the registry.",
+		"that never arrived - while a registry saying already-revoked is success.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanRemoveAgent,
 }

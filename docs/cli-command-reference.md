@@ -1106,17 +1106,46 @@ which store changed and which did not, rather than leaving an agent with no
 credential and claims nobody can clear. To revoke access immediately and
 accept that outcome, use `aw id team remove-member`.
 
-The result names what each store did. On a hosted team a revoke that revoked
-nothing is reported as what the service said, not as a statement about the
-certificate: the hosted service answers from its own membership records and
-may never consult the registry. Read the certificate state with
-`aw team agent-status`.
-
 Customer-controlled teams revoke with the local team controller key; hosted
-aweb.ai teams call the cloud-mediated controller revoke endpoint. On a
+aweb.ai teams call the cloud-mediated controller revoke endpoint.
+
+STATUS VALUES. These are a contract; branch on them rather than on the prose.
+Each says what its evidence supports, and the second column is the part that
+matters, because the defect this command was built to remove was a status word
+asserting more than the service had established.
+
+  status (whole retirement)
+    retired           every store reached the state retirement wants, and each
+                      one established it. Exit 0.
+    reported_retired  every store reached that state, but the certificate part
+                      rests on a service reporting a no-op. It does NOT mean no
+                      certificate exists. Exit 0. Confirm with agent-status.
+    incomplete        a store did not reach that state; the per-store results
+                      say which. Exit non-zero.
+
+  certificate_result
+    revoked                     this call revoked a certificate.
+    already_revoked             the registry stated the certificate exists and
+                                was already revoked. Only a registry says this;
+                                it is never inferred from an absence.
+    reported_nothing_to_revoke  the service reported it had nothing to revoke.
+                                This says NOTHING about whether a certificate
+                                exists: the hosted service answers from its own
+                                membership records and may never consult the
+                                registry, so a member holding a live certificate
+                                with no hosted record is reported this way.
+
+  per-store result: changed, unchanged, blocked, failed, not_attempted.
+    changed and unchanged are terminal; the other three are not.
+
+  claims_released is null when the server did not report a count, which is what
+    a server older than that field does. Null is not zero.
+
+Exit status answers one question only: did the request reach the service and get
+an answer. It never carries a claim about certificate state. So on a
 customer-controlled team, retiring a name that no longer resolves is an error
 rather than a no-op, because that answer is indistinguishable from a request
-that never reached the registry.
+that never arrived - while a registry saying already-revoked is success.
 
 Flags:
 - `--api-key string Team API key for hosted removal (overrides AWEB_API_KEY; workspace-bound API keys are rejected by hosted aweb)`

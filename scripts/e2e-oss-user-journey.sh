@@ -2250,7 +2250,10 @@ capture_success revoke_out "revoke_out" run_aw_in "$ALICE_DIR" id team remove-me
   --json
 
 REVOKE_STATUS="$(echo "$revoke_out" | jq_field status)"
-assert_eq "bob revoked" "removed" "$REVOKE_STATUS"
+# The certificate primitive reports what it did, not one word for every outcome:
+# revoked when it revoked something, no_active_certificate when the registry
+# stated there was nothing active to revoke.
+assert_eq "bob revoked" "revoked" "$REVOKE_STATUS"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -2265,6 +2268,49 @@ assert_eq "1 revocation" "1" "$revocation_count"
 active_certs="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
 active_count="$(echo "$active_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
 assert_eq "5 active certificates (alice, erin, eve, gsk, and nokey)" "5" "$active_count"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Phase 18b: Retiring an agent releases its claims, then revokes its certificate
+#
+# Every reading here comes from psql or from awid, never from the command under
+# test. A retirement command reporting on its own success is what this whole
+# change exists to stop trusting, and that applies to proving it too.
+# ---------------------------------------------------------------------------
+echo "=== Phase 18b: Retire nokey across both stores ==="
+
+NOKEY_WORKSPACE_ID="$(psql_scalar "SELECT workspace_id FROM aweb.workspaces WHERE team_id = 'devteam:test.local' AND alias = 'nokey' AND deleted_at IS NULL;")"
+assert_not_empty "nokey workspace id" "$NOKEY_WORKSPACE_ID"
+
+# Give nokey a claim to lose, and age its presence past the window that refuses
+# to delete a workspace still being used.
+psql_exec "INSERT INTO aweb.task_claims (team_id, workspace_id, alias, human_name, task_ref, claimed_at) VALUES ('devteam:test.local', '$NOKEY_WORKSPACE_ID', 'nokey', '', 'devteam-retire-1', NOW());"
+psql_exec "UPDATE aweb.workspaces SET last_seen_at = NOW() - INTERVAL '2 hours' WHERE workspace_id = '$NOKEY_WORKSPACE_ID';"
+
+claims_before="$(psql_scalar "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$NOKEY_WORKSPACE_ID';")"
+assert_eq "nokey holds a claim before retirement" "1" "$claims_before"
+
+capture_success retire_out "retire_out" run_aw_in "$ALICE_DIR" team remove-agent test.local/nokey \
+  --team-id devteam:test.local \
+  --json
+
+RETIRE_STATUS="$(echo "$retire_out" | jq_field status)"
+assert_eq "nokey retired" "retired" "$RETIRE_STATUS"
+
+# The load-bearing assertion: the rows are gone, read from the store itself.
+claims_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$NOKEY_WORKSPACE_ID';")"
+assert_eq "retirement released nokey's claim" "0" "$claims_after"
+
+workspace_deleted="$(psql_scalar "SELECT (deleted_at IS NOT NULL) FROM aweb.workspaces WHERE workspace_id = '$NOKEY_WORKSPACE_ID';")"
+assert_eq "retirement deleted nokey's workspace record" "t" "$workspace_deleted"
+
+# And the count the command reported agrees with what the store shows.
+retire_claims_released="$(echo "$retire_out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('claims_released'))" 2>/dev/null || echo "")"
+assert_eq "retirement reported the claim it released" "1" "$retire_claims_released"
+
+nokey_active_certs="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
+nokey_active_count="$(echo "$nokey_active_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
+assert_eq "4 active certificates after retiring nokey" "4" "$nokey_active_count"
 echo ""
 
 # ---------------------------------------------------------------------------
