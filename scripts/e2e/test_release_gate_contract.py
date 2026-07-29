@@ -25,6 +25,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 
+CHECKOUT_STEP = "      - uses: actions/checkout@v7\n"
+CHECKOUT_ON_MAIN = (
+    "      - uses: actions/checkout@v7\n        with:\n          ref: main\n\n"
+)
+
 STEP_START = re.compile(r"(?m)^      - ")
 STEP_CONDITION = re.compile(r"(?m)^        if:")
 STEP_CONTINUE_ON_ERROR = re.compile(r"(?m)^        continue-on-error:")
@@ -125,12 +130,26 @@ class ReleaseGateContractTests(unittest.TestCase):
             "continue-on-error would let the publish run after the gate failed",
         )
 
+        # The tree under the gate has to be the tree that gets published, which is
+        # what a tag push checks out by default. One checkout, taking that default,
+        # is the only arrangement in which that needs no further argument: a second
+        # checkout could replace the tested tree before the publish, and an explicit
+        # ref could name a different tree from the outset.
         checkouts = [i for i, step in enumerate(steps) if "actions/checkout" in step]
-        self.assertTrue(checkouts, "the job must check out the tagged commit")
+        self.assertEqual(
+            len(checkouts),
+            1,
+            "the job must check out once; a later checkout can replace the tested tree",
+        )
         self.assertLess(
-            min(checkouts),
+            checkouts[0],
             gate,
             "the gate must run against the checked-out tagged commit",
+        )
+        self.assertNotIn(
+            "ref:",
+            steps[checkouts[0]],
+            "the checkout must take the tag's own commit, not name a ref",
         )
 
         publishes = [
@@ -177,6 +196,15 @@ class ReleaseGateContractTests(unittest.TestCase):
                     gate_step,
                     gate_step.rstrip("\n") + "\n        continue-on-error: true\n\n",
                     1,
+                ),
+                # These two are the substitution the whole task exists to prevent:
+                # the gate runs, passes, and reports on a tree other than the one
+                # the tag points at. Neither changes the step ORDER.
+                "checkout pinned to main": workflow.replace(
+                    CHECKOUT_STEP, CHECKOUT_ON_MAIN, 1
+                ),
+                "second checkout of main after the gate": workflow.replace(
+                    gate_step, gate_step + CHECKOUT_ON_MAIN, 1
                 ),
                 "gate moved after the publish": workflow.replace(
                     gate_step, "", 1
