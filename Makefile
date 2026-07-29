@@ -14,7 +14,7 @@
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
 	release-all-check release-all-tag release-all-push \
 	publish-skills \
-	ship
+	cli-e2e ship-suites ship
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
@@ -566,19 +566,26 @@ release-all-check:
 # ran `make test` instead of the canonical comprehensive gate. Even
 # though GHA caught build failures downstream, the local gate should
 # be the source of truth before tag-push.
+cli-e2e:
+	COMPOSE_BAKE="$${LIBRARY_E2E_COMPOSE_BAKE:-}" $(MAKE) -C cli e2e
+
+# The suites ship runs after the build. None of them consumes another's output -
+# awid:release-test is built by release-awid-check and read by nothing else - so a
+# failure in one must not remove the evidence the others would have produced.
+# make stops a recipe at the first failing line, which is why these are handed to
+# a runner instead of being recipe lines.
+#
+# Assigned with := so the environment cannot change what the gate runs. A
+# deliberate demonstration overrides it on the command line, which make allows
+# and the environment does not.
+SHIP_SUITES := release-awid-check test-federation-e2e test-e2e cli-e2e
+
+ship-suites:
+	@MAKE="$(MAKE)" ./scripts/run-ship-suites.sh $(SHIP_SUITES)
+
 ship: release-all-check
 	@echo ""
-	@echo "=== Running awid release check ==="
-	$(MAKE) release-awid-check
-	@echo ""
-	@echo "=== Running federation e2e journey ==="
-	$(MAKE) test-federation-e2e
-	@echo ""
-	@echo "=== Running e2e user journey ==="
-	$(MAKE) test-e2e
-	@echo ""
-	@echo "=== Running profile/team/Library e2e ==="
-	COMPOSE_BAKE="$${LIBRARY_E2E_COMPOSE_BAKE:-}" $(MAKE) -C cli e2e
+	$(MAKE) ship-suites
 	@echo ""
 	@echo "=== ship: ALL pre-release checks passed ==="
 	@echo "    server:  $(SERVER_VERSION)"
