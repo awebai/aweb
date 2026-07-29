@@ -24,6 +24,39 @@ The Render API key is read from `~/.aweb-render/env`. The file must have mode `0
 contain exactly one nonempty `RENDER_API_KEY`. Commands never print the key, headers, or
 raw authenticated materialization responses.
 
+### Why `render.yaml` is not the production identity source
+
+The root `render.yaml` entered the repository unchanged with the initial scaffold
+(`c621010`), whose commit records that the Render file was copied from Folio and renamed.
+It still carries the inherited `library-api` / `oregon` template values; no later commit
+made those values a Library production-topology decision. They do not identify the live
+service.
+
+Do not use `render.yaml` to select a production target or derive a deploy plan. Production
+is `srv-d8qm4jvavr4c73dhrmgg`, named `library`, in `virginia`, with generated origin
+`https://library-02jf.onrender.com` and public edge `https://library.aweb.ai`, as pinned in
+`ops/render-production.json`. The checked-in operations validate that allowlist against
+Render before acting.
+
+Repository history does not establish whether the scaffold template was ever linked to
+the live Render service. Until that relationship is verified from sanitized live
+metadata, do not apply the template to production, delete it as presumed inert, or claim
+that changing it changes the existing service.
+
+### Credential-less topology boundary
+
+A credential-less reader can identify the pinned production target from this repository
+and can verify that both the generated origin and public edge serve the Library health
+payload. Those public surfaces and headers do not expose the Render region. Render's
+[documented automatic runtime metadata](https://render.com/docs/environment-variables#render-defined-environment-variables)
+exposes service identity and origin fields, but no service-region field; a second manually
+configured region string would be circular.
+
+Region drift is therefore checked at the credentialed operations boundary, by design.
+`make prod-status` reads the live Render API and fails closed unless every field in
+`ops/render-production.json` matches, including `virginia`. Run that preflight before any
+production operation; do not describe the public health response as region attestation.
+
 ## Required release record
 
 Before requesting production approval, record all of the following:

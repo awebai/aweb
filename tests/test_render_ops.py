@@ -14,6 +14,29 @@ import pytest
 from scripts import render_ops
 
 
+def test_repo_identifies_production_without_treating_render_blueprint_as_authority() -> None:
+    repo_root = Path(__file__).parents[1]
+    render_blueprint = (repo_root / "render.yaml").read_text(encoding="utf-8")
+    operations_doc = (repo_root / "docs" / "production-operations.md").read_text(
+        encoding="utf-8"
+    )
+    production = render_ops.ProductionConfig.load(repo_root / "ops" / "render-production.json")
+
+    assert "NOT the production topology authority" in render_blueprint
+    assert "Folio" in render_blueprint
+    assert "c621010" in render_blueprint
+    assert "ops/render-production.json" in render_blueprint
+    assert "Credential-less topology boundary" in operations_doc
+    for identity_value in (
+        production.service_id,
+        production.service_name,
+        production.region,
+        production.origin_url,
+        production.public_url,
+    ):
+        assert f"`{identity_value}`" in operations_doc
+
+
 @pytest.fixture
 def config(tmp_path: Path) -> render_ops.ProductionConfig:
     path = tmp_path / "production.json"

@@ -1,3 +1,10 @@
+# PRODUCTION WARNING: this file is NOT the production topology authority.
+# The service definition below is inherited unchanged from Folio in c621010.
+# It does not describe the current Library production service name or region. Do not use
+# it to identify a production target or build a production plan. The exact production
+# identity and fail-closed topology allowlist live in ops/render-production.json; see
+# docs/production-operations.md. Repository history does not establish whether this
+# template was ever linked to the live Render service, so do not apply it to production.
 services:
   - type: web
     name: library-api
