@@ -94,6 +94,14 @@ Render metadata and health do not prove the functional release. Verification req
    homes; a self-reported version string alone is insufficient.
 7. Real Claude Code and Pi harnesses load the generated title and provenance line.
 
+The harness artifact check has a deliberate boundary. It proves the exact reviewed
+Claude native executable and the exact Pi entry script, run by the exact reviewed Node
+interpreter through absolute paths and a controlled minimal `PATH`. This prevents
+accidental interpreter interception and half-installed operator environments. It does
+not claim per-run integrity of Pi's installed dependency tree; that tree is trusted as
+part of the reviewed package installation. This gate does not defend a compromised local
+machine that can also rewrite the Makefile or gate itself.
+
 Do not send an authenticated materialization request signed for the generated Render
 origin. Library validates the signed audience against its canonical public origin, so a
 401 at the generated origin is expected and must not be "fixed" by weakening audience

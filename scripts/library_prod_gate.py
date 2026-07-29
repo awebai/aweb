@@ -26,7 +26,12 @@ REQUIRED_AW_PATH = Path("/opt/homebrew/bin/aw")
 REQUIRED_AW_SHA256 = "e546aa12294e61c95d02cd0a69a613b115ea72cc43f7716e193dc4ef342d6815"
 REQUIRED_AW_VERSION_OUTPUT = "aw 1.34.0\n  commit: 82d7ca0\n  built:  2026-07-27T20:23:38Z\n"
 REQUIRED_CLAUDE_PATH = Path("/opt/homebrew/bin/claude")
+REQUIRED_CLAUDE_SHA256 = "8addc857f3fe64d5a0368af9ee50321b50afb4a6918ba3ef018ab84f5dbbe081"
 REQUIRED_PI_PATH = Path("/opt/homebrew/bin/pi")
+REQUIRED_PI_SHA256 = "af302f231437eaf6f37691bce4b34234fcb626bcb5eb3910d4fc3f6519bf78ca"
+REQUIRED_NODE_PATH = Path("/opt/homebrew/bin/node")
+REQUIRED_NODE_SHA256 = "70851490e028b3d699a8d6d4e1de909af2a989359ae807974c92af9c6580a8e8"
+HARNESS_PATH = "/opt/homebrew/bin:/usr/bin:/bin"
 IGNORED_AUTH_FILES = (
     "interaction-log.jsonl",
     "channel-delivered-ids.json",
@@ -227,9 +232,17 @@ def verify_released_aw(aw_bin: Path) -> None:
         )
 
 
-def run_checked(command: list[str], *, cwd: Path, stdout: Path, stderr: Path, label: str) -> None:
+def run_checked(
+    command: list[str],
+    *,
+    cwd: Path,
+    stdout: Path,
+    stderr: Path,
+    label: str,
+    env: dict[str, str] | None = None,
+) -> None:
     with stdout.open("wb") as out, stderr.open("wb") as err:
-        completed = subprocess.run(command, cwd=cwd, stdout=out, stderr=err, check=False)
+        completed = subprocess.run(command, cwd=cwd, stdout=out, stderr=err, check=False, env=env)
     if completed.returncode != 0:
         raise GateError(
             f"{label} exited {completed.returncode}; stderr was captured without printing"
@@ -360,7 +373,12 @@ def expected_provenance(ref_path: Path) -> str:
 
 
 def run_harness(
-    home: Path, runtime: str, root: Path, claude_bin: Path, pi_bin: Path
+    home: Path,
+    runtime: str,
+    root: Path,
+    claude_bin: Path,
+    pi_bin: Path,
+    node_bin: Path,
 ) -> dict[str, Any]:
     if runtime == "claude-code":
         command = [
@@ -375,6 +393,7 @@ def run_harness(
         ]
     else:
         command = [
+            str(node_bin),
             str(pi_bin),
             "--provider",
             "openai-codex",
@@ -391,7 +410,15 @@ def run_harness(
         ]
     stdout = root / f"harness-{runtime}.stdout"
     stderr = root / f"harness-{runtime}.stderr"
-    run_checked(command, cwd=home, stdout=stdout, stderr=stderr, label=f"{runtime} harness")
+    harness_env = {**os.environ, "PATH": HARNESS_PATH}
+    run_checked(
+        command,
+        cwd=home,
+        stdout=stdout,
+        stderr=stderr,
+        label=f"{runtime} harness",
+        env=harness_env,
+    )
     lines = [
         line.strip() for line in stdout.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
@@ -436,7 +463,16 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
         )
         homes[runtime] = home
     for runtime in RUNTIMES:
-        summaries.append(run_harness(homes[runtime], runtime, root, args.claude_bin, args.pi_bin))
+        summaries.append(
+            run_harness(
+                homes[runtime],
+                runtime,
+                root,
+                args.claude_bin,
+                args.pi_bin,
+                args.node_bin,
+            )
+        )
     return summaries
 
 
@@ -476,6 +512,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--aw-bin", type=Path, default=REQUIRED_AW_PATH)
     p.add_argument("--claude-bin", type=Path, default=REQUIRED_CLAUDE_PATH)
     p.add_argument("--pi-bin", type=Path, default=REQUIRED_PI_PATH)
+    p.add_argument("--node-bin", type=Path, default=REQUIRED_NODE_PATH)
     return p
 
 
@@ -493,6 +530,25 @@ def main() -> int:
                 "EXPECTED_PROFILE_DIGEST/--expected-profile-digest must be sha256-pinned"
             )
         verify_released_aw(args.aw_bin)
+        if args.mode == "candidate":
+            verify_file_artifact(
+                args.claude_bin,
+                expected_path=REQUIRED_CLAUDE_PATH,
+                expected_sha256=REQUIRED_CLAUDE_SHA256,
+                label="Claude Code binary",
+            )
+            verify_file_artifact(
+                args.pi_bin,
+                expected_path=REQUIRED_PI_PATH,
+                expected_sha256=REQUIRED_PI_SHA256,
+                label="Pi entry script",
+            )
+            verify_file_artifact(
+                args.node_bin,
+                expected_path=REQUIRED_NODE_PATH,
+                expected_sha256=REQUIRED_NODE_SHA256,
+                label="Node interpreter",
+            )
         with tempfile.TemporaryDirectory(prefix="library-prod-gate-") as temporary:
             root = Path(temporary)
             summaries = (

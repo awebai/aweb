@@ -241,6 +241,54 @@ def test_spoofed_same_version_aw_fails_artifact_identity(
         gate.verify_released_aw(fake)
 
 
+def test_pi_harness_bypasses_fake_path_node(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    (fake_bin / "node").write_text("#!/bin/sh\necho FAKE_NODE_INTERCEPTED_PI\n")
+    (fake_bin / "node").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{gate.HARNESS_PATH}")
+    home = tmp_path / "home"
+    ref_path = home / ".aw" / "profile" / "ref.json"
+    ref_path.parent.mkdir(parents=True)
+    ref_path.write_text(
+        json.dumps(
+            {
+                "profile_ref": "developer",
+                "profile_version": EXPECTED_VERSION,
+                "profile_digest": EXPECTED_DIGEST,
+                "runtime_kind": "pi",
+                "managed_set": [".aw/profile/ref.json"],
+                "source_blueprint_ref": "aweb.team",
+                "source_blueprint_version": "0.1.12",
+            }
+        )
+    )
+    captured = {}
+
+    def fake_run_checked(command, *, cwd, stdout, stderr, label, env=None):
+        captured["command"] = command
+        captured["path"] = env["PATH"]
+        stdout.write_text("# Developer\n> Profile developer v0.1.8 · blueprint aweb.team v0.1.12\n")
+
+    monkeypatch.setattr(gate, "run_checked", fake_run_checked)
+    gate.run_harness(
+        home,
+        "pi",
+        tmp_path,
+        gate.REQUIRED_CLAUDE_PATH,
+        gate.REQUIRED_PI_PATH,
+        gate.REQUIRED_NODE_PATH,
+    )
+    assert captured["command"][:2] == [
+        str(gate.REQUIRED_NODE_PATH),
+        str(gate.REQUIRED_PI_PATH),
+    ]
+    assert captured["path"] == gate.HARNESS_PATH
+    assert str(fake_bin) not in captured["path"]
+
+
 def test_clone_auth_home_removes_profile_and_delivery_state(tmp_path: Path) -> None:
     source = tmp_path / "source"
     destination = tmp_path / "destination"
