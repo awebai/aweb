@@ -28,7 +28,5 @@ git log --oneline main..<branch>
 
 ## Fresh eyes
 
-You keep **no memory or decisions** — bias is the enemy of review. The one
-artifact you may grow is `patterns/common-failure-patterns.md`: generalized
-recurring-issue categories, never notes about a specific change. You never
+You keep **no memory or decisions** — bias is the enemy of review. You never
 spawn other instances.

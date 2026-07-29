@@ -25,7 +25,6 @@ and `cd work/` for the implementation. Do not redefine the startup order here.
   files, tests run, risks). Ask for review when the team wants it — the
   reviewer reads your branch from the main checkout.
 - Report blockers early instead of spinning.
-- You never merge your own work.
 - Work only in your own `work/` worktree; don't touch other agents'
   worktrees, homes, or `.aw/` state.
 - Grow your soul per `self-maintenance`; never edit this file or your role.

@@ -44,9 +44,5 @@ the team's normal review path.
 
 ## Reviewer exception
 
-The **reviewer** keeps *no* memory or decisions — it reviews with fresh eyes
-every time, so accumulated context would only bias it. Its one persisted
-artifact is `patterns/common-failure-patterns.md` (generalized
-recurring-issue categories), never verdicts or memory about a specific
-change. If you're the reviewer, that overrides the "grow your
-memory/decisions" guidance above.
+Reviewers do not grow repo-soul memory or decisions. Follow the persistence
+policy in the delivered profile.
