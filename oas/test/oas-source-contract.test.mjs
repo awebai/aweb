@@ -65,7 +65,10 @@ test("a present non-file contract marker still produces the readable diagnostic"
   assert.doesNotMatch(result.stderr, /EISDIR|node:fs|check-oas-launch-environment-contract\.mjs:\d+/);
 });
 
-test("test-oas checks the launch-environment contract before starting assertions", () => {
+test("test-oas checks the launch-environment contract before runtime setup or assertions", () => {
   const makefile = readFileSync(join(REPO_ROOT, "Makefile"), "utf8");
-  assert.match(makefile, /^test-oas:\s+check-oas-launch-environment-contract$/m);
+  assert.match(
+    makefile,
+    /^test-oas:\s+check-oas-launch-environment-contract\s+build\s+test-node-deps$/m,
+  );
 });

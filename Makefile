@@ -193,8 +193,11 @@ prepare-oas-test-root:
 check-oas-launch-environment-contract: prepare-oas-test-root
 	@OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node scripts/check-oas-launch-environment-contract.mjs
 
-test-oas: check-oas-launch-environment-contract
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node --test oas/test/*.test.mjs
+# The real spawn seam validates both the aweb capability command and its selected
+# Pi runtime even with --no-launch. Use only tools built/locked by this checkout;
+# ambient developer installs must not decide whether the release test passes.
+test-oas: check-oas-launch-environment-contract build test-node-deps
+	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node --test oas/test/*.test.mjs
 
 test-oas-proof-helpers: prepare-oas-test-root
 	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_pinned_checkout.py

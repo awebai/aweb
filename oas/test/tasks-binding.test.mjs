@@ -93,7 +93,7 @@ test("real OAS spawn composes the aweb tasks integration into the instance", () 
     env: { ...process.env, PI_AGENTS_ROOT: agentsRoot },
     encoding: "utf8",
   });
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 0, [result.stderr, result.stdout].filter(Boolean).join("\n"));
   const document = JSON.parse(result.stdout);
   const spawned = document.schemaVersion === 1 ? document.result : document;
   assert.match(readFileSync(join(spawned.home, "AGENTS.md"), "utf8"), /## Tasks: aweb/);
