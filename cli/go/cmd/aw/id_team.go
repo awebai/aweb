@@ -2246,6 +2246,17 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	if certificateID == "" {
+		// The typed namespace is discarded here on purpose-for-now: the alias is
+		// resolved against the TEAM's namespace, because cross-namespace membership
+		// is real and the alias is the key within a team. What is missing is any
+		// check that the member the alias resolves to is the one the operator named,
+		// and the output then reports the typed address rather than the resolved one.
+		// aweb-aaum.7 owns that verification and will land it in one helper covering
+		// this site and the copy in team_human.go revokeTeamCertificate. Two copies
+		// until then, deliberately, because the correction does not exist yet and
+		// merging two wrong copies buys nothing.
+		// The add path in this file already does it correctly: runTeamAddMember binds
+		// memberDomain and passes it through to the namespace address lookup.
 		_, memberName, err := parseAddress(member)
 		if err != nil {
 			return err

@@ -2429,6 +2429,11 @@ func revokeTeamCertificate(ctx context.Context, domain, team, teamID, memberAddr
 	}
 	registryURL := resolveTeamRemoveRegistryURL(registry)
 
+	// Same deliberate gap as the copy in id_team.go runTeamRemoveMember: the typed
+	// namespace is discarded and the alias resolved against the team's own, with
+	// nothing checking that the member it resolves to is the one named. aweb-aaum.7
+	// owns the verification and covers both sites. This one matters more, because
+	// aw team remove-agent is the documented retirement path.
 	_, memberName, err := parseAddress(memberAddress)
 	if err != nil {
 		return certificateStoreResult{}, err
