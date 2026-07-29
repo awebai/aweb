@@ -12,15 +12,40 @@ CONTRIBUTING = REPO_ROOT / "docs" / "contributing.md"
 
 
 class ShipCIContractTests(unittest.TestCase):
+    def assert_ship_job_context(self, workflow: str) -> None:
+        jobs = workflow[workflow.index("jobs:\n") + len("jobs:\n") :]
+        ship = re.search(r"(?m)^  ship:\s*$", jobs)
+        self.assertIsNotNone(ship, "workflow must define jobs.ship")
+        remainder = jobs[ship.end() :]
+        next_job = re.search(r"(?m)^  [A-Za-z0-9_-]+:\s*$", remainder)
+        ship_block = remainder[: next_job.start()] if next_job else remainder
+        self.assertRegex(
+            ship_block,
+            r"(?m)^    name:\s*Comprehensive ship gate\s*$",
+            "jobs.ship.name must preserve the required status context",
+        )
+
     def test_workflow_runs_the_canonical_ship_gate_on_every_change(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
         self.assertRegex(workflow, r"(?m)^  pull_request:\s*$")
         self.assertRegex(workflow, r"(?m)^  push:\s*$")
         self.assertNotRegex(workflow, r"(?m)^  pull_request:\n\s+paths:")
-        self.assertIn("name: Comprehensive ship gate", workflow)
         self.assertIn("run: make ship", workflow)
         self.assertNotIn("run: make release-all-check", workflow)
+        self.assert_ship_job_context(workflow)
+
+        job_name = "    name: Comprehensive ship gate"
+        mutations = {
+            "missing job context": workflow.replace(f"{job_name}\n", "", 1),
+            "renamed job context": workflow.replace(
+                job_name, "    name: Renamed ship gate", 1
+            ),
+        }
+        for mutation_name, mutation in mutations.items():
+            with self.subTest(mutation=mutation_name):
+                with self.assertRaises(AssertionError):
+                    self.assert_ship_job_context(mutation)
 
     def test_workflow_materializes_exact_cross_repo_inputs(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
