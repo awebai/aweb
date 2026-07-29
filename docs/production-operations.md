@@ -145,10 +145,12 @@ workflow invokes the structural check directly.
 Runtime proof never lives in that manifest. A future run ledger is external, immutable,
 and bound to the manifest digest and exact candidate SHA. `make aatk-validate-preplan
 AATK_EVIDENCE_INDEX=...` and `make aatk-validate-release AATK_EVIDENCE_INDEX=...` are
-separate lifecycle validators. In the current first honest increment they both fail with
-`unenforced-obligation` and enumerate every deferred enforcement ID. Only static schema
-validation can pass. Therefore this increment cannot authorize a deployment plan or close
-a release, even if a syntactically complete fixture ledger is supplied.
+separate lifecycle validators. In the current first honest increment, a structurally valid
+fixture ledger reaches `unenforced-obligation` and enumerates every deferred enforcement
+ID; an invalid or missing ledger may correctly fail its own earlier structural check. The
+load-bearing invariant is that neither lifecycle validator can return success while a
+deferred ID remains. Only static schema validation can pass. Therefore this increment
+cannot authorize a deployment plan or close a release.
 
 Every predicate row structurally requires a typed positive, a same-declared-path faithful
 negative, strict postdeploy obligation, owner, rollback disposition, and machine expiry.

@@ -1,8 +1,8 @@
 {
   "postdeploy_entrypoint": {
     "executor_contracts": [
-      "scripts.render_ops.POSTDEPLOY_PREDICATES",
-      "scripts.library_prod_gate.POSTDEPLOY_PREDICATES"
+      "scripts.library_prod_gate.POSTDEPLOY_PREDICATES",
+      "scripts.render_ops.POSTDEPLOY_PREDICATES"
     ],
     "make_target": "prod-verify"
   },

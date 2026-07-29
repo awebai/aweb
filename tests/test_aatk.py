@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -186,6 +187,103 @@ def test_each_release_finding_sentinel_is_independently_rejected(sentinel: str) 
     )
 
 
+def test_service_object_rejects_untyped_identity() -> None:
+    value = manifest()
+    value["service"] = 123
+    assert_error("service-contract", "manifest.service", aatk.validate_manifest, value)
+
+
+def test_predicate_owner_rejects_untyped_value() -> None:
+    value = manifest()
+    value["predicates"][0]["owner"] = 123
+    assert_error(
+        "invalid-owner", "manifest.predicates[0].owner", aatk.validate_manifest, value
+    )
+
+
+def test_proof_object_rejects_unknown_authoritative_field() -> None:
+    value = manifest()
+    value["predicates"][0]["postdeploy"]["passed"] = True
+    assert_error(
+        "invalid-proof",
+        "manifest.predicates[0].postdeploy",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+def test_registry_owner_rejects_untyped_value() -> None:
+    value = manifest()
+    value["requirement_registry"][0]["owner"] = 123
+    assert_error(
+        "enforcement-registry",
+        "manifest.requirement_registry[0].owner",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+def test_expiry_condition_rejects_untyped_value() -> None:
+    value = manifest()
+    value["predicates"][0]["expiry"]["condition_code"] = 123
+    assert_error(
+        "expiry",
+        "manifest.predicates[0].expiry.condition_code",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+def test_candidate_absence_shape_rejects_untyped_value() -> None:
+    value = manifest()
+    row = row_by_id(value, "health.public.build-sha")
+    row["current_production"]["absence"]["incumbent_shape"] = 123
+    index = value["predicates"].index(row)
+    assert_error(
+        "candidate-only-absence",
+        f"manifest.predicates[{index}].current_production.absence.incumbent_shape",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "code", "location"),
+    [
+        (
+            lambda value: value["requirement_registry"][0].__setitem__("status", {}),
+            "enforcement-registry",
+            "manifest.requirement_registry[0].status",
+        ),
+        (
+            lambda value: value["predicates"][0]["current_production"].__setitem__(
+                "state", {}
+            ),
+            "current-state",
+            "manifest.predicates[0].current_production",
+        ),
+        (
+            lambda value: value["predicates"][0]["negative_controls"][0].__setitem__(
+                "polarity", {}
+            ),
+            "negative-contract",
+            "manifest.predicates[0].negative_controls[0].polarity",
+        ),
+        (
+            lambda value: value["predicates"][0]["expiry"].__setitem__("kind", {}),
+            "expiry",
+            "manifest.predicates[0].expiry.kind",
+        ),
+    ],
+)
+def test_malformed_nested_manifest_returns_typed_aatk_error(
+    mutate, code: str, location: str
+) -> None:
+    value = manifest()
+    mutate(value)
+    assert_error(code, location, aatk.validate_manifest, value)
+
+
 def test_blank_cell_is_rejected_with_exact_row_and_cell() -> None:
     value = manifest()
     value["predicates"][0]["owner"] = " "
@@ -251,6 +349,21 @@ def test_lifecycle_index_path_is_exported_not_make_interpolated() -> None:
     assert "export AATK_EVIDENCE_INDEX" in makefile
     assert "$(AATK_EVIDENCE_INDEX)" not in lifecycle_recipes
     assert lifecycle_recipes.count('"$$AATK_EVIDENCE_INDEX"') == 4
+
+
+def test_lifecycle_index_path_cannot_inject_a_shell_command(tmp_path: Path) -> None:
+    marker = tmp_path / "injected"
+    payload = f'{tmp_path}/missing"; touch {marker}; #'
+    completed = subprocess.run(
+        ["make", "aatk-validate-preplan", f"AATK_EVIDENCE_INDEX={payload}"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert not marker.exists()
+    assert "invalid-json" in completed.stderr
 
 
 def test_nonchecked_entrypoint_is_rejected() -> None:
@@ -445,6 +558,64 @@ def test_unrelated_failure_cannot_satisfy_a_dedicated_negative() -> None:
         mode="preplan",
         now=NOW,
     )
+
+
+def test_index_rejects_unknown_top_level_field() -> None:
+    value = manifest()
+    index = evidence_index(value)
+    index["authoritative_note"] = "passed"
+    assert_error(
+        "index-contract", "index", aatk.validate_index, value, index, mode="preplan", now=NOW
+    )
+
+
+def test_receipt_rejects_unknown_proof_field() -> None:
+    value = manifest()
+    index = evidence_index(value)
+    index["receipts"][0]["passed"] = True
+    assert_error(
+        "invalid-receipt",
+        "index.receipts[0]",
+        aatk.validate_index,
+        value,
+        index,
+        mode="preplan",
+        now=NOW,
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutate", "code", "location"),
+    [
+        (
+            lambda receipt: receipt.__setitem__("proof_kind", {}),
+            "proof-kind",
+            "index.receipts[0].proof_kind",
+        ),
+        (
+            lambda receipt: receipt.__setitem__("substitutions", [{}]),
+            "unapproved-substitution",
+            "index.receipts[0].substitutions",
+        ),
+        (
+            lambda receipt: receipt.__setitem__("terminal", []),
+            "nonterminal",
+            "index.receipts[0].terminal",
+        ),
+        (
+            lambda receipt: receipt.__setitem__("artifact", []),
+            "artifact",
+            "index.receipts[0].artifact",
+        ),
+    ],
+)
+def test_malformed_nested_receipt_returns_typed_aatk_error(
+    mutate, code: str, location: str
+) -> None:
+    value = manifest()
+    index = evidence_index(value)
+    mutate(index["receipts"][0])
+    assert_error(code, location, aatk.validate_index, value, index, mode="preplan", now=NOW)
 
 
 def test_duplicate_receipt_cannot_be_reused_as_another_proof() -> None:
