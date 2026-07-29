@@ -1,4 +1,4 @@
-name: Reproducible release gate
+name: Comprehensive ship gate
 
 on:
   push:
@@ -10,36 +10,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-all-check-${{ github.ref }}
+  group: ship-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  release-all-check:
+  ship:
+    name: Comprehensive ship gate
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+    timeout-minutes: 120
     env:
       PGHOST: localhost
       PGPORT: "5432"
@@ -49,10 +27,29 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
 
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout aweb
+        uses: actions/checkout@v7
         with:
           # Version guards and CLI release derivation inspect the full tag history.
           fetch-depth: 0
+          path: aweb
+
+      # These are the exact public inputs independently proven green by the CLI
+      # real-stack run on aweb e0284257. Advance them deliberately and review the
+      # resulting cross-repository change; never replace them with mutable main.
+      - name: Checkout pinned Library
+        uses: actions/checkout@v7
+        with:
+          repository: awebai/library
+          ref: 20c081aa9452fcd7e397cf1be18f6e50c79e8817
+          path: library
+
+      - name: Checkout pinned blueprints
+        uses: actions/checkout@v7
+        with:
+          repository: awebai/blueprints
+          ref: 0d9071aa88822f5c71277ad22acda0ed484bbd02
+          path: blueprints
 
       - uses: actions/setup-node@v6
         with:
@@ -66,11 +63,78 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: cli/go/go.mod
-          cache-dependency-path: cli/go/go.sum
+          go-version-file: aweb/cli/go/go.mod
+          cache-dependency-path: aweb/cli/go/go.sum
+
+      # OAS capability composition invokes `aw` during release-all-check. A
+      # developer machine usually has one globally, while a clean runner does
+      # not; build the reviewed checkout and make that exact binary discoverable.
+      - name: Build the CLI used by release seams
+        working-directory: aweb
+        run: |
+          make build
+          echo "$PWD/cli/go" >> "$GITHUB_PATH"
 
       - name: Install tmux for guarded launcher tests
         run: sudo apt-get update && sudo apt-get install -y tmux
 
-      - name: Run the complete release gate
-        run: make release-all-check
+      # Hosted runners share Docker Hub egress. Configure both the Docker daemon
+      # and the buildx builder before starting containers so every journey's
+      # direct pulls and the three-service Library build use the mirror.
+      - name: Route Docker Hub pulls through a mirror
+        run: |
+          sudo mkdir -p /etc/docker
+          echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+
+      - name: Expose GitHub Actions runtime for the buildx GHA cache
+        uses: crazy-max/ghaction-github-runtime@v4
+
+      # release-all-check expects host Postgres and Redis. Start them only after
+      # the daemon mirror is configured; restarting Docker after job-level
+      # service containers exist would silently remove their availability.
+      - name: Start release-test services
+        run: |
+          docker run --detach --name release-postgres \
+            --publish 5432:5432 \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_PASSWORD=postgres \
+            --env POSTGRES_DB=postgres \
+            --health-cmd 'pg_isready -U postgres -d postgres' \
+            --health-interval 2s --health-timeout 5s --health-retries 30 \
+            postgres:16
+          docker run --detach --name release-redis \
+            --publish 6379:6379 \
+            --health-cmd 'redis-cli ping' \
+            --health-interval 2s --health-timeout 5s --health-retries 30 \
+            redis:7
+          for container in release-postgres release-redis; do
+            for _ in $(seq 1 60); do
+              [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" == healthy ]] && break
+              sleep 1
+            done
+            [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" == healthy ]] || {
+              docker logs "$container" >&2
+              exit 1
+            }
+          done
+
+      - name: Run every canonical release journey
+        working-directory: aweb
+        env:
+          LIBRARY_E2E_LIBRARY_CONTEXT: ${{ github.workspace }}/library
+          LIBRARY_E2E_BLUEPRINT_SRC: ${{ github.workspace }}/blueprints/team
+          # Only the nested CLI/Library journey enables compose bake; the user
+          # and federation journeys retain their existing Docker semantics.
+          LIBRARY_E2E_COMPOSE_BAKE: "true"
+          LIBRARY_E2E_COMPOSE_OVERLAY: ${{ github.workspace }}/aweb/docker-compose.e2e.cache.yml
+          BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
+        run: make ship

@@ -1,4 +1,4 @@
-# CI-only overlay for .github/workflows/cli-e2e.yml.
+# CI-only overlay for the CLI e2e and comprehensive ship workflows.
 #
 # Routes the awid/aweb/library image builds through the GitHub Actions buildx
 # layer cache (type=gha) so a cold runner does not rebuild all three images from

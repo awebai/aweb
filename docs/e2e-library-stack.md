@@ -27,9 +27,15 @@ This harness depends on two checkouts sitting beside the aweb repo:
 
 - **`../library`** — the Library service. It is the build context for the
   `library` service. Override with `LIBRARY_E2E_LIBRARY_CONTEXT`.
-- **`../blueprints/team`** — the `aweb.team` blueprint (whatever version
-  the checkout holds) that the
-  seed publishes into Library. Override with `LIBRARY_E2E_BLUEPRINT_SRC`.
+- **`../blueprints/team`** — the `aweb.team` blueprint from the selected
+  checkout that the seed publishes into Library. Override with
+  `LIBRARY_E2E_BLUEPRINT_SRC`.
+
+The hosted `Comprehensive ship gate` does not consume mutable repository heads:
+it checks out Library and blueprints at the exact reviewed commits recorded in
+`.github/workflows/release-all-check.yml` and points these overrides at them.
+Sibling working checkouts remain the local default for deliberate leading-edge
+integration only.
 
 The expected layout is the standard sibling checkout:
 

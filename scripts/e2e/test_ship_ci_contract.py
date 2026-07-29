@@ -60,6 +60,11 @@ class ShipCIContractTests(unittest.TestCase):
         self.assertIn("mirror.gcr.io", workflow)
         self.assertIn("LIBRARY_E2E_COMPOSE_OVERLAY:", workflow)
         self.assertRegex(workflow, r"(?m)^    timeout-minutes:\s*\d+\s*$")
+        cli_build = workflow.index("\n          make build\n")
+        cli_path = workflow.index("$GITHUB_PATH")
+        ship_run = workflow.index("run: make ship")
+        self.assertLess(cli_build, cli_path)
+        self.assertLess(cli_path, ship_run)
 
         makefile = MAKEFILE.read_text(encoding="utf-8")
         ship = makefile[makefile.index("ship: release-all-check") :]

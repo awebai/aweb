@@ -161,6 +161,29 @@ for the pinned release result. Update the committed pin deliberately when the
 reviewed OAS seam advances; a clean first run requires network access to fetch the
 pinned commit, while later runs reuse and reset the repository-owned cache.
 
+## Mandatory comprehensive CI
+
+`make ship`, not `make test` or `make release-all-check`, is the canonical release
+proof. It includes the release and AWID packaging checks, the cross-server
+federation journey, the OSS user journey and its mutation guard, and the
+real-binary profile/team/Library journey. The `Comprehensive ship gate` workflow
+runs that exact target for every pull request and every push to `main`; no person
+chooses whether the journeys run.
+
+The workflow checks out Library and blueprints at the exact public commits in
+`.github/workflows/release-all-check.yml`. Advance either pin deliberately after
+proving the combined stack. Local `make ship` still accepts the sibling checkouts
+and `LIBRARY_E2E_LIBRARY_CONTEXT` / `LIBRARY_E2E_BLUEPRINT_SRC` overrides as
+additional leading-edge integration evidence, but mutable siblings are not the
+hosted release subject.
+
+A workflow that merely reports failure is capability, not enforcement. Repository
+protection must make `Comprehensive ship gate` a required status check, require a
+strict up-to-date branch, and apply to administrators. Observe the exact hosted
+check name and a successful run before enabling that rule: requiring a misspelled
+or never-reported context blocks every merge. Renaming the job therefore requires
+a coordinated protection update, never an isolated workflow edit.
+
 ## Vulnerability audits
 
 `make check-node-audit` and `make check-go-vulnerability-audit` audit the

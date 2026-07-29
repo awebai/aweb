@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
 	freshness check-go-vulnerability-audit check-node-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -50,6 +50,7 @@ help:
 	@echo "  test-channel-core Run channel-core tests"
 	@echo "  test-channel-core-process-guard Run the multi-process DeliveryStore guard (release path)"
 	@echo "  test-pi-extension Run pi-extension tests"
+	@echo "  test-ship-ci-contract Verify the canonical mandatory ship workflow"
 	@echo "  prepare-oas-test-root Materialize the clean committed OAS test pin"
 	@echo "  check-oas-launch-environment-contract Verify the pinned OAS seam dependency"
 	@echo "    opt-in local OAS: make test-oas OAS_TEST_ROOT=/path/to/local/oas"
@@ -91,7 +92,7 @@ help:
 build:
 	cd cli/go && $(MAKE) build
 
-test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version
+test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-ship-ci-contract test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
@@ -178,6 +179,9 @@ test-channel-core-process-guard:
 
 test-pi-extension:
 	cd pi-extension && npm test
+
+test-ship-ci-contract:
+	python3 scripts/e2e/test_ship_ci_contract.py
 
 prepare-oas-test-root:
 	@if [ "$(abspath $(OAS_TEST_ROOT))" = "$(abspath $(OAS_PINNED_ROOT))" ]; then \
@@ -520,7 +524,7 @@ ship: release-all-check
 	$(MAKE) test-e2e
 	@echo ""
 	@echo "=== Running profile/team/Library e2e ==="
-	$(MAKE) -C cli e2e
+	COMPOSE_BAKE="$${LIBRARY_E2E_COMPOSE_BAKE:-}" $(MAKE) -C cli e2e
 	@echo ""
 	@echo "=== ship: ALL pre-release checks passed ==="
 	@echo "    server:  $(SERVER_VERSION)"
