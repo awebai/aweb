@@ -19,4 +19,5 @@ The runtime meanings of declared path IDs, actual same-path invocation, receipt 
 immutability, separate incumbent/rollback identity semantics, lifecycle transitions, safe
 boundary execution, paid-provider obligations, and orchestrator mutation controls remain
 explicit deferred blockers. Tests and prose in this increment are not receipts and cannot
-satisfy those blockers.
+satisfy those blockers. The next deliberately non-authorizing capability layer is documented
+in `docs/aatk-increment-2a.md`.

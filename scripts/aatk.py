@@ -34,16 +34,15 @@ PROOF_FIELDS = {
     "safety_class",
     "allowed_substitutions",
 }
-IMPLEMENTED_ENFORCEMENT_IDS = frozenset(
-    {
-        "architecture.static-dynamic-separation",
-        "predicates.exact-universe",
-        "schema.typed-contracts",
-        "controls.structural-positive-negative-pair",
-        "candidate-only.structural-allowlist",
-        "validator.falsification",
-    }
-)
+ENFORCEMENT_HISTORY = {
+    "architecture.static-dynamic-separation": "increment-1",
+    "predicates.exact-universe": "increment-1",
+    "schema.typed-contracts": "increment-1",
+    "controls.structural-positive-negative-pair": "increment-1",
+    "candidate-only.structural-allowlist": "increment-1",
+    "validator.falsification": "increment-1",
+}
+IMPLEMENTED_ENFORCEMENT_IDS = frozenset(ENFORCEMENT_HISTORY)
 DEFERRED_ENFORCEMENT_IDS = frozenset(
     {
         "runtime.path-fidelity",
@@ -121,6 +120,30 @@ def source_predicates_by_executor() -> dict[str, list[str]]:
         ),
         "scripts.render_ops.POSTDEPLOY_PREDICATES": render_ops.postdeploy_predicate_inventory(),
     }
+
+
+def source_capability_coverage() -> list[dict[str, Any]]:
+    """Return exact source-owned coverage rows from the actual executors."""
+    rows = [
+        *library_prod_gate.aatk_predicate_coverage(),
+        *render_ops.aatk_predicate_coverage(),
+    ]
+    instrumented = {
+        str(row.get("id"))
+        for row in rows
+        if isinstance(row.get("obligations"), dict)
+        and set(row["obligations"].values()) == {"instrumented-capability"}
+    }
+    if instrumented != render_ops.CAPABILITY_FIXTURE_PREDICATES:
+        fail(
+            "capability-emitter-registration",
+            "source.capability_coverage",
+            f"coverage/emitter mismatch: coverage={sorted(instrumented)} emitter={sorted(render_ops.CAPABILITY_FIXTURE_PREDICATES)}",
+        )
+    return sorted(
+        rows,
+        key=lambda row: (str(row.get("domain")), str(row.get("id"))),
+    )
 
 
 def source_predicates() -> frozenset[str]:
@@ -237,6 +260,485 @@ def validate_proof_spec(value: Any, *, location: str, targets: frozenset[str]) -
     return value
 
 
+CAPABILITY_OBLIGATION_IDS = frozenset(
+    {
+        "runtime.path-fidelity",
+        "safety.boundary-invocation",
+        "controls.executed-same-path",
+    }
+)
+
+
+def validate_capability_coverage(rows: Any) -> list[dict[str, Any]]:
+    """Validate exact source-owned predicate-domain capability coverage."""
+    if not isinstance(rows, list) or not rows:
+        fail("capability-coverage", "manifest.capability_coverage", "must be a nonempty list")
+    seen: set[tuple[str, str]] = set()
+    candidate_ids: set[str] = set()
+    for index, raw_row in enumerate(rows):
+        location = f"manifest.capability_coverage[{index}]"
+        row = require_exact_keys(
+            raw_row,
+            {"domain", "id", "owner", "candidate_mapping", "obligations"},
+            location=location,
+            code="capability-coverage",
+        )
+        domain = row["domain"]
+        if not isinstance(domain, str) or domain not in {
+            "candidate-postdeploy",
+            "current-incumbent",
+        }:
+            fail("capability-domain", f"{location}.domain", "invalid predicate domain")
+        predicate_id = require_stable_id(
+            row["id"], location=f"{location}.id", code="capability-coverage"
+        )
+        require_stable_id(
+            row["owner"], location=f"{location}.owner", code="capability-coverage"
+        )
+        key = (domain, predicate_id)
+        if key in seen:
+            fail("duplicate-capability-predicate", f"{location}.id", str(key))
+        seen.add(key)
+        obligations = require_exact_keys(
+            row["obligations"],
+            CAPABILITY_OBLIGATION_IDS,
+            location=f"{location}.obligations",
+            code="capability-coverage",
+        )
+        for obligation_id, state in obligations.items():
+            if not isinstance(state, str) or state not in {
+                "deferred",
+                "instrumented-capability",
+            }:
+                fail(
+                    "capability-state",
+                    f"{location}.obligations.{obligation_id}",
+                    "must be deferred or instrumented-capability",
+                )
+        mapping = row["candidate_mapping"]
+        if domain == "candidate-postdeploy":
+            require_exact_keys(
+                mapping,
+                {"state"},
+                location=f"{location}.candidate_mapping",
+                code="candidate-mapping",
+            )
+            if mapping["state"] != "self":
+                fail(
+                    "candidate-mapping",
+                    f"{location}.candidate_mapping.state",
+                    "candidate predicates must map to self",
+                )
+            candidate_ids.add(predicate_id)
+        else:
+            if not isinstance(mapping, dict):
+                fail("candidate-mapping", f"{location}.candidate_mapping", "must be an object")
+            state = mapping.get("state")
+            if state == "deferred":
+                mapping = require_exact_keys(
+                    mapping,
+                    {"state", "blocked_obligation_ids"},
+                    location=f"{location}.candidate_mapping",
+                    code="candidate-mapping",
+                )
+                blocked = mapping["blocked_obligation_ids"]
+                if (
+                    not isinstance(blocked, list)
+                    or not blocked
+                    or not all(isinstance(item, str) for item in blocked)
+                    or len(blocked) != len(set(blocked))
+                    or not set(blocked) <= DEFERRED_ENFORCEMENT_IDS
+                ):
+                    fail(
+                        "candidate-mapping",
+                        f"{location}.candidate_mapping.blocked_obligation_ids",
+                        "must be unique deferred global obligation IDs",
+                    )
+            elif state == "identical":
+                fail(
+                    "candidate-mapping-unimplemented",
+                    f"{location}.candidate_mapping.state",
+                    "2A has no source-owned semantic comparator for identical mappings",
+                )
+            else:
+                fail(
+                    "candidate-mapping",
+                    f"{location}.candidate_mapping.state",
+                    "must be deferred or identical",
+                )
+    if candidate_ids != source_predicates():
+        fail(
+            "capability-universe",
+            "manifest.capability_coverage",
+            f"candidate coverage differs from source: missing={sorted(source_predicates() - candidate_ids)} extra={sorted(candidate_ids - source_predicates())}",
+        )
+    if rows != source_capability_coverage():
+        fail(
+            "capability-source-mismatch",
+            "manifest.capability_coverage",
+            "manifest coverage must exactly equal source emitter registration",
+        )
+    return rows
+
+
+def validate_capability_transcript(value: Any) -> dict[str, Any]:
+    """Validate an untrusted child capability transcript, never lifecycle evidence."""
+    transcript = require_exact_keys(
+        value,
+        {
+            "schema",
+            "transcript_class",
+            "driver",
+            "correlation_id",
+            "mutation_id",
+            "source",
+            "config_sha256",
+            "normalized_arguments",
+            "substitutions",
+            "observed_components",
+            "children",
+            "terminal",
+        },
+        location="capability",
+        code="capability-transcript",
+    )
+    if transcript["schema"] != "library.aatk-capability-transcript.v1":
+        fail("capability-transcript", "capability.schema", "unexpected schema")
+    if transcript["transcript_class"] != "capability-fixture":
+        fail(
+            "capability-transcript",
+            "capability.transcript_class",
+            "must be capability-fixture",
+        )
+    if transcript["driver"] != "render_ops.command_verify":
+        fail(
+            "capability-driver",
+            "capability.driver",
+            "increment 2A proves only render_ops.command_verify",
+        )
+    require_stable_id(
+        transcript["correlation_id"],
+        location="capability.correlation_id",
+        code="capability-transcript",
+    )
+    mutation_id = transcript["mutation_id"]
+    if mutation_id != "":
+        require_stable_id(
+            mutation_id,
+            location="capability.mutation_id",
+            code="capability-transcript",
+        )
+    source = require_exact_keys(
+        transcript["source"],
+        {"verifier_source_sha", "verifier_script_sha256", "verifier_script_path"},
+        location="capability.source",
+        code="capability-source",
+    )
+    if not isinstance(source["verifier_source_sha"], str) or not COMMIT_RE.fullmatch(
+        source["verifier_source_sha"]
+    ):
+        fail("capability-source", "capability.source.verifier_source_sha", "must be a commit")
+    if not isinstance(source["verifier_script_sha256"], str) or not SHA_RE.fullmatch(
+        source["verifier_script_sha256"]
+    ):
+        fail("capability-source", "capability.source.verifier_script_sha256", "must be sha256")
+    if source["verifier_script_path"] != "scripts/render_ops.py":
+        fail("capability-source", "capability.source.verifier_script_path", "unexpected script")
+    if not isinstance(transcript["config_sha256"], str) or not SHA_RE.fullmatch(
+        transcript["config_sha256"]
+    ):
+        fail("capability-source", "capability.config_sha256", "must be sha256")
+    arguments = require_exact_keys(
+        transcript["normalized_arguments"],
+        {"commit", "deploy_id", "service_id"},
+        location="capability.normalized_arguments",
+        code="capability-arguments",
+    )
+    if not isinstance(arguments["commit"], str) or not COMMIT_RE.fullmatch(arguments["commit"]):
+        fail("capability-arguments", "capability.normalized_arguments.commit", "must be a commit")
+    for field in ("deploy_id", "service_id"):
+        require_stable_id(
+            arguments[field],
+            location=f"capability.normalized_arguments.{field}",
+            code="capability-arguments",
+        )
+    expected_substitutions = [
+        {
+            "boundary_id": "render.api.fixture",
+            "position": "render-ops.command-verify.render-api",
+        },
+        {
+            "boundary_id": "http.origin.fixture",
+            "position": "render-ops.verify-health.origin.http",
+        },
+        {
+            "boundary_id": "http.public.fixture",
+            "position": "render-ops.verify-health.public.http",
+        },
+    ]
+    if transcript["substitutions"] != expected_substitutions:
+        fail(
+            "capability-substitutions",
+            "capability.substitutions",
+            "must equal the isolated slice boundary allowlist",
+        )
+    components = transcript["observed_components"]
+    if (
+        not isinstance(components, list)
+        or not components
+        or not all(isinstance(item, str) and ID_RE.fullmatch(item) for item in components)
+        or len(components) != len(set(components))
+    ):
+        fail(
+            "capability-components",
+            "capability.observed_components",
+            "must be unique stable entered components",
+        )
+    allowed_component_paths = [
+        [render_ops.CAPABILITY_COMPONENT_COMMAND],
+        [
+            render_ops.CAPABILITY_COMPONENT_COMMAND,
+            render_ops.CAPABILITY_COMPONENT_SURFACES,
+        ],
+        [
+            render_ops.CAPABILITY_COMPONENT_COMMAND,
+            render_ops.CAPABILITY_COMPONENT_SURFACES,
+            render_ops.CAPABILITY_COMPONENT_ORIGIN,
+        ],
+        [
+            render_ops.CAPABILITY_COMPONENT_COMMAND,
+            render_ops.CAPABILITY_COMPONENT_SURFACES,
+            render_ops.CAPABILITY_COMPONENT_ORIGIN,
+            render_ops.CAPABILITY_COMPONENT_PUBLIC,
+        ],
+    ]
+    component_path_valid = components in allowed_component_paths
+    children = transcript["children"]
+    if not isinstance(children, list):
+        fail("capability-children", "capability.children", "must be a list")
+    seen_children: set[str] = set()
+    for index, raw_child in enumerate(children):
+        location = f"capability.children[{index}]"
+        child = require_exact_keys(
+            raw_child,
+            {
+                "predicate_id",
+                "observed_subject_path",
+                "terminal",
+                "subject_artifact_sha256",
+            },
+            location=location,
+            code="capability-child",
+        )
+        predicate_id = child["predicate_id"]
+        if predicate_id not in render_ops.CAPABILITY_FIXTURE_PREDICATES:
+            fail("capability-child", f"{location}.predicate_id", "predicate is outside slice")
+        if predicate_id in seen_children:
+            fail("capability-child", f"{location}.predicate_id", "duplicate terminal child")
+        seen_children.add(predicate_id)
+        path = child["observed_subject_path"]
+        expected_path = [
+            render_ops.CAPABILITY_COMPONENT_COMMAND,
+            render_ops.CAPABILITY_COMPONENT_SURFACES,
+            render_ops.CAPABILITY_COMPONENT_ORIGIN,
+        ]
+        if predicate_id.startswith("health.public."):
+            expected_path.append(render_ops.CAPABILITY_COMPONENT_PUBLIC)
+        if not isinstance(path, list) or path != expected_path:
+            fail(
+                "capability-path",
+                f"{location}.observed_subject_path",
+                f"must equal the exact entered subject path {expected_path}",
+            )
+        if path != components[: len(path)]:
+            fail(
+                "capability-path",
+                f"{location}.observed_subject_path",
+                "must be an entered path prefix",
+            )
+        terminal = require_exact_keys(
+            child["terminal"],
+            {"outcome", "assertion_code", "count"},
+            location=f"{location}.terminal",
+            code="capability-child",
+        )
+        if terminal["outcome"] not in {"passed", "expected-failure"}:
+            fail("capability-child", f"{location}.terminal.outcome", "invalid outcome")
+        if (
+            terminal["outcome"] == "expected-failure"
+            and mutation_id != f"{predicate_id}.dedicated-negative"
+        ):
+            fail(
+                "capability-mutation",
+                "capability.mutation_id",
+                "negative child requires its dedicated single-variable mutation ID",
+            )
+        require_stable_id(
+            terminal["assertion_code"],
+            location=f"{location}.terminal.assertion_code",
+            code="capability-child",
+        )
+        expected_assertion = (
+            f"{predicate_id}.capability-pass"
+            if terminal["outcome"] == "passed"
+            else f"{predicate_id}.rejected"
+        )
+        if terminal["assertion_code"] != expected_assertion:
+            fail(
+                "capability-assertion",
+                f"{location}.terminal.assertion_code",
+                f"expected {expected_assertion}",
+            )
+        if terminal["count"] != 1 or isinstance(terminal["count"], bool):
+            fail("capability-child", f"{location}.terminal.count", "must equal one")
+        if not isinstance(child["subject_artifact_sha256"], str) or not SHA_RE.fullmatch(
+            child["subject_artifact_sha256"]
+        ):
+            fail("capability-child", f"{location}.subject_artifact_sha256", "must be sha256")
+    terminal = require_exact_keys(
+        transcript["terminal"],
+        {"outcome", "error_code", "count"},
+        location="capability.terminal",
+        code="capability-terminal",
+    )
+    if terminal["outcome"] not in {"passed", "failed"}:
+        fail("capability-terminal", "capability.terminal.outcome", "invalid outcome")
+    if not isinstance(terminal["error_code"], str):
+        fail("capability-terminal", "capability.terminal.error_code", "must be a string")
+    if terminal["count"] != 1 or isinstance(terminal["count"], bool):
+        fail("capability-terminal", "capability.terminal.count", "must equal one")
+    positive_recipe = [
+        ("health.origin.http-200", "passed"),
+        ("health.origin.payload-contract", "passed"),
+        ("health.public.http-200", "passed"),
+        ("health.public.payload-contract", "passed"),
+    ]
+    child_recipe = [
+        (child["predicate_id"], child["terminal"]["outcome"])
+        for child in children
+    ]
+    negative_recipes = {
+        "health.origin.http-200.dedicated-negative": (
+            allowed_component_paths[2],
+            [("health.origin.http-200", "expected-failure")],
+            "health.origin.http-200.dedicated-negative-observed",
+        ),
+        "health.origin.payload-contract.dedicated-negative": (
+            allowed_component_paths[2],
+            [
+                ("health.origin.http-200", "passed"),
+                ("health.origin.payload-contract", "expected-failure"),
+            ],
+            "health.origin.payload-contract.dedicated-negative-observed",
+        ),
+        "health.public.http-200.dedicated-negative": (
+            allowed_component_paths[3],
+            [
+                *positive_recipe[:2],
+                ("health.public.http-200", "expected-failure"),
+            ],
+            "health.public.http-200.dedicated-negative-observed",
+        ),
+        "health.public.payload-contract.dedicated-negative": (
+            allowed_component_paths[3],
+            [
+                *positive_recipe[:3],
+                ("health.public.payload-contract", "expected-failure"),
+            ],
+            "health.public.payload-contract.dedicated-negative-observed",
+        ),
+    }
+    if terminal["outcome"] == "passed":
+        if components != allowed_component_paths[-1]:
+            fail(
+                "capability-components",
+                "capability.observed_components",
+                "passing slice requires the complete exact subject path",
+            )
+        if mutation_id != "":
+            fail(
+                "capability-mutation",
+                "capability.mutation_id",
+                "passing capability cannot claim an active mutation",
+            )
+        if child_recipe != positive_recipe:
+            fail(
+                "capability-child-order",
+                "capability.children",
+                "passing children must equal the exact four-cell recipe",
+            )
+        if terminal["error_code"] != "":
+            fail("capability-terminal", "capability.terminal.error_code", "passing transcript has no error")
+    elif mutation_id in negative_recipes:
+        expected_components, expected_children, expected_error = negative_recipes[mutation_id]
+        if components != expected_components:
+            fail(
+                "capability-negative-recipe",
+                "capability.observed_components",
+                "dedicated negative has the wrong component path",
+            )
+        if child_recipe != expected_children:
+            fail(
+                "capability-negative-recipe",
+                "capability.children",
+                "dedicated negative lacks exact prerequisite/terminal children",
+            )
+        if terminal["error_code"] != expected_error:
+            fail(
+                "capability-negative-recipe",
+                "capability.terminal.error_code",
+                f"expected {expected_error}",
+            )
+    elif mutation_id == "health.origin.build-sha.forbidden-null":
+        if (
+            components != allowed_component_paths[2]
+            or child_recipe != positive_recipe[:2]
+            or terminal["error_code"] != "capability-deferred-control"
+        ):
+            fail(
+                "capability-deferred-control",
+                "capability",
+                "null-build control must remain an exact nonclaiming origin recipe",
+            )
+    elif mutation_id == "":
+        if child_recipe != positive_recipe[: len(child_recipe)]:
+            fail(
+                "capability-structural-failure",
+                "capability.children",
+                "nonclaiming structural failures may contain only passing recipe prefixes",
+            )
+        if terminal["error_code"] == "capability-path-mismatch":
+            if component_path_valid:
+                fail(
+                    "capability-structural-failure",
+                    "capability.observed_components",
+                    "path-mismatch requires a noncanonical entered path",
+                )
+        elif terminal["error_code"] in {
+            "capability-incomplete",
+            "capability-subject-failure",
+        }:
+            if not component_path_valid:
+                fail(
+                    "capability-structural-failure",
+                    "capability.observed_components",
+                    "incomplete/subject failures require a canonical path prefix",
+                )
+        else:
+            fail(
+                "capability-structural-failure",
+                "capability.terminal.error_code",
+                "unrecognized nonclaiming structural failure",
+            )
+    else:
+        fail(
+            "capability-failure-variant",
+            "capability.mutation_id",
+            "mutation does not select a closed failed transcript variant",
+        )
+    return transcript
+
+
 def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         fail("manifest-contract", "manifest", "must be an object")
@@ -251,6 +753,7 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         "postdeploy_entrypoint",
         "protected_ci",
         "requirement_registry",
+        "capability_coverage",
         "predicates",
     }
     require_exact_keys(manifest, required_top, location="manifest", code="manifest-contract")
@@ -297,12 +800,28 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     if ci["events"] != ["pull_request", "push:main"]:
         fail("ci-contract", "manifest.protected_ci.events", "must bind pull requests and main pushes")
 
+    capability_coverage = validate_capability_coverage(manifest["capability_coverage"])
+    candidate_coverage_owner = {
+        row["id"]: row["owner"]
+        for row in capability_coverage
+        if row["domain"] == "candidate-postdeploy"
+    }
+
     registry = manifest["requirement_registry"]
     if not isinstance(registry, list) or not registry:
         fail("enforcement-registry", "manifest.requirement_registry", "must be nonempty")
     statuses: dict[str, str] = {}
     for index, obligation in enumerate(registry):
         location = f"manifest.requirement_registry[{index}]"
+        if not isinstance(obligation, dict):
+            fail("enforcement-registry", location, "must be an object")
+        status = obligation.get("status")
+        if not isinstance(status, str) or status not in {"implemented", "deferred"}:
+            fail(
+                "enforcement-registry",
+                f"{location}.status",
+                "must be implemented or deferred",
+            )
         required_obligation = {
             "id",
             "status",
@@ -311,6 +830,8 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
             "blocked_lifecycle_stages",
             "nonclaim_code",
         }
+        if status == "implemented":
+            required_obligation.add("first_enforced_increment")
         obligation = require_exact_keys(
             obligation,
             required_obligation,
@@ -323,8 +844,6 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         if obligation_id in statuses:
             fail("enforcement-registry", f"{location}.id", "duplicate obligation")
         status = obligation["status"]
-        if not isinstance(status, str) or status not in {"implemented", "deferred"}:
-            fail("enforcement-registry", f"{location}.status", "must be implemented or deferred")
         for field in ("owner", "enforcement_target", "nonclaim_code"):
             require_stable_id(
                 obligation[field],
@@ -338,6 +857,24 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
             fail("enforcement-registry", f"{location}.blocked_lifecycle_stages", "deferred enforcement must block preplan and release-close")
         if status == "implemented" and stages != []:
             fail("enforcement-registry", f"{location}.blocked_lifecycle_stages", "implemented enforcement cannot block a lifecycle stage")
+        if status == "implemented":
+            first_increment = require_stable_id(
+                obligation["first_enforced_increment"],
+                location=f"{location}.first_enforced_increment",
+                code="enforcement-history",
+            )
+            if ENFORCEMENT_HISTORY.get(obligation_id) != first_increment:
+                fail(
+                    "enforcement-history",
+                    f"{location}.first_enforced_increment",
+                    "does not equal source-owned enforcement history",
+                )
+        elif obligation_id in ENFORCEMENT_HISTORY:
+            fail(
+                "enforcement-history",
+                f"{location}.status",
+                "source-implemented obligation cannot be deferred",
+            )
         statuses[obligation_id] = status
     implemented = frozenset(key for key, status in statuses.items() if status == "implemented")
     deferred = frozenset(key for key, status in statuses.items() if status == "deferred")
@@ -357,7 +894,18 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         predicate_id = require_stable_id(
             row["id"], location=f"{location}.id", code="invalid-predicate-id"
         )
-        require_stable_id(row["owner"], location=f"{location}.owner", code="invalid-owner")
+        owner = require_stable_id(
+            row["owner"], location=f"{location}.owner", code="invalid-owner"
+        )
+        if (
+            predicate_id in candidate_coverage_owner
+            and candidate_coverage_owner[predicate_id] != owner
+        ):
+            fail(
+                "capability-owner",
+                f"{location}.owner",
+                "predicate owner must equal source-owned capability coverage",
+            )
         if predicate_id in row_by_id:
             fail("duplicate-predicate", f"{location}.id", predicate_id)
         row_by_id[predicate_id] = row
@@ -567,6 +1115,12 @@ def validate_receipt(
     if missing:
         fail("missing-receipt-field", location, f"missing fields {missing}")
     proof_kind = receipt["proof_kind"]
+    if proof_kind == "capability-fixture":
+        fail(
+            "capability-not-lifecycle-evidence",
+            f"{location}.proof_kind",
+            "isolated capability transcripts cannot satisfy lifecycle evidence",
+        )
     expected_keys = RECEIPT_FIELDS | (
         {"mutation_id", "expected_error_code"} if proof_kind == "negative" else set()
     )
