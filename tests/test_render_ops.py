@@ -687,9 +687,16 @@ def test_health_proof_records_terminal_outcome_for_each_failure_stage(
         render_ops.command_health_client_proof(
             SimpleNamespace(config=str(config_path), evidence_dir=str(baseline_dir))
         )
-    baseline_outcome = json.loads((baseline_dir / "002.json").read_text())
-    assert baseline_outcome["outcome"] == "failed"
-    assert baseline_outcome["stage"] == "blocked-baseline"
+    baseline_artifacts = [
+        json.loads(path.read_text()) for path in sorted(baseline_dir.glob("*.json"))
+    ]
+    baseline_outcomes = [
+        item for item in baseline_artifacts if item["probe_kind"] == "run-outcome"
+    ]
+    assert len(baseline_outcomes) == 1
+    assert baseline_outcomes[0] is baseline_artifacts[-1]
+    assert baseline_outcomes[0]["outcome"] == "failed"
+    assert baseline_outcomes[0]["stage"] == "blocked-baseline"
 
     calls = 0
 
