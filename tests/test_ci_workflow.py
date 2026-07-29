@@ -30,6 +30,12 @@ def test_make_test_uses_the_locked_uv_environment() -> None:
     assert "python3 -m pytest" not in test_recipe
 
 
+def test_ci_provides_postgres_so_database_tests_cannot_skip() -> None:
+    workflow = _workflow()
+
+    assert any("postgres" in job.get("services", {}) for job in workflow["jobs"].values())
+
+
 def test_ci_runs_every_make_gate_on_push_and_pull_request() -> None:
     workflow = _workflow()
 
