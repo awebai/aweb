@@ -56,11 +56,40 @@ Pull requests and pushes to `main` run the `Lint, test, and real-stack e2e`
 check. Branch protection requires that exact check before merging to `main`,
 including for administrators.
 
+### Gate-authorized integration
+
+For this repository, the protected gate plus an independent exact-head review is
+sufficient integration authority; a separate coordinator merge is not required.
+This policy applies only while all of these conditions hold:
+
+- the head being merged exactly matches the independently reviewed head;
+- strict branch protection requires the head to be up to date with `main`, so a
+  change to `main` triggers re-evaluation;
+- the required context remains `Lint, test, and real-stack e2e`, bound to the
+  GitHub Actions app with ID `15368`;
+- protection is enforced for administrators, with no bypass; and
+- the push to `main` runs the same required check against the integrated commit.
+  This condition was observed holding when
+  [push-main run 30437187502](https://github.com/awebai/library/actions/runs/30437187502)
+  passed on exact integrated commit `5137334ae2b88c7515c6c080c427fafaf1e71faa`,
+  the first merge governed by this policy.
+
+The gate is not sufficient authority if the reviewed head changes, protection is
+weakened, the required context or app changes, a conflict or manual recombination
+changes the reviewed result, the change spans repositories, a release tag is being
+chosen, or the deployment boundary moves. Those cases require fresh review and
+coordinator routing. A merge under this policy authorizes source integration only;
+it does not by itself authorize a release, production mutation, or deployment.
+
 The break-glass path for an emergency fix while CI itself is broken is to get
 repository-owner approval, temporarily disable the required protection, land
 only the emergency fix, and immediately re-enable the same protection. Record
 both the disable and re-enable actions, with their timestamps and reason, in a
 shared task or incident. Administrator bypass is not the break-glass path.
+
+Re-evaluate whether this repository-specific policy should become shared aweb
+instructions through Jules only when aweb itself has a protected, green hosted
+canonical merge-state gate (tracked by `aweb-aatq`).
 
 ## Production operations
 
