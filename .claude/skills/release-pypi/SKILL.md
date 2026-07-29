@@ -27,6 +27,20 @@ suite never ran against. Commit the lock before you tag.
 Steps 3 to 5 below are what makes that pass. If the gate fails at release time,
 the fix is the same work done earlier, not a bypass.
 
+### What the gate does not cover
+
+A tag push is the only trigger, and re-running the workflow re-runs the gate, so
+this route is covered. Two routes are not, and neither can be closed from inside
+this repository:
+
+- A `server-v*` tag cut at a commit where the gate step was edited out. A
+  tag-triggered workflow runs the file as it exists at the tagged commit, and
+  `main` cannot be branch-protected here.
+- A direct `uv publish` from anywhere, by anyone holding a PyPI token for the
+  `aweb` project. Scoping that credential is `aweb-aaun.2`.
+
+Publishing off-CI is not a supported path. Use the tag.
+
 ## Flow
 
 1. Determine the next version.

@@ -27,6 +27,20 @@ the difference between it and `make release-awid-check` below. Repair belongs to
 preparation; at publish time a stale `awid/uv.lock` has to fail rather than be
 resolved into dependencies the suite never ran against.
 
+### What the gate does not cover
+
+A tag push is the only trigger, and re-running the workflow re-runs the gate, so
+this route is covered. Two routes are not, and neither can be closed from inside
+this repository:
+
+- An `awid-service-v*` tag cut at a commit where the gate step was edited out. A
+  tag-triggered workflow runs the file as it exists at the tagged commit, and
+  `main` cannot be branch-protected here.
+- A direct `uv publish` from anywhere, by anyone holding a PyPI token for the
+  `awid-service` project. Scoping that credential is `aweb-aaun.2`.
+
+Publishing off-CI is not a supported path. Use the tag.
+
 ## Flow
 
 1. Determine the next version.

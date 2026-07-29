@@ -27,6 +27,20 @@ shipped unverified.
 `uv lock --check` verifies the lockfile rather than repairing it. Step 2 below
 is where repair belongs; commit that result before you tag.
 
+### What the gate does not cover
+
+A tag push is the only trigger, and re-running the workflow re-runs the gate, so
+this route is covered. Two routes are not, and neither can be closed from inside
+this repository:
+
+- An `awid-v*` tag cut at a commit where the gate step was edited out. A
+  tag-triggered workflow runs the file as it exists at the tagged commit, and
+  `main` cannot be branch-protected here.
+- A direct `docker push` to `ghcr.io/awebai/awid` by anyone whose credential
+  carries `packages: write` for the org.
+
+Pushing the image off-CI is not a supported path. Use the tag.
+
 ## Flow
 
 1. Determine the version.
