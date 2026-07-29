@@ -474,6 +474,30 @@ def test_evidence_refuses_symlink_component(tmp_path: Path) -> None:
         render_ops.HealthEvidenceRun(symlink_parent / "evidence", label="test")
 
 
+def test_evidence_rejects_non_private_parent_mode(tmp_path: Path) -> None:
+    parent = tmp_path / "shared-parent"
+    parent.mkdir(mode=0o750)
+    parent.chmod(0o750)
+    evidence_path = parent / "evidence"
+    with pytest.raises(render_ops.OpsError, match="operator-owned with exact mode 0700"):
+        render_ops.HealthEvidenceRun(evidence_path, label="test")
+    assert not evidence_path.exists()
+
+
+def test_evidence_rejects_parent_not_owned_by_operator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    parent = tmp_path / "other-owner-parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    actual_euid = os.geteuid()
+    monkeypatch.setattr(render_ops.os, "geteuid", lambda: actual_euid + 1)
+    evidence_path = parent / "evidence"
+    with pytest.raises(render_ops.OpsError, match="operator-owned with exact mode 0700"):
+        render_ops.HealthEvidenceRun(evidence_path, label="test")
+    assert not evidence_path.exists()
+
+
 def test_evidence_detects_swap_during_construction(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
