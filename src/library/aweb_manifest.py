@@ -344,19 +344,43 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "propose",
-            "description": "Submit an asset-scoped profile learning proposal. A profile proposal carries a changeset of file assets and profile.yaml field assets; approve applies it to the current shelf profile, auto-increments the next patch version, and mints after per-asset stale checks.",
+            "description": "Submit an asset-scoped profile learning proposal. content.schema must be aweb.library.profile-asset-changeset.v1. File assets use path/content_utf8; profile.yaml fields use path profile.yaml#<field> and native JSON content. Read exact base_asset_digest values from get-shelf-profile include=files proposal_asset_digests. Submission rejects invalid or colliding changes before review; approval rechecks stale bases and mints the next patch version.",
             "method": "POST",
             "path": "/v1/proposals",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "target": {"type": "string"},
+                    "target": {"type": "string", "const": "profile"},
                     "profile_ref": {"type": "string"},
-                    "content": {"type": "object"},
+                    "content": {
+                        "type": "object",
+                        "properties": {
+                            "schema": {
+                                "type": "string",
+                                "const": "aweb.library.profile-asset-changeset.v1",
+                            },
+                            "assets": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "path": {"type": "string"},
+                                        "content_utf8": {"type": "string"},
+                                        "content": {},
+                                        "delete": {"type": "boolean"},
+                                        "base_asset_digest": {"type": "string"},
+                                    },
+                                    "required": ["path"],
+                                },
+                            },
+                        },
+                        "required": ["schema", "assets"],
+                    },
                     "summary": {"type": "string"},
                     "rationale": {"type": "string"},
                 },
-                "required": ["target"],
+                "required": ["target", "profile_ref", "content"],
             },
             "params": [
                 {"name": "target", "in": "body"},
@@ -409,7 +433,7 @@ MANIFEST: dict[str, Any] = {
         },
         {
             "name": "get-shelf-profile",
-            "description": "Get the team's private shelf profile. ?include=files adds the profile content (path/content_utf8/sha256) so a local runtime can re-materialize the latest shelf version.",
+            "description": "Get the team's private shelf profile. ?include=files adds the profile content and proposal_asset_digests keyed by exact proposal path, including profile.yaml#<field> entries.",
             "method": "GET",
             "path": "/v1/profiles/{profile_ref}",
             "input_schema": {

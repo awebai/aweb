@@ -202,9 +202,9 @@ aw library materialize  (POST /v1/materialize)
     optional: agent_id, profile_ref
 
 aw library propose  (POST /v1/proposals)
-    Submit an asset-scoped profile learning proposal. A profile proposal carries a changeset of file assets and profile.yaml field assets; approve applies it to the current shelf profile, auto-increments the next patch version, and mints after per-asset stale checks.
-    required: target
-    optional: profile_ref, content, summary, rationale
+    Submit an asset-scoped profile learning proposal. content.schema must be aweb.library.profile-asset-changeset.v1. File assets use path/content_utf8; profile.yaml fields use path profile.yaml#<field> and native JSON content. Read exact base_asset_digest values from get-shelf-profile include=files proposal_asset_digests. Submission rejects invalid or colliding changes before review; approval rechecks stale bases and mints the next patch version.
+    required: target, profile_ref, content
+    optional: summary, rationale
 
 aw library proposals  (GET /v1/proposals)
     List the team's profile learning proposals.
@@ -218,7 +218,7 @@ aw library reject  (POST /v1/proposals/{proposal_id}/reject)
     required: proposal_id
 
 aw library get-shelf-profile  (GET /v1/profiles/{profile_ref})
-    Get the team's private shelf profile. ?include=files adds the profile content (path/content_utf8/sha256) so a local runtime can re-materialize the latest shelf version.
+    Get the team's private shelf profile. ?include=files adds the profile content and proposal_asset_digests keyed by exact proposal path, including profile.yaml#<field> entries.
     required: profile_ref
     optional: include
 

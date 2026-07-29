@@ -1094,24 +1094,27 @@ def test_profile_proposal_approval_mints_and_rejects_stale_asset(
             "base_asset_digest": base_asset_digests["field:mission"],
         }
     )
-    stale_proposal = _aw_json(
-        _post_json(
-            team,
-            f"{library.origin}/v1/proposals",
-            {
-                "target": "profile",
-                "profile_ref": "coordinator",
-                "content": stale_content,
-            },
-        ),
-        context="create stale-asset proposal",
-    )
-    stale_approve = _post_json(
+    stale_create = _post_json(
         team,
-        f"{library.origin}/v1/proposals/{stale_proposal['proposal_id']}/approve",
-        {},
+        f"{library.origin}/v1/proposals",
+        {
+            "target": "profile",
+            "profile_ref": "coordinator",
+            "content": stale_content,
+        },
     )
-    _assert_aw_status(stale_approve, 409, context="approve stale-asset proposal")
+    _assert_aw_status(stale_create, 409, context="submit stale-asset proposal")
+    assert json.loads(stale_create.stdout) == {
+        "detail": (
+            "Asset 'profile.yaml#mission' base_asset_digest does not match the current "
+            "proposal_asset_digests value"
+        )
+    }
+    proposals = _aw_json(
+        _aw_request(team, "GET", f"{library.origin}/v1/proposals"),
+        context="list proposals after rejected stale submission",
+    )
+    assert [item["proposal_id"] for item in proposals] == [proposal["proposal_id"]]
 
 
 def test_empty_profile_invariant_never_requires_reachable_library(

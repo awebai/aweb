@@ -586,6 +586,25 @@ async def list_shelf(db: AsyncDatabaseManager, *, principal: Principal) -> dict[
     return {"profiles": profiles}
 
 
+def _proposal_asset_digests(files: list[dict[str, str]]) -> dict[str, str]:
+    digests = profile_asset_digests(files)
+    by_path = {entry["path"]: entry for entry in files}
+    profile_doc = yaml.safe_load(by_path["profile.yaml"]["content_utf8"]) or {}
+    proposal_digests = {
+        path: digests[f"file:{path}"]
+        for path in by_path
+        if path != "profile.yaml"
+    }
+    proposal_digests.update(
+        {
+            f"profile.yaml#{field}": digests[f"field:{field}"]
+            for field in PROFILE_FIELD_ASSETS
+            if field in profile_doc
+        }
+    )
+    return dict(sorted(proposal_digests.items()))
+
+
 async def get_shelf_profile(
     db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, include_files: bool = False
 ) -> dict[str, Any]:
@@ -603,7 +622,9 @@ async def get_shelf_profile(
         raise HTTPException(status_code=404, detail="Shelf profile not found")
     summary = _shelf_summary(row)
     if include_files:
-        summary["files"] = _json_value(dict(row).get("files")) or []
+        files = _json_value(dict(row).get("files")) or []
+        summary["files"] = files
+        summary["proposal_asset_digests"] = _proposal_asset_digests(files)
     return summary
 
 
@@ -1141,6 +1162,12 @@ async def create_proposal(
 ) -> dict[str, Any]:
     if request.target != "profile":
         raise _unsupported_proposal_target(request.target)
+    await _validate_profile_proposal(
+        db,
+        principal=principal,
+        profile_ref=request.profile_ref,
+        changeset=request.content,
+    )
     proposal_id = uuid4()
     await db.execute(
         "INSERT INTO {{tables.proposals}}"
@@ -1227,7 +1254,12 @@ def _current_asset_digest(files: list[dict[str, str]], path: str) -> str | None:
 
 
 def _validate_asset_base(
-    *, files: list[dict[str, str]], asset: dict[str, Any], path: str, deleting: bool
+    *,
+    files: list[dict[str, str]],
+    asset: dict[str, Any],
+    path: str,
+    deleting: bool,
+    at_submission: bool = False,
 ) -> None:
     current = _current_asset_digest(files, path)
     base = asset.get("base_asset_digest")
@@ -1237,14 +1269,29 @@ def _validate_asset_base(
                 status_code=409, detail=f"Asset '{path}' is stale; it does not exist"
             )
         if base is not None:
-            raise HTTPException(
-                status_code=409, detail=f"Asset '{path}' is stale; it does not exist"
+            detail = (
+                f"Asset '{path}' base_asset_digest does not match the current asset; "
+                "the asset does not exist"
+                if at_submission
+                else f"Asset '{path}' is stale; it does not exist"
             )
+            raise HTTPException(status_code=409, detail=detail)
         return
     if base is None:
-        raise HTTPException(status_code=409, detail=f"Asset '{path}' already exists")
+        detail = (
+            f"Asset '{path}' requires the current base_asset_digest from proposal_asset_digests"
+            if at_submission
+            else f"Asset '{path}' already exists"
+        )
+        raise HTTPException(status_code=409, detail=detail)
     if base != current:
-        raise HTTPException(status_code=409, detail=f"Asset '{path}' is stale")
+        detail = (
+            f"Asset '{path}' base_asset_digest does not match the current "
+            "proposal_asset_digests value"
+            if at_submission
+            else f"Asset '{path}' is stale"
+        )
+        raise HTTPException(status_code=409, detail=detail)
 
 
 def _next_patch_version(version: str) -> str:
@@ -1255,9 +1302,7 @@ def _next_patch_version(version: str) -> str:
     return f"{version}.1"
 
 
-def _apply_asset_changeset(
-    *, prior_files: list[dict[str, str]], changeset: dict[str, Any], target_version: str
-) -> list[dict[str, str]]:
+def _changeset_assets(changeset: dict[str, Any]) -> list[dict[str, Any]]:
     if changeset.get("schema") != PROFILE_ASSET_CHANGESET_SCHEMA:
         raise HTTPException(
             status_code=422,
@@ -1269,25 +1314,72 @@ def _apply_asset_changeset(
             status_code=422, detail="proposal content assets must be a non-empty list"
         )
 
-    files_by_path = {entry["path"]: dict(entry) for entry in prior_files}
-    profile_doc = yaml.safe_load(files_by_path["profile.yaml"]["content_utf8"]) or {}
-
+    validated: list[dict[str, Any]] = []
+    paths: set[str] = set()
     for raw_asset in assets:
         if not isinstance(raw_asset, dict):
             raise HTTPException(status_code=422, detail="proposal asset must be an object")
         path = raw_asset.get("path")
         if not isinstance(path, str) or not path:
             raise HTTPException(status_code=422, detail="proposal asset path is required")
+        _asset_key(path)
+        if path in paths:
+            raise HTTPException(
+                status_code=422, detail=f"proposal asset path '{path}' is duplicated"
+            )
+        paths.add(path)
+
         delete_value = raw_asset.get("delete", False)
         if not isinstance(delete_value, bool):
             raise HTTPException(status_code=422, detail=f"Asset '{path}' delete must be boolean")
-        deleting = delete_value
-        if deleting and ("content" in raw_asset or "content_utf8" in raw_asset):
-            raise HTTPException(
-                status_code=422, detail=f"Asset '{path}' cannot include content and delete"
-            )
+        if delete_value:
+            if "content" in raw_asset or "content_utf8" in raw_asset:
+                raise HTTPException(
+                    status_code=422, detail=f"Asset '{path}' cannot include content and delete"
+                )
+        elif path.startswith(_FIELD_ASSET_PREFIX):
+            if "content" not in raw_asset:
+                raise HTTPException(
+                    status_code=422, detail=f"Field asset '{path}' requires content"
+                )
+            if "content_utf8" in raw_asset:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Field asset '{path}' cannot include content_utf8",
+                )
+        else:
+            if not isinstance(raw_asset.get("content_utf8"), str):
+                raise HTTPException(
+                    status_code=422, detail=f"File asset '{path}' requires content_utf8"
+                )
+            if "content" in raw_asset:
+                raise HTTPException(
+                    status_code=422, detail=f"File asset '{path}' cannot include content"
+                )
+        validated.append(raw_asset)
+    return validated
+
+
+def _apply_asset_changeset(
+    *,
+    prior_files: list[dict[str, str]],
+    changeset: dict[str, Any],
+    target_version: str,
+    at_submission: bool = False,
+) -> list[dict[str, str]]:
+    assets = _changeset_assets(changeset)
+    files_by_path = {entry["path"]: dict(entry) for entry in prior_files}
+    profile_doc = yaml.safe_load(files_by_path["profile.yaml"]["content_utf8"]) or {}
+
+    for raw_asset in assets:
+        path = raw_asset["path"]
+        deleting = raw_asset.get("delete", False)
         _validate_asset_base(
-            files=list(files_by_path.values()), asset=raw_asset, path=path, deleting=deleting
+            files=list(files_by_path.values()),
+            asset=raw_asset,
+            path=path,
+            deleting=deleting,
+            at_submission=at_submission,
         )
 
         if path.startswith(_FIELD_ASSET_PREFIX):
@@ -1328,6 +1420,60 @@ def _apply_asset_changeset(
             status_code=422, detail=f"Invalid minted profile after changeset: {exc}"
         ) from exc
     return files
+
+
+async def _validate_profile_proposal(
+    db: AsyncDatabaseManager,
+    *,
+    principal: Principal,
+    profile_ref: str | None,
+    changeset: dict[str, Any],
+) -> None:
+    if not profile_ref:
+        raise HTTPException(status_code=422, detail="profile proposal requires profile_ref")
+    prior = await db.fetch_one(
+        "SELECT version, files FROM {{tables.shelf_profiles}}"
+        " WHERE team_id = $1 AND profile_ref = $2 ORDER BY created_at DESC LIMIT 1",
+        principal.team_id,
+        profile_ref,
+    )
+    if prior is None:
+        raise HTTPException(status_code=404, detail="Shelf profile not found")
+
+    _apply_asset_changeset(
+        prior_files=_json_value(prior["files"]) or [],
+        changeset=changeset,
+        target_version=_next_patch_version(str(prior["version"])),
+        at_submission=True,
+    )
+    candidate_paths = {asset["path"] for asset in _changeset_assets(changeset)}
+    rows = await db.fetch_all(
+        "SELECT proposal_id, content FROM {{tables.proposals}}"
+        " WHERE team_id = $1 AND target = 'profile' AND profile_ref = $2"
+        " AND status = 'open' ORDER BY created_at",
+        principal.team_id,
+        profile_ref,
+    )
+    for row in rows:
+        existing = _json_value(row["content"]) or {}
+        existing_assets = existing.get("assets")
+        if not isinstance(existing_assets, list):
+            continue
+        existing_paths = {
+            asset.get("path")
+            for asset in existing_assets
+            if isinstance(asset, dict) and isinstance(asset.get("path"), str)
+        }
+        overlap = sorted(candidate_paths & existing_paths)
+        if overlap:
+            path = overlap[0]
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Open proposal {row['proposal_id']} already changes asset '{path}'; "
+                    "reject it before proposing another change to that asset"
+                ),
+            )
 
 
 async def _mint_from_proposal(

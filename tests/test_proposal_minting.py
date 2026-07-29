@@ -25,6 +25,8 @@ from library.repository import (
     approve_proposal,
     create_proposal,
     create_shelf_profile,
+    create_shelf_version,
+    get_shelf_profile,
     import_to_shelf,
     list_shelf,
     publish_blueprint,
@@ -122,6 +124,154 @@ async def test_create_proposal_rejects_unsupported_targets(migrated_db, target: 
     assert excinfo.value.status_code == 422
     assert excinfo.value.detail == (
         f"Unsupported proposal target '{target}'; only profile proposals are supported"
+    )
+
+
+@pytest.mark.parametrize(
+    ("content", "detail", "status_code"),
+    [
+        ({}, f"proposal content schema must be {PROFILE_ASSET_CHANGESET_SCHEMA}", 422),
+        (
+            {"schema": "wrong", "assets": []},
+            f"proposal content schema must be {PROFILE_ASSET_CHANGESET_SCHEMA}",
+            422,
+        ),
+        (
+            {"schema": PROFILE_ASSET_CHANGESET_SCHEMA},
+            "proposal content assets must be a non-empty list",
+            422,
+        ),
+        (
+            {"schema": PROFILE_ASSET_CHANGESET_SCHEMA, "assets": []},
+            "proposal content assets must be a non-empty list",
+            422,
+        ),
+        (
+            {"schema": PROFILE_ASSET_CHANGESET_SCHEMA, "assets": ["not-an-object"]},
+            "proposal asset must be an object",
+            422,
+        ),
+        (
+            _changeset({"content_utf8": "missing path"}),
+            "proposal asset path is required",
+            422,
+        ),
+        (
+            _changeset({"path": "profile.yaml", "content_utf8": "id: no"}),
+            "profile.yaml must be changed by profile.yaml#<field> assets",
+            422,
+        ),
+        (
+            _changeset({"path": "profile.yaml#not_a_field", "content": "no"}),
+            "Unsupported profile.yaml asset field 'not_a_field'",
+            422,
+        ),
+        (
+            _changeset({"path": "instructions.md", "base_asset_digest": "sha256:" + "0" * 64}),
+            "File asset 'instructions.md' requires content_utf8",
+            422,
+        ),
+        (
+            _changeset(
+                {
+                    "path": "profile.yaml#mission",
+                    "content_utf8": "wrong field encoding",
+                    "base_asset_digest": "sha256:" + "0" * 64,
+                }
+            ),
+            "Field asset 'profile.yaml#mission' requires content",
+            422,
+        ),
+        (
+            _changeset({"path": "instructions.md", "content_utf8": "missing base"}),
+            "Asset 'instructions.md' requires the current base_asset_digest from proposal_asset_digests",
+            409,
+        ),
+        (
+            _changeset(
+                {
+                    "path": "profile.yaml#mission",
+                    "content": "Wrong digest",
+                    "base_asset_digest": "sha256:" + "0" * 64,
+                }
+            ),
+            "Asset 'profile.yaml#mission' base_asset_digest does not match the current proposal_asset_digests value",
+            409,
+        ),
+    ],
+)
+async def test_create_proposal_rejects_unapprovable_changeset_without_persisting(
+    migrated_db, content: dict[str, Any], detail: str, status_code: int
+) -> None:
+    db = migrated_db
+    await _publish_and_import(db)
+    principal = SimpleNamespace(team_id=_TEAM, alias="dev")
+
+    with pytest.raises(HTTPException) as excinfo:
+        await create_proposal(
+            db,
+            principal=principal,
+            request=ProposalCreateRequest(
+                target="profile",
+                profile_ref="coordinator",
+                content=content,
+            ),
+        )
+
+    assert excinfo.value.status_code == status_code
+    assert excinfo.value.detail == detail
+    row = await db.fetch_one(
+        "SELECT COUNT(*) AS count FROM {{tables.proposals}} WHERE team_id = $1",
+        _TEAM,
+    )
+    assert row["count"] == 0
+
+
+async def test_create_proposal_rejects_open_proposal_for_same_asset(migrated_db) -> None:
+    db = migrated_db
+    await _publish_and_import(db)
+    principal = SimpleNamespace(team_id=_TEAM, alias="dev")
+    shelf = await get_shelf_profile(
+        db, principal=principal, profile_ref="coordinator", include_files=True
+    )
+    base = shelf["proposal_asset_digests"]["instructions.md"]
+
+    first = await create_proposal(
+        db,
+        principal=principal,
+        request=ProposalCreateRequest(
+            target="profile",
+            profile_ref="coordinator",
+            content=_changeset(
+                {
+                    "path": "instructions.md",
+                    "content_utf8": "First candidate.\n",
+                    "base_asset_digest": base,
+                }
+            ),
+        ),
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        await create_proposal(
+            db,
+            principal=principal,
+            request=ProposalCreateRequest(
+                target="profile",
+                profile_ref="coordinator",
+                content=_changeset(
+                    {
+                        "path": "instructions.md",
+                        "content_utf8": "Second candidate.\n",
+                        "base_asset_digest": base,
+                    }
+                ),
+            ),
+        )
+
+    assert excinfo.value.status_code == 409
+    assert excinfo.value.detail == (
+        f"Open proposal {first['proposal_id']} already changes asset 'instructions.md'; "
+        "reject it before proposing another change to that asset"
     )
 
 
@@ -227,6 +377,11 @@ async def test_non_overlapping_asset_proposals_do_not_conflict(migrated_db) -> N
     base = await _latest_row(db)
     base_files = _files(base)
     base_digests = profile_asset_digests(base_files)
+    shelf = await get_shelf_profile(
+        db, principal=principal, profile_ref="coordinator", include_files=True
+    )
+    mission_base = shelf["proposal_asset_digests"]["profile.yaml#mission"]
+    assert mission_base == base_digests["field:mission"]
     instructions = next(f["content_utf8"] for f in base_files if f["path"] == "instructions.md") + "\nOne more rule.\n"
     mission = "Coordinate focused delivery and keep everyone unblocked."
 
@@ -252,7 +407,7 @@ async def test_non_overlapping_asset_proposals_do_not_conflict(migrated_db) -> N
             target="profile",
             profile_ref="coordinator",
             content=_changeset(
-                {"path": "profile.yaml#mission", "content": mission, "base_asset_digest": base_digests["field:mission"]}
+                {"path": "profile.yaml#mission", "content": mission, "base_asset_digest": mission_base}
             ),
         ),
     )
@@ -266,7 +421,7 @@ async def test_non_overlapping_asset_proposals_do_not_conflict(migrated_db) -> N
     assert parse_profile_payload(latest_files).mission == mission
 
 
-async def test_approve_rejects_only_stale_changed_asset(migrated_db) -> None:
+async def test_approve_rechecks_stale_asset_after_later_shelf_version(migrated_db) -> None:
     db = migrated_db
     await _publish_and_import(db)
     principal = SimpleNamespace(team_id=_TEAM, alias="dev")
@@ -275,21 +430,6 @@ async def test_approve_rejects_only_stale_changed_asset(migrated_db) -> None:
     base_digests = profile_asset_digests(base_files)
     original_instructions = next(f["content_utf8"] for f in base_files if f["path"] == "instructions.md")
 
-    first = await create_proposal(
-        db,
-        principal=principal,
-        request=ProposalCreateRequest(
-            target="profile",
-            profile_ref="coordinator",
-            content=_changeset(
-                {
-                    "path": "instructions.md",
-                    "content_utf8": original_instructions + "\nFirst change.\n",
-                    "base_asset_digest": base_digests["file:instructions.md"],
-                }
-            ),
-        ),
-    )
     stale = await create_proposal(
         db,
         principal=principal,
@@ -305,10 +445,22 @@ async def test_approve_rejects_only_stale_changed_asset(migrated_db) -> None:
             ),
         ),
     )
-    await approve_proposal(db, principal=principal, proposal_id=first["proposal_id"])
+    newer_files = _files_with_changes(
+        base_files,
+        version="0.1.1",
+        replacements={"instructions.md": original_instructions + "\nConcurrent change.\n"},
+    )
+    await create_shelf_version(
+        db,
+        principal=principal,
+        profile_ref="coordinator",
+        files=newer_files,
+    )
+
     with pytest.raises(HTTPException) as excinfo:
         await approve_proposal(db, principal=principal, proposal_id=stale["proposal_id"])
     assert excinfo.value.status_code == 409
+    assert excinfo.value.detail == "Asset 'instructions.md' is stale"
 
 
 async def test_create_new_skill_changeset_is_atomic(migrated_db) -> None:
