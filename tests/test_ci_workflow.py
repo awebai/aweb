@@ -56,6 +56,9 @@ def test_ci_break_glass_requires_visible_protection_restoration() -> None:
 
 
 _POLICY_SEMANTIC_GROUPS = (
+    "the protected gate plus an independent exact-head review is sufficient integration authority",
+    "a separate coordinator merge is not required",
+    "This policy applies only while all of these conditions hold",
     "the head being merged exactly matches the independently reviewed head",
     "up to date with `main`",
     "change to `main` triggers re-evaluation",
