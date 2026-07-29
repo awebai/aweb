@@ -7,8 +7,25 @@ argument-hint: [version]
 # Release awid Docker image
 
 The Docker release is triggered by pushing an `awid-vX.Y.Z` tag.
-GitHub Actions runs `.github/workflows/awid-release.yml`, which
+GitHub Actions runs `.github/workflows/awid-release.yml`, which runs
+`make release-awid-image-gate` against the tagged commit and only then
 builds `Dockerfile.release` and pushes to GHCR.
+
+## The push refuses unless the suite passed on the tagged commit
+
+A tag can be moved, but a consumer that already pulled it cannot be reached. So
+the workflow runs the awid suite in the same job as the push, against the tree
+the tag points at.
+
+The gate is `make release-awid-image-gate`: `uv lock --check` and the awid suite
+against that committed lock. It deliberately does **not** build the image. The
+publishing build already gates — `build-push-action` cannot push an image that
+fails to build — and it is the only build covering both published platforms, so
+a separate verification build would check `linux/amd64` while `linux/arm64`
+shipped unverified.
+
+`uv lock --check` verifies the lockfile rather than repairing it. Step 2 below
+is where repair belongs; commit that result before you tag.
 
 ## Flow
 

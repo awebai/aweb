@@ -9,7 +9,23 @@ argument-hint: [version]
 The PyPI release is triggered by pushing an `awid-service-vX.Y.Z` git tag.
 GitHub Actions then runs
 [`.github/workflows/awid-pypi-release.yml`](../../../.github/workflows/awid-pypi-release.yml),
-which builds from `awid/` and publishes with `uv publish`.
+which runs `make release-awid-pypi-gate` against the tagged commit and publishes
+with `uv publish` only if it passes.
+
+## The publish refuses unless the suite passed on the tagged commit
+
+PyPI never lets a version be re-uploaded, and awid has already burned two
+versions this way. The workflow runs the awid suite in the same job as the
+publish, against the tree the tag points at, and `uv publish` uploads the
+`awid/dist` that gate produced — so the artifact tested and the artifact
+published are the same build.
+
+The gate is `make release-awid-pypi-gate`: `uv lock --check`, the awid suite
+against that committed lock, then `uv build` and an assertion that both
+artifacts exist. It **verifies** the lockfile rather than repairing it, which is
+the difference between it and `make release-awid-check` below. Repair belongs to
+preparation; at publish time a stale `awid/uv.lock` has to fail rather than be
+resolved into dependencies the suite never ran against.
 
 ## Flow
 
@@ -21,9 +37,10 @@ which builds from `awid/` and publishes with `uv publish`.
 
 3. Run release checks.
    ```bash
-   cd awid && uv sync && uv run pytest awid/tests -q
-   uv build
+   make release-awid-check
    ```
+   This repairs `awid/uv.lock` if it is stale. Commit the result — the release
+   gate verifies that lock and will refuse the publish if it is out of date.
 
 4. Verify artifacts.
    Confirm `awid/dist/` contains:

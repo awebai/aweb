@@ -2,6 +2,11 @@ name: Server Release (PyPI)
 
 # Tag server-vX.Y.Z to publish the aweb package to PyPI.
 # Uses PYPI_TOKEN secret (__token__ API token from pypi.org).
+#
+# PyPI never allows a version to be re-uploaded, so the aweb suite runs in this
+# job, against the tree the tag points at, and the publish step below is only
+# reached when it passes. The gate also produces server/dist, so what is
+# uploaded is the build the suite ran beside rather than a second one.
 
 on:
   push:
@@ -12,6 +17,30 @@ jobs:
   publish:
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
+
+    # The aweb suite talks to a real Postgres, as server-ci.yml does.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+
     steps:
       - uses: actions/checkout@v7
 
@@ -38,9 +67,8 @@ jobs:
           fi
           echo "Version: $PKG_VERSION"
 
-      - name: Build
-        working-directory: server
-        run: uv build
+      - name: Gate the publish on the aweb suite at this commit
+        run: make release-server-gate
 
       - name: Publish to PyPI
         working-directory: server
