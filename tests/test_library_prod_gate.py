@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import socket
+import socketserver
+import threading
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
@@ -368,6 +372,318 @@ def test_node_options_preload_cannot_intercept_pi(
     assert not marker.exists()
     assert "NODE_OPTIONS" not in gate.controlled_harness_environment()
     assert "NODE_PATH" not in gate.controlled_harness_environment()
+
+
+def test_functional_gate_urls_match_the_pinned_production_topology() -> None:
+    config = json.loads(
+        (Path(__file__).resolve().parents[1] / "ops" / "render-production.json").read_text()
+    )
+    assert gate.REQUIRED_ORIGIN_URL == config["origin_url"]
+    assert gate.REQUIRED_PUBLIC_URL == config["public_url"]
+
+
+def test_origin_connect_tunnel_routes_only_the_canonical_authority() -> None:
+    class EchoHandler(socketserver.BaseRequestHandler):
+        def handle(self) -> None:
+            data = self.request.recv(1024)
+            self.request.sendall(data)
+
+    upstream = socketserver.ThreadingTCPServer(("127.0.0.1", 0), EchoHandler)
+    upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    upstream_thread.start()
+    try:
+        with gate.OriginConnectTunnel(
+            canonical_url="https://127.0.0.2",
+            origin_url=f"https://127.0.0.1:{upstream.server_address[1]}",
+        ) as tunnel:
+            with socket.create_connection(tunnel.address, timeout=2) as client:
+                client.sendall(
+                    b"CONNECT 127.0.0.2:443 HTTP/1.1\r\n"
+                    b"Host: 127.0.0.2:443\r\n\r\n"
+                )
+                response = client.recv(4096)
+                assert response.startswith(b"HTTP/1.1 200 Connection Established\r\n")
+                client.sendall(b"origin probe")
+                assert client.recv(1024) == b"origin probe"
+            assert tunnel.connection_attempts == 1
+            assert tunnel.successful_connections == 1
+            assert tunnel.peer_ip == "127.0.0.1"
+            assert tunnel.peer_ip == tunnel.selected_origin_ip
+
+            with socket.create_connection(tunnel.address, timeout=2) as client:
+                client.sendall(
+                    b"CONNECT attacker.example:443 HTTP/1.1\r\n"
+                    b"Host: attacker.example:443\r\n\r\n"
+                )
+                assert client.recv(4096).startswith(b"HTTP/1.1 403 Forbidden\r\n")
+            assert tunnel.connection_attempts == 2
+            assert tunnel.successful_connections == 1
+    finally:
+        upstream.shutdown()
+        upstream.server_close()
+        upstream_thread.join(timeout=2)
+
+
+def test_origin_connect_tunnel_uses_only_startup_dns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class EchoHandler(socketserver.BaseRequestHandler):
+        def handle(self) -> None:
+            data = self.request.recv(1024)
+            self.request.sendall(data)
+
+    upstream = socketserver.ThreadingTCPServer(("127.0.0.1", 0), EchoHandler)
+    upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+    upstream_thread.start()
+    original_getaddrinfo = socket.getaddrinfo
+    resolutions = {"public.invalid": 0, "origin.invalid": 0}
+    startup_complete = False
+
+    def controlled_resolution(host, port, family=0, type=0, proto=0, flags=0):
+        if host in resolutions:
+            assert not startup_complete, f"post-start DNS lookup for {host}"
+            resolutions[host] += 1
+            target = "127.0.0.2" if host == "public.invalid" else "127.0.0.1"
+            return original_getaddrinfo(target, port, family, type, proto, flags)
+        return original_getaddrinfo(host, port, family, type, proto, flags)
+
+    monkeypatch.setattr(gate.socket, "getaddrinfo", controlled_resolution)
+    try:
+        with gate.OriginConnectTunnel(
+            canonical_url="https://public.invalid",
+            origin_url=f"https://origin.invalid:{upstream.server_address[1]}",
+        ) as tunnel:
+            startup_complete = True
+            with socket.create_connection(tunnel.address, timeout=2) as client:
+                client.sendall(
+                    b"CONNECT public.invalid:443 HTTP/1.1\r\n"
+                    b"Host: public.invalid:443\r\n\r\n"
+                )
+                assert client.recv(4096).startswith(
+                    b"HTTP/1.1 200 Connection Established\r\n"
+                )
+                client.sendall(b"pinned DNS")
+                assert client.recv(1024) == b"pinned DNS"
+            assert tunnel.peer_ip == "127.0.0.1"
+            assert resolutions == {"public.invalid": 1, "origin.invalid": 1}
+    finally:
+        upstream.shutdown()
+        upstream.server_close()
+        upstream_thread.join(timeout=2)
+
+
+def test_origin_connect_tunnel_refuses_dns_overlap_and_resolution_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(gate.GateError, match="DNS addresses overlap"):
+        gate.OriginConnectTunnel(
+            canonical_url="https://127.0.0.1",
+            origin_url="https://127.0.0.1",
+        )
+
+    original_getaddrinfo = socket.getaddrinfo
+
+    def failed_origin_resolution(host, port, family=0, type=0, proto=0, flags=0):
+        if host == "missing.invalid":
+            raise socket.gaierror("not found")
+        return original_getaddrinfo(host, port, family, type, proto, flags)
+
+    monkeypatch.setattr(gate.socket, "getaddrinfo", failed_origin_resolution)
+    with pytest.raises(gate.GateError, match="failed to resolve generated origin URL"):
+        gate.OriginConnectTunnel(
+            canonical_url="https://127.0.0.2",
+            origin_url="https://missing.invalid",
+        )
+
+
+def test_origin_raw_materialize_keeps_canonical_url_and_requires_tunnel(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class TraversedTunnel:
+        proxy_url = "http://127.0.0.1:43210"
+        selected_origin_ip = "192.0.2.10"
+
+        def __init__(self) -> None:
+            self.connection_attempts = 0
+            self.successful_connections = 0
+            self.peer_ip = ""
+
+    seen: dict[str, object] = {}
+
+    def successful_aw(command, *, cwd, stdout, stderr, label, env=None):
+        seen["command"] = command
+        seen["environment"] = env
+        tunnel.connection_attempts = 1
+        tunnel.successful_connections = 1
+        tunnel.peer_ip = tunnel.selected_origin_ip
+        stdout.write_text(json.dumps(payload("pi")))
+        stderr.write_text("HTTP 200\n")
+
+    monkeypatch.setattr(gate, "run_checked", successful_aw)
+    monkeypatch.setenv("HTTP_PROXY", "http://untrusted.example")
+    monkeypatch.setenv("https_proxy", "http://untrusted.example")
+    monkeypatch.setenv("ALL_PROXY", "socks5://untrusted.example")
+    monkeypatch.setenv("no_proxy", "library.example")
+    tunnel = TraversedTunnel()
+    result = gate.raw_materialize(
+        Path("/released/aw"),
+        tmp_path,
+        "https://library.example",
+        "pi",
+        tmp_path,
+        origin_tunnel=tunnel,
+    )
+    assert result == payload("pi")
+    assert seen["command"][4] == "https://library.example/v1/materialize"
+    environment = seen["environment"]
+    assert environment["HTTPS_PROXY"] == tunnel.proxy_url
+    assert environment["NO_PROXY"] == ""
+    assert "HTTP_PROXY" not in environment
+    assert "https_proxy" not in environment
+    assert "ALL_PROXY" not in environment
+    assert "no_proxy" not in environment
+
+    class BypassedTunnel:
+        proxy_url = tunnel.proxy_url
+        selected_origin_ip = tunnel.selected_origin_ip
+        connection_attempts = 0
+        successful_connections = 0
+        peer_ip = ""
+
+    def bypassed_aw(command, *, cwd, stdout, stderr, label, env=None):
+        stdout.write_text(json.dumps(payload("pi")))
+        stderr.write_text("HTTP 200\n")
+
+    monkeypatch.setattr(gate, "run_checked", bypassed_aw)
+    with pytest.raises(gate.GateError, match="exactly one pinned origin socket"):
+        gate.raw_materialize(
+            Path("/released/aw"),
+            tmp_path,
+            "https://library.example",
+            "pi",
+            tmp_path,
+            origin_tunnel=BypassedTunnel(),
+        )
+
+
+def test_raw_materialize_requires_exact_http_200(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def redirected_aw(command, *, cwd, stdout, stderr, label, env=None):
+        stdout.write_text(json.dumps(payload("pi")))
+        stderr.write_text("HTTP 302\n")
+
+    monkeypatch.setattr(gate, "run_checked", redirected_aw)
+    with pytest.raises(gate.GateError, match="did not return exact HTTP 200"):
+        gate.raw_materialize(
+            Path("/released/aw"), tmp_path, "https://library.example", "pi", tmp_path
+        )
+
+
+def test_candidate_runs_origin_functional_probes_before_public_edge(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, str, bool]] = []
+
+    class FakeTunnel:
+        peer_ip = "192.0.2.10"
+
+        def __init__(self, *, canonical_url: str, origin_url: str) -> None:
+            assert canonical_url == "https://library.example"
+            assert origin_url == "https://library-origin.example"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_raw(aw_bin, source_home, public_url, runtime, root, *, origin_tunnel=None):
+        calls.append((runtime, public_url, origin_tunnel is not None))
+        return payload(runtime)
+
+    monkeypatch.setattr(gate, "OriginConnectTunnel", FakeTunnel)
+    monkeypatch.setattr(gate, "raw_materialize", fake_raw)
+    monkeypatch.setattr(gate, "clone_auth_home", lambda source, destination: None)
+    monkeypatch.setattr(
+        gate,
+        "strict_materialize",
+        lambda *args, **kwargs: {"gate": "released-strict-client"},
+    )
+    monkeypatch.setattr(gate, "run_harness", lambda *args, **kwargs: {"gate": "real-harness"})
+    args = Namespace(
+        source_home=tmp_path,
+        public_url="https://library.example",
+        origin_url="https://library-origin.example",
+        expected_profile_version=EXPECTED_VERSION,
+        expected_profile_digest=EXPECTED_DIGEST,
+    )
+    summaries = gate.run_candidate(args, tmp_path)
+    assert calls == [
+        ("claude-code", "https://library.example", True),
+        ("pi", "https://library.example", True),
+        ("claude-code", "https://library.example", False),
+        ("pi", "https://library.example", False),
+    ]
+    assert [item["gate"] for item in summaries[:4]] == [
+        "raw-candidate-origin",
+        "raw-candidate-origin",
+        "raw-candidate-public",
+        "raw-candidate-public",
+    ]
+    assert [item.get("transport_peer_ip") for item in summaries[:2]] == [
+        "192.0.2.10",
+        "192.0.2.10",
+    ]
+
+
+def test_candidate_cannot_pass_when_canonical_public_probe_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    class FakeTunnel:
+        peer_ip = "192.0.2.10"
+
+        def __init__(self, *, canonical_url: str, origin_url: str) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def public_failure(aw_bin, source_home, public_url, runtime, root, *, origin_tunnel=None):
+        is_origin = origin_tunnel is not None
+        calls.append((runtime, is_origin))
+        if not is_origin:
+            raise gate.GateError("canonical public edge failed")
+        return payload(runtime)
+
+    monkeypatch.setattr(gate, "OriginConnectTunnel", FakeTunnel)
+    monkeypatch.setattr(gate, "raw_materialize", public_failure)
+    monkeypatch.setattr(gate, "clone_auth_home", lambda source, destination: None)
+    monkeypatch.setattr(
+        gate,
+        "strict_materialize",
+        lambda *args, **kwargs: {"gate": "released-strict-client"},
+    )
+    monkeypatch.setattr(gate, "run_harness", lambda *args, **kwargs: {"gate": "real-harness"})
+    args = Namespace(
+        source_home=tmp_path,
+        public_url="https://library.example",
+        origin_url="https://library-origin.example",
+        expected_profile_version=EXPECTED_VERSION,
+        expected_profile_digest=EXPECTED_DIGEST,
+    )
+    with pytest.raises(gate.GateError, match="canonical public edge failed"):
+        gate.run_candidate(args, tmp_path)
+    assert calls == [
+        ("claude-code", True),
+        ("pi", True),
+        ("claude-code", False),
+    ]
 
 
 def test_clone_auth_home_removes_profile_and_delivery_state(tmp_path: Path) -> None:

@@ -9,19 +9,26 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
+import select
 import shutil
+import socket
+import socketserver
 import subprocess
 import sys
 import tempfile
+import threading
 import unicodedata
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 RUNTIMES = ("claude-code", "pi")
 REQUIRED_PUBLIC_URL = "https://library.aweb.ai"
+REQUIRED_ORIGIN_URL = "https://library-02jf.onrender.com"
 REQUIRED_AW_PATH = Path("/opt/homebrew/bin/aw")
 REQUIRED_AW_SHA256 = "e546aa12294e61c95d02cd0a69a613b115ea72cc43f7716e193dc4ef342d6815"
 REQUIRED_AW_VERSION_OUTPUT = "aw 1.34.0\n  commit: 82d7ca0\n  built:  2026-07-27T20:23:38Z\n"
@@ -48,6 +55,260 @@ PROMPT = (
 
 class GateError(RuntimeError):
     pass
+
+
+def _https_authority(url: str, *, label: str) -> tuple[str, int, str]:
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise GateError(f"{label} must be an https origin without path, query, or credentials")
+    try:
+        port = parsed.port or 443
+    except ValueError as exc:
+        raise GateError(f"{label} has an invalid port") from exc
+    host = parsed.hostname
+    authority_host = f"[{host}]" if ":" in host else host
+    return host, port, f"{authority_host}:{port}"
+
+
+def _resolve_stream_addresses(
+    host: str, port: int, *, label: str
+) -> tuple[tuple[int, int, int, tuple[Any, ...], str], ...]:
+    try:
+        results = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise GateError(f"failed to resolve {label}") from exc
+    addresses: dict[
+        tuple[int, tuple[Any, ...]], tuple[int, int, int, tuple[Any, ...], str]
+    ] = {}
+    for family, socktype, protocol, _, sockaddr in results:
+        normalized_ip = str(ipaddress.ip_address(sockaddr[0]))
+        key = (family, tuple(sockaddr))
+        addresses[key] = (family, socktype, protocol, tuple(sockaddr), normalized_ip)
+    if not addresses:
+        raise GateError(f"{label} resolved to no stream addresses")
+    return tuple(sorted(addresses.values(), key=lambda item: (item[4], item[0])))
+
+
+class _OriginProxyServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def __init__(
+        self,
+        address: tuple[str, int],
+        *,
+        allowed_authority: str,
+        selected_origin: tuple[int, int, int, tuple[Any, ...], str],
+        public_ips: frozenset[str],
+    ) -> None:
+        self.allowed_authority = allowed_authority
+        self.selected_origin = selected_origin
+        self.public_ips = public_ips
+        self._connection_attempts = 0
+        self._successful_connections = 0
+        self._peer_ip = ""
+        self._connection_lock = threading.Lock()
+        super().__init__(address, _OriginProxyHandler)
+
+    @property
+    def connection_attempts(self) -> int:
+        with self._connection_lock:
+            return self._connection_attempts
+
+    @property
+    def successful_connections(self) -> int:
+        with self._connection_lock:
+            return self._successful_connections
+
+    @property
+    def peer_ip(self) -> str:
+        with self._connection_lock:
+            return self._peer_ip
+
+    def record_connection_attempt(self) -> None:
+        with self._connection_lock:
+            self._connection_attempts += 1
+
+    def record_successful_connection(self, peer_ip: str) -> None:
+        with self._connection_lock:
+            self._successful_connections += 1
+            self._peer_ip = peer_ip
+
+    def connect_to_selected_origin(self) -> tuple[socket.socket, str]:
+        family, socktype, protocol, sockaddr, selected_ip = self.selected_origin
+        upstream = socket.socket(family, socktype, protocol)
+        upstream.settimeout(10)
+        try:
+            upstream.connect(sockaddr)
+            peer_ip = str(ipaddress.ip_address(upstream.getpeername()[0]))
+            if peer_ip != selected_ip or peer_ip in self.public_ips:
+                raise OSError("origin socket peer did not match the selected generated address")
+            return upstream, peer_ip
+        except OSError:
+            upstream.close()
+            raise
+
+
+class _OriginProxyHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        server: _OriginProxyServer = self.server  # type: ignore[assignment]
+        server.record_connection_attempt()
+        request = b""
+        try:
+            while b"\r\n\r\n" not in request:
+                chunk = self.request.recv(4096)
+                if not chunk or len(request) + len(chunk) > 16384:
+                    self.request.sendall(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
+                    return
+                request += chunk
+            request_line = request.split(b"\r\n", 1)[0].decode("ascii")
+        except (OSError, UnicodeDecodeError):
+            return
+        parts = request_line.split()
+        if len(parts) != 3 or parts[0] != "CONNECT" or parts[1] != server.allowed_authority:
+            try:
+                self.request.sendall(b"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+            return
+
+        try:
+            upstream, peer_ip = server.connect_to_selected_origin()
+        except OSError:
+            try:
+                self.request.sendall(b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
+            except OSError:
+                pass
+            return
+        with upstream:
+            try:
+                self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                server.record_successful_connection(peer_ip)
+                self._relay(upstream)
+            except OSError:
+                return
+
+    def _relay(self, upstream: socket.socket) -> None:
+        peers = (self.request, upstream)
+        while True:
+            readable, _, _ = select.select(peers, (), (), 35)
+            if not readable:
+                return
+            for source in readable:
+                data = source.recv(65536)
+                if not data:
+                    return
+                destination = upstream if source is self.request else self.request
+                destination.sendall(data)
+
+
+class OriginConnectTunnel:
+    """Route canonical TLS bytes to one captured generated-origin address."""
+
+    def __init__(self, *, canonical_url: str, origin_url: str) -> None:
+        public_host, public_port, self._allowed_authority = _https_authority(
+            canonical_url, label="canonical public URL"
+        )
+        origin_host, origin_port, _ = _https_authority(origin_url, label="generated origin URL")
+        public_addresses = _resolve_stream_addresses(
+            public_host, public_port, label="canonical public URL"
+        )
+        origin_addresses = _resolve_stream_addresses(
+            origin_host, origin_port, label="generated origin URL"
+        )
+        public_ips = frozenset(item[4] for item in public_addresses)
+        origin_ips = frozenset(item[4] for item in origin_addresses)
+        if public_ips & origin_ips:
+            raise GateError(
+                "generated-origin and canonical-public DNS addresses overlap; "
+                "origin bypass cannot be proven"
+            )
+        self._public_ips = public_ips
+        self._selected_origin = origin_addresses[0]
+        self._server: _OriginProxyServer | None = None
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> OriginConnectTunnel:
+        self._server = _OriginProxyServer(
+            ("127.0.0.1", 0),
+            allowed_authority=self._allowed_authority,
+            selected_origin=self._selected_origin,
+            public_ips=self._public_ips,
+        )
+        self._thread = threading.Thread(
+            target=self._server.serve_forever,
+            name="library-origin-connect-tunnel",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    @property
+    def address(self) -> tuple[str, int]:
+        if self._server is None:
+            raise GateError("origin tunnel is not running")
+        host, port = self._server.server_address
+        return str(host), int(port)
+
+    @property
+    def proxy_url(self) -> str:
+        host, port = self.address
+        return f"http://{host}:{port}"
+
+    @property
+    def selected_origin_ip(self) -> str:
+        return self._selected_origin[4]
+
+    @property
+    def connection_attempts(self) -> int:
+        if self._server is None:
+            return 0
+        return self._server.connection_attempts
+
+    @property
+    def successful_connections(self) -> int:
+        if self._server is None:
+            return 0
+        return self._server.successful_connections
+
+    @property
+    def peer_ip(self) -> str:
+        if self._server is None:
+            return ""
+        return self._server.peer_ip
+
+
+def origin_proxy_environment(proxy_url: str) -> dict[str, str]:
+    environment = os.environ.copy()
+    for key in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+    ):
+        environment.pop(key, None)
+    environment["HTTPS_PROXY"] = proxy_url
+    environment["NO_PROXY"] = ""
+    return environment
 
 
 def validate_relative_paths(paths: list[str]) -> None:
@@ -262,7 +523,13 @@ def run_checked(
 
 
 def raw_materialize(
-    aw_bin: Path, source_home: Path, public_url: str, runtime: str, root: Path
+    aw_bin: Path,
+    source_home: Path,
+    public_url: str,
+    runtime: str,
+    root: Path,
+    *,
+    origin_tunnel: OriginConnectTunnel | None = None,
 ) -> dict[str, Any]:
     request = root / f"raw-{runtime}.request.json"
     response = root / f"raw-{runtime}.response.json"
@@ -271,6 +538,10 @@ def raw_materialize(
         json.dumps({"profile_ref": "developer", "runtime_kind": runtime, "target": "local"}) + "\n",
         encoding="utf-8",
     )
+    if origin_tunnel is not None and (
+        origin_tunnel.connection_attempts != 0 or origin_tunnel.successful_connections != 0
+    ):
+        raise GateError("origin tunnel must be unused before each functional probe")
     run_checked(
         [
             str(aw_bin),
@@ -287,7 +558,22 @@ def raw_materialize(
         stdout=response,
         stderr=stderr,
         label=f"raw materialize {runtime}",
+        env=(
+            origin_proxy_environment(origin_tunnel.proxy_url)
+            if origin_tunnel is not None
+            else None
+        ),
     )
+    if stderr.read_text(encoding="utf-8", errors="replace") != "HTTP 200\n":
+        raise GateError(f"raw materialize {runtime} did not return exact HTTP 200")
+    if origin_tunnel is not None and (
+        origin_tunnel.connection_attempts != 1
+        or origin_tunnel.successful_connections != 1
+        or origin_tunnel.peer_ip != origin_tunnel.selected_origin_ip
+    ):
+        raise GateError(
+            f"raw materialize {runtime} did not traverse exactly one pinned origin socket"
+        )
     try:
         return json.loads(response.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -456,17 +742,39 @@ def run_candidate(args: argparse.Namespace, root: Path) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
     homes: dict[str, Path] = {}
     for runtime in RUNTIMES:
-        payload = raw_materialize(
-            REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root
-        )
-        summaries.append(
-            validate_candidate_payload(
+        with OriginConnectTunnel(
+            canonical_url=args.public_url, origin_url=args.origin_url
+        ) as origin_tunnel:
+            payload = raw_materialize(
+                REQUIRED_AW_PATH,
+                args.source_home,
+                args.public_url,
+                runtime,
+                root,
+                origin_tunnel=origin_tunnel,
+            )
+            summary = validate_candidate_payload(
                 payload,
                 runtime,
                 expected_version=args.expected_profile_version,
                 expected_digest=args.expected_profile_digest,
             )
+            summary["gate"] = "raw-candidate-origin"
+            summary["transport_route"] = "generated-origin-direct"
+            summary["transport_peer_ip"] = origin_tunnel.peer_ip
+            summaries.append(summary)
+    for runtime in RUNTIMES:
+        payload = raw_materialize(
+            REQUIRED_AW_PATH, args.source_home, args.public_url, runtime, root
         )
+        summary = validate_candidate_payload(
+            payload,
+            runtime,
+            expected_version=args.expected_profile_version,
+            expected_digest=args.expected_profile_digest,
+        )
+        summary["gate"] = "raw-candidate-public"
+        summaries.append(summary)
     for runtime in RUNTIMES:
         home = root / f"home-{runtime}"
         home.mkdir()
@@ -523,6 +831,7 @@ def parser() -> argparse.ArgumentParser:
     source_home = os.environ.get("AW_SOURCE_HOME")
     p.add_argument("--source-home", type=Path, default=Path(source_home) if source_home else None)
     p.add_argument("--public-url", default=REQUIRED_PUBLIC_URL)
+    p.add_argument("--origin-url", default=REQUIRED_ORIGIN_URL)
     p.add_argument(
         "--expected-profile-version",
         default=os.environ.get("EXPECTED_PROFILE_VERSION", ""),
@@ -541,6 +850,8 @@ def main() -> int:
             raise GateError("AW_SOURCE_HOME/--source-home must be an absolute path")
         if args.public_url != REQUIRED_PUBLIC_URL:
             raise GateError(f"production public URL must be exactly {REQUIRED_PUBLIC_URL}")
+        if args.origin_url != REQUIRED_ORIGIN_URL:
+            raise GateError(f"production origin URL must be exactly {REQUIRED_ORIGIN_URL}")
         if not args.expected_profile_version:
             raise GateError("EXPECTED_PROFILE_VERSION/--expected-profile-version is required")
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", args.expected_profile_digest):

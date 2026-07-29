@@ -46,7 +46,7 @@ rollback artifact after starting the deploy.
 | `make prod-status` | Read-only topology and current-live-deploy preflight. |
 | `make prod-deploy ... APPLY=1` | Validates topology and rollback pin, fetches and verifies exact `origin/main`, starts a clear-cache deploy, waits for `live`, then waits boundedly for exact origin and public health readiness. |
 | `make prod-wait ...` | Restartable read-only wait for one exact deploy ID and commit. |
-| `make prod-verify ...` | Requires the exact deploy to be the sole live artifact, checks origin/public health, then runs raw, released-client, and real-harness gates. |
+| `make prod-verify ...` | Requires the exact deploy to be the sole live artifact, checks origin/public health, then runs generated-origin raw, public raw, released-client, and real-harness gates. |
 | `make prod-rollback ... APPLY=1` | Pins the exact current live deployment, validates a distinct known-good rollback deploy ID/commit/state, rolls back, waits, re-checks the sole live artifact, and checks both health surfaces. |
 | `make prod-recovery ... APPLY=1` | Performs the pinned rollback and its explicitly selected recovery gate. |
 
@@ -96,13 +96,43 @@ Render metadata and health do not prove the functional release. Verification req
    seconds after switching networking, and this bound covers that documented transition
    window plus a 30-second operator safety margin. Review observed readiness durations
    after real releases and tighten or extend the bound only from evidence.
-4. Authenticated public `POST /v1/materialize` succeeds for `claude-code` and `pi`.
-5. `managed_set` is positionally identical to `home_files`, with no duplicates,
+4. Authenticated generated-origin `POST /v1/materialize` succeeds for `claude-code`
+   and `pi`, before any authenticated public-edge probe.
+5. Authenticated public `POST /v1/materialize` succeeds for both runtimes.
+6. `managed_set` is positionally identical to `home_files`, with no duplicates,
    noncanonical paths, broken links, or links resolving outside the generated home.
-6. The canonical `/opt/homebrew/bin/aw` strict client matches the reviewed 1.34.0
+7. The canonical `/opt/homebrew/bin/aw` strict client matches the reviewed 1.34.0
    SHA-256 plus version/commit/build metadata and materializes both runtimes into fresh
    homes; a self-reported version string alone is insufficient.
-7. Real Claude Code and Pi harnesses load the generated title and provenance line.
+8. Real Claude Code and Pi harnesses load the generated title and provenance line.
+
+The generated-origin functional probe separates the request's logical authority from its
+socket route without separating its security authority. The pinned `aw` command still
+requests `https://library.aweb.ai/v1/materialize`, so the signed audience, TLS SNI, HTTP
+Host, method, path, and body hash remain canonical. Before each runtime probe, a
+loopback-only CONNECT tunnel resolves the generated and public hostnames once, refuses
+any address-set overlap, selects one generated numeric address, and accepts only one
+`library.aweb.ai:443` connection. It removes ambient proxy/fallback settings, forwards
+opaque TLS bytes only to that selected address, never terminates TLS or reads
+authentication material, and performs no later DNS lookup or alternate-address retry.
+The gate requires exact HTTP 200, validates the full materialization payload, verifies
+that the kernel-observed peer is the selected address, and records that safe peer IP in
+the release output. It then closes the tunnel and runs the public probe normally.
+
+This tunnel deliberately bypasses the aweb-controlled Cloudflare zone on
+`library.aweb.ai`; reaching Render ingress without that zone is what makes it an origin
+probe. Consequently, it does not exercise the public zone's WAF/browser-signature rules,
+cache, routing, or other edge configuration and cannot establish that the path users take
+is healthy. It proves only bypass of the public hostname address set observed by the same
+resolver at startup and functional behavior behind Render ingress. It does not prove a
+dedicated backend process, globally disjoint CDN address ownership, or bypass of every
+shared Render ingress/edge layer.
+
+The authenticated canonical public-edge probe remains mandatory and runs after both
+origin runtime probes. Any public probe failure aborts the candidate gate; origin success
+cannot substitute for it, mask it, or produce an overall pass. TLS certificate validation,
+canonical audience validation, and the service's single allowed audience remain
+unchanged on both paths.
 
 The harness artifact check has a deliberate boundary. It proves the exact reviewed
 Claude native executable and the exact Pi entry script, run by the exact reviewed Node
@@ -114,10 +144,13 @@ not claim per-run integrity of Pi's installed dependency tree; that tree is trus
 part of the reviewed package installation. This gate does not defend a compromised local
 machine that can also rewrite the Makefile or gate itself.
 
-Do not send an authenticated materialization request signed for the generated Render
-origin. Library validates the signed audience against its canonical public origin, so a
-401 at the generated origin is expected and must not be "fixed" by weakening audience
-validation.
+Do not send an authenticated materialization request whose URL is the generated Render
+origin. That request is signed for the generated audience; Library correctly rejects it
+with 401 because the only allowed audience is the canonical public origin. This expected
+audience rejection is not evidence that the product failed at the origin. The supported
+origin probe instead keeps the canonical URL and audience and changes only the pinned
+socket route. Never add the generated origin as an allowed audience or weaken the
+canonical audience comparison.
 
 ## Rollback and recovery
 
