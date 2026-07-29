@@ -140,11 +140,26 @@ var teamHumanLeaveCmd = &cobra.Command{
 
 var teamHumanRemoveAgentCmd = &cobra.Command{
 	Use:   "remove-agent <member-address>",
-	Short: "Remove an agent from a team",
-	Long: "Remove an agent from a team.\n\n" +
-		"This everyday verb maps to the identity/certificate revocation primitive.\n" +
+	Short: "Retire an agent: release its claims, then revoke its certificate",
+	Long: "Retire an agent from a team across the stores that hold its state.\n\n" +
+		"It first deletes the agent's workspace record, which releases the task claims\n" +
+		"held under it, and only then revokes its certificate. That order matters: an\n" +
+		"agent can release its own claims until its certificate is revoked, and the\n" +
+		"hosted removal deletes the same workspace record without releasing anything.\n\n" +
+		"If the claims cannot be released the command stops before revoking and says\n" +
+		"which store changed and which did not, rather than leaving an agent with no\n" +
+		"credential and claims nobody can clear. To revoke access immediately and\n" +
+		"accept that outcome, use `aw id team remove-member`.\n\n" +
+		"The result names what each store did. On a hosted team a revoke that revoked\n" +
+		"nothing is reported as what the service said, not as a statement about the\n" +
+		"certificate: the hosted service answers from its own membership records and\n" +
+		"may never consult the registry. Read the certificate state with\n" +
+		"`aw team agent-status`.\n\n" +
 		"Customer-controlled teams revoke with the local team controller key; hosted\n" +
-		"aweb.ai teams call the cloud-mediated controller revoke endpoint.",
+		"aweb.ai teams call the cloud-mediated controller revoke endpoint. On a\n" +
+		"customer-controlled team, retiring a name that no longer resolves is an error\n" +
+		"rather than a no-op, because that answer is indistinguishable from a request\n" +
+		"that never reached the registry.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanRemoveAgent,
 }

@@ -898,6 +898,7 @@ controller operations remain under `aw id team`.
 Subcommands:
 - `add` Add agents to this team's agents/instances layout
 - `adopt` Adopt a public-pinned agent profile onto the team's private Library shelf
+- `agent-status` Read whether an agent still holds a certificate, a workspace, or task claims
 - `create` Create a local empty-profile team workspace
 - `extend` Add agents to an existing team by discovering membership authority
 - `invite` Invite an agent or workspace to the active team
@@ -905,7 +906,7 @@ Subcommands:
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
 - `refresh` Refresh a team member's profile and existing team-instructions block
-- `remove-agent` Remove an agent from a team
+- `remove-agent` Retire an agent: release its claims, then revoke its certificate
 - `replace-key` Replace a local agent identity key under team-controller authority
 - `switch` Switch the active team for this identity
 - `up` Launch local team agents in tmux
@@ -947,6 +948,19 @@ uses the shelf path and can pick up approved team-local profile mints.
 Flags:
 - `-h, --help help for adopt`
 - `--home string Agent home directory override (default: agents/instances/<name>)`
+
+## `team agent-status`
+
+### `team agent-status`
+
+Read the state of one agent across the stores retirement has to clear.
+
+This reads and never writes. It exists so that the evidence an agent is
+retired comes from somewhere other than the command that retired it.
+
+Flags:
+- `-h, --help help for agent-status`
+- `--team-id string Canonical team id (<name>:<namespace>) to read from (defaults to active team)`
 
 ## `team create`
 
@@ -1080,11 +1094,29 @@ Flags:
 
 ### `team remove-agent`
 
-Remove an agent from a team.
+Retire an agent from a team across the stores that hold its state.
 
-This everyday verb maps to the identity/certificate revocation primitive.
+It first deletes the agent's workspace record, which releases the task claims
+held under it, and only then revokes its certificate. That order matters: an
+agent can release its own claims until its certificate is revoked, and the
+hosted removal deletes the same workspace record without releasing anything.
+
+If the claims cannot be released the command stops before revoking and says
+which store changed and which did not, rather than leaving an agent with no
+credential and claims nobody can clear. To revoke access immediately and
+accept that outcome, use `aw id team remove-member`.
+
+The result names what each store did. On a hosted team a revoke that revoked
+nothing is reported as what the service said, not as a statement about the
+certificate: the hosted service answers from its own membership records and
+may never consult the registry. Read the certificate state with
+`aw team agent-status`.
+
 Customer-controlled teams revoke with the local team controller key; hosted
-aweb.ai teams call the cloud-mediated controller revoke endpoint.
+aweb.ai teams call the cloud-mediated controller revoke endpoint. On a
+customer-controlled team, retiring a name that no longer resolves is an error
+rather than a no-op, because that answer is indistinguishable from a request
+that never reached the registry.
 
 Flags:
 - `--api-key string Team API key for hosted removal (overrides AWEB_API_KEY; workspace-bound API keys are rejected by hosted aweb)`
