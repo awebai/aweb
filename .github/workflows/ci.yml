@@ -10,6 +10,7 @@ permissions:
 
 env:
   AW_VERSION: "1.34.0"
+  LIBRARY_REQUIRE_TEST_DATABASE: "1"
 
 concurrency:
   group: library-ci-${{ github.ref }}

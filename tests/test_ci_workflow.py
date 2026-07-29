@@ -52,6 +52,7 @@ def test_ci_pins_the_released_aw_client_used_by_e2e() -> None:
     commands = "\n".join(step.get("run", "") for step in steps)
 
     assert workflow["env"]["AW_VERSION"]
+    assert workflow["env"]["LIBRARY_REQUIRE_TEST_DATABASE"] == "1"
     assert '@awebai/aw@$AW_VERSION' in commands
     assert "aw version" in commands
 
