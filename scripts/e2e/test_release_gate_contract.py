@@ -15,6 +15,7 @@ to show the assertions can fail.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import unittest
@@ -226,12 +227,22 @@ class ReleaseGateContractTests(unittest.TestCase):
         for surface in SURFACES:
             with self.subTest(surface=surface.name):
                 target = surface.gate_command.split("make ", 1)[1]
+                # Run the child make free of the parent's MAKEFLAGS, so the plan
+                # asserted below is the committed Makefile's rather than one
+                # bent by how the caller happened to invoke `make test` -
+                # command-line variable overrides propagate through MAKEFLAGS.
+                env = {
+                    key: value
+                    for key, value in os.environ.items()
+                    if key not in ("MAKEFLAGS", "MFLAGS", "MAKELEVEL")
+                }
                 plan = subprocess.run(
                     ["make", "--dry-run", target],
                     cwd=REPO_ROOT,
                     capture_output=True,
                     text=True,
                     check=True,
+                    env=env,
                 ).stdout
                 for command in surface.gate_must_run:
                     self.assertIn(command, plan, f"{target} must run {command}")
