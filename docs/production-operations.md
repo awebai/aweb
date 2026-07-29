@@ -92,7 +92,8 @@ Render metadata and health do not prove the functional release. Verification req
 6. The canonical `/opt/homebrew/bin/aw` strict client matches the reviewed 1.34.0
    SHA-256 plus version/commit/build metadata and materializes both runtimes into fresh
    homes; a self-reported version string alone is insufficient.
-7. Real Claude Code and Pi harnesses load the generated title and provenance line.
+7. Canonical, content-pinned Claude Code and Pi harness artifacts load the generated
+   title and provenance line.
 
 Do not send an authenticated materialization request signed for the generated Render
 origin. Library validates the signed audience against its canonical public origin, so a

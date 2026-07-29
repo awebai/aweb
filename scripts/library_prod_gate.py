@@ -21,9 +21,14 @@ from pathlib import Path
 from typing import Any
 
 RUNTIMES = ("claude-code", "pi")
+REQUIRED_PUBLIC_URL = "https://library.aweb.ai"
 REQUIRED_AW_PATH = Path("/opt/homebrew/bin/aw")
 REQUIRED_AW_SHA256 = "e546aa12294e61c95d02cd0a69a613b115ea72cc43f7716e193dc4ef342d6815"
 REQUIRED_AW_VERSION_OUTPUT = "aw 1.34.0\n  commit: 82d7ca0\n  built:  2026-07-27T20:23:38Z\n"
+REQUIRED_CLAUDE_PATH = Path("/opt/homebrew/bin/claude")
+REQUIRED_CLAUDE_SHA256 = "8addc857f3fe64d5a0368af9ee50321b50afb4a6918ba3ef018ab84f5dbbe081"
+REQUIRED_PI_PATH = Path("/opt/homebrew/bin/pi")
+REQUIRED_PI_SHA256 = "af302f231437eaf6f37691bce4b34234fcb626bcb5eb3910d4fc3f6519bf78ca"
 IGNORED_AUTH_FILES = (
     "interaction-log.jsonl",
     "channel-delivered-ids.json",
@@ -153,21 +158,28 @@ def validate_materialized_ref(
     ):
         raise GateError(f"strict client managed_set invalid for {runtime}")
     validate_relative_paths(managed)
-    home = path.parents[2]
-    home_resolved = home.resolve(strict=True)
-    invalid_paths = 0
-    for relative in managed:
-        try:
-            resolved = (home / relative).resolve(strict=True)
-            resolved.relative_to(home_resolved)
-        except (OSError, RuntimeError, ValueError):
-            invalid_paths += 1
-    if invalid_paths:
-        raise GateError(
-            f"strict client produced {invalid_paths} missing, broken, or escaping managed paths "
-            f"for {runtime}"
-        )
+    verify_managed_paths(path.parents[2], managed, runtime)
     return sanitized_summary("released-strict-client", runtime, ref, len(managed))
+
+
+def verify_managed_paths(home: Path, managed: list[str], runtime: str) -> None:
+    home_resolved = home.resolve(strict=True)
+    for relative in managed:
+        requested = home / relative
+        try:
+            resolved = requested.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise GateError(
+                f"strict client managed path requested at {requested} is missing or broken "
+                f"for {runtime}"
+            ) from exc
+        try:
+            resolved.relative_to(home_resolved)
+        except ValueError as exc:
+            raise GateError(
+                f"strict client managed path requested at {requested} resolves outside "
+                f"generated home {home_resolved}: {resolved}"
+            ) from exc
 
 
 def sanitized_summary(gate: str, runtime: str, ref: dict[str, Any], count: int) -> dict[str, Any]:
@@ -182,15 +194,26 @@ def sanitized_summary(gate: str, runtime: str, ref: dict[str, Any], count: int) 
     }
 
 
-def verify_released_aw(aw_bin: Path) -> None:
-    if aw_bin != REQUIRED_AW_PATH:
-        raise GateError(f"released client path must be exactly {REQUIRED_AW_PATH}")
+def verify_file_artifact(
+    path: Path, *, expected_path: Path, expected_sha256: str, label: str
+) -> None:
+    if path != expected_path:
+        raise GateError(f"{label} path must be exactly {expected_path}")
     try:
-        digest = hashlib.sha256(aw_bin.read_bytes()).hexdigest()
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError as exc:
-        raise GateError("failed to hash the released aw binary") from exc
-    if digest != REQUIRED_AW_SHA256:
-        raise GateError("released aw binary SHA-256 does not match the reviewed artifact")
+        raise GateError(f"failed to hash {label}") from exc
+    if digest != expected_sha256:
+        raise GateError(f"{label} SHA-256 does not match the reviewed artifact")
+
+
+def verify_released_aw(aw_bin: Path) -> None:
+    verify_file_artifact(
+        aw_bin,
+        expected_path=REQUIRED_AW_PATH,
+        expected_sha256=REQUIRED_AW_SHA256,
+        label="released aw binary",
+    )
     try:
         completed = subprocess.run(
             [str(aw_bin), "version"],
@@ -443,7 +466,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("mode", choices=("candidate", "legacy-aasb"))
     source_home = os.environ.get("AW_SOURCE_HOME")
     p.add_argument("--source-home", type=Path, default=Path(source_home) if source_home else None)
-    p.add_argument("--public-url", default="https://library.aweb.ai")
+    p.add_argument("--public-url", default=REQUIRED_PUBLIC_URL)
     p.add_argument(
         "--expected-profile-version",
         default=os.environ.get("EXPECTED_PROFILE_VERSION", ""),
@@ -452,9 +475,9 @@ def parser() -> argparse.ArgumentParser:
         "--expected-profile-digest",
         default=os.environ.get("EXPECTED_PROFILE_DIGEST", ""),
     )
-    p.add_argument("--aw-bin", type=Path, default=Path("/opt/homebrew/bin/aw"))
-    p.add_argument("--claude-bin", type=Path, default=Path("/opt/homebrew/bin/claude"))
-    p.add_argument("--pi-bin", type=Path, default=Path("/opt/homebrew/bin/pi"))
+    p.add_argument("--aw-bin", type=Path, default=REQUIRED_AW_PATH)
+    p.add_argument("--claude-bin", type=Path, default=REQUIRED_CLAUDE_PATH)
+    p.add_argument("--pi-bin", type=Path, default=REQUIRED_PI_PATH)
     return p
 
 
@@ -463,6 +486,8 @@ def main() -> int:
     try:
         if args.source_home is None or not args.source_home.is_absolute():
             raise GateError("AW_SOURCE_HOME/--source-home must be an absolute path")
+        if args.public_url != REQUIRED_PUBLIC_URL:
+            raise GateError(f"production public URL must be exactly {REQUIRED_PUBLIC_URL}")
         if not args.expected_profile_version:
             raise GateError("EXPECTED_PROFILE_VERSION/--expected-profile-version is required")
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", args.expected_profile_digest):
@@ -470,6 +495,19 @@ def main() -> int:
                 "EXPECTED_PROFILE_DIGEST/--expected-profile-digest must be sha256-pinned"
             )
         verify_released_aw(args.aw_bin)
+        if args.mode == "candidate":
+            verify_file_artifact(
+                args.claude_bin,
+                expected_path=REQUIRED_CLAUDE_PATH,
+                expected_sha256=REQUIRED_CLAUDE_SHA256,
+                label="Claude Code binary",
+            )
+            verify_file_artifact(
+                args.pi_bin,
+                expected_path=REQUIRED_PI_PATH,
+                expected_sha256=REQUIRED_PI_SHA256,
+                label="Pi launcher",
+            )
         with tempfile.TemporaryDirectory(prefix="library-prod-gate-") as temporary:
             root = Path(temporary)
             summaries = (

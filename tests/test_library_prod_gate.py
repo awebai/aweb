@@ -201,13 +201,15 @@ def test_materialized_ref_rejects_broken_or_escaping_symlinks(tmp_path: Path) ->
             }
         )
     )
-    with pytest.raises(gate.GateError, match="escaping"):
+    with pytest.raises(gate.GateError, match="resolves outside") as escaped:
         gate.validate_materialized_ref(
             ref_path,
             "pi",
             expected_version=EXPECTED_VERSION,
             expected_digest=EXPECTED_DIGEST,
         )
+    assert str(link) in str(escaped.value)
+    assert str(outside) in str(escaped.value)
     link.unlink()
     link.symlink_to(home / "missing")
     with pytest.raises(gate.GateError, match="broken"):
