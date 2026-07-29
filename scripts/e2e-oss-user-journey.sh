@@ -2290,6 +2290,25 @@ psql_exec "UPDATE aweb.workspaces SET last_seen_at = NOW() - INTERVAL '2 hours' 
 claims_before="$(psql_scalar "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$NOKEY_WORKSPACE_ID';")"
 assert_eq "nokey holds a claim before retirement" "1" "$claims_before"
 
+# The verification runs before anything is written, so a namespace that is not
+# this team's must refuse and leave both stores exactly as they were. This is the
+# only place the coordination call site is driven through the real command - the
+# Go tests reach the verification helper directly, so they stay green if nothing
+# wires it in.
+if wrong_ns_out="$(run_aw_in "$ALICE_DIR" team remove-agent evil.local/nokey \
+  --team-id devteam:test.local --json 2>&1)"; then
+  wrong_ns_exit=0
+else
+  wrong_ns_exit=$?
+fi
+assert_eq "retiring a wrong-namespace address refuses" "1" "$wrong_ns_exit"
+assert_contains "refusal names the team namespace" "$wrong_ns_out" "test.local"
+
+claims_after_refusal="$(psql_scalar "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$NOKEY_WORKSPACE_ID';")"
+assert_eq "refused retirement released no claim" "1" "$claims_after_refusal"
+workspace_after_refusal="$(psql_scalar "SELECT (deleted_at IS NULL) FROM aweb.workspaces WHERE workspace_id = '$NOKEY_WORKSPACE_ID';")"
+assert_eq "refused retirement left the workspace record intact" "t" "$workspace_after_refusal"
+
 capture_success retire_out "retire_out" run_aw_in "$ALICE_DIR" team remove-agent test.local/nokey \
   --team-id devteam:test.local \
   --json
