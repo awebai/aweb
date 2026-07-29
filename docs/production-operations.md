@@ -88,8 +88,9 @@ Run `make prod-ops-test` before release planning. The mutation targets deliberat
 require `APPLY=1` and `CONFIRM_SERVICE_ID=srv-d8qm4jvavr4c73dhrmgg` in addition to the
 artifact pins. Deploy, verify, rollback, and health-client proof also require a fresh
 absolute `PROD_EVIDENCE_DIR` outside the repository. The directory must not exist; its
-parent must be an existing path with no symlink component. The tooling retains no-follow
-directory descriptors, detects path replacement, creates the root at exact mode 0700, and
+parent must be an operator-owned exact-mode-0700 path with no symlink component. The tooling
+retains no-follow directory descriptors, detects path replacement before and after publication,
+creates the root at exact mode 0700, and
 publishes no-replace mode-0600 versioned JSON artifacts. The initial manifest exists before any
 mutation. Each artifact records verified source/config identity, exact nonsecret request
 semantics, timing, bounded body bytes and their captured-byte digest/completeness, an allowlist
@@ -126,7 +127,7 @@ The gate clones only into a private temporary directory and removes it on exit.
 
 ## Verification surfaces
 
-The isolated stack does not prove production routing, Cloudflare policy, deployed identity, or shelf state; the production preflight does not prove candidate bytes are live; only exact-ID post-deploy verification can close a deployment.
+The isolated stack does not prove production routing, Cloudflare policy, deployed identity, or shelf state; production preflight does not prove candidate bytes are live; only exact-ID post-deploy verification can close a deployment.
 
 Real Claude Code and Pi harnesses run against the isolated exact-source signed stack before
 planning. The fast production preflight validates the installed harness identities but does

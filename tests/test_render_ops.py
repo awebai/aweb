@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import os
@@ -467,9 +468,61 @@ def test_evidence_refuses_symlink_component(tmp_path: Path) -> None:
         render_ops.HealthEvidenceRun(symlink_parent / "evidence", label="test")
 
 
+def test_evidence_detects_swap_during_construction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    parent = tmp_path / "private-parent"
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
+    evidence_path = parent / "evidence"
+    moved = parent / "created-original"
+    real_open = os.open
+    swapped = False
+
+    def swapping_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if path == "evidence" and flags & os.O_DIRECTORY and dir_fd is not None and not swapped:
+            swapped = True
+            evidence_path.rename(moved)
+            evidence_path.mkdir(mode=0o700)
+            evidence_path.chmod(0o700)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(render_ops.os, "open", swapping_open)
+    with pytest.raises(render_ops.OpsError, match="changed during creation"):
+        render_ops.HealthEvidenceRun(evidence_path, label="test")
+    assert not (evidence_path / "001.json").exists()
+    assert not (moved / "001.json").exists()
+
+
+def test_evidence_detects_swap_during_terminal_publication(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    evidence = render_ops.HealthEvidenceRun(tmp_path / "evidence", label="test")
+    moved = tmp_path / "moved"
+    real_link = os.link
+    swapped = False
+
+    def swapping_link(src, dst, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            evidence.path.rename(moved)
+            evidence.path.mkdir(mode=0o700)
+            evidence.path.chmod(0o700)
+        return real_link(src, dst, **kwargs)
+
+    monkeypatch.setattr(render_ops.os, "link", swapping_link)
+    with pytest.raises(render_ops.OpsError, match="path changed"):
+        evidence.finish({"probe_kind": "run-outcome", "outcome": "passed"})
+    assert not (evidence.path / "002.json").exists()
+    assert (moved / "002.json").exists()
+
+
 def test_evidence_detects_parent_swap(tmp_path: Path) -> None:
     parent = tmp_path / "parent"
-    parent.mkdir()
+    parent.mkdir(mode=0o700)
+    parent.chmod(0o700)
     evidence = render_ops.HealthEvidenceRun(parent / "evidence", label="test")
     moved = tmp_path / "moved-parent"
     parent.rename(moved)
@@ -785,6 +838,54 @@ def test_health_proof_body_bounds_and_terminal_outcome(
     assert len(outcomes) == 1
     assert outcomes[0] is artifacts[-1]
     assert outcomes[0]["outcome"] == expected_outcome
+
+
+def test_health_proof_cross_minute_has_one_failed_terminal_outcome(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig, tmp_path: Path
+) -> None:
+    config_path = tmp_path / "production.json"
+    write_config(config_path, config)
+    monkeypatch.setattr(
+        render_ops,
+        "_verifier_identity",
+        lambda: {
+            "verifier_source_sha": "a" * 40,
+            "verifier_script_sha256": "b" * 64,
+            "verifier_script_path": "scripts/render_ops.py",
+        },
+    )
+
+    class CrossMinuteDateTime:
+        calls = 0
+
+        @classmethod
+        def now(cls, tz):
+            cls.calls += 1
+            minute = 0 if cls.calls == 1 else 1
+            return dt.datetime(2026, 1, 1, 0, minute, tzinfo=dt.UTC)
+
+    calls = 0
+
+    def red_then_green(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise render_ops.PermanentHealthHTTPError("expected", status=403)
+        return {"status": "ok", "service": "library"}
+
+    monkeypatch.setattr(render_ops, "datetime", CrossMinuteDateTime)
+    monkeypatch.setattr(render_ops, "verify_health", red_then_green)
+    evidence_path = tmp_path / "evidence"
+    with pytest.raises(render_ops.OpsError, match="crossed a UTC minute"):
+        render_ops.command_health_client_proof(
+            SimpleNamespace(config=str(config_path), evidence_dir=str(evidence_path))
+        )
+    artifacts = [json.loads(path.read_text()) for path in sorted(evidence_path.glob("*.json"))]
+    outcomes = [item for item in artifacts if item["probe_kind"] == "run-outcome"]
+    assert len(outcomes) == 1
+    assert outcomes[0] is artifacts[-1]
+    assert outcomes[0]["outcome"] == "failed"
+    assert outcomes[0]["stage"] == "freshness"
 
 
 def test_health_client_proof_requires_same_path_red_then_green(

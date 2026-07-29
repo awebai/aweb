@@ -128,8 +128,21 @@ class HealthEvidenceRun:
             ) from exc
         self._leaf = path.name
         try:
-            os.mkdir(self._leaf, 0o700, dir_fd=self._parent_fd)
-            os.chmod(self._leaf, 0o700, dir_fd=self._parent_fd, follow_symlinks=False)
+            self._validate_parent_chain()
+            parent_stat = os.fstat(self._parent_fd)
+            if (
+                stat.S_IMODE(parent_stat.st_mode) != 0o700
+                or parent_stat.st_uid != os.geteuid()
+            ):
+                raise OpsError(
+                    "health evidence parent must be operator-owned with exact mode 0700"
+                )
+            previous_umask = os.umask(0)
+            try:
+                os.mkdir(self._leaf, 0o700, dir_fd=self._parent_fd)
+            finally:
+                os.umask(previous_umask)
+            created_stat = os.stat(self._leaf, dir_fd=self._parent_fd, follow_symlinks=False)
             self._directory_fd = os.open(
                 self._leaf,
                 os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -137,10 +150,13 @@ class HealthEvidenceRun:
             )
             os.fchmod(self._directory_fd, 0o700)
             directory_stat = os.fstat(self._directory_fd)
-            if not stat.S_ISDIR(directory_stat.st_mode) or stat.S_IMODE(
-                directory_stat.st_mode
-            ) != 0o700:
-                raise OpsError("health evidence directory must have exact mode 0700")
+            if (
+                not stat.S_ISDIR(directory_stat.st_mode)
+                or stat.S_IMODE(directory_stat.st_mode) != 0o700
+                or (created_stat.st_dev, created_stat.st_ino)
+                != (directory_stat.st_dev, directory_stat.st_ino)
+            ):
+                raise OpsError("health evidence directory changed during creation")
             self._directory_identity = (directory_stat.st_dev, directory_stat.st_ino)
             self.record({"probe_kind": "run-manifest", "outcome": "started"})
         except FileExistsError as exc:
@@ -152,9 +168,7 @@ class HealthEvidenceRun:
             self.close()
             raise
 
-    def _validate_anchor(self) -> None:
-        if self._closed:
-            raise OpsError("health evidence run is closed")
+    def _validate_parent_chain(self) -> None:
         for index in range(1, len(self._parent_chain)):
             parent_fd = self._parent_chain[index - 1][0]
             descriptor, component, identity = self._parent_chain[index]
@@ -169,6 +183,11 @@ class HealthEvidenceRun:
                 or (component_stat.st_dev, component_stat.st_ino) != identity
             ):
                 raise OpsError("health evidence parent path changed")
+
+    def _validate_anchor(self) -> None:
+        if self._closed:
+            raise OpsError("health evidence run is closed")
+        self._validate_parent_chain()
         directory_stat = os.fstat(self._directory_fd)
         if (
             not stat.S_ISDIR(directory_stat.st_mode)
@@ -226,6 +245,7 @@ class HealthEvidenceRun:
             except FileExistsError as exc:
                 raise OpsError("health evidence artifact must not already exist") from exc
             os.fsync(self._directory_fd)
+            self._validate_anchor()
         finally:
             if descriptor >= 0:
                 os.close(descriptor)
