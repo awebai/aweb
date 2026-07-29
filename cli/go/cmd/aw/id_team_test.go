@@ -4588,3 +4588,26 @@ func TestTeamSwitchRejectsUnknownMembershipWithAvailableTeams(t *testing.T) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
 }
+
+// An empty status is the most unknown answer available and must not take the
+// strongest branch. A 200 from something that is not this endpoint, carrying JSON
+// with no status field, is the wrong-URL case the 404 guard exists for arriving
+// through a different door.
+func TestRevokeHostedTeamCertificateRefusesAnEmptyStatus(t *testing.T) {
+	resetTeamRemoveMemberGlobals(t)
+	t.Chdir(t.TempDir())
+	t.Setenv(initAPIKeyEnvVar, "aw_sk_env")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"certificate_id": "cert-456"})
+	}))
+	defer server.Close()
+	teamRemoveAwebURL = server.URL
+
+	result, err := revokeHostedTeamCertificate(context.Background(), "default:alice.aweb.ai", "alice.aweb.ai/reviewer", "")
+	if err == nil {
+		t.Fatalf("an empty status was accepted, result=%+v", result)
+	}
+	if result.Result == certificateRevoked {
+		t.Fatalf("an empty status reported a revocation")
+	}
+}

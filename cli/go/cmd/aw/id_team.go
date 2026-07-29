@@ -2324,6 +2324,14 @@ func revokeRegistryTeamCertificate(
 // already-revoked answer, not any 409. The status alone is not enough: a
 // revocation command must not read an unrelated conflict as a completed
 // revocation.
+//
+// The detail text is a cross-repo coupling: awid raises
+// HTTPException(409, "Certificate already revoked") from revoke_certificate in
+// awid/src/awid_service/routes/teams.py, immediately after re-looking-up a
+// certificate whose conditional UPDATE changed no row. Rewording that raise costs
+// this distinction, and the failure is safe rather than silent - an unmatched 409
+// falls through to a loud error - but the caller goes back to being unable to tell
+// an already-revoked certificate from one that was never there.
 func registryReportsCertificateAlreadyRevoked(err error) bool {
 	status, ok := awid.HTTPStatusCode(err)
 	if !ok || status != http.StatusConflict {
@@ -2390,7 +2398,7 @@ func revokeHostedTeamCertificate(ctx context.Context, teamID, memberAddress, cer
 		WorkspaceID:   strings.TrimSpace(resp.WorkspaceID),
 	}
 	switch strings.ToLower(strings.TrimSpace(resp.Status)) {
-	case "removed", "":
+	case "removed":
 		result.Result = certificateRevoked
 	case "not_found":
 		result.Result = certificateNothingReported

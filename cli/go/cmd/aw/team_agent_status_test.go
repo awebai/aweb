@@ -24,6 +24,7 @@ type agentStores struct {
 	workspacePresent  bool
 	claimRefs         []string
 	claimsTruncated   bool
+	claimsListed      bool
 
 	registry     *httptest.Server
 	coordination *httptest.Server
@@ -75,6 +76,7 @@ func newAgentStores(t *testing.T) *agentStores {
 				"workspace_id": s.workspaceID, "alias": s.alias,
 			}}, "has_more": false})
 		case "/v1/claims":
+			s.claimsListed = true
 			claims := make([]map[string]any, 0, len(s.claimRefs))
 			for _, ref := range s.claimRefs {
 				claims = append(claims, map[string]any{
@@ -105,7 +107,7 @@ func (s *agentStores) read(t *testing.T) teamAgentStatusOutput {
 	out := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: s.alias}
 	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false)
 	readAgentCoordinationState(context.Background(), client, &out, s.alias)
-	out.NameReusable = out.Certificate == agentCertificateNone && out.Workspace == agentWorkspaceAbsent
+	out.deriveState()
 	return out
 }
 
@@ -237,5 +239,64 @@ func TestAgentStatusWillNotReadAHostedRegistrySilenceAsAnAbsentCertificate(t *te
 	readAgentCertificateState(context.Background(), &byot, "acme.com", "backend", false)
 	if byot.Certificate != agentCertificateNone {
 		t.Fatalf("customer-controlled certificate=%q, want %q", byot.Certificate, agentCertificateNone)
+	}
+}
+
+// A soft-deleted workspace is invisible to the workspace listing while its claims
+// remain. Reading "no workspace record" and reporting zero claims without asking
+// the claims store is the same defect as reporting an absent certificate from a
+// store that does not hold it - and this is the read that is supposed to catch
+// exactly that.
+func TestAgentStatusReadsTheClaimsStoreWhenTheWorkspaceRecordIsGone(t *testing.T) {
+	stores := newAgentStores(t)
+	stores.certificateActive = false
+	stores.workspacePresent = false
+	stores.claimRefs = []string{"backend-77", "backend-78"}
+
+	out := stores.read(t)
+
+	if !stores.claimsListed {
+		t.Fatalf("the claims store was never read for an alias with no workspace record")
+	}
+	if out.ClaimsHeld != 2 {
+		t.Fatalf("claims_held=%d, want 2; claims survive a deleted workspace record", out.ClaimsHeld)
+	}
+	if out.NameReusable {
+		t.Fatalf("name_reusable=true while the name still holds task claims")
+	}
+}
+
+// The same path with nothing held must still read clear, so the fix cannot be
+// "never report clear when the workspace is absent".
+func TestAgentStatusStillReadsClearWhenNothingIsHeldAnywhere(t *testing.T) {
+	stores := newAgentStores(t)
+	stores.certificateActive = false
+	stores.workspacePresent = false
+
+	out := stores.read(t)
+
+	if out.ClaimsHeld != 0 || !out.ClaimsComplete {
+		t.Fatalf("claims_held=%d complete=%t, want 0 and complete", out.ClaimsHeld, out.ClaimsComplete)
+	}
+	if !out.NameReusable {
+		t.Fatalf("name_reusable=false when nothing is held")
+	}
+}
+
+// A truncated listing cannot establish that no claims are held, on this path
+// either.
+func TestAgentStatusWillNotReadATruncatedListingAsNoClaimsWhenTheWorkspaceIsGone(t *testing.T) {
+	stores := newAgentStores(t)
+	stores.certificateActive = false
+	stores.workspacePresent = false
+	stores.claimsTruncated = true
+
+	out := stores.read(t)
+
+	if out.ClaimsComplete {
+		t.Fatalf("claims_complete=true on a truncated listing with no workspace record")
+	}
+	if out.NameReusable {
+		t.Fatalf("name_reusable=true while the claim listing could not establish zero")
 	}
 }

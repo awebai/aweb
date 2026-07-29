@@ -108,17 +108,29 @@ func runTeamHumanAgentStatus(cmd *cobra.Command, args []string) error {
 	readAgentCertificateState(ctx, &out, domain, team, isAwebHostedNamespace(domain))
 	readAgentCoordinationState(ctx, client, &out, alias)
 
-	out.NameReusable = out.Certificate == agentCertificateNone && out.Workspace == agentWorkspaceAbsent
+	out.deriveState()
+	printOutput(out, formatTeamAgentStatus)
+	return nil
+}
+
+// deriveState settles the overall reading from the per-store ones.
+//
+// A truncated claim listing is not zero claims. Neither is an unread one. Both
+// leave the state unknown rather than clear, because this command exists to be
+// believed about an absence and must not report one it did not establish.
+func (out *teamAgentStatusOutput) deriveState() {
+	claimsClear := out.ClaimsHeld == 0 && out.ClaimsComplete
+	out.NameReusable = out.Certificate == agentCertificateNone &&
+		out.Workspace == agentWorkspaceAbsent &&
+		claimsClear
 	switch {
-	case out.Certificate == agentCertificateUnknown || out.Workspace == agentWorkspaceUnknown:
+	case out.Certificate == agentCertificateUnknown || out.Workspace == agentWorkspaceUnknown || !out.ClaimsComplete:
 		out.State = agentStateUnknown
-	case out.Certificate == agentCertificateNone && out.Workspace == agentWorkspaceAbsent && out.ClaimsHeld == 0:
+	case out.Certificate == agentCertificateNone && out.Workspace == agentWorkspaceAbsent && claimsClear:
 		out.State = agentStateClear
 	default:
 		out.State = agentStateHolding
 	}
-	printOutput(out, formatTeamAgentStatus)
-	return nil
 }
 
 // readAgentCertificateState answers whether the alias holds an active
@@ -203,15 +215,25 @@ func readAgentCoordinationState(ctx context.Context, client *aweb.Client, out *t
 		}
 	}
 	if matched == nil {
+		// No workspace record is not the same as no claims. The record may have
+		// been soft-deleted - by a completed retirement, or by a hosted removal
+		// that released nothing - and the claims keyed to it survive, invisible
+		// to this listing but not to the claims store. Ask.
 		out.Workspace = agentWorkspaceAbsent
-		out.ClaimsComplete = true
+		held, complete, err := claimsHeldByAlias(ctx, client, alias)
+		if err != nil {
+			out.Unreadable = append(out.Unreadable, fmt.Sprintf("task claims: %v", err))
+			return
+		}
+		out.ClaimsHeld = held
+		out.ClaimsComplete = complete
 		return
 	}
 
 	out.Workspace = agentWorkspacePresent
 	out.WorkspaceID = matched.WorkspaceID
 
-	claims, err := client.ClaimsList(ctx, matched.WorkspaceID, 100)
+	claims, err := client.ClaimsList(ctx, matched.WorkspaceID, 200)
 	if err != nil {
 		out.Unreadable = append(out.Unreadable, fmt.Sprintf("task claims: %v", err))
 		return

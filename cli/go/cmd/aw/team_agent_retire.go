@@ -183,12 +183,25 @@ func retireTeamAgent(
 			Result: storeUnchanged,
 			Detail: "revoked nothing: the registry states this certificate was already revoked",
 		})
-	default:
+	case certificate.Result == certificateNothingReported:
 		out.Stores = append(out.Stores, retireStoreOutcome{
 			Store:  storeCertificate,
 			Result: storeUnchanged,
 			Detail: "revoked nothing: the service reported it had nothing to revoke, which does not establish that no certificate exists; confirm with aw team agent-status",
 		})
+	default:
+		// Every result constant is handled above. A new one reaching here has no
+		// agreed meaning, and the strongest status is the wrong default for an
+		// answer nobody has interpreted - which is the whole argument of this
+		// change applied to this switch. Unreachable on purpose beats unreachable
+		// by coincidence.
+		out.Stores = append(out.Stores, retireStoreOutcome{
+			Store:  storeCertificate,
+			Result: storeFailed,
+			Detail: fmt.Sprintf("unrecognised certificate result %q; refusing to report what it means", certificate.Result),
+		})
+		out.Status = retirementIncomplete
+		return out
 	}
 
 	out.CertificateResult = certificate.Result
@@ -249,11 +262,7 @@ func releaseCoordinationState(
 
 	switch len(matches) {
 	case 0:
-		return retireStoreOutcome{
-			Store:  storeCoordination,
-			Result: storeUnchanged,
-			Detail: fmt.Sprintf("released nothing: no workspace record for %s", alias),
-		}, nil
+		return coordinationOutcomeWithoutWorkspace(ctx, client, alias), nil
 	case 1:
 	default:
 		return retireStoreOutcome{
@@ -303,6 +312,84 @@ func releaseCoordinationState(
 		Result: storeChanged,
 		Detail: fmt.Sprintf("deleted workspace %s and released %d task claim(s)", deleted.WorkspaceID, *deleted.ClaimsReleased),
 	}, deleted
+}
+
+// claimsHeldByAlias lists the task refs still claimed under an alias.
+//
+// "No workspace record" and "no claims" are different questions, and only the
+// second one is about claims. A soft-deleted workspace is invisible to the
+// workspace listing - WorkspaceListParams has no include-deleted option - while
+// the claims keyed to it remain, because /v1/claims selects straight from
+// task_claims with no join to workspaces. Inferring one from the other is how a
+// retirement reports success over an agent that still holds work.
+//
+// complete is false when the listing did not fit one page. A zero count from an
+// incomplete listing establishes nothing and must not be read as "none".
+//
+// It reports how many, not which. Naming the tasks needs a task_ref field the
+// claims client does not decode - see aweb-aaup, which owns that field because
+// the struct is shared with the already-claimed filter in aw work ready. The
+// count is what decides whether a retirement may call itself complete, so the
+// correctness of this path does not wait on that.
+func claimsHeldByAlias(ctx context.Context, client *aweb.Client, alias string) (held int, complete bool, err error) {
+	listCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	// The claims route caps a page at 200. There is no alias filter, so the whole
+	// team's claims come back and are matched here.
+	resp, err := client.ClaimsList(listCtx, "", 200)
+	if err != nil {
+		return 0, false, err
+	}
+	for _, claim := range resp.Claims {
+		if strings.EqualFold(strings.TrimSpace(claim.Alias), alias) {
+			held++
+		}
+	}
+	return held, !resp.HasMore, nil
+}
+
+// coordinationOutcomeWithoutWorkspace decides what an absent workspace record
+// means for the alias's claims.
+//
+// Absent is the ordinary case after a completed retirement, and it is also the
+// case after a hosted removal that soft-deleted the record without releasing
+// anything. Those look identical from the workspace listing and differ only in
+// whether claims remain, so the claims are read rather than assumed.
+//
+// When claims remain there is nothing this command can do about them: the record
+// they are keyed to is gone, so the delete cascade can no longer reach them.
+// Retirement therefore cannot complete, and saying so is the only honest outcome.
+func coordinationOutcomeWithoutWorkspace(ctx context.Context, client *aweb.Client, alias string) retireStoreOutcome {
+	held, complete, err := claimsHeldByAlias(ctx, client, alias)
+	if err != nil {
+		return retireStoreOutcome{
+			Store:  storeCoordination,
+			Result: storeFailed,
+			Detail: fmt.Sprintf("no workspace record for %s, and its task claims could not be read, so whether any are still held is unknown: %v", alias, err),
+		}
+	}
+	if !complete {
+		return retireStoreOutcome{
+			Store:  storeCoordination,
+			Result: storeFailed,
+			Detail: fmt.Sprintf("no workspace record for %s, and the claim listing was truncated, so it cannot establish that none are held", alias),
+		}
+	}
+	if held > 0 {
+		return retireStoreOutcome{
+			Store:  storeCoordination,
+			Result: storeBlocked,
+			Detail: fmt.Sprintf(
+				"released nothing: %s holds no workspace record but still holds %d task claim(s). The record they are keyed to is gone, so deleting it cannot release them. Move each claimed task out of in_progress, which releases every claim on it, then retire again.",
+				alias, held,
+			),
+		}
+	}
+	return retireStoreOutcome{
+		Store:  storeCoordination,
+		Result: storeUnchanged,
+		Detail: fmt.Sprintf("released nothing: no workspace record for %s, and it holds no task claims", alias),
+	}
 }
 
 func formatTeamRemoveAgent(v any) string {

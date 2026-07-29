@@ -34,6 +34,12 @@ type retirementStores struct {
 	certificateStatus string
 	// omitClaimsReleased serves a server too old to report the count.
 	omitClaimsReleased bool
+	// aliasClaims are task refs still claimed under the alias. They survive a
+	// workspace record, which is the state that matters: a soft-deleted workspace
+	// is invisible to the workspace listing while its claims remain.
+	aliasClaims []string
+	// claimsTruncated serves a claim listing that did not fit one page.
+	claimsTruncated bool
 
 	coordination *httptest.Server
 	certificate  *httptest.Server
@@ -63,6 +69,16 @@ func newRetirementStores(t *testing.T) *retirementStores {
 				"alias":                s.alias,
 				"agent_identity_scope": scope,
 			}}, "has_more": false})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/claims":
+			s.record("coordination:claims")
+			claims := make([]map[string]any, 0, len(s.aliasClaims))
+			for _, ref := range s.aliasClaims {
+				claims = append(claims, map[string]any{
+					"task_ref": ref, "workspace_id": s.workspaceID, "alias": s.alias,
+					"claimed_at": "2026-07-29T00:00:00Z", "team_id": "default:alice.aweb.ai",
+				})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"claims": claims, "has_more": s.claimsTruncated})
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/workspaces/"+s.workspaceID:
 			s.record("coordination:delete")
 			if s.deleteConflict {
@@ -393,5 +409,97 @@ func TestRetireTeamAgentDoesNotReportZeroClaimsWhenTheServerSentNoCount(t *testi
 	}
 	if !strings.Contains(detail, "does not report how many") {
 		t.Fatalf("detail must say the count is unavailable: %q", detail)
+	}
+}
+
+// The workspace listing cannot see a soft-deleted workspace, so an agent whose
+// record was already removed - by a hosted removal, or by a previous partial
+// retirement - looks identical to one that never had claims. Its claims are still
+// there, and the delete cascade can no longer reach them, so nothing in this
+// command can release them. Reporting that as retired is the defect this command
+// exists to remove.
+func TestRetireTeamAgentWillNotReportRetiredWhileClaimsSurviveAMissingWorkspace(t *testing.T) {
+	stores := newRetirementStores(t)
+	stores.workspaceMissing = true
+	stores.aliasClaims = []string{"backend-77", "backend-78"}
+	out := stores.retire(t)
+
+	for _, call := range stores.order() {
+		if call == "certificate:revoke" {
+			t.Fatalf("revoked while claims nothing can release were still held; calls=%v", stores.order())
+		}
+	}
+	if out.Status != retirementIncomplete {
+		t.Fatalf("status=%q, want %q", out.Status, retirementIncomplete)
+	}
+	coordination := storeOutcome(t, out, storeCoordination)
+	if coordination.terminal() {
+		t.Fatalf("coordination=%+v, want a non-terminal result while claims are held", coordination)
+	}
+	if !strings.Contains(coordination.Detail, "2 task claim(s)") {
+		t.Fatalf("blocked coordination store does not report the claims still held: %q", coordination.Detail)
+	}
+	if !strings.Contains(coordination.Detail, "in_progress") {
+		t.Fatalf("blocked coordination store does not say how to release them: %q", coordination.Detail)
+	}
+}
+
+// The same path with no claims is a genuine convergence and must stay terminal,
+// so the fix above cannot be "always refuse when the workspace is missing".
+func TestRetireTeamAgentStillConvergesWhenNoWorkspaceAndNoClaims(t *testing.T) {
+	stores := newRetirementStores(t)
+	stores.workspaceMissing = true
+	stores.certificateStatus = "not_found"
+	out := stores.retire(t)
+
+	if !retirementSucceeded(out.Status) {
+		t.Fatalf("status=%q, want a succeeding status when nothing is held", out.Status)
+	}
+	if got := storeOutcome(t, out, storeCoordination); got.Result != storeUnchanged {
+		t.Fatalf("coordination=%+v, want %q", got, storeUnchanged)
+	}
+}
+
+// A truncated claim listing cannot establish that no claims are held, and this is
+// the one command that must not read "I could not see any" as "there are none".
+func TestRetireTeamAgentWillNotConvergeOnATruncatedClaimListing(t *testing.T) {
+	stores := newRetirementStores(t)
+	stores.workspaceMissing = true
+	stores.claimsTruncated = true
+	out := stores.retire(t)
+
+	if retirementSucceeded(out.Status) {
+		t.Fatalf("status=%q, want a failing status on a listing that could not establish zero", out.Status)
+	}
+	if got := storeOutcome(t, out, storeCoordination); got.terminal() {
+		t.Fatalf("coordination=%+v, want non-terminal on a truncated listing", got)
+	}
+}
+
+// A certificate result nobody has interpreted must not come out as the most
+// confident status. The switch is exhaustive today; this keeps it so on purpose
+// rather than by coincidence.
+func TestRetireTeamAgentRefusesAnUninterpretedCertificateResult(t *testing.T) {
+	stores := newRetirementStores(t)
+	resetTeamRemoveMemberGlobals(t)
+	t.Chdir(t.TempDir())
+
+	client, err := aweb.New(stores.coordination.URL)
+	if err != nil {
+		t.Fatalf("aweb.New: %v", err)
+	}
+	out := retireTeamAgent(
+		context.Background(), client, "default:alice.aweb.ai",
+		"alice.aweb.ai/"+stores.alias, stores.alias,
+		func(ctx context.Context) (certificateStoreResult, error) {
+			return certificateStoreResult{Result: "queued_for_later"}, nil
+		},
+	)
+
+	if retirementSucceeded(out.Status) {
+		t.Fatalf("status=%q, want a failing status for an uninterpreted result", out.Status)
+	}
+	if got := storeOutcome(t, out, storeCertificate); got.Result != storeFailed {
+		t.Fatalf("certificate=%+v, want %q", got, storeFailed)
 	}
 }
