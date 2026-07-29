@@ -5,18 +5,28 @@
 NEVER make work in progress or temp branches. You have been assigned a worktree
 and a branch; always stay there and work there.
 
-This team's workflow has a coordinator who owns integration. When you finish a
-task, stand back and review the code, then hand off your branch. The handoff is
-the branch. Agents never merge their branches to main.
+When you finish a task, stand back and review the code, get an independent
+review, and then keep main in sync. Main is the shared branch and divergence is
+the thing to avoid.
 
-The coordinator integrates from a detached worktree based on `origin/main`, so
-no working tree is touched and the combination of branches can be built and
-tested before it lands. A self-merge policy cannot test that combination.
-Agents keep current from their own worktree: fetch, then merge `origin/main`
-into their own branch.
+**Ordinary single-repo work: merge it yourself.** After your reviewer ACKs,
+merge your branch to main and merge main back into your branch, from your own
+worktree. Do not wait for anyone. Many agents cannot stay coordinated if
+integration queues behind one of them.
 
-A team without a coordinator may use a different integration workflow; follow
-that team's explicit instructions rather than assuming this policy is universal.
+**Ask the coordinator to integrate when the change spans repositories, cuts a
+release tag, or touches production tooling.** There the risk is not your diff
+but the *combination*: two branches can each pass alone and fail together, and a
+tag must point at one reviewed commit. The coordinator merges those from a
+detached worktree based on `origin/main`, so no working tree is touched and the
+combination is built and tested before it lands.
+
+Either way: never merge work your reviewer has not ACKed, and always merge
+`origin/main` into your branch before handing off, so what was reviewed is what
+lands.
+
+A team without a coordinator self-merges everything; follow your team's explicit
+instructions rather than assuming this split is universal.
 
 ## Database migrations
 
