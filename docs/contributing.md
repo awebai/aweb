@@ -137,6 +137,30 @@ make freshness
 
 `make release-all-check` runs the same check and fails on drift.
 
+## Reproducible OAS seam input
+
+The OAS seam tests do not read a sibling working checkout by default. `make
+prepare-oas-test-root` materializes the immutable repository and commit recorded
+in `oas/upstream-test-pin.json` into the ignored `.cache/oas-pinned` directory;
+`make test-oas`, `make test-oas-proof-helpers`, and `make release-all-check` all
+consume that clean checkout. The same default runs in the release-gate workflow,
+so an aweb result is attributable to committed inputs rather than another
+repository's uncommitted state.
+
+This pin has a cost: it does not automatically exercise newer or uncommitted OAS
+integration primitives. To test that leading edge deliberately, opt in without
+changing or cleaning the local checkout:
+
+```bash
+make test-oas OAS_TEST_ROOT=/path/to/local/oas
+make test-oas-proof-helpers OAS_TEST_ROOT=/path/to/local/oas
+```
+
+Treat that override as additional early-integration evidence, not as a substitute
+for the pinned release result. Update the committed pin deliberately when the
+reviewed OAS seam advances; a clean first run requires network access to fetch the
+pinned commit, while later runs reuse and reset the repository-owned cache.
+
 ## Vulnerability audits
 
 `make check-node-audit` and `make check-go-vulnerability-audit` audit the

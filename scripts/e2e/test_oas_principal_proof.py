@@ -19,10 +19,9 @@ from oas_principal_proof import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-GIT_COMMON_DIR = subprocess.check_output(
-    ["git", "rev-parse", "--git-common-dir"], cwd=REPO_ROOT, text=True
-).strip()
-PINNED_OAS_ROOT = (REPO_ROOT / GIT_COMMON_DIR / "../../oas").resolve()
+SELECTED_OAS_ROOT = Path(
+    os.environ.get("OAS_TEST_ROOT") or REPO_ROOT / ".cache" / "oas-pinned"
+).resolve()
 
 
 class PrincipalProofHarnessTests(unittest.TestCase):
@@ -80,7 +79,7 @@ class PrincipalProofHarnessTests(unittest.TestCase):
         result = subprocess.run(
             ["/bin/bash", "scripts/e2e-oas-attached-principal-retire.sh", "--preflight"],
             cwd=REPO_ROOT,
-            env={"PATH": "/usr/bin:/bin", "OAS_TEST_ROOT": str(PINNED_OAS_ROOT)},
+            env={"PATH": "/usr/bin:/bin", "OAS_TEST_ROOT": str(SELECTED_OAS_ROOT)},
             capture_output=True,
             text=True,
             timeout=10,
@@ -118,7 +117,7 @@ class PrincipalProofHarnessTests(unittest.TestCase):
             env={
                 "PATH": "/usr/bin:/bin",
                 "NODE_OPTIONS": "--import=/tmp/external-preload.mjs",
-                "OAS_TEST_ROOT": str(PINNED_OAS_ROOT),
+                "OAS_TEST_ROOT": str(SELECTED_OAS_ROOT),
             },
             capture_output=True,
             text=True,

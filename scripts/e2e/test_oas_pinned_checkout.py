@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import tempfile
 import unittest
@@ -72,11 +71,17 @@ class OASPinnedCheckoutContractTests(unittest.TestCase):
                 "--target",
                 str(target),
             ]
-            subprocess.run(command, cwd=REPO_ROOT, check=True, capture_output=True, text=True)
+            first = subprocess.run(
+                command, cwd=REPO_ROOT, capture_output=True, text=True
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
             (target / "tracked.txt").write_text("uncommitted\n", encoding="utf-8")
             (target / "untracked.txt").write_text("uncommitted\n", encoding="utf-8")
 
-            subprocess.run(command, cwd=REPO_ROOT, check=True, capture_output=True, text=True)
+            second = subprocess.run(
+                command, cwd=REPO_ROOT, capture_output=True, text=True
+            )
+            self.assertEqual(second.returncode, 0, second.stderr)
             self.assertEqual((target / "tracked.txt").read_text(encoding="utf-8"), "reviewed\n")
             self.assertFalse((target / "untracked.txt").exists())
             self.assertEqual(
@@ -91,6 +96,38 @@ class OASPinnedCheckoutContractTests(unittest.TestCase):
                 ),
                 "",
             )
+
+    def test_materializer_refuses_an_unowned_existing_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            upstream = root / "upstream"
+            target = root / "not-a-cache"
+            pin_file = root / "pin.json"
+            subprocess.run(["git", "init", "-q", str(upstream)], check=True)
+            subprocess.run(["git", "init", "-q", str(target)], check=True)
+            sentinel = target / "uncommitted-work"
+            sentinel.write_text("keep me\n", encoding="utf-8")
+            pin_file.write_text(
+                json.dumps({"repository": str(upstream), "commit": "1" * 40}) + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "node",
+                    str(PREPARE_SCRIPT),
+                    "--pin-file",
+                    str(pin_file),
+                    "--target",
+                    str(target),
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("refusing to reset unowned directory", result.stderr)
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
 
     def test_explicit_local_override_is_not_materialized_or_cleaned(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -111,7 +148,7 @@ class OASPinnedCheckoutContractTests(unittest.TestCase):
                 text=True,
                 check=True,
             )
-            self.assertIn("explicit OAS_TEST_ROOT override", result.stdout)
+            self.assertIn("explicit OAS_TEST_ROOT override", result.stderr)
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
 
     def test_ci_runs_the_complete_release_gate(self) -> None:

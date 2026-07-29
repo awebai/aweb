@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
 	freshness check-go-vulnerability-audit check-node-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -23,9 +23,13 @@ CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plu
 CLI_VERSION = $(shell ./scripts/cli-release-version.sh next)
 # The A2A gateway workflow requires its tag to match server/pyproject.toml.
 A2A_GATEWAY_VERSION := $(SERVER_VERSION)
-# OAS seam tests intentionally measure the working sibling clone, including
-# unreleased integration primitives, rather than whichever CLI is global.
-OAS_TEST_ROOT ?= $(abspath $(shell git rev-parse --git-common-dir)/../../oas)
+# OAS seam tests default to an immutable reviewed upstream commit materialized
+# under this repository's ignored cache. That makes local and CI runs consume the
+# same clean input instead of a colleague's mutable sibling checkout. Deliberate
+# early integration remains opt-in: OAS_TEST_ROOT=/path/to/local/oas make test-oas.
+OAS_PIN_FILE := $(CURDIR)/oas/upstream-test-pin.json
+OAS_PINNED_ROOT := $(CURDIR)/.cache/oas-pinned
+OAS_TEST_ROOT ?= $(OAS_PINNED_ROOT)
 
 # Canonical docs mirrored onto the public AWID site. Sync, freshness checks, and
 # their negative controls all consume this one list so adding a mirror cannot
@@ -46,7 +50,9 @@ help:
 	@echo "  test-channel-core Run channel-core tests"
 	@echo "  test-channel-core-process-guard Run the multi-process DeliveryStore guard (release path)"
 	@echo "  test-pi-extension Run pi-extension tests"
-	@echo "  check-oas-launch-environment-contract Verify the unreleased OAS seam dependency"
+	@echo "  prepare-oas-test-root Materialize the clean committed OAS test pin"
+	@echo "  check-oas-launch-environment-contract Verify the pinned OAS seam dependency"
+	@echo "    opt-in local OAS: make test-oas OAS_TEST_ROOT=/path/to/local/oas"
 	@echo "  freshness    Regenerate committed artifacts and fail on drift"
 	@echo "  check-node-audit Audit Node dependencies for known vulnerabilities"
 	@echo "  check-go-vulnerability-audit Audit Go dependencies (pinned toolchain)"
@@ -173,15 +179,23 @@ test-channel-core-process-guard:
 test-pi-extension:
 	cd pi-extension && npm test
 
-check-oas-launch-environment-contract:
+prepare-oas-test-root:
+	@if [ "$(abspath $(OAS_TEST_ROOT))" = "$(abspath $(OAS_PINNED_ROOT))" ]; then \
+		node scripts/prepare-pinned-oas.mjs --pin-file "$(OAS_PIN_FILE)" --target "$(OAS_PINNED_ROOT)"; \
+	else \
+		echo "Using explicit OAS_TEST_ROOT override without modifying it: $(OAS_TEST_ROOT)" >&2; \
+	fi
+
+check-oas-launch-environment-contract: prepare-oas-test-root
 	@OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node scripts/check-oas-launch-environment-contract.mjs
 
 test-oas: check-oas-launch-environment-contract
 	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node --test oas/test/*.test.mjs
 
-test-oas-proof-helpers:
-	python3 scripts/e2e/test_oas_principal_proof.py
-	python3 scripts/e2e/test_oas_tmux_safety.py
+test-oas-proof-helpers: prepare-oas-test-root
+	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_pinned_checkout.py
+	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_principal_proof.py
+	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_tmux_safety.py
 
 test-oas-attached-principal-e2e: test-oas-proof-helpers
 	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" ./scripts/e2e-oas-attached-principal-retire.sh
