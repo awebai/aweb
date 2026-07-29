@@ -23,8 +23,10 @@ is today's main decision.
   assuming. My last verified-green run was the OAS suite 83/83.
 - **upstream OAS clone**: `~/prj/awebai/oas`, branch `working` — current
   upstream `main` (Pepe's 192 commits) **plus** our 8 commits: the pi launch fix
-  and the 6-commit environment contract. `OAS_TEST_ROOT` resolves here by
-  construction (`Makefile:24`), so our suite tests against this tree.
+  and the 6-commit environment contract. This remains the deliberate
+  early-integration override (`OAS_TEST_ROOT=~/prj/awebai/oas`); the default
+  suite now materializes the immutable commit in `oas/upstream-test-pin.json`
+  into a repository-owned cache so local and CI release evidence is reproducible.
 - **Push to that clone is deliberately blocked**:
   `remote.origin.pushurl = BLOCKED-open-a-PR-for-Pepe-instead-see-aweb-oas-aaaa`.
   Leave it blocked. Push feature branches by explicit URL only.
