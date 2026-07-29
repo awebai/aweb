@@ -77,6 +77,7 @@ rollback artifact after starting the deploy.
 |---|---|
 | `make prod-ops-test` | Mocked operations and gate tests; no network mutation. |
 | `make prod-status` | Read-only topology and current-live-deploy preflight. |
+| `make prod-health-client-proof ...` | Makes exactly two bounded canonical health requests: the known-blocked baseline UA must return 403 and the honest gate UA must return the exact 200 payload; persists both artifacts. |
 | `make prod-deploy ... APPLY=1` | Validates topology and rollback pin, fetches and verifies exact `origin/main`, starts a clear-cache deploy, waits for `live`, then waits boundedly for exact origin and public health readiness. |
 | `make prod-wait ...` | Restartable read-only wait for one exact deploy ID and commit. |
 | `make prod-verify ...` | Requires the exact deploy to be the sole live artifact, checks origin/public health, then runs raw, released-client, and real-harness gates. |
@@ -85,7 +86,13 @@ rollback artifact after starting the deploy.
 
 Run `make prod-ops-test` before release planning. The mutation targets deliberately
 require `APPLY=1` and `CONFIRM_SERVICE_ID=srv-d8qm4jvavr4c73dhrmgg` in addition to the
-artifact pins.
+artifact pins. Deploy, verify, rollback, and health-client proof also require a fresh
+absolute `PROD_EVIDENCE_DIR` outside the repository. The directory must not exist; its
+parent must be an existing non-symlink path. The tooling creates it at mode 0700 and writes
+atomic mode-0600 versioned JSON artifacts. Each artifact records exact nonsecret request
+semantics, timing, bounded body bytes and their digest/completeness, an allowlist of
+diagnostic response headers, and omitted header names but never omitted values. The
+operator owns retention and cleanup.
 
 Example variable shape (placeholders only):
 
@@ -206,15 +213,17 @@ that observation. Therefore the health-specific recovery interval is unmeasured.
 
 Because the known-good artifact exhibited the same immediate failure and then served
 both authenticated application traffic and health without another deploy, the evidence
-rules out a candidate-specific persistent defect and is consistent with a deployment-
-transition readiness race. It does not identify Render as the exact failing layer. The
-historical command preserved only the exception class `HTTPError`, not its HTTP status,
-so it also does not prove that the new transient-status allowlist would have matched that
-specific response. Future structured logs preserve exact safe status, attempts, and
-elapsed time to establish that match. The candidate was still not verified and must not
-be reported as deployed. The durable correction is a bounded, instrumented treatment
-for the observed failure class, not removal of health verification, redirect following,
-or an unreviewed retry.
+ruled out a candidate-specific persistent defect. The initial readiness-race explanation
+was an unconfirmed hypothesis, not the incident cause. A later controlled comparison
+reproduced Cloudflare error 1010 only for the default `Python-urllib/3.12` User-Agent on
+`library.aweb.ai`; the same client reached the generated origin, and a different honest
+client reached the canonical health URL. The request never reached Library. A third deploy
+attempt preserved exact HTTP 403 for both candidate and rollback but still discarded the
+response artifact. The gate now identifies itself as
+`aweb-library-deploy-gate/1.0`, persists bounded sanitized evidence before raising,
+and retains the bounded readiness retry only as preventive hardening for a distinct
+plausible failure class. The candidates were not verified and must not be reported as
+deployed.
 
 Initial-bound basis: Render documents that after updating networking to route traffic to
 the new instance it waits 60 seconds before signaling the original instance to stop:

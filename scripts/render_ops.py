@@ -8,18 +8,22 @@ The API key is loaded from a mode-0600 env file and is never printed.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from http.client import HTTPException
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 API_BASE = "https://api.render.com/v1"
@@ -39,6 +43,20 @@ SERVICE_RE = re.compile(r"^srv-[a-z0-9]+$")
 HEALTH_READINESS_TIMEOUT_SECONDS = 90.0
 HEALTH_RETRY_INTERVAL_SECONDS = 5.0
 HEALTH_REQUEST_TIMEOUT_SECONDS = 20.0
+HEALTH_USER_AGENT = "aweb-library-deploy-gate/1.0"
+BLOCKED_BASELINE_USER_AGENT = "Python-urllib/3.12"
+HEALTH_BODY_CAPTURE_LIMIT = 16_384
+HEALTH_HEADER_CAPTURE_LIMIT = 16_384
+HEALTH_DIAGNOSTIC_HEADERS = {
+    "cf-cache-status",
+    "cf-mitigated",
+    "cf-ray",
+    "content-length",
+    "content-type",
+    "location",
+    "retry-after",
+    "server",
+}
 RETRYABLE_HEALTH_HTTP_STATUSES = {404, 408, 425, 429, 500, 502, 503, 504}
 
 
@@ -48,6 +66,64 @@ class OpsError(RuntimeError):
 
 class TransientHealthError(OpsError):
     """A health failure that may be caused by a live-transition readiness window."""
+
+
+class PermanentHealthHTTPError(OpsError):
+    """A nonretryable health HTTP response with a preserved status."""
+
+    def __init__(self, message: str, *, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+class HealthEvidenceRun:
+    """Mode-private, bounded evidence for unauthenticated health probes."""
+
+    def __init__(
+        self, path: Path, *, label: str, metadata: dict[str, Any] | None = None
+    ) -> None:
+        if not path.is_absolute():
+            raise OpsError("health evidence directory must be absolute")
+        if path.exists() or path.is_symlink():
+            raise OpsError("health evidence directory must not already exist")
+        parent = path.parent
+        if not parent.is_dir() or parent.is_symlink() or parent.resolve() != parent:
+            raise OpsError("health evidence parent must be an existing non-symlink directory")
+        try:
+            path.relative_to(Path.cwd().resolve())
+        except ValueError:
+            pass
+        else:
+            raise OpsError("health evidence directory must be outside the repository")
+        path.mkdir(mode=0o700)
+        if path.stat().st_mode & 0o077:
+            raise OpsError("health evidence directory must have mode 0700")
+        self.path = path
+        self.label = label
+        self.metadata = metadata or {}
+        self.sequence = 0
+
+    def record(self, event: dict[str, Any]) -> None:
+        self.sequence += 1
+        payload = {
+            "schema": "library.health-evidence.v1",
+            "run_label": self.label,
+            "run_metadata": self.metadata,
+            "sequence": self.sequence,
+            **event,
+        }
+        destination = self.path / f"{self.sequence:03d}.json"
+        temporary = self.path / f".{destination.name}.{uuid.uuid4().hex}.tmp"
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump(payload, stream, ensure_ascii=False, sort_keys=True)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 class NoHealthRedirects(HTTPRedirectHandler):
@@ -65,8 +141,87 @@ class NoHealthRedirects(HTTPRedirectHandler):
         return None
 
 
-def open_health_url(url: str, *, timeout: float):
-    return build_opener(NoHealthRedirects()).open(url, timeout=timeout)
+def open_health_url(url: str, *, timeout: float, user_agent: str = HEALTH_USER_AGENT):
+    request = Request(
+        url,
+        headers={"Accept": "application/json", "User-Agent": user_agent},
+    )
+    return build_opener(NoHealthRedirects()).open(request, timeout=timeout)
+
+
+def _health_headers(
+    headers: Any,
+) -> tuple[dict[str, list[str]], list[str], bool]:
+    captured: dict[str, list[str]] = {}
+    omitted: set[str] = set()
+    remaining = HEALTH_HEADER_CAPTURE_LIMIT
+    complete = True
+    if headers is None:
+        return captured, [], complete
+    for raw_name, raw_value in headers.items():
+        name = str(raw_name).lower()
+        if name not in HEALTH_DIAGNOSTIC_HEADERS:
+            omitted.add(name)
+            continue
+        value = "".join(
+            char if ord(char) >= 32 and ord(char) != 127 else "�" for char in str(raw_value)
+        )
+        if name == "location":
+            try:
+                parts = urlsplit(value)
+                host = parts.hostname or ""
+                if parts.port is not None:
+                    host = f"{host}:{parts.port}"
+                value = urlunsplit((parts.scheme, host, parts.path, "", ""))
+            except ValueError:
+                value = "[invalid-location]"
+        encoded = value.encode("utf-8")
+        if len(encoded) > remaining:
+            value = encoded[:remaining].decode("utf-8", errors="replace")
+            complete = False
+        captured.setdefault(name, []).append(value)
+        remaining -= min(len(encoded), remaining)
+        if remaining <= 0:
+            complete = False
+            break
+    return dict(sorted(captured.items())), sorted(omitted), complete
+
+
+def _health_event(
+    *,
+    url: str,
+    user_agent: str,
+    started_wall: str,
+    started_mono: float,
+    status: int | None,
+    headers: Any,
+    body: bytes,
+    body_complete: bool,
+    phase: str,
+    error_class: str | None = None,
+) -> dict[str, Any]:
+    allowed_headers, omitted_headers, headers_complete = _health_headers(headers)
+    return {
+        "probe_kind": "unauthenticated-health",
+        "phase": phase,
+        "method": "GET",
+        "url": url,
+        "request_headers": {"accept": "application/json", "user-agent": user_agent},
+        "started_at": started_wall,
+        "finished_at": datetime.now(UTC).isoformat(),
+        "duration_seconds": round(time.monotonic() - started_mono, 6),
+        "status": status,
+        "response_headers": allowed_headers,
+        "response_headers_complete": headers_complete,
+        "omitted_response_header_names": omitted_headers,
+        "omitted_response_header_count": len(omitted_headers),
+        "body_encoding": "utf-8-with-replacement",
+        "body_utf8": body.decode("utf-8", errors="replace"),
+        "captured_body_bytes": len(body),
+        "captured_body_sha256": hashlib.sha256(body).hexdigest(),
+        "body_complete": body_complete,
+        "error_class": error_class,
+    }
 
 
 @dataclass(frozen=True)
@@ -337,23 +492,87 @@ def wait_for_deploy(
     raise OpsError(f"timed out waiting for Render deploy {deploy_id}")
 
 
-def verify_health(url: str, *, timeout: float = HEALTH_REQUEST_TIMEOUT_SECONDS) -> dict[str, Any]:
+def verify_health(
+    url: str,
+    *,
+    timeout: float = HEALTH_REQUEST_TIMEOUT_SECONDS,
+    user_agent: str = HEALTH_USER_AGENT,
+    evidence: HealthEvidenceRun | None = None,
+) -> dict[str, Any]:
+    started_wall = datetime.now(UTC).isoformat()
+    started_mono = time.monotonic()
     try:
-        with open_health_url(url, timeout=timeout) as response:
+        with open_health_url(url, timeout=timeout, user_agent=user_agent) as response:
+            body_with_marker = response.read(HEALTH_BODY_CAPTURE_LIMIT + 1)
+            body_complete = len(body_with_marker) <= HEALTH_BODY_CAPTURE_LIMIT
+            body = body_with_marker[:HEALTH_BODY_CAPTURE_LIMIT]
+            if evidence is not None:
+                evidence.record(
+                    _health_event(
+                        url=url,
+                        user_agent=user_agent,
+                        started_wall=started_wall,
+                        started_mono=started_mono,
+                        status=response.status,
+                        headers=response.headers,
+                        body=body,
+                        body_complete=body_complete,
+                        phase="response",
+                    )
+                )
             if response.geturl() != url:
                 raise OpsError(f"health check redirected away from exact surface {url}")
             if response.status != 200:
                 message = f"health check failed for {url}: HTTP {response.status}"
                 if response.status in RETRYABLE_HEALTH_HTTP_STATUSES:
                     raise TransientHealthError(message)
-                raise OpsError(message)
-            payload = json.loads(response.read().decode("utf-8"))
+                raise PermanentHealthHTTPError(message, status=response.status)
+            if not body_complete:
+                raise OpsError(f"health response exceeded evidence bound for {url}")
+            payload = json.loads(body.decode("utf-8"))
     except HTTPError as exc:
+        try:
+            body_with_marker = exc.read(HEALTH_BODY_CAPTURE_LIMIT + 1)
+            body_complete = len(body_with_marker) <= HEALTH_BODY_CAPTURE_LIMIT
+            body = body_with_marker[:HEALTH_BODY_CAPTURE_LIMIT]
+        except Exception:
+            body_complete = False
+            body = b""
+        if evidence is not None:
+            evidence.record(
+                _health_event(
+                    url=url,
+                    user_agent=user_agent,
+                    started_wall=started_wall,
+                    started_mono=started_mono,
+                    status=exc.code,
+                    headers=exc.headers,
+                    body=body,
+                    body_complete=body_complete,
+                    phase="http-error",
+                    error_class="HTTPError",
+                )
+            )
         message = f"health check failed for {url}: HTTP {exc.code}"
         if exc.code in RETRYABLE_HEALTH_HTTP_STATUSES:
             raise TransientHealthError(message) from exc
-        raise OpsError(message) from exc
+        raise PermanentHealthHTTPError(message, status=exc.code) from exc
     except (URLError, TimeoutError, ConnectionError, HTTPException) as exc:
+        if evidence is not None:
+            evidence.record(
+                _health_event(
+                    url=url,
+                    user_agent=user_agent,
+                    started_wall=started_wall,
+                    started_mono=started_mono,
+                    status=None,
+                    headers=None,
+                    body=b"",
+                    body_complete=False,
+                    phase="transport-error",
+                    error_class=type(exc).__name__,
+                )
+            )
         raise TransientHealthError(
             f"health check failed for {url}: {type(exc).__name__}"
         ) from exc
@@ -367,6 +586,7 @@ def verify_health(url: str, *, timeout: float = HEALTH_REQUEST_TIMEOUT_SECONDS) 
 def verify_health_surfaces(
     config: ProductionConfig,
     *,
+    evidence: HealthEvidenceRun | None = None,
     readiness_timeout: float = HEALTH_READINESS_TIMEOUT_SECONDS,
     retry_interval: float = HEALTH_RETRY_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
@@ -387,13 +607,17 @@ def verify_health_surfaces(
         attempts += 1
         try:
             origin = verify_health(
-                origin_url, timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining)
+                origin_url,
+                timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining),
+                evidence=evidence,
             )
             remaining = deadline - monotonic()
             if remaining <= 0:
                 raise TransientHealthError("health readiness deadline elapsed after origin check")
             public = verify_health(
-                public_url, timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining)
+                public_url,
+                timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining),
+                evidence=evidence,
             )
             finished_at = monotonic()
             if finished_at > deadline:
@@ -435,6 +659,74 @@ def verify_health_surfaces(
     raise OpsError(
         f"health readiness failed after {readiness_timeout:g} seconds and {attempts} attempts{detail}"
     )
+
+
+def _command_health_evidence(
+    args: argparse.Namespace, *, label: str, config: ProductionConfig
+) -> HealthEvidenceRun | None:
+    value = str(getattr(args, "evidence_dir", "") or "").strip()
+    if not value:
+        return None
+    try:
+        source_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], check=True, text=True, capture_output=True
+        ).stdout.strip()
+        config_bytes = Path(args.config).read_bytes()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise OpsError("failed to identify health evidence source") from exc
+    return HealthEvidenceRun(
+        Path(value),
+        label=label,
+        metadata={
+            "verifier_source_sha": source_sha,
+            "config_sha256": hashlib.sha256(config_bytes).hexdigest(),
+            "service_id": config.service_id,
+            "expected_commit": str(
+                getattr(args, "commit", "") or getattr(args, "rollback_commit", "")
+            ),
+        },
+    )
+
+
+def command_health_client_proof(args: argparse.Namespace) -> dict[str, Any]:
+    config_path = Path(args.config)
+    config = ProductionConfig.load(config_path)
+    try:
+        source_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise OpsError("failed to identify verifier source commit") from exc
+    evidence = HealthEvidenceRun(
+        Path(args.evidence_dir),
+        label="health-client-proof",
+        metadata={
+            "verifier_source_sha": source_sha,
+            "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+            "service_id": config.service_id,
+        },
+    )
+    url = f"{config.public_url}{config.health_path}"
+    try:
+        verify_health(url, user_agent=BLOCKED_BASELINE_USER_AGENT, evidence=evidence)
+    except PermanentHealthHTTPError as exc:
+        if exc.status != 403:
+            evidence.record({"probe_kind": "run-outcome", "outcome": "unexpected-red"})
+            raise
+    else:
+        evidence.record({"probe_kind": "run-outcome", "outcome": "baseline-did-not-fail"})
+        raise OpsError("blocked baseline User-Agent did not return HTTP 403")
+    payload = verify_health(url, user_agent=HEALTH_USER_AGENT, evidence=evidence)
+    evidence.record({"probe_kind": "run-outcome", "outcome": "red-green-pass"})
+    return {
+        "baseline_user_agent_status": 403,
+        "gate_user_agent_status": 200,
+        "health": payload,
+        "evidence_dir": str(evidence.path),
+    }
 
 
 def _client(args: argparse.Namespace) -> tuple[RenderClient, ProductionConfig]:
@@ -495,7 +787,9 @@ def command_deploy(args: argparse.Namespace) -> dict[str, Any]:
     finished = wait_for_deploy(client, config, deploy_id, commit, timeout_seconds=args.timeout)
     final_live = current_live(client.deploys(config.service_id))
     require_deploy(final_live, deploy_id=deploy_id, commit=commit)
-    health = verify_health_surfaces(config)
+    health = verify_health_surfaces(
+        config, evidence=_command_health_evidence(args, label="deploy-health", config=config)
+    )
     return {"deploy": safe_deploy(finished), "rollback": safe_deploy(live), "health": health}
 
 
@@ -521,7 +815,13 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
         raise OpsError(f"expected deploy is not live: {artifact.get('status')}")
     live = current_live(client.deploys(config.service_id))
     require_deploy(live, deploy_id=deploy_id, commit=commit)
-    return {"deploy": safe_deploy(artifact), "health": verify_health_surfaces(config)}
+    return {
+        "deploy": safe_deploy(artifact),
+        "health": verify_health_surfaces(
+            config,
+            evidence=_command_health_evidence(args, label="verify-health", config=config),
+        ),
+    }
 
 
 def command_rollback(args: argparse.Namespace) -> dict[str, Any]:
@@ -550,7 +850,10 @@ def command_rollback(args: argparse.Namespace) -> dict[str, Any]:
     )
     final_live = current_live(client.deploys(config.service_id))
     require_deploy(final_live, deploy_id=created_id, commit=rollback_commit)
-    health = verify_health_surfaces(config)
+    health = verify_health_surfaces(
+        config,
+        evidence=_command_health_evidence(args, label="rollback-health", config=config),
+    )
     return {"rollback_deploy": safe_deploy(finished), "health": health}
 
 
@@ -560,6 +863,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--env-file", default=os.environ.get("RENDER_ENV_FILE", "~/.aweb-render/env"))
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("status")
+    proof = sub.add_parser("health-client-proof")
+    proof.add_argument("--evidence-dir", default=os.environ.get("PROD_EVIDENCE_DIR", ""))
     deploy = sub.add_parser("deploy")
     deploy.add_argument("--commit", default=os.environ.get("PROD_COMMIT", ""))
     deploy.add_argument("--rollback-deploy-id", default=os.environ.get("ROLLBACK_DEPLOY_ID", ""))
@@ -567,6 +872,7 @@ def parser() -> argparse.ArgumentParser:
     deploy.add_argument("--repo-root", default=".")
     deploy.add_argument("--confirm-service-id", default=os.environ.get("CONFIRM_SERVICE_ID", ""))
     deploy.add_argument("--timeout", type=int, default=900)
+    deploy.add_argument("--evidence-dir", default=os.environ.get("PROD_EVIDENCE_DIR", ""))
     deploy.add_argument("--apply", action="store_true", default=os.environ.get("APPLY") == "1")
     wait = sub.add_parser("wait")
     wait.add_argument("--deploy-id", default=os.environ.get("PROD_DEPLOY_ID", ""))
@@ -575,6 +881,7 @@ def parser() -> argparse.ArgumentParser:
     verify = sub.add_parser("verify")
     verify.add_argument("--deploy-id", default=os.environ.get("PROD_DEPLOY_ID", ""))
     verify.add_argument("--commit", default=os.environ.get("PROD_COMMIT", ""))
+    verify.add_argument("--evidence-dir", default=os.environ.get("PROD_EVIDENCE_DIR", ""))
     rollback = sub.add_parser("rollback")
     rollback.add_argument("--rollback-deploy-id", default=os.environ.get("ROLLBACK_DEPLOY_ID", ""))
     rollback.add_argument("--rollback-commit", default=os.environ.get("ROLLBACK_COMMIT", ""))
@@ -582,6 +889,7 @@ def parser() -> argparse.ArgumentParser:
     rollback.add_argument("--current-commit", default=os.environ.get("CURRENT_COMMIT", ""))
     rollback.add_argument("--confirm-service-id", default=os.environ.get("CONFIRM_SERVICE_ID", ""))
     rollback.add_argument("--timeout", type=int, default=900)
+    rollback.add_argument("--evidence-dir", default=os.environ.get("PROD_EVIDENCE_DIR", ""))
     rollback.add_argument("--apply", action="store_true", default=os.environ.get("APPLY") == "1")
     return p
 
@@ -589,8 +897,14 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = parser().parse_args()
     try:
+        if args.command in {"deploy", "verify", "rollback"} and not args.evidence_dir:
+            raise OpsError("PROD_EVIDENCE_DIR/--evidence-dir is required for health evidence")
         if args.command == "status":
             result = command_status(args)
+        elif args.command == "health-client-proof":
+            if not args.evidence_dir:
+                raise OpsError("PROD_EVIDENCE_DIR/--evidence-dir is required")
+            result = command_health_client_proof(args)
         elif args.command == "deploy":
             result = command_deploy(args)
         elif args.command == "wait":

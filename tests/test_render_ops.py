@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
+from email.message import Message
 from http.client import IncompleteRead
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError
@@ -105,7 +107,7 @@ def test_render_client_deploy_uses_exact_clear_cache_request(
         def __exit__(self, *args):
             return False
 
-        def read(self) -> bytes:
+        def read(self, *args) -> bytes:
             return json.dumps(
                 {"id": "dep-created", "commit": {"id": "b" * 40}, "status": "build_in_progress"}
             ).encode()
@@ -152,10 +154,12 @@ def test_health_rejects_redirected_surface(monkeypatch: pytest.MonkeyPatch) -> N
         def geturl(self) -> str:
             return "https://library.example/health"
 
-        def read(self) -> bytes:
+        def read(self, *args) -> bytes:
             return b'{"status":"ok","service":"library"}'
 
-    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout: Response())
+    monkeypatch.setattr(
+        render_ops, "open_health_url", lambda url, timeout, user_agent: Response()
+    )
     with pytest.raises(render_ops.OpsError, match="redirected away"):
         render_ops.verify_health("https://library-origin.example/health")
 
@@ -180,12 +184,12 @@ def test_health_readiness_retries_transient_http_then_succeeds(
         def geturl(self) -> str:
             return self.url
 
-        def read(self) -> bytes:
+        def read(self, *args) -> bytes:
             return b'{"status":"ok","service":"library"}'
 
     calls: list[str] = []
 
-    def fake_urlopen(url: str, timeout: float):
+    def fake_urlopen(url: str, timeout: float, user_agent: str):
         calls.append(url)
         if len(calls) == 1:
             raise HTTPError(url, 503, "warming", {}, None)
@@ -234,7 +238,7 @@ def test_health_readiness_fails_closed_after_bound(
     now = [0.0]
     sleeps: list[float] = []
 
-    def transient(url: str, *, timeout: float):
+    def transient(url: str, *, timeout: float, evidence=None):
         raise render_ops.TransientHealthError("still warming")
 
     def fake_sleep(seconds: float) -> None:
@@ -258,7 +262,7 @@ def test_health_readiness_does_not_retry_permanent_http_error(
 ) -> None:
     calls = 0
 
-    def forbidden(url: str, timeout: float):
+    def forbidden(url: str, timeout: float, user_agent: str):
         nonlocal calls
         calls += 1
         raise HTTPError(url, 403, "forbidden", {}, None)
@@ -286,12 +290,12 @@ def test_health_readiness_does_not_retry_wrong_payload(
         def geturl(self) -> str:
             return f"{config.origin_url}/health"
 
-        def read(self) -> bytes:
+        def read(self, *args) -> bytes:
             return b'{"status":"ok","service":"other"}'
 
     calls = 0
 
-    def wrong(url: str, timeout: float):
+    def wrong(url: str, timeout: float, user_agent: str):
         nonlocal calls
         calls += 1
         return Response()
@@ -336,6 +340,106 @@ def test_health_redirect_location_is_never_requested() -> None:
     assert requests == ["/health"]
 
 
+def test_health_sends_explicit_gate_user_agent() -> None:
+    seen: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            seen.append(self.headers.get("User-Agent", ""))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok","service":"library"}')
+
+        def log_message(self, format: str, *args) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        render_ops.verify_health(f"http://127.0.0.1:{server.server_port}/health")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    assert seen == ["aweb-library-deploy-gate/1.0"]
+
+
+def test_health_403_persists_bounded_allowlisted_evidence_before_raise(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    body = b"error code: 1010"
+    headers = Message()
+    headers.add_header("Content-Type", "text/plain")
+    headers.add_header("Server", "cloudflare")
+    headers.add_header("CF-Ray", "ray-id")
+    headers.add_header("Set-Cookie", "must-not-persist")
+
+    def blocked(url: str, timeout: float, user_agent: str):
+        raise HTTPError(url, 403, "Forbidden", headers, BytesIO(body))
+
+    monkeypatch.setattr(render_ops, "open_health_url", blocked)
+    evidence_path = tmp_path / "evidence"
+    evidence = render_ops.HealthEvidenceRun(evidence_path, label="test")
+    with pytest.raises(render_ops.OpsError, match="HTTP 403"):
+        render_ops.verify_health(
+            "https://library.example/health",
+            user_agent="Python-urllib/3.12",
+            evidence=evidence,
+        )
+    artifact = json.loads((evidence_path / "001.json").read_text())
+    assert artifact["status"] == 403
+    assert artifact["body_utf8"] == "error code: 1010"
+    assert artifact["body_complete"] is True
+    assert artifact["response_headers"] == {
+        "cf-ray": ["ray-id"],
+        "content-type": ["text/plain"],
+        "server": ["cloudflare"],
+    }
+    assert artifact["omitted_response_header_names"] == ["set-cookie"]
+    assert "must-not-persist" not in (evidence_path / "001.json").read_text()
+    assert evidence_path.stat().st_mode & 0o777 == 0o700
+    assert (evidence_path / "001.json").stat().st_mode & 0o777 == 0o600
+    with pytest.raises(render_ops.OpsError, match="must not already exist"):
+        render_ops.HealthEvidenceRun(evidence_path, label="duplicate")
+
+
+def test_health_client_proof_requires_same_path_red_then_green(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig, tmp_path: Path
+) -> None:
+    config_path = tmp_path / "production.json"
+    config_path.write_text(json.dumps(config.__dict__))
+    evidence_path = tmp_path / "proof"
+    calls: list[tuple[str, str]] = []
+
+    def proof_health(url: str, *, user_agent: str, evidence, **kwargs):
+        calls.append((url, user_agent))
+        evidence.record(
+            {
+                "probe_kind": "test-health",
+                "user_agent": user_agent,
+                "status": 403 if user_agent == render_ops.BLOCKED_BASELINE_USER_AGENT else 200,
+            }
+        )
+        if user_agent == render_ops.BLOCKED_BASELINE_USER_AGENT:
+            raise render_ops.PermanentHealthHTTPError(
+                f"health check failed for {url}: HTTP 403", status=403
+            )
+        return {"status": "ok", "service": "library"}
+
+    monkeypatch.setattr(render_ops, "verify_health", proof_health)
+    args = SimpleNamespace(config=str(config_path), evidence_dir=str(evidence_path))
+    result = render_ops.command_health_client_proof(args)
+    expected_url = f"{config.public_url}/health"
+    assert calls == [
+        (expected_url, "Python-urllib/3.12"),
+        (expected_url, "aweb-library-deploy-gate/1.0"),
+    ]
+    assert result["baseline_user_agent_status"] == 403
+    assert result["gate_user_agent_status"] == 200
+    assert json.loads((evidence_path / "003.json").read_text())["outcome"] == "red-green-pass"
+
+
 def test_health_invalid_utf8_is_bounded_transient(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
 ) -> None:
@@ -355,12 +459,12 @@ def test_health_invalid_utf8_is_bounded_transient(
         def geturl(self) -> str:
             return self.url
 
-        def read(self) -> bytes:
+        def read(self, *args) -> bytes:
             return self.body
 
     calls = 0
 
-    def fake_open(url: str, timeout: float):
+    def fake_open(url: str, timeout: float, user_agent: str):
         nonlocal calls
         calls += 1
         body = b"\xff" if calls == 1 else b'{"status":"ok","service":"library"}'
@@ -397,10 +501,12 @@ def test_health_interrupted_body_read_is_transient(monkeypatch: pytest.MonkeyPat
         def geturl(self) -> str:
             return "https://library.example/health"
 
-        def read(self) -> bytes:
+        def read(self, *args) -> bytes:
             raise IncompleteRead(b"partial", 20)
 
-    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout: Response())
+    monkeypatch.setattr(
+        render_ops, "open_health_url", lambda url, timeout, user_agent: Response()
+    )
     with pytest.raises(render_ops.TransientHealthError, match="IncompleteRead"):
         render_ops.verify_health("https://library.example/health")
 
@@ -413,7 +519,7 @@ def test_health_late_public_success_fails_closed(
     now = [0.0]
     calls: list[tuple[str, float]] = []
 
-    def late_public(url: str, *, timeout: float):
+    def late_public(url: str, *, timeout: float, evidence=None):
         calls.append((url, timeout))
         if url.startswith(config.origin_url):
             now[0] = 89.0
@@ -463,7 +569,7 @@ def test_health_final_transient_attempt_is_logged_as_exhausted(
 ) -> None:
     now = [0.0]
 
-    def consumes_deadline(url: str, *, timeout: float):
+    def consumes_deadline(url: str, *, timeout: float, evidence=None):
         now[0] = 90.0
         raise render_ops.TransientHealthError("request timed out")
 
@@ -581,7 +687,9 @@ def test_command_deploy_pins_rollback_and_clears_through_client(
         "wait_for_deploy",
         lambda c, cfg, deploy_id, commit, timeout_seconds: deploy(deploy_id, commit),
     )
-    monkeypatch.setattr(render_ops, "verify_health_surfaces", lambda cfg: {"ok": True})
+    monkeypatch.setattr(
+        render_ops, "verify_health_surfaces", lambda cfg, **kwargs: {"ok": True}
+    )
     result = render_ops.command_deploy(common_args(config))
     assert client.posts == [("deploy", "b" * 40)]
     assert result["rollback"]["id"] == "dep-rollback"
@@ -600,7 +708,9 @@ def test_command_rollback_uses_exact_artifact(
         "wait_for_deploy",
         lambda c, cfg, deploy_id, commit, timeout_seconds: deploy(deploy_id, commit),
     )
-    monkeypatch.setattr(render_ops, "verify_health_surfaces", lambda cfg: {"ok": True})
+    monkeypatch.setattr(
+        render_ops, "verify_health_surfaces", lambda cfg, **kwargs: {"ok": True}
+    )
     result = render_ops.command_rollback(common_args(config))
     assert client.posts == [("rollback", "dep-rollback")]
     assert result["rollback_deploy"]["commit"] == "a" * 40
@@ -668,7 +778,9 @@ def test_command_verify_requires_exact_current_live(
     artifact = deploy("dep-candidate", "b" * 40)
     client = FakeClient(config, artifact)
     monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
-    monkeypatch.setattr(render_ops, "verify_health_surfaces", lambda cfg: {"ok": True})
+    monkeypatch.setattr(
+        render_ops, "verify_health_surfaces", lambda cfg, **kwargs: {"ok": True}
+    )
     args = SimpleNamespace(deploy_id="dep-candidate", commit="b" * 40)
     result = render_ops.command_verify(args)
     assert result["deploy"]["status"] == "live"
