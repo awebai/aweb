@@ -87,9 +87,11 @@ Render metadata and health do not prove the functional release. Verification req
 2. Generated origin `/health` returns the exact Library health payload without redirecting.
 3. Public edge `/health` returns the same exact payload without URL drift.
 4. Authenticated public `POST /v1/materialize` succeeds for `claude-code` and `pi`.
-5. `managed_set` is positionally identical to `home_files`, with no duplicates.
-6. The unchanged released `/opt/homebrew/bin/aw` strict client materializes both
-   runtimes into fresh homes.
+5. `managed_set` is positionally identical to `home_files`, with no duplicates,
+   noncanonical paths, broken links, or links resolving outside the generated home.
+6. The canonical `/opt/homebrew/bin/aw` strict client matches the reviewed 1.34.0
+   SHA-256 plus version/commit/build metadata and materializes both runtimes into fresh
+   homes; a self-reported version string alone is insufficient.
 7. Real Claude Code and Pi harnesses load the generated title and provenance line.
 
 Do not send an authenticated materialization request signed for the generated Render

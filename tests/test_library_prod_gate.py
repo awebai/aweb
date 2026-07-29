@@ -49,6 +49,24 @@ def test_candidate_requires_positional_managed_set() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        ".",
+        "foo//bar",
+        "foo/",
+        "foo/./bar",
+        "scheme://host",
+        "../escape",
+        "nul\x00path",
+        "line\npath",
+    ],
+)
+def test_managed_paths_must_be_canonical_and_safe(unsafe: str) -> None:
+    with pytest.raises(gate.GateError, match="noncanonical or unsafe"):
+        gate.validate_relative_paths([unsafe])
+
+
 def test_candidate_rejects_unapproved_profile_pin() -> None:
     with pytest.raises(gate.GateError, match="profile_digest"):
         gate.validate_candidate_payload(
@@ -164,13 +182,61 @@ def test_materialized_ref_is_strict(tmp_path: Path) -> None:
         )
 
 
+def test_materialized_ref_rejects_broken_or_escaping_symlinks(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    ref_path = home / ".aw" / "profile" / "ref.json"
+    ref_path.parent.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.write_text("outside")
+    link = home / "managed-link"
+    link.symlink_to(outside)
+    ref_path.write_text(
+        json.dumps(
+            {
+                "profile_ref": "developer",
+                "profile_version": EXPECTED_VERSION,
+                "profile_digest": EXPECTED_DIGEST,
+                "runtime_kind": "pi",
+                "managed_set": ["managed-link", ".aw/profile/ref.json"],
+            }
+        )
+    )
+    with pytest.raises(gate.GateError, match="escaping"):
+        gate.validate_materialized_ref(
+            ref_path,
+            "pi",
+            expected_version=EXPECTED_VERSION,
+            expected_digest=EXPECTED_DIGEST,
+        )
+    link.unlink()
+    link.symlink_to(home / "missing")
+    with pytest.raises(gate.GateError, match="broken"):
+        gate.validate_materialized_ref(
+            ref_path,
+            "pi",
+            expected_version=EXPECTED_VERSION,
+            expected_digest=EXPECTED_DIGEST,
+        )
+
+
 def test_released_aw_version_is_exact(monkeypatch: pytest.MonkeyPatch) -> None:
     class Completed:
         stdout = "aw 1.34.1\n"
 
     monkeypatch.setattr(gate.subprocess, "run", lambda *args, **kwargs: Completed())
-    with pytest.raises(gate.GateError, match="exactly aw 1.34.0"):
+    with pytest.raises(gate.GateError, match="metadata"):
         gate.verify_released_aw(Path("/opt/homebrew/bin/aw"))
+
+
+def test_spoofed_same_version_aw_fails_artifact_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake = tmp_path / "aw"
+    fake.write_text(f"#!/bin/sh\nprintf '{gate.REQUIRED_AW_VERSION_OUTPUT}'\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(gate, "REQUIRED_AW_PATH", fake)
+    with pytest.raises(gate.GateError, match="SHA-256"):
+        gate.verify_released_aw(fake)
 
 
 def test_clone_auth_home_removes_profile_and_delivery_state(tmp_path: Path) -> None:

@@ -8,6 +8,7 @@ responses, auth state, headers, or harness stderr.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -15,11 +16,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path, PurePosixPath
+import unicodedata
+from pathlib import Path
 from typing import Any
 
 RUNTIMES = ("claude-code", "pi")
-REQUIRED_AW_VERSION = "aw 1.34.0"
+REQUIRED_AW_PATH = Path("/opt/homebrew/bin/aw")
+REQUIRED_AW_SHA256 = "e546aa12294e61c95d02cd0a69a613b115ea72cc43f7716e193dc4ef342d6815"
+REQUIRED_AW_VERSION_OUTPUT = "aw 1.34.0\n  commit: 82d7ca0\n  built:  2026-07-27T20:23:38Z\n"
 IGNORED_AUTH_FILES = (
     "interaction-log.jsonl",
     "channel-delivered-ids.json",
@@ -38,9 +42,21 @@ class GateError(RuntimeError):
 
 def validate_relative_paths(paths: list[str]) -> None:
     for value in paths:
-        path = PurePosixPath(value)
-        if not value or "\\" in value or path.is_absolute() or ".." in path.parts:
-            raise GateError("materialize response contains an unsafe managed path")
+        parts = value.split("/")
+        invalid = (
+            not value
+            or value.strip() != value
+            or any(unicodedata.category(char) == "Cc" for char in value)
+            or "\\" in value
+            or value.startswith("/")
+            or "://" in value
+            or value.startswith("git@")
+            or "//" in value
+            or value.endswith("/")
+            or any(part in {"", ".", ".."} for part in parts)
+        )
+        if invalid:
+            raise GateError("materialize response contains a noncanonical or unsafe managed path")
 
 
 def ref_from_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -138,9 +154,19 @@ def validate_materialized_ref(
         raise GateError(f"strict client managed_set invalid for {runtime}")
     validate_relative_paths(managed)
     home = path.parents[2]
-    missing = [relative for relative in managed if not os.path.lexists(home / relative)]
-    if missing:
-        raise GateError(f"strict client omitted {len(missing)} managed paths for {runtime}")
+    home_resolved = home.resolve(strict=True)
+    invalid_paths = 0
+    for relative in managed:
+        try:
+            resolved = (home / relative).resolve(strict=True)
+            resolved.relative_to(home_resolved)
+        except (OSError, RuntimeError, ValueError):
+            invalid_paths += 1
+    if invalid_paths:
+        raise GateError(
+            f"strict client produced {invalid_paths} missing, broken, or escaping managed paths "
+            f"for {runtime}"
+        )
     return sanitized_summary("released-strict-client", runtime, ref, len(managed))
 
 
@@ -157,6 +183,14 @@ def sanitized_summary(gate: str, runtime: str, ref: dict[str, Any], count: int) 
 
 
 def verify_released_aw(aw_bin: Path) -> None:
+    if aw_bin != REQUIRED_AW_PATH:
+        raise GateError(f"released client path must be exactly {REQUIRED_AW_PATH}")
+    try:
+        digest = hashlib.sha256(aw_bin.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise GateError("failed to hash the released aw binary") from exc
+    if digest != REQUIRED_AW_SHA256:
+        raise GateError("released aw binary SHA-256 does not match the reviewed artifact")
     try:
         completed = subprocess.run(
             [str(aw_bin), "version"],
@@ -166,9 +200,10 @@ def verify_released_aw(aw_bin: Path) -> None:
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise GateError("failed to identify the released aw binary") from exc
-    first_line = completed.stdout.splitlines()[0] if completed.stdout else ""
-    if first_line != REQUIRED_AW_VERSION:
-        raise GateError(f"released client must be exactly {REQUIRED_AW_VERSION}")
+    if completed.stdout != REQUIRED_AW_VERSION_OUTPUT:
+        raise GateError(
+            "released aw version/commit/build metadata does not match the reviewed artifact"
+        )
 
 
 def run_checked(command: list[str], *, cwd: Path, stdout: Path, stderr: Path, label: str) -> None:
