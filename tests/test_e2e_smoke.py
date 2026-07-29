@@ -26,6 +26,7 @@ POSTGRES_URL = os.environ.get(
     "postgresql://library:library@127.0.0.1:55432/library",
 )
 COMPOSE = ["docker", "compose", "-p", "library-e2e", "-f", "docker-compose.e2e.yml"]
+E2E_BUILD_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
 @dataclass(frozen=True)
@@ -279,8 +280,11 @@ def library() -> Iterator[RunningLibrary]:
     backend_origin = f"http://127.0.0.1:{backend_port}"
     proxy_origin = f"http://127.0.0.1:{proxy_port}"
     env = os.environ.copy()
+    env.pop("RENDER_GIT_COMMIT", None)
+    env.pop("LIBRARY_GIT_SHA", None)
     env.update(
         {
+            "RENDER_GIT_COMMIT": E2E_BUILD_SHA,
             "LIBRARY_DATABASE_URL": POSTGRES_URL,
             "LIBRARY_AWID_REGISTRY_URL": AWID_URL,
             "LIBRARY_AUTH_CACHE_TTL_SECONDS": "2",
@@ -461,7 +465,11 @@ def test_health_endpoints_are_public(library: RunningLibrary) -> None:
     for path in ("/health", "/live", "/ready"):
         response = httpx.get(f"{library.origin}{path}", timeout=10.0)
         assert response.status_code == 200, response.text
-        assert response.json() == {"status": "ok", "service": "library"}
+        assert response.json() == {
+            "status": "ok",
+            "service": "library",
+            "build": {"git_sha": E2E_BUILD_SHA},
+        }
 
 
 def test_public_blueprint_catalog_needs_no_auth(library: RunningLibrary) -> None:
