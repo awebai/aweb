@@ -103,7 +103,7 @@ func (s *agentStores) read(t *testing.T) teamAgentStatusOutput {
 	}
 
 	out := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: s.alias}
-	readAgentCertificateState(context.Background(), &out, "acme.com", "backend")
+	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false)
 	readAgentCoordinationState(context.Background(), client, &out, s.alias)
 	out.NameReusable = out.Certificate == agentCertificateNone && out.Workspace == agentWorkspaceAbsent
 	return out
@@ -155,9 +155,6 @@ func TestAgentStatusShowsHeldClaimsForAnAgentStillPresent(t *testing.T) {
 	if out.ClaimsHeld != 2 {
 		t.Fatalf("claims_held=%d, want 2", out.ClaimsHeld)
 	}
-	if strings.Join(out.ClaimedTasks, ",") != "backend-11,backend-12" {
-		t.Fatalf("claimed_tasks=%v, want the refs themselves", out.ClaimedTasks)
-	}
 	if out.NameReusable {
 		t.Fatalf("name_reusable=true while the agent still holds a certificate and a workspace")
 	}
@@ -205,5 +202,40 @@ func TestAgentStatusSaysWhenTheClaimListingWasTruncated(t *testing.T) {
 	}
 	if !strings.Contains(formatTeamAgentStatus(out), "truncated") {
 		t.Fatalf("human output does not disclose the truncation:\n%s", formatTeamAgentStatus(out))
+	}
+}
+
+// A hosted team's local agents hold cloud certificates the registry never sees,
+// so the registry not knowing an alias establishes nothing. Reporting that as
+// "no active certificate" would be an unestablished absence - the same defect
+// this change removes from the retire path.
+func TestAgentStatusWillNotReadAHostedRegistrySilenceAsAnAbsentCertificate(t *testing.T) {
+	stores := newAgentStores(t)
+	stores.certificateActive = false
+	stores.workspacePresent = false
+	resetTeamRemoveMemberGlobals(t)
+	teamRemoveRegistryURL = stores.registry.URL
+
+	client, err := aweb.New(stores.coordination.URL)
+	if err != nil {
+		t.Fatalf("aweb.New: %v", err)
+	}
+
+	hosted := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: stores.alias}
+	readAgentCertificateState(context.Background(), &hosted, "acme.com", "backend", true)
+	readAgentCoordinationState(context.Background(), client, &hosted, stores.alias)
+	if hosted.Certificate != agentCertificateUnknown {
+		t.Fatalf("hosted certificate=%q, want %q", hosted.Certificate, agentCertificateUnknown)
+	}
+	if !strings.Contains(strings.Join(hosted.Unreadable, " "), "establishes nothing") {
+		t.Fatalf("hosted reading does not say why it cannot answer: %v", hosted.Unreadable)
+	}
+
+	// On a team whose certificates really are in the registry, the same silence
+	// after a readable team does establish absence.
+	byot := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: stores.alias}
+	readAgentCertificateState(context.Background(), &byot, "acme.com", "backend", false)
+	if byot.Certificate != agentCertificateNone {
+		t.Fatalf("customer-controlled certificate=%q, want %q", byot.Certificate, agentCertificateNone)
 	}
 }

@@ -33,10 +33,16 @@ const (
 	agentWorkspaceUnknown = "unknown"
 )
 
-// Overall readings.
+// Overall readings. These name what the stores hold now, not how they came to
+// hold it. A name that was retired this morning and a name that has never been
+// used read the same way, and saying otherwise would assert a history this
+// command cannot establish.
 const (
-	agentStateRetired = "retired"
-	agentStateActive  = "active"
+	// agentStateClear: no active certificate, no workspace record, no claims.
+	agentStateClear = "clear"
+	// agentStateHolding: at least one store still holds something.
+	agentStateHolding = "holding"
+	// agentStateUnknown: a store could not be read, so nothing is established.
 	agentStateUnknown = "unknown"
 )
 
@@ -50,7 +56,6 @@ type teamAgentStatusOutput struct {
 	Workspace      string   `json:"workspace"`
 	WorkspaceID    string   `json:"workspace_id,omitempty"`
 	ClaimsHeld     int      `json:"claims_held"`
-	ClaimedTasks   []string `json:"claimed_tasks,omitempty"`
 	ClaimsComplete bool     `json:"claims_complete"`
 	NameReusable   bool     `json:"name_reusable"`
 	Unreadable     []string `json:"unreadable,omitempty"`
@@ -100,7 +105,7 @@ func runTeamHumanAgentStatus(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	out := teamAgentStatusOutput{TeamID: teamID, Alias: alias}
-	readAgentCertificateState(ctx, &out, domain, team)
+	readAgentCertificateState(ctx, &out, domain, team, isAwebHostedNamespace(domain))
 	readAgentCoordinationState(ctx, client, &out, alias)
 
 	out.NameReusable = out.Certificate == agentCertificateNone && out.Workspace == agentWorkspaceAbsent
@@ -108,23 +113,34 @@ func runTeamHumanAgentStatus(cmd *cobra.Command, args []string) error {
 	case out.Certificate == agentCertificateUnknown || out.Workspace == agentWorkspaceUnknown:
 		out.State = agentStateUnknown
 	case out.Certificate == agentCertificateNone && out.Workspace == agentWorkspaceAbsent && out.ClaimsHeld == 0:
-		out.State = agentStateRetired
+		out.State = agentStateClear
 	default:
-		out.State = agentStateActive
+		out.State = agentStateHolding
 	}
 	printOutput(out, formatTeamAgentStatus)
 	return nil
 }
 
 // readAgentCertificateState answers whether the alias holds an active
-// certificate.
+// certificate, and reports unknown wherever it cannot answer.
 //
-// A 404 on the member lookup on its own does not establish that: an
-// unreachable or misaddressed registry answers the same way. So the team itself
-// is read first, and only a team that answers turns a member 404 into the
-// established reading "no active certificate". Without that corroboration the
-// state is reported unknown rather than guessed at.
-func readAgentCertificateState(ctx context.Context, out *teamAgentStatusOutput, domain, team string) {
+// Two different things stop it answering, and both were found by running this
+// against a live team rather than by reading the code.
+//
+// A 404 on the member lookup does not on its own mean the member has no
+// certificate: an unreachable or misaddressed registry answers the same way. So
+// the team is read first, and only a team that answers can turn a member 404
+// into a reading at all.
+//
+// On a hosted team that is still not enough. A hosted team's local agents do not
+// have registry certificates - theirs live in the cloud service, keyed by
+// workspace - so the registry has nothing to say about them and its silence
+// establishes nothing. Only global members appear there. Reading a hosted team's
+// registry and reporting "no active certificate" would have been exactly the
+// unestablished absence this whole change exists to remove; verified against the
+// live team, where the registry holds one certificate and four working local
+// agents hold none of it.
+func readAgentCertificateState(ctx context.Context, out *teamAgentStatusOutput, domain, team string, hosted bool) {
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
 		out.Certificate = agentCertificateUnknown
@@ -150,6 +166,14 @@ func readAgentCertificateState(ctx context.Context, out *teamAgentStatusOutput, 
 		return
 	}
 	if status, ok := awid.HTTPStatusCode(err); ok && status == http.StatusNotFound {
+		if hosted {
+			out.Certificate = agentCertificateUnknown
+			out.Unreadable = append(out.Unreadable, fmt.Sprintf(
+				"certificate store: %s is a hosted team, and a hosted team's local agents hold cloud certificates that the registry never sees, so the registry not knowing %s establishes nothing about whether it holds one",
+				awid.BuildTeamID(domain, team), out.Alias,
+			))
+			return
+		}
 		out.Certificate = agentCertificateNone
 		return
 	}
@@ -196,9 +220,6 @@ func readAgentCoordinationState(ctx context.Context, client *aweb.Client, out *t
 	// A truncated page would understate the claims held, and understating them is
 	// the failure this command exists to prevent.
 	out.ClaimsComplete = !claims.HasMore
-	for _, claim := range claims.Claims {
-		out.ClaimedTasks = append(out.ClaimedTasks, claim.TaskRef)
-	}
 }
 
 func formatTeamAgentStatus(v any) string {
@@ -220,9 +241,6 @@ func formatTeamAgentStatus(v any) string {
 	claims := fmt.Sprintf("%d", out.ClaimsHeld)
 	if !out.ClaimsComplete {
 		claims += " or more (listing truncated)"
-	}
-	if len(out.ClaimedTasks) > 0 {
-		claims += ": " + strings.Join(out.ClaimedTasks, ", ")
 	}
 	sb.WriteString(fmt.Sprintf("Claims:      %s\n", claims))
 	sb.WriteString(fmt.Sprintf("Name free:   %t\n", out.NameReusable))

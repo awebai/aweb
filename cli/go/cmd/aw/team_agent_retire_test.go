@@ -32,6 +32,8 @@ type retirementStores struct {
 	deleteConflict bool
 	// certificateStatus is the wire status the hosted endpoint answers with.
 	certificateStatus string
+	// omitClaimsReleased serves a server too old to report the count.
+	omitClaimsReleased bool
 
 	coordination *httptest.Server
 	certificate  *httptest.Server
@@ -71,13 +73,16 @@ func newRetirementStores(t *testing.T) *retirementStores {
 				}})
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			body := map[string]any{
 				"workspace_id":     s.workspaceID,
 				"alias":            s.alias,
 				"deleted_at":       "2026-07-29T12:00:00Z",
 				"identity_deleted": true,
-				"claims_released":  s.claimsReleased,
-			})
+			}
+			if !s.omitClaimsReleased {
+				body["claims_released"] = s.claimsReleased
+			}
+			_ = json.NewEncoder(w).Encode(body)
 		default:
 			s.t.Fatalf("unexpected coordination request %s %s", r.Method, r.URL.String())
 		}
@@ -172,8 +177,8 @@ func TestRetireTeamAgentReleasesClaimsBeforeRevokingTheCertificate(t *testing.T)
 	if deleteAt > revokeAt {
 		t.Fatalf("certificate was revoked before the claims were released; calls=%v", order)
 	}
-	if out.ClaimsReleased != 3 {
-		t.Fatalf("claims_released=%d, want 3", out.ClaimsReleased)
+	if out.ClaimsReleased == nil || *out.ClaimsReleased != 3 {
+		t.Fatalf("claims_released=%v, want 3", out.ClaimsReleased)
 	}
 	if out.Status != retirementRetired {
 		t.Fatalf("status=%q, want %q", out.Status, retirementRetired)
@@ -222,8 +227,8 @@ func TestRetireTeamAgentStopsBeforeRevokeWhenTheClaimsCannotBeReleased(t *testin
 	if !strings.Contains(certificate.Detail, "aw id team remove-member") {
 		t.Fatalf("skipped certificate store does not name the immediate-revoke path: %q", certificate.Detail)
 	}
-	if out.ClaimsReleased != 0 {
-		t.Fatalf("claims_released=%d, want 0 when nothing was released", out.ClaimsReleased)
+	if out.ClaimsReleased != nil {
+		t.Fatalf("claims_released=%v, want unreported when no delete happened", out.ClaimsReleased)
 	}
 }
 
@@ -336,22 +341,21 @@ func TestRetireTeamAgentDoesNotTurnAReportedNoOpIntoACertificateClaim(t *testing
 		t.Fatalf("a reported no-op must still exit zero so retries converge; status=%q", out.Status)
 	}
 
-	detail := strings.ToLower(storeOutcome(t, out, storeCertificate).Detail)
-	for _, forbidden := range []string{
-		"holds no active certificate",
-		"no active certificate exists",
-		"already removed",
-		"already revoked",
-	} {
-		if strings.Contains(detail, forbidden) {
-			t.Fatalf("a reported no-op must not assert %q; detail=%q", forbidden, detail)
-		}
-	}
-	if !strings.Contains(detail, "reported") {
-		t.Fatalf("a reported no-op must say it is what the service reported; detail=%q", detail)
-	}
-	if !strings.Contains(detail, "aw team agent-status") {
-		t.Fatalf("a reported no-op must name the read that can establish the certificate state; detail=%q", detail)
+	// Pinned exactly, on purpose. A list of forbidden phrasings would only catch
+	// the phrasings someone thought of, and it is weakest against a rewrite -
+	// which is the event it exists to catch, since anyone rewording this will not
+	// reuse the words we banned. An equality check cannot go green on a
+	// strengthened claim whatever words it is written in.
+	//
+	// If you are here because you reworded this detail: the sentence may say what
+	// the service reported and may not say anything about whether a certificate
+	// exists. The hosted service answers from its own membership records and may
+	// never consult the registry, so any claim about certificate state is one the
+	// command has not established. That is the defect this whole change removes.
+	const reportedNoOpDetail = "revoked nothing: the service reported it had nothing to revoke, " +
+		"which does not establish that no certificate exists; confirm with aw team agent-status"
+	if got := storeOutcome(t, out, storeCertificate).Detail; got != reportedNoOpDetail {
+		t.Fatalf("reported no-op detail changed.\n got: %q\nwant: %q", got, reportedNoOpDetail)
 	}
 }
 
@@ -368,5 +372,26 @@ func TestRetireTeamAgentReportsAnAlreadyRevokedCertificateAsEstablished(t *testi
 	}
 	if certificateAlreadyRevoked == certificateNothingReported {
 		t.Fatalf("the two no-op results must stay distinguishable")
+	}
+}
+
+// A server older than the claims_released field sends no count. Absent is not
+// zero: reporting "released 0 task claim(s)" for a delete that released three
+// asserts a number nobody sent, and the CLI reaches servers older than itself
+// for as long as it takes them to be upgraded.
+func TestRetireTeamAgentDoesNotReportZeroClaimsWhenTheServerSentNoCount(t *testing.T) {
+	stores := newRetirementStores(t)
+	stores.omitClaimsReleased = true
+	out := stores.retire(t)
+
+	if out.ClaimsReleased != nil {
+		t.Fatalf("claims_released=%v, want unreported when the server sent no count", out.ClaimsReleased)
+	}
+	detail := storeOutcome(t, out, storeCoordination).Detail
+	if strings.Contains(detail, "released 0") {
+		t.Fatalf("a server that sent no count must not be reported as having released none: %q", detail)
+	}
+	if !strings.Contains(detail, "does not report how many") {
+		t.Fatalf("detail must say the count is unavailable: %q", detail)
 	}
 }

@@ -87,7 +87,7 @@ type teamRemoveAgentOutput struct {
 	CertificateResult string               `json:"certificate_result,omitempty"`
 	CertificateID     string               `json:"certificate_id,omitempty"`
 	WorkspaceID       string               `json:"workspace_id,omitempty"`
-	ClaimsReleased    int                  `json:"claims_released"`
+	ClaimsReleased    *int                 `json:"claims_released"`
 	Stores            []retireStoreOutcome `json:"stores"`
 }
 
@@ -276,10 +276,20 @@ func releaseCoordinationState(
 		}, nil
 	}
 
+	if deleted.ClaimsReleased == nil {
+		return retireStoreOutcome{
+			Store:  storeCoordination,
+			Result: storeChanged,
+			Detail: fmt.Sprintf(
+				"deleted workspace %s, which releases its task claims; this server does not report how many, so read them back with aw team agent-status",
+				deleted.WorkspaceID,
+			),
+		}, deleted
+	}
 	return retireStoreOutcome{
 		Store:  storeCoordination,
 		Result: storeChanged,
-		Detail: fmt.Sprintf("deleted workspace %s and released %d task claim(s)", deleted.WorkspaceID, deleted.ClaimsReleased),
+		Detail: fmt.Sprintf("deleted workspace %s and released %d task claim(s)", deleted.WorkspaceID, *deleted.ClaimsReleased),
 	}, deleted
 }
 

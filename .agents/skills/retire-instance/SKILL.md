@@ -41,8 +41,12 @@ anything, so a revoke that runs first strands every claim it held.
 `aw team agent-status <name>` reads the stores directly and mutates
 nothing. It is the check that the retirement actually happened, and it is
 deliberately not the retire command reporting on itself. A retired agent
-reads `state: retired`, no active certificate, no workspace, zero claims,
+reads `state: clear` — no active certificate, no workspace, zero claims,
 and `name free: true`.
+
+`clear` describes what the stores hold now, not how they came to hold it. A
+name retired this morning and a name never used read the same way, because
+this command cannot establish which it is looking at and will not guess.
 
 **Never delete the home while the server still considers the member
 active** — that orphans it in the roster. The status read is how you know.
