@@ -337,7 +337,13 @@ def wait_for_deploy(
     raise OpsError(f"timed out waiting for Render deploy {deploy_id}")
 
 
-def verify_health(url: str, *, timeout: float = HEALTH_REQUEST_TIMEOUT_SECONDS) -> dict[str, Any]:
+def verify_health(
+    url: str,
+    *,
+    expected_commit: str,
+    allow_legacy_null_build: bool = False,
+    timeout: float = HEALTH_REQUEST_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
     try:
         with open_health_url(url, timeout=timeout) as response:
             if response.geturl() != url:
@@ -359,14 +365,34 @@ def verify_health(url: str, *, timeout: float = HEALTH_REQUEST_TIMEOUT_SECONDS) 
         ) from exc
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise TransientHealthError(f"health check returned invalid JSON from {url}") from exc
-    if payload != {"status": "ok", "service": "library"}:
+    if not isinstance(payload, dict) or set(payload) != {"status", "service", "build"}:
         raise OpsError(f"unexpected Library health payload from {url}")
+    if payload["status"] != "ok" or payload["service"] != "library":
+        raise OpsError(f"unexpected Library health payload from {url}")
+    build = payload["build"]
+    if not isinstance(build, dict) or set(build) != {"git_sha"}:
+        raise OpsError(f"unexpected Library health build payload from {url}")
+
+    expected = require_commit(expected_commit, "expected health commit")
+    observed = build["git_sha"]
+    if observed is None:
+        if allow_legacy_null_build:
+            return payload
+        raise OpsError(f"Library health returned null build identity from {url}")
+    if not isinstance(observed, str) or not COMMIT_RE.fullmatch(observed):
+        raise OpsError(f"Library health returned invalid build identity from {url}")
+    if observed != expected:
+        raise TransientHealthError(
+            f"Library health build mismatch from {url}: observed {observed}, expected {expected}"
+        )
     return payload
 
 
 def verify_health_surfaces(
     config: ProductionConfig,
     *,
+    expected_commit: str,
+    allow_legacy_null_build: bool = False,
     readiness_timeout: float = HEALTH_READINESS_TIMEOUT_SECONDS,
     retry_interval: float = HEALTH_RETRY_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
@@ -387,14 +413,22 @@ def verify_health_surfaces(
         attempts += 1
         try:
             origin = verify_health(
-                origin_url, timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining)
+                origin_url,
+                expected_commit=expected_commit,
+                allow_legacy_null_build=allow_legacy_null_build,
+                timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining),
             )
             remaining = deadline - monotonic()
             if remaining <= 0:
                 raise TransientHealthError("health readiness deadline elapsed after origin check")
             public = verify_health(
-                public_url, timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining)
+                public_url,
+                expected_commit=expected_commit,
+                allow_legacy_null_build=allow_legacy_null_build,
+                timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining),
             )
+            if origin != public:
+                raise OpsError("origin and public Library health payloads differ")
             finished_at = monotonic()
             if finished_at > deadline:
                 raise TransientHealthError("health readiness deadline elapsed after public check")
@@ -450,6 +484,15 @@ def _confirm_apply(args: argparse.Namespace, config: ProductionConfig) -> None:
         raise OpsError("mutation refused: exact service-ID confirmation does not match")
 
 
+def _legacy_null_build_allowed(value: str, *, expected_commit: str) -> bool:
+    if not value:
+        return False
+    approved = require_commit(value, "legacy null-build commit")
+    if approved != expected_commit:
+        raise OpsError("legacy null-build commit does not match the approved target")
+    return True
+
+
 def command_status(args: argparse.Namespace) -> dict[str, Any]:
     client, config = _client(args)
     service = client.service(config.service_id)
@@ -495,7 +538,7 @@ def command_deploy(args: argparse.Namespace) -> dict[str, Any]:
     finished = wait_for_deploy(client, config, deploy_id, commit, timeout_seconds=args.timeout)
     final_live = current_live(client.deploys(config.service_id))
     require_deploy(final_live, deploy_id=deploy_id, commit=commit)
-    health = verify_health_surfaces(config)
+    health = verify_health_surfaces(config, expected_commit=commit)
     return {"deploy": safe_deploy(finished), "rollback": safe_deploy(live), "health": health}
 
 
@@ -521,13 +564,20 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
         raise OpsError(f"expected deploy is not live: {artifact.get('status')}")
     live = current_live(client.deploys(config.service_id))
     require_deploy(live, deploy_id=deploy_id, commit=commit)
-    return {"deploy": safe_deploy(artifact), "health": verify_health_surfaces(config)}
+    return {
+        "deploy": safe_deploy(artifact),
+        "health": verify_health_surfaces(config, expected_commit=commit),
+    }
 
 
 def command_rollback(args: argparse.Namespace) -> dict[str, Any]:
     client, config = _client(args)
     _confirm_apply(args, config)
     rollback_commit = require_commit(args.rollback_commit, "rollback commit")
+    allow_legacy_null_build = _legacy_null_build_allowed(
+        args.allow_legacy_null_build_for,
+        expected_commit=rollback_commit,
+    )
     rollback_id = require_deploy_id(args.rollback_deploy_id, "rollback deploy ID")
     current_commit = require_commit(args.current_commit, "current live commit")
     current_id = require_deploy_id(args.current_deploy_id, "current live deploy ID")
@@ -550,7 +600,11 @@ def command_rollback(args: argparse.Namespace) -> dict[str, Any]:
     )
     final_live = current_live(client.deploys(config.service_id))
     require_deploy(final_live, deploy_id=created_id, commit=rollback_commit)
-    health = verify_health_surfaces(config)
+    health = verify_health_surfaces(
+        config,
+        expected_commit=rollback_commit,
+        allow_legacy_null_build=allow_legacy_null_build,
+    )
     return {"rollback_deploy": safe_deploy(finished), "health": health}
 
 
@@ -581,6 +635,10 @@ def parser() -> argparse.ArgumentParser:
     rollback.add_argument("--current-deploy-id", default=os.environ.get("CURRENT_DEPLOY_ID", ""))
     rollback.add_argument("--current-commit", default=os.environ.get("CURRENT_COMMIT", ""))
     rollback.add_argument("--confirm-service-id", default=os.environ.get("CONFIRM_SERVICE_ID", ""))
+    rollback.add_argument(
+        "--allow-legacy-null-build-for",
+        default=os.environ.get("ALLOW_LEGACY_NULL_BUILD_FOR", ""),
+    )
     rollback.add_argument("--timeout", type=int, default=900)
     rollback.add_argument("--apply", action="store_true", default=os.environ.get("APPLY") == "1")
     return p

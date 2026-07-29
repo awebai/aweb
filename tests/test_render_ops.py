@@ -13,6 +13,16 @@ import pytest
 
 from scripts import render_ops
 
+_SHA_A = "a" * 40
+
+
+def health_payload(git_sha: str | None = _SHA_A) -> dict:
+    return {"status": "ok", "service": "library", "build": {"git_sha": git_sha}}
+
+
+def health_bytes(git_sha: str | None = _SHA_A) -> bytes:
+    return json.dumps(health_payload(git_sha), separators=(",", ":")).encode()
+
 
 @pytest.fixture
 def config(tmp_path: Path) -> render_ops.ProductionConfig:
@@ -130,11 +140,176 @@ def test_health_rejects_redirected_surface(monkeypatch: pytest.MonkeyPatch) -> N
             return "https://library.example/health"
 
         def read(self) -> bytes:
-            return b'{"status":"ok","service":"library"}'
+            return health_bytes()
 
     monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout: Response())
     with pytest.raises(render_ops.OpsError, match="redirected away"):
-        render_ops.verify_health("https://library-origin.example/health")
+        render_ops.verify_health(
+            "https://library-origin.example/health", expected_commit=_SHA_A
+        )
+
+
+def test_health_requires_exact_approved_build_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://library.example/health"
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "service": "library",
+                    "build": {"git_sha": "b" * 40},
+                }
+            ).encode()
+
+    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout: Response())
+
+    with pytest.raises(render_ops.TransientHealthError, match="observed.*expected"):
+        render_ops.verify_health(
+            "https://library.example/health",
+            expected_commit="a" * 40,
+        )
+
+
+def test_health_readiness_retries_a_valid_stale_commit_then_matches(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+) -> None:
+    class Response:
+        status = 200
+
+        def __init__(self, url: str, git_sha: str) -> None:
+            self.url = url
+            self.git_sha = git_sha
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return self.url
+
+        def read(self) -> bytes:
+            return health_bytes(self.git_sha)
+
+    calls: list[str] = []
+
+    def stale_then_current(url: str, timeout: float):
+        calls.append(url)
+        return Response(url, "b" * 40 if len(calls) == 1 else _SHA_A)
+
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    monkeypatch.setattr(render_ops, "open_health_url", stale_then_current)
+
+    result = render_ops.verify_health_surfaces(
+        config,
+        expected_commit=_SHA_A,
+        readiness_timeout=10,
+        retry_interval=1,
+        sleep=sleep,
+        monotonic=lambda: now[0],
+    )
+
+    assert result == {"origin": health_payload(), "public": health_payload()}
+    assert calls == [
+        f"{config.origin_url}/health",
+        f"{config.origin_url}/health",
+        f"{config.public_url}/health",
+    ]
+    assert now[0] == 1
+
+
+def test_health_null_build_identity_requires_explicit_exact_legacy_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://library.example/health"
+
+        def read(self) -> bytes:
+            return b'{"status":"ok","service":"library","build":{"git_sha":null}}'
+
+    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout: Response())
+
+    with pytest.raises(render_ops.OpsError, match="null build identity"):
+        render_ops.verify_health(
+            "https://library.example/health",
+            expected_commit="a" * 40,
+        )
+    assert render_ops.verify_health(
+        "https://library.example/health",
+        expected_commit="a" * 40,
+        allow_legacy_null_build=True,
+    )["build"] == {"git_sha": None}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"status": "ok", "service": "library", "build": {"git_sha": "a" * 39}},
+        {
+            "status": "ok",
+            "service": "library",
+            "build": {"git_sha": _SHA_A, "unapproved": True},
+        },
+        {
+            "status": "ok",
+            "service": "library",
+            "build": {"git_sha": _SHA_A},
+            "unapproved": True,
+        },
+    ],
+)
+def test_health_rejects_malformed_or_unapproved_build_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict,
+) -> None:
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://library.example/health"
+
+        def read(self) -> bytes:
+            return json.dumps(payload).encode()
+
+    monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout: Response())
+
+    with pytest.raises(render_ops.OpsError):
+        render_ops.verify_health(
+            "https://library.example/health", expected_commit=_SHA_A
+        )
 
 
 def test_health_readiness_retries_transient_http_then_succeeds(
@@ -158,7 +333,7 @@ def test_health_readiness_retries_transient_http_then_succeeds(
             return self.url
 
         def read(self) -> bytes:
-            return b'{"status":"ok","service":"library"}'
+            return health_bytes()
 
     calls: list[str] = []
 
@@ -178,13 +353,14 @@ def test_health_readiness_retries_transient_http_then_succeeds(
     monkeypatch.setattr(render_ops, "open_health_url", fake_urlopen)
     result = render_ops.verify_health_surfaces(
         config,
+        expected_commit=_SHA_A,
         readiness_timeout=20,
         retry_interval=5,
         sleep=fake_sleep,
         monotonic=lambda: now[0],
     )
-    assert result["origin"] == {"status": "ok", "service": "library"}
-    assert result["public"] == {"status": "ok", "service": "library"}
+    assert result["origin"] == health_payload()
+    assert result["public"] == health_payload()
     assert calls == [
         f"{config.origin_url}/health",
         f"{config.origin_url}/health",
@@ -211,7 +387,7 @@ def test_health_readiness_fails_closed_after_bound(
     now = [0.0]
     sleeps: list[float] = []
 
-    def transient(url: str, *, timeout: float):
+    def transient(url: str, **kwargs):
         raise render_ops.TransientHealthError("still warming")
 
     def fake_sleep(seconds: float) -> None:
@@ -222,6 +398,7 @@ def test_health_readiness_fails_closed_after_bound(
     with pytest.raises(render_ops.OpsError, match="after 11 seconds and 3 attempts"):
         render_ops.verify_health_surfaces(
             config,
+            expected_commit=_SHA_A,
             readiness_timeout=11,
             retry_interval=5,
             sleep=fake_sleep,
@@ -243,7 +420,9 @@ def test_health_readiness_does_not_retry_permanent_http_error(
     sleeps: list[float] = []
     monkeypatch.setattr(render_ops, "open_health_url", forbidden)
     with pytest.raises(render_ops.OpsError, match="HTTP 403"):
-        render_ops.verify_health_surfaces(config, sleep=sleeps.append)
+        render_ops.verify_health_surfaces(
+            config, expected_commit=_SHA_A, sleep=sleeps.append
+        )
     assert calls == 1
     assert sleeps == []
 
@@ -276,7 +455,9 @@ def test_health_readiness_does_not_retry_wrong_payload(
     sleeps: list[float] = []
     monkeypatch.setattr(render_ops, "open_health_url", wrong)
     with pytest.raises(render_ops.OpsError, match="unexpected Library health payload"):
-        render_ops.verify_health_surfaces(config, sleep=sleeps.append)
+        render_ops.verify_health_surfaces(
+            config, expected_commit=_SHA_A, sleep=sleeps.append
+        )
     assert calls == 1
     assert sleeps == []
 
@@ -294,7 +475,7 @@ def test_health_redirect_location_is_never_requested() -> None:
                 return
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b'{"status":"ok","service":"library"}')
+            self.wfile.write(health_bytes())
 
         def log_message(self, format: str, *args) -> None:
             return
@@ -305,7 +486,7 @@ def test_health_redirect_location_is_never_requested() -> None:
     try:
         url = f"http://127.0.0.1:{server.server_port}/health"
         with pytest.raises(render_ops.OpsError, match="HTTP 302"):
-            render_ops.verify_health(url)
+            render_ops.verify_health(url, expected_commit=_SHA_A)
     finally:
         server.shutdown()
         server.server_close()
@@ -340,7 +521,7 @@ def test_health_invalid_utf8_is_bounded_transient(
     def fake_open(url: str, timeout: float):
         nonlocal calls
         calls += 1
-        body = b"\xff" if calls == 1 else b'{"status":"ok","service":"library"}'
+        body = b"\xff" if calls == 1 else health_bytes()
         return Response(url, body)
 
     now = [0.0]
@@ -351,12 +532,13 @@ def test_health_invalid_utf8_is_bounded_transient(
     monkeypatch.setattr(render_ops, "open_health_url", fake_open)
     result = render_ops.verify_health_surfaces(
         config,
+        expected_commit=_SHA_A,
         readiness_timeout=10,
         retry_interval=1,
         sleep=fake_sleep,
         monotonic=lambda: now[0],
     )
-    assert result["public"] == {"status": "ok", "service": "library"}
+    assert result["public"] == health_payload()
     assert calls == 3
     assert now[0] == 1
 
@@ -379,7 +561,9 @@ def test_health_interrupted_body_read_is_transient(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(render_ops, "open_health_url", lambda url, timeout: Response())
     with pytest.raises(render_ops.TransientHealthError, match="IncompleteRead"):
-        render_ops.verify_health("https://library.example/health")
+        render_ops.verify_health(
+            "https://library.example/health", expected_commit=_SHA_A
+        )
 
 
 def test_health_late_public_success_fails_closed(
@@ -390,18 +574,24 @@ def test_health_late_public_success_fails_closed(
     now = [0.0]
     calls: list[tuple[str, float]] = []
 
-    def late_public(url: str, *, timeout: float):
+    def late_public(url: str, **kwargs):
+        timeout = kwargs["timeout"]
         calls.append((url, timeout))
         if url.startswith(config.origin_url):
             now[0] = 89.0
         else:
             assert timeout == 1.0
             now[0] = 91.0
-        return {"status": "ok", "service": "library"}
+        return health_payload()
 
     monkeypatch.setattr(render_ops, "verify_health", late_public)
     with pytest.raises(render_ops.OpsError, match="after 90 seconds and 1 attempts"):
-        render_ops.verify_health_surfaces(config, monotonic=lambda: now[0], sleep=lambda _: None)
+        render_ops.verify_health_surfaces(
+            config,
+            expected_commit=_SHA_A,
+            monotonic=lambda: now[0],
+            sleep=lambda _: None,
+        )
     events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
     assert events == [
         {
@@ -422,14 +612,16 @@ def test_health_deadline_crossing_before_origin_never_starts_request(
     times = iter([0.0, 91.0])
     calls = 0
 
-    def must_not_run(url: str, *, timeout: float):
+    def must_not_run(url: str, **kwargs):
         nonlocal calls
         calls += 1
         raise AssertionError("health request started after deadline")
 
     monkeypatch.setattr(render_ops, "verify_health", must_not_run)
     with pytest.raises(render_ops.OpsError, match="after 90 seconds and 0 attempts"):
-        render_ops.verify_health_surfaces(config, monotonic=lambda: next(times))
+        render_ops.verify_health_surfaces(
+            config, expected_commit=_SHA_A, monotonic=lambda: next(times)
+        )
     assert calls == 0
 
 
@@ -440,13 +632,15 @@ def test_health_final_transient_attempt_is_logged_as_exhausted(
 ) -> None:
     now = [0.0]
 
-    def consumes_deadline(url: str, *, timeout: float):
+    def consumes_deadline(url: str, **kwargs):
         now[0] = 90.0
         raise render_ops.TransientHealthError("request timed out")
 
     monkeypatch.setattr(render_ops, "verify_health", consumes_deadline)
     with pytest.raises(render_ops.OpsError, match="after 90 seconds and 1 attempts"):
-        render_ops.verify_health_surfaces(config, monotonic=lambda: now[0])
+        render_ops.verify_health_surfaces(
+            config, expected_commit=_SHA_A, monotonic=lambda: now[0]
+        )
     events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
     assert events == [
         {
@@ -534,6 +728,7 @@ def common_args(config: render_ops.ProductionConfig) -> SimpleNamespace:
         rollback_deploy_id="dep-rollback",
         current_commit="b" * 40,
         current_deploy_id="dep-candidate",
+        allow_legacy_null_build_for="",
         repo_root=".",
         timeout=30,
     )
@@ -558,11 +753,17 @@ def test_command_deploy_pins_rollback_and_clears_through_client(
         "wait_for_deploy",
         lambda c, cfg, deploy_id, commit, timeout_seconds: deploy(deploy_id, commit),
     )
-    monkeypatch.setattr(render_ops, "verify_health_surfaces", lambda cfg: {"ok": True})
+    health_checks = []
+    monkeypatch.setattr(
+        render_ops,
+        "verify_health_surfaces",
+        lambda cfg, **kwargs: health_checks.append(kwargs) or {"ok": True},
+    )
     result = render_ops.command_deploy(common_args(config))
     assert client.posts == [("deploy", "b" * 40)]
     assert result["rollback"]["id"] == "dep-rollback"
     assert result["deploy"]["id"] == "dep-created"
+    assert health_checks == [{"expected_commit": "b" * 40}]
 
 
 def test_command_rollback_uses_exact_artifact(
@@ -577,10 +778,36 @@ def test_command_rollback_uses_exact_artifact(
         "wait_for_deploy",
         lambda c, cfg, deploy_id, commit, timeout_seconds: deploy(deploy_id, commit),
     )
-    monkeypatch.setattr(render_ops, "verify_health_surfaces", lambda cfg: {"ok": True})
-    result = render_ops.command_rollback(common_args(config))
+    health_checks = []
+    monkeypatch.setattr(
+        render_ops,
+        "verify_health_surfaces",
+        lambda cfg, **kwargs: health_checks.append(kwargs) or {"ok": True},
+    )
+    args = common_args(config)
+    args.allow_legacy_null_build_for = "a" * 40
+    result = render_ops.command_rollback(args)
     assert client.posts == [("rollback", "dep-rollback")]
     assert result["rollback_deploy"]["commit"] == "a" * 40
+    assert health_checks == [
+        {"expected_commit": "a" * 40, "allow_legacy_null_build": True}
+    ]
+
+
+def test_command_rollback_rejects_legacy_null_flag_for_a_different_commit_before_mutation(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
+) -> None:
+    artifact = deploy("dep-rollback", "a" * 40, "deactivated")
+    current = deploy("dep-candidate", "b" * 40)
+    client = FakeClient(config, artifact, current=current)
+    monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
+    args = common_args(config)
+    args.allow_legacy_null_build_for = "c" * 40
+
+    with pytest.raises(render_ops.OpsError, match="does not match the approved target"):
+        render_ops.command_rollback(args)
+
+    assert client.posts == []
 
 
 def test_command_rollback_requires_exact_artifact(
@@ -645,10 +872,16 @@ def test_command_verify_requires_exact_current_live(
     artifact = deploy("dep-candidate", "b" * 40)
     client = FakeClient(config, artifact)
     monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
-    monkeypatch.setattr(render_ops, "verify_health_surfaces", lambda cfg: {"ok": True})
+    health_checks = []
+    monkeypatch.setattr(
+        render_ops,
+        "verify_health_surfaces",
+        lambda cfg, **kwargs: health_checks.append(kwargs) or {"ok": True},
+    )
     args = SimpleNamespace(deploy_id="dep-candidate", commit="b" * 40)
     result = render_ops.command_verify(args)
     assert result["deploy"]["status"] == "live"
+    assert health_checks == [{"expected_commit": "b" * 40}]
 
 
 def test_command_wait_is_restartable(

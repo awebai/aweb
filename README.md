@@ -26,6 +26,8 @@ model, real endpoint bodies, and domain tables arrive in later tasks.
 Public (no auth):
 
 - `GET /` — landing page
+- `GET /health`, `GET /live`, `GET /ready` — service state plus non-secret
+  `build.git_sha` (`null` when no source identity is injected)
 - `GET /llms.txt`, `GET /skills/`
 - `GET /aweb-app.json`, `GET /.well-known/aweb-app.json` — app manifest
 - `GET /v1/blueprints`, `GET /v1/blueprints/{blueprint_id}`, `GET /v1/profiles/{profile_id}`

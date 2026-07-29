@@ -126,7 +126,11 @@ def test_health_endpoints_are_public() -> None:
     for path in ("/health", "/live", "/ready"):
         response = client.get(path)
         assert response.status_code == 200, path
-        assert response.json() == {"status": "ok", "service": "library"}
+        assert response.json() == {
+            "status": "ok",
+            "service": "library",
+            "build": {"git_sha": None},
+        }
 
 
 def test_public_blueprint_catalog_is_unauthenticated() -> None:

@@ -47,7 +47,7 @@ rollback artifact after starting the deploy.
 | `make prod-deploy ... APPLY=1` | Validates topology and rollback pin, fetches and verifies exact `origin/main`, starts a clear-cache deploy, waits for `live`, then waits boundedly for exact origin and public health readiness. |
 | `make prod-wait ...` | Restartable read-only wait for one exact deploy ID and commit. |
 | `make prod-verify ...` | Requires the exact deploy to be the sole live artifact, checks origin/public health, then runs raw, released-client, and real-harness gates. |
-| `make prod-rollback ... APPLY=1` | Pins the exact current live deployment, validates a distinct known-good rollback deploy ID/commit/state, rolls back, waits, re-checks the sole live artifact, and checks both health surfaces. |
+| `make prod-rollback ... APPLY=1` | Pins the exact current live deployment, validates a distinct known-good rollback deploy ID/commit/state, rolls back, waits, re-checks the sole live artifact, and checks both health surfaces against the approved rollback commit. A pre-build-identity artifact additionally requires an explicit per-run `ALLOW_LEGACY_NULL_BUILD_FOR` equal to that rollback commit. |
 | `make prod-recovery ... APPLY=1` | Performs the pinned rollback and its explicitly selected recovery gate. |
 
 Run `make prod-ops-test` before release planning. The mutation targets deliberately
@@ -84,8 +84,17 @@ The gate clones only into a private temporary directory and removes it on exit.
 Render metadata and health do not prove the functional release. Verification requires:
 
 1. Render reports the exact candidate deploy ID and commit as the sole `live` deploy.
-2. Generated origin `/health` returns the exact Library health payload without redirecting.
-3. Public edge `/health` returns the same exact payload without URL drift.
+2. Generated origin `/health` returns the exact Library health payload without redirecting:
+   `{status: "ok", service: "library", build: {git_sha: <full lowercase 40-hex SHA>}}`.
+   The SHA must equal the approved commit. Render's documented `RENDER_GIT_COMMIT` is
+   authoritative; `LIBRARY_GIT_SHA` is only a validated non-Render fallback, and
+   conflicting values make the service fail configuration validation. A null SHA means
+   no source identity was injected (normal in local development and true of legacy
+   production artifacts); it never means the artifact agrees with an approved commit.
+3. Public edge `/health` returns the same exact payload without URL drift, and its
+   `build.git_sha` independently equals the approved commit. A different valid SHA is
+   treated as bounded stale-transition evidence; malformed or null identity fails
+   immediately outside the explicit legacy rollback action described below.
    Render's `live` transition can precede request readiness. The checked-in gate retries
    only explicitly transient connection, timeout, invalid-JSON, and allowlisted HTTP
    failures for at most 90 seconds with five-second backoff. Redirects, authentication
@@ -141,10 +150,16 @@ make prod-recovery \
   CURRENT_COMMIT=<40-char-current-live> \
   ROLLBACK_DEPLOY_ID=dep-... \
   ROLLBACK_COMMIT=<40-char-rollback> \
+  ALLOW_LEGACY_NULL_BUILD_FOR=<same-40-char-rollback> \
   AW_SOURCE_HOME=/absolute/path/to/certified-agent-home \
   EXPECTED_PROFILE_VERSION=<approved-shelf-version> \
   EXPECTED_PROFILE_DIGEST=sha256:<64-hex-digest>
 ```
+
+`ALLOW_LEGACY_NULL_BUILD_FOR` is never defaulted or stored as an exception list. It is
+accepted only when it is a full SHA exactly equal to the approved rollback target for
+that invocation. Omitting it makes a null build identity fail closed; naming a different
+commit fails before the rollback mutation. Build-identified artifacts must not use it.
 
 Do not reuse `legacy-aasb` for a later release. Add and review the later release's exact
 recovery fingerprint before its production approval.
