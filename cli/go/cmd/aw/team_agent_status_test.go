@@ -300,3 +300,22 @@ func TestAgentStatusWillNotReadATruncatedListingAsNoClaimsWhenTheWorkspaceIsGone
 		t.Fatalf("name_reusable=true while the claim listing could not establish zero")
 	}
 }
+
+// The read-only site is the same defect with the damage removed: stripping the
+// namespace answers about whoever holds that alias here, under a name nobody
+// asked about. It matters because this is the command the retirement output
+// tells operators to confirm with, so a silent substitution would let the
+// confirmation disagree with the thing it confirms.
+func TestAgentStatusRefusesANamespaceThatIsNotTheTeams(t *testing.T) {
+	_, typedName, err := parseAddress("evil.com/retiree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = agentStatusAliasCheck("backend:acme.com", "evil.com/retiree", typedName)
+	if err == nil {
+		t.Fatalf("a foreign namespace was silently stripped and reported on")
+	}
+	if !strings.Contains(err.Error(), "acme.com") {
+		t.Fatalf("refusal does not name the team's own namespace: %v", err)
+	}
+}

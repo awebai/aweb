@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	aweb "github.com/awebai/aw"
+	"github.com/awebai/aw/awid"
 )
 
 // retirementStores is a pair of stand-in stores that records the order it was
@@ -40,9 +44,20 @@ type retirementStores struct {
 	aliasClaims []string
 	// claimsTruncated serves a claim listing that did not fit one page.
 	claimsTruncated bool
+	// targetVerified reports whether the principal was established before acting.
+	// Default false is the hosted shape these fixtures drive: no read there can
+	// establish which member an alias belongs to.
+	targetVerified bool
 
 	coordination *httptest.Server
 	certificate  *httptest.Server
+	// registry serves the member resolve that establishes the principal. Its
+	// answer is what the verification compares the typed address against.
+	registry *httptest.Server
+	// resolvedAddress is the member_address the registry reports for the alias.
+	resolvedAddress string
+	// memberMissing serves a member that does not resolve at all.
+	memberMissing bool
 }
 
 func newRetirementStores(t *testing.T) *retirementStores {
@@ -114,7 +129,57 @@ func newRetirementStores(t *testing.T) *retirementStores {
 	}))
 	t.Cleanup(s.certificate.Close)
 
+	s.registry = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.record("registry:resolve")
+		if s.memberMissing {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"detail": "Team member not found"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"team_id": "backend:acme.com", "certificate_id": "cert-retiree",
+			"member_did_key": "did:key:z6MkRetiree", "member_address": s.resolvedAddress,
+			"alias": s.alias, "identity_scope": "local", "issued_at": "2026-07-29T00:00:00Z",
+		})
+	}))
+	t.Cleanup(s.registry.Close)
+
 	return s
+}
+
+// retireVerified drives the command's own sequence: establish the principal
+// first, and only then run the retirement. It is the call-site path rather than
+// the helper, so it fails if nothing wires the verification in.
+func (s *retirementStores) retireVerified(t *testing.T, typedAddress string) (teamRemoveAgentOutput, error) {
+	t.Helper()
+	resetTeamRemoveMemberGlobals(t)
+	t.Chdir(t.TempDir())
+	t.Setenv(initAPIKeyEnvVar, "aw_sk_env")
+	teamRemoveAwebURL = s.certificate.URL
+	teamRemoveRegistryURL = s.registry.URL
+
+	client, err := aweb.New(s.coordination.URL)
+	if err != nil {
+		t.Fatalf("aweb.New: %v", err)
+	}
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		t.Fatalf("registry client: %v", err)
+	}
+	verified, err := verifyRetirementTarget(
+		context.Background(), client, registry, s.registry.URL,
+		"acme.com", "backend", typedAddress, s.alias,
+	)
+	if err != nil {
+		return teamRemoveAgentOutput{}, err
+	}
+	out := retireTeamAgent(
+		context.Background(), client, "backend:acme.com", typedAddress, s.alias, verified != nil,
+		func(ctx context.Context) (certificateStoreResult, error) {
+			return revokeHostedTeamCertificate(ctx, "backend:acme.com", typedAddress, "")
+		},
+	)
+	return out, nil
 }
 
 func (s *retirementStores) record(call string) {
@@ -146,6 +211,7 @@ func (s *retirementStores) retire(t *testing.T) teamRemoveAgentOutput {
 		"default:alice.aweb.ai",
 		"alice.aweb.ai/"+s.alias,
 		s.alias,
+		s.targetVerified,
 		func(ctx context.Context) (certificateStoreResult, error) {
 			return revokeHostedTeamCertificate(ctx, "default:alice.aweb.ai", "alice.aweb.ai/"+s.alias, "")
 		},
@@ -495,7 +561,7 @@ func TestRetireTeamAgentRefusesAnUninterpretedCertificateResult(t *testing.T) {
 	}
 	out := retireTeamAgent(
 		context.Background(), client, "default:alice.aweb.ai",
-		"alice.aweb.ai/"+stores.alias, stores.alias,
+		"alice.aweb.ai/"+stores.alias, stores.alias, false,
 		func(ctx context.Context) (certificateStoreResult, error) {
 			return certificateStoreResult{Result: "queued_for_later"}, nil
 		},
@@ -506,5 +572,200 @@ func TestRetireTeamAgentRefusesAnUninterpretedCertificateResult(t *testing.T) {
 	}
 	if got := storeOutcome(t, out, storeCertificate); got.Result != storeFailed {
 		t.Fatalf("certificate=%+v, want %q", got, storeFailed)
+	}
+}
+
+// On a hosted team no read can establish which member an alias belongs to, so
+// the workspace is selected by alias alone. The result must say that rather than
+// implying the record was the one named - a refusal is one way to avoid claiming
+// more than the evidence supports, and an accurate disclosure is the other.
+func TestRetireTeamAgentDisclosesWhenThePrincipalWasNotVerified(t *testing.T) {
+	stores := newRetirementStores(t)
+	stores.targetVerified = false
+	out := stores.retire(t)
+
+	detail := storeOutcome(t, out, storeCoordination).Detail
+	if !strings.Contains(detail, "selected by alias") {
+		t.Fatalf("an unverified retirement does not disclose how the record was chosen: %q", detail)
+	}
+	if !strings.Contains(detail, "aweb-aaum.9") {
+		t.Fatalf("the disclosure does not name what would change it: %q", detail)
+	}
+}
+
+// A verified retirement must not carry the disclosure, or it becomes wallpaper
+// and stops meaning anything on the paths where it is true.
+func TestRetireTeamAgentDoesNotDiscloseWhenThePrincipalWasVerified(t *testing.T) {
+	stores := newRetirementStores(t)
+	stores.targetVerified = true
+	out := stores.retire(t)
+
+	detail := storeOutcome(t, out, storeCoordination).Detail
+	if strings.Contains(detail, "could not be verified") {
+		t.Fatalf("a verified retirement carried the unverified disclosure: %q", detail)
+	}
+}
+
+// CALL SITE, not the helper. The verification's own tests would all pass with
+// nothing in production calling it - a perfectly tested helper that nothing
+// invokes is green in every direction. This drives the sequence the command
+// runs and asserts the writes never happened.
+func TestRetirementNeverTouchesAnyStoreWhenTheNamedMemberIsSomeoneElse(t *testing.T) {
+	stores := newRetirementStores(t)
+	stores.resolvedAddress = "partner.com/retiree"
+
+	_, err := stores.retireVerified(t, "acme.com/retiree")
+	if err == nil {
+		t.Fatalf("naming acme.com for a member who is partner.com was accepted")
+	}
+	for _, call := range stores.order() {
+		if call == "coordination:delete" || call == "certificate:revoke" {
+			t.Fatalf("a store was written after a failed verification; calls=%v", stores.order())
+		}
+	}
+}
+
+// The permits direction at the call site: a correctly named member must still be
+// retired, or the verification is a refusal machine.
+func TestRetirementProceedsWhenTheNamedMemberIsTheResolvedOne(t *testing.T) {
+	stores := newRetirementStores(t)
+	stores.resolvedAddress = "partner.com/retiree"
+
+	out, err := stores.retireVerified(t, "partner.com/retiree")
+	if err != nil {
+		t.Fatalf("a correctly named member was refused: %v", err)
+	}
+	if !retirementSucceeded(out.Status) {
+		t.Fatalf("status=%q, want a succeeding status", out.Status)
+	}
+	var deleted bool
+	for _, call := range stores.order() {
+		if call == "coordination:delete" {
+			deleted = true
+		}
+	}
+	if !deleted {
+		t.Fatalf("a verified retirement never reached the coordination store; calls=%v", stores.order())
+	}
+}
+
+// Fail-closed on a member that does not resolve, and the refusal has to tell the
+// operator which of the two recoverable states they are in.
+func TestRetirementRefusesAnUnresolvableMemberAndNamesTheRemedy(t *testing.T) {
+	stores := newRetirementStores(t)
+	stores.memberMissing = true
+
+	_, err := stores.retireVerified(t, "acme.com/retiree")
+	if err == nil {
+		t.Fatalf("an unresolvable member was accepted")
+	}
+	for _, call := range stores.order() {
+		if call == "coordination:delete" || call == "certificate:revoke" {
+			t.Fatalf("a store was written for an unresolvable member; calls=%v", stores.order())
+		}
+	}
+	// The workspace record is present in this fixture, so the remedy is the id.
+	if !strings.Contains(err.Error(), "aw workspace delete") {
+		t.Fatalf("refusal does not name the remedy for a record that still exists: %v", err)
+	}
+	if !strings.Contains(err.Error(), stores.workspaceID) {
+		t.Fatalf("refusal does not hand over the workspace id: %v", err)
+	}
+}
+
+// The other arrival: no record left, so aw workspace delete has nothing to act
+// on and pointing there would send the operator at aaum.6's false success.
+func TestRetirementRefusalNamesTheStatusRouteWhenNoRecordRemains(t *testing.T) {
+	stores := newRetirementStores(t)
+	stores.memberMissing = true
+	stores.workspaceMissing = true
+
+	_, err := stores.retireVerified(t, "acme.com/retiree")
+	if err == nil {
+		t.Fatalf("an unresolvable member was accepted")
+	}
+	if strings.Contains(err.Error(), "aw workspace delete "+stores.workspaceID) {
+		t.Fatalf("refusal points at a workspace record that does not exist: %v", err)
+	}
+	if !strings.Contains(err.Error(), "in_progress") {
+		t.Fatalf("refusal does not name the route that works without a record: %v", err)
+	}
+}
+
+// CALL SITE, through the real binary, for the coordination store.
+//
+// This exists because the rest of the Go suite cannot see the verification being
+// unwired from aw team remove-agent: every other test reaches the helper
+// directly, so removing the call from the command reds nothing. That leaves the
+// most destructive of the four sites - it deletes a workspace and releases its
+// claims, and it runs first - protected only by the OSS journey, which nothing
+// in CI obliges anyone to run.
+//
+// Naming a namespace that is not this team's must refuse before any write, so
+// the assertion is that no workspace delete was ever issued.
+func TestTeamRemoveAgentBinaryRefusesAForeignNamespaceBeforeDeletingAnything(t *testing.T) {
+	t.Parallel()
+
+	var deleteIssued bool
+	var mu sync.Mutex
+	aweb := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/workspaces/"):
+			deleteIssued = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace_id": "ws-1", "alias": "retiree",
+				"deleted_at": "2026-07-29T00:00:00Z", "identity_deleted": true,
+			})
+		case r.URL.Path == "/v1/workspaces":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workspaces": []map[string]any{{
+				"workspace_id": "11111111-2222-3333-4444-555555555555", "alias": "retiree",
+			}}, "has_more": false})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		}
+	}))
+
+	registry := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/members/retiree") {
+			// A local member: no address of its own, so the namespace that names
+			// it is the team's, which is acme.com and not evil.com.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id": "backend:acme.com", "certificate_id": "cert-retiree",
+				"member_did_key": "did:key:z6MkRetiree", "alias": "retiree",
+				"identity_scope": "local", "issued_at": "2026-07-29T00:00:00Z",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	pub, signingKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, aweb.URL, "backend:acme.com", "operator", did, signingKey)
+
+	run := exec.CommandContext(ctx, bin, "team", "remove-agent", "evil.com/retiree",
+		"--team-id", "backend:acme.com", "--registry", registry.URL, "--json")
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+registry.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("remove-agent accepted a namespace that is not this team's\n%s", string(out))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if deleteIssued {
+		t.Fatalf("a workspace was deleted despite the named namespace not being this team's\n%s", string(out))
 	}
 }
