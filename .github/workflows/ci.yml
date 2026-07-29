@@ -90,6 +90,10 @@ jobs:
         working-directory: library
         run: make lint
 
+      - name: Validate AATK structural contract
+        working-directory: library
+        run: make aatk-spec-check
+
       - name: Run unit and contract tests
         working-directory: library
         run: make test

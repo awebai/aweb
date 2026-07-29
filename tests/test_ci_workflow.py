@@ -60,7 +60,7 @@ def test_ci_runs_every_make_gate_on_push_and_pull_request() -> None:
     assert {"push", "pull_request"}.issubset(workflow["on"])
     steps = [step for job in workflow["jobs"].values() for step in job["steps"]]
     commands = "\n".join(step.get("run", "") for step in steps)
-    for target in ("lint", "test", "e2e"):
+    for target in ("lint", "aatk-spec-check", "test", "e2e"):
         assert f"make {target}" in commands
 
 

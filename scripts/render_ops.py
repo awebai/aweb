@@ -64,6 +64,45 @@ HEALTH_DIAGNOSTIC_HEADERS = {
 }
 RETRYABLE_HEALTH_HTTP_STATUSES = {404, 408, 425, 429, 500, 502, 503, 504}
 
+# Stable child predicates evaluated by the Render half of `make prod-verify`.
+# AATK validates exact set equality between these source-owned IDs, its static
+# manifest, and terminal release receipts; adding or removing a predicate here
+# cannot silently disappear from the release proof.
+POSTDEPLOY_PREDICATES = frozenset(
+    {
+        "verifier.source-clean",
+        "verifier.evidence-private-no-replace",
+        "render.topology.exact",
+        "render.deploy.sole-live-id",
+        "render.deploy.exact-commit",
+        "health.origin.exact-url-no-redirect",
+        "health.origin.user-agent",
+        "health.origin.http-200",
+        "health.origin.evidence-complete",
+        "health.origin.payload-contract",
+        "health.origin.build-sha",
+        "health.public.exact-url-no-redirect",
+        "health.public.user-agent",
+        "health.public.http-200",
+        "health.public.evidence-complete",
+        "health.public.payload-contract",
+        "health.public.build-sha",
+        "health.surfaces.payload-equal",
+        "health.readiness.bounded",
+    }
+)
+CANDIDATE_ONLY_POSTDEPLOY_PREDICATES = frozenset(
+    {
+        "health.origin.build-sha",
+        "health.public.build-sha",
+    }
+)
+
+
+def postdeploy_predicate_inventory() -> list[str]:
+    """Return stable child IDs emitted by the postdeploy executor."""
+    return sorted(POSTDEPLOY_PREDICATES)
+
 
 class OpsError(RuntimeError):
     """A safe-to-print operational failure."""
@@ -1198,7 +1237,11 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
         )
         raise
     evidence.finish({"probe_kind": "run-outcome", "outcome": "passed", "stage": "verify"})
-    return {"deploy": safe_deploy(artifact), "health": health}
+    return {
+        "deploy": safe_deploy(artifact),
+        "health": health,
+        "predicate_ids": postdeploy_predicate_inventory(),
+    }
 
 
 def command_rollback(args: argparse.Namespace) -> dict[str, Any]:
