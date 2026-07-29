@@ -22,3 +22,13 @@ eyes are the point.
   a nonzero overall result with no success verdict. Then remove the downstream
   stage and verify the regression test fails; this distinguishes a real gate
   dependency from mere call ordering.
+- A red CI result proves capability, not merge obligation. Verify repository
+  protection requires the exact observed check context and app (including for
+  administrators), then attempt an exact-head merge while that check is red and
+  require the provider to reject it. Revert the defect and require the same
+  protected context to make the head mergeable.
+- A deliberate defect caught by an earlier sibling check does not exercise a
+  downstream gate. To prove an end-to-end journey has teeth, inject a semantic
+  source defect that is lint-clean, type-clean, and unit-green; require the
+  intended journey to fail for its exact assertion rather than infrastructure;
+  then revert it and require the same journey to pass.
