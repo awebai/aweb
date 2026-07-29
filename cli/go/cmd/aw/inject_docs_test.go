@@ -178,7 +178,6 @@ func TestAwebOwnedStartupGuidanceHasSingleCanonicalOrder(t *testing.T) {
 	}
 
 	for _, rel := range []string{
-		"agents/instructions.md",
 		"agents/souls/consultant/AGENTS.md",
 		"agents/souls/coordinator/AGENTS.md",
 		"agents/souls/developer/AGENTS.md",
@@ -199,6 +198,20 @@ func TestAwebOwnedStartupGuidanceHasSingleCanonicalOrder(t *testing.T) {
 		if !strings.Contains(guidance, "canonical start-of-session loop in the `aweb-coordination` skill") {
 			t.Errorf("startup guidance %s must defer to the canonical skill", rel)
 		}
+	}
+
+	teamCopy := strings.Join(strings.Fields(read("agents/instructions.md")), " ")
+	for _, want := range []string{
+		"The canonical source for this order is the `aweb-coordination` skill.",
+		"This block reproduces it so it is available without loading the skill.",
+		"If the two ever disagree, the skill wins and this block is stale.",
+	} {
+		if !strings.Contains(teamCopy, want) {
+			t.Errorf("team-instructions convenience copy missing %q", want)
+		}
+	}
+	if strings.Contains(teamCopy, "This order is canonical") {
+		t.Error("team-instructions convenience copy independently claims canonicality")
 	}
 }
 

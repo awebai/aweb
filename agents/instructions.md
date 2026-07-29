@@ -54,9 +54,10 @@ unread. `aw mail inbox` shows unread only by default, so an empty inbox and an
 unreachable one look identical without `--show-all`; `aw chat pending` lists
 only waiting conversations, so open each one.
 
-This order is canonical and matches the `aweb-coordination` skill. If you find a
-different order somewhere else, that other source is stale; report the conflict
-rather than choosing silently.
+The canonical source for this order is the `aweb-coordination` skill. This block
+reproduces it so it is available without loading the skill. If the two ever
+disagree, the skill wins and this block is stale. Report the conflict rather
+than choosing silently.
 
 ## Shared Rules
 
