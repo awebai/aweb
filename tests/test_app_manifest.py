@@ -185,6 +185,10 @@ def _coerce(value: object, prop: dict) -> object:
         return (
             value if isinstance(value, bool) else {"true": True, "false": False}[str(value).lower()]
         )
+    if kind == "object" and isinstance(value, dict):
+        return value
+    if kind == "array" and isinstance(value, list):
+        return value
     return str(value)
 
 
@@ -280,14 +284,43 @@ def test_interpreted_spec_bind() -> None:
     assert spec["mutation"] is True
 
 
+def test_propose_manifest_exposes_asset_changeset_contract() -> None:
+    propose = next(tool for tool in MANIFEST["tools"] if tool["name"] == "propose")
+    content = propose["input_schema"]["properties"]["content"]
+    assert content["required"] == ["schema", "assets"]
+    assert content["properties"]["schema"] == {
+        "type": "string",
+        "const": "aweb.library.profile-asset-changeset.v1",
+    }
+    assert content["properties"]["assets"]["minItems"] == 1
+    assert "profile.yaml#<field>" in propose["description"]
+    assert "proposal_asset_digests" in propose["description"]
+
+
 def test_interpreted_spec_propose() -> None:
-    # The propose body must match the implemented ProposalCreateRequest (target
-    # required; profile_ref/content optional) so a manifest-driven caller is
-    # accepted, not 422'd.
-    spec = _interpret(MANIFEST, "propose", {"target": "profile", "profile_ref": "coordinator"})
+    content = {
+        "schema": "aweb.library.profile-asset-changeset.v1",
+        "assets": [
+            {
+                "path": "instructions.md",
+                "content_utf8": "updated",
+                "base_asset_digest": "sha256:base",
+            }
+        ],
+    }
+    spec = _interpret(
+        MANIFEST,
+        "propose",
+        {"target": "profile", "profile_ref": "coordinator", "content": content},
+    )
     assert spec["method"] == "POST"
     assert spec["path"] == "/v1/proposals"
-    assert spec["body"] == b'{"profile_ref":"coordinator","target":"profile"}'
+    assert spec["body"] == (
+        b'{"content":{"assets":[{"base_asset_digest":"sha256:base",'
+        b'"content_utf8":"updated","path":"instructions.md"}],'
+        b'"schema":"aweb.library.profile-asset-changeset.v1"},'
+        b'"profile_ref":"coordinator","target":"profile"}'
+    )
     assert spec["mutation"] is True
 
 

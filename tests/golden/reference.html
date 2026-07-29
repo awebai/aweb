@@ -546,18 +546,18 @@ Content-Type: application/json
             </span>
             <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
           </div>
-          <p class="ref-op-desc">Submit an asset-scoped profile learning proposal. A profile proposal carries a changeset of file assets and profile.yaml field assets; approve applies it to the current shelf profile, auto-increments the next patch version, and mints after per-asset stale checks.</p>
+          <p class="ref-op-desc">Submit an asset-scoped profile learning proposal. content.schema must be aweb.library.profile-asset-changeset.v1. File assets use path/content_utf8; profile.yaml fields use path profile.yaml#&lt;field&gt; and native JSON content. Read exact base_asset_digest values from get-shelf-profile include=files proposal_asset_digests. Submission rejects invalid or colliding changes before review; approval rechecks stale bases and mints the next patch version.</p>
           <table class="ref-params">
             <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
             <tbody>
             <tr><td><code>target</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
-            <tr><td><code>profile_ref</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
-            <tr><td><code>content</code></td><td>body</td><td>object</td><td class="ref-opt">optional</td></tr>
+            <tr><td><code>profile_ref</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>content</code></td><td>body</td><td>object</td><td class="ref-req">required</td></tr>
             <tr><td><code>summary</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
             <tr><td><code>rationale</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
             </tbody>
           </table>
-          <div class="cmd ref-cmd-primary"><pre>aw library propose --target &lt;target&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <div class="cmd ref-cmd-primary"><pre>aw library propose --target &lt;target&gt; --profile_ref &lt;profile_ref&gt; --content &lt;content&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
           <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/proposals
 Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
 X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
@@ -565,7 +565,7 @@ X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON paylo
 X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
 Content-Type: application/json
 
-{"target": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/proposals --body '{"target": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+{"target": "...", "profile_ref": "...", "content": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/proposals --body '{"target": "...", "profile_ref": "...", "content": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
         </article>
         <article class="ref-op" id="op-proposals">
           <div class="ref-op-sig">
@@ -643,7 +643,7 @@ X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</p
             </span>
             <span class="ref-op-tags"><span class="ref-scope-tag">library:read</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
           </div>
-          <p class="ref-op-desc">Get the team&#x27;s private shelf profile. ?include=files adds the profile content (path/content_utf8/sha256) so a local runtime can re-materialize the latest shelf version.</p>
+          <p class="ref-op-desc">Get the team&#x27;s private shelf profile. ?include=files adds the profile content and proposal_asset_digests keyed by exact proposal path, including profile.yaml#&lt;field&gt; entries.</p>
           <table class="ref-params">
             <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
             <tbody>

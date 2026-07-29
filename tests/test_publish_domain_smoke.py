@@ -102,6 +102,10 @@ async def test_get_shelf_profile_include_files_round_trips(migrated_db) -> None:
     assert content["files"], "include_files must return the profile files"
     for f in content["files"]:
         assert {"path", "content_utf8", "sha256"} <= set(f)
+    instructions = next(f for f in content["files"] if f["path"] == "instructions.md")
+    assert content["proposal_asset_digests"]["instructions.md"] == instructions["sha256"]
+    assert content["proposal_asset_digests"]["profile.yaml#mission"].startswith("sha256:")
+    assert "profile.yaml" not in content["proposal_asset_digests"]
     assert content["source_blueprint_ref"] == "aweb.engineering"
     # The recorded digest is the canonical profile-payload digest of these exact
     # files - it round-trips (no ad-hoc hash), so aw can record + verify it.
