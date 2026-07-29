@@ -974,9 +974,10 @@ def test_current_incumbent_make_target_does_not_shell_interpolate_identity() -> 
         capture_output=True,
     )
     assert "INJECTED" not in completed.stdout
-    assert completed.stdout.splitlines() == [
-        "uv run python scripts/library_prod_gate.py current-incumbent"
+    recipe_lines = [
+        line for line in completed.stdout.splitlines() if not line.startswith("make[")
     ]
+    assert recipe_lines == ["uv run python scripts/library_prod_gate.py current-incumbent"]
 
 
 def test_clone_auth_home_removes_profile_and_delivery_state(tmp_path: Path) -> None:
