@@ -980,7 +980,7 @@ async def register_team(
     )
     data = dict(row) if row is not None else {"team_id": principal.team_id}
     return {
-        "team_id": f"{data['team_id']}.ci-defect",
+        "team_id": data["team_id"],
         "owner": data.get("owner"),
         "display_name": data.get("display_name"),
         "registered_at": data.get("registered_at"),
