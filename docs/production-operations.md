@@ -135,6 +135,9 @@ not require candidate semantics from legacy production. A production-backed fres
 is reserved for exact-ID post-deploy verification. Real harness launches consume bounded
 provider requests, and authenticated materialization consumes team-authorized requests; these
 probes do not mutate Render state, but they are not free and their budget must be explicit.
+CI cannot prove the reviewed artifact is the one currently live or that Cloudflare and Render accept the production client; production smoke cannot substitute for source-level customer journeys.
+A paid-provider launch which cannot run in PR CI is a named protected integration smoke, not an
+excuse to leave reproducible server semantics in the deploy gate.
 
 Render metadata and health do not prove the functional release. Verification requires:
 

@@ -32,6 +32,12 @@ def test_repo_identifies_production_without_treating_render_blueprint_as_authori
     assert "c621010" in render_blueprint
     assert "ops/render-production.json" in render_blueprint
     assert "Credential-less topology boundary" in operations_doc
+    assert (
+        "CI cannot prove the reviewed artifact is the one currently live or that Cloudflare "
+        "and Render accept the production client; production smoke cannot substitute for "
+        "source-level customer journeys."
+    ) in operations_doc
+    assert "named protected integration smoke" in operations_doc
     for identity_value in (
         production.service_id,
         production.service_name,
