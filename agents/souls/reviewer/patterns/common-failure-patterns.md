@@ -32,3 +32,10 @@ eyes are the point.
   source defect that is lint-clean, type-clean, and unit-green; require the
   intended journey to fail for its exact assertion rather than infrastructure;
   then revert it and require the same journey to pass.
+- A green reproducible gate cannot prove compatibility with a live legacy or
+  rollback artifact that the stack does not contain. When a response contract
+  adds identity fields, inventory actual deployed shapes and drive exact
+  fixtures through preflight, candidate, rollback, and recovery commands.
+  Compatibility exceptions must be layer-specific, artifact-and-commit pinned
+  per invocation, forbidden on the candidate path, and carry an explicit
+  artifact-based expiry condition.
