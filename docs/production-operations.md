@@ -215,9 +215,11 @@ Because the known-good artifact exhibited the same immediate failure and then se
 both authenticated application traffic and health without another deploy, the evidence
 ruled out a candidate-specific persistent defect. The initial readiness-race explanation
 was an unconfirmed hypothesis, not the incident cause. A later controlled comparison
-reproduced Cloudflare error 1010 only for the default `Python-urllib/3.12` User-Agent on
-`library.aweb.ai`; the same client reached the generated origin, and a different honest
-client reached the canonical health URL. The request never reached Library. A third deploy
+established that Cloudflare on the canonical zone returned browser-signature error 1010 only
+for the default `Python-urllib/3.12` User-Agent; the same exact client reached the generated
+origin, while multiple honest User-Agents reached the canonical health URL. The four evidenced
+canonical probe failures plus the controlled one-variable responses rule out rate limiting and
+a Python-client class block. The rejected requests never reached Library. A third deploy
 attempt preserved exact HTTP 403 for both candidate and rollback but still discarded the
 response artifact. The gate now identifies itself as
 `aweb-library-deploy-gate/1.0`, persists bounded sanitized evidence before raising,
