@@ -3,6 +3,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).parents[1]
@@ -54,27 +55,63 @@ def test_ci_break_glass_requires_visible_protection_restoration() -> None:
     assert "re-enable" in readme
 
 
-def test_ci_documents_when_the_gate_is_integration_authority() -> None:
-    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+_POLICY_SEMANTIC_GROUPS = (
+    "the head being merged exactly matches the independently reviewed head",
+    "up to date with `main`",
+    "change to `main` triggers re-evaluation",
+    "the required context remains `Lint, test, and real-stack e2e`",
+    "GitHub Actions app with ID `15368`",
+    "protection is enforced for administrators, with no bypass",
+    "the push to `main` runs the same required check against the integrated commit",
+    "push-main run 30437187502",
+    "5137334ae2b88c7515c6c080c427fafaf1e71faa",
+    "the reviewed head changes",
+    "protection is weakened",
+    "the required context or app changes",
+    "a conflict or manual recombination changes the reviewed result",
+    "the change spans repositories",
+    "a release tag is being chosen",
+    "the deployment boundary moves",
+    "fresh review and coordinator routing",
+    "authorizes source integration only",
+    "does not by itself authorize a release, production mutation, or deployment",
+)
+_REVISIT_SEMANTIC_GROUPS = (
+    "through Jules",
+    "only when aweb itself has a protected, green hosted canonical merge-state gate",
+    "tracked by `aweb-aatq`",
+)
+
+
+def _assert_gate_policy_contract(readme: str) -> None:
+    readme = " ".join(readme.split())
     policy = readme.index("### Gate-authorized integration")
     break_glass = readme.index("The break-glass path")
     revisit = readme.index("Re-evaluate whether this repository-specific policy")
+    production = readme.index("## Production operations")
 
-    assert policy < break_glass < revisit
-    for required_text in (
-        "exactly matches the independently reviewed head",
-        "strict branch protection",
-        "GitHub Actions app with ID `15368`",
-        "protection is enforced for administrators",
-        "30437187502",
-        "5137334ae2b88c7515c6c080c427fafaf1e71faa",
-        "conflict or manual recombination",
-        "release tag",
-        "deployment boundary moves",
-        "does not by itself authorize a release, production mutation, or deployment",
-        "aweb-aatq",
-    ):
-        assert required_text in readme
+    assert policy < break_glass < revisit < production
+    policy_block = readme[policy:break_glass]
+    revisit_block = readme[revisit:production]
+    for semantic_group in _POLICY_SEMANTIC_GROUPS:
+        assert semantic_group in policy_block
+    for semantic_group in _REVISIT_SEMANTIC_GROUPS:
+        assert semantic_group in revisit_block
+
+
+def test_ci_documents_when_the_gate_is_integration_authority() -> None:
+    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    _assert_gate_policy_contract(readme)
+
+
+@pytest.mark.parametrize("semantic_group", _POLICY_SEMANTIC_GROUPS + _REVISIT_SEMANTIC_GROUPS)
+def test_ci_gate_policy_contract_rejects_semantic_weakening(semantic_group: str) -> None:
+    readme = " ".join((_REPO_ROOT / "README.md").read_text(encoding="utf-8").split())
+    assert semantic_group in readme
+
+    with pytest.raises(AssertionError):
+        _assert_gate_policy_contract(readme.replace(semantic_group, "", 1))
 
 
 def test_ci_runs_every_make_gate_on_push_and_pull_request() -> None:
