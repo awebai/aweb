@@ -2057,6 +2057,17 @@ def test_command_verify_emits_four_child_capability_transcripts_from_real_health
             "capability-assertion",
             "capability.children[0].terminal.assertion_code",
         ),
+        (
+            lambda value: value.update(
+                {
+                    "mutation_id": "health.public.http-200.dedicated-negative",
+                    "children": [],
+                    "terminal": {"outcome": "failed", "error_code": "TypeError", "count": 1},
+                }
+            ),
+            "capability-negative-recipe",
+            "capability.children",
+        ),
     ],
 )
 def test_capability_schema_rejects_unentered_ordered_or_forged_semantics(
@@ -2126,6 +2137,11 @@ def test_capability_negatives_fail_at_exact_sibling_after_restoration(
     assert len(calls) == expected_calls
     transcript = _capability_transcript(output)
     child = next(item for item in transcript["children"] if item["predicate_id"] == predicate_id)
+    assert transcript["terminal"] == {
+        "outcome": "failed",
+        "error_code": f"{predicate_id}.dedicated-negative-observed",
+        "count": 1,
+    }
     assert child["terminal"] == {
         "outcome": "expected-failure",
         "assertion_code": f"{predicate_id}.rejected",
@@ -2220,7 +2236,7 @@ def test_capability_reordered_parallel_components_fail_with_local_path_code(
         deploy_id="dep-candidate",
         commit="b" * 40,
         correlation_id="capability-reordered",
-        mutation_id="public-before-origin",
+        mutation_id="",
     )
     recorder.enter(render_ops.CAPABILITY_COMPONENT_COMMAND)
     recorder.enter(render_ops.CAPABILITY_COMPONENT_SURFACES)

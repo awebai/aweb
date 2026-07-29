@@ -275,7 +275,6 @@ def validate_capability_coverage(rows: Any) -> list[dict[str, Any]]:
         fail("capability-coverage", "manifest.capability_coverage", "must be a nonempty list")
     seen: set[tuple[str, str]] = set()
     candidate_ids: set[str] = set()
-    identical_targets: list[tuple[str, str]] = []
     for index, raw_row in enumerate(rows):
         location = f"manifest.capability_coverage[{index}]"
         row = require_exact_keys(
@@ -356,30 +355,11 @@ def validate_capability_coverage(rows: Any) -> list[dict[str, Any]]:
                         "must be unique deferred global obligation IDs",
                     )
             elif state == "identical":
-                mapping = require_exact_keys(
-                    mapping,
-                    {
-                        "state",
-                        "candidate_predicate_id",
-                        "runtime",
-                        "surface",
-                        "assertion_code",
-                    },
-                    location=f"{location}.candidate_mapping",
-                    code="candidate-mapping",
+                fail(
+                    "candidate-mapping-unimplemented",
+                    f"{location}.candidate_mapping.state",
+                    "2A has no source-owned semantic comparator for identical mappings",
                 )
-                for field in (
-                    "candidate_predicate_id",
-                    "runtime",
-                    "surface",
-                    "assertion_code",
-                ):
-                    require_stable_id(
-                        mapping[field],
-                        location=f"{location}.candidate_mapping.{field}",
-                        code="candidate-mapping",
-                    )
-                identical_targets.append((predicate_id, mapping["candidate_predicate_id"]))
             else:
                 fail(
                     "candidate-mapping",
@@ -391,20 +371,6 @@ def validate_capability_coverage(rows: Any) -> list[dict[str, Any]]:
             "capability-universe",
             "manifest.capability_coverage",
             f"candidate coverage differs from source: missing={sorted(source_predicates() - candidate_ids)} extra={sorted(candidate_ids - source_predicates())}",
-        )
-    mapped_targets = [target for _, target in identical_targets]
-    unknown_targets = sorted(set(mapped_targets) - candidate_ids)
-    if unknown_targets:
-        fail(
-            "candidate-mapping",
-            "manifest.capability_coverage",
-            f"identical mappings target unknown candidate predicates {unknown_targets}",
-        )
-    if len(mapped_targets) != len(set(mapped_targets)):
-        fail(
-            "candidate-mapping",
-            "manifest.capability_coverage",
-            "identical mappings cannot flatten multiple source IDs onto one candidate ID",
         )
     if rows != source_capability_coverage():
         fail(
@@ -641,13 +607,47 @@ def validate_capability_transcript(value: Any) -> dict[str, Any]:
         fail("capability-terminal", "capability.terminal.error_code", "must be a string")
     if terminal["count"] != 1 or isinstance(terminal["count"], bool):
         fail("capability-terminal", "capability.terminal.count", "must equal one")
-    if terminal["outcome"] == "failed" and not component_path_valid:
-        if terminal["error_code"] != "capability-path-mismatch":
-            fail(
-                "capability-components",
-                "capability.observed_components",
-                "invalid path requires the exact path-mismatch terminal code",
-            )
+    positive_recipe = [
+        ("health.origin.http-200", "passed"),
+        ("health.origin.payload-contract", "passed"),
+        ("health.public.http-200", "passed"),
+        ("health.public.payload-contract", "passed"),
+    ]
+    child_recipe = [
+        (child["predicate_id"], child["terminal"]["outcome"])
+        for child in children
+    ]
+    negative_recipes = {
+        "health.origin.http-200.dedicated-negative": (
+            allowed_component_paths[2],
+            [("health.origin.http-200", "expected-failure")],
+            "health.origin.http-200.dedicated-negative-observed",
+        ),
+        "health.origin.payload-contract.dedicated-negative": (
+            allowed_component_paths[2],
+            [
+                ("health.origin.http-200", "passed"),
+                ("health.origin.payload-contract", "expected-failure"),
+            ],
+            "health.origin.payload-contract.dedicated-negative-observed",
+        ),
+        "health.public.http-200.dedicated-negative": (
+            allowed_component_paths[3],
+            [
+                *positive_recipe[:2],
+                ("health.public.http-200", "expected-failure"),
+            ],
+            "health.public.http-200.dedicated-negative-observed",
+        ),
+        "health.public.payload-contract.dedicated-negative": (
+            allowed_component_paths[3],
+            [
+                *positive_recipe[:3],
+                ("health.public.payload-contract", "expected-failure"),
+            ],
+            "health.public.payload-contract.dedicated-negative-observed",
+        ),
+    }
     if terminal["outcome"] == "passed":
         if components != allowed_component_paths[-1]:
             fail(
@@ -661,24 +661,81 @@ def validate_capability_transcript(value: Any) -> dict[str, Any]:
                 "capability.mutation_id",
                 "passing capability cannot claim an active mutation",
             )
-        if seen_children != render_ops.CAPABILITY_FIXTURE_PREDICATES:
-            fail("capability-incomplete", "capability.children", "passing slice requires all five children")
-        if any(child["terminal"]["outcome"] != "passed" for child in children):
-            fail("capability-incomplete", "capability.children", "passing slice cannot contain a negative")
-        expected_child_order = [
-            "health.origin.http-200",
-            "health.origin.payload-contract",
-            "health.public.http-200",
-            "health.public.payload-contract",
-        ]
-        if [child["predicate_id"] for child in children] != expected_child_order:
+        if child_recipe != positive_recipe:
             fail(
                 "capability-child-order",
                 "capability.children",
-                "passing children must preserve exact parallel execution order",
+                "passing children must equal the exact four-cell recipe",
             )
         if terminal["error_code"] != "":
             fail("capability-terminal", "capability.terminal.error_code", "passing transcript has no error")
+    elif mutation_id in negative_recipes:
+        expected_components, expected_children, expected_error = negative_recipes[mutation_id]
+        if components != expected_components:
+            fail(
+                "capability-negative-recipe",
+                "capability.observed_components",
+                "dedicated negative has the wrong component path",
+            )
+        if child_recipe != expected_children:
+            fail(
+                "capability-negative-recipe",
+                "capability.children",
+                "dedicated negative lacks exact prerequisite/terminal children",
+            )
+        if terminal["error_code"] != expected_error:
+            fail(
+                "capability-negative-recipe",
+                "capability.terminal.error_code",
+                f"expected {expected_error}",
+            )
+    elif mutation_id == "health.origin.build-sha.forbidden-null":
+        if (
+            components != allowed_component_paths[2]
+            or child_recipe != positive_recipe[:2]
+            or terminal["error_code"] != "capability-deferred-control"
+        ):
+            fail(
+                "capability-deferred-control",
+                "capability",
+                "null-build control must remain an exact nonclaiming origin recipe",
+            )
+    elif mutation_id == "":
+        if child_recipe != positive_recipe[: len(child_recipe)]:
+            fail(
+                "capability-structural-failure",
+                "capability.children",
+                "nonclaiming structural failures may contain only passing recipe prefixes",
+            )
+        if terminal["error_code"] == "capability-path-mismatch":
+            if component_path_valid:
+                fail(
+                    "capability-structural-failure",
+                    "capability.observed_components",
+                    "path-mismatch requires a noncanonical entered path",
+                )
+        elif terminal["error_code"] in {
+            "capability-incomplete",
+            "capability-subject-failure",
+        }:
+            if not component_path_valid:
+                fail(
+                    "capability-structural-failure",
+                    "capability.observed_components",
+                    "incomplete/subject failures require a canonical path prefix",
+                )
+        else:
+            fail(
+                "capability-structural-failure",
+                "capability.terminal.error_code",
+                "unrecognized nonclaiming structural failure",
+            )
+    else:
+        fail(
+            "capability-failure-variant",
+            "capability.mutation_id",
+            "mutation does not select a closed failed transcript variant",
+        )
     return transcript
 
 

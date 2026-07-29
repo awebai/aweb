@@ -206,6 +206,41 @@ def test_capability_coverage_rejects_unknown_or_renamed_id() -> None:
     )
 
 
+def test_identical_mapping_rejects_typed_but_unproved_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = manifest()
+    row = {
+        "domain": "current-incumbent",
+        "id": "health.origin.http-200",
+        "owner": "release-infrastructure",
+        "candidate_mapping": {
+            "state": "identical",
+            "candidate_predicate_id": "health.origin.http-200",
+            "runtime": "unrelated-runtime",
+            "surface": "unrelated-surface",
+            "assertion_code": "unrelated-assertion",
+        },
+        "obligations": {
+            obligation_id: "deferred"
+            for obligation_id in sorted(aatk.CAPABILITY_OBLIGATION_IDS)
+        },
+    }
+    value["capability_coverage"].append(row)
+    monkeypatch.setattr(
+        aatk,
+        "source_capability_coverage",
+        lambda: copy.deepcopy(value["capability_coverage"]),
+    )
+    index = len(value["capability_coverage"]) - 1
+    assert_error(
+        "candidate-mapping-unimplemented",
+        f"manifest.capability_coverage[{index}].candidate_mapping.state",
+        aatk.validate_manifest,
+        value,
+    )
+
+
 def test_capability_coverage_rejects_manifest_only_status_edit() -> None:
     value = manifest()
     value["capability_coverage"][0]["obligations"][

@@ -488,6 +488,24 @@ class CapabilityFixtureRecorder:
             }
         )
 
+    def failure_code(self, exc: Exception) -> str:
+        """Classify handled failure without treating exception text as evidence."""
+        negatives = [
+            child
+            for child in self.children
+            if child["terminal"]["outcome"] == "expected-failure"
+        ]
+        if len(negatives) == 1:
+            return f"{negatives[0]['predicate_id']}.dedicated-negative-observed"
+        text = str(exc)
+        if text.startswith("capability-path-mismatch"):
+            return "capability-path-mismatch"
+        if text.startswith("capability-incomplete"):
+            return "capability-incomplete"
+        if self._metadata["mutation_id"] == "health.origin.build-sha.forbidden-null":
+            return "capability-deferred-control"
+        return "capability-subject-failure"
+
     def finish(self, *, outcome: str, error_code: str = "") -> None:
         if self._terminal:
             return
@@ -507,7 +525,7 @@ class CapabilityFixtureRecorder:
                     f"missing={missing} unexpected={unexpected} nonpassing={nonpassing}"
                 )
                 outcome = "failed"
-                error_code = missing_error
+                error_code = "capability-incomplete"
         self._terminal = True
         transcript = {
             **self._metadata,
@@ -1555,11 +1573,7 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
         if capability is not None:
             capability.finish(
                 outcome="failed",
-                error_code=(
-                    str(exc)
-                    if str(exc).startswith("capability-")
-                    else type(exc).__name__
-                ),
+                error_code=capability.failure_code(exc),
             )
         evidence.finish(
             {

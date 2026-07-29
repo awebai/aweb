@@ -26,8 +26,11 @@ per-obligation states. A subset therefore cannot imply global enforcement.
 
 The driver records entered components and terminal assertions inside checked-in code. Callers
 cannot supply an observed path or outcome. Public negatives first pass origin, then fail at the
-exact public child. Output is bounded, outside the repository, operator-private, atomic
-no-replace, and bound to the clean source and captured config/body bytes.
+exact public child. Failed transcripts use closed variants: four exact dedicated-negative
+recipes, nonclaiming incomplete/path/subject failures, and one deferred null-build control.
+Arbitrary exception classes cannot accompany a dedicated mutation. Output is bounded, outside
+the repository, operator-private, atomic no-replace, and bound to the clean source and captured
+config/body bytes.
 
 ## Explicit nonclaims
 
@@ -36,6 +39,10 @@ not prove producer authenticity, top-level completeness, current-production exec
 postdeploy execution, rollback execution, ledger immutability, lifecycle state, Make/CLI
 wiring, or production safety selection. Lifecycle validation rejects `capability-fixture`
 proofs. All nine global deferred obligation IDs still block both preplan and release.
+
+The generic current-incumbent domain accepts only deferred candidate mappings in 2A.
+`candidate_mapping=identical` is rejected until a later increment adds source-owned semantic
+descriptors on both domains and an exact runtime/surface/assertion comparator.
 
 `health.surfaces.payload-equal` is deliberately not marked instrumented. Under
 `render_ops.command_verify`, both real checkers require the same exact response shape,
@@ -53,5 +60,7 @@ surface and a strict three-key shape on the other, making equality independently
 | Enforcement history is immutable | six implemented IDs map to `increment-1` | rewritten history and unearned deferred history tests |
 | Real parallel health path emits children | command verify fixture emits four passing child transcripts | origin/public HTTP and payload failures independently emit exact sibling rejection |
 | Public is mandatory after origin | public negatives contain both passing origin children | bypassed health orchestration fails `capability-incomplete`; reordered components fail `capability-path-mismatch` |
+| Failed transcript variants are closed | each dedicated negative has exact prerequisites, one terminal negative, and a stable top code | empty-child `TypeError` with a dedicated public mutation is rejected |
+| Cross-domain identity is not inferred | deferred current mappings remain representable | typed but unrelated `identical` runtime/surface/assertion mapping is rejected until a comparator exists |
 | Fixture evidence is bounded/private/no-replace | exact mode and captured-byte digest assertions | dirty source prevents output; second output creation is refused |
 | Fixture output cannot authorize lifecycle | transcript schema validates as capability only | lifecycle receipt validation rejects `capability-fixture` |
