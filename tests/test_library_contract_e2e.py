@@ -443,7 +443,7 @@ def test_manifest_digest_and_public_blueprint_catalog_reads_are_unauth(
     unique = uuid.uuid4().hex[:8]
     runtime_hints = {"coordinator": ["claude-code"], "reviewer": ["pi", "claude-code"]}
     payload = _blueprint_payload(
-        blueprint_ref=f"aweb.e2e-{unique}-blueprint", profile_runtime_hints=runtime_hints
+        blueprint_ref=f"example.e2e-{unique}-blueprint", profile_runtime_hints=runtime_hints
     )
     blueprint = _payload_blueprint(payload)
     _publish_blueprint(team, library, payload)
@@ -509,7 +509,7 @@ def test_import_to_shelf_idempotent_conflict_never_clobbers_and_signals_update(
 ) -> None:
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
-    blueprint_payload = _blueprint_payload(blueprint_ref=f"aweb.copy-{unique}")
+    blueprint_payload = _blueprint_payload(blueprint_ref=f"example.copy-{unique}")
     blueprint = _payload_blueprint(blueprint_payload)
     _publish_blueprint(team, library, blueprint_payload)
 
@@ -558,7 +558,7 @@ def test_import_to_shelf_idempotent_conflict_never_clobbers_and_signals_update(
     }
 
     # Same target shelf ref from a different source blueprint is a conflict.
-    other_payload = _blueprint_payload(blueprint_ref=f"aweb.other-{unique}")
+    other_payload = _blueprint_payload(blueprint_ref=f"example.other-{unique}")
     other_blueprint = _payload_blueprint(other_payload)
     _publish_blueprint(team, library, other_payload)
     conflict = _post_json(
@@ -575,7 +575,7 @@ def test_update_from_source_merges_noops_and_rejects_collision(
 ) -> None:
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
-    payload = _blueprint_payload(blueprint_ref=f"aweb.update-{unique}")
+    payload = _blueprint_payload(blueprint_ref=f"example.update-{unique}")
     blueprint = _payload_blueprint(payload)
     _publish_blueprint(team, library, payload)
     base = _import_to_shelf(
@@ -672,6 +672,8 @@ def test_update_from_source_merges_noops_and_rejects_collision(
         "profile_ref": "coordinator",
         "profile_version": "0.2.0",
         "profile_digest": update["digest"],
+        "runtime_kind": "claude-code",
+        "managed_set": [entry["path"] for entry in materialized["home_files"]],
         "source_blueprint_ref": blueprint.blueprint_ref,
         "source_blueprint_version": "0.2.0",
         "source_blueprint_digest": newer_blueprint.digest,
@@ -784,7 +786,7 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
         "profile_version": "0.1.0",
         "blueprint_version": "1.0.0",
         "new_blueprint": {
-            "blueprint_ref": f"aweb.published-{unique}",
+            "blueprint_ref": f"example.published-{unique}",
             "name": "Published E2E Blueprint",
             "summary": "Published from a private shelf profile.",
             "description": "Round-trip digest proof.",
@@ -853,7 +855,10 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
             "profile_version": "0.1.0",
             "blueprint_version": "1.0.2",
             "target_blueprint_ref": expected_blueprint.blueprint_ref,
-            "new_blueprint": {"blueprint_ref": f"aweb.invalid-{unique}", "name": "Invalid"},
+            "new_blueprint": {
+                "blueprint_ref": f"example.invalid-{unique}",
+                "name": "Invalid",
+            },
         },
     )
     _assert_aw_status(invalid_target, 422, context="publish target XOR new_blueprint")
@@ -865,7 +870,7 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
 ) -> None:
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
-    payload = _blueprint_payload(blueprint_ref=f"aweb.flow-{unique}")
+    payload = _blueprint_payload(blueprint_ref=f"example.flow-{unique}")
     blueprint = _payload_blueprint(payload)
     _publish_blueprint(team, library, payload)
     shelf_copy = _import_to_shelf(team, library, blueprint=blueprint)
@@ -931,6 +936,8 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
         "profile_ref": "developer",
         "profile_version": "0.1.0",
         "profile_digest": binding["profile_digest"],
+        "runtime_kind": "claude-code",
+        "managed_set": [entry["path"] for entry in materialized["home_files"]],
         "source_blueprint_ref": blueprint.blueprint_ref,
         "source_blueprint_version": blueprint.version,
         "source_blueprint_digest": blueprint.digest,
@@ -946,7 +953,7 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
             },
         )
         _assert_aw_status(rejected_create, 422, context=f"reject {unsupported_target} proposal")
-        assert rejected_create.json() == {
+        assert json.loads(rejected_create.stdout) == {
             "detail": (
                 f"Unsupported proposal target '{unsupported_target}'; "
                 "only profile proposals are supported"
@@ -965,7 +972,7 @@ def test_profile_proposal_approval_mints_and_rejects_stale_asset(
 ) -> None:
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
-    payload = _blueprint_payload(blueprint_ref=f"aweb.mint-{unique}")
+    payload = _blueprint_payload(blueprint_ref=f"example.mint-{unique}")
     blueprint = _payload_blueprint(payload)
     _publish_blueprint(team, library, payload)
     base = _import_to_shelf(team, library, blueprint=blueprint, profile_ref="coordinator")
@@ -1192,7 +1199,7 @@ def test_delete_blueprint_removes_from_catalog_and_requires_auth(
     its catalog profile."""
     team = _provision_team(aw_workspace)
     unique = uuid.uuid4().hex[:8]
-    payload = _blueprint_payload(blueprint_ref=f"aweb.e2e-{unique}-del")
+    payload = _blueprint_payload(blueprint_ref=f"example.e2e-{unique}-del")
     blueprint = _payload_blueprint(payload)
     _publish_blueprint(team, library, payload)
 
