@@ -16,3 +16,9 @@ eyes are the point.
   preselection, and execute the counterexample against the authoritative
   ranking signal. When that signal supplies candidate IDs, verify tenant,
   authorization, and endpoint filters still apply before ordering.
+- In a sequential release gate, seeing a downstream check after an upstream
+  check does not prove the downstream check is mandatory. Make the upstream
+  stage succeed, inject a downstream failure, and assert that it propagates to
+  a nonzero overall result with no success verdict. Then remove the downstream
+  stage and verify the regression test fails; this distinguishes a real gate
+  dependency from mere call ordering.
