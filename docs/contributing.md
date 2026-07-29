@@ -177,6 +177,12 @@ and `LIBRARY_E2E_LIBRARY_CONTEXT` / `LIBRARY_E2E_BLUEPRINT_SRC` overrides as
 additional leading-edge integration evidence, but mutable siblings are not the
 hosted release subject.
 
+Reproducible here means reproducible on a clean runner with no helpful ambient
+tools. The workflow builds `aw` from the exact aweb checkout and puts that binary
+on `PATH` before the release seam invokes it; it never substitutes a globally
+installed or previously published CLI. A developer laptop is weak evidence for
+this property precisely because its accumulated tools can hide missing setup.
+
 A workflow that merely reports failure is capability, not enforcement. Repository
 protection must make `Comprehensive ship gate` a required status check, require a
 strict up-to-date branch, and apply to administrators. Observe the exact hosted
