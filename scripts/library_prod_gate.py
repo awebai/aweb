@@ -118,6 +118,46 @@ CANDIDATE_ONLY_POSTDEPLOY_PREDICATES = frozenset(
 )
 
 
+AATK_CAPABILITY_OBLIGATIONS = (
+    "runtime.path-fidelity",
+    "safety.boundary-invocation",
+    "controls.executed-same-path",
+)
+AATK_PREDICATE_COVERAGE = {
+    "client.aw.artifact-sha": ("release-infrastructure", "deferred"),
+    "client.aw.version-metadata": ("release-infrastructure", "deferred"),
+    "gate.profile-pin.arguments": ("release-infrastructure", "deferred"),
+    "gate.public-url.exact": ("release-infrastructure", "deferred"),
+    "gate.source-home.absolute": ("release-infrastructure", "deferred"),
+    "harness.claude-code.artifact": ("release-infrastructure", "deferred"),
+    "harness.claude-code.command": ("release-infrastructure", "deferred"),
+    "harness.claude-code.instructions": ("release-infrastructure", "deferred"),
+    "harness.pi.artifacts": ("release-infrastructure", "deferred"),
+    "harness.pi.command": ("release-infrastructure", "deferred"),
+    "harness.pi.instructions": ("release-infrastructure", "deferred"),
+    "materialize.managed-set.claude-code": ("library-service", "deferred"),
+    "materialize.managed-set.pi": ("library-service", "deferred"),
+    "materialize.profile-pin.claude-code": ("library-service", "deferred"),
+    "materialize.profile-pin.pi": ("library-service", "deferred"),
+    "materialize.public.claude-code.http-200": ("library-service", "deferred"),
+    "materialize.public.pi.http-200": ("library-service", "deferred"),
+    "materialize.response-contract.claude-code": ("library-service", "deferred"),
+    "materialize.response-contract.pi": ("library-service", "deferred"),
+    "materialize.runtime-kind.claude-code": ("library-service", "deferred"),
+    "materialize.runtime-kind.pi": ("library-service", "deferred"),
+    "strict-client.claude-code.managed-paths": ("library-service", "deferred"),
+    "strict-client.claude-code.managed-set": ("library-service", "deferred"),
+    "strict-client.claude-code.materialize": ("library-service", "deferred"),
+    "strict-client.claude-code.profile-pin": ("library-service", "deferred"),
+    "strict-client.claude-code.runtime-kind": ("library-service", "deferred"),
+    "strict-client.pi.managed-paths": ("library-service", "deferred"),
+    "strict-client.pi.managed-set": ("library-service", "deferred"),
+    "strict-client.pi.materialize": ("library-service", "deferred"),
+    "strict-client.pi.profile-pin": ("library-service", "deferred"),
+    "strict-client.pi.runtime-kind": ("library-service", "deferred"),
+}
+
+
 def postdeploy_predicate_inventory() -> list[str]:
     """Return stable child IDs emitted by the candidate postdeploy executor."""
     return sorted(POSTDEPLOY_PREDICATES)
@@ -178,6 +218,18 @@ def current_incumbent_predicate_paths() -> dict[str, list[str]]:
         predicate: list(CURRENT_INCUMBENT_PREDICATE_PATHS[predicate])
         for predicate in current_incumbent_predicate_inventory()
     }
+def aatk_predicate_coverage() -> list[dict[str, Any]]:
+    """Return source-owned per-obligation capability coverage for this executor."""
+    return [
+        {
+            "domain": "candidate-postdeploy",
+            "id": predicate_id,
+            "owner": owner,
+            "candidate_mapping": {"state": "self"},
+            "obligations": {obligation: state for obligation in AATK_CAPABILITY_OBLIGATIONS},
+        }
+        for predicate_id, (owner, state) in sorted(AATK_PREDICATE_COVERAGE.items())
+    ]
 
 
 class GateError(RuntimeError):

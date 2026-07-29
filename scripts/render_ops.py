@@ -99,9 +99,51 @@ CANDIDATE_ONLY_POSTDEPLOY_PREDICATES = frozenset(
 )
 
 
+AATK_CAPABILITY_OBLIGATIONS = (
+    "runtime.path-fidelity",
+    "safety.boundary-invocation",
+    "controls.executed-same-path",
+)
+AATK_PREDICATE_COVERAGE = {
+    "health.origin.build-sha": ("release-infrastructure", "deferred"),
+    "health.origin.evidence-complete": ("release-infrastructure", "deferred"),
+    "health.origin.exact-url-no-redirect": ("release-infrastructure", "deferred"),
+    "health.origin.http-200": ("release-infrastructure", "instrumented-capability"),
+    "health.origin.payload-contract": ("release-infrastructure", "instrumented-capability"),
+    "health.origin.user-agent": ("release-infrastructure", "deferred"),
+    "health.public.build-sha": ("release-infrastructure", "deferred"),
+    "health.public.evidence-complete": ("release-infrastructure", "deferred"),
+    "health.public.exact-url-no-redirect": ("release-infrastructure", "deferred"),
+    "health.public.http-200": ("release-infrastructure", "instrumented-capability"),
+    "health.public.payload-contract": ("release-infrastructure", "instrumented-capability"),
+    "health.public.user-agent": ("release-infrastructure", "deferred"),
+    "health.readiness.bounded": ("release-infrastructure", "deferred"),
+    "health.surfaces.payload-equal": ("release-infrastructure", "deferred"),
+    "render.deploy.exact-commit": ("release-infrastructure", "deferred"),
+    "render.deploy.sole-live-id": ("release-infrastructure", "deferred"),
+    "render.topology.exact": ("release-infrastructure", "deferred"),
+    "verifier.evidence-private-no-replace": ("release-infrastructure", "deferred"),
+    "verifier.source-clean": ("release-infrastructure", "deferred"),
+}
+
+
 def postdeploy_predicate_inventory() -> list[str]:
     """Return stable child IDs emitted by the postdeploy executor."""
     return sorted(POSTDEPLOY_PREDICATES)
+
+
+def aatk_predicate_coverage() -> list[dict[str, Any]]:
+    """Return source-owned per-obligation capability coverage for this executor."""
+    return [
+        {
+            "domain": "candidate-postdeploy",
+            "id": predicate_id,
+            "owner": owner,
+            "candidate_mapping": {"state": "self"},
+            "obligations": {obligation: state for obligation in AATK_CAPABILITY_OBLIGATIONS},
+        }
+        for predicate_id, (owner, state) in sorted(AATK_PREDICATE_COVERAGE.items())
+    ]
 
 
 class OpsError(RuntimeError):
@@ -311,6 +353,195 @@ class HealthEvidenceRun:
 
     def __del__(self) -> None:
         self.close()
+
+
+CAPABILITY_FIXTURE_PREDICATES = frozenset(
+    {
+        "health.origin.http-200",
+        "health.origin.payload-contract",
+        "health.public.http-200",
+        "health.public.payload-contract",
+    }
+)
+CAPABILITY_COMPONENT_COMMAND = "render-ops.command-verify"
+CAPABILITY_COMPONENT_SURFACES = "render-ops.verify-health-surfaces"
+CAPABILITY_COMPONENT_ORIGIN = "render-ops.verify-health.origin"
+CAPABILITY_COMPONENT_PUBLIC = "render-ops.verify-health.public"
+
+
+class CapabilityFixtureRecorder:
+    """Emit an untrusted, isolated child-capability transcript.
+
+    This recorder establishes only which checked-in Python components and assertions a
+    contract fixture observed.  It is deliberately unsigned and cannot satisfy any
+    lifecycle receipt.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        config: ProductionConfig,
+        deploy_id: str,
+        commit: str,
+        correlation_id: str,
+        mutation_id: str,
+    ) -> None:
+        if not re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", correlation_id):
+            raise OpsError("capability correlation ID must be a stable opaque ID")
+        if mutation_id and not re.fullmatch(
+            r"[a-z0-9]+(?:[.-][a-z0-9]+)*", mutation_id
+        ):
+            raise OpsError("capability mutation ID must be empty or stable")
+        source_identity = _verifier_identity()
+        self._evidence = HealthEvidenceRun(
+            path,
+            label="aatk-capability-fixture",
+            metadata={
+                "transcript_class": "capability-fixture",
+                "driver": "render_ops.command_verify",
+                "correlation_id": correlation_id,
+                "mutation_id": mutation_id,
+                "verifier_source_sha": source_identity["verifier_source_sha"],
+                "verifier_script_sha256": source_identity["verifier_script_sha256"],
+                "config_sha256": config.source_sha256,
+            },
+        )
+        self._metadata = {
+            "schema": "library.aatk-capability-transcript.v1",
+            "transcript_class": "capability-fixture",
+            "driver": "render_ops.command_verify",
+            "correlation_id": correlation_id,
+            "mutation_id": mutation_id,
+            "source": source_identity,
+            "config_sha256": config.source_sha256,
+            "normalized_arguments": {
+                "commit": commit,
+                "deploy_id": deploy_id,
+                "service_id": config.service_id,
+            },
+            "substitutions": [
+                {
+                    "boundary_id": "render.api.fixture",
+                    "position": "render-ops.command-verify.render-api",
+                },
+                {
+                    "boundary_id": "http.origin.fixture",
+                    "position": "render-ops.verify-health.origin.http",
+                },
+                {
+                    "boundary_id": "http.public.fixture",
+                    "position": "render-ops.verify-health.public.http",
+                },
+            ],
+        }
+        self.components: list[str] = []
+        self.children: list[dict[str, Any]] = []
+        self._terminal = False
+
+    def enter(self, component_id: str) -> None:
+        if self._terminal:
+            raise OpsError("capability transcript is already terminal")
+        if component_id in self.components:
+            raise OpsError(f"capability-duplicate-component: {component_id}")
+        self.components.append(component_id)
+
+    def _expected_path(self, predicate_id: str) -> list[str]:
+        base = [CAPABILITY_COMPONENT_COMMAND, CAPABILITY_COMPONENT_SURFACES]
+        if predicate_id.startswith("health.origin."):
+            return [*base, CAPABILITY_COMPONENT_ORIGIN]
+        return [*base, CAPABILITY_COMPONENT_ORIGIN, CAPABILITY_COMPONENT_PUBLIC]
+
+    def terminal_child(
+        self,
+        predicate_id: str,
+        *,
+        outcome: str,
+        assertion_code: str,
+        subject_sha256: str,
+    ) -> None:
+        if predicate_id not in CAPABILITY_FIXTURE_PREDICATES:
+            raise OpsError(f"capability-unknown-predicate: {predicate_id}")
+        if any(child["predicate_id"] == predicate_id for child in self.children):
+            raise OpsError(f"capability-duplicate-terminal: {predicate_id}")
+        expected = self._expected_path(predicate_id)
+        if self.components != expected:
+            missing = next(
+                (item for item in expected if item not in self.components),
+                "component-order",
+            )
+            raise OpsError(f"capability-path-mismatch: {predicate_id}: {missing}")
+        if outcome not in {"passed", "expected-failure"}:
+            raise OpsError("capability terminal outcome is invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", subject_sha256):
+            raise OpsError("capability subject digest must be sha256")
+        self.children.append(
+            {
+                "predicate_id": predicate_id,
+                "observed_subject_path": list(self.components),
+                "terminal": {
+                    "outcome": outcome,
+                    "assertion_code": assertion_code,
+                    "count": 1,
+                },
+                "subject_artifact_sha256": subject_sha256,
+            }
+        )
+
+    def failure_code(self, exc: Exception) -> str:
+        """Classify handled failure without treating exception text as evidence."""
+        negatives = [
+            child
+            for child in self.children
+            if child["terminal"]["outcome"] == "expected-failure"
+        ]
+        if len(negatives) == 1:
+            return f"{negatives[0]['predicate_id']}.dedicated-negative-observed"
+        text = str(exc)
+        if text.startswith("capability-path-mismatch"):
+            return "capability-path-mismatch"
+        if text.startswith("capability-incomplete"):
+            return "capability-incomplete"
+        if self._metadata["mutation_id"] == "health.origin.build-sha.forbidden-null":
+            return "capability-deferred-control"
+        return "capability-subject-failure"
+
+    def finish(self, *, outcome: str, error_code: str = "") -> None:
+        if self._terminal:
+            return
+        missing_error = ""
+        if outcome == "passed":
+            observed = {child["predicate_id"] for child in self.children}
+            missing = sorted(CAPABILITY_FIXTURE_PREDICATES - observed)
+            unexpected = sorted(observed - CAPABILITY_FIXTURE_PREDICATES)
+            nonpassing = sorted(
+                child["predicate_id"]
+                for child in self.children
+                if child["terminal"]["outcome"] != "passed"
+            )
+            if missing or unexpected or nonpassing:
+                missing_error = (
+                    "capability-incomplete: "
+                    f"missing={missing} unexpected={unexpected} nonpassing={nonpassing}"
+                )
+                outcome = "failed"
+                error_code = "capability-incomplete"
+        self._terminal = True
+        transcript = {
+            **self._metadata,
+            "observed_components": list(self.components),
+            "children": list(self.children),
+            "terminal": {"outcome": outcome, "error_code": error_code, "count": 1},
+        }
+        encoded = json.dumps(transcript, ensure_ascii=True, sort_keys=True).encode()
+        if len(encoded) > 65_536:
+            self._evidence.close()
+            raise OpsError("capability transcript exceeded evidence bound")
+        self._evidence.finish(
+            {"probe_kind": "aatk-capability-transcript", "transcript": transcript}
+        )
+        if missing_error:
+            raise OpsError(missing_error)
 
 
 class NoHealthRedirects(HTTPRedirectHandler):
@@ -768,6 +999,8 @@ def verify_health(
     timeout: float = HEALTH_REQUEST_TIMEOUT_SECONDS,
     user_agent: str = HEALTH_USER_AGENT,
     evidence: HealthEvidenceRun | None = None,
+    capability: CapabilityFixtureRecorder | None = None,
+    capability_surface: str = "",
 ) -> dict[str, Any]:
     started_wall = datetime.now(UTC).isoformat()
     started_mono = time.monotonic()
@@ -791,12 +1024,26 @@ def verify_health(
             if response.geturl() != url:
                 raise OpsError(f"health check redirected away from exact surface {url}")
             if response.status != 200:
+                if capability is not None:
+                    capability.terminal_child(
+                        f"health.{capability_surface}.http-200",
+                        outcome="expected-failure",
+                        assertion_code=f"health.{capability_surface}.http-200.rejected",
+                        subject_sha256=hashlib.sha256(body).hexdigest(),
+                    )
                 message = f"health check failed for {url}: HTTP {response.status}"
                 if response.status in RETRYABLE_HEALTH_HTTP_STATUSES:
                     raise TransientHealthError(message)
                 raise PermanentHealthHTTPError(message, status=response.status)
             if not body_complete:
                 raise OpsError(f"health response exceeded evidence bound for {url}")
+            if capability is not None:
+                capability.terminal_child(
+                    f"health.{capability_surface}.http-200",
+                    outcome="passed",
+                    assertion_code=f"health.{capability_surface}.http-200.capability-pass",
+                    subject_sha256=hashlib.sha256(body).hexdigest(),
+                )
             payload = json.loads(body.decode("utf-8"))
     except HTTPError as exc:
         try:
@@ -818,6 +1065,13 @@ def verify_health(
                     phase="http-error",
                     error_class="HTTPError",
                 )
+            )
+        if capability is not None:
+            capability.terminal_child(
+                f"health.{capability_surface}.http-200",
+                outcome="expected-failure",
+                assertion_code=f"health.{capability_surface}.http-200.rejected",
+                subject_sha256=hashlib.sha256(body).hexdigest(),
             )
         message = f"health check failed for {url}: HTTP {exc.code}"
         if exc.code in RETRYABLE_HEALTH_HTTP_STATUSES:
@@ -843,19 +1097,62 @@ def verify_health(
             f"health check failed for {url}: {type(exc).__name__}"
         ) from exc
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        if capability is not None:
+            capability.terminal_child(
+                f"health.{capability_surface}.payload-contract",
+                outcome="expected-failure",
+                assertion_code=f"health.{capability_surface}.payload-contract.rejected",
+                subject_sha256=hashlib.sha256(body).hexdigest(),
+            )
         raise TransientHealthError(f"health check returned invalid JSON from {url}") from exc
     expected = require_commit(expected_commit, "expected health commit")
+    subject_sha256 = hashlib.sha256(body).hexdigest()
     if payload == {"status": "ok", "service": "library"}:
-        if allow_legacy_missing_build:
+        if allow_legacy_missing_build and capability is None:
             return payload
+        if capability is not None:
+            capability.terminal_child(
+                f"health.{capability_surface}.payload-contract",
+                outcome="expected-failure",
+                assertion_code=f"health.{capability_surface}.payload-contract.rejected",
+                subject_sha256=subject_sha256,
+            )
         raise OpsError(f"Library health returned missing build identity from {url}")
     if not isinstance(payload, dict) or set(payload) != {"status", "service", "build"}:
+        if capability is not None:
+            capability.terminal_child(
+                f"health.{capability_surface}.payload-contract",
+                outcome="expected-failure",
+                assertion_code=f"health.{capability_surface}.payload-contract.rejected",
+                subject_sha256=subject_sha256,
+            )
         raise OpsError(f"unexpected Library health payload from {url}")
     if payload["status"] != "ok" or payload["service"] != "library":
+        if capability is not None:
+            capability.terminal_child(
+                f"health.{capability_surface}.payload-contract",
+                outcome="expected-failure",
+                assertion_code=f"health.{capability_surface}.payload-contract.rejected",
+                subject_sha256=subject_sha256,
+            )
         raise OpsError(f"unexpected Library health payload from {url}")
     build = payload["build"]
     if not isinstance(build, dict) or set(build) != {"git_sha"}:
+        if capability is not None:
+            capability.terminal_child(
+                f"health.{capability_surface}.payload-contract",
+                outcome="expected-failure",
+                assertion_code=f"health.{capability_surface}.payload-contract.rejected",
+                subject_sha256=subject_sha256,
+            )
         raise OpsError(f"unexpected Library health build payload from {url}")
+    if capability is not None:
+        capability.terminal_child(
+            f"health.{capability_surface}.payload-contract",
+            outcome="passed",
+            assertion_code=f"health.{capability_surface}.payload-contract.capability-pass",
+            subject_sha256=subject_sha256,
+        )
 
     observed = build["git_sha"]
     if observed is None:
@@ -875,6 +1172,7 @@ def verify_health_surfaces(
     expected_commit: str,
     allow_legacy_missing_build: bool = False,
     evidence: HealthEvidenceRun | None = None,
+    capability: CapabilityFixtureRecorder | None = None,
     readiness_timeout: float = HEALTH_READINESS_TIMEOUT_SECONDS,
     retry_interval: float = HEALTH_RETRY_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
@@ -882,6 +1180,8 @@ def verify_health_surfaces(
 ) -> dict[str, Any]:
     if readiness_timeout <= 0 or retry_interval <= 0:
         raise OpsError("health readiness timing must be positive")
+    if capability is not None:
+        capability.enter(CAPABILITY_COMPONENT_SURFACES)
     started_at = monotonic()
     deadline = started_at + readiness_timeout
     attempts = 0
@@ -894,22 +1194,30 @@ def verify_health_surfaces(
             break
         attempts += 1
         try:
+            if capability is not None:
+                capability.enter(CAPABILITY_COMPONENT_ORIGIN)
             origin = verify_health(
                 origin_url,
                 expected_commit=expected_commit,
                 allow_legacy_missing_build=allow_legacy_missing_build,
                 timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining),
                 evidence=evidence,
+                capability=capability,
+                capability_surface="origin",
             )
             remaining = deadline - monotonic()
             if remaining <= 0:
                 raise TransientHealthError("health readiness deadline elapsed after origin check")
+            if capability is not None:
+                capability.enter(CAPABILITY_COMPONENT_PUBLIC)
             public = verify_health(
                 public_url,
                 expected_commit=expected_commit,
                 allow_legacy_missing_build=allow_legacy_missing_build,
                 timeout=min(HEALTH_REQUEST_TIMEOUT_SECONDS, remaining),
                 evidence=evidence,
+                capability=capability,
+                capability_surface="public",
             )
             if origin != public:
                 raise OpsError("origin and public Library health payloads differ")
@@ -1024,6 +1332,26 @@ def _command_health_evidence(
         ),
     }
     return HealthEvidenceRun(Path(value), label=label, metadata=metadata)
+
+
+def _command_capability_fixture(
+    args: argparse.Namespace,
+    *,
+    config: ProductionConfig,
+    deploy_id: str,
+    commit: str,
+) -> CapabilityFixtureRecorder | None:
+    value = str(getattr(args, "capability_fixture_dir", "") or "").strip()
+    if not value:
+        return None
+    return CapabilityFixtureRecorder(
+        Path(value),
+        config=config,
+        deploy_id=deploy_id,
+        commit=commit,
+        correlation_id=str(getattr(args, "capability_correlation_id", "") or ""),
+        mutation_id=str(getattr(args, "capability_mutation_id", "") or ""),
+    )
 
 
 def command_health_client_proof(args: argparse.Namespace) -> dict[str, Any]:
@@ -1217,7 +1545,16 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
     deploy_id = require_deploy_id(args.deploy_id)
     commit = require_commit(args.commit)
     evidence = _command_health_evidence(args, label="verify-health", config=config)
+    capability: CapabilityFixtureRecorder | None = None
     try:
+        capability = _command_capability_fixture(
+            args,
+            config=config,
+            deploy_id=deploy_id,
+            commit=commit,
+        )
+        if capability is not None:
+            capability.enter(CAPABILITY_COMPONENT_COMMAND)
         validate_service(client.service(config.service_id), config)
         artifact = client.deploy_by_id(config.service_id, deploy_id)
         require_deploy(artifact, deploy_id=deploy_id, commit=commit)
@@ -1225,16 +1562,43 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
             raise OpsError(f"expected deploy is not live: {artifact.get('status')}")
         live = current_live(client.deploys(config.service_id))
         require_deploy(live, deploy_id=deploy_id, commit=commit)
-        health = verify_health_surfaces(config, expected_commit=commit, evidence=evidence)
-    except Exception as exc:
-        evidence.finish(
-            {
-                "probe_kind": "run-outcome",
-                "outcome": "failed",
-                "stage": "verify",
-                "error_class": type(exc).__name__,
-            }
+        health = verify_health_surfaces(
+            config,
+            expected_commit=commit,
+            evidence=evidence,
+            capability=capability,
         )
+        if capability is not None:
+            capability.finish(outcome="passed")
+    except Exception as exc:
+        capability_finish_error: Exception | None = None
+        if capability is not None:
+            try:
+                capability.finish(
+                    outcome="failed",
+                    error_code=capability.failure_code(exc),
+                )
+            except Exception as finish_exc:
+                capability_finish_error = finish_exc
+        try:
+            evidence.finish(
+                {
+                    "probe_kind": "run-outcome",
+                    "outcome": "failed",
+                    "stage": "verify",
+                    "error_class": type(exc).__name__,
+                }
+            )
+        except Exception as primary_finish_error:
+            if capability_finish_error is not None:
+                primary_finish_error.add_note(
+                    f"capability finalization also failed: {type(capability_finish_error).__name__}"
+                )
+            raise
+        if capability_finish_error is not None:
+            exc.add_note(
+                f"capability finalization failed: {type(capability_finish_error).__name__}"
+            )
         raise
     evidence.finish({"probe_kind": "run-outcome", "outcome": "passed", "stage": "verify"})
     return {
