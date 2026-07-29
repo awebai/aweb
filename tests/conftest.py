@@ -34,6 +34,8 @@ async def migrated_db() -> AsyncIterator[AsyncDatabaseManager]:
     try:
         await test_database.create_test_database()
     except Exception as exc:  # pragma: no cover - environment without Postgres
+        if os.environ.get("LIBRARY_REQUIRE_TEST_DATABASE") == "1":
+            raise RuntimeError("real Postgres is required for this test run") from exc
         pytest.skip(f"real Postgres not available: {exc}")
 
     try:

@@ -5,6 +5,7 @@ dist/
 .DS_Store
 __pycache__/
 .pytest_cache/
+.pytest_tmp/
 .ruff_cache/
 .mypy_cache/
 .coverage
