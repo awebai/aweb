@@ -42,6 +42,47 @@ def tmp_path() -> Iterator[Path]:
         yield path
 
 
+def test_production_operations_doc_is_for_shipping_and_recovery() -> None:
+    operations_doc = (
+        Path(__file__).parents[1] / "docs" / "production-operations.md"
+    ).read_text(encoding="utf-8")
+    normalized = " ".join(operations_doc.split())
+
+    shipping_criterion = (
+        "We ship when all tests pass, including the end-to-end tests. Anything anyone wants "
+        "to add beyond that goes to Juan, one item at a time, in plain words."
+    )
+    assert shipping_criterion in normalized
+    assert operations_doc.index("We ship when") < operations_doc.index("## Ownership and profile assets")
+
+    for removed_heading in (
+        "## AATK verification contract",
+        "### AATK matrix worked example",
+        "### Exact current-incumbent semantic probe",
+    ):
+        assert removed_heading not in operations_doc
+
+    verification = operations_doc.split("## Verification surfaces\n", 1)[1].split(
+        "## Rollback and recovery", 1
+    )[0]
+    assert " ".join(verification.split()) == (
+        "The isolated stack does not prove production routing, Cloudflare policy, deployed "
+        "identity, or shelf state. CI cannot prove the reviewed artifact is the one currently "
+        "live or that Cloudflare and Render accept the production client; production smoke "
+        "cannot substitute for source-level customer journeys. A paid-provider launch which "
+        "cannot run in PR CI is a named protected integration smoke, not an excuse to leave "
+        "reproducible server semantics in the deploy gate."
+    )
+
+    for retained_heading in (
+        "## Required release record",
+        "## Targets",
+        "## Rollback and recovery",
+        "## 2026-07-29 live-transition readiness incident",
+    ):
+        assert retained_heading in operations_doc
+
+
 def test_repo_identifies_production_without_treating_render_blueprint_as_authority() -> None:
     repo_root = Path(__file__).parents[1]
     render_blueprint = (repo_root / "render.yaml").read_text(encoding="utf-8")

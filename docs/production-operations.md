@@ -5,6 +5,9 @@ this repository. Do not substitute dashboard clicks, inline shell, `curl`, or a 
 script during a release. A production deploy still requires independent review and
 explicit human approval.
 
+We ship when all tests pass, including the end-to-end tests. Anything anyone wants to add
+beyond that goes to Juan, one item at a time, in plain words.
+
 ## Ownership and profile assets
 
 The executable service tooling lives here with the service so it is versioned, tested,
@@ -135,186 +138,13 @@ make prod-verify \
 `AW_SOURCE_HOME` must be an established agent home with the correct team certificate.
 The gate clones only into a private temporary directory and removes it on exit.
 
-## AATK verification contract
-
-`ops/aatk-manifest.json` is the checked-in static coverage specification. The actual
-postdeploy executors own stable child predicate IDs in `scripts/render_ops.py` and
-`scripts/library_prod_gate.py`; `make aatk-predicate-inventory` exposes those IDs and
-`make aatk-spec-check` requires exact equality with the manifest rows. The required CI
-workflow invokes the structural check directly.
-
-Runtime proof never lives in that manifest. A future run ledger is external, immutable,
-and bound to the manifest digest and exact candidate SHA. `make aatk-validate-preplan
-AATK_EVIDENCE_INDEX=...` and `make aatk-validate-release AATK_EVIDENCE_INDEX=...` are
-separate lifecycle validators. In the current first honest increment, a structurally valid
-fixture ledger reaches `unenforced-obligation` and enumerates every deferred enforcement
-ID; an invalid or missing ledger may correctly fail its own earlier structural check. The
-load-bearing invariant is that neither lifecycle validator can return success while a
-deferred ID remains. Only static schema validation can pass. Therefore this increment
-cannot authorize a deployment plan or close a release.
-
-Every predicate row structurally requires a typed positive, a same-declared-path faithful
-negative, strict postdeploy obligation, owner, rollback disposition, and machine expiry.
-Candidate-only absence is source-allowlisted to semantics the exact incumbent cannot emit;
-it requires an exact-source positive and cannot waive shared transport or environment.
-The deferred registry machine-blocks preplan and release until runtime path fidelity,
-actual execution obligations, separate incumbent/rollback identity semantics, immutable
-fresh receipts, lifecycle transitions, safe boundary invocation, executed same-path
-controls, candidate-only runtime proof, and orchestrator falsification are implemented and
-tested. A status edit cannot clear those blockers because the validator cross-checks the
-registry against source-owned enforcement IDs. The enforced claims, dedicated negative
-tests, and explicit nonclaims for this increment are mapped in
-[`aatk-increment-1.md`](aatk-increment-1.md).
-
 ## Verification surfaces
 
-The isolated stack does not prove production routing, Cloudflare policy, deployed identity, or shelf state; production preflight does not prove candidate bytes are live; only exact-ID post-deploy verification can close a deployment.
+The isolated stack does not prove production routing, Cloudflare policy, deployed identity, or shelf state.
 
-Real Claude Code and Pi harnesses run against the isolated exact-source signed stack before
-planning. The fast production preflight validates the installed harness identities but does
-not require candidate semantics from legacy production. A production-backed fresh-home harness
-is reserved for exact-ID post-deploy verification. Real harness launches consume bounded
-provider requests, and authenticated materialization consumes team-authorized requests; these
-probes do not mutate Render state, but they are not free and their budget must be explicit.
 CI cannot prove the reviewed artifact is the one currently live or that Cloudflare and Render accept the production client; production smoke cannot substitute for source-level customer journeys.
-A paid-provider launch which cannot run in PR CI is a named protected integration smoke, not an
-excuse to leave reproducible server semantics in the deploy gate.
 
-### AATK matrix worked example: build identity across a legacy incumbent
-
-The post-deploy build-identity predicate is intentionally unsatisfiable against the current
-pre-AASR incumbent: that exact artifact has no `build` key, while candidate deploy/verify
-correctly require an exact `build.git_sha`. Its matrix row must not weaken that candidate
-predicate to manufacture a green incumbent result. Instead it records separate cells:
-
-- current-production transport/client positive: the exact two-key payload is accepted only
-  under `ALLOW_LEGACY_MISSING_BUILD_FOR` pinned to the exact incumbent commit;
-- exact-candidate semantic positive: the isolated signed stack must serve the three-key payload
-  with the exact candidate SHA;
-- negative predicates: missing build without the pin, null build, malformed build, wrong SHA,
-  and a pin naming any other commit all fail for their asserted reason;
-- exact-ID post-deploy: origin and canonical public payloads both identify the deployed SHA;
-- expiry: the preflight exception dies when the candidate is live, while rollback compatibility
-  dies only when the approved pre-AASR rollback artifact is replaced.
-
-This is a worked row, not the complete machine-visible AATK table. The incomplete table still
-blocks a deployment plan. It also records a CI boundary observed in practice: protected Library
-CI was green for AASR, but could not exercise its new checker against the live legacy artifact
-or a rollback to that artifact.
-
-Render metadata and health do not prove the functional release. Verification requires:
-
-1. Render reports the exact candidate deploy ID and commit as the sole `live` deploy.
-2. Generated origin `/health` returns the exact Library health payload without redirecting:
-   `{status: "ok", service: "library", build: {git_sha: <full lowercase 40-hex SHA>}}`.
-   The SHA must equal the approved commit. Render's documented `RENDER_GIT_COMMIT` is
-   authoritative; `LIBRARY_GIT_SHA` is only a validated non-Render fallback, and
-   conflicting values make the service fail configuration validation. A null SHA is a
-   current-shape local/uninjected failure state, normal only in local development; it never
-   means the artifact agrees with an approved commit. Deployed pre-AASR artifacts instead
-   omit `build` entirely and serve the exact two-key legacy shape described below.
-3. Public edge `/health` returns the same exact payload without URL drift, and its
-   `build.git_sha` independently equals the approved commit. A different valid SHA is
-   treated as bounded stale-transition evidence; malformed or null identity fails
-   immediately outside the explicit legacy rollback action described below.
-   Render's `live` transition can precede request readiness. The checked-in gate retries
-   only explicitly transient connection, timeout, invalid-JSON, and allowlisted HTTP
-   failures for at most 90 seconds with five-second backoff. Redirects, authentication
-   failures, and wrong health payloads fail immediately; exhaustion fails closed. Every
-   retry and success records its attempt count and elapsed seconds in the release log.
-   The 90-second initial bound is provisional rather than an observed Library recovery
-   time: Render's documented zero-downtime sequence retains the old process for 60
-   seconds after switching networking, and this bound covers that documented transition
-   window plus a 30-second operator safety margin. Review observed readiness durations
-   after real releases and tighten or extend the bound only from evidence.
-4. Authenticated generated-origin `POST /v1/materialize` succeeds for `claude-code`
-   and `pi`, before any authenticated public-edge probe.
-5. Authenticated public `POST /v1/materialize` succeeds for both runtimes.
-6. `managed_set` is positionally identical to `home_files`, with no duplicates,
-   noncanonical paths, broken links, or links resolving outside the generated home.
-7. The canonical `/opt/homebrew/bin/aw` strict client matches the reviewed 1.34.0
-   SHA-256 plus version/commit/build metadata and materializes both runtimes into fresh
-   homes; a self-reported version string alone is insufficient.
-8. Real Claude Code and Pi harnesses load the generated title and provenance line.
-
-The generated-origin functional probe separates the request's logical authority from its
-socket route without separating its security authority. The pinned `aw` command still
-requests `https://library.aweb.ai/v1/materialize`, so the signed audience, TLS SNI, HTTP
-Host, method, path, and body hash remain canonical. Before each runtime probe, a
-loopback-only CONNECT tunnel resolves the generated and public hostnames once, refuses
-any address-set overlap, selects one generated numeric address, and accepts only one
-`library.aweb.ai:443` connection. It removes ambient proxy/fallback settings, forwards
-opaque TLS bytes only to that selected address, never terminates TLS or reads
-authentication material, and performs no later DNS lookup or alternate-address retry.
-The gate requires exact HTTP 200, validates the full materialization payload, verifies
-that the kernel-observed peer is the selected address, and records that safe peer IP in
-the release output. It then closes the tunnel and runs the public probe normally.
-
-This tunnel deliberately bypasses the aweb-controlled Cloudflare zone on
-`library.aweb.ai`; reaching Render ingress without that zone is what makes it an origin
-probe. Consequently, it does not exercise the public zone's WAF/browser-signature rules,
-cache, routing, or other edge configuration and cannot establish that the path users take
-is healthy. It proves only bypass of the public hostname address set observed by the same
-resolver at startup and functional behavior behind Render ingress. It does not prove a
-dedicated backend process, globally disjoint CDN address ownership, or bypass of every
-shared Render ingress/edge layer.
-
-The authenticated canonical public-edge probe remains mandatory and runs after both
-origin runtime probes. Any public probe failure aborts the candidate gate; origin success
-cannot substitute for it, mask it, or produce an overall pass. TLS certificate validation,
-canonical audience validation, and the service's single allowed audience remain
-unchanged on both paths.
-
-The harness artifact check has a deliberate boundary. It proves the exact reviewed
-Claude native executable and the exact Pi entry script, run by the exact reviewed Node
-interpreter through absolute paths and an allowlisted minimal environment and `PATH`.
-Claude's pinned artifact is separately verified as a native Mach-O executable with no
-interpreter lookup layer. These checks prevent
-accidental interpreter interception and half-installed operator environments. It does
-not claim per-run integrity of Pi's installed dependency tree; that tree is trusted as
-part of the reviewed package installation. This gate does not defend a compromised local
-machine that can also rewrite the Makefile or gate itself.
-
-Do not send an authenticated materialization request whose URL is the generated Render
-origin. That request is signed for the generated audience; Library correctly rejects it
-with 401 because the only allowed audience is the canonical public origin. This expected
-audience rejection is not evidence that the product failed at the origin. The supported
-origin probe instead keeps the canonical URL and audience and changes only the pinned
-socket route. Never add the generated origin as an allowed audience or weaken the
-canonical audience comparison.
-
-### Exact current-incumbent semantic probe
-
-`prod-gate-current-incumbent` exists so the AATK preplan system can later replay the same
-AATD transport and public-continuation semantics against untouched known-good production.
-It requires all three identity assertions on every invocation, with no drifting defaults:
-
-- service `srv-d8qm4jvavr4c73dhrmgg`;
-- deploy `dep-d9koecdbedkc73b582vg`;
-- commit `3376af7ee4a571488441794047018af94b06057f`.
-
-Any missing or different assertion fails before a functional request. The mode then uses
-the canonical signed URL through the numeric generated-origin route for `claude-code` and
-`pi`, followed by mandatory canonical-public materialization for both runtimes. Every
-response must match the exact pre-aasb fingerprint: the approved profile pin is present,
-while `runtime_kind` and `managed_set` are absent rather than empty. A public failure is
-fatal after origin success. Candidate mode remains separate and still requires exact
-candidate identity plus `runtime_kind`, positional `managed_set`, strict-client success,
-and real-harness success; incumbent compatibility never relaxes it.
-
-The target emits a source-owned 22-predicate current-incumbent inventory and each predicate's
-exact ordered path. AATK registers all 22 by domain and owner. Its source-owned semantic
-comparator proves only four one-to-one candidate identities: public HTTP-200 and profile-pin
-for each runtime. The other 18 mappings remain deferred, including all legacy response-shape
-checks. Target output is diagnostic class `current-incumbent-debug`, which lifecycle validation
-forbids as evidence alongside capability fixtures.
-
-The target deliberately does **not** query Render to prove that the asserted deploy is currently
-live, enforce same-path receipt execution, publish an AATK receipt, authorize a plan, or grant
-live-execution authority. Those identity, receipt, orchestration, and authority controls belong
-to later AATK enforcement. The mode and its legacy fingerprint expire when this exact incumbent
-can no longer be the serving or approved rollback artifact; do not repoint the constants to
-another artifact.
+A paid-provider launch which cannot run in PR CI is a named protected integration smoke, not an excuse to leave reproducible server semantics in the deploy gate.
 
 ## Rollback and recovery
 
