@@ -170,6 +170,16 @@ real-binary profile/team/Library journey. The `Comprehensive ship gate` workflow
 runs that exact target for every pull request and every push to `main`; no person
 chooses whether the journeys run.
 
+Those suites run independently of each other. `make` stops a recipe at the first
+failing line, so while they were recipe lines a failure in one silently removed the
+coverage of every suite behind it — the federation journey failing meant the OSS
+user journey did not run, and nothing said so. `ship` now hands `SHIP_SUITES` to
+`scripts/run-ship-suites.sh`, which runs each suite whatever the previous one did
+and exits nonzero if any failed. Read its summary rather than the last failure: it
+reports every suite as `PASSED`, `FAILED` or `NOT RUN`, so a run that was cancelled
+or timed out names the suites it never reached instead of leaving them out. A suite
+missing from the output would otherwise read the same as one that passed.
+
 The workflow checks out Library and blueprints at the exact public commits in
 `.github/workflows/ship.yml`. Advance either pin deliberately after
 proving the combined stack. Local `make ship` still accepts the sibling checkouts
