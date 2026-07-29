@@ -280,8 +280,16 @@ def library() -> Iterator[RunningLibrary]:
     backend_origin = f"http://127.0.0.1:{backend_port}"
     proxy_origin = f"http://127.0.0.1:{proxy_port}"
     env = os.environ.copy()
-    env.pop("RENDER_GIT_COMMIT", None)
-    env.pop("LIBRARY_GIT_SHA", None)
+    for name in (
+        "RENDER_SERVICE_ID",
+        "RENDER_SERVICE_NAME",
+        "RENDER_EXTERNAL_HOSTNAME",
+        "RENDER_GIT_REPO_SLUG",
+        "RENDER_GIT_BRANCH",
+        "RENDER_GIT_COMMIT",
+        "LIBRARY_GIT_SHA",
+    ):
+        env.pop(name, None)
     env.update(
         {
             "RENDER_GIT_COMMIT": E2E_BUILD_SHA,

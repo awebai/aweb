@@ -50,7 +50,10 @@ that changing it changes the existing service.
 
 A credential-less reader can identify the pinned production target from this repository
 and can verify that both the generated origin and public edge serve the Library health
-payload. Those public surfaces and headers do not expose the Render region. Render's
+payload. On Render, that payload exposes only automatic non-secret service ID, service name,
+generated hostname/origin, repository, branch, and commit metadata. `make
+prod-public-identity` compares it with `ops/render-production.json` without credentials.
+Those public surfaces and headers do not expose the Render region. Render's
 [documented automatic runtime metadata](https://render.com/docs/environment-variables#render-defined-environment-variables)
 exposes service identity and origin fields, but no service-region field; a second manually
 configured region string would be circular.
@@ -79,6 +82,7 @@ rollback artifact after starting the deploy.
 | Target | Effect |
 |---|---|
 | `make prod-ops-test` | Mocked operations and gate tests; no network mutation. |
+| `make prod-public-identity` | Credential-less comparison of public automatic Render metadata with the pinned topology; validates commit identity but cannot attest region. |
 | `make prod-status` | Read-only topology and current-live-deploy preflight. |
 | `make prod-health-client-proof ...` | Makes exactly two bounded canonical health requests: the known-blocked baseline UA must return 403 and the honest gate UA must return the exact 200 payload; persists both artifacts. |
 | `make prod-gate-current-incumbent ...` | Read-only semantic probe of the exact pinned pre-aasb incumbent: authenticated generated-origin then mandatory public materialization for both runtimes, validating only the pinned legacy response shape. It does not prove the asserted deploy is live or emit AATK receipts. |
