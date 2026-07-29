@@ -182,11 +182,11 @@ class OASPinnedCheckoutContractTests(unittest.TestCase):
             self.assertIn("explicit OAS_TEST_ROOT override", result.stderr)
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
 
-    def test_ci_runs_the_complete_release_gate(self) -> None:
+    def test_ci_runs_the_canonical_ship_gate(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertRegex(workflow, r"(?m)^\s*pull_request:\s*$")
         self.assertRegex(workflow, r"(?m)^\s*push:\s*$")
-        self.assertIn("make release-all-check", workflow)
+        self.assertIn("make ship", workflow)
         self.assertIn("fetch-depth: 0", workflow)
 
 
