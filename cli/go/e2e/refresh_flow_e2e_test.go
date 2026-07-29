@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/awebai/aw/internal/agentdocs"
 )
 
 func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
@@ -60,6 +62,7 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 		t.Fatalf("aw team create --agent failed: %v\n%s", err, out)
 	}
 	coordinatorHome := filepath.Join(repo, "agents", "instances", "coordinator")
+	assertSingleCoordinationBlock(t, coordinatorHome, "fresh materialization")
 	if out, err := awInRepo("team", "adopt", "coordinator", "--home", coordinatorHome); err != nil {
 		t.Fatalf("aw team adopt failed: %v\n%s", err, out)
 	}
@@ -77,6 +80,7 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 	if out, err := awInRepo("team", "refresh", "coordinator", "--home", coordinatorHome); err != nil {
 		t.Fatalf("aw team refresh failed: %v\n%s", err, out)
 	}
+	assertSingleCoordinationBlock(t, coordinatorHome, "adopt and refresh")
 
 	after := profileRefShow(t, awInRepo, "coordinator", "--home", coordinatorHome)
 	if after.ProfileVersion == before.ProfileVersion {
@@ -94,6 +98,17 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 		t.Fatalf("refresh did not propagate the approved instructions change (marker %q absent):\n%s", marker, instr)
 	}
 	t.Logf("refresh picked up the approved proposal: %s@%s -> @%s", after.ProfileRef, before.ProfileVersion, after.ProfileVersion)
+}
+
+func assertSingleCoordinationBlock(t *testing.T, home, phase string) {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(home, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read %s AGENTS.md: %v", phase, err)
+	}
+	if !agentdocs.HasSingleMarkedBlock(string(body)) {
+		t.Fatalf("%s AGENTS.md does not contain exactly one complete AWEB marker block:\n%s", phase, body)
+	}
 }
 
 type e2eRecordedRef struct {
