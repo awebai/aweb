@@ -156,6 +156,140 @@ def test_canonical_partial_manifest_is_spec_valid_and_matches_executor_universe(
     }
     assert {row["id"] for row in value["predicates"]} == aatk.source_predicates()
     assert sum(map(len, inventory.values())) == 50
+    assert value["capability_coverage"] == aatk.source_capability_coverage()
+    assert len(value["capability_coverage"]) == 50
+    instrumented = {
+        row["id"]
+        for row in value["capability_coverage"]
+        if set(row["obligations"].values()) == {"instrumented-capability"}
+    }
+    assert instrumented == {
+        "health.origin.http-200",
+        "health.origin.payload-contract",
+        "health.public.http-200",
+        "health.public.payload-contract",
+    }
+    assert aatk.DEFERRED_ENFORCEMENT_IDS >= aatk.CAPABILITY_OBLIGATION_IDS
+
+
+def test_capability_coverage_rejects_deleted_source_row() -> None:
+    value = manifest()
+    del value["capability_coverage"][0]
+    assert_error(
+        "capability-universe",
+        "manifest.capability_coverage",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+def test_capability_coverage_rejects_duplicate_domain_id() -> None:
+    value = manifest()
+    value["capability_coverage"].append(copy.deepcopy(value["capability_coverage"][0]))
+    index = len(value["capability_coverage"]) - 1
+    assert_error(
+        "duplicate-capability-predicate",
+        f"manifest.capability_coverage[{index}].id",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+def test_capability_coverage_rejects_unknown_or_renamed_id() -> None:
+    value = manifest()
+    value["capability_coverage"][0]["id"] = "orphaned.renamed.predicate"
+    assert_error(
+        "capability-universe",
+        "manifest.capability_coverage",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+def test_capability_coverage_rejects_manifest_only_status_edit() -> None:
+    value = manifest()
+    value["capability_coverage"][0]["obligations"][
+        "runtime.path-fidelity"
+    ] = "instrumented-capability"
+    assert_error(
+        "capability-source-mismatch",
+        "manifest.capability_coverage",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+def test_emitter_registration_cannot_diverge_from_instrumented_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = manifest()
+    monkeypatch.setattr(
+        aatk.render_ops,
+        "CAPABILITY_FIXTURE_PREDICATES",
+        frozenset({"health.origin.http-200"}),
+    )
+    assert_error(
+        "capability-emitter-registration",
+        "source.capability_coverage",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+def test_source_coverage_omission_cannot_hide_behind_complete_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = manifest()
+    coverage = copy.deepcopy(aatk.render_ops.AATK_PREDICATE_COVERAGE)
+    coverage.pop("health.origin.http-200")
+    monkeypatch.setattr(aatk.render_ops, "AATK_PREDICATE_COVERAGE", coverage)
+    assert_error(
+        "capability-emitter-registration",
+        "source.capability_coverage",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+def test_implemented_obligations_have_immutable_source_history() -> None:
+    value = manifest()
+    implemented = {
+        row["id"]: row["first_enforced_increment"]
+        for row in value["requirement_registry"]
+        if row["status"] == "implemented"
+    }
+    assert implemented == aatk.ENFORCEMENT_HISTORY
+    assert all(
+        "first_enforced_increment" not in row
+        for row in value["requirement_registry"]
+        if row["status"] == "deferred"
+    )
+
+
+def test_enforcement_history_rejects_rewritten_increment() -> None:
+    value = manifest()
+    row = next(item for item in value["requirement_registry"] if item["status"] == "implemented")
+    index = value["requirement_registry"].index(row)
+    row["first_enforced_increment"] = "increment-2a"
+    assert_error(
+        "enforcement-history",
+        f"manifest.requirement_registry[{index}].first_enforced_increment",
+        aatk.validate_manifest,
+        value,
+    )
+
+
+def test_deferred_obligation_rejects_unearned_history() -> None:
+    value = manifest()
+    row = next(item for item in value["requirement_registry"] if item["status"] == "deferred")
+    index = value["requirement_registry"].index(row)
+    row["first_enforced_increment"] = "increment-2a"
+    assert_error(
+        "enforcement-registry",
+        f"manifest.requirement_registry[{index}]",
+        aatk.validate_manifest,
+        value,
+    )
 
 
 @pytest.mark.parametrize("mode", ["preplan", "release"])
@@ -173,6 +307,27 @@ def test_lifecycle_validation_machine_blocks_on_every_deferred_obligation(mode: 
     )
     for obligation_id in sorted(aatk.DEFERRED_ENFORCEMENT_IDS):
         assert obligation_id in str(error)
+
+
+def test_capability_fixture_is_forbidden_as_lifecycle_evidence() -> None:
+    value = manifest()
+    row = value["predicates"][0]
+    candidate_index = evidence_index(value)
+    candidate_receipt = receipt(value, row, "current-production")
+    candidate_receipt["proof_kind"] = "capability-fixture"
+    assert_error(
+        "capability-not-lifecycle-evidence",
+        "index.receipts[0].proof_kind",
+        lambda candidate: aatk.validate_receipt(
+            candidate,
+            location="index.receipts[0]",
+            row=row,
+            manifest_sha=aatk.manifest_digest(value),
+            index=candidate_index,
+            now=NOW,
+        ),
+        candidate_receipt,
+    )
 
 
 @pytest.mark.parametrize("sentinel", aatk.SENTINELS)
@@ -445,11 +600,12 @@ def test_editing_deferred_status_cannot_clear_source_enforcement_blocker() -> No
     obligation = next(
         item for item in value["requirement_registry"] if item["status"] == "deferred"
     )
+    obligation_index = value["requirement_registry"].index(obligation)
     obligation["status"] = "implemented"
     obligation["blocked_lifecycle_stages"] = []
     assert_error(
         "enforcement-registry",
-        "manifest.requirement_registry",
+        f"manifest.requirement_registry[{obligation_index}]",
         aatk.validate_manifest,
         value,
     )

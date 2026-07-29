@@ -18,7 +18,7 @@ from urllib.error import HTTPError
 
 import pytest
 
-from scripts import render_ops
+from scripts import aatk, render_ops
 
 _SHA_A = "a" * 40
 _SHA_B = "b" * 40
@@ -1914,7 +1914,319 @@ def test_command_verify_requires_exact_current_live(
     result = render_ops.command_verify(args)
     assert result["deploy"]["status"] == "live"
     assert result["predicate_ids"] == render_ops.postdeploy_predicate_inventory()
-    assert health_checks == [{"expected_commit": "b" * 40, "evidence": evidence}]
+    assert health_checks == [
+        {"expected_commit": "b" * 40, "evidence": evidence, "capability": None}
+    ]
+
+
+def _stub_capability_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        render_ops,
+        "_verifier_identity",
+        lambda: {
+            "verifier_source_sha": "a" * 40,
+            "verifier_script_sha256": "b" * 64,
+            "verifier_script_path": "scripts/render_ops.py",
+        },
+    )
+
+
+def _capability_verify_args(path: Path, *, mutation_id: str = "") -> SimpleNamespace:
+    return SimpleNamespace(
+        deploy_id="dep-candidate",
+        commit="b" * 40,
+        capability_fixture_dir=str(path),
+        capability_correlation_id="capability-run-1",
+        capability_mutation_id=mutation_id,
+    )
+
+
+def _capability_transcript(path: Path) -> dict:
+    artifacts = [json.loads(item.read_text()) for item in sorted(path.glob("*.json"))]
+    assert artifacts[-1]["probe_kind"] == "aatk-capability-transcript"
+    transcript = artifacts[-1]["transcript"]
+    assert aatk.validate_capability_transcript(transcript) is transcript
+    assert path.stat().st_mode & 0o777 == 0o700
+    assert all(item.stat().st_mode & 0o777 == 0o600 for item in path.glob("*.json"))
+    return transcript
+
+
+def _stub_capability_http(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    *,
+    failure_surface: str = "",
+    failure_kind: str = "",
+) -> list[str]:
+    calls: list[str] = []
+
+    class Response:
+        headers = Message()
+
+        def __init__(self, url: str, status: int, body: bytes) -> None:
+            self.url = url
+            self.status = status
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return self.url
+
+        def read(self, *args) -> bytes:
+            return self.body
+
+    def open_fixture(url: str, *, timeout: float, user_agent: str) -> Response:
+        calls.append(url)
+        surface = "origin" if url.startswith(config.origin_url) else "public"
+        if surface == failure_surface and failure_kind == "http":
+            return Response(url, 401, b'{"error":"fixture"}')
+        if surface == failure_surface and failure_kind == "payload":
+            body = json.dumps(
+                {"status": "wrong", "service": "library", "build": {"git_sha": "b" * 40}},
+                separators=(",", ":"),
+            ).encode()
+            return Response(url, 200, body)
+        if failure_kind == "legacy" and failure_surface in {surface, "both"}:
+            return Response(url, 200, b'{"status":"ok","service":"library"}')
+        if failure_kind == "null-build" and failure_surface in {surface, "both"}:
+            return Response(url, 200, health_bytes(None))
+        return Response(url, 200, health_bytes("b" * 40))
+
+    monkeypatch.setattr(render_ops, "open_health_url", open_fixture)
+    return calls
+
+
+def test_command_verify_emits_four_child_capability_transcripts_from_real_health_path(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+) -> None:
+    stub_command_evidence(monkeypatch)
+    _stub_capability_identity(monkeypatch)
+    calls = _stub_capability_http(monkeypatch, config)
+    artifact = deploy("dep-candidate", "b" * 40)
+    monkeypatch.setattr(
+        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
+    )
+    output = tmp_path / "capability"
+    result = render_ops.command_verify(_capability_verify_args(output))
+    assert result["health"]["origin"] == health_payload("b" * 40)
+    assert calls == [
+        f"{config.origin_url}{config.health_path}",
+        f"{config.public_url}{config.health_path}",
+    ]
+    transcript = _capability_transcript(output)
+    assert transcript["driver"] == "render_ops.command_verify"
+    assert transcript["terminal"] == {"outcome": "passed", "error_code": "", "count": 1}
+    assert {child["predicate_id"] for child in transcript["children"]} == (
+        render_ops.CAPABILITY_FIXTURE_PREDICATES
+    )
+    assert all(child["terminal"]["outcome"] == "passed" for child in transcript["children"])
+    assert set(transcript["normalized_arguments"]) == {"commit", "deploy_id", "service_id"}
+    expected_body_sha = hashlib.sha256(health_bytes("b" * 40)).hexdigest()
+    assert {
+        child["subject_artifact_sha256"] for child in transcript["children"]
+    } == {expected_body_sha}
+
+
+@pytest.mark.parametrize(
+    ("surface", "failure_kind", "predicate_id", "expected_calls"),
+    [
+        ("origin", "http", "health.origin.http-200", 1),
+        ("origin", "payload", "health.origin.payload-contract", 1),
+        ("public", "http", "health.public.http-200", 2),
+        ("public", "payload", "health.public.payload-contract", 2),
+    ],
+)
+def test_capability_negatives_fail_at_exact_sibling_after_restoration(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+    surface: str,
+    failure_kind: str,
+    predicate_id: str,
+    expected_calls: int,
+) -> None:
+    stub_command_evidence(monkeypatch)
+    _stub_capability_identity(monkeypatch)
+    calls = _stub_capability_http(
+        monkeypatch,
+        config,
+        failure_surface=surface,
+        failure_kind=failure_kind,
+    )
+    artifact = deploy("dep-candidate", "b" * 40)
+    monkeypatch.setattr(
+        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
+    )
+    output = tmp_path / f"{surface}-{failure_kind}"
+    with pytest.raises(render_ops.OpsError):
+        render_ops.command_verify(
+            _capability_verify_args(
+                output,
+                mutation_id=f"{predicate_id}.dedicated-negative",
+            )
+        )
+    assert len(calls) == expected_calls
+    transcript = _capability_transcript(output)
+    child = next(item for item in transcript["children"] if item["predicate_id"] == predicate_id)
+    assert child["terminal"] == {
+        "outcome": "expected-failure",
+        "assertion_code": f"{predicate_id}.rejected",
+        "count": 1,
+    }
+    if surface == "public":
+        origin = {
+            item["predicate_id"]: item["terminal"]["outcome"]
+            for item in transcript["children"]
+            if item["predicate_id"].startswith("health.origin.")
+        }
+        assert origin == {
+            "health.origin.http-200": "passed",
+            "health.origin.payload-contract": "passed",
+        }
+
+
+@pytest.mark.parametrize(
+    ("failure_kind", "error"),
+    [
+        ("legacy", "missing build identity"),
+        ("null-build", "null build identity"),
+    ],
+)
+def test_candidate_capability_symmetric_permissive_shapes_remain_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+    failure_kind: str,
+    error: str,
+) -> None:
+    stub_command_evidence(monkeypatch)
+    _stub_capability_identity(monkeypatch)
+    _stub_capability_http(
+        monkeypatch,
+        config,
+        failure_surface="both",
+        failure_kind=failure_kind,
+    )
+    artifact = deploy("dep-candidate", "b" * 40)
+    monkeypatch.setattr(
+        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
+    )
+    output = tmp_path / failure_kind
+    mutation_id = (
+        "health.origin.payload-contract.dedicated-negative"
+        if failure_kind == "legacy"
+        else "health.origin.build-sha.forbidden-null"
+    )
+    with pytest.raises(render_ops.OpsError, match=error):
+        render_ops.command_verify(
+            _capability_verify_args(output, mutation_id=mutation_id)
+        )
+    transcript = _capability_transcript(output)
+    assert transcript["terminal"]["outcome"] == "failed"
+
+
+def test_capability_bypassed_health_orchestration_fails_closed_with_missing_cells(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+) -> None:
+    stub_command_evidence(monkeypatch)
+    _stub_capability_identity(monkeypatch)
+    artifact = deploy("dep-candidate", "b" * 40)
+    monkeypatch.setattr(
+        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
+    )
+    monkeypatch.setattr(
+        render_ops,
+        "verify_health_surfaces",
+        lambda *args, **kwargs: {"origin": health_payload("b" * 40), "public": health_payload("b" * 40)},
+    )
+    output = tmp_path / "bypassed-orchestration"
+    with pytest.raises(render_ops.OpsError, match="capability-incomplete"):
+        render_ops.command_verify(_capability_verify_args(output))
+    transcript = _capability_transcript(output)
+    assert transcript["terminal"]["outcome"] == "failed"
+    assert transcript["terminal"]["error_code"].startswith("capability-incomplete")
+    assert transcript["children"] == []
+
+
+def test_capability_reordered_parallel_components_fail_with_local_path_code(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+) -> None:
+    _stub_capability_identity(monkeypatch)
+    recorder = render_ops.CapabilityFixtureRecorder(
+        tmp_path / "reordered",
+        config=config,
+        deploy_id="dep-candidate",
+        commit="b" * 40,
+        correlation_id="capability-reordered",
+        mutation_id="public-before-origin",
+    )
+    recorder.enter(render_ops.CAPABILITY_COMPONENT_COMMAND)
+    recorder.enter(render_ops.CAPABILITY_COMPONENT_SURFACES)
+    recorder.enter(render_ops.CAPABILITY_COMPONENT_PUBLIC)
+    with pytest.raises(render_ops.OpsError, match="capability-path-mismatch.*origin"):
+        recorder.terminal_child(
+            "health.public.http-200",
+            outcome="passed",
+            assertion_code="health.public.http-200.capability-pass",
+            subject_sha256="c" * 64,
+        )
+    recorder.finish(outcome="failed", error_code="capability-path-mismatch")
+    transcript = _capability_transcript(tmp_path / "reordered")
+    assert transcript["terminal"]["error_code"] == "capability-path-mismatch"
+
+
+def test_capability_output_is_atomic_no_replace(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+) -> None:
+    stub_command_evidence(monkeypatch)
+    _stub_capability_identity(monkeypatch)
+    _stub_capability_http(monkeypatch, config)
+    artifact = deploy("dep-candidate", "b" * 40)
+    monkeypatch.setattr(
+        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
+    )
+    output = tmp_path / "no-replace"
+    render_ops.command_verify(_capability_verify_args(output))
+    before = {path.name: path.read_bytes() for path in output.glob("*.json")}
+    with pytest.raises(render_ops.OpsError, match="must not already exist"):
+        render_ops.command_verify(_capability_verify_args(output))
+    assert {path.name: path.read_bytes() for path in output.glob("*.json")} == before
+
+
+def test_capability_source_cleanliness_fails_before_output_or_http(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+) -> None:
+    stub_command_evidence(monkeypatch)
+    artifact = deploy("dep-candidate", "b" * 40)
+    monkeypatch.setattr(
+        render_ops, "_client", lambda args: (FakeClient(config, artifact), config)
+    )
+    calls = _stub_capability_http(monkeypatch, config)
+    monkeypatch.setattr(
+        render_ops,
+        "_verifier_identity",
+        lambda: (_ for _ in ()).throw(render_ops.OpsError("verifier repository has tracked changes")),
+    )
+    output = tmp_path / "dirty-source"
+    with pytest.raises(render_ops.OpsError, match="tracked changes"):
+        render_ops.command_verify(_capability_verify_args(output))
+    assert not output.exists()
+    assert calls == []
 
 
 def test_command_wait_is_restartable(
