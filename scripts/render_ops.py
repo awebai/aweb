@@ -52,6 +52,15 @@ BLOCKED_BASELINE_USER_AGENT = "Python-urllib/3.12"
 HEALTH_BODY_CAPTURE_LIMIT = 16_384
 HEALTH_BODY_PREVIEW_LIMIT = 16_384
 HEALTH_HEADER_CAPTURE_LIMIT = 16_384
+PUBLIC_DEPLOYMENT_IDENTITY_FIELDS = {
+    "service_id",
+    "service_name",
+    "hostname",
+    "origin_url",
+    "repo",
+    "branch",
+    "commit",
+}
 HEALTH_DIAGNOSTIC_HEADERS = {
     "cf-cache-status",
     "cf-mitigated",
@@ -742,6 +751,69 @@ class ProductionConfig:
         return config
 
 
+def _validated_public_deployment_identity(
+    value: object, *, expected_commit: str
+) -> dict[str, str]:
+    if not isinstance(value, dict) or set(value) != PUBLIC_DEPLOYMENT_IDENTITY_FIELDS:
+        raise OpsError("public deployment identity has unexpected fields")
+    if not all(isinstance(item, str) and item for item in value.values()):
+        raise OpsError("public deployment identity fields must be nonempty strings")
+    deployment = {field: value[field] for field in PUBLIC_DEPLOYMENT_IDENTITY_FIELDS}
+    if not SERVICE_RE.fullmatch(deployment["service_id"]):
+        raise OpsError("public deployment identity has invalid service_id")
+    if not COMMIT_RE.fullmatch(deployment["commit"]):
+        raise OpsError("public deployment identity has invalid commit")
+    if deployment["origin_url"] != f"https://{deployment['hostname']}":
+        raise OpsError("public deployment identity origin_url does not match hostname")
+    if deployment["commit"] != expected_commit:
+        raise OpsError("public deployment identity commit does not match build.git_sha")
+    return deployment
+
+
+def verify_public_deployment_identity(
+    payload: object, config: ProductionConfig
+) -> dict[str, str]:
+    """Compare credential-less Render metadata with the pinned topology."""
+    if not isinstance(payload, dict) or set(payload) != {
+        "status",
+        "service",
+        "build",
+        "deployment",
+    }:
+        raise OpsError("unexpected Library public deployment identity payload")
+    if payload["status"] != "ok" or payload["service"] != config.service_name:
+        raise OpsError("public deployment identity service_name mismatch")
+    build = payload["build"]
+    if not isinstance(build, dict) or set(build) != {"git_sha"}:
+        raise OpsError("public deployment identity has unexpected build fields")
+    commit = build["git_sha"]
+    if not isinstance(commit, str) or not COMMIT_RE.fullmatch(commit):
+        raise OpsError("public deployment identity has invalid build.git_sha")
+    deployment = _validated_public_deployment_identity(
+        payload["deployment"], expected_commit=commit
+    )
+
+    origin = urlsplit(config.origin_url)
+    expected_repo = urlsplit(config.repo).path.strip("/")
+    if expected_repo.endswith(".git"):
+        expected_repo = expected_repo[:-4]
+    expected = {
+        "service_id": config.service_id,
+        "service_name": config.service_name,
+        "hostname": origin.hostname or "",
+        "origin_url": config.origin_url.rstrip("/"),
+        "repo": expected_repo,
+        "branch": config.branch,
+    }
+    for field_name, expected_value in expected.items():
+        if deployment[field_name] != expected_value:
+            raise OpsError(
+                f"public deployment identity {field_name} mismatch: "
+                f"observed {deployment[field_name]}, expected {expected_value}"
+            )
+    return deployment
+
+
 def load_api_key(path: Path) -> str:
     try:
         if path.is_symlink():
@@ -1118,7 +1190,10 @@ def verify_health(
                 subject_sha256=subject_sha256,
             )
         raise OpsError(f"Library health returned missing build identity from {url}")
-    if not isinstance(payload, dict) or set(payload) != {"status", "service", "build"}:
+    if not isinstance(payload, dict) or set(payload) not in (
+        {"status", "service", "build"},
+        {"status", "service", "build", "deployment"},
+    ):
         if capability is not None:
             capability.terminal_child(
                 f"health.{capability_surface}.payload-contract",
@@ -1163,6 +1238,8 @@ def verify_health(
         raise TransientHealthError(
             f"Library health build mismatch from {url}: observed {observed}, expected {expected}"
         )
+    if "deployment" in payload:
+        _validated_public_deployment_identity(payload["deployment"], expected_commit=observed)
     return payload
 
 
@@ -1467,6 +1544,34 @@ def _legacy_missing_build_allowed(value: str, *, expected_commit: str) -> bool:
     return True
 
 
+def command_public_identity(args: argparse.Namespace) -> dict[str, Any]:
+    config = ProductionConfig.load(Path(args.config))
+    url = f"{config.public_url}{config.health_path}"
+    try:
+        with open_health_url(
+            url, timeout=HEALTH_REQUEST_TIMEOUT_SECONDS, user_agent=HEALTH_USER_AGENT
+        ) as response:
+            if response.geturl() != url:
+                raise OpsError(f"public deployment identity redirected away from {url}")
+            if response.status != 200:
+                raise OpsError(f"public deployment identity request failed: HTTP {response.status}")
+            body, complete = _bounded_health_body(response)
+    except OpsError:
+        raise
+    except (HTTPError, URLError, OSError, HTTPException, IncompleteRead) as exc:
+        raise OpsError(
+            f"public deployment identity request failed: {type(exc).__name__}"
+        ) from exc
+    if not complete:
+        raise OpsError("public deployment identity response exceeded the health body bound")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise OpsError("public deployment identity response is not valid JSON") from exc
+    deployment = verify_public_deployment_identity(payload, config)
+    return {"url": url, "deployment": deployment}
+
+
 def command_status(args: argparse.Namespace) -> dict[str, Any]:
     client, config = _client(args)
     service = client.service(config.service_id)
@@ -1665,6 +1770,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--config", default=os.environ.get("PROD_CONFIG", "ops/render-production.json"))
     p.add_argument("--env-file", default=os.environ.get("RENDER_ENV_FILE", "~/.aweb-render/env"))
     sub = p.add_subparsers(dest="command", required=True)
+    sub.add_parser("public-identity")
     sub.add_parser("status")
     proof = sub.add_parser("health-client-proof")
     proof.add_argument("--expected-commit", default=os.environ.get("CURRENT_COMMIT", ""))
@@ -1711,7 +1817,9 @@ def main() -> int:
     try:
         if args.command in {"deploy", "verify", "rollback"} and not args.evidence_dir:
             raise OpsError("PROD_EVIDENCE_DIR/--evidence-dir is required for health evidence")
-        if args.command == "status":
+        if args.command == "public-identity":
+            result = command_public_identity(args)
+        elif args.command == "status":
             result = command_status(args)
         elif args.command == "health-client-proof":
             if not args.evidence_dir:
