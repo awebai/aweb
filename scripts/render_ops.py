@@ -12,20 +12,24 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from http.client import HTTPException
+from http.client import HTTPException, IncompleteRead
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
+SCRIPT_PATH = Path(__file__).resolve()
+REPOSITORY_ROOT = SCRIPT_PATH.parents[1]
+SCRIPT_RELATIVE_PATH = SCRIPT_PATH.relative_to(REPOSITORY_ROOT)
 API_BASE = "https://api.render.com/v1"
 IN_PROGRESS_STATUSES = {
     "created",
@@ -46,6 +50,7 @@ HEALTH_REQUEST_TIMEOUT_SECONDS = 20.0
 HEALTH_USER_AGENT = "aweb-library-deploy-gate/1.0"
 BLOCKED_BASELINE_USER_AGENT = "Python-urllib/3.12"
 HEALTH_BODY_CAPTURE_LIMIT = 16_384
+HEALTH_BODY_PREVIEW_LIMIT = 16_384
 HEALTH_HEADER_CAPTURE_LIMIT = 16_384
 HEALTH_DIAGNOSTIC_HEADERS = {
     "cf-cache-status",
@@ -76,34 +81,113 @@ class PermanentHealthHTTPError(OpsError):
         self.status = status
 
 
+def _open_directory_nofollow(path: Path) -> list[tuple[int, str, tuple[int, int]]]:
+    """Retain a no-follow descriptor chain for an existing absolute directory."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    descriptor = os.open("/", flags)
+    root_stat = os.fstat(descriptor)
+    chain = [(descriptor, "", (root_stat.st_dev, root_stat.st_ino))]
+    try:
+        for component in path.parts[1:]:
+            descriptor = os.open(component, flags, dir_fd=chain[-1][0])
+            component_stat = os.fstat(descriptor)
+            chain.append(
+                (descriptor, component, (component_stat.st_dev, component_stat.st_ino))
+            )
+        return chain
+    except OSError:
+        for opened, _, _ in reversed(chain):
+            os.close(opened)
+        raise
+
+
 class HealthEvidenceRun:
-    """Mode-private, bounded evidence for unauthenticated health probes."""
+    """Descriptor-anchored, mode-private evidence for unauthenticated health probes."""
 
     def __init__(
         self, path: Path, *, label: str, metadata: dict[str, Any] | None = None
     ) -> None:
         if not path.is_absolute():
             raise OpsError("health evidence directory must be absolute")
-        if path.exists() or path.is_symlink():
-            raise OpsError("health evidence directory must not already exist")
-        parent = path.parent
-        if not parent.is_dir() or parent.is_symlink() or parent.resolve() != parent:
-            raise OpsError("health evidence parent must be an existing non-symlink directory")
-        try:
-            path.relative_to(Path.cwd().resolve())
-        except ValueError:
-            pass
-        else:
+        normalized = Path(os.path.normpath(str(path)))
+        if normalized != path:
+            raise OpsError("health evidence directory must not contain traversal components")
+        if path == REPOSITORY_ROOT or REPOSITORY_ROOT in path.parents:
             raise OpsError("health evidence directory must be outside the repository")
-        path.mkdir(mode=0o700)
-        if path.stat().st_mode & 0o077:
-            raise OpsError("health evidence directory must have mode 0700")
         self.path = path
         self.label = label
-        self.metadata = metadata or {}
+        self.metadata = {"run_id": str(uuid.uuid4()), **(metadata or {})}
         self.sequence = 0
+        self._closed = False
+        try:
+            self._parent_chain = _open_directory_nofollow(path.parent)
+            self._parent_fd = self._parent_chain[-1][0]
+        except OSError as exc:
+            raise OpsError(
+                "health evidence parent must be an existing path without symlink components"
+            ) from exc
+        self._leaf = path.name
+        try:
+            os.mkdir(self._leaf, 0o700, dir_fd=self._parent_fd)
+            os.chmod(self._leaf, 0o700, dir_fd=self._parent_fd, follow_symlinks=False)
+            self._directory_fd = os.open(
+                self._leaf,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=self._parent_fd,
+            )
+            os.fchmod(self._directory_fd, 0o700)
+            directory_stat = os.fstat(self._directory_fd)
+            if not stat.S_ISDIR(directory_stat.st_mode) or stat.S_IMODE(
+                directory_stat.st_mode
+            ) != 0o700:
+                raise OpsError("health evidence directory must have exact mode 0700")
+            self._directory_identity = (directory_stat.st_dev, directory_stat.st_ino)
+            self.record({"probe_kind": "run-manifest", "outcome": "started"})
+        except FileExistsError as exc:
+            for descriptor, _, _ in reversed(self._parent_chain):
+                os.close(descriptor)
+            self._closed = True
+            raise OpsError("health evidence directory must not already exist") from exc
+        except Exception:
+            self.close()
+            raise
+
+    def _validate_anchor(self) -> None:
+        if self._closed:
+            raise OpsError("health evidence run is closed")
+        for index in range(1, len(self._parent_chain)):
+            parent_fd = self._parent_chain[index - 1][0]
+            descriptor, component, identity = self._parent_chain[index]
+            descriptor_stat = os.fstat(descriptor)
+            try:
+                component_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+            except OSError as exc:
+                raise OpsError("health evidence parent path changed") from exc
+            if (
+                not stat.S_ISDIR(component_stat.st_mode)
+                or (descriptor_stat.st_dev, descriptor_stat.st_ino) != identity
+                or (component_stat.st_dev, component_stat.st_ino) != identity
+            ):
+                raise OpsError("health evidence parent path changed")
+        directory_stat = os.fstat(self._directory_fd)
+        if (
+            not stat.S_ISDIR(directory_stat.st_mode)
+            or stat.S_IMODE(directory_stat.st_mode) != 0o700
+            or (directory_stat.st_dev, directory_stat.st_ino) != self._directory_identity
+        ):
+            raise OpsError("health evidence directory identity or mode changed")
+        try:
+            path_stat = os.stat(self._leaf, dir_fd=self._parent_fd, follow_symlinks=False)
+        except OSError as exc:
+            raise OpsError("health evidence directory path changed") from exc
+        if (
+            not stat.S_ISDIR(path_stat.st_mode)
+            or (path_stat.st_dev, path_stat.st_ino) != self._directory_identity
+        ):
+            raise OpsError("health evidence directory path changed")
 
     def record(self, event: dict[str, Any]) -> None:
+        self._validate_anchor()
         self.sequence += 1
         payload = {
             "schema": "library.health-evidence.v1",
@@ -112,18 +196,62 @@ class HealthEvidenceRun:
             "sequence": self.sequence,
             **event,
         }
-        destination = self.path / f"{self.sequence:03d}.json"
-        temporary = self.path / f".{destination.name}.{uuid.uuid4().hex}.tmp"
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        encoded = (json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n").encode()
+        destination = f"{self.sequence:03d}.json"
+        temporary = f".{destination}.{uuid.uuid4().hex}.tmp"
+        descriptor = -1
         try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                json.dump(payload, stream, ensure_ascii=False, sort_keys=True)
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, destination)
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+                dir_fd=self._directory_fd,
+            )
+            os.fchmod(descriptor, 0o600)
+            view = memoryview(encoded)
+            while view:
+                written = os.write(descriptor, view)
+                view = view[written:]
+            os.fsync(descriptor)
+            os.close(descriptor)
+            descriptor = -1
+            try:
+                os.link(
+                    temporary,
+                    destination,
+                    src_dir_fd=self._directory_fd,
+                    dst_dir_fd=self._directory_fd,
+                    follow_symlinks=False,
+                )
+            except FileExistsError as exc:
+                raise OpsError("health evidence artifact must not already exist") from exc
+            os.fsync(self._directory_fd)
         finally:
-            temporary.unlink(missing_ok=True)
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                os.unlink(temporary, dir_fd=self._directory_fd)
+            except FileNotFoundError:
+                pass
+
+    def finish(self, event: dict[str, Any]) -> None:
+        try:
+            self.record(event)
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        if getattr(self, "_closed", True):
+            return
+        self._closed = True
+        directory_descriptor = getattr(self, "_directory_fd", None)
+        if directory_descriptor is not None:
+            os.close(directory_descriptor)
+        for descriptor, _, _ in reversed(getattr(self, "_parent_chain", [])):
+            os.close(descriptor)
+
+    def __del__(self) -> None:
+        self.close()
 
 
 class NoHealthRedirects(HTTPRedirectHandler):
@@ -149,23 +277,57 @@ def open_health_url(url: str, *, timeout: float, user_agent: str = HEALTH_USER_A
     return build_opener(NoHealthRedirects()).open(request, timeout=timeout)
 
 
+def _control_safe(value: str) -> str:
+    return "".join(
+        char if ord(char) >= 32 and ord(char) != 127 else "�" for char in value
+    )
+
+
+def _header_evidence_size(
+    captured: dict[str, list[str]], omitted_names: list[str], omitted_count: int
+) -> int:
+    return len(
+        json.dumps(
+            {
+                "response_headers": captured,
+                "omitted_response_header_names": omitted_names,
+                "omitted_response_header_count": omitted_count,
+                "response_headers_complete": False,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    )
+
+
 def _health_headers(
     headers: Any,
-) -> tuple[dict[str, list[str]], list[str], bool]:
+) -> tuple[dict[str, list[str]], list[str], int, bool]:
     captured: dict[str, list[str]] = {}
-    omitted: set[str] = set()
-    remaining = HEALTH_HEADER_CAPTURE_LIMIT
+    omitted_names: list[str] = []
+    omitted_seen: set[str] = set()
+    omitted_count = 0
     complete = True
     if headers is None:
-        return captured, [], complete
+        return captured, omitted_names, omitted_count, complete
     for raw_name, raw_value in headers.items():
-        name = str(raw_name).lower()
+        name = _control_safe(str(raw_name).lower())
         if name not in HEALTH_DIAGNOSTIC_HEADERS:
-            omitted.add(name)
+            omitted_count += 1
+            if name in omitted_seen:
+                continue
+            candidate_names = sorted([*omitted_names, name])
+            if (
+                _header_evidence_size(captured, candidate_names, omitted_count)
+                <= HEALTH_HEADER_CAPTURE_LIMIT
+            ):
+                omitted_names = candidate_names
+                omitted_seen.add(name)
+            else:
+                complete = False
             continue
-        value = "".join(
-            char if ord(char) >= 32 and ord(char) != 127 else "�" for char in str(raw_value)
-        )
+        value = _control_safe(str(raw_value))
         if name == "location":
             try:
                 parts = urlsplit(value)
@@ -175,16 +337,47 @@ def _health_headers(
                 value = urlunsplit((parts.scheme, host, parts.path, "", ""))
             except ValueError:
                 value = "[invalid-location]"
-        encoded = value.encode("utf-8")
-        if len(encoded) > remaining:
-            value = encoded[:remaining].decode("utf-8", errors="replace")
+        candidate = {key: list(values) for key, values in captured.items()}
+        candidate.setdefault(name, []).append(value)
+        if (
+            _header_evidence_size(candidate, omitted_names, omitted_count)
+            <= HEALTH_HEADER_CAPTURE_LIMIT
+        ):
+            captured = candidate
+        else:
+            omitted_count += 1
             complete = False
-        captured.setdefault(name, []).append(value)
-        remaining -= min(len(encoded), remaining)
-        if remaining <= 0:
+            if name not in omitted_seen:
+                candidate_names = sorted([*omitted_names, name])
+                if (
+                    _header_evidence_size(captured, candidate_names, omitted_count)
+                    <= HEALTH_HEADER_CAPTURE_LIMIT
+                ):
+                    omitted_names = candidate_names
+                    omitted_seen.add(name)
+    while (
+        _header_evidence_size(captured, omitted_names, omitted_count)
+        > HEALTH_HEADER_CAPTURE_LIMIT
+        and omitted_names
+    ):
+        omitted_names.pop()
+        complete = False
+    return dict(sorted(captured.items())), omitted_names, omitted_count, complete
+
+
+def _body_preview(body: bytes) -> tuple[str, bool]:
+    tokens: list[str] = []
+    remaining = HEALTH_BODY_PREVIEW_LIMIT - 2  # JSON string quotes
+    complete = True
+    for byte in body:
+        token = chr(byte) if 32 <= byte <= 126 else f"\\x{byte:02x}"
+        serialized_length = len(json.dumps(token, ensure_ascii=True).encode()) - 2
+        if serialized_length > remaining:
             complete = False
             break
-    return dict(sorted(captured.items())), sorted(omitted), complete
+        tokens.append(token)
+        remaining -= serialized_length
+    return "".join(tokens), complete
 
 
 def _health_event(
@@ -200,7 +393,8 @@ def _health_event(
     phase: str,
     error_class: str | None = None,
 ) -> dict[str, Any]:
-    allowed_headers, omitted_headers, headers_complete = _health_headers(headers)
+    allowed_headers, omitted_headers, omitted_count, headers_complete = _health_headers(headers)
+    body_preview, preview_complete = _body_preview(body)
     return {
         "probe_kind": "unauthenticated-health",
         "phase": phase,
@@ -214,9 +408,10 @@ def _health_event(
         "response_headers": allowed_headers,
         "response_headers_complete": headers_complete,
         "omitted_response_header_names": omitted_headers,
-        "omitted_response_header_count": len(omitted_headers),
-        "body_encoding": "utf-8-with-replacement",
-        "body_utf8": body.decode("utf-8", errors="replace"),
+        "omitted_response_header_count": omitted_count,
+        "body_preview_encoding": "control-safe-ascii-with-hex-byte-escapes",
+        "body_preview": body_preview,
+        "body_preview_complete": preview_complete,
         "captured_body_bytes": len(body),
         "captured_body_sha256": hashlib.sha256(body).hexdigest(),
         "body_complete": body_complete,
@@ -234,13 +429,17 @@ class ProductionConfig:
     origin_url: str
     public_url: str
     health_path: str
+    source_sha256: str = field(default="", compare=False, repr=False)
 
     @classmethod
     def load(cls, path: Path) -> ProductionConfig:
         try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            config = cls(**raw)
-        except (OSError, json.JSONDecodeError, TypeError) as exc:
+            snapshot = path.read_bytes()
+            raw = json.loads(snapshot.decode("utf-8"))
+            if not isinstance(raw, dict) or "source_sha256" in raw:
+                raise TypeError("invalid config object")
+            config = cls(**raw, source_sha256=hashlib.sha256(snapshot).hexdigest())
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError) as exc:
             raise OpsError(f"invalid production config: {path}") from exc
         if not SERVICE_RE.fullmatch(config.service_id):
             raise OpsError("production config has an invalid Render service ID")
@@ -492,6 +691,16 @@ def wait_for_deploy(
     raise OpsError(f"timed out waiting for Render deploy {deploy_id}")
 
 
+def _bounded_health_body(stream: Any) -> tuple[bytes, bool]:
+    try:
+        body_with_marker = stream.read(HEALTH_BODY_CAPTURE_LIMIT + 1)
+        complete = len(body_with_marker) <= HEALTH_BODY_CAPTURE_LIMIT
+    except IncompleteRead as exc:
+        body_with_marker = exc.partial
+        complete = False
+    return body_with_marker[:HEALTH_BODY_CAPTURE_LIMIT], complete
+
+
 def verify_health(
     url: str,
     *,
@@ -503,9 +712,7 @@ def verify_health(
     started_mono = time.monotonic()
     try:
         with open_health_url(url, timeout=timeout, user_agent=user_agent) as response:
-            body_with_marker = response.read(HEALTH_BODY_CAPTURE_LIMIT + 1)
-            body_complete = len(body_with_marker) <= HEALTH_BODY_CAPTURE_LIMIT
-            body = body_with_marker[:HEALTH_BODY_CAPTURE_LIMIT]
+            body, body_complete = _bounded_health_body(response)
             if evidence is not None:
                 evidence.record(
                     _health_event(
@@ -532,9 +739,7 @@ def verify_health(
             payload = json.loads(body.decode("utf-8"))
     except HTTPError as exc:
         try:
-            body_with_marker = exc.read(HEALTH_BODY_CAPTURE_LIMIT + 1)
-            body_complete = len(body_with_marker) <= HEALTH_BODY_CAPTURE_LIMIT
-            body = body_with_marker[:HEALTH_BODY_CAPTURE_LIMIT]
+            body, body_complete = _bounded_health_body(exc)
         except Exception:
             body_complete = False
             body = b""
@@ -661,66 +866,136 @@ def verify_health_surfaces(
     )
 
 
-def _command_health_evidence(
-    args: argparse.Namespace, *, label: str, config: ProductionConfig
-) -> HealthEvidenceRun | None:
-    value = str(getattr(args, "evidence_dir", "") or "").strip()
-    if not value:
-        return None
+def _verifier_identity(
+    *, repo_root: Path = REPOSITORY_ROOT, script_path: Path = SCRIPT_PATH
+) -> dict[str, str]:
     try:
+        root = repo_root.resolve(strict=True)
+        script = script_path.resolve(strict=True)
+        relative_script = script.relative_to(root)
+        top_level = Path(
+            subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.strip()
+        ).resolve(strict=True)
+        if top_level != root:
+            raise OpsError("verifier repository root does not match the executing script")
         source_sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"], check=True, text=True, capture_output=True
-        ).stdout.strip()
-        config_bytes = Path(args.config).read_bytes()
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise OpsError("failed to identify health evidence source") from exc
-    return HealthEvidenceRun(
-        Path(value),
-        label=label,
-        metadata={
-            "verifier_source_sha": source_sha,
-            "config_sha256": hashlib.sha256(config_bytes).hexdigest(),
-            "service_id": config.service_id,
-            "expected_commit": str(
-                getattr(args, "commit", "") or getattr(args, "rollback_commit", "")
-            ),
-        },
-    )
-
-
-def command_health_client_proof(args: argparse.Namespace) -> dict[str, Any]:
-    config_path = Path(args.config)
-    config = ProductionConfig.load(config_path)
-    try:
-        source_sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
             check=True,
             text=True,
             capture_output=True,
         ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise OpsError("failed to identify verifier source commit") from exc
-    evidence = HealthEvidenceRun(
-        Path(args.evidence_dir),
-        label="health-client-proof",
-        metadata={
-            "verifier_source_sha": source_sha,
-            "config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
-            "service_id": config.service_id,
-        },
-    )
+        if not COMMIT_RE.fullmatch(source_sha):
+            raise OpsError("verifier source commit is invalid")
+        tracked_changes = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout
+        if tracked_changes:
+            raise OpsError("verifier repository has tracked changes")
+        committed_script = subprocess.run(
+            ["git", "-C", str(root), "show", f"HEAD:{relative_script.as_posix()}"],
+            check=True,
+            capture_output=True,
+        ).stdout
+        script_bytes = script.read_bytes()
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+        raise OpsError("failed to establish executing verifier identity") from exc
+    if script_bytes != committed_script:
+        raise OpsError("executing verifier does not match its source commit")
+    return {
+        "verifier_source_sha": source_sha,
+        "verifier_script_sha256": hashlib.sha256(script_bytes).hexdigest(),
+        "verifier_script_path": relative_script.as_posix(),
+    }
+
+
+def _command_health_evidence(
+    args: argparse.Namespace, *, label: str, config: ProductionConfig
+) -> HealthEvidenceRun:
+    value = str(getattr(args, "evidence_dir", "") or "").strip()
+    if not value:
+        raise OpsError("PROD_EVIDENCE_DIR/--evidence-dir is required for health evidence")
+    if not re.fullmatch(r"[0-9a-f]{64}", config.source_sha256):
+        raise OpsError("production config lacks an immutable source digest")
+    metadata = {
+        **_verifier_identity(),
+        "config_sha256": config.source_sha256,
+        "service_id": config.service_id,
+        "expected_commit": str(
+            getattr(args, "commit", "") or getattr(args, "rollback_commit", "")
+        ),
+    }
+    return HealthEvidenceRun(Path(value), label=label, metadata=metadata)
+
+
+def command_health_client_proof(args: argparse.Namespace) -> dict[str, Any]:
+    config = ProductionConfig.load(Path(args.config))
+    evidence = _command_health_evidence(args, label="health-client-proof", config=config)
     url = f"{config.public_url}{config.health_path}"
+    proof_minute = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M")
     try:
         verify_health(url, user_agent=BLOCKED_BASELINE_USER_AGENT, evidence=evidence)
     except PermanentHealthHTTPError as exc:
         if exc.status != 403:
-            evidence.record({"probe_kind": "run-outcome", "outcome": "unexpected-red"})
+            evidence.finish(
+                {
+                    "probe_kind": "run-outcome",
+                    "outcome": "failed",
+                    "stage": "blocked-baseline",
+                    "error_class": type(exc).__name__,
+                }
+            )
             raise
+    except Exception as exc:
+        evidence.finish(
+            {
+                "probe_kind": "run-outcome",
+                "outcome": "failed",
+                "stage": "blocked-baseline",
+                "error_class": type(exc).__name__,
+            }
+        )
+        raise
     else:
-        evidence.record({"probe_kind": "run-outcome", "outcome": "baseline-did-not-fail"})
+        evidence.finish(
+            {
+                "probe_kind": "run-outcome",
+                "outcome": "failed",
+                "stage": "blocked-baseline",
+                "error_class": "ExpectedHTTP403NotObserved",
+            }
+        )
         raise OpsError("blocked baseline User-Agent did not return HTTP 403")
-    payload = verify_health(url, user_agent=HEALTH_USER_AGENT, evidence=evidence)
-    evidence.record({"probe_kind": "run-outcome", "outcome": "red-green-pass"})
+    try:
+        payload = verify_health(url, user_agent=HEALTH_USER_AGENT, evidence=evidence)
+    except Exception as exc:
+        evidence.finish(
+            {
+                "probe_kind": "run-outcome",
+                "outcome": "failed",
+                "stage": "honest-gate",
+                "error_class": type(exc).__name__,
+            }
+        )
+        raise
+    if datetime.now(UTC).strftime("%Y-%m-%dT%H:%M") != proof_minute:
+        evidence.finish(
+            {
+                "probe_kind": "run-outcome",
+                "outcome": "failed",
+                "stage": "freshness",
+                "error_class": "CrossMinuteProof",
+            }
+        )
+        raise OpsError("health client proof crossed a UTC minute boundary; rerun it")
+    evidence.finish({"probe_kind": "run-outcome", "outcome": "red-green-pass"})
     return {
         "baseline_user_agent_status": 403,
         "gate_user_agent_status": 200,
@@ -770,26 +1045,37 @@ def command_deploy(args: argparse.Namespace) -> dict[str, Any]:
     rollback_id = require_deploy_id(args.rollback_deploy_id, "rollback deploy ID")
     if args.timeout <= 0:
         raise OpsError("timeout must be positive")
-    verify_git_target(
-        Path(args.repo_root),
-        commit,
-        expected_repo=config.repo,
-        expected_branch=config.branch,
-    )
-    service = client.service(config.service_id)
-    validate_service(service, config)
-    live = current_live(client.deploys(config.service_id))
-    require_rollback_artifact(live, deploy_id=rollback_id, commit=rollback_commit)
-    created = client.deploy(config.service_id, commit)
-    deploy_id = require_deploy_id(str(created.get("id") or ""), "created deploy ID")
-    if deploy_commit(created) != commit:
-        raise OpsError("Render created a deploy for the wrong commit")
-    finished = wait_for_deploy(client, config, deploy_id, commit, timeout_seconds=args.timeout)
-    final_live = current_live(client.deploys(config.service_id))
-    require_deploy(final_live, deploy_id=deploy_id, commit=commit)
-    health = verify_health_surfaces(
-        config, evidence=_command_health_evidence(args, label="deploy-health", config=config)
-    )
+    evidence = _command_health_evidence(args, label="deploy-health", config=config)
+    try:
+        verify_git_target(
+            Path(args.repo_root),
+            commit,
+            expected_repo=config.repo,
+            expected_branch=config.branch,
+        )
+        service = client.service(config.service_id)
+        validate_service(service, config)
+        live = current_live(client.deploys(config.service_id))
+        require_rollback_artifact(live, deploy_id=rollback_id, commit=rollback_commit)
+        created = client.deploy(config.service_id, commit)
+        deploy_id = require_deploy_id(str(created.get("id") or ""), "created deploy ID")
+        if deploy_commit(created) != commit:
+            raise OpsError("Render created a deploy for the wrong commit")
+        finished = wait_for_deploy(client, config, deploy_id, commit, timeout_seconds=args.timeout)
+        final_live = current_live(client.deploys(config.service_id))
+        require_deploy(final_live, deploy_id=deploy_id, commit=commit)
+        health = verify_health_surfaces(config, evidence=evidence)
+    except Exception as exc:
+        evidence.finish(
+            {
+                "probe_kind": "run-outcome",
+                "outcome": "failed",
+                "stage": "deploy",
+                "error_class": type(exc).__name__,
+            }
+        )
+        raise
+    evidence.finish({"probe_kind": "run-outcome", "outcome": "passed", "stage": "deploy"})
     return {"deploy": safe_deploy(finished), "rollback": safe_deploy(live), "health": health}
 
 
@@ -808,20 +1094,28 @@ def command_verify(args: argparse.Namespace) -> dict[str, Any]:
     client, config = _client(args)
     deploy_id = require_deploy_id(args.deploy_id)
     commit = require_commit(args.commit)
-    validate_service(client.service(config.service_id), config)
-    artifact = client.deploy_by_id(config.service_id, deploy_id)
-    require_deploy(artifact, deploy_id=deploy_id, commit=commit)
-    if artifact.get("status") != "live":
-        raise OpsError(f"expected deploy is not live: {artifact.get('status')}")
-    live = current_live(client.deploys(config.service_id))
-    require_deploy(live, deploy_id=deploy_id, commit=commit)
-    return {
-        "deploy": safe_deploy(artifact),
-        "health": verify_health_surfaces(
-            config,
-            evidence=_command_health_evidence(args, label="verify-health", config=config),
-        ),
-    }
+    evidence = _command_health_evidence(args, label="verify-health", config=config)
+    try:
+        validate_service(client.service(config.service_id), config)
+        artifact = client.deploy_by_id(config.service_id, deploy_id)
+        require_deploy(artifact, deploy_id=deploy_id, commit=commit)
+        if artifact.get("status") != "live":
+            raise OpsError(f"expected deploy is not live: {artifact.get('status')}")
+        live = current_live(client.deploys(config.service_id))
+        require_deploy(live, deploy_id=deploy_id, commit=commit)
+        health = verify_health_surfaces(config, evidence=evidence)
+    except Exception as exc:
+        evidence.finish(
+            {
+                "probe_kind": "run-outcome",
+                "outcome": "failed",
+                "stage": "verify",
+                "error_class": type(exc).__name__,
+            }
+        )
+        raise
+    evidence.finish({"probe_kind": "run-outcome", "outcome": "passed", "stage": "verify"})
+    return {"deploy": safe_deploy(artifact), "health": health}
 
 
 def command_rollback(args: argparse.Namespace) -> dict[str, Any]:
@@ -833,27 +1127,37 @@ def command_rollback(args: argparse.Namespace) -> dict[str, Any]:
     current_id = require_deploy_id(args.current_deploy_id, "current live deploy ID")
     if args.timeout <= 0:
         raise OpsError("timeout must be positive")
-    service = client.service(config.service_id)
-    validate_service(service, config)
-    live = current_live(client.deploys(config.service_id))
-    require_deploy(live, deploy_id=current_id, commit=current_commit)
-    if current_id == rollback_id:
-        raise OpsError("current live deploy and rollback artifact must be different")
-    artifact = client.deploy_by_id(config.service_id, rollback_id)
-    require_rollback_artifact(artifact, deploy_id=rollback_id, commit=rollback_commit)
-    created = client.rollback(config.service_id, rollback_id)
-    created_id = require_deploy_id(str(created.get("id") or ""), "created rollback deploy ID")
-    if deploy_commit(created) != rollback_commit:
-        raise OpsError("Render created a rollback for the wrong commit")
-    finished = wait_for_deploy(
-        client, config, created_id, rollback_commit, timeout_seconds=args.timeout
-    )
-    final_live = current_live(client.deploys(config.service_id))
-    require_deploy(final_live, deploy_id=created_id, commit=rollback_commit)
-    health = verify_health_surfaces(
-        config,
-        evidence=_command_health_evidence(args, label="rollback-health", config=config),
-    )
+    evidence = _command_health_evidence(args, label="rollback-health", config=config)
+    try:
+        service = client.service(config.service_id)
+        validate_service(service, config)
+        live = current_live(client.deploys(config.service_id))
+        require_deploy(live, deploy_id=current_id, commit=current_commit)
+        if current_id == rollback_id:
+            raise OpsError("current live deploy and rollback artifact must be different")
+        artifact = client.deploy_by_id(config.service_id, rollback_id)
+        require_rollback_artifact(artifact, deploy_id=rollback_id, commit=rollback_commit)
+        created = client.rollback(config.service_id, rollback_id)
+        created_id = require_deploy_id(str(created.get("id") or ""), "created rollback deploy ID")
+        if deploy_commit(created) != rollback_commit:
+            raise OpsError("Render created a rollback for the wrong commit")
+        finished = wait_for_deploy(
+            client, config, created_id, rollback_commit, timeout_seconds=args.timeout
+        )
+        final_live = current_live(client.deploys(config.service_id))
+        require_deploy(final_live, deploy_id=created_id, commit=rollback_commit)
+        health = verify_health_surfaces(config, evidence=evidence)
+    except Exception as exc:
+        evidence.finish(
+            {
+                "probe_kind": "run-outcome",
+                "outcome": "failed",
+                "stage": "rollback",
+                "error_class": type(exc).__name__,
+            }
+        )
+        raise
+    evidence.finish({"probe_kind": "run-outcome", "outcome": "passed", "stage": "rollback"})
     return {"rollback_deploy": safe_deploy(finished), "health": health}
 
 

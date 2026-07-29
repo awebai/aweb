@@ -88,10 +88,13 @@ Run `make prod-ops-test` before release planning. The mutation targets deliberat
 require `APPLY=1` and `CONFIRM_SERVICE_ID=srv-d8qm4jvavr4c73dhrmgg` in addition to the
 artifact pins. Deploy, verify, rollback, and health-client proof also require a fresh
 absolute `PROD_EVIDENCE_DIR` outside the repository. The directory must not exist; its
-parent must be an existing non-symlink path. The tooling creates it at mode 0700 and writes
-atomic mode-0600 versioned JSON artifacts. Each artifact records exact nonsecret request
-semantics, timing, bounded body bytes and their digest/completeness, an allowlist of
-diagnostic response headers, and omitted header names but never omitted values. The
+parent must be an existing path with no symlink component. The tooling retains no-follow
+directory descriptors, detects path replacement, creates the root at exact mode 0700, and
+publishes no-replace mode-0600 versioned JSON artifacts. The initial manifest exists before any
+mutation. Each artifact records verified source/config identity, exact nonsecret request
+semantics, timing, bounded body bytes and their captured-byte digest/completeness, an allowlist
+of diagnostic response headers, and bounded omitted header names/count but never omitted
+values. A terminal outcome survives HTTP, DNS, TLS, timeout, and no-response failure. The
 operator owns retention and cleanup.
 
 Example variable shape (placeholders only):
@@ -102,7 +105,8 @@ make prod-deploy \
   CONFIRM_SERVICE_ID=srv-... \
   PROD_COMMIT=<40-char-candidate> \
   ROLLBACK_DEPLOY_ID=dep-... \
-  ROLLBACK_COMMIT=<40-char-rollback>
+  ROLLBACK_COMMIT=<40-char-rollback> \
+  PROD_EVIDENCE_DIR=/absolute/operator-owned/deploy-run
 ```
 
 After the command returns the new deployment ID, verification is separate and explicit:
@@ -111,6 +115,7 @@ After the command returns the new deployment ID, verification is separate and ex
 make prod-verify \
   PROD_DEPLOY_ID=dep-... \
   PROD_COMMIT=<40-char-candidate> \
+  PROD_EVIDENCE_DIR=/absolute/operator-owned/verify-run \
   AW_SOURCE_HOME=/absolute/path/to/certified-agent-home \
   EXPECTED_PROFILE_VERSION=<approved-shelf-version> \
   EXPECTED_PROFILE_DIGEST=sha256:<64-hex-digest>
@@ -120,6 +125,8 @@ make prod-verify \
 The gate clones only into a private temporary directory and removes it on exit.
 
 ## Verification surfaces
+
+The isolated stack does not prove production routing, Cloudflare policy, deployed identity or shelf state; the preflight does not prove candidate bytes are live; only exact-ID post-deploy verification can close a deployment.
 
 Render metadata and health do not prove the functional release. Verification requires:
 
@@ -181,6 +188,7 @@ make prod-recovery \
   CURRENT_COMMIT=<40-char-current-live> \
   ROLLBACK_DEPLOY_ID=dep-... \
   ROLLBACK_COMMIT=<40-char-rollback> \
+  PROD_EVIDENCE_DIR=/absolute/operator-owned/recovery-run \
   AW_SOURCE_HOME=/absolute/path/to/certified-agent-home \
   EXPECTED_PROFILE_VERSION=<approved-shelf-version> \
   EXPECTED_PROFILE_DIGEST=sha256:<64-hex-digest>

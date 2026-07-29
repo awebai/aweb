@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import subprocess
 import threading
 from email.message import Message
@@ -57,6 +59,26 @@ def config(tmp_path: Path) -> render_ops.ProductionConfig:
         )
     )
     return render_ops.ProductionConfig.load(path)
+
+
+def write_config(path: Path, config: render_ops.ProductionConfig) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                key: getattr(config, key)
+                for key in (
+                    "service_id",
+                    "service_name",
+                    "region",
+                    "repo",
+                    "branch",
+                    "origin_url",
+                    "public_url",
+                    "health_path",
+                )
+            }
+        )
+    )
 
 
 def service(config: render_ops.ProductionConfig) -> dict:
@@ -387,9 +409,9 @@ def test_health_403_persists_bounded_allowlisted_evidence_before_raise(
             user_agent="Python-urllib/3.12",
             evidence=evidence,
         )
-    artifact = json.loads((evidence_path / "001.json").read_text())
+    artifact = json.loads((evidence_path / "002.json").read_text())
     assert artifact["status"] == 403
-    assert artifact["body_utf8"] == "error code: 1010"
+    assert artifact["body_preview"] == "error code: 1010"
     assert artifact["body_complete"] is True
     assert artifact["response_headers"] == {
         "cf-ray": ["ray-id"],
@@ -397,18 +419,250 @@ def test_health_403_persists_bounded_allowlisted_evidence_before_raise(
         "server": ["cloudflare"],
     }
     assert artifact["omitted_response_header_names"] == ["set-cookie"]
-    assert "must-not-persist" not in (evidence_path / "001.json").read_text()
+    assert "must-not-persist" not in (evidence_path / "002.json").read_text()
     assert evidence_path.stat().st_mode & 0o777 == 0o700
-    assert (evidence_path / "001.json").stat().st_mode & 0o777 == 0o600
+    assert (evidence_path / "002.json").stat().st_mode & 0o777 == 0o600
     with pytest.raises(render_ops.OpsError, match="must not already exist"):
         render_ops.HealthEvidenceRun(evidence_path, label="duplicate")
+    evidence.close()
+
+
+def test_evidence_refuses_inside_repo_from_subdirectory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(render_ops.REPOSITORY_ROOT / "scripts")
+    path = render_ops.REPOSITORY_ROOT / ".pytest-inside-evidence"
+    with pytest.raises(render_ops.OpsError, match="outside the repository"):
+        render_ops.HealthEvidenceRun(path, label="test")
+    assert not path.exists()
+
+
+def test_evidence_no_replace_preserves_existing_destination(tmp_path: Path) -> None:
+    evidence = render_ops.HealthEvidenceRun(tmp_path / "evidence", label="test")
+    destination = evidence.path / "002.json"
+    destination.write_text("preserve", encoding="utf-8")
+    with pytest.raises(render_ops.OpsError, match="must not already exist"):
+        evidence.record({"probe_kind": "test"})
+    assert destination.read_text(encoding="utf-8") == "preserve"
+    evidence.close()
+
+
+def test_evidence_enforces_exact_modes_under_restrictive_umask(tmp_path: Path) -> None:
+    previous = os.umask(0o777)
+    try:
+        evidence = render_ops.HealthEvidenceRun(tmp_path / "evidence", label="test")
+    finally:
+        os.umask(previous)
+    assert evidence.path.stat().st_mode & 0o777 == 0o700
+    assert (evidence.path / "001.json").stat().st_mode & 0o777 == 0o600
+    evidence.close()
+
+
+def test_evidence_refuses_symlink_component(tmp_path: Path) -> None:
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    symlink_parent = tmp_path / "linked"
+    symlink_parent.symlink_to(real_parent, target_is_directory=True)
+    with pytest.raises(render_ops.OpsError, match="without symlink components"):
+        render_ops.HealthEvidenceRun(symlink_parent / "evidence", label="test")
+
+
+def test_evidence_detects_parent_swap(tmp_path: Path) -> None:
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    evidence = render_ops.HealthEvidenceRun(parent / "evidence", label="test")
+    moved = tmp_path / "moved-parent"
+    parent.rename(moved)
+    parent.mkdir()
+    with pytest.raises(render_ops.OpsError, match="parent path changed"):
+        evidence.record({"probe_kind": "test"})
+    assert not (parent / "evidence" / "002.json").exists()
+    assert not (moved / "evidence" / "002.json").exists()
+    evidence.close()
+
+
+def test_evidence_detects_directory_swap(tmp_path: Path) -> None:
+    evidence = render_ops.HealthEvidenceRun(tmp_path / "evidence", label="test")
+    moved = tmp_path / "moved"
+    evidence.path.rename(moved)
+    evidence.path.mkdir()
+    with pytest.raises(render_ops.OpsError, match="path changed"):
+        evidence.record({"probe_kind": "test"})
+    assert not (evidence.path / "002.json").exists()
+    assert not (moved / "002.json").exists()
+    evidence.close()
+
+
+def test_header_evidence_has_one_total_bound_and_control_safe_preview() -> None:
+    class Headers:
+        def items(self):
+            values = [(f"X-Omitted-{index}-" + "n" * 300, "secret") for index in range(100)]
+            values.extend(("Server", "") for _ in range(100))
+            values.append(("Location", "https://user:secret@example.test:bad/a?token=x"))
+            return values
+
+    event = render_ops._health_event(
+        url="https://library.example/health",
+        user_agent="test",
+        started_wall="2026-01-01T00:00:00+00:00",
+        started_mono=0.0,
+        status=403,
+        headers=Headers(),
+        body=b"safe\x00\x1bunsafe",
+        body_complete=True,
+        phase="test",
+    )
+    header_size = render_ops._header_evidence_size(
+        event["response_headers"],
+        event["omitted_response_header_names"],
+        event["omitted_response_header_count"],
+    )
+    assert header_size <= render_ops.HEALTH_HEADER_CAPTURE_LIMIT
+    assert event["response_headers_complete"] is False
+    assert "\x00" not in event["body_preview"]
+    assert "\x1b" not in event["body_preview"]
+    assert "secret" not in json.dumps(event["response_headers"])
+
+
+def test_header_evidence_exact_boundary() -> None:
+    base_size = render_ops._header_evidence_size({"server": [""]}, [], 0)
+    exact_value = "x" * (render_ops.HEALTH_HEADER_CAPTURE_LIMIT - base_size)
+    exact_headers = Message()
+    exact_headers.add_header("Server", exact_value)
+    captured, omitted, omitted_count, complete = render_ops._health_headers(exact_headers)
+    assert render_ops._header_evidence_size(captured, omitted, omitted_count) == (
+        render_ops.HEALTH_HEADER_CAPTURE_LIMIT
+    )
+    assert complete is True
+
+    oversized_headers = Message()
+    oversized_headers.add_header("Server", exact_value + "x")
+    captured, omitted, omitted_count, complete = render_ops._health_headers(oversized_headers)
+    assert render_ops._header_evidence_size(captured, omitted, omitted_count) <= (
+        render_ops.HEALTH_HEADER_CAPTURE_LIMIT
+    )
+    assert complete is False
+
+
+def test_verifier_identity_is_repo_anchored_and_rejects_dirty_script(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    script = repo / "scripts" / "render_ops.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("print('clean')\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "initial",
+        ],
+        check=True,
+    )
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    monkeypatch.chdir(unrelated)
+    identity = render_ops._verifier_identity(repo_root=repo, script_path=script)
+    assert len(identity["verifier_source_sha"]) == 40
+    assert identity["verifier_script_sha256"] == hashlib.sha256(script.read_bytes()).hexdigest()
+
+    script.write_text("print('dirty')\n", encoding="utf-8")
+    with pytest.raises(render_ops.OpsError, match="tracked changes"):
+        render_ops._verifier_identity(repo_root=repo, script_path=script)
+
+
+def test_config_digest_uses_same_snapshot_as_parsed_config(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig, tmp_path: Path
+) -> None:
+    path = tmp_path / "production.json"
+    write_config(path, config)
+    expected_snapshot = path.read_bytes()
+    loaded = render_ops.ProductionConfig.load(path)
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        render_ops,
+        "_verifier_identity",
+        lambda: {
+            "verifier_source_sha": "a" * 40,
+            "verifier_script_sha256": "b" * 64,
+            "verifier_script_path": "scripts/render_ops.py",
+        },
+    )
+    evidence = render_ops._command_health_evidence(
+        SimpleNamespace(evidence_dir=str(tmp_path / "evidence")),
+        label="test",
+        config=loaded,
+    )
+    manifest = json.loads((evidence.path / "001.json").read_text())
+    assert manifest["run_metadata"]["config_sha256"] == hashlib.sha256(
+        expected_snapshot
+    ).hexdigest()
+    evidence.close()
+
+
+def test_health_proof_records_terminal_outcome_for_each_failure_stage(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig, tmp_path: Path
+) -> None:
+    config_path = tmp_path / "production.json"
+    write_config(config_path, config)
+    monkeypatch.setattr(
+        render_ops,
+        "_verifier_identity",
+        lambda: {
+            "verifier_source_sha": "a" * 40,
+            "verifier_script_sha256": "b" * 64,
+            "verifier_script_path": "scripts/render_ops.py",
+        },
+    )
+
+    monkeypatch.setattr(
+        render_ops,
+        "verify_health",
+        lambda *args, **kwargs: (_ for _ in ()).throw(render_ops.TransientHealthError("dns")),
+    )
+    baseline_dir = tmp_path / "baseline-failure"
+    with pytest.raises(render_ops.TransientHealthError):
+        render_ops.command_health_client_proof(
+            SimpleNamespace(config=str(config_path), evidence_dir=str(baseline_dir))
+        )
+    baseline_outcome = json.loads((baseline_dir / "002.json").read_text())
+    assert baseline_outcome["outcome"] == "failed"
+    assert baseline_outcome["stage"] == "blocked-baseline"
+
+    calls = 0
+
+    def gate_failure(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise render_ops.PermanentHealthHTTPError("expected", status=403)
+        raise render_ops.TransientHealthError("tls")
+
+    monkeypatch.setattr(render_ops, "verify_health", gate_failure)
+    gate_dir = tmp_path / "gate-failure"
+    with pytest.raises(render_ops.TransientHealthError):
+        render_ops.command_health_client_proof(
+            SimpleNamespace(config=str(config_path), evidence_dir=str(gate_dir))
+        )
+    gate_outcome = json.loads((gate_dir / "002.json").read_text())
+    assert gate_outcome["outcome"] == "failed"
+    assert gate_outcome["stage"] == "honest-gate"
 
 
 def test_health_client_proof_requires_same_path_red_then_green(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig, tmp_path: Path
 ) -> None:
     config_path = tmp_path / "production.json"
-    config_path.write_text(json.dumps(config.__dict__))
+    write_config(config_path, config)
     evidence_path = tmp_path / "proof"
     calls: list[tuple[str, str]] = []
 
@@ -428,6 +682,15 @@ def test_health_client_proof_requires_same_path_red_then_green(
         return {"status": "ok", "service": "library"}
 
     monkeypatch.setattr(render_ops, "verify_health", proof_health)
+    monkeypatch.setattr(
+        render_ops,
+        "_verifier_identity",
+        lambda: {
+            "verifier_source_sha": "a" * 40,
+            "verifier_script_sha256": "b" * 64,
+            "verifier_script_path": "scripts/render_ops.py",
+        },
+    )
     args = SimpleNamespace(config=str(config_path), evidence_dir=str(evidence_path))
     result = render_ops.command_health_client_proof(args)
     expected_url = f"{config.public_url}/health"
@@ -437,7 +700,7 @@ def test_health_client_proof_requires_same_path_red_then_green(
     ]
     assert result["baseline_user_agent_status"] == 403
     assert result["gate_user_agent_status"] == 200
-    assert json.loads((evidence_path / "003.json").read_text())["outcome"] == "red-green-pass"
+    assert json.loads((evidence_path / "004.json").read_text())["outcome"] == "red-green-pass"
 
 
 def test_health_invalid_utf8_is_bounded_transient(
@@ -507,7 +770,7 @@ def test_health_interrupted_body_read_is_transient(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(
         render_ops, "open_health_url", lambda url, timeout, user_agent: Response()
     )
-    with pytest.raises(render_ops.TransientHealthError, match="IncompleteRead"):
+    with pytest.raises(render_ops.OpsError, match="exceeded evidence bound"):
         render_ops.verify_health("https://library.example/health")
 
 
@@ -654,6 +917,23 @@ class FakeClient:
         raise AssertionError(deploy_id)
 
 
+class RecordingEvidence:
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def record(self, event: dict) -> None:
+        self.events.append(event)
+
+    def finish(self, event: dict) -> None:
+        self.record(event)
+
+
+def stub_command_evidence(monkeypatch: pytest.MonkeyPatch) -> RecordingEvidence:
+    evidence = RecordingEvidence()
+    monkeypatch.setattr(render_ops, "_command_health_evidence", lambda *args, **kwargs: evidence)
+    return evidence
+
+
 def common_args(config: render_ops.ProductionConfig) -> SimpleNamespace:
     return SimpleNamespace(
         apply=True,
@@ -668,6 +948,87 @@ def common_args(config: render_ops.ProductionConfig) -> SimpleNamespace:
     )
 
 
+@pytest.mark.parametrize("command_name", ["deploy", "rollback"])
+@pytest.mark.parametrize("invalid_kind", ["relative", "existing", "inside-repo", "symlink"])
+def test_invalid_evidence_path_prevents_every_mutation_call(
+    monkeypatch: pytest.MonkeyPatch,
+    config: render_ops.ProductionConfig,
+    tmp_path: Path,
+    command_name: str,
+    invalid_kind: str,
+) -> None:
+    artifact = deploy("dep-rollback", "a" * 40, "deactivated")
+    client = FakeClient(config, artifact, current=deploy("dep-candidate", "b" * 40))
+    monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
+    monkeypatch.setattr(
+        render_ops,
+        "_verifier_identity",
+        lambda: {
+            "verifier_source_sha": "a" * 40,
+            "verifier_script_sha256": "b" * 64,
+            "verifier_script_path": "scripts/render_ops.py",
+        },
+    )
+    if invalid_kind == "relative":
+        evidence_path = Path("relative-evidence")
+    elif invalid_kind == "existing":
+        evidence_path = tmp_path / "existing"
+        evidence_path.mkdir()
+    elif invalid_kind == "inside-repo":
+        evidence_path = render_ops.REPOSITORY_ROOT / f".pytest-evidence-{tmp_path.name}"
+    else:
+        real_parent = tmp_path / "real"
+        real_parent.mkdir()
+        linked_parent = tmp_path / "linked"
+        linked_parent.symlink_to(real_parent, target_is_directory=True)
+        evidence_path = linked_parent / "evidence"
+    args = common_args(config)
+    args.evidence_dir = str(evidence_path)
+    command = render_ops.command_deploy if command_name == "deploy" else render_ops.command_rollback
+    with pytest.raises(render_ops.OpsError):
+        command(args)
+    assert client.posts == []
+    assert not (
+        invalid_kind == "inside-repo" and evidence_path.exists()
+    ), "inside-repository evidence path was created"
+
+
+def test_deploy_persists_initial_manifest_before_mutation(
+    monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig, tmp_path: Path
+) -> None:
+    evidence_path = tmp_path / "evidence"
+
+    class ManifestClient(FakeClient):
+        def deploy(self, service_id: str, commit: str) -> dict:
+            assert (evidence_path / "001.json").exists()
+            return super().deploy(service_id, commit)
+
+    client = ManifestClient(config, deploy("dep-rollback", "a" * 40))
+    monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
+    monkeypatch.setattr(
+        render_ops,
+        "_verifier_identity",
+        lambda: {
+            "verifier_source_sha": "a" * 40,
+            "verifier_script_sha256": "b" * 64,
+            "verifier_script_path": "scripts/render_ops.py",
+        },
+    )
+    monkeypatch.setattr(render_ops, "verify_git_target", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        render_ops,
+        "wait_for_deploy",
+        lambda c, cfg, deploy_id, commit, timeout_seconds: deploy(deploy_id, commit),
+    )
+    monkeypatch.setattr(
+        render_ops, "verify_health_surfaces", lambda cfg, **kwargs: {"ok": True}
+    )
+    args = common_args(config)
+    args.evidence_dir = str(evidence_path)
+    render_ops.command_deploy(args)
+    assert client.posts == [("deploy", "b" * 40)]
+
+
 def test_deploy_requires_apply(config: render_ops.ProductionConfig) -> None:
     args = common_args(config)
     args.apply = False
@@ -678,6 +1039,7 @@ def test_deploy_requires_apply(config: render_ops.ProductionConfig) -> None:
 def test_command_deploy_pins_rollback_and_clears_through_client(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
 ) -> None:
+    stub_command_evidence(monkeypatch)
     artifact = deploy("dep-rollback", "a" * 40)
     client = FakeClient(config, artifact)
     monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
@@ -699,6 +1061,7 @@ def test_command_deploy_pins_rollback_and_clears_through_client(
 def test_command_rollback_uses_exact_artifact(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
 ) -> None:
+    stub_command_evidence(monkeypatch)
     artifact = deploy("dep-rollback", "a" * 40, "deactivated")
     current = deploy("dep-candidate", "b" * 40)
     client = FakeClient(config, artifact, current=current)
@@ -719,6 +1082,7 @@ def test_command_rollback_uses_exact_artifact(
 def test_command_rollback_requires_exact_artifact(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
 ) -> None:
+    stub_command_evidence(monkeypatch)
     artifact = deploy("dep-rollback", "c" * 40, "deactivated")
     client = FakeClient(config, artifact, current=deploy("dep-candidate", "b" * 40))
     monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
@@ -730,6 +1094,7 @@ def test_command_rollback_requires_exact_artifact(
 def test_command_rollback_rejects_failed_artifact_before_mutation(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
 ) -> None:
+    stub_command_evidence(monkeypatch)
     artifact = deploy("dep-rollback", "a" * 40, "build_failed")
     client = FakeClient(config, artifact, current=deploy("dep-candidate", "b" * 40))
     monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
@@ -741,6 +1106,8 @@ def test_command_rollback_rejects_failed_artifact_before_mutation(
 def test_command_rollback_detects_competing_deploy_after_mutation(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
 ) -> None:
+    stub_command_evidence(monkeypatch)
+
     class ConcurrentClient(FakeClient):
         def deploys(self, service_id: str, limit: int = 20) -> list[dict]:
             artifacts = super().deploys(service_id, limit)
@@ -764,6 +1131,7 @@ def test_command_rollback_detects_competing_deploy_after_mutation(
 def test_command_rollback_rejects_unpinned_current_live(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
 ) -> None:
+    stub_command_evidence(monkeypatch)
     artifact = deploy("dep-rollback", "a" * 40, "deactivated")
     client = FakeClient(config, artifact, current=deploy("dep-other", "c" * 40))
     monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
@@ -775,6 +1143,7 @@ def test_command_rollback_rejects_unpinned_current_live(
 def test_command_verify_requires_exact_current_live(
     monkeypatch: pytest.MonkeyPatch, config: render_ops.ProductionConfig
 ) -> None:
+    stub_command_evidence(monkeypatch)
     artifact = deploy("dep-candidate", "b" * 40)
     client = FakeClient(config, artifact)
     monkeypatch.setattr(render_ops, "_client", lambda args: (client, config))
