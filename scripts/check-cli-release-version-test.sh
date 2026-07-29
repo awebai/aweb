@@ -34,12 +34,12 @@ make_repo() {
 
 make_cli_version() {
   local work="$1"
-  make -s -C "$work" -f TestMakefile print-cli-version
+  make -s --no-print-directory -C "$work" -f TestMakefile print-cli-version
 }
 
 run_guard() {
   local work="$1" proposal="$2"
-  make -s -C "$work" -f TestMakefile \
+  make -s --no-print-directory -C "$work" -f TestMakefile \
     release-cli-version-check CLI_VERSION="$proposal"
 }
 
@@ -57,9 +57,9 @@ else
 fi
 
 a2a_dry_run="$(
-  make -s -n -C "$work" -f TestMakefile release-a2a-gateway-check
-  make -s -n -C "$work" -f TestMakefile release-a2a-gateway-tag
-  make -s -n -C "$work" -f TestMakefile release-a2a-gateway-push
+  make -s -n --no-print-directory -C "$work" -f TestMakefile release-a2a-gateway-check
+  make -s -n --no-print-directory -C "$work" -f TestMakefile release-a2a-gateway-tag
+  make -s -n --no-print-directory -C "$work" -f TestMakefile release-a2a-gateway-push
 )"
 if grep -Fq -- '--build-arg VERSION=1.26.30' <<<"$a2a_dry_run" \
   && grep -Fq -- '--build-arg RELEASE_TAG=a2a-gw-v1.26.30' <<<"$a2a_dry_run" \
