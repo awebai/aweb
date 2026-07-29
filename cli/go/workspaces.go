@@ -58,6 +58,11 @@ type DeleteWorkspaceResponse struct {
 	Alias           string `json:"alias"`
 	DeletedAt       string `json:"deleted_at"`
 	IdentityDeleted bool   `json:"identity_deleted"`
+	// ClaimsReleased is nil when the server did not report a count, which is what
+	// a server older than the field does. Absent is not zero: reporting "released
+	// 0 claims" for a delete that released three would assert a number nobody
+	// sent.
+	ClaimsReleased *int `json:"claims_released"`
 }
 
 type WorkspaceTeamParams struct {

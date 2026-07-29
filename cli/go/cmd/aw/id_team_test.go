@@ -425,21 +425,79 @@ func TestRunTeamRemoveMemberHostedPostsCloudRevokeByCertificateID(t *testing.T) 
 	}
 }
 
-func TestPostHostedTeamRemoveMemberMapsNotFoundStatusIn2xxResponseToAlreadyRemoved(t *testing.T) {
+// The endpoint sends removed and not_found as distinct values and both are
+// success. Collapsing them into one word is what let a call against a name that
+// had never been a member report a removal, so the transport must hand both
+// through unchanged.
+func TestPostHostedTeamRemoveMemberPreservesTheStatusItReceived(t *testing.T) {
+	for _, wireStatus := range []string{"removed", "not_found"} {
+		t.Run(wireStatus, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/default:alice.aweb.ai/agents/remove-member" {
+					t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": wireStatus, "team_id": "default:alice.aweb.ai", "certificate_id": "cert-456"})
+			}))
+			defer server.Close()
+
+			resp, err := postHostedTeamRemoveMember(context.Background(), server.URL, "aw_sk_owner", "default:alice.aweb.ai", hostedTeamRemoveMemberRequest{CertificateID: "cert-456"})
+			if err != nil {
+				t.Fatalf("postHostedTeamRemoveMember: %v", err)
+			}
+			if resp.Status != wireStatus || resp.TeamID != "default:alice.aweb.ai" || resp.CertificateID != "cert-456" {
+				t.Fatalf("response=%+v, want status %q", resp, wireStatus)
+			}
+		})
+	}
+}
+
+// The two wire statuses must reach the caller as two different results. A single
+// result for both is the defect: it asserts a removal the command never
+// established.
+func TestRevokeHostedTeamCertificateDistinguishesRevokedFromNothingRevoked(t *testing.T) {
+	for wireStatus, wantResult := range map[string]string{
+		"removed":   certificateRevoked,
+		"not_found": certificateNothingReported,
+	} {
+		t.Run(wireStatus, func(t *testing.T) {
+			resetTeamRemoveMemberGlobals(t)
+			t.Chdir(t.TempDir())
+			t.Setenv(initAPIKeyEnvVar, "aw_sk_env")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": wireStatus, "certificate_id": "cert-456"})
+			}))
+			defer server.Close()
+			teamRemoveAwebURL = server.URL
+
+			result, err := revokeHostedTeamCertificate(context.Background(), "default:alice.aweb.ai", "alice.aweb.ai/ghost", "")
+			if err != nil {
+				t.Fatalf("revokeHostedTeamCertificate: %v", err)
+			}
+			if result.Result != wantResult {
+				t.Fatalf("result=%q, want %q", result.Result, wantResult)
+			}
+			if result.Result == certificateNothingReported && strings.Contains(result.Result, "removed") {
+				t.Fatalf("a result for a revoke that revoked nothing must not claim a removal: %q", result.Result)
+			}
+		})
+	}
+}
+
+// An unrecognised status must not read as success. A revocation command with no
+// failure mode cannot establish that access was removed.
+func TestRevokeHostedTeamCertificateRefusesAnUnrecognisedStatus(t *testing.T) {
+	resetTeamRemoveMemberGlobals(t)
+	t.Chdir(t.TempDir())
+	t.Setenv(initAPIKeyEnvVar, "aw_sk_env")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/default:alice.aweb.ai/agents/remove-member" {
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "not_found", "team_id": "default:alice.aweb.ai", "certificate_id": "cert-456"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "queued", "certificate_id": "cert-456"})
 	}))
 	defer server.Close()
+	teamRemoveAwebURL = server.URL
 
-	resp, err := postHostedTeamRemoveMember(context.Background(), server.URL, "aw_sk_owner", "default:alice.aweb.ai", hostedTeamRemoveMemberRequest{CertificateID: "cert-456"})
-	if err != nil {
-		t.Fatalf("postHostedTeamRemoveMember: %v", err)
-	}
-	if resp.Status != "already_removed" || resp.TeamID != "default:alice.aweb.ai" || resp.CertificateID != "cert-456" {
-		t.Fatalf("response=%+v", resp)
+	_, err := revokeHostedTeamCertificate(context.Background(), "default:alice.aweb.ai", "alice.aweb.ai/reviewer", "")
+	if err == nil || !strings.Contains(err.Error(), "unrecognised status") {
+		t.Fatalf("error=%v, want a refusal naming the unrecognised status", err)
 	}
 }
 
@@ -3595,7 +3653,7 @@ func TestTeamRemoveMemberFlow(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, string(out))
 	}
-	if got["status"] != "removed" {
+	if got["status"] != "revoked" {
 		t.Fatalf("status=%v", got["status"])
 	}
 	if gotRevokePayload["certificate_id"] != "cert-42" {
@@ -3659,7 +3717,7 @@ func TestTeamRemoveMemberFlowCrossNamespaceMember(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, string(out))
 	}
-	if got["status"] != "removed" {
+	if got["status"] != "revoked" {
 		t.Fatalf("status=%v", got["status"])
 	}
 	if got["member_address"] != "partner.com/bob" {
@@ -4528,5 +4586,28 @@ func TestTeamSwitchRejectsUnknownMembershipWithAvailableTeams(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `team "unknown:acme.com" is not present in local team memberships; available: backend:acme.com, ops:acme.com`) {
 		t.Fatalf("unexpected output:\n%s", string(out))
+	}
+}
+
+// An empty status is the most unknown answer available and must not take the
+// strongest branch. A 200 from something that is not this endpoint, carrying JSON
+// with no status field, is the wrong-URL case the 404 guard exists for arriving
+// through a different door.
+func TestRevokeHostedTeamCertificateRefusesAnEmptyStatus(t *testing.T) {
+	resetTeamRemoveMemberGlobals(t)
+	t.Chdir(t.TempDir())
+	t.Setenv(initAPIKeyEnvVar, "aw_sk_env")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"certificate_id": "cert-456"})
+	}))
+	defer server.Close()
+	teamRemoveAwebURL = server.URL
+
+	result, err := revokeHostedTeamCertificate(context.Background(), "default:alice.aweb.ai", "alice.aweb.ai/reviewer", "")
+	if err == nil {
+		t.Fatalf("an empty status was accepted, result=%+v", result)
+	}
+	if result.Result == certificateRevoked {
+		t.Fatalf("an empty status reported a revocation")
 	}
 }

@@ -1000,3 +1000,139 @@ async def test_delete_workspace_rejects_cross_team_request(aweb_cloud_db):
     )
     assert workspace_row["deleted_at"] is None
     assert agent_row["deleted_at"] is None
+
+
+async def _seed_local_workspace_with_claims(
+    aweb_cloud_db, team_sk, team_did_key, agent_sk, agent_did_key, *, task_refs
+):
+    """Seed a stale local workspace holding one claim per task ref.
+
+    Identity scope is set explicitly to local, and asserted by the caller, so a
+    test built on this fixture cannot pass through the blank-scope re-entry path
+    that returns success without running the cascade.
+    """
+    team_id = "backend:acme.com"
+    workspace_id = uuid4()
+    agent_id = uuid4()
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        agent_did_key,
+        team_id=team_id,
+        alias="retiree",
+        identity_scope="local",
+    )
+    headers = _signed_request(agent_sk, agent_did_key, team_id)
+    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        team_id,
+        "acme.com",
+        "backend",
+        team_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, $3, $4, 'local', 'developer')
+        """,
+        agent_id,
+        team_id,
+        agent_did_key,
+        "retiree",
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        workspace_id,
+        team_id,
+        agent_id,
+        "retiree",
+        "/tmp/retiree-worktree",
+        datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    for task_ref in task_refs:
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.task_claims}}
+                (team_id, workspace_id, alias, human_name, task_ref, claimed_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            team_id,
+            workspace_id,
+            "retiree",
+            "",
+            task_ref,
+            datetime.now(timezone.utc),
+        )
+    return team_id, agent_id, workspace_id, headers
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_reports_the_claims_it_released(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+    _, agent_id, workspace_id, headers = await _seed_local_workspace_with_claims(
+        aweb_cloud_db,
+        team_sk,
+        team_did_key,
+        agent_sk,
+        agent_did_key,
+        task_refs=("backend-11", "backend-12", "backend-13"),
+    )
+
+    scope_before = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT identity_scope FROM {{tables.agents}} WHERE agent_id = $1",
+        agent_id,
+    )
+    assert scope_before == "local"
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=_FakeRedis())
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    remaining = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
+        workspace_id,
+    )
+    assert remaining == 0
+    assert body["claims_released"] == 3
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_reports_zero_claims_when_it_released_none(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    agent_sk, _, agent_did_key = _make_keypair()
+    _, _, workspace_id, headers = await _seed_local_workspace_with_claims(
+        aweb_cloud_db,
+        team_sk,
+        team_did_key,
+        agent_sk,
+        agent_did_key,
+        task_refs=(),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key, redis=_FakeRedis())
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["claims_released"] == 0

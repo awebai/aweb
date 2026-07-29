@@ -2240,7 +2240,55 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Resolve registry URL: explicit flag → identity.yaml → default.
+	registryURL := resolveTeamRemoveRegistryURL(registry)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if certificateID == "" {
+		// The typed namespace is discarded here on purpose-for-now: the alias is
+		// resolved against the TEAM's namespace, because cross-namespace membership
+		// is real and the alias is the key within a team. What is missing is any
+		// check that the member the alias resolves to is the one the operator named,
+		// and the output then reports the typed address rather than the resolved one.
+		// aweb-aaum.7 owns that verification and will land it in one helper covering
+		// this site and the copy in team_human.go revokeTeamCertificate. Two copies
+		// until then, deliberately, because the correction does not exist yet and
+		// merging two wrong copies buys nothing.
+		// The add path in this file already does it correctly: runTeamAddMember binds
+		// memberDomain and passes it through to the namespace address lookup.
+		_, memberName, err := parseAddress(member)
+		if err != nil {
+			return err
+		}
+		memberRef, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, memberName)
+		if err != nil {
+			// A 404 here is ambiguous: it looks the same whether the member has
+			// no active certificate or the request never reached the registry at
+			// all. The command cannot establish the postcondition, so it fails
+			// rather than reporting a removal it did not make.
+			return fmt.Errorf("resolve team member %s in %s: %w", memberName, teamID, err)
+		}
+		certificateID = strings.TrimSpace(memberRef.CertificateID)
+	}
+
+	result, err := revokeRegistryTeamCertificate(ctx, registry, registryURL, domain, team, certificateID, teamKey)
+	if err != nil {
+		return err
+	}
+
+	printOutput(teamRemoveMemberOutput{
+		Status:        result.Result,
+		TeamID:        teamID,
+		MemberAddress: member,
+		CertificateID: certificateID,
+	}, formatTeamRemoveMember)
+	return nil
+}
+
+// resolveTeamRemoveRegistryURL resolves the registry origin for a removal:
+// explicit flag → identity.yaml → default.
+func resolveTeamRemoveRegistryURL(registry *awid.RegistryClient) string {
 	registryURL := strings.TrimSpace(teamRemoveRegistryURL)
 	if registryURL == "" {
 		if workingDir, wdErr := os.Getwd(); wdErr == nil {
@@ -2252,66 +2300,126 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 	if registryURL == "" {
 		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
 	}
+	return registryURL
+}
 
+// revokeRegistryTeamCertificate revokes under local team-controller authority.
+//
+// The registry answers a revoke that changed nothing in two ways, and they mean
+// different things. 409 says the certificate exists and was already revoked: the
+// member holds no active certificate, which is the postcondition, so it is
+// success. 404 says no such certificate, which is indistinguishable from a
+// request that never reached the registry, so it stays an error. A 409 carries
+// that meaning wherever it arrives, including after a by-name resolve raced a
+// concurrent revoke.
+func revokeRegistryTeamCertificate(
+	ctx context.Context,
+	registry *awid.RegistryClient,
+	registryURL, domain, team, certificateID string,
+	teamKey ed25519.PrivateKey,
+) (certificateStoreResult, error) {
+	result := certificateStoreResult{CertificateID: certificateID}
+	err := registry.RevokeCertificate(ctx, registryURL, domain, team, certificateID, teamKey)
+	if err == nil {
+		result.Result = certificateRevoked
+		return result, nil
+	}
+	if registryReportsCertificateAlreadyRevoked(err) {
+		result.Result = certificateAlreadyRevoked
+		return result, nil
+	}
+	return certificateStoreResult{}, fmt.Errorf("revoke certificate: %w", err)
+}
+
+// registryReportsCertificateAlreadyRevoked matches the registry's own
+// already-revoked answer, not any 409. The status alone is not enough: a
+// revocation command must not read an unrelated conflict as a completed
+// revocation.
+//
+// The detail text is a cross-repo coupling: awid raises
+// HTTPException(409, "Certificate already revoked") from revoke_certificate in
+// awid/src/awid_service/routes/teams.py, immediately after re-looking-up a
+// certificate whose conditional UPDATE changed no row. Rewording that raise costs
+// this distinction, and the failure is safe rather than silent - an unmatched 409
+// falls through to a loud error - but the caller goes back to being unable to tell
+// an already-revoked certificate from one that was never there.
+func registryReportsCertificateAlreadyRevoked(err error) bool {
+	status, ok := awid.HTTPStatusCode(err)
+	if !ok || status != http.StatusConflict {
+		return false
+	}
+	body, ok := awid.HTTPErrorBody(err)
+	if !ok {
+		return false
+	}
+	var envelope struct {
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal([]byte(body), &envelope) != nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(envelope.Detail), "already revoked")
+}
+
+func runHostedTeamRemoveMember(teamID, memberAddress, certificateID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	if certificateID == "" {
-		_, memberName, err := parseAddress(member)
-		if err != nil {
-			return err
-		}
-		memberRef, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, memberName)
-		if err != nil {
-			return fmt.Errorf("resolve team member %s in %s: %w", memberName, teamID, err)
-		}
-		certificateID = strings.TrimSpace(memberRef.CertificateID)
+	result, err := revokeHostedTeamCertificate(ctx, teamID, memberAddress, certificateID)
+	if err != nil {
+		return err
 	}
-
-	if err := registry.RevokeCertificate(ctx, registryURL, domain, team, certificateID, teamKey); err != nil {
-		return fmt.Errorf("revoke certificate: %w", err)
-	}
-
 	printOutput(teamRemoveMemberOutput{
-		Status:        "removed",
+		Status:        result.Result,
 		TeamID:        teamID,
-		MemberAddress: member,
-		CertificateID: certificateID,
+		MemberAddress: firstNonEmpty(result.MemberAddress, memberAddress),
+		CertificateID: firstNonEmpty(result.CertificateID, certificateID),
+		AgentID:       result.AgentID,
+		WorkspaceID:   result.WorkspaceID,
 	}, formatTeamRemoveMember)
 	return nil
 }
 
-func runHostedTeamRemoveMember(teamID, memberAddress, certificateID string) error {
+// revokeHostedTeamCertificate revokes through the cloud-mediated controller.
+//
+// The endpoint answers with two distinct statuses and both are success: removed
+// when it revoked a certificate, not_found when there was no active certificate
+// to revoke. An unrecognised status is an error rather than a default, because a
+// revocation command that treats an unknown answer as success cannot be used to
+// establish that access was removed.
+func revokeHostedTeamCertificate(ctx context.Context, teamID, memberAddress, certificateID string) (certificateStoreResult, error) {
 	workingDir, err := os.Getwd()
 	if err != nil {
-		return err
+		return certificateStoreResult{}, err
 	}
 	awebURL, apiKey, err := resolveHostedTeamRemoveAuth(workingDir, teamID)
 	if err != nil {
-		return err
+		return certificateStoreResult{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
 	resp, err := postHostedTeamRemoveMember(ctx, awebURL, apiKey, teamID, hostedTeamRemoveMemberRequest{
 		MemberAddress: strings.TrimSpace(memberAddress),
 		CertificateID: strings.TrimSpace(certificateID),
 	})
 	if err != nil {
-		return err
+		return certificateStoreResult{}, err
 	}
-	status := strings.TrimSpace(resp.Status)
-	if status == "" {
-		status = "removed"
-	}
-	printOutput(teamRemoveMemberOutput{
-		Status:        status,
-		TeamID:        firstNonEmpty(resp.CanonicalTeamID, resp.TeamID, teamID),
-		MemberAddress: firstNonEmpty(resp.MemberAddress, memberAddress),
+	result := certificateStoreResult{
 		CertificateID: firstNonEmpty(resp.CertificateID, certificateID),
+		MemberAddress: firstNonEmpty(resp.MemberAddress, memberAddress),
 		AgentID:       strings.TrimSpace(resp.AgentID),
 		WorkspaceID:   strings.TrimSpace(resp.WorkspaceID),
-	}, formatTeamRemoveMember)
-	return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(resp.Status)) {
+	case "removed":
+		result.Result = certificateRevoked
+	case "not_found":
+		result.Result = certificateNothingReported
+	default:
+		return certificateStoreResult{}, fmt.Errorf(
+			"hosted remove-member returned unrecognised status %q; refusing to report the certificate revoked",
+			strings.TrimSpace(resp.Status),
+		)
+	}
+	return result, nil
 }
 
 func resolveHostedTeamRemoveAuth(workingDir, teamID string) (awebURL, apiKey string, err error) {
@@ -2391,9 +2499,10 @@ func postHostedTeamRemoveMember(ctx context.Context, awebURL, apiKey, teamID str
 	if err := json.Unmarshal(responseBody, &out); err != nil {
 		return nil, fmt.Errorf("decode hosted remove-member response: %w", err)
 	}
-	if strings.EqualFold(strings.TrimSpace(out.Status), "not_found") {
-		out.Status = "already_removed"
-	}
+	// The response carries removed and not_found as distinct values. Both mean
+	// the member ends with no active certificate, which is why both are success,
+	// but only one of them revoked anything. Callers need that difference, so it
+	// is passed through rather than collapsed here.
 	return &out, nil
 }
 

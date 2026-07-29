@@ -369,6 +369,8 @@ class DeleteWorkspaceResponse(BaseModel):
     alias: str
     deleted_at: str
     identity_deleted: bool
+    claims_released: int = 0
+    """Task claims this request released. Zero when the request released none."""
 
 
 def _workspace_delete_conflict_detail(
@@ -566,6 +568,7 @@ async def delete_workspace(
                 alias=existing["alias"],
                 deleted_at=deleted_at.isoformat(),
                 identity_deleted=cascade_result.identity_deleted,
+                claims_released=cascade_result.task_unclaim_count,
             )
         raise HTTPException(
             status_code=503,
@@ -583,6 +586,7 @@ async def delete_workspace(
         alias=existing["alias"],
         deleted_at=deleted_at.isoformat(),
         identity_deleted=cascade_result.identity_deleted,
+        claims_released=cascade_result.task_unclaim_count,
     )
 
 

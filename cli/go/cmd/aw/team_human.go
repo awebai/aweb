@@ -53,6 +53,7 @@ var (
 	teamHumanExtendAPIKey      string
 	teamHumanExtendTeamID      string
 	teamHumanRemoveTeamID      string
+	teamHumanAgentStatusTeamID string
 	teamHumanRemoveRegistryURL string
 	teamHumanRemoveAwebURL     string
 	teamHumanRemoveAPIKey      string
@@ -139,11 +140,50 @@ var teamHumanLeaveCmd = &cobra.Command{
 
 var teamHumanRemoveAgentCmd = &cobra.Command{
 	Use:   "remove-agent <member-address>",
-	Short: "Remove an agent from a team",
-	Long: "Remove an agent from a team.\n\n" +
-		"This everyday verb maps to the identity/certificate revocation primitive.\n" +
+	Short: "Retire an agent: release its claims, then revoke its certificate",
+	Long: "Retire an agent from a team across the stores that hold its state.\n\n" +
+		"It first deletes the agent's workspace record, which releases the task claims\n" +
+		"held under it, and only then revokes its certificate. That order matters: an\n" +
+		"agent can release its own claims until its certificate is revoked, and the\n" +
+		"hosted removal deletes the same workspace record without releasing anything.\n\n" +
+		"If the claims cannot be released the command stops before revoking and says\n" +
+		"which store changed and which did not, rather than leaving an agent with no\n" +
+		"credential and claims nobody can clear. To revoke access immediately and\n" +
+		"accept that outcome, use `aw id team remove-member`.\n\n" +
 		"Customer-controlled teams revoke with the local team controller key; hosted\n" +
-		"aweb.ai teams call the cloud-mediated controller revoke endpoint.",
+		"aweb.ai teams call the cloud-mediated controller revoke endpoint.\n\n" +
+		"STATUS VALUES. These are a contract; branch on them rather than on the prose.\n" +
+		"Each says what its evidence supports, and the second column is the part that\n" +
+		"matters, because the defect this command was built to remove was a status word\n" +
+		"asserting more than the service had established.\n\n" +
+		"  status (whole retirement)\n" +
+		"    retired           every store reached the state retirement wants, and each\n" +
+		"                      one established it. Exit 0.\n" +
+		"    reported_retired  every store reached that state, but the certificate part\n" +
+		"                      rests on a service reporting a no-op. It does NOT mean no\n" +
+		"                      certificate exists. Exit 0. Confirm with agent-status.\n" +
+		"    incomplete        a store did not reach that state; the per-store results\n" +
+		"                      say which. Exit non-zero.\n\n" +
+		"  certificate_result\n" +
+		"    revoked                     this call revoked a certificate.\n" +
+		"    already_revoked             the registry stated the certificate exists and\n" +
+		"                                was already revoked. Only a registry says this;\n" +
+		"                                it is never inferred from an absence.\n" +
+		"    reported_nothing_to_revoke  the service reported it had nothing to revoke.\n" +
+		"                                This says NOTHING about whether a certificate\n" +
+		"                                exists: the hosted service answers from its own\n" +
+		"                                membership records and may never consult the\n" +
+		"                                registry, so a member holding a live certificate\n" +
+		"                                with no hosted record is reported this way.\n\n" +
+		"  per-store result: changed, unchanged, blocked, failed, not_attempted.\n" +
+		"    changed and unchanged are terminal; the other three are not.\n\n" +
+		"  claims_released is null when the server did not report a count, which is what\n" +
+		"    a server older than that field does. Null is not zero.\n\n" +
+		"Exit status answers one question only: did the request reach the service and get\n" +
+		"an answer. It never carries a claim about certificate state. So on a\n" +
+		"customer-controlled team, retiring a name that no longer resolves is an error\n" +
+		"rather than a no-op, because that answer is indistinguishable from a request\n" +
+		"that never arrived - while a registry saying already-revoked is success.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanRemoveAgent,
 }
@@ -220,6 +260,9 @@ func init() {
 	teamHumanCmd.AddCommand(teamHumanListCmd)
 	teamHumanCmd.AddCommand(teamHumanSwitchCmd)
 	teamHumanCmd.AddCommand(teamHumanLeaveCmd)
+	teamHumanAgentStatusCmd.Flags().StringVar(&teamHumanAgentStatusTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to read from (defaults to active team)")
+	teamHumanCmd.AddCommand(teamHumanAgentStatusCmd)
+
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to remove from (defaults to active team)")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveRegistryURL, "registry", "", "Registry origin override")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveAwebURL, "aweb-url", "", "Hosted aweb API URL override for cloud-mediated removal")
@@ -2341,7 +2384,68 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 	teamRemoveRegistryURL = teamHumanRemoveRegistryURL
 	teamRemoveAwebURL = teamHumanRemoveAwebURL
 	teamRemoveAPIKey = teamHumanRemoveAPIKey
-	return runTeamRemoveMember(cmd, nil)
+
+	_, alias, err := parseAddress(teamRemoveMember)
+	if err != nil {
+		return err
+	}
+
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	client, _, err := resolveClientSelectionForDir(workingDir)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	out := retireTeamAgent(ctx, client, teamID, teamRemoveMember, alias, func(ctx context.Context) (certificateStoreResult, error) {
+		return revokeTeamCertificate(ctx, domain, name, teamID, teamRemoveMember)
+	})
+	printOutput(out, formatTeamRemoveAgent)
+	if !retirementSucceeded(out.Status) {
+		return &cliError{code: 1, msg: fmt.Sprintf("%s is not fully retired; see the per-store results above", teamRemoveMember)}
+	}
+	return nil
+}
+
+// revokeTeamCertificate revokes the member's certificate through whichever
+// authority owns the namespace.
+func revokeTeamCertificate(ctx context.Context, domain, team, teamID, memberAddress string) (certificateStoreResult, error) {
+	if isAwebHostedNamespace(domain) {
+		return revokeHostedTeamCertificate(ctx, teamID, memberAddress, "")
+	}
+
+	teamKey, err := awconfig.LoadTeamKey(domain, team)
+	if err != nil {
+		return certificateStoreResult{}, fmt.Errorf("load team key for %s: %w", teamID, err)
+	}
+	registry, err := newConfiguredRegistryClient(nil, "")
+	if err != nil {
+		return certificateStoreResult{}, err
+	}
+	registryURL := resolveTeamRemoveRegistryURL(registry)
+
+	// Same deliberate gap as the copy in id_team.go runTeamRemoveMember: the typed
+	// namespace is discarded and the alias resolved against the team's own, with
+	// nothing checking that the member it resolves to is the one named. aweb-aaum.7
+	// owns the verification and covers both sites. This one matters more, because
+	// aw team remove-agent is the documented retirement path.
+	_, memberName, err := parseAddress(memberAddress)
+	if err != nil {
+		return certificateStoreResult{}, err
+	}
+	memberRef, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, memberName)
+	if err != nil {
+		return certificateStoreResult{}, fmt.Errorf("resolve team member %s in %s: %w", memberName, teamID, err)
+	}
+	return revokeRegistryTeamCertificate(
+		ctx, registry, registryURL, domain, team,
+		strings.TrimSpace(memberRef.CertificateID), teamKey,
+	)
 }
 
 func activeTeamIDForHumanTeamCommand() (string, error) {
