@@ -5,7 +5,9 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 import threading
+from collections.abc import Iterator
 from email.message import Message
 from http.client import IncompleteRead
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +19,15 @@ from urllib.error import HTTPError
 import pytest
 
 from scripts import render_ops
+
+
+@pytest.fixture
+def tmp_path() -> Iterator[Path]:
+    """Evidence tests require a private temporary root outside the repository."""
+    with tempfile.TemporaryDirectory(prefix="library-render-ops-tests-") as directory:
+        path = Path(directory).resolve(strict=True)
+        path.chmod(0o700)
+        yield path
 
 
 def test_repo_identifies_production_without_treating_render_blueprint_as_authority() -> None:
