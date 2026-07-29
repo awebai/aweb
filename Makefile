@@ -1,5 +1,5 @@
 .PHONY: test test-server lint compile run e2e e2e-up e2e-down api-serve api-stop \
-	prod-ops-test prod-status prod-deploy prod-wait prod-verify prod-rollback prod-recovery \
+	prod-ops-test prod-status prod-health-client-proof prod-deploy prod-wait prod-verify prod-rollback prod-recovery \
 	prod-gate-candidate prod-gate-recovery
 
 API_PORT ?= 8765
@@ -15,15 +15,16 @@ CONFIRM_SERVICE_ID ?=
 AW_SOURCE_HOME ?=
 EXPECTED_PROFILE_VERSION ?=
 EXPECTED_PROFILE_DIGEST ?=
-ALLOW_LEGACY_NULL_BUILD_FOR ?=
+ALLOW_LEGACY_MISSING_BUILD_FOR ?=
 APPLY ?= 0
+PROD_EVIDENCE_DIR ?=
 
 # Export operational values instead of interpolating them into recipes. This keeps
 # operator-provided IDs and paths out of shell parsing; Python performs exact validation.
 export PROD_CONFIG RENDER_ENV_FILE PROD_COMMIT PROD_DEPLOY_ID CURRENT_DEPLOY_ID CURRENT_COMMIT
 export ROLLBACK_DEPLOY_ID
 export ROLLBACK_COMMIT CONFIRM_SERVICE_ID AW_SOURCE_HOME EXPECTED_PROFILE_VERSION
-export EXPECTED_PROFILE_DIGEST ALLOW_LEGACY_NULL_BUILD_FOR APPLY
+export EXPECTED_PROFILE_DIGEST ALLOW_LEGACY_MISSING_BUILD_FOR APPLY PROD_EVIDENCE_DIR
 
 test:
 	uv run pytest -q -m "not e2e"
@@ -69,6 +70,9 @@ prod-ops-test:
 
 prod-status:
 	uv run python scripts/render_ops.py status
+
+prod-health-client-proof:
+	uv run python scripts/render_ops.py health-client-proof
 
 prod-deploy:
 	git fetch --quiet origin
