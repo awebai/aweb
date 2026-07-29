@@ -61,3 +61,11 @@ eyes are the point.
   transcript rather than a receipt. Independently verify the actual
   driver, observed subject path, and allowed substitutions; never infer them
   from caller-supplied fields.
+- Whole-document substring assertions cannot protect load-bearing guidance:
+  they fail on harmless rewording while staying green when obligations are
+  deleted, weakened, or merely found elsewhere in the file. Select the
+  normative block with boundaries that fail closed when missing or ambiguous,
+  anchor each independent condition within it, and remove or weaken each
+  condition separately to prove its dedicated regression fails. When the
+  property is agreement with a canonical source rather than fixed wording,
+  test derived structural or behavioral equivalence instead.
