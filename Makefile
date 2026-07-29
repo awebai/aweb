@@ -1,5 +1,5 @@
 .PHONY: test test-server lint compile run e2e e2e-up e2e-down api-serve api-stop \
-	prod-ops-test prod-status prod-health-client-proof prod-deploy prod-wait prod-verify prod-rollback prod-recovery \
+	prod-ops-test prod-public-identity prod-status prod-health-client-proof prod-deploy prod-wait prod-verify prod-rollback prod-recovery \
 	prod-gate-candidate prod-gate-recovery prod-gate-current-incumbent \
 	aatk-predicate-inventory aatk-spec-check aatk-validate-preplan aatk-validate-release
 
@@ -74,6 +74,9 @@ api-stop:
 # targets with inline curl/shell mutations in a release session.
 prod-ops-test:
 	uv run pytest -q tests/test_render_ops.py tests/test_library_prod_gate.py
+
+prod-public-identity:
+	uv run python scripts/render_ops.py public-identity
 
 prod-status:
 	uv run python scripts/render_ops.py status

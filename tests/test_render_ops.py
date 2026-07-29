@@ -33,6 +33,22 @@ def health_bytes(git_sha: str | None = _SHA_A) -> bytes:
     return json.dumps(health_payload(git_sha), separators=(",", ":")).encode()
 
 
+def deployment_health_payload(
+    *, git_sha: str = _SHA_A, **deployment_overrides: str
+) -> dict:
+    deployment = {
+        "service_id": "srv-abc123",
+        "service_name": "library",
+        "hostname": "library-origin.example",
+        "origin_url": "https://library-origin.example",
+        "repo": "awebai/library",
+        "branch": "main",
+        "commit": git_sha,
+        **deployment_overrides,
+    }
+    return {**health_payload(git_sha), "deployment": deployment}
+
+
 @pytest.fixture
 def tmp_path() -> Iterator[Path]:
     """Evidence tests require a private temporary root outside the repository."""
@@ -132,6 +148,63 @@ def config(tmp_path: Path) -> render_ops.ProductionConfig:
     return render_ops.ProductionConfig.load(path)
 
 
+def test_public_deployment_identity_matches_pinned_topology(
+    config: render_ops.ProductionConfig,
+) -> None:
+    payload = deployment_health_payload()
+
+    assert render_ops.verify_public_deployment_identity(payload, config) == payload["deployment"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("service_id", "srv-wrong"),
+        ("service_name", "wrong"),
+        ("hostname", "wrong.example"),
+        ("origin_url", "https://wrong.example"),
+        ("repo", "other/library"),
+        ("branch", "develop"),
+    ],
+)
+def test_public_deployment_identity_rejects_topology_drift(
+    config: render_ops.ProductionConfig,
+    field: str,
+    value: str,
+) -> None:
+    payload = deployment_health_payload(**{field: value})
+
+    with pytest.raises(render_ops.OpsError, match=field):
+        render_ops.verify_public_deployment_identity(payload, config)
+
+
+def test_public_deployment_identity_rejects_commit_disagreement(
+    config: render_ops.ProductionConfig,
+) -> None:
+    payload = deployment_health_payload(commit=_SHA_B)
+
+    with pytest.raises(render_ops.OpsError, match="commit.*build.git_sha"):
+        render_ops.verify_public_deployment_identity(payload, config)
+
+
+def test_public_deployment_identity_has_no_region_field(
+    config: render_ops.ProductionConfig,
+) -> None:
+    payload = deployment_health_payload()
+    payload["deployment"]["region"] = "virginia"
+
+    with pytest.raises(render_ops.OpsError, match="fields"):
+        render_ops.verify_public_deployment_identity(payload, config)
+
+
+def test_public_identity_has_a_credentialless_make_target() -> None:
+    makefile = (Path(__file__).parents[1] / "Makefile").read_text(encoding="utf-8")
+    recipe = makefile.split("prod-public-identity:\n", 1)[1].split("\n\n", 1)[0]
+
+    assert "render_ops.py public-identity" in recipe
+    assert "RENDER_ENV_FILE" not in recipe
+
+
 def write_config(path: Path, config: render_ops.ProductionConfig) -> None:
     path.write_text(
         json.dumps(
@@ -150,6 +223,49 @@ def write_config(path: Path, config: render_ops.ProductionConfig) -> None:
             }
         )
     )
+
+
+def test_public_identity_command_reads_only_the_pinned_public_health_surface(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    config: render_ops.ProductionConfig,
+) -> None:
+    config_path = tmp_path / "public-identity-production.json"
+    write_config(config_path, config)
+    seen: dict[str, object] = {}
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return f"{config.public_url}{config.health_path}"
+
+        def read(self, *args) -> bytes:
+            return json.dumps(deployment_health_payload()).encode()
+
+    def open_public(url: str, *, timeout: float, user_agent: str):
+        seen.update(url=url, timeout=timeout, user_agent=user_agent)
+        return Response()
+
+    monkeypatch.setattr(render_ops, "open_health_url", open_public)
+
+    result = render_ops.command_public_identity(SimpleNamespace(config=str(config_path)))
+
+    assert result == {
+        "url": f"{config.public_url}{config.health_path}",
+        "deployment": deployment_health_payload()["deployment"],
+    }
+    assert seen == {
+        "url": f"{config.public_url}{config.health_path}",
+        "timeout": render_ops.HEALTH_REQUEST_TIMEOUT_SECONDS,
+        "user_agent": render_ops.HEALTH_USER_AGENT,
+    }
 
 
 def health_proof_args(config_path: Path, evidence_path: Path) -> SimpleNamespace:
@@ -301,6 +417,35 @@ def test_health_requires_exact_approved_build_commit(
             "https://library.example/health",
             expected_commit="a" * 40,
         )
+
+
+def test_health_accepts_public_deployment_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = deployment_health_payload()
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def geturl(self) -> str:
+            return "https://library.example/health"
+
+        def read(self, *args) -> bytes:
+            return json.dumps(payload).encode()
+
+    monkeypatch.setattr(
+        render_ops, "open_health_url", lambda url, timeout, user_agent: Response()
+    )
+
+    assert render_ops.verify_health(
+        "https://library.example/health", expected_commit=_SHA_A
+    ) == payload
 
 
 def test_health_readiness_retries_a_valid_stale_commit_then_matches(
