@@ -23,15 +23,41 @@ from pathlib import Path
 
 _FOLIO_ROOT = Path(__file__).resolve().parents[1]
 
+# What identifies aweb, as opposed to a directory that merely holds the file being looked
+# for. aweb's server distribution is named aweb and nothing else in these layouts is.
+_AWEB_MARKER = ("server", "pyproject.toml")
+_AWEB_MARKER_DECLARES = 'name = "aweb"'
+
+
+def is_aweb_root(root: Path) -> bool:
+    """Whether root IS aweb, rather than somewhere the requested file happens to exist.
+
+    Without this the search accepted the first candidate that contained the requested
+    path, which is a different question and answers it wrongly in the worst available way.
+    A decoy directory holding docs/vectors/... was accepted and its bytes returned - so a
+    conformance test would have agreed with the wrong reference instead of failing, which
+    is silent rather than loud. The walk over ancestors also ran to the filesystem root,
+    so anything above folio could supply that decoy.
+    """
+    marker = root.joinpath(*_AWEB_MARKER)
+    if not marker.is_file():
+        return False
+    try:
+        return _AWEB_MARKER_DECLARES in marker.read_text()
+    except OSError:
+        return False
+
 
 def aweb_candidate_roots() -> list[Path]:
-    """Every directory aweb's root could be, nearest first.
+    """Every directory that is actually aweb, nearest first.
 
     The sibling checkout is tried first because that is the layout while the two repos
     exist separately. The ancestors cover the post-move layout, where folio is inside
-    aweb.
+    aweb. Both are filtered through is_aweb_root, so a directory that happens to contain a
+    matching path is never mistaken for the repository.
     """
-    return [_FOLIO_ROOT.parent / "aweb", *_FOLIO_ROOT.parents]
+    searched = [_FOLIO_ROOT.parent / "aweb", *_FOLIO_ROOT.parents]
+    return [root for root in searched if is_aweb_root(root)]
 
 
 def aweb_path(*parts: str) -> Path:
@@ -39,15 +65,26 @@ def aweb_path(*parts: str) -> Path:
 
     Raises FileNotFoundError naming everywhere it looked, rather than returning a path
     that does not exist: a caller handed a missing path either crashes further away from
-    the cause or, worse, treats it as a reason to do nothing.
+    the cause or, worse, treats it as a reason to do nothing. The two reasons for failing
+    are reported differently, because "aweb is not checked out next to folio" and "aweb is
+    here but this file is not in it" call for different actions.
     """
+    roots = aweb_candidate_roots()
+    joined = "/".join(parts)
+    if not roots:
+        raise FileNotFoundError(
+            f"could not find the aweb repository from {_FOLIO_ROOT}, so aweb/{joined} "
+            "cannot be read. folio's cross-repo conformance tests need aweb checked out "
+            "as a sibling of folio (or, after the naapp move, as an ancestor). Looked for "
+            f"{'/'.join(_AWEB_MARKER)} declaring {_AWEB_MARKER_DECLARES!r} in: "
+            + ", ".join(str(path) for path in [_FOLIO_ROOT.parent / "aweb", *_FOLIO_ROOT.parents])
+        )
     tried: list[Path] = []
-    for root in aweb_candidate_roots():
+    for root in roots:
         candidate = root.joinpath(*parts)
         tried.append(candidate)
         if candidate.exists():
             return candidate
-    joined = "/".join(parts)
     raise FileNotFoundError(
         f"could not locate aweb/{joined} from {_FOLIO_ROOT}. These are cross-repo "
         "conformance inputs and must not be skipped. Looked in: "

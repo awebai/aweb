@@ -119,6 +119,26 @@ make e2e
 
 `make e2e` starts local Postgres + AWID via Docker Compose, runs real `aw id request --team-auth` tests, and tears the stack down.
 
+**The suite needs `aweb` and `aweb-naapp` checked out next to folio.** Four tests read the
+neighbouring repositories directly rather than through a package:
+
+| test | needs | why |
+| --- | --- | --- |
+| 3 in `tests/test_auth_v2_envelope.py` | `../aweb` | they check folio's request signing against aweb's own implementation, using conformance vectors that live in aweb |
+| 1 in `tests/test_surfaces.py` | `../aweb-naapp` | it checks that `aweb_naapp` was imported from the pinned package and not from a local source tree, so it needs a local source tree to look for |
+
+```
+prj/
+  aweb/
+  aweb-naapp/
+  folio/
+```
+
+Without them those four fail with a message naming every path searched; the other 162 tests
+still run. They fail rather than skip on purpose: a cross-repo conformance check that
+quietly stops comparing is indistinguishable from one that passes, and the guard that
+checked a location which could not exist is the defect this arrangement exists to prevent.
+
 ## Docker / Render
 
 Build locally:

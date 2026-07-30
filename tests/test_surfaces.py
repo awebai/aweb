@@ -6,6 +6,7 @@ from uuid import UUID
 from aweb_layout import (
     aweb_naapp_local_source_candidates,
     existing_local_sources,
+    is_aweb_root,
     shadowing_local_source,
 )
 from fastapi.testclient import TestClient
@@ -75,6 +76,35 @@ def test_the_local_source_guard_can_detect_a_shadowing_import(tmp_path: Path) ->
     # A candidate that does not exist must never be reported, or the guard would claim to
     # have checked a location it could not have looked at.
     assert shadowing_local_source(shadowed, [tmp_path / "absent" / "src"]) is None
+
+
+def test_aweb_is_identified_by_its_marker_not_by_containing_the_wanted_file(tmp_path: Path) -> None:
+    """A directory that merely holds the requested path is not aweb.
+
+    Accepting the first candidate that contained the file was wrong in the quietest
+    possible way: a decoy directory above folio would be accepted and its bytes returned,
+    so a conformance test would agree with the wrong reference instead of failing. This
+    reconstructs that decoy and requires it to be rejected.
+    """
+    decoy = tmp_path / "decoy_root"
+    (decoy / "docs" / "vectors").mkdir(parents=True)
+    (decoy / "docs" / "vectors" / "team-auth-envelope-v2.json").write_text('{"decoy": true}')
+
+    assert not is_aweb_root(decoy)
+
+    # A server/pyproject.toml alone is not enough either - it has to declare aweb.
+    other_repo = tmp_path / "other_repo"
+    (other_repo / "server").mkdir(parents=True)
+    (other_repo / "server" / "pyproject.toml").write_text('[project]\nname = "something-else"\n')
+
+    assert not is_aweb_root(other_repo)
+
+    # And the real shape is accepted, so the check is not simply always false.
+    real = tmp_path / "aweb"
+    (real / "server").mkdir(parents=True)
+    (real / "server" / "pyproject.toml").write_text('[project]\nname = "aweb"\n')
+
+    assert is_aweb_root(real)
 
 
 def test_landing_page_explains_folio_and_links_agent_surfaces() -> None:
