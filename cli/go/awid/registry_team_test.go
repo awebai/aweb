@@ -741,7 +741,95 @@ func TestListCertificatesRefusesToReturnATruncatedListing(t *testing.T) {
 	if certs != nil {
 		t.Fatalf("got %d certificates alongside the error; a partial list must not be returned", len(certs))
 	}
-	if !strings.Contains(err.Error(), "truncated") {
-		t.Fatalf("err=%v; the error must say the listing was truncated", err)
+	// Named specifically: all three truncation guards say "truncated", so a
+	// substring that loose would pass whichever one fired.
+	if !strings.Contains(err.Error(), "no cursor to reach them") {
+		t.Fatalf("err=%v; the error must name the missing cursor as the cause", err)
+	}
+}
+
+func TestListCertificatesRefusesAListingWhoseCursorNeverAdvances(t *testing.T) {
+	t.Parallel()
+
+	// A registry that keeps reporting more pages while handing back the cursor
+	// the client just used. Following it would loop forever; trusting it would
+	// return the first page as the whole team.
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests > 20 {
+			t.Fatal("client kept following a cursor that never advanced")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"certificates": []map[string]any{{
+				"certificate_id": "cert-1",
+				"team_id":        "backend:acme.com",
+				"member_did_key": "did:key:z6MkAlice",
+				"alias":          "alice",
+				"identity_scope": "global",
+				"issued_at":      "2026-04-06T00:00:00Z",
+			}},
+			"has_more":    true,
+			"next_cursor": "stuck",
+		})
+	}))
+	defer server.Close()
+
+	client := NewAWIDRegistryClient(nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	certs, err := client.ListCertificates(ctx, server.URL, "acme.com", "backend", true)
+	if err == nil {
+		t.Fatalf("got %d certificates and no error from a cursor that never advanced", len(certs))
+	}
+	if certs != nil {
+		t.Fatalf("got %d certificates alongside the error; a partial list must not be returned", len(certs))
+	}
+	if !strings.Contains(err.Error(), "repeated cursor") {
+		t.Fatalf("err=%v; the error must name the stuck cursor as the cause", err)
+	}
+}
+
+func TestListCertificatesRefusesToReturnWhatItGatheredAtThePageCap(t *testing.T) {
+	t.Parallel()
+
+	// A registry that never stops reporting more pages. The walk is bounded, and
+	// what it has gathered at the bound is a prefix — returning it is exactly the
+	// short-list-reads-as-complete defect this whole change exists to remove.
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"certificates": []map[string]any{{
+				"certificate_id": "cert-" + strconv.Itoa(requests),
+				"team_id":        "backend:acme.com",
+				"member_did_key": "did:key:z6Mk" + strconv.Itoa(requests),
+				"alias":          "member-" + strconv.Itoa(requests),
+				"identity_scope": "global",
+				"issued_at":      "2026-04-06T00:00:00Z",
+			}},
+			"has_more":    true,
+			"next_cursor": "page-" + strconv.Itoa(requests+1),
+		})
+	}))
+	defer server.Close()
+
+	client := NewAWIDRegistryClient(nil, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	certs, err := client.ListCertificates(ctx, server.URL, "acme.com", "backend", true)
+	if err == nil {
+		t.Fatalf("got %d certificates and no error; the walk hit its bound and returned a prefix as complete", len(certs))
+	}
+	if certs != nil {
+		t.Fatalf("got %d certificates alongside the error; a partial list must not be returned", len(certs))
+	}
+	if !strings.Contains(err.Error(), "after "+strconv.Itoa(certificateListPageCap)+" pages") {
+		t.Fatalf("err=%v; the error must name the page cap as the cause", err)
+	}
+	if requests != certificateListPageCap {
+		t.Fatalf("made %d requests, want exactly the cap of %d", requests, certificateListPageCap)
 	}
 }
