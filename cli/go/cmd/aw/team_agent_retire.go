@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -289,6 +290,24 @@ func releaseCoordinationState(
 				Store:  storeCoordination,
 				Result: storeBlocked,
 				Detail: fmt.Sprintf("released nothing: %s", reason),
+			}, nil
+		}
+		// The workspace row is already gone, so this call released nothing - but the
+		// server refused precisely because the identity is still bound, and saying
+		// "unchanged" without that would report the retirement further along than it is.
+		if errors.Is(err, aweb.ErrWorkspaceAlreadyDeleted) {
+			return retireStoreOutcome{
+				Store:  storeCoordination,
+				Result: storeUnchanged,
+				Detail: fmt.Sprintf("released nothing: workspace record for %s was already deleted, and its identity was not cleaned", alias),
+			}, nil
+		}
+		// Establishes nothing: not present, or not visible to this caller.
+		if errors.Is(err, aweb.ErrWorkspaceNotFound) {
+			return retireStoreOutcome{
+				Store:  storeCoordination,
+				Result: storeBlocked,
+				Detail: fmt.Sprintf("could not establish coordination state: no workspace %s is visible to this caller", matches[0].WorkspaceID),
 			}, nil
 		}
 		return retireStoreOutcome{

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/pathpreflight"
@@ -55,9 +57,19 @@ type localProvisionOutput struct {
 	AwebURL       string `json:"aweb_url"`
 }
 
+// A cleanup field says what this run established. "could-not-establish" is a
+// correct answer and is never interchangeable with the good one: the OAS retire
+// flow reads these values as its evidence, so an unknown reported as success
+// declares a principal clean on the strength of a value nobody observed.
+const (
+	cleanupStateUnestablished = "could-not-establish"
+	cleanupStateNotDeleted    = "not-deleted"
+)
+
 type localProvisionCleanup struct {
 	Grants      string `json:"grants"`
 	Workspace   string `json:"workspace"`
+	Identity    string `json:"identity"`
 	Certificate string `json:"certificate"`
 	Credentials string `json:"credentials"`
 }
@@ -392,7 +404,7 @@ func cleanupLocalProvision(ctx context.Context, opts localProvisionOptions) (loc
 		return localProvisionCleanupOutput{}, fmt.Errorf("local provision operation %s has no completed resource to clean", operation)
 	}
 	if record.Status == "complete" {
-		return cleanupOutputForRecord(*record), nil
+		return cleanupOutputForRecord(*record, localProvisionRecordRetained(targetHome)), nil
 	}
 	if err := verifyCompletedLocalProvision(targetHome, *record.Result); err != nil {
 		return localProvisionCleanupOutput{}, err
@@ -441,14 +453,30 @@ func cleanupLocalProvision(ctx context.Context, opts localProvisionOptions) (loc
 
 	if record.Cleanup.Workspace != "soft-deleted" {
 		deleted, err := client.WorkspaceDelete(ctx, record.Result.WorkspaceID)
-		if err != nil {
-			if status, ok := awid.HTTPStatusCode(err); !ok || status != 404 {
-				return localProvisionCleanupOutput{}, fmt.Errorf("soft-delete provisioned workspace: %w", err)
+		// This tuple is what the OAS retire flow verifies a principal against, so each
+		// field says what this call established and nothing more. The two 404s differ:
+		// one establishes both outcomes, the other establishes neither.
+		switch {
+		case errors.Is(err, aweb.ErrWorkspaceAlreadyDeleted):
+			// Refused because the row is deleted AND its identity is still bound, so
+			// both halves are observed - and the identity half is observed to be bad.
+			record.Cleanup.Workspace = "soft-deleted"
+			record.Cleanup.Identity = cleanupStateNotDeleted
+		case errors.Is(err, aweb.ErrWorkspaceNotFound):
+			record.Cleanup.Workspace = cleanupStateUnestablished
+			record.Cleanup.Identity = cleanupStateUnestablished
+		case err != nil:
+			return localProvisionCleanupOutput{}, fmt.Errorf("soft-delete provisioned workspace: %w", err)
+		default:
+			if deleted == nil || deleted.WorkspaceID != record.Result.WorkspaceID {
+				return localProvisionCleanupOutput{}, fmt.Errorf("workspace cleanup response does not match provisioned resource")
 			}
-		} else if deleted != nil && deleted.WorkspaceID != record.Result.WorkspaceID {
-			return localProvisionCleanupOutput{}, fmt.Errorf("workspace cleanup response does not match provisioned resource")
+			record.Cleanup.Workspace = "soft-deleted"
+			record.Cleanup.Identity = "soft-deleted"
+			if !deleted.IdentityDeleted {
+				record.Cleanup.Identity = cleanupStateNotDeleted
+			}
 		}
-		record.Cleanup.Workspace = "soft-deleted"
 		record.Status = "cleaning"
 		if err := writeLocalProvisionTargetRecord(targetHome, *record); err != nil {
 			return localProvisionCleanupOutput{}, err
@@ -523,15 +551,24 @@ func cleanupLocalProvision(ctx context.Context, opts localProvisionOptions) (loc
 	if err := writeLocalProvisionTargetRecord(targetHome, *record); err != nil {
 		return localProvisionCleanupOutput{}, err
 	}
-	return cleanupOutputForRecord(*record), nil
+	return cleanupOutputForRecord(*record, localProvisionRecordRetained(targetHome)), nil
 }
 
-func cleanupOutputForRecord(record localProvisionTargetRecord) localProvisionCleanupOutput {
+// cleanupOutputForRecord reports what the cleanup established. Every field reads
+// from the record, because this tuple is the OAS attached-principal retire flow's
+// verification that a principal was cleaned - a literal here is a value the
+// verifier cannot fail on, since the producer supplies the constant it compares to.
+func cleanupOutputForRecord(record localProvisionTargetRecord, auditRetained bool) localProvisionCleanupOutput {
+	audit := cleanupStateUnestablished
+	if auditRetained {
+		audit = "intentionally-retained-operation-record"
+	}
 	return localProvisionCleanupOutput{
-		Status: "complete", OperationID: record.OperationID,
-		Grants: record.Cleanup.Grants, Workspace: record.Cleanup.Workspace, Identity: "soft-deleted",
+		Status: record.Status, OperationID: record.OperationID,
+		Grants: record.Cleanup.Grants, Workspace: record.Cleanup.Workspace,
+		Identity:    record.Cleanup.Identity,
 		Certificate: record.Cleanup.Certificate, Credentials: record.Cleanup.Credentials,
-		Audit: "intentionally-retained-operation-record",
+		Audit: audit,
 	}
 }
 
@@ -767,4 +804,11 @@ func init() {
 	teamCleanupLocalProvisionCmd.Flags().StringVar(&cleanupLocalAuthorityStableID, "authority-stable-id", "", "Expected declared authority stable identity")
 	teamCleanupLocalProvisionCmd.Flags().StringVar(&cleanupLocalControllerDID, "controller-did", "", "Expected local controller DID")
 	teamCmd.AddCommand(teamCleanupLocalProvisionCmd)
+}
+
+// localProvisionRecordRetained reports whether the operation record is still on
+// disk after the cleanup, rather than asserting the retention policy was honoured.
+func localProvisionRecordRetained(targetHome string) bool {
+	_, err := os.Stat(localProvisionTargetRecordPath(targetHome))
+	return err == nil
 }

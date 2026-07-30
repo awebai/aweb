@@ -373,7 +373,7 @@ class DeleteWorkspaceResponse(BaseModel):
     """Task claims this request released. Zero when the request released none."""
 
 
-def _workspace_delete_conflict_detail(
+def _workspace_delete_refusal_detail(
     *,
     code: str,
     workspace_id: str,
@@ -430,16 +430,35 @@ async def delete_workspace(
     )
 
     if not existing:
+        # Structured like the 409 refusals below because a client has to tell these
+        # two 404s apart and neither is inferable from the status code. This one
+        # establishes nothing: the workspace may never have existed, or may belong
+        # to a team this caller cannot see.
         raise HTTPException(
             status_code=404,
-            detail=f"Workspace {workspace_id} not found",
+            detail=_workspace_delete_refusal_detail(
+                code="workspace_not_found",
+                workspace_id=validated_id,
+                identity_id=None,
+                identity_scope=None,
+                recommended_next_step="Confirm the workspace id and that it belongs to this team before treating it as cleaned.",
+            ),
         )
 
     if existing["deleted_at"] is not None:
         if str(existing.get("agent_identity_scope") or "").strip():
+            # Reached only inside `deleted_at is not None`, so this DOES establish
+            # two things: the workspace row is deleted, and the bound identity was
+            # not cleaned - which is the reason for the refusal.
             raise HTTPException(
                 status_code=404,
-                detail=f"Workspace {workspace_id} is already deleted",
+                detail=_workspace_delete_refusal_detail(
+                    code="workspace_already_deleted",
+                    workspace_id=validated_id,
+                    identity_id=existing.get("agent_id"),
+                    identity_scope=str(existing.get("agent_identity_scope") or "").strip(),
+                    recommended_next_step="The workspace is deleted; its identity is not. Clean the identity before reporting the retirement complete.",
+                ),
             )
         # A previous local-workspace request may have committed SQL and lost its response
         # or failed during Redis cleanup. Re-enter the idempotent post-commit
@@ -453,7 +472,7 @@ async def delete_workspace(
             logger.warning("Retry failed to clear deleted workspace presence", exc_info=exc)
             raise HTTPException(
                 status_code=503,
-                detail=_workspace_delete_conflict_detail(
+                detail=_workspace_delete_refusal_detail(
                     code="post_commit_cleanup_pending",
                     workspace_id=validated_id,
                     identity_id=existing.get("agent_id"),
@@ -472,7 +491,7 @@ async def delete_workspace(
     if not agent_identity_scope:
         raise HTTPException(
             status_code=409,
-            detail=_workspace_delete_conflict_detail(
+            detail=_workspace_delete_refusal_detail(
                 code="unknown_identity_scope_no_cleanup",
                 workspace_id=validated_id,
                 identity_id=existing.get("agent_id"),
@@ -483,7 +502,7 @@ async def delete_workspace(
     if agent_identity_scope == "global":
         raise HTTPException(
             status_code=409,
-            detail=_workspace_delete_conflict_detail(
+            detail=_workspace_delete_refusal_detail(
                 code="global_identity_not_cleanup_eligible",
                 workspace_id=validated_id,
                 identity_id=existing.get("agent_id"),
@@ -494,7 +513,7 @@ async def delete_workspace(
     if agent_identity_scope != "local":
         raise HTTPException(
             status_code=409,
-            detail=_workspace_delete_conflict_detail(
+            detail=_workspace_delete_refusal_detail(
                 code="unknown_identity_scope_no_cleanup",
                 workspace_id=validated_id,
                 identity_id=existing.get("agent_id"),
@@ -508,7 +527,7 @@ async def delete_workspace(
     if last_seen_at is not None and last_seen_at > stale_cutoff:
         raise HTTPException(
             status_code=409,
-            detail=_workspace_delete_conflict_detail(
+            detail=_workspace_delete_refusal_detail(
                 code="local_workspace_still_active",
                 workspace_id=validated_id,
                 identity_id=existing.get("agent_id"),
@@ -544,7 +563,7 @@ async def delete_workspace(
         error = cascade_result.errors[0]
         raise HTTPException(
             status_code=409,
-            detail=_workspace_delete_conflict_detail(
+            detail=_workspace_delete_refusal_detail(
                 code=error.code,
                 workspace_id=validated_id,
                 identity_id=existing.get("agent_id"),
@@ -572,7 +591,7 @@ async def delete_workspace(
             )
         raise HTTPException(
             status_code=503,
-            detail=_workspace_delete_conflict_detail(
+            detail=_workspace_delete_refusal_detail(
                 code="post_commit_cleanup_pending",
                 workspace_id=validated_id,
                 identity_id=existing.get("agent_id"),
