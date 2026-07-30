@@ -46,17 +46,47 @@ def test_no_recipe_resolves_dependencies_through_a_sibling_path() -> None:
     )
 
 
-def test_no_recipe_invokes_a_bare_interpreter() -> None:
-    """`python3 -m x` uses whatever is on PATH, so the locked environment is not used."""
-    offenders = [
-        line
-        for line in _recipe_lines()
-        if re.search(r"(?<!uv run )\bpython3?\b", line) and "uv run" not in line
-    ]
+# The Python-ecosystem entrypoints folio invokes. Any of these run bare takes whatever is
+# on PATH, so folio's locked dependencies are not the ones used.
+#
+# THIS IS A DENYLIST AND SO IT IS FORGETTABLE. A tool folio starts using that is not named
+# here passes this check. It is spelled out rather than inferred because there is no reliable
+# way to ask "does this command need folio's dependencies" from the Makefile text - so the
+# honest form is a list plus this sentence, not a claim to cover every case.
+#
+# It reached this shape by measurement: the first version matched only python/python3, and a
+# reviewer removed `uv run` from `lint:` - leaving bare ruff and mypy - and the guard passed.
+# The regex was keyed on a SPELLING while the docstring claimed a PROPERTY.
+_MUST_GO_THROUGH_UV = ("python", "python3", "pytest", "ruff", "mypy", "uvicorn", "pip", "alembic")
+
+# A recipe line can hold several commands. Splitting on shell separators is what makes the
+# check positional rather than subtractive: the question is whether `uv run` appears BEFORE
+# the tool in the SAME command, not whether it appears anywhere on the line.
+#
+# The subtractive form was tried and was wrong twice over. Stripping "uv run" left the command
+# it runs behind, so every legitimate `uv run pytest` reported as an offender; and a mere
+# substring test let `uv run true && python3 -m pytest` pass, which is the co-occurrence hole
+# a reviewer measured.
+_SEPARATORS = re.compile(r"&&|\|\||[;|&]")
+
+
+def _commands(line: str) -> list[str]:
+    return _SEPARATORS.split(line)
+
+
+def test_no_recipe_invokes_a_listed_tool_outside_uv() -> None:
+    offenders = []
+    for line in _recipe_lines():
+        for command in _commands(line):
+            for tool in _MUST_GO_THROUGH_UV:
+                found = re.search(rf"(?<![\w./-]){re.escape(tool)}(?![\w.-])", command)
+                if found and "uv run" not in command[: found.start()]:
+                    offenders.append(f"{tool}: {line.strip()}")
+                    break
 
     assert not offenders, (
-        "a recipe invokes an interpreter without uv, so folio's locked dependencies are "
-        "not the ones that run:\n  " + "\n  ".join(offenders)
+        "a recipe invokes a tool that needs folio's dependencies without going through uv, "
+        "so the locked environment is not the one that runs:\n  " + "\n  ".join(offenders)
     )
 
 
