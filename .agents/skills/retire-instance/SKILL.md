@@ -13,6 +13,24 @@ long-running and not retired this way.
 is merged or pushed, and anything the instance learned that belongs in its
 soul is committed (see `self-maintenance`).
 
+## The verb depends on the agent's identity scope
+
+These are different lifecycle stories and `aweb-sot.md` says they must not be
+conflated. Establish the scope before choosing a command.
+
+- **Local identity scope** — spawned `:local`, a name on one team, no `did:aw`,
+  no registry certificate. This is the common case: a coordinator's own workers
+  are local. The verb is **`aw workspace delete`**, which the SOT calls "the
+  single user-facing lifecycle verb for local teardown".
+- **Global identity scope** — holds a `did:aw` and a registry certificate. The
+  verb is `aw team remove-agent`, the identity/certificate revocation primitive.
+  Hosted removal needs a team-scoped owner/admin API key; a workspace-bound key
+  is rejected, so this is not something an agent workspace can do alone.
+
+Using `remove-agent` on a local agent produces an accurate refusal about missing
+owner/admin credentials. That error is about the wrong verb, not about a missing
+permission — it is easy to read as a capability boundary and it is not one.
+
 Run from your own agent home:
 
 ```bash
@@ -20,14 +38,21 @@ name=<name>
 REPO="$(cd "$(git rev-parse --git-common-dir)" && cd .. && pwd)"
 inst="$REPO/agents/instances/$name"
 
-aw team remove-agent "<namespace>/$name"          # claims, workspace, certificate
-aw team agent-status "$name"                      # read it back before deleting anything
+# LOCAL identity scope (the usual case):
+aw workspace delete "$name"                       # workspace + local identity
+
+# GLOBAL identity scope only — needs an owner/admin key:
+# aw team remove-agent "<namespace>/$name"        # claims, workspace, certificate
 
 git -C "$REPO" worktree remove "$inst/worktree" --force 2>/dev/null
 rm -rf "$inst"
 git -C "$REPO" branch -D "$name" 2>/dev/null
 git -C "$REPO" worktree prune
 ```
+
+**Check the exit status, not the output.** `aw team remove-agent` prints its
+refusal and still exits 0, so a shell that branches on `$?` sees success. Read
+what the command actually said.
 
 `aw team remove-agent` covers the network state: it deletes the workspace
 record — which is what releases the task claims held under it — and then
@@ -38,11 +63,17 @@ anything, so a revoke that runs first strands every claim it held.
 
 ## Read it back before you delete the home
 
-`aw team agent-status <name>` reads the stores directly and mutates
-nothing. It is the check that the retirement actually happened, and it is
-deliberately not the retire command reporting on itself. A retired agent
-reads `state: clear` — no active certificate, no workspace, zero claims,
-and `name free: true`.
+Confirm the retirement from something other than the retire command reporting on
+itself. `aw workspace delete` prints what it removed, including whether the local
+identity went with it — read that, and confirm the name no longer appears in the
+team's workspace listing.
+
+**`aw team agent-status` does not exist.** Earlier versions of this skill told you
+to run it as the read-back. In aw 1.34.1 it is not a verb: it prints the parent
+help and **exits 0**, so a script treats 1.6 KB of usage text as a successful
+status check. Do not use it, and do not trust an exit code from any `aw`
+subcommand you have not confirmed exists — an unknown subcommand is indistinguishable
+from a working one by exit status alone.
 
 `clear` describes what the stores hold now, not how they came to hold it. A
 name retired this morning and a name never used read the same way, because
