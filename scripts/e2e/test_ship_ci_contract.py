@@ -214,38 +214,73 @@ class ShipCIContractTests(unittest.TestCase):
                     "the self-test passed without reporting this arm, so it proved less than it claims",
                 )
 
-    def test_runner_self_test_rejects_a_runner_that_stops_at_the_first_failure(self) -> None:
-        """The check above is only meaningful if it fails when the fix is reverted."""
-        original = self.RUNNER.read_text(encoding="utf-8")
-        anchor = '"$MAKE" "$suite" && status=0 || status=$?'
-        self.assertTrue(
-            anchor in original,
-            "the runner no longer captures each suite's status, so this mutation has "
-            "nothing to revert; update the anchor if the runner was restructured",
-        )
-        reverted = original.replace(anchor, '"$MAKE" "$suite" || return 1', 1)
-        self.assertNotEqual(reverted, original, "the revert did not change the runner")
-
-        with tempfile.TemporaryDirectory() as work:
-            # Kept out of scripts/ so a failed run cannot leave a mutated copy behind;
-            # the runner derives its root from its own location and does not need the
-            # repository for the self-test path.
-            mutated = Path(work) / "run-ship-suites.sh"
-            mutated.write_text(reverted, encoding="utf-8")
-            shutil.copymode(self.RUNNER, mutated)
-            result = self.run_runner_self_test(mutated)
-
-        self.assertNotEqual(
-            result.returncode,
-            0,
-            "a runner that stops at the first failing suite passed its own self-test",
-        )
-        # The red has to be the independence arm rather than any other failure.
-        self.assertIn(
+    # Each arm's sensitivity has to be provable on its own. Requiring the four
+    # confirmation lines proves they were PRINTED: an arm whose assertion is
+    # neutered still prints its line, which was measured. So for each arm, break
+    # the behaviour that arm guards and require the self-test to go red naming
+    # that arm - and pick a mutation narrow enough that an earlier arm does not
+    # fail first and mask it.
+    #
+    # Arm 4, the lost-summary arm, is deliberately absent. Its property is held
+    # three times over - init_state refuses at creation, record refuses rather
+    # than blocking, summarize exits from the trap as a backstop - so no single
+    # mutation makes it fail, and a redundantly-held property cannot be
+    # mutation-tested. Recorded rather than faked.
+    RUNNER_ARM_MUTATIONS = (
+        (
+            "independence: stop at the first failing suite",
+            '    "$MAKE" "$suite" && status=0 || status=$?',
+            '    "$MAKE" "$suite" || return 1',
             "suite-c never executed",
-            result.stderr + result.stdout,
-            "the self-test failed for some reason other than the suites behind a failure not running",
-        )
+        ),
+        (
+            "unlaunchable suite counted as passing",
+            '    if [[ "$status" -eq 0 ]]; then\n      record "$suite" "PASSED"',
+            '    if [[ "$status" -eq 0 || "$status" -eq 127 ]]; then\n      record "$suite" "PASSED"',
+            "every suite failed to launch and the run still exited 0",
+        ),
+        (
+            "NOT RUN rows omitted from the summary",
+            "    printf '  %-10s %s\\n' \"$result\" \"$suite\"",
+            "    [[ \"$result\" == \"NOT RUN\" ]] || printf '  %-10s %s\\n' \"$result\" \"$suite\"",
+            "not reported as NOT RUN",
+        ),
+    )
+
+    def test_each_self_test_arm_can_fail(self) -> None:
+        """Every arm must go red when the behaviour it guards breaks, and name itself."""
+        original = self.RUNNER.read_text(encoding="utf-8")
+
+        for label, anchor, replacement, expected in self.RUNNER_ARM_MUTATIONS:
+            with self.subTest(mutation=label):
+                self.assertEqual(
+                    original.count(anchor),
+                    1,
+                    f"the anchor for '{label}' is not unique; update it if the runner moved",
+                )
+                mutated = original.replace(anchor, replacement, 1)
+                self.assertNotEqual(mutated, original, f"the '{label}' mutation changed nothing")
+
+                with tempfile.TemporaryDirectory() as work:
+                    probe = Path(work) / "run-ship-suites.sh"
+                    probe.write_text(mutated, encoding="utf-8")
+                    shutil.copymode(self.RUNNER, probe)
+                    # Assert the mutation is really gone from what will run: a probe
+                    # that never applied reports exit 0 and reads as "cannot detect".
+                    self.assertNotIn(anchor, probe.read_text(encoding="utf-8"))
+                    result = self.run_runner_self_test(probe)
+
+                self.assertNotEqual(
+                    result.returncode,
+                    0,
+                    f"the self-test passed with '{label}' broken, so no arm covers it",
+                )
+                self.assertIn(
+                    expected,
+                    result.stdout + result.stderr,
+                    f"the self-test went red for '{label}' but did not name it, "
+                    "so the red does not identify which property broke",
+                )
 
     def test_ship_suite_contract_rejects_a_dropped_or_renamed_suite(self) -> None:
         """The assertions above must fail when the property they name is broken."""
