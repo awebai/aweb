@@ -3,6 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
+from aweb_layout import (
+    aweb_naapp_local_source_candidates,
+    existing_local_sources,
+    shadowing_local_source,
+)
 from fastapi.testclient import TestClient
 
 import folio.api as folio_api
@@ -21,13 +26,55 @@ def _override_db_for_path(app, path: str) -> None:
     app.dependency_overrides[db_dependency] = lambda: object()
 
 
-def test_aweb_naapp_import_uses_pinned_package_not_sibling_checkout() -> None:
+def test_aweb_naapp_import_resolves_from_the_pinned_package_not_a_local_source_tree() -> None:
     import aweb_naapp
 
-    package_path = Path(aweb_naapp.__file__).resolve()
-    sibling_checkout = Path(__file__).resolve().parents[2] / "aweb-naapp" / "src"
+    candidates = aweb_naapp_local_source_candidates()
+    local_sources = existing_local_sources(candidates)
 
-    assert sibling_checkout not in package_path.parents
+    # A guard whose subject does not exist cannot fail, and this one nearly stopped being
+    # able to. It named only the sibling aweb-naapp checkout, so once the naapp move puts
+    # folio at aweb/naapp/folio the path it looks for can never exist and the assertion
+    # below passes without testing anything - at the same moment aweb-naapp's source
+    # arrives in the tree at aweb/naapp-lib and makes the hazard real. So require that a
+    # local source tree was actually found: no subject means this test reports that it
+    # cannot do its job, rather than reporting success.
+    assert local_sources, (
+        "no local aweb-naapp source tree exists, so an import from one could not be "
+        "detected and this guard would pass vacuously. Looked in: "
+        + ", ".join(str(candidate) for candidate in candidates)
+    )
+
+    shadowing = shadowing_local_source(aweb_naapp.__file__, local_sources)
+    assert shadowing is None, (
+        f"aweb_naapp was imported from the local source tree at {shadowing} rather than "
+        f"from the pinned package ({Path(aweb_naapp.__file__).resolve()})"
+    )
+
+
+def test_the_local_source_guard_can_detect_a_shadowing_import(tmp_path: Path) -> None:
+    """Negative control for the guard above, which cannot fail on its own inputs.
+
+    The real import resolves from the pinned package, so the guard's failing case never
+    occurs while everything is correct - which is how it went unnoticed that the guard had
+    stopped being able to fail at all. Both directions are constructed here instead.
+    """
+    local_source = tmp_path / "naapp-lib" / "src"
+    shadowed = local_source / "aweb_naapp" / "__init__.py"
+    shadowed.parent.mkdir(parents=True)
+    shadowed.write_text("")
+
+    assert shadowing_local_source(shadowed, [local_source]) == local_source
+
+    pinned = tmp_path / "site-packages" / "aweb_naapp" / "__init__.py"
+    pinned.parent.mkdir(parents=True)
+    pinned.write_text("")
+
+    assert shadowing_local_source(pinned, [local_source]) is None
+
+    # A candidate that does not exist must never be reported, or the guard would claim to
+    # have checked a location it could not have looked at.
+    assert shadowing_local_source(shadowed, [tmp_path / "absent" / "src"]) is None
 
 
 def test_landing_page_explains_folio_and_links_agent_surfaces() -> None:

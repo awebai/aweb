@@ -8,10 +8,10 @@ import json
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import pytest
+from aweb_layout import aweb_path
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message, verify_did_key_signature
 from fastapi import HTTPException
@@ -21,9 +21,12 @@ from starlette.requests import Request
 from folio.auth import CachedTeamFacts, authenticate_request, raw_request_target
 from folio.config import Settings
 
-AWEB_SERVER_SRC = Path(__file__).resolve().parents[1].parent / "aweb" / "server" / "src"
-if AWEB_SERVER_SRC.exists():
-    sys.path.insert(0, str(AWEB_SERVER_SRC))
+# aweb's server source is imported below so both implementations of the envelope can be
+# checked against the same bytes. Located rather than assumed to be a sibling, and not
+# guarded by exists(): if it cannot be found this module must fail loudly, because the
+# alternative is a cross-repo conformance check that quietly stops comparing anything.
+AWEB_SERVER_SRC = aweb_path("server", "src")
+sys.path.insert(0, str(AWEB_SERVER_SRC))
 
 TEAM_ID = "backend:example.com"
 PUBLIC_ORIGIN = "https://folio.example.com"
@@ -310,7 +313,7 @@ async def test_authenticate_v2_fails_closed_when_awid_facts_unavailable() -> Non
 
 
 def test_aweb_team_auth_envelope_v2_conformance_vector() -> None:
-    vector_path = Path(__file__).resolve().parents[1].parent / "aweb" / "docs" / "vectors" / "team-auth-envelope-v2.json"
+    vector_path = aweb_path("docs", "vectors", "team-auth-envelope-v2.json")
     vector = json.loads(vector_path.read_text())
     case = vector["cases"][0]
     canonical = case["canonical_payload"].encode("utf-8")
@@ -344,7 +347,7 @@ def test_aweb_team_auth_envelope_v2_conformance_vector() -> None:
 
 
 def test_crypto_signature_vector_still_verifies_presented_bytes() -> None:
-    vector_path = Path(__file__).resolve().parents[1].parent / "aweb" / "test-vectors" / "trust" / "crypto-sig-v1.json"
+    vector_path = aweb_path("test-vectors", "trust", "crypto-sig-v1.json")
     vector = json.loads(vector_path.read_text())
     valid_case = vector["vectors"][0]
 
