@@ -56,11 +56,16 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/aweb"]
 
+# The wheel target above declares what it ships. The sdist declares the same way,
+# for the same reason: a denylist ships whatever nobody remembered to name, and an
+# untracked file in server/ is exactly what nobody remembers. Anything needed at
+# build or install time goes in this list explicitly.
 [tool.hatch.build.targets.sdist]
-exclude = [
-    ".claude/",
-    "AGENTS.md",
-    "CLAUDE.md",
+include = [
+    "src/",
+    "pyproject.toml",
+    "uv.lock",
+    "README.md",
 ]
 
 [dependency-groups]

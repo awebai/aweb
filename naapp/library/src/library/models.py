@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class TeamRegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    owner: str | None = Field(default=None, max_length=240)
+    display_name: str | None = Field(default=None, max_length=240)
+
+
+class ProfileBindingRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    profile_ref: str = Field(..., min_length=1, max_length=240)
+    profile_version: str = Field(..., min_length=1, max_length=80)
+    profile_digest: str = Field(..., min_length=1, max_length=128)
+    source_blueprint_ref: str | None = Field(default=None, max_length=240)
+
+
+class MaterializeRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    agent_id: str | None = Field(default=None, max_length=240)
+    profile_ref: str | None = Field(default=None, max_length=240)
+    profile_version: str | None = Field(default=None, max_length=80)
+    runtime_kind: str = Field(..., min_length=1, max_length=80)
+    target: str = Field(..., pattern=r"^(local|custodial-mcp)$")
+
+
+class SetTagsRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    tags: list[str] = Field(default_factory=list)
+
+
+class ImportToShelfRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    source_blueprint_ref: str = Field(..., min_length=1, max_length=240)
+    source_blueprint_version: str | None = Field(default=None, max_length=80)
+    profile_ref: str = Field(..., min_length=1, max_length=240)
+    tags: list[str] = Field(default_factory=list)
+
+
+class UpdateFromSourceRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    target_version: str = Field(..., min_length=1, max_length=80)
+    source_blueprint_version: str | None = Field(default=None, max_length=80)
+
+
+class NewBlueprintTarget(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    blueprint_ref: str = Field(..., min_length=1, max_length=240)
+    name: str = Field(..., min_length=1, max_length=240)
+    summary: str | None = Field(default=None, max_length=2000)
+    description: str | None = Field(default=None)
+    tags: list[str] = Field(default_factory=list)
+    readme: str | None = Field(default=None)
+    missions: list[str] = Field(default_factory=list)
+
+
+class ProfilePublishRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    profile_version: str | None = Field(default=None, max_length=80)
+    blueprint_version: str = Field(..., min_length=1, max_length=80)
+    target_blueprint_ref: str | None = Field(default=None, max_length=240)
+    new_blueprint: NewBlueprintTarget | None = Field(default=None)
+
+
+class ProposalCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    target: str = Field(..., pattern=r"^(profile|memory|skill|workflow)$")
+    profile_ref: str | None = Field(default=None, max_length=240)
+    content: dict[str, Any] = Field(default_factory=dict)
+    summary: str | None = Field(default=None, max_length=2000)
+    rationale: str | None = Field(default=None)

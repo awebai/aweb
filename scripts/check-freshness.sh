@@ -110,6 +110,21 @@ else
   status=1
 fi
 
+# 8. The moved fixtures' ignore negations must stay EFFECTIVE, measured as an effect:
+#    a new file written into a protected subtree has to be visible to git. Stripping a
+#    negation does not untrack the files already tracked, so the loss appears only at
+#    the next regeneration - and library builds its expected golden set from the
+#    working tree rather than from git, so it passes on the machine that made it.
+#    The self-test proves the gate reports both directions; note that until the
+#    aweb-aauv.2 merge lands the live arm reports NOT APPLICABLE rather than passing.
+section "moved fixture ignore negations (aweb-aauv.2 criterion 3)"
+if scripts/check-naapp-golden-visibility.sh --self-test && scripts/check-naapp-golden-visibility.sh; then
+  echo "protected subtrees are visible to git (or the movers are not here yet — read the notice above)"
+else
+  echo "FAIL: a moved fixture's ignore negations are no longer effective, so regenerating it silently loses files (or the checker's self-test failed)"
+  status=1
+fi
+
 if [ "$status" -eq 0 ]; then
   printf '\nAll freshness checks passed.\n'
 else

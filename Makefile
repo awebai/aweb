@@ -1,5 +1,5 @@
 .PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
-	freshness check-go-vulnerability-audit check-node-audit \
+	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
@@ -94,7 +94,7 @@ help:
 build:
 	cd cli/go && $(MAKE) build
 
-test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-ship-ci-contract test-release-gate-contract test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version
+test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-ship-ci-contract test-release-gate-contract test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
@@ -116,6 +116,29 @@ freshness:
 # default-aaoa.
 check-go-vulnerability-audit:
 	bash scripts/check-go-vulnerability-audit.sh
+
+# The deadline half of the audit above, split out because it is the only part
+# that can run without the pinned toolchain, a govulncheck scan or the advisory
+# database. It reads .github/go-vulnerability-exceptions.json and compares dates,
+# so it is deterministic and cheap.
+#
+# It is separate because a deferral lapses on a DATE, not on a commit. The audit
+# runs at release; if no release happens across a deadline, the deferral simply
+# stops being deferred and nothing says so. This target is what the scheduled
+# workflow runs daily. It does NOT run the audit, and the release-only decision
+# for that audit is unchanged.
+# The audit's own unit suite. It belongs in `make test` where the audit itself
+# does not: it runs against fixtures and the checked-in exceptions file, with no
+# toolchain, no scanner and no advisory database, and none of its assertions
+# depend on today's date. Before this it was invoked by nothing, so the audit's
+# ability to fail was asserted in a comment and tested nowhere.
+test-go-vulnerability-audit:
+	python3 -m unittest discover -s scripts -p "test_check_go_vulnerability_audit.py" -v
+
+check-exception-deadlines:
+	python3 scripts/check_go_vulnerability_audit.py \
+		--deadlines-only \
+		--exceptions .github/go-vulnerability-exceptions.json
 
 check-node-audit:
 	bash scripts/check-node-audit.sh
