@@ -30,11 +30,15 @@ type teamProfileSource struct {
 	LineageUnknown bool
 }
 
-// Describe states the source, version and digest, so the caller can report what
-// happened instead of asserting an adoption that never took place.
+// Describe states the source of a resolution. It reports a version and digest only
+// for the shelf, because only the shelf payload is in hand here - the public profile
+// is not fetched until materialization, so this cannot state a public version without
+// asserting something nothing has read. A caller that needs the published version and
+// digest for either source must build that line from the MaterializeResult afterwards,
+// which carries both.
 func (s teamProfileSource) Describe(selector libraryProfileSelector) string {
-	if !s.FromShelf {
-		return fmt.Sprintf("public catalog %s: %s %s", strings.TrimSpace(selector.LibraryURL), strings.TrimSpace(selector.ProfileRef), "latest")
+	if !s.FromShelf || s.Shelf == nil {
+		return fmt.Sprintf("public catalog %s: %s", strings.TrimSpace(selector.LibraryURL), strings.TrimSpace(selector.ProfileRef))
 	}
 	lineage := strings.TrimSpace(s.Shelf.SourceBlueprintRef)
 	if s.LineageUnknown {
@@ -51,6 +55,16 @@ func resolveTeamProfileSourceForHome(homeDir string, selector libraryProfileSele
 	if profileRef == "" {
 		return teamProfileSource{}, fmt.Errorf("profile ref is required to resolve a team profile source")
 	}
+	// The requested blueprint ref is required because the lineage check below is the
+	// only thing standing between a request for one blueprint's role and a shelf entry
+	// imported from another. With it empty that check cannot run, and every caller
+	// today happens to default it - but "unreachable because of a caller" is not the
+	// same as safe, and a future caller that omits it would silently accept any
+	// lineage rather than fail.
+	requested := strings.TrimSpace(selector.SourceBlueprintRef)
+	if requested == "" {
+		return teamProfileSource{}, fmt.Errorf("source blueprint ref is required to resolve a team profile source for %s; without it a shelf profile from any blueprint would be accepted", profileRef)
+	}
 	shelf, found, err := lookupTeamShelfProfile(homeDir, profileRef)
 	if err != nil {
 		return teamProfileSource{}, err
@@ -64,9 +78,8 @@ func resolveTeamProfileSourceForHome(homeDir string, selector libraryProfileSele
 	// blueprint would be materialized under the requested lineage silently, and every
 	// digest assertion would still pass. team_refresh.go applies the same distrust to
 	// the profile_ref dimension for the same reason.
-	requested := strings.TrimSpace(selector.SourceBlueprintRef)
 	recorded := strings.TrimSpace(shelf.SourceBlueprintRef)
-	if recorded != "" && requested != "" && recorded != requested {
+	if recorded != "" && recorded != requested {
 		return teamProfileSource{}, fmt.Errorf(
 			"team shelf profile %s records source blueprint %q but %q was requested; refusing to materialize a different lineage. Import the profile from %q, or request %q",
 			profileRef, recorded, requested, requested, recorded)

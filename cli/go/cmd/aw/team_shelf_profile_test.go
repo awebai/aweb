@@ -303,6 +303,39 @@ func TestShelfProfileLineageMismatchRefuses(t *testing.T) {
 	}
 }
 
+// The lineage check is the only thing between a request for one blueprint's role and
+// a shelf entry imported from another, so a request that carries no blueprint ref must
+// be refused rather than silently accepting any lineage. Every caller today defaults
+// the field, which makes this unreachable in practice - and "unreachable because of a
+// caller" is not the same as safe, so the guard is asserted here rather than trusted.
+func TestShelfProfileRequestWithoutLineageIsRefused(t *testing.T) {
+	files := testShelfProfileFiles(t, "local")
+	stub := &shelfStub{
+		ProfileRef: "coordinator", Version: testShelfProfileVersion, BlueprintRef: "other.blueprint",
+		Digest: testShelfPayloadDigest(t, testShelfProfileVersion, files), Files: files,
+	}
+	server := stub.server(t)
+	defer server.Close()
+	home := newShelfTestHome(t, server.URL)
+
+	selector := libraryProfileSelector{
+		LibraryURL: server.URL, SourceBlueprintRef: "",
+		ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
+	}
+	_, err := resolveTeamProfileSourceForHome(home, selector)
+	if err == nil {
+		t.Fatal("a request with no source blueprint ref was accepted; any shelf lineage would match")
+	}
+	if !strings.Contains(err.Error(), "source blueprint ref is required") {
+		t.Fatalf("refusal must name the missing field: %v", err)
+	}
+	// It has to refuse BEFORE consulting the shelf: asking first and then rejecting the
+	// answer would make the refusal depend on what the shelf happens to hold.
+	if stub.ShelfGets != 0 {
+		t.Fatalf("shelf was consulted %d times before the request was validated, want 0", stub.ShelfGets)
+	}
+}
+
 // An empty lineage is a state the service produces deliberately -
 // create-shelf-profile takes files with no source blueprint, and delete-blueprint
 // detaches rather than orphans - so it is usable, not a mismatch.
