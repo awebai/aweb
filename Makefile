@@ -94,7 +94,7 @@ help:
 build:
 	cd cli/go && $(MAKE) build
 
-test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-ship-ci-contract test-release-gate-contract test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
+test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-ship-ci-contract test-release-gate-contract check-aw-commit-repo-stamp test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
