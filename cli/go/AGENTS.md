@@ -76,8 +76,11 @@ You are part of a team working toward a shared goal. Optimize for the project ou
 
 ## Who to ask
 
-Roles shown in `aw workspace status` are the profile each agent runs, not who is
-currently leading. When the two disagree, this section is the answer.
+Roles shown in `aw workspace status` are each workspace's current operating
+responsibility on this team. Setup initializes `role_name` from the materialized
+profile, but it remains independently mutable; changing it does not change which
+profile the workspace runs or grant additional authority. Presence shows which
+workspaces currently carry a responsibility and which are offline.
 
 - **Coordination, scope questions and handoffs: alice.** Route them there.
 - **dev is not reachable and its home is hands-off.** Presence shows dev offline
