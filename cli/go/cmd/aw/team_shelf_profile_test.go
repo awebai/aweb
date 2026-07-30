@@ -547,3 +547,64 @@ func TestRosterOutputNamesTheShelfSourceItMaterialized(t *testing.T) {
 		t.Fatalf("the unconditional line survived alongside the source line:\n%s", human)
 	}
 }
+
+// The ordinary path: a roster on a team with no reachable shelf must still
+// materialize, must land the PUBLIC bytes, and must say that the shelf was not
+// consulted rather than reporting an absence it never established.
+//
+// This exists because the existing suite does not cover it. A mutation making
+// "not consultable" an error reds exactly one test - a create-path one - so the
+// roster path's shelf wiring has no end-to-end coverage to inherit.
+func TestRosterWithNoReachableShelfMaterializesPublicAndSaysSo(t *testing.T) {
+	stub := &shelfStub{ProfileRef: "coordinator", Status: http.StatusNotFound}
+	server := stub.server(t)
+	defer server.Close()
+
+	home := t.TempDir()
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+	writeLocalTeamSignedRequestWorkspaceForTest(t, home, "https://library.invalid", "default:acme.com", "coordinator", did, priv)
+	// No plugin manifest written: this is the plugin-free home that every bootstrap
+	// starts from, and the case that must not become an error.
+	t.Setenv("AW_HOME", filepath.Join(home, ".aw"))
+
+	selector := libraryProfileSelector{
+		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
+		ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
+	}
+	target := filepath.Join(home, "aw-coord")
+	plans := []teamHumanAddedAgent{{Name: "aw-coord", HomeDir: target, Profile: &selector}}
+	if err := resolveTeamProfileSourcesForPlans(home, plans); err != nil {
+		t.Fatalf("a plugin-free roster must resolve, not fail: %v", err)
+	}
+	if stub.ShelfGets != 0 {
+		t.Fatalf("with no plugin the shelf cannot have been reached, got %d gets", stub.ShelfGets)
+	}
+	if plans[0].Source == nil || plans[0].Source.FromShelf {
+		t.Fatalf("expected a public source, got %+v", plans[0].Source)
+	}
+	// The roster loop creates the home before materializing into it; the resolution
+	// above deliberately happens before that, which is why it is authorized from the
+	// anchor rather than from a directory that does not exist yet.
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := applyTeamLibraryProfileToHome(target, selector, plans[0].Source, true); err != nil {
+		t.Fatal(err)
+	}
+	// The PUBLIC bytes, read back off disk - not a digest the command reported.
+	body, err := os.ReadFile(filepath.Join(target, ".aw", "profile", "instructions.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != testPublicInstructionsBody {
+		t.Fatalf("public path did not land the public bytes:\n got %q\nwant %q", body, testPublicInstructionsBody)
+	}
+	human := formatTeamHumanAdd(teamHumanAddOutput{Status: "extended", AgentsRoot: home, Agents: plans})
+	if !strings.Contains(human, "team shelf not consulted") {
+		t.Fatalf("output must say the shelf was never asked rather than imply an absence:\n%s", human)
+	}
+}
