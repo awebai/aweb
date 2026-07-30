@@ -512,11 +512,23 @@ async function dispatchMailEvent(
   const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log);
   for (const msg of messages) {
     if (msg.verification_error) {
-      await options.undeliveredLog?.record({
-        messageID: msg.message_id,
-        from: senderDisplayAddress(msg.from_alias, msg.from_address),
-        reason: "verification_error",
-      });
+      // An audit write must never fail the delivery it observes. This message is
+      // deliberately left unread and unacked, so it returns in every unread-only
+      // fetch; letting a write failure escape would abort the rest of the batch
+      // and do so again on each fetch, stopping delivery behind a message that
+      // can never be cleared. Contrast persistDeliveryMark below, which rethrows
+      // on purpose: a failed delivery mark must not become an acknowledgment.
+      // This record carries no such contract, so it fails soft and reports.
+      try {
+        await options.undeliveredLog?.record({
+          messageID: msg.message_id,
+          from: senderDisplayAddress(msg.from_alias, msg.from_address),
+          reason: "verification_error",
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        log(`aweb: could not record undelivered message ${JSON.stringify(msg.message_id)}: ${detail}`);
+      }
       continue;
     }
     if (isSelfSender(msg.from_alias, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
