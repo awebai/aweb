@@ -21,6 +21,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { afterEach, test } from "node:test";
 
 import { cleanupCorroborationPayload } from "../.agents/capabilities/owned/aweb-identity-attach/lib/binding-policy.mjs";
+import { oasCliPath } from "./helpers/oas-test-root.mjs";
 
 const CAPABILITY_SOURCE = resolve(new URL("../.agents/capabilities/owned/aweb-identity-attach", import.meta.url).pathname);
 const temporaryDirectories = [];
@@ -43,11 +44,7 @@ function write(path, content, mode) {
 }
 
 function oasCli() {
-  const root = process.env.OAS_TEST_ROOT
-    || execFileSync("oas", ["root"], { encoding: "utf8" }).trim();
-  const cli = join(root, "bin", "oas.mjs");
-  assert.equal(existsSync(cli), true, `real OAS CLI not found at ${cli}`);
-  return cli;
+  return oasCliPath();
 }
 
 function reconcileCommand(args, cwd, env) {
