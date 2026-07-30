@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { lock } from "proper-lockfile";
 
 import { APIClient } from "./api/client.js";
@@ -20,6 +20,7 @@ import {
 
 export const DEFAULT_PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
 export const DEFAULT_DELIVERY_STORE_PATH = join(homedir(), ".config", "aw", "channel-delivered-ids.json");
+export const DEFAULT_UNDELIVERED_LOG_PATH = join(homedir(), ".config", "aw", "channel-undelivered.jsonl");
 const MAX_DISPATCHED_IDS = 2000;
 const MAX_DELIVERED_IDS = 5000;
 const DELIVERED_IDS_TTL_MS = 24 * 60 * 60 * 1000;
@@ -57,6 +58,8 @@ export interface ChannelLoopOptions {
   mailAcknowledgment?: "delivery" | "manual";
   deliveryStore?: DeliveryStore;
   deliveryStorePath?: string;
+  undeliveredLog?: UndeliveredLog;
+  undeliveredLogPath?: string;
   localDecrypt?: LocalDecryptProvider;
   workdir?: string;
   awCommand?: string;
@@ -271,6 +274,34 @@ export class DeliveryStore {
   }
 }
 
+/**
+ * Append-only record of the messages the channel declined to present.
+ *
+ * A message that is never presented otherwise leaves no trace at all: the skip
+ * happens before the delivery mark and before the trust record, the server holds
+ * only read_at — which cannot distinguish a dropped message from a read one —
+ * and the channel's own log goes to stderr. So a delivery failure can only be
+ * reconstructed from message metadata, if at all (aweb-aawv).
+ *
+ * Deliberately not a DeliveryStore. These entries carry no TTL and are never
+ * rewritten: expiring or overwriting the evidence would recreate the gap this
+ * record exists to close.
+ */
+export class UndeliveredLog {
+  constructor(private readonly path: string) {}
+
+  async record(entry: { messageID: string; from: string; reason: string }): Promise<void> {
+    const line = JSON.stringify({
+      message_id: entry.messageID,
+      from: entry.from,
+      reason: entry.reason,
+      at: new Date().toISOString(),
+    });
+    await mkdir(dirname(this.path), { recursive: true });
+    await appendFile(this.path, `${line}\n`, { encoding: "utf-8", mode: 0o600 });
+  }
+}
+
 export function resolveRegistryFallbackURL(identityRegistryURL: string = ""): string | undefined {
   const envRegistryURL = (process.env.AWID_REGISTRY_URL || "").trim();
   if (envRegistryURL) {
@@ -314,11 +345,18 @@ export async function startChannelLoop(options: ChannelLoopOptions): Promise<voi
   const deliveryStorePath = options.deliveryStorePath
     || (options.workdir ? join(options.workdir, ".aw", "channel-delivered-ids.json") : DEFAULT_DELIVERY_STORE_PATH);
   const deliveryStore = options.deliveryStore || await DeliveryStore.load(deliveryStorePath);
+  const undeliveredLogPath = options.undeliveredLogPath
+    || (options.workdir ? join(options.workdir, ".aw", "channel-undelivered.jsonl") : DEFAULT_UNDELIVERED_LOG_PATH);
+  const undeliveredLog = options.undeliveredLog || new UndeliveredLog(undeliveredLogPath);
   const localDecrypt = options.localDecrypt || (
     options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : undefined
   );
   await consumeAgentEvents(
-    { ...options, deliveryStore, localDecrypt },
+    // UNGUARDED: no test covers this function, so removing any dependency from
+    // this spread silently disables it rather than failing. Deleting
+    // undeliveredLog here leaves all 281 tests passing while the channel stops
+    // recording dropped messages entirely. See aweb-aayl.
+    { ...options, deliveryStore, undeliveredLog, localDecrypt },
     dispatched,
     streamAgentEvents(options.client, options.signal, options.onStreamState),
     options.log || (() => {}),
@@ -473,7 +511,14 @@ async function dispatchMailEvent(
 ): Promise<void> {
   const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log);
   for (const msg of messages) {
-    if (msg.verification_error) continue;
+    if (msg.verification_error) {
+      await options.undeliveredLog?.record({
+        messageID: msg.message_id,
+        from: senderDisplayAddress(msg.from_alias, msg.from_address),
+        reason: "verification_error",
+      });
+      continue;
+    }
     if (isSelfSender(msg.from_alias, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
     const conversationID = msg.conversation_id || event.conversation_id;
     const key = dispatchKey("mail", conversationID, msg.message_id);

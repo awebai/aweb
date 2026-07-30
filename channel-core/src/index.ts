@@ -25,6 +25,7 @@ export {
   createChannelClient,
   consumeAgentEvents,
   DeliveryStore,
+  UndeliveredLog,
   createRegistryResolver,
   dispatchAgentEvent,
   formatAwakeningForAgent,

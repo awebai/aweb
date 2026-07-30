@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   consumeAgentEvents,
   DeliveryStore,
+  UndeliveredLog,
   dispatchAgentEvent,
   formatAwakeningForAgent,
   PinStore,
@@ -507,6 +508,74 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(log).toHaveBeenCalledWith(
       "aweb: skipped verification for 1 inbox message; it remains unread",
     );
+  });
+
+  test("records a durable entry for the message it declined to present", async () => {
+    const undeliveredPath = join(
+      await mkdtemp(join(tmpdir(), "aweb-channel-undelivered-")),
+      "undelivered.jsonl",
+    );
+    const undeliveredLog = new UndeliveredLog(undeliveredPath);
+    const poisonMessage = {
+      message_id: "mail-unrecorded",
+      from_agent_id: "agent-1",
+      from_alias: "alice",
+      from_address: "acme.com/alice",
+      to_alias: self.alias,
+      to_address: self.address,
+      subject: "poison",
+      body: "malformed transport record",
+      priority: "normal",
+      created_at: "2025-01-01T00:00:00Z",
+      get signed_payload(): string {
+        throw new Error("unexpected per-message verification failure");
+      },
+    };
+    const onAwakening = vi.fn();
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [poisonMessage, {
+          message_id: "mail-presented",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: self.alias,
+          subject: "good",
+          body: "still delivered",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:01Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    async function* events(): AsyncGenerator<AgentEvent> {
+      yield { type: "mail_message", message_id: "mail-unrecorded" };
+    }
+
+    await consumeAgentEvents(
+      { client: client as never, pinStore: new PinStore(), trust, self, undeliveredLog, onAwakening },
+      new Set(),
+      events(),
+      vi.fn(),
+    );
+
+    const entries = (await readFile(undeliveredPath, "utf-8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, string>);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      message_id: "mail-unrecorded",
+      reason: "verification_error",
+      from: "acme.com/alice",
+    });
+    expect(Number.isFinite(Date.parse(entries[0].at))).toBe(true);
+
+    // The sibling in the same fetch WAS presented, so it must be absent. Without
+    // this, a log that recorded every message would satisfy the assertion above.
+    expect(onAwakening).toHaveBeenCalledTimes(1);
+    expect(entries.some((entry) => entry.message_id === "mail-presented")).toBe(false);
   });
 
   test("keeps mail unread while host injection is pending", async () => {
