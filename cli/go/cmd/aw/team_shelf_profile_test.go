@@ -174,9 +174,9 @@ func TestShelfProfileResolutionMaterializesShelfBytes(t *testing.T) {
 		ProfileRef: "coordinator", RuntimeKind: "claude-code",
 		IdentityScope: "local",
 	}
-	resolved, err := resolveTeamProfileSourceForHome(home, selector)
+	resolved, err := resolveTeamProfileSource(home, selector)
 	if err != nil {
-		t.Fatalf("resolveTeamProfileSourceForHome: %v", err)
+		t.Fatalf("resolveTeamProfileSource: %v", err)
 	}
 	if !resolved.FromShelf {
 		t.Fatalf("shelf profile present but resolution chose public: %+v", resolved)
@@ -299,7 +299,7 @@ func TestShelfProfileAbsenceFallsBackToPublic(t *testing.T) {
 		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
 		ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
 	}
-	resolved, err := resolveTeamProfileSourceForHome(home, selector)
+	resolved, err := resolveTeamProfileSource(home, selector)
 	if err != nil {
 		t.Fatalf("a 404 from the shelf is absence, not an error: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestShelfProfileUnreachableIsAnErrorNotAFallback(t *testing.T) {
 			LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
 			ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
 		}
-		_, err := resolveTeamProfileSourceForHome(home, selector)
+		_, err := resolveTeamProfileSource(home, selector)
 		shelfGets := stub.ShelfGets
 		server.Close()
 		if err == nil {
@@ -358,7 +358,7 @@ func TestShelfProfileLineageMismatchRefuses(t *testing.T) {
 		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
 		ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
 	}
-	_, err := resolveTeamProfileSourceForHome(home, selector)
+	_, err := resolveTeamProfileSource(home, selector)
 	if err == nil {
 		t.Fatal("a shelf profile from a different blueprint was accepted for the requested one")
 	}
@@ -386,7 +386,7 @@ func TestShelfProfileRequestWithoutLineageIsRefused(t *testing.T) {
 		LibraryURL: server.URL, SourceBlueprintRef: "",
 		ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
 	}
-	_, err := resolveTeamProfileSourceForHome(home, selector)
+	_, err := resolveTeamProfileSource(home, selector)
 	if err == nil {
 		t.Fatal("a request with no source blueprint ref was accepted; any shelf lineage would match")
 	}
@@ -417,7 +417,7 @@ func TestShelfProfileEmptyLineageIsUsable(t *testing.T) {
 		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
 		ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
 	}
-	resolved, err := resolveTeamProfileSourceForHome(home, selector)
+	resolved, err := resolveTeamProfileSource(home, selector)
 	if err != nil {
 		t.Fatalf("a shelf profile with no recorded lineage must be usable: %v", err)
 	}
@@ -443,9 +443,9 @@ func TestShelfSourcedHomeStaysOnShelfAfterRefresh(t *testing.T) {
 		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
 		ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
 	}
-	resolved, err := resolveTeamProfileSourceForHome(home, selector)
+	resolved, err := resolveTeamProfileSource(home, selector)
 	if err != nil {
-		t.Fatalf("resolveTeamProfileSourceForHome: %v", err)
+		t.Fatalf("resolveTeamProfileSource: %v", err)
 	}
 	if _, _, err := applyTeamLibraryProfileToHome(home, selector, resolved, true); err != nil {
 		t.Fatalf("applyTeamLibraryProfileToHome: %v", err)
@@ -481,7 +481,7 @@ func TestShelfNotConsultableIsReportedAsNotConsultedNotAbsent(t *testing.T) {
 	t.Setenv("AW_HOME", filepath.Join(home, ".aw"))
 
 	selector := libraryProfileSelector{LibraryURL: "https://library.example", ProfileRef: "coordinator", SourceBlueprintRef: "aweb.team", RuntimeKind: "local-shell"}
-	source, err := resolveTeamProfileSourceForHome(home, selector)
+	source, err := resolveTeamProfileSource(home, selector)
 	if err != nil {
 		t.Fatalf("a home without the Library plugin must resolve to the public catalog, not fail: %v", err)
 	}

@@ -83,10 +83,10 @@ func (s teamProfileSource) Describe(selector libraryProfileSelector) string {
 	return fmt.Sprintf("team shelf: %s %s %s (%s)", strings.TrimSpace(s.Shelf.ProfileRef), strings.TrimSpace(s.Shelf.Version), strings.TrimSpace(s.Shelf.Digest), lineage)
 }
 
-// resolveTeamProfileSourceForHome decides whether this role comes from the team's
+// resolveTeamProfileSource decides whether this role comes from the team's
 // shelf or the public catalog, and refuses rather than guessing when the shelf
 // answers something that does not match what was asked for.
-func resolveTeamProfileSourceForHome(homeDir string, selector libraryProfileSelector) (teamProfileSource, error) {
+func resolveTeamProfileSource(teamAuthorityDir string, selector libraryProfileSelector) (teamProfileSource, error) {
 	profileRef := strings.TrimSpace(selector.ProfileRef)
 	if profileRef == "" {
 		return teamProfileSource{}, fmt.Errorf("profile ref is required to resolve a team profile source")
@@ -101,7 +101,7 @@ func resolveTeamProfileSourceForHome(homeDir string, selector libraryProfileSele
 	if requested == "" {
 		return teamProfileSource{}, fmt.Errorf("source blueprint ref is required to resolve a team profile source for %s; without it a shelf profile from any blueprint would be accepted", profileRef)
 	}
-	shelf, outcome, err := lookupTeamShelfProfile(homeDir, profileRef)
+	shelf, outcome, err := lookupTeamShelfProfile(teamAuthorityDir, profileRef)
 	if err != nil {
 		return teamProfileSource{}, err
 	}
@@ -133,9 +133,9 @@ func resolveTeamProfileSourceForHome(homeDir string, selector libraryProfileSele
 // uninstalled Library plugin is neither: the shelf was never askable from here, so
 // the public catalog is the only available source and the caller must say so rather
 // than report an absence.
-func lookupTeamShelfProfile(homeDir, profileRef string) (*libraryShelfProfileResponse, shelfLookupOutcome, error) {
+func lookupTeamShelfProfile(teamAuthorityDir, profileRef string) (*libraryShelfProfileResponse, shelfLookupOutcome, error) {
 	var shelf *libraryShelfProfileResponse
-	err := withWorkingDir(homeDir, func() error {
+	err := withWorkingDir(teamAuthorityDir, func() error {
 		var callErr error
 		shelf, callErr = callLibraryGetShelfProfileWithMissingErr(profileRef, errTeamShelfNotConsultable)
 		return callErr
