@@ -26,7 +26,7 @@ command's `--body-file` flag.
 
 **The hazard is a mechanism, not a surface.** *Any* shell context that
 interpolates will expand backticks and `$(...)` before the program ever sees the
-text - and it does so at every layer between your keyboard and the artifact, not
+text — and it does so at every layer between your keyboard and the artifact, not
 just on the `aw` command line:
 
 ```
@@ -36,7 +36,7 @@ echo "..."   interpolates          a quoted heredoc into a file  does not
 ```
 
 Using `--body-file` protects the last layer only. A file written by an *unquoted*
-heredoc is already corrupted before `aw` reads it - this has happened here, in a
+heredoc is already corrupted before `aw` reads it — this has happened here, in a
 document about not trusting unreviewed text, and nothing failed: the writer
 reported success and the diff reported the expected line count. Both were true and
 neither measured the thing that mattered.
@@ -49,10 +49,9 @@ grep -c '`' <the-written-file>    # non-zero => backticks survived, so the conte
 ```
 
 That works because the corruption and its evidence are the same characters. Note
-the asymmetry: a zero is only meaningful if you *meant* to write backticks - for a
+the asymmetry: a zero is only meaningful if you *meant* to write backticks — for a
 file that never had any, "none present" cannot distinguish "I wrote none" from
 "the shell ate them", and that absence is not recoverable afterwards.
-
 ## Mail
 
 ```bash
