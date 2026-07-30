@@ -32,8 +32,25 @@ done
 # The repository the sync clones and pushes to.
 push_target="$(grep -oE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git' "$WORKFLOW" | head -1 | sed 's/\.git$//' || true)"
 
-# The repository the binary will claim its commit resolves in.
-stamped="$(grep -oE '\-X main\.commitRepo=[^[:space:]]+' "$GORELEASER" | head -1 | sed 's/^-X main\.commitRepo=//' || true)"
+# The repository the AW BINARY will claim its commit resolves in.
+#
+# Bounded to the aw build block rather than read from the whole file. Reading the file
+# and taking the first match passes while the stamp sits on a DIFFERENT binary's block:
+# aw then ships a bare hash and this check affirms, by name, the property it no longer
+# has. That is not hypothetical - aweb-a2a-gw is filed to gain its own commitRepo, and
+# the moment it does, a file-wide read becomes an ordering accident.
+#
+# The anchor is exact because "- id: aw" is a prefix of "- id: aweb-a2a-gw".
+aw_block="$(awk '/^  - id: aw$/{inblock=1; next} /^  - id: /{inblock=0} inblock' "$GORELEASER")"
+
+if [[ -z "$aw_block" ]]; then
+  printf 'FAIL: no "- id: aw" build block found in %s.\n' "$GORELEASER" >&2
+  printf '      This check reads the stamp from that block specifically, so it will not fall back\n' >&2
+  printf '      to a file-wide search that could match another binary.\n' >&2
+  exit 1
+fi
+
+stamped="$(printf '%s\n' "$aw_block" | grep -oE '\-X main\.commitRepo=[^[:space:]]+' | head -1 | sed 's/^-X main\.commitRepo=//' || true)"
 
 if [[ -z "$push_target" ]]; then
   printf 'FAIL: no sync target found in %s.\n' "$WORKFLOW" >&2
@@ -42,9 +59,11 @@ if [[ -z "$push_target" ]]; then
 fi
 
 if [[ -z "$stamped" ]]; then
-  printf 'FAIL: no -X main.commitRepo stamp found in %s.\n' "$GORELEASER" >&2
+  printf 'FAIL: no -X main.commitRepo stamp in the "- id: aw" build block of %s.\n' "$GORELEASER" >&2
   printf '      Without it `aw version` prints a bare commit that resolves in no repository a\n' >&2
   printf '      reader has, which is aweb-aaun.7.\n' >&2
+  printf '      NOTE: the stamp may exist elsewhere in this file and still fail here - it is only\n' >&2
+  printf '      read from the aw block, because a stamp on another binary does nothing for aw.\n' >&2
   exit 1
 fi
 

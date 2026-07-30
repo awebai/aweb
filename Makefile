@@ -3,7 +3,7 @@
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
-	check-server-locked-suite release-server-gate \
+	check-aw-commit-repo-stamp check-server-locked-suite release-server-gate \
 	check-awid-locked-suite release-awid-pypi-gate release-awid-image-gate \
 	release-server-check release-server-tag release-server-push \
 	release-awid-check release-awid-tag release-awid-push \
