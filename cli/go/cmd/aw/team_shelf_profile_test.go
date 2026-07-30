@@ -498,3 +498,52 @@ func TestShelfNotConsultableIsReportedAsNotConsultedNotAbsent(t *testing.T) {
 		t.Fatalf("describe\n got %q\nwant %q", got, want)
 	}
 }
+
+// eve's open requirement: the reported line must be built FROM Describe and asserted
+// on WHAT THE COMMAND PRINTED. A test on Describe alone cannot close it - the failure
+// mode is a correct, tested, UNCALLED Describe sitting beside a different inline line
+// that actually ships.
+//
+// So this chains the whole path: a real shelf resolution against the stub, through
+// the preflight that assigns the plan's reported source, into the formatter that
+// renders the command's human output. Nothing here constructs the expected string by
+// hand except the values the shelf itself returned.
+func TestRosterOutputNamesTheShelfSourceItMaterialized(t *testing.T) {
+	files := testShelfProfileFiles(t, "local")
+	stub := &shelfStub{
+		ProfileRef: "coordinator", Version: testShelfProfileVersion, BlueprintRef: "aweb.team",
+		Digest: testShelfPayloadDigest(t, testShelfProfileVersion, files), Files: files,
+	}
+	server := stub.server(t)
+	defer server.Close()
+	home := newShelfTestHome(t, server.URL)
+
+	selector := libraryProfileSelector{
+		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
+		ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
+	}
+	plans := []teamHumanAddedAgent{{Name: "aw-coord", HomeDir: filepath.Join(home, "aw-coord"), Profile: &selector}}
+	if err := resolveTeamProfileSourcesForPlans(home, plans); err != nil {
+		t.Fatal(err)
+	}
+	if stub.ShelfGets != 1 {
+		t.Fatalf("preflight must consult the shelf exactly once, got %d", stub.ShelfGets)
+	}
+
+	human := formatTeamHumanAdd(teamHumanAddOutput{
+		Status: "extended", AgentsRoot: home, Agents: plans,
+	})
+
+	// The printed line must carry the version and digest the SHELF reported, so a
+	// public materialization cannot produce this output.
+	for _, want := range []string{"team shelf", "coordinator", testShelfProfileVersion, stub.Digest} {
+		if !strings.Contains(human, want) {
+			t.Fatalf("the command's output omits %q, so a reader cannot tell which source landed:\n%s", want, human)
+		}
+	}
+	// And it must not still be claiming the old unconditional success line, which was
+	// true of the shelf and the public catalog alike.
+	if strings.Contains(human, "Library profile(s) adopted and materialized.") {
+		t.Fatalf("the unconditional line survived alongside the source line:\n%s", human)
+	}
+}
