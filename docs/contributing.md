@@ -137,6 +137,18 @@ make freshness
 
 `make release-all-check` runs the same check and fails on drift.
 
+Run the Node installs first if you are invoking it directly on a fresh checkout:
+
+```
+(cd channel && npm ci) && (cd pi-extension && npm ci)
+```
+
+Without them the bundle sections fail on a missing `esbuild` binary, and they
+report it as `bundle stale or missing the security surface` — which reads as
+artifact drift rather than as an absent install. `make release-all-check` does not
+hit this because `release-channel-check` runs `npm ci` before it reaches
+freshness; running `make freshness` on its own skips that step.
+
 ## Reproducible OAS seam input
 
 The OAS seam tests do not read a sibling working checkout by default. `make
