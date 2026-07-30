@@ -474,14 +474,20 @@ func cleanupLocalProvision(ctx context.Context, opts localProvisionOptions) (loc
 				break
 			}
 		}
-		if certificate != nil {
-			if certificate.TeamID != teamID || certificate.Alias != alias || certificate.MemberDIDKey != record.Result.DIDKey {
-				return localProvisionCleanupOutput{}, fmt.Errorf("registry certificate does not match provisioned cleanup tuple")
-			}
-			if strings.TrimSpace(certificate.RevokedAt) == "" {
-				if err := registry.RevokeCertificate(ctx, record.Result.RegistryURL, domain, team, record.Result.CertificateID, teamKey); err != nil {
-					return localProvisionCleanupOutput{}, fmt.Errorf("revoke provisioned certificate: %w", err)
-				}
+		// Recording a revocation that was never established would leave a valid
+		// credential behind a cleanup that reported success, so an absent
+		// certificate fails the cleanup instead of completing it.
+		if certificate == nil {
+			return localProvisionCleanupOutput{}, fmt.Errorf(
+				"cannot establish revocation of provisioned certificate %s: it is absent from the %s certificate listing",
+				record.Result.CertificateID, teamID)
+		}
+		if certificate.TeamID != teamID || certificate.Alias != alias || certificate.MemberDIDKey != record.Result.DIDKey {
+			return localProvisionCleanupOutput{}, fmt.Errorf("registry certificate does not match provisioned cleanup tuple")
+		}
+		if strings.TrimSpace(certificate.RevokedAt) == "" {
+			if err := registry.RevokeCertificate(ctx, record.Result.RegistryURL, domain, team, record.Result.CertificateID, teamKey); err != nil {
+				return localProvisionCleanupOutput{}, fmt.Errorf("revoke provisioned certificate: %w", err)
 			}
 		}
 		record.Cleanup.Certificate = "revoked"
