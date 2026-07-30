@@ -3,7 +3,7 @@
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
-	check-server-locked-suite release-server-gate \
+	check-aw-commit-repo-stamp check-server-locked-suite release-server-gate \
 	check-awid-locked-suite release-awid-pypi-gate release-awid-image-gate \
 	release-server-check release-server-tag release-server-push \
 	release-awid-check release-awid-tag release-awid-push \
@@ -94,7 +94,7 @@ help:
 build:
 	cd cli/go && $(MAKE) build
 
-test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-ship-ci-contract test-release-gate-contract test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
+test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-ship-ci-contract test-release-gate-contract check-aw-commit-repo-stamp test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
@@ -331,6 +331,11 @@ awid-prod-migrate:
 # guard is absent: on the commit a server-v* tag points at it compares that tag
 # against itself and always passes. It stays in server-ci.yml, where the
 # change-time question it asks is the one being asked.
+
+# Deterministic, no network, no toolchain: it reads two checked-in files and compares
+# them. Safe to run anywhere, which is why it is a target rather than only a release step.
+check-aw-commit-repo-stamp:
+	./scripts/check-aw-commit-repo-stamp.sh
 
 check-server-locked-suite:
 	cd server && uv lock --check

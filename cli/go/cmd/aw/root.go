@@ -76,15 +76,28 @@ var versionCmd = &cobra.Command{
 		// No-op: version command doesn't require command initialization side-effects.
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("aw %s\n", version)
-		if commit != "none" {
-			fmt.Printf("  commit: %s\n", commit)
-		}
-		if date != "unknown" {
-			fmt.Printf("  built:  %s\n", date)
-		}
+		fmt.Print(versionReport())
 		checkLatestVersion(os.Stderr, "")
 	},
+}
+
+// versionReport renders the version block. It is separate from the command so the
+// output contract can be asserted directly: a reader holding a binary resolves the
+// commit it prints, so what it prints is the traceability surface (aweb-aaun.7).
+func versionReport() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "aw %s\n", version)
+	if commit != "none" {
+		if commitRepo != "" {
+			fmt.Fprintf(&b, "  commit: %s (%s)\n", commit, commitRepo)
+		} else {
+			fmt.Fprintf(&b, "  commit: %s\n", commit)
+		}
+	}
+	if date != "unknown" {
+		fmt.Fprintf(&b, "  built:  %s\n", date)
+	}
+	return b.String()
 }
 
 func init() {
