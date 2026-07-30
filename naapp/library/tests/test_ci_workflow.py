@@ -228,9 +228,20 @@ def test_ci_also_covers_naapp_lib() -> None:
 
 
 def test_ci_runs_library_targets_from_the_subtree_path() -> None:
-    """make runs in naapp/library, not at the aweb root, or it runs aweb's Makefile."""
-    workflow = _workflow()
-    steps = [job for job in workflow["jobs"].values() for job in job["steps"]]
+    """make runs in naapp/library, not at the aweb root, or it runs aweb's Makefile.
+
+    Scoped to the library job on purpose. Iterating every job would force any
+    future job that legitimately runs make elsewhere into naapp/library, which
+    is an assertion about jobs this test knows nothing about.
+
+    The command test is on the first token rather than `"make " in run`: that
+    substring also matches "cmake --build". Only over-constraining, and there is
+    no cmake here, but a containment test keyed on a command name is the shape
+    that has cost this repo repeatedly - a denylist matching by spelling instead
+    of by position is the same defect measured in folio's Makefile guard.
+    """
+    steps = _workflow()["jobs"]["quality"]["steps"]
     for step in steps:
-        if "make " in step.get("run", ""):
+        commands = step.get("run", "").splitlines()
+        if any(line.split()[:1] == ["make"] for line in commands if line.split()):
             assert step.get("working-directory") == "naapp/library", step
