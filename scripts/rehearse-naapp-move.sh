@@ -291,17 +291,58 @@ if [[ "${1:-}" == "--self-test" ]]; then
   echo
 fi
 
+# Has the move already landed? The rehearsal grafts each mover at its destination prefix
+# with read-tree --prefix=, and once those prefixes are populated the graft cannot bind -
+# git fails with "Entry ... overlaps with ... Cannot bind" and exit 128.
+#
+# That mattered more than a confusing error. run_parity sat behind an unconditional
+# rehearse, so when the move landed the rehearsal started failing and TOOK CRITERION 4'S
+# INSTRUMENT WITH IT, silently: --parity exited 128 before printing anything. The tool
+# stopped being able to measure at the exact moment there was something to measure.
+move_has_landed() {
+  local mover src dest ref
+  while IFS= read -r mover; do
+    IFS=':' read -r src dest ref <<< "$mover"
+    git -C "$ROOT" cat-file -e "HEAD:$dest" 2>/dev/null || return 1
+  done < <(naapp_movers)
+}
+
+if [[ "${1:-}" == "--parity" ]]; then
+  if move_has_landed; then
+    # The merge is in this repository, so the tree to measure is this one. No rehearsal:
+    # run_parity clones it, which is what makes the measurement come from git objects
+    # rather than from a working tree.
+    echo "criterion 4: parity against the recorded tallies, measured on this repository"
+    run_parity "$ROOT"
+    echo
+    echo "parity complete: each mover's suite matches its recorded tally from a fresh clone"
+  else
+    # Pre-move: there is a merge left to rehearse, so measure the rehearsed result rather
+    # than this repository - naapp/library and naapp/folio do not exist here yet.
+    echo "rehearsing the three subtree merges in a throwaway clone"
+    rehearse "rehearsal"
+    echo
+    echo "rehearsal complete: every mover's tree is intact at its destination and aweb's root is unchanged"
+    echo
+    echo "criterion 4: parity against the recorded tallies, measured on the rehearsed merge"
+    run_parity "$WORK/rehearsal"
+    echo
+    echo "parity complete: each mover's suite matches its recorded tally from a fresh clone"
+  fi
+  echo "note: naapp-lib/ is not exercised - both movers install aweb-naapp from git, so the"
+  echo "      moved copy is executed by nothing here."
+  exit 0
+fi
+
+if move_has_landed; then
+  printf 'CANNOT REHEARSE: the movers are already at their destinations in this repository, so\n' >&2
+  printf '                 there is no merge left to rehearse - read-tree cannot graft onto a\n' >&2
+  printf '                 populated prefix. This is not a failure of the move; the move landed.\n' >&2
+  printf '                 For the parity measurement, which still applies, run: %s --parity\n' "$(basename "$0")" >&2
+  exit 2
+fi
+
 echo "rehearsing the three subtree merges in a throwaway clone"
 rehearse "rehearsal"
 echo
 echo "rehearsal complete: every mover's tree is intact at its destination and aweb's root is unchanged"
-
-if [[ "${1:-}" == "--parity" ]]; then
-  echo
-  echo "criterion 4: fresh-clone parity against the pre-move baselines"
-  run_parity "$WORK/rehearsal"
-  echo
-  echo "parity complete: each mover's suite matches its pre-move tally from a fresh clone"
-  echo "note: naapp-lib/ is not exercised - both movers install aweb-naapp from git, so the"
-  echo "      moved copy is executed by nothing in this task."
-fi
