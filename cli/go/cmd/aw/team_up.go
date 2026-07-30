@@ -69,6 +69,7 @@ type teamUpAgentPlan struct {
 const (
 	teamUpActionStart         = "start"
 	teamUpActionSkip          = "skip"
+	teamUpActionRefuse        = "refuse"
 	teamUpTmuxTmpdirEnv       = "AWEB_TMUX_TMPDIR"
 	teamUpTmuxKillOverrideEnv = "AWEB_TMUX_KILL_OK"
 	tmuxTmpdirEnv             = "TMUX_TMPDIR"
@@ -218,6 +219,10 @@ func buildTeamUpPlanForSession(repoRoot string, selection teamUpSessionSelection
 			}
 			return teamUpPlan{}, err
 		}
+		if reason, ok := teamUpHomeAccountsForItself(home); !ok {
+			plan.Agents = append(plan.Agents, teamUpAgentPlan{Name: name, HomeDir: home, Action: teamUpActionRefuse, Reason: reason})
+			continue
+		}
 		runtimeKind, err := readTeamUpRuntimeKind(home)
 		if err != nil {
 			return teamUpPlan{}, fmt.Errorf("%s: %w", name, err)
@@ -240,6 +245,44 @@ func buildTeamUpPlanForSession(repoRoot string, selection teamUpSessionSelection
 		return teamUpPlan{}, fmt.Errorf("no materialized agents found under agents/instances (expected .aw/profile/profile.yaml)")
 	}
 	return plan, nil
+}
+
+// teamUpHomeAccountsForItself reports whether a directory is a current agent home
+// rather than merely shaped like one. It returns the refusal reason when it is not.
+//
+// aweb-aawn: the launcher used to accept any directory containing
+// .aw/profile/profile.yaml, and never read the file - so a COPY of a home was an
+// executable artifact that started a second process holding the original's
+// credentials, and so was a directory containing nothing but that one empty file.
+//
+// The check is positive rather than a denylist of backup-looking names: a home must
+// carry a workspace identity AND that identity must name the place the home actually
+// is. Every other identity check in the tree compares copied artifacts to each other -
+// .aw/context against .aw/workspace.yaml, the signing key against the certificate - and
+// those agree in any faithful copy. This compares a copied thing against something that
+// cannot be copied: where the directory sits. A copy names where it was copied FROM,
+// wherever it is put, so it fails wherever someone puts it.
+//
+// The cost is that a legitimately moved or renamed home stops launching until `aw init`
+// is re-run there. That is the intended reading: a home that does not know where it is
+// should not start holding credentials.
+func teamUpHomeAccountsForItself(home string) (string, bool) {
+	workspacePath := filepath.Join(home, ".aw", "workspace.yaml")
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "no .aw/workspace.yaml, so this directory has no agent identity of its own", false
+		}
+		return fmt.Sprintf("unusable .aw/workspace.yaml: %v", err), false
+	}
+	recorded := strings.TrimSpace(workspace.WorkspacePath)
+	if recorded == "" {
+		return "no workspace_path in .aw/workspace.yaml, so it does not say where it belongs", false
+	}
+	if canonicalTeamUpPath(recorded) != canonicalTeamUpPath(home) {
+		return fmt.Sprintf("workspace_path says %s but this home is at %s, so it is a copy of another home and would run as that agent", recorded, home), false
+	}
+	return "", true
 }
 
 func readTeamUpRuntimeKind(home string) (string, error) {
@@ -792,15 +835,26 @@ func printTeamUpPlan(out interface{ Write([]byte) (int, error) }, plan teamUpPla
 	}
 	starts := 0
 	skips := 0
+	refusals := 0
 	for _, agent := range plan.Agents {
-		if agent.Action == teamUpActionStart {
+		switch agent.Action {
+		case teamUpActionStart:
 			starts++
-		} else {
+		case teamUpActionRefuse:
+			refusals++
+		default:
 			skips++
 		}
 	}
 	fmt.Fprintf(out, "tmux session: %s\n", plan.Session)
-	fmt.Fprintf(out, "reconcile: %d to start, %d already up\n", starts, skips)
+	// Refusals are counted apart from skips: a directory this command declined to run
+	// is not an agent that is already up, and reporting it as one would hide exactly
+	// what the refusal exists to surface.
+	summary := fmt.Sprintf("reconcile: %d to start, %d already up", starts, skips)
+	if refusals > 0 {
+		summary += fmt.Sprintf(", %d refused", refusals)
+	}
+	fmt.Fprintf(out, "%s\n", summary)
 	for _, agent := range plan.Agents {
 		fmt.Fprintf(out, "- %s (%s): %s\n", agent.Name, agent.RuntimeKind, agent.Action)
 		fmt.Fprintf(out, "  home: %s\n", agent.HomeDir)

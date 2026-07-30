@@ -55,7 +55,27 @@ func writeMaterializedAgentForTeamUp(t *testing.T, root, name, runtimeKind strin
 	if err := os.WriteFile(filepath.Join(home, ".aw", "profile", "ref.json"), append(data, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A materialized home records where it is; the launcher requires it to be right.
+	writeTeamUpWorkspaceYAML(t, home, home)
 	return home
+}
+
+// writeTeamUpWorkspaceYAML writes a workspace.yaml recording recordedPath as the home's
+// own location. A copied home keeps the ORIGINAL's path here, which is what the launcher
+// refuses on, so tests pass the two independently.
+func writeTeamUpWorkspaceYAML(t *testing.T, home, recordedPath string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(home, ".aw"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "aweb_url: https://aweb.invalid\n" +
+		"memberships:\n" +
+		"  - team_id: eng:local\n" +
+		"    cert_path: team-certs/eng__local.pem\n" +
+		"workspace_path: " + recordedPath + "\n"
+	if err := os.WriteFile(filepath.Join(home, ".aw", "workspace.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestTeamUpPlanEnumeratesMaterializedAgents(t *testing.T) {
@@ -943,5 +963,79 @@ func TestTeamUpCommandRegistered(t *testing.T) {
 	cmd, _, err := teamHumanCmd.Find([]string{"up"})
 	if err != nil || cmd == nil || cmd.Name() != "up" {
 		t.Fatalf("team up command missing: cmd=%v err=%v", cmd, err)
+	}
+}
+
+// aweb-aawn: `aw team up` treated the existence of .aw/profile/profile.yaml as the
+// definition of an agent, so any directory carrying that one file was launched - a
+// backup of a home included, holding the original's credentials. A home must now
+// account for itself: it has a workspace identity, and that identity names the place
+// the home actually is. A copy names where it was copied FROM, wherever it is put.
+func TestTeamUpPlanRefusesHomesThatDoNotAccountForThemselves(t *testing.T) {
+	resetTeamUpDetectorsForTest(t)
+	root := t.TempDir()
+	instances := filepath.Join(root, "agents", "instances")
+
+	realHome := writeMaterializedAgentForTeamUp(t, root, "realagent", "claude-code")
+
+	// One file, never read, and it was enough to be launched as a claude-code agent.
+	bare := filepath.Join(instances, "not-an-agent-at-all")
+	if err := os.MkdirAll(filepath.Join(bare, ".aw", "profile"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bare, ".aw", "profile", "profile.yaml"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A faithful copy, the way the profile advises taking one before a refresh. Its
+	// workspace.yaml still names the original's path - that is what gives it away.
+	backup := filepath.Join(instances, "realagent.pre-refresh-backup")
+	if err := os.MkdirAll(filepath.Join(backup, ".aw", "profile"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"profile.yaml", "ref.json"} {
+		data, err := os.ReadFile(filepath.Join(realHome, ".aw", "profile", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(backup, ".aw", "profile", name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wsData, err := os.ReadFile(filepath.Join(realHome, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backup, ".aw", "workspace.yaml"), wsData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := buildTeamUpPlan(root, "aawn:local", false, false)
+	if err != nil {
+		t.Fatalf("buildTeamUpPlan: %v", err)
+	}
+
+	actions := map[string]string{}
+	for _, agent := range plan.Agents {
+		actions[agent.Name] = agent.Action
+	}
+	if actions["realagent"] != teamUpActionStart {
+		t.Fatalf("a home that accounts for itself must still start: %+v", plan.Agents)
+	}
+	if actions["not-an-agent-at-all"] != teamUpActionRefuse {
+		t.Fatalf("a directory with no workspace identity was not refused: action=%q", actions["not-an-agent-at-all"])
+	}
+	if actions["realagent.pre-refresh-backup"] != teamUpActionRefuse {
+		t.Fatalf("a copied home was not refused, so it would launch holding the original's credentials: action=%q", actions["realagent.pre-refresh-backup"])
+	}
+
+	// A refusal reported as "already up" is the failure this guard exists to make
+	// visible, so the summary must count it separately.
+	var out bytes.Buffer
+	if err := printTeamUpPlan(&out, plan); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "2 refused") {
+		t.Fatalf("refusals must be counted in their own right, not folded into 'already up':\n%s", out.String())
 	}
 }
