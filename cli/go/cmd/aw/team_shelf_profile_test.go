@@ -156,6 +156,19 @@ func TestShelfProfileResolutionMaterializesShelfBytes(t *testing.T) {
 	defer server.Close()
 	home := newShelfTestHome(t, server.URL)
 
+	// The scope is EXPLICIT on purpose. That is the shape of the reported command -
+	// `aw team extend aweb.team/developer:local=claude-code` - and it is the path the
+	// divergence guard deliberately skips, because an explicitly declared scope
+	// overrides both profiles and there is nothing to compare. So this is the one path
+	// no guard test exercises, and it is the one the bug was reported on.
+	//
+	// Do not simplify this to a scope-inferring selector. The shelf fetch must be
+	// unconditional with respect to scope explicitness: if it ever becomes a rider on
+	// the guard's condition, an inferring spec would still resolve the shelf while an
+	// explicit one silently materialized public bytes, and every guard test would stay
+	// green. This test asserts both halves - the shelf was consulted, AND the bytes on
+	// disk are the shelf's - because either alone can be satisfied by a fetch whose
+	// result is dropped, or by a payload that happens to match.
 	selector := libraryProfileSelector{
 		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
 		ProfileRef: "coordinator", RuntimeKind: "claude-code",
