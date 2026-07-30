@@ -41,7 +41,14 @@ push_target="$(grep -oE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git' "$WOR
 # the moment it does, a file-wide read becomes an ordering accident.
 #
 # The anchor is exact because "- id: aw" is a prefix of "- id: aweb-a2a-gw".
-aw_block="$(awk '/^  - id: aw$/{inblock=1; next} /^  - id: /{inblock=0} inblock' "$GORELEASER")"
+#
+# The block ends at the next build id OR at any unindented line - a top-level key such as
+# archives:. Closing only on the next id is not the safe direction: with aw LAST and nothing
+# matching "  - id: " after it, the extraction runs to end of file, and a commitRepo-shaped
+# line anywhere below then satisfies a check on a block that does not contain one. That is
+# this guard's own defect reintroduced through the boundary rather than through the anchor,
+# and it was measured rather than argued.
+aw_block="$(awk '/^  - id: aw$/{inblock=1; next} /^  - id: /{inblock=0} /^[^ ]/{inblock=0} inblock' "$GORELEASER")"
 
 if [[ -z "$aw_block" ]]; then
   printf 'FAIL: no "- id: aw" build block found in %s.\n' "$GORELEASER" >&2
