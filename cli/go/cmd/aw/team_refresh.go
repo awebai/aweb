@@ -356,7 +356,14 @@ func validateManagedSetPath(rel string) error {
 }
 
 func callLibraryGetShelfProfile(profileRef string) (*libraryShelfProfileResponse, error) {
-	body, err := executeLibraryToolBody([]string{"get-shelf-profile", "--profile_ref", profileRef, "--include", "files"}, nil)
+	return callLibraryGetShelfProfileWithMissingErr(profileRef, nil)
+}
+
+// callLibraryGetShelfProfileWithMissingErr lets a caller supply the error returned
+// when the Library plugin is absent, so it can tell that case apart from a shelf that
+// answered. A nil missingErr keeps the default install hint.
+func callLibraryGetShelfProfileWithMissingErr(profileRef string, missingErr error) (*libraryShelfProfileResponse, error) {
+	body, err := executeLibraryToolBody([]string{"get-shelf-profile", "--profile_ref", profileRef, "--include", "files"}, missingErr)
 	if err != nil {
 		return nil, err
 	}

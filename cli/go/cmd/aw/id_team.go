@@ -2445,11 +2445,23 @@ func runHostedTeamRemoveMember(teamID, memberAddress, certificateID string) erro
 
 // revokeHostedTeamCertificate revokes through the cloud-mediated controller.
 //
-// The endpoint answers with two distinct statuses and both are success: removed
-// when it revoked a certificate, not_found when there was no active certificate
-// to revoke. An unrecognised status is an error rather than a default, because a
-// revocation command that treats an unknown answer as success cannot be used to
-// establish that access was removed.
+// The endpoint answers with two distinct statuses and both are success. status
+// reports what the call's own removal did on the hosted side: removed when this
+// call reaped the hosted record, not_found when it did not. It is NOT a statement
+// about certificates - a call can revoke a live certificate and still answer
+// not_found, because whether it revoked and whether it reaped are separate facts
+// settled at different moments. The service reports the revocation separately, in
+// revoke_outcome (revoked / already_revoked / not_found / not_attempted).
+//
+// revoke_outcome is deliberately not consumed here yet: reading it would change
+// what this function reports, which is a behaviour change wanting its own review.
+// Unknown fields decode away harmlessly, so leaving it unread is safe.
+//
+// An unrecognised status is an error rather than a default, because a revocation
+// command that treats an unknown answer as success cannot be used to establish that
+// access was removed. That also makes any NEW status string a breaking change for
+// every deployed client, which is why the service reports the revocation in a new
+// field rather than a new status.
 func revokeHostedTeamCertificate(ctx context.Context, teamID, memberAddress, certificateID string) (certificateStoreResult, error) {
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -2563,10 +2575,11 @@ func postHostedTeamRemoveMember(ctx context.Context, awebURL, apiKey, teamID str
 	if err := json.Unmarshal(responseBody, &out); err != nil {
 		return nil, fmt.Errorf("decode hosted remove-member response: %w", err)
 	}
-	// The response carries removed and not_found as distinct values. Both mean
-	// the member ends with no active certificate, which is why both are success,
-	// but only one of them revoked anything. Callers need that difference, so it
-	// is passed through rather than collapsed here.
+	// The response carries removed and not_found as distinct values, and both are
+	// success. They distinguish whether THIS call reaped the hosted record - not
+	// whether the member ends with an active certificate, which this response does
+	// not establish and which revoke_outcome answers separately. Passed through
+	// rather than collapsed, because callers need the difference.
 	return &out, nil
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -296,17 +297,6 @@ func applyPublicLibraryProfileToHome(homeDir string, selector libraryProfileSele
 		return nil, nil, err
 	}
 	return materialized, materialized.FilesWritten, nil
-}
-
-func applyPublicLibraryProfileToHomeAndConfigure(homeDir string, selector libraryProfileSelector, force bool) (*blueprint.MaterializeResult, []string, error) {
-	materialized, written, err := applyPublicLibraryProfileToHome(homeDir, selector, force)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := configureMaterializedAgentHome(homeDir); err != nil {
-		return nil, nil, err
-	}
-	return materialized, written, nil
 }
 
 func applyLocalBlueprintProfileToHome(homeDir string, selector libraryProfileSelector, sourceDir string, force bool) (*blueprint.MaterializeResult, []string, error) {
@@ -711,9 +701,32 @@ func executeLibraryToolBody(args []string, missingErr error) ([]byte, error) {
 		return nil, err
 	}
 	if result.Status >= 400 {
-		return nil, fmt.Errorf("aw library %s failed with status %d: %s", args[0], result.Status, strings.TrimSpace(string(result.Body)))
+		return nil, &libraryToolStatusError{Verb: args[0], Status: result.Status, Body: strings.TrimSpace(string(result.Body))}
 	}
 	return result.Body, nil
+}
+
+// libraryToolStatusError carries the status alongside the message so a caller can
+// tell WHY a verb failed. Without it every status from 400 up is one string, and a
+// caller wanting to distinguish "this profile does not exist" from "the shelf could
+// not be reached" has to parse prose or treat both the same - the second of which
+// silently substitutes stock bytes for a team's own.
+type libraryToolStatusError struct {
+	Verb   string
+	Status int
+	Body   string
+}
+
+func (e *libraryToolStatusError) Error() string {
+	return fmt.Sprintf("aw library %s failed with status %d: %s", e.Verb, e.Status, e.Body)
+}
+
+func libraryToolStatus(err error) (int, bool) {
+	var statusErr *libraryToolStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.Status, true
+	}
+	return 0, false
 }
 
 func firstNonEmptyLibraryValue(values ...string) string {
