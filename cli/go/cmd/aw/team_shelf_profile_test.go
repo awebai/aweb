@@ -608,3 +608,82 @@ func TestRosterWithNoReachableShelfMaterializesPublicAndSaysSo(t *testing.T) {
 		t.Fatalf("output must say the shelf was never asked rather than imply an absence:\n%s", human)
 	}
 }
+
+// Criterion 3 is unqualified: no output line claims an action that did not occur.
+// A create from a LOCAL BLUEPRINT DIRECTORY sets ProfileMode "library" in the shared
+// block but never sets a source, so it fell through to the old unconditional line and
+// claimed two things that are both false on that path - nothing was ADOPTED, and it is
+// not a Library profile at all.
+//
+// Asserted against the real formatter fed the struct the command itself produced, so
+// it fails if the command stops setting the source as well as if the line comes back.
+func TestLocalBlueprintCreateDoesNotClaimALibraryAdoption(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	fixture := filepath.Join(engineeringBlueprintFixtureRoot(t), "source")
+	// The configure step injects coordination docs and refuses on an uninitialized
+	// directory. Without a workspace this test fails during SETUP, which would look
+	// like a red on the property while proving nothing about the output line.
+	// The configure step fetches the team's active instructions, so the workspace has
+	// to point at something that answers. Serving only that one route keeps any other
+	// call a visible failure rather than a silent success.
+	aweb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/instructions/active" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"content": "# Team instructions\n"})
+	}))
+	defer aweb.Close()
+
+	home := t.TempDir()
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+	writeLocalTeamSignedRequestWorkspaceForTest(t, home, aweb.URL, "default:acme.com", "developer", did, priv)
+	t.Setenv("AW_HOME", filepath.Join(home, ".aw"))
+
+	selector := libraryProfileSelector{
+		SourceBlueprintRef: "aweb.team", ProfileRef: "developer", RuntimeKind: "claude-code",
+	}
+	out := teamHumanCreateOutput{Status: "created", TeamName: "acme"}
+	if err := finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{
+		HomeDir: home, Selector: &selector, LocalBlueprintDir: fixture, HumanOutput: &out,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	human := formatTeamHumanCreate(out)
+	if strings.Contains(human, "adopted") {
+		t.Fatalf("a local-blueprint create claims an adoption that did not happen:\n%s", human)
+	}
+	if !strings.Contains(human, fixture) {
+		t.Fatalf("the line must name the local blueprint it materialized from:\n%s", human)
+	}
+}
+
+// The unset-source branch is unreachable today - every materialize path sets a
+// source - but nothing in the type system forbids the state, and it took
+// enumerating every call site to establish even that. It is reachable by the next
+// branch that forgets, which is exactly how the defect it replaced arose.
+//
+// So it gets a test that REACHES it. A guard nobody can trigger is the thing this
+// team keeps finding; this one fires, and it fires without claiming an adoption.
+func TestCreateOutputAnnouncesAMissingSourceRatherThanClaimingAdoption(t *testing.T) {
+	// The state a forgetful future branch would produce: library mode, no source.
+	human := formatTeamHumanCreate(teamHumanCreateOutput{
+		Status: "created", TeamName: "acme", ProfileMode: "library",
+	})
+	if !strings.Contains(human, "BUG:") {
+		t.Fatalf("an unset source must announce itself loudly:\n%s", human)
+	}
+	if strings.Contains(human, "adopted") {
+		t.Fatalf("the unset branch must not claim an adoption that did not happen:\n%s", human)
+	}
+	// And it must not silently print nothing about the profile either - the failure
+	// mode of deleting the branch outright.
+	if !strings.Contains(human, "materialized") {
+		t.Fatalf("the unset branch must still report that a profile was materialized:\n%s", human)
+	}
+}

@@ -656,6 +656,9 @@ func finishTeamHumanCreateFounding(result teamHumanCreateFoundingResult, rosterS
 			if err := configureMaterializedAgentHome(result.HomeDir); err != nil {
 				return err
 			}
+			if result.HumanOutput != nil {
+				result.HumanOutput.ProfileSource = "local blueprint directory " + strings.TrimSpace(result.LocalBlueprintDir)
+			}
 		} else {
 			// The founding home already carries the team credential by this point, so
 			// it is what authorizes the shelf read.
@@ -1067,10 +1070,24 @@ func formatTeamHumanCreate(v any) string {
 		// Name the source rather than asserting a bare success: "adopted and
 		// materialized" is true of a team's own shelf profile and of the stock catalog
 		// copy alike, so on its own it cannot tell a reader which one landed.
+		//
+		// The word "Library" is dropped because a local blueprint directory is not a
+		// Library profile, and where it IS one the source already names which catalog -
+		// so the word carries no information where it is true and a false claim where
+		// it is not.
 		if src := strings.TrimSpace(out.ProfileSource); src != "" {
-			fmt.Fprintf(&b, "Library profile materialized from %s\n", src)
+			fmt.Fprintf(&b, "Profile materialized from %s\n", src)
 		} else {
-			b.WriteString("Library profile adopted and materialized.\n")
+			// Unreachable today: every materialize branch sets a source. But nothing in
+			// the type system forbids the unset state - it took enumerating all the call
+			// sites to establish even the current-tense version - so this is reachable by
+			// the next branch that forgets, which is precisely how this defect arose.
+			//
+			// Deleting the branch and printing a plausible sentence fail the same way, in
+			// opposite directions: one goes silent, the other repeats the original false
+			// claim. So it says only what is known to be true - a profile was materialized
+			// - and announces the missing part rather than papering over it.
+			b.WriteString("BUG: a profile was materialized but no source was recorded, so this command cannot say where it came from.\n")
 		}
 	} else {
 		b.WriteString("No Library profile was adopted; no profile home was materialized.\n")
