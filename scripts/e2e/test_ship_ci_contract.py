@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -169,6 +172,79 @@ class ShipCIContractTests(unittest.TestCase):
 
         runner = REPO_ROOT / "scripts" / "run-ship-suites.sh"
         self.assertTrue(runner.is_file(), f"{runner} must exist")
+
+    RUNNER = REPO_ROOT / "scripts" / "run-ship-suites.sh"
+
+    # What the runner's self-test must be seen to have proved. Requiring exit 0
+    # alone would pass a self-test gutted to a no-op.
+    RUNNER_SELF_TEST_ARMS = (
+        "suite-b failed, suite-c still ran",
+        "an unlaunchable suite reports FAILED and the run is red",
+        "an interrupted run reports suite-a PASSED and suite-c NOT RUN",
+    )
+
+    def run_runner_self_test(self, runner: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(runner), "--self-test"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+
+    def test_runner_self_test_is_not_optional(self) -> None:
+        """The runner's behaviour is what this task delivers, so verifying it runs here.
+
+        The contract assertions above check the wiring - which suites, which target,
+        which script. They pass with the runner reverted to stopping at the first
+        failure, which is the whole defect. Only the runner's own self-test catches
+        that, so it cannot be a script somebody remembers to run.
+        """
+        result = self.run_runner_self_test(self.RUNNER)
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"the ship suite runner's self-test failed:\n{result.stdout}\n{result.stderr}",
+        )
+        for arm in self.RUNNER_SELF_TEST_ARMS:
+            with self.subTest(arm=arm):
+                self.assertIn(
+                    arm,
+                    result.stdout,
+                    "the self-test passed without reporting this arm, so it proved less than it claims",
+                )
+
+    def test_runner_self_test_rejects_a_runner_that_stops_at_the_first_failure(self) -> None:
+        """The check above is only meaningful if it fails when the fix is reverted."""
+        original = self.RUNNER.read_text(encoding="utf-8")
+        anchor = '"$MAKE" "$suite" && status=0 || status=$?'
+        self.assertTrue(
+            anchor in original,
+            "the runner no longer captures each suite's status, so this mutation has "
+            "nothing to revert; update the anchor if the runner was restructured",
+        )
+        reverted = original.replace(anchor, '"$MAKE" "$suite" || return 1', 1)
+        self.assertNotEqual(reverted, original, "the revert did not change the runner")
+
+        with tempfile.TemporaryDirectory() as work:
+            # Kept out of scripts/ so a failed run cannot leave a mutated copy behind;
+            # the runner derives its root from its own location and does not need the
+            # repository for the self-test path.
+            mutated = Path(work) / "run-ship-suites.sh"
+            mutated.write_text(reverted, encoding="utf-8")
+            shutil.copymode(self.RUNNER, mutated)
+            result = self.run_runner_self_test(mutated)
+
+        self.assertNotEqual(
+            result.returncode,
+            0,
+            "a runner that stops at the first failing suite passed its own self-test",
+        )
+        # The red has to be the independence arm rather than any other failure.
+        self.assertIn(
+            "suite-c never executed",
+            result.stderr + result.stdout,
+            "the self-test failed for some reason other than the suites behind a failure not running",
+        )
 
     def test_ship_suite_contract_rejects_a_dropped_or_renamed_suite(self) -> None:
         """The assertions above must fail when the property they name is broken."""
