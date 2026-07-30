@@ -656,6 +656,9 @@ func finishTeamHumanCreateFounding(result teamHumanCreateFoundingResult, rosterS
 			if err := configureMaterializedAgentHome(result.HomeDir); err != nil {
 				return err
 			}
+			if result.HumanOutput != nil {
+				result.HumanOutput.ProfileSource = "local blueprint directory " + strings.TrimSpace(result.LocalBlueprintDir)
+			}
 		} else {
 			// The founding home already carries the team credential by this point, so
 			// it is what authorizes the shelf read.
@@ -1067,8 +1070,13 @@ func formatTeamHumanCreate(v any) string {
 		// Name the source rather than asserting a bare success: "adopted and
 		// materialized" is true of a team's own shelf profile and of the stock catalog
 		// copy alike, so on its own it cannot tell a reader which one landed.
+		//
+		// The word "Library" is dropped because a local blueprint directory is not a
+		// Library profile, and where it IS one the source already names which catalog -
+		// so the word carries no information where it is true and a false claim where
+		// it is not.
 		if src := strings.TrimSpace(out.ProfileSource); src != "" {
-			fmt.Fprintf(&b, "Library profile materialized from %s\n", src)
+			fmt.Fprintf(&b, "Profile materialized from %s\n", src)
 		} else {
 			b.WriteString("Library profile adopted and materialized.\n")
 		}
