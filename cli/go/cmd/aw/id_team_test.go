@@ -3661,6 +3661,66 @@ func TestTeamRemoveMemberFlow(t *testing.T) {
 	}
 }
 
+// CALL SITE, through the real binary. The verification's own unit tests would all
+// pass with nothing in production calling it, so this drives the actual command
+// and asserts the revoke endpoint is never reached. Removing the verifyNamedMember
+// call from runTeamRemoveMember reds this and nothing else.
+func TestTeamRemoveMemberFlowRefusesAMemberThatIsNotTheOneNamed(t *testing.T) {
+	t.Parallel()
+
+	var revokeAttempted bool
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/teams/backend/members/bob":
+			// The alias resolves to a member of a different namespace than the
+			// one the operator typed.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":        "backend:acme.com",
+				"certificate_id": "cert-cross",
+				"member_did_key": "did:key:z6MkBob",
+				"member_address": "partner.com/bob",
+				"alias":          "bob",
+				"issued_at":      "2026-04-06T00:00:00Z",
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates/revoke"):
+			revokeAttempted = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTeamKeyForTest(t, tmp, "acme.com", "backend", teamKey)
+
+	run := exec.CommandContext(ctx, bin, "id", "team", "remove-member",
+		"--team", "backend",
+		"--namespace", "acme.com",
+		"--member", "acme.com/bob",
+		"--json")
+	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("removing acme.com/bob succeeded for a member who is partner.com/bob\n%s", string(out))
+	}
+	if revokeAttempted {
+		t.Fatalf("a certificate was revoked after the named member did not match\n%s", string(out))
+	}
+	if !strings.Contains(string(out), "partner.com/bob") {
+		t.Fatalf("refusal does not name the principal it actually resolved to\n%s", string(out))
+	}
+}
+
 func TestTeamRemoveMemberFlowCrossNamespaceMember(t *testing.T) {
 	t.Parallel()
 
@@ -4609,5 +4669,200 @@ func TestRevokeHostedTeamCertificateRefusesAnEmptyStatus(t *testing.T) {
 	}
 	if result.Result == certificateRevoked {
 		t.Fatalf("an empty status reported a revocation")
+	}
+}
+
+// SET BRANCH, PERMITS, and the normalization case. member_address is populated on
+// purpose: the empty branch compares only the domain, so this fixture would prove
+// nothing about name normalization if it were left unset.
+//
+// The verification must compare what the two sides MEAN, not the strings they
+// arrived as. parseAddress normalizes the typed address; the stored
+// member_address is a raw TEXT column that nothing guarantees to be normalized.
+// Comparing raw strings would refuse a correct address over case or whitespace,
+// and a verification that refuses valid retirements is one that gets turned off.
+func TestVerifyNamedMemberAcceptsTheSameAddressDifferentlyCased(t *testing.T) {
+	ref := &awid.TeamMemberReference{Alias: "bob", MemberAddress: "Partner.COM/Bob "}
+	if err := verifyNamedMember("partner.com/bob", "acme.com", ref); err != nil {
+		t.Fatalf("a correct address differing only in case was refused: %v", err)
+	}
+}
+
+// SET BRANCH, REFUSES. member_address is populated so the mismatch is caught by
+// the set-branch comparison rather than falling through to the empty branch - the
+// fixture that would silently make this test vacuous is one that omits it.
+func TestVerifyNamedMemberSetBranchRefusesADifferentPrincipal(t *testing.T) {
+	ref := &awid.TeamMemberReference{Alias: "bob", MemberAddress: "partner.com/bob"}
+	err := verifyNamedMember("acme.com/bob", "acme.com", ref)
+	if err == nil {
+		t.Fatalf("naming acme.com/bob for a member who is partner.com/bob was accepted")
+	}
+	if !strings.Contains(err.Error(), "partner.com/bob") || !strings.Contains(err.Error(), "acme.com/bob") {
+		t.Fatalf("refusal must name both the typed and the resolved address: %v", err)
+	}
+}
+
+// The rule has two branches and both refuse a mismatch, so a fixture decides which
+// one a test exercises. Each test below pins its branch by whether member_address
+// is populated, and says so in its name - otherwise a test written for one branch
+// can pass entirely through the other, and the branch it was written for could be
+// deleted with the test still green.
+
+// SET BRANCH, PERMITS. Cross-namespace membership is real: a member of another
+// namespace holding an alias here must still be removable by its own address.
+func TestVerifyNamedMemberSetBranchPermitsTheMembersOwnAddress(t *testing.T) {
+	ref := &awid.TeamMemberReference{Alias: "bob", MemberAddress: "partner.com/bob"}
+	if err := verifyNamedMember("partner.com/bob", "acme.com", ref); err != nil {
+		t.Fatalf("a cross-namespace member named by its own address was refused: %v", err)
+	}
+}
+
+// EMPTY BRANCH, PERMITS. A local member named in the only namespace that means
+// anything for it.
+func TestVerifyNamedMemberEmptyBranchPermitsTheTeamNamespace(t *testing.T) {
+	ref := &awid.TeamMemberReference{Alias: "nokey", MemberAddress: ""}
+	if err := verifyNamedMember("test.local/nokey", "test.local", ref); err != nil {
+		t.Fatalf("a local member named in its own team namespace was refused: %v", err)
+	}
+}
+
+// EMPTY BRANCH, REFUSES. Naming any other namespace for an address-less member.
+func TestVerifyNamedMemberEmptyBranchRefusesAForeignNamespace(t *testing.T) {
+	ref := &awid.TeamMemberReference{Alias: "nokey", MemberAddress: ""}
+	err := verifyNamedMember("evil.com/nokey", "test.local", ref)
+	if err == nil {
+		t.Fatalf("naming evil.com for a local member of test.local was accepted")
+	}
+	if !strings.Contains(err.Error(), "evil.com") || !strings.Contains(err.Error(), "test.local") {
+		t.Fatalf("refusal must name both namespaces: %v", err)
+	}
+}
+
+// The alias is the key within a team, so a resolved member whose alias differs
+// from the one asked for is a different principal regardless of addresses.
+func TestVerifyNamedMemberRefusesAResolvedAliasThatIsNotTheOneNamed(t *testing.T) {
+	ref := &awid.TeamMemberReference{Alias: "carol", MemberAddress: "acme.com/carol"}
+	if err := verifyNamedMember("acme.com/bob", "acme.com", ref); err == nil {
+		t.Fatalf("a resolve that returned a different alias was accepted")
+	}
+}
+
+// captureTeamMembersStdout drains the pipe while fn runs, so a roster large
+// enough to fill the pipe buffer cannot deadlock the test it is proving.
+func captureTeamMembersStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+	fn()
+	_ = w.Close()
+	os.Stdout = oldStdout
+	return <-done
+}
+
+func TestRunTeamMembersListsMembersBeyondTheFirstPage(t *testing.T) {
+	resetTeamMembersGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+
+	// Sixty members against a registry serving fifty per page: a roster that reads
+	// one page reports fifty of them and looks exactly like a complete team of fifty.
+	const total = 60
+	const pageSize = 50
+	alias := func(index int) string { return fmt.Sprintf("member-%03d", index) }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/acme.com/teams/backend/certificates" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		offset := 0
+		if cursor := r.URL.Query().Get("cursor"); cursor == "page-2" {
+			offset = pageSize
+		} else if cursor != "" {
+			t.Fatalf("cursor=%q was not one this server issued", cursor)
+		}
+		end := offset + pageSize
+		if end > total {
+			end = total
+		}
+		items := make([]map[string]any, 0, end-offset)
+		for index := offset; index < end; index++ {
+			items = append(items, map[string]any{
+				"certificate_id": fmt.Sprintf("cert-%03d", index),
+				"team_id":        "backend:acme.com",
+				"member_did_key": fmt.Sprintf("did:key:z6Mk%03d", index),
+				"alias":          alias(index),
+				"identity_scope": "global",
+				"issued_at":      "2026-06-22T00:00:00Z",
+			})
+		}
+		body := map[string]any{"certificates": items, "has_more": end < total}
+		if end < total {
+			body["next_cursor"] = "page-2"
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	defer server.Close()
+	teamMembersTeamID = "backend:acme.com"
+	teamMembersRegistryURL = server.URL
+
+	var runErr error
+	output := captureTeamMembersStdout(t, func() {
+		runErr = runTeamMembers(&cobra.Command{}, nil)
+	})
+	if runErr != nil {
+		t.Fatalf("runTeamMembers: %v", runErr)
+	}
+	for index := 0; index < total; index++ {
+		if !strings.Contains(output, alias(index)) {
+			t.Fatalf("%s is missing from the roster; the listing stopped short of the whole team:\n%s", alias(index), output)
+		}
+	}
+}
+
+func TestRunTeamMembersRefusesToPrintATruncatedRoster(t *testing.T) {
+	resetTeamMembersGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+
+	// The registry reports more members but hands back no cursor to reach them.
+	// Printing the page it did return would assert a completeness nobody established.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"certificates": []map[string]any{{
+				"certificate_id": "cert-alice",
+				"team_id":        "backend:acme.com",
+				"member_did_key": "did:key:alice",
+				"alias":          "alice",
+				"identity_scope": "global",
+				"issued_at":      "2026-06-22T00:00:00Z",
+			}},
+			"has_more": true,
+		})
+	}))
+	defer server.Close()
+	teamMembersTeamID = "backend:acme.com"
+	teamMembersRegistryURL = server.URL
+
+	var runErr error
+	output := captureTeamMembersStdout(t, func() {
+		runErr = runTeamMembers(&cobra.Command{}, nil)
+	})
+	if runErr == nil {
+		t.Fatalf("runTeamMembers printed a roster it could not complete:\n%s", output)
+	}
+	if !strings.Contains(runErr.Error(), "truncated") {
+		t.Fatalf("err=%v; the failure must say the listing was truncated", runErr)
+	}
+	if strings.Contains(output, "alice") {
+		t.Fatalf("the partial roster was printed anyway:\n%s", output)
 	}
 }

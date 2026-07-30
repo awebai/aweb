@@ -2290,12 +2290,44 @@ psql_exec "UPDATE aweb.workspaces SET last_seen_at = NOW() - INTERVAL '2 hours' 
 claims_before="$(psql_scalar "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$NOKEY_WORKSPACE_ID';")"
 assert_eq "nokey holds a claim before retirement" "1" "$claims_before"
 
+# The verification runs before anything is written, so a namespace that is not
+# this team's must refuse and leave both stores exactly as they were. This is the
+# only place the coordination call site is driven through the real command - the
+# Go tests reach the verification helper directly, so they stay green if nothing
+# wires it in.
+if wrong_ns_out="$(run_aw_in "$ALICE_DIR" team remove-agent evil.local/nokey \
+  --team-id devteam:test.local --json 2>&1)"; then
+  wrong_ns_exit=0
+else
+  wrong_ns_exit=$?
+fi
+assert_eq "retiring a wrong-namespace address refuses" "1" "$wrong_ns_exit"
+# Assert the VERIFICATION refused, not merely that the command exited non-zero.
+# With the verification unwired the command still fails - the revoke declines
+# without an established member - so a bare exit-status check passes while the
+# workspace has already been deleted. The wording below is only produced before
+# anything is written.
+assert_contains "the verification is what refused" "$wrong_ns_out" "is a member of this team only"
+assert_contains "refusal names the team namespace" "$wrong_ns_out" "not evil.local"
+
+claims_after_refusal="$(psql_scalar "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$NOKEY_WORKSPACE_ID';")"
+assert_eq "refused retirement released no claim" "1" "$claims_after_refusal"
+workspace_after_refusal="$(psql_scalar "SELECT (deleted_at IS NULL) FROM aweb.workspaces WHERE workspace_id = '$NOKEY_WORKSPACE_ID';")"
+assert_eq "refused retirement left the workspace record intact" "t" "$workspace_after_refusal"
+
 capture_success retire_out "retire_out" run_aw_in "$ALICE_DIR" team remove-agent test.local/nokey \
   --team-id devteam:test.local \
   --json
 
 RETIRE_STATUS="$(echo "$retire_out" | jq_field status)"
 assert_eq "nokey retired" "retired" "$RETIRE_STATUS"
+
+# A customer-controlled team CAN establish which principal an alias names, so a
+# retirement here must not carry the disclosure that it could not. Nothing else
+# asserts that the flag is driven by the verification rather than set by hand:
+# the Go tests pass it in directly, so they hold whatever production does.
+retire_disclosure_count="$(echo "$retire_out" | grep -c "selected by alias" || true)"
+assert_eq "a verified retirement carries no unverified disclosure" "0" "$retire_disclosure_count"
 
 # The load-bearing assertion: the rows are gone, read from the store itself.
 claims_after="$(psql_scalar "SELECT COUNT(*) FROM aweb.task_claims WHERE workspace_id = '$NOKEY_WORKSPACE_ID';")"

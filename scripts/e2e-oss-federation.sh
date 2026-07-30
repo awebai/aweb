@@ -277,8 +277,19 @@ set_namespace_delivery_origin() {
   fi
 }
 
+# On timeout, dump the service's container log. Without it a health failure
+# reports only "timed out", and every assertion after it fails too, so the run
+# ends in twenty failures none of which say why the server did not serve.
+#
+# That is not hypothetical: eleven consecutive runs failed this way on 2026-07-28,
+# when the images still resolved dependencies at build time and an incompatible
+# mcp v2 broke the server. The reason was only ever in the container log, which
+# nothing captured, so the run said "alpha health timed out" and the diagnosis had
+# to happen outside CI. Both causes are fixed - the images build --frozen from the
+# committed locks now - but the next thing that stops a container from serving will
+# present identically.
 wait_health() {
-  local label="$1" url="$2"
+  local label="$1" url="$2" service="${3:-}"
   for _ in $(seq 1 60); do
     if curl -sf "$url/health" >/dev/null 2>&1; then
       assert_eq "$label health" "ok" "$(curl -sf "$url/health" | jq_field status)"
@@ -288,6 +299,12 @@ wait_health() {
   done
   echo "  FAIL: $label health timed out"
   fail=$((fail + 1))
+  if [[ -n "$service" ]]; then
+    echo "  --- last 60 log lines from $service, the only place the reason appears ---"
+    compose logs --tail 60 --no-color "$service" 2>&1 | sed 's/^/    /' || \
+      echo "    (could not read $service logs)"
+    echo "  --- end $service log ---"
+  fi
 }
 
 create_identity_and_join_team() {
@@ -454,9 +471,9 @@ if [[ "${AWEB_FED_E2E_BUILD:-1}" != "0" ]]; then
   compose build
 fi
 compose up -d
-wait_health "awid" "$AWID_URL"
-wait_health "alpha" "$ALPHA_URL"
-wait_health "beta" "$BETA_URL"
+wait_health "awid" "$AWID_URL" "awid"
+wait_health "alpha" "$ALPHA_URL" "aweb-alpha"
+wait_health "beta" "$BETA_URL" "aweb-beta"
 locked_server_mcp="$(lock_package_version "$SERVER_DIR/uv.lock" mcp)"
 installed_server_mcp="$(container_package_version aweb-alpha mcp)"
 assert_eq "aweb image installs locked mcp" "$locked_server_mcp" "$installed_server_mcp"

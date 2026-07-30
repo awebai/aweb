@@ -2269,6 +2269,9 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 			// rather than reporting a removal it did not make.
 			return fmt.Errorf("resolve team member %s in %s: %w", memberName, teamID, err)
 		}
+		if err := verifyNamedMember(member, domain, memberRef); err != nil {
+			return err
+		}
 		certificateID = strings.TrimSpace(memberRef.CertificateID)
 	}
 
@@ -2280,9 +2283,70 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 	printOutput(teamRemoveMemberOutput{
 		Status:        result.Result,
 		TeamID:        teamID,
-		MemberAddress: member,
+		MemberAddress: firstNonEmpty(result.MemberAddress, member),
 		CertificateID: certificateID,
 	}, formatTeamRemoveMember)
+	return nil
+}
+
+// verifyNamedMember refuses when the member an alias resolved to is not the one
+// the operator named.
+//
+// Resolving by alias is correct: the alias is the key within a team, and
+// cross-namespace membership is real, so a member of another namespace can hold
+// an alias here. What was missing is any check that the member it resolved to is
+// the one that was named. Without it, naming the wrong namespace revokes the
+// team's own holder of that alias and reports success for the address that was
+// typed, so the audit trail records an address that was never true.
+//
+// The comparison is two-part because the two kinds of member carry different
+// evidence:
+//
+//   member_address set    the address is the member's own identity; the typed
+//                         address must be it
+//   member_address empty  a local member has no address at all - local scope
+//                         rejects --address, and awid stores the column nullable -
+//                         so the only namespace that means anything for one is the
+//                         team's own, and that is what the typed domain must be
+//
+// Both sides are parsed before comparing. parseAddress normalizes what was typed
+// while member_address is a raw stored column that the awid write path does not
+// normalize, so comparing the strings as they arrived would refuse a correct
+// address over case or whitespace - and a verification that refuses valid
+// retirements is one that gets switched off.
+func verifyNamedMember(typedAddress, teamDomain string, ref *awid.TeamMemberReference) error {
+	typedDomain, typedName, err := parseAddress(typedAddress)
+	if err != nil {
+		return err
+	}
+	if resolvedAlias := strings.ToLower(strings.TrimSpace(ref.Alias)); resolvedAlias != "" && resolvedAlias != typedName {
+		return fmt.Errorf(
+			"refusing to act on %s: that name resolved to member %q, which is not the one named",
+			typedAddress, strings.TrimSpace(ref.Alias),
+		)
+	}
+
+	resolvedAddress := strings.TrimSpace(ref.MemberAddress)
+	if resolvedAddress == "" {
+		if typedDomain != awconfig.NormalizeDomain(teamDomain) {
+			return fmt.Errorf(
+				"refusing to act on %s: %s is a member of this team only and holds no address of its own, so the namespace that names it is %s, not %s",
+				typedAddress, typedName, awconfig.NormalizeDomain(teamDomain), typedDomain,
+			)
+		}
+		return nil
+	}
+
+	resolvedDomain, resolvedName, err := parseAddress(resolvedAddress)
+	if err != nil {
+		return fmt.Errorf("refusing to act on %s: the registry returned an unreadable member address %q", typedAddress, resolvedAddress)
+	}
+	if resolvedDomain != typedDomain || resolvedName != typedName {
+		return fmt.Errorf(
+			"refusing to act on %s: that name resolves to %s, a different principal",
+			typedAddress, resolvedAddress,
+		)
+	}
 	return nil
 }
 

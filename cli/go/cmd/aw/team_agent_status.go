@@ -9,6 +9,7 @@ import (
 	"time"
 
 	aweb "github.com/awebai/aw"
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
@@ -87,12 +88,25 @@ func runTeamHumanAgentStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	alias := strings.TrimSpace(args[0])
-	if idx := strings.LastIndex(alias, "/"); idx >= 0 {
-		alias = strings.TrimSpace(alias[idx+1:])
-	}
-	if alias == "" {
+	// A typed namespace is checked, not stripped. This is the command the
+	// retirement output tells operators to confirm with, so answering about
+	// whoever holds that alias in this team - under a name the operator did not
+	// ask about - would let the confirmation disagree with the thing it confirms.
+	// Nothing is destroyed here, so the same defect with the damage removed.
+	typed := strings.TrimSpace(args[0])
+	if typed == "" {
 		return usageError("agent name is required")
+	}
+	alias := typed
+	if strings.Contains(typed, "/") {
+		_, typedName, parseErr := parseAddress(typed)
+		if parseErr != nil {
+			return parseErr
+		}
+		if err := agentStatusAliasCheck(teamID, typed, typedName); err != nil {
+			return err
+		}
+		alias = typedName
 	}
 
 	workingDir, _ := os.Getwd()
@@ -110,6 +124,25 @@ func runTeamHumanAgentStatus(cmd *cobra.Command, args []string) error {
 
 	out.deriveState()
 	printOutput(out, formatTeamAgentStatus)
+	return nil
+}
+
+// agentStatusAliasCheck refuses a typed namespace that is not this team's.
+func agentStatusAliasCheck(teamID, typed, typedName string) error {
+	teamDomain, _, err := awid.ParseTeamID(teamID)
+	if err != nil {
+		return err
+	}
+	typedDomain, _, err := parseAddress(typed)
+	if err != nil {
+		return err
+	}
+	if typedDomain != awconfig.NormalizeDomain(teamDomain) {
+		return usageError(
+			"refusing to report on %s: this team's namespace is %s, and a name in another namespace does not refer to the same member; drop the namespace to read %s in this team",
+			typed, awconfig.NormalizeDomain(teamDomain), typedName,
+		)
+	}
 	return nil
 }
 
