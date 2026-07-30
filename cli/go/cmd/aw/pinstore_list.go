@@ -93,11 +93,24 @@ func newPinStoreListCmd() *cobra.Command {
 		// it reports. It shows what is PINNED; it does not resolve each address to its
 		// holder's current key, so it cannot tell you a pin is stale - which is the defect
 		// class in aweb-aava and the question people will be holding when they run it.
+		// And two things measured while diagnosing aweb-aava that a reader cannot get from
+		// the listing itself: what last_seen indicates, and that a single read is not the
+		// store's state. Both belong here rather than in a document nobody opens mid-defect.
 		Long: "List the address-to-key bindings this store holds.\n\n" +
 			"This reports the CONTENTS of the store. It does not verify those contents " +
 			"against the current keys of the agents named, so it cannot tell you a pin is " +
 			"stale: a binding to a retired keypair is listed exactly like a good one. " +
-			"Answering that needs resolution per address.",
+			"Answering that needs resolution per address.\n\n" +
+			"last_seen is the closest thing here to that answer. A binding whose last_seen " +
+			"stays frozen while its holder is actively sending is a pin that no longer " +
+			"matches the sender, because the path that reports a mismatch does not refresh " +
+			"it while the verified path does. Two fields, no network.\n\n" +
+			"One read is not the store's state. Several processes write this file, each " +
+			"marshalling its whole map, so its contents are whichever wrote last: entries " +
+			"and field values can differ between two reads seconds apart. To characterise " +
+			"it, copy the file and interrogate the copy - two reads are not of the same " +
+			"object, so a difference between them may be the file changing rather than " +
+			"anything you did.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

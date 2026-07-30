@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.venv/
+dist/
+build/
+.DS_Store
+
+# Editor lock/autosave files
+.#*
+\#*\#
+*~

@@ -145,11 +145,32 @@ means concretely: whoever performs the merge should expect an `awid.ai` deploy,
 and should know its current live deploy so it can be rolled back independently of
 the merge:
 
-| field | value |
-|---|---|
-| currently live deploy | `dep-d9j7rhpoagis738kuhi0` |
-| live commit | `c35409066b0e…` |
-| finished | 2026-07-26T21:36:23Z, trigger `new_commit` |
+**This capture is perishable and a recorded one is worse than none.** `awid.ai` deploys
+on every commit to `main` with no path filter, so its live deploy changes whenever
+anything lands — including the reversible work of this very programme. The values below
+were live when recorded and are not now:
+
+| field | value when recorded | still live? |
+|---|---|---|
+| deploy | `dep-d9j7rhpoagis738kuhi0` | no |
+| commit | `c35409066b0e…` | no — 318 commits have landed on `main` since it |
+| finished | 2026-07-26T21:36:23Z, trigger `new_commit` | |
+
+A rollback target for a continuously-deploying service is valid only until the next push.
+Rolling back to the deploy above would now restore a tree from before three days of work.
+
+So the capture is a step of the merge procedure, not a prerequisite recorded ahead of it:
+read the live deploy id and commit immediately before pushing the merge, and read them
+again afterwards to identify the deploy the merge itself triggered. Two reads, both in the
+same session as the push. Anything recorded earlier describes a deploy that has already
+been replaced.
+
+The after-read identifies the merge's own deploy **only if nothing else landed on `main`
+in the interval.** With no path filter every push deploys, so under concurrent traffic the
+after-read finds a deploy and gives no way to tell whose it is — which is a value that
+looks like an answer, the same failure as the stale table above. So push the merge into a
+quiet window, and if something else lands between the two reads, say the deploy is
+unattributed rather than naming the one you found.
 
 ## 4. Dependency pins, recorded because the move changes what they mean
 
