@@ -22,7 +22,8 @@ builds:
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
-      - -X main.commit={{.ShortCommit}}
+      - -X main.commit={{.FullCommit}}
+      - -X main.commitRepo=github.com/awebai/aw
       - -X main.date={{.Date}}
   - id: aweb-a2a-gw
     main: ./cmd/aweb-a2a-gw
@@ -39,7 +40,7 @@ builds:
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
-      - -X main.commit={{.ShortCommit}}
+      - -X main.commit={{.FullCommit}}
       - -X main.date={{.Date}}
 
 archives:
