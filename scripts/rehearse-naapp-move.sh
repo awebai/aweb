@@ -41,8 +41,6 @@ source "$ROOT/scripts/lib/naapp-movers.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-fail() { printf 'FAIL: %s\n' "$1" >&2; return 1; }
-
 assert_baseline_ref() {
   local src="$1" ref="$2" expected="$3" label="$4" actual
   actual="$(git -C "$src" rev-parse "$ref^{commit}")"
