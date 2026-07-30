@@ -2747,3 +2747,153 @@ async def test_mcp_contacts_accept_equivalent_identity_owner_did(aweb_cloud_db, 
         did_key,
     )
     assert remaining == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case,recipient_scope,recipient_did_aw,inbound_mode,alice_is_contact,expect_delivered",
+    [
+        # The defect (aweb-aapo): a GLOBAL recipient whose policy requires contacts,
+        # with the sender NOT a contact. HTTP refuses this on every continuation;
+        # MCP passed skip_policy_check=True and never asked.
+        ("global_revoked", "global", "did:aw:bob", "team_and_contacts", False, False),
+        # The regression guard. For a LOCAL recipient an existing conversation IS an
+        # authorization by design - authorize_message_delivery returns early on
+        # stored_route_continuation. If MCP passes neither flag it becomes STRICTER
+        # than HTTP and ordinary local replies break.
+        ("local_reply", "local", None, "team_and_contacts", False, True),
+        # The case the fix newly subjects to the check: a GLOBAL recipient who IS a
+        # current contact must still receive replies.
+        ("global_contact", "global", "did:aw:bob", "team_and_contacts", True, True),
+    ],
+)
+async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
+    aweb_cloud_db,
+    monkeypatch,
+    case,
+    recipient_scope,
+    recipient_did_aw,
+    inbound_mode,
+    alice_is_contact,
+    expect_delivered,
+):
+    """aweb-aapo: contacts policy must be re-evaluated on every continuation.
+
+    It was evaluated once at conversation establishment and never again on the MCP
+    path, so a revoked contact kept sending. Both directions are asserted because
+    the fix's risk runs the other way: over-tightening breaks every legitimate reply.
+    """
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    workspace_id = uuid4()
+    bob_agent_id = uuid4()
+    conversation_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did_key = did_from_public_key(alice_pub)
+    bob_did_key = "did:key:z6MkBobLocal"
+    bob_participant_did = recipient_did_aw or bob_did_key
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        """,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+        (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+        VALUES
+            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
+            ($2, $3, $5, $6, 'acme.com/bob', 'bob', $7, 'active', $8)
+        """,
+        alice_agent_id,
+        bob_agent_id,
+        team_id,
+        alice_did_key,
+        bob_did_key,
+        recipient_did_aw,
+        recipient_scope,
+        inbound_mode,
+    )
+    if alice_is_contact:
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
+            VALUES ($1, 'acme.com/alice', 'Alice')
+            """,
+            bob_participant_did,
+        )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, team_id, created_by_did, created_at, updated_at
+        )
+        VALUES ($1, 'mail', $2, 'did:aw:alice', NOW() - INTERVAL '1 minute', NOW() - INTERVAL '1 minute')
+        """,
+        conversation_id,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, transport_hint, role
+        )
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', 'sender', 'initiator'),
+            ($1, $4, $3, 'bob', 'acme.com/bob', 'to_alias', 'participant')
+        """,
+        conversation_id,
+        alice_agent_id,
+        bob_agent_id,
+        bob_participant_did,
+    )
+
+    monkeypatch.setattr(
+        mail_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+
+    async def _signer(**kwargs) -> HostedMessageSigningResult:
+        signed_payload = canonical_signed_payload(kwargs["payload"])
+        return HostedMessageSigningResult(
+            from_did=alice_did_key,
+            signature=sign_message(alice_sk, signed_payload.encode("utf-8")),
+            signed_payload=signed_payload,
+            signing_key_id=alice_did_key,
+        )
+
+    class _NoRediscoveryRegistry:
+        async def resolve_address(self, *_args, **_kwargs):
+            raise AssertionError("continuation must not rediscover the recipient address")
+
+    result = json.loads(
+        await mail_tools.send_mail(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=_NoRediscoveryRegistry(),
+            hosted_signer=_signer,
+            plaintext=True,
+            conversation_id=str(conversation_id),
+            subject="Re",
+            body="conversation reply",
+        )
+    )
+
+    delivered = result.get("status") == "delivered"
+    assert delivered is expect_delivered, f"{case}: got {result!r}"
+    stored = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT count(*) AS n FROM {{tables.messages}} WHERE conversation_id = $1",
+        conversation_id,
+    )
+    assert (stored["n"] > 0) is expect_delivered, f"{case}: message rows disagree with the verdict"
