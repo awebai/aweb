@@ -30,6 +30,7 @@ func init() {
 	identityCmd.AddCommand(pinStoreCmd)
 	pinStoreCmd.AddCommand(pinStoreCompareAndSetCmd)
 	pinStoreCmd.AddCommand(newPinStoreListCmd())
+	pinStoreCmd.AddCommand(newPinStoreForgetCmd())
 }
 
 func newPinStoreCompareAndSetCmd() *cobra.Command {
