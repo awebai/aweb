@@ -216,9 +216,15 @@ def test_ci_also_covers_naapp_lib() -> None:
     assert "uv run pytest" in commands
     assert "uv run ruff check" in commands
     assert "uv run mypy" in commands
+    # Every run step must NAME naapp-lib. Allowing None here would have let the
+    # field be deleted entirely and still pass - caught by mutation, not review:
+    # removing `working-directory` ran the steps at the repository root against
+    # aweb's own pyproject, and the permissive form stayed green. Keying on
+    # "naapp-lib or absent" instead of "naapp-lib" is the same defect charlie
+    # measured in folio's guard, which keys on a spelling rather than a property.
     for step in steps:
         if step.get("run"):
-            assert step.get("working-directory") in (None, "naapp-lib"), step
+            assert step.get("working-directory") == "naapp-lib", step
 
 
 def test_ci_runs_library_targets_from_the_subtree_path() -> None:
