@@ -26,6 +26,31 @@
 # why the retired arm's parity comparison could not have been kept as it was, and it is
 # a fact about the table rather than about the graft.
 #
+# THE SURVIVING CODE'S SEMANTICS WERE NOT REVIEWED, AND ONE PART OF IT IS KNOWN TO BE BLIND.
+# The retirement that produced this file was reviewed and ACKed, and the reviewer stated what
+# his ACK covered. Both halves are worth having precisely:
+#
+#   REACHABILITY WAS CHECKED. He ran a reference count per surviving function - that is how an
+#   orphaned fail() was found, and the same pass confirmed run_parity has one call site and that
+#   assert_baseline_ref and tally_of are still reached. Do not redo that work.
+#   SEMANTICS WERE NOT. Whether assert_baseline_ref reads the thing it claims to read was never
+#   examined, because the function survived untouched and so was outside the diff.
+#
+# Recorded because an ACK covers what the reviewer examined, and a later reader otherwise sees
+# "reviewed" sitting over the following defect and concludes it was considered and accepted:
+#
+#   assert_baseline_ref does `git -C "$src" rev-parse "origin/main^{commit}"` where $src is
+#   the LOCAL sibling clone. origin/main there is that clone's last-fetched tracking ref, so
+#   the assertion cannot see the sibling repository advance - it sees whether someone has run
+#   git fetch in ~/prj/awebai/library. A sibling that merges ten PRs while nobody fetches
+#   passes this check unchanged.
+#
+# KNOWN AND DELIBERATELY UNFIXED. It is one of three reasons this arm is not a drift detector
+# (the tally is also noisy on every legitimate change and silent on offsetting ones), and the
+# arm's fate is open on aweb-aauv.4. Fixing this read now would build the wrong half of either
+# answer: if the sibling repos are archived the arm goes entirely, and if they stay live the
+# check that is wanted is a content comparison, not a ref assertion.
+#
 # The mover table points at the sibling repos' origin/main rather than at the merge
 # parents, and for a DRIFT question that is correct: a merge parent is frozen, so
 # anchoring to one would only ever re-verify what was merged. Whether drift detection

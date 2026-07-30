@@ -2,6 +2,16 @@ version: 2
 
 project_name: aw
 
+# goreleaser validates git state BEFORE running these hooks, so a hook that writes into
+# the tree leaves the build reading a tree goreleaser has already called clean - and the
+# binary is stamped vcs.modified=true with nothing failing. aweb-aaun.13 closed that for
+# `go mod tidy` by REMOVING the condition rather than refusing it: the manifest is kept
+# tidy, so the hook has nothing to write, and check-cli-go-tidy keeps it that way.
+#
+# THAT FIX DOES NOT GENERALISE. Any hook added here that can modify a tracked file
+# reopens it, because the ordering is goreleaser's and does not change. A new hook needs
+# its own answer to aweb-aaun.13 acceptance 2 - either it cannot write, or something
+# refuses when it has.
 before:
   hooks:
     - go mod tidy
@@ -22,7 +32,8 @@ builds:
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
-      - -X main.commit={{.ShortCommit}}
+      - -X main.commit={{.FullCommit}}
+      - -X main.commitRepo=github.com/awebai/aw
       - -X main.date={{.Date}}
   - id: aweb-a2a-gw
     main: ./cmd/aweb-a2a-gw
@@ -39,7 +50,8 @@ builds:
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
-      - -X main.commit={{.ShortCommit}}
+      - -X main.commit={{.FullCommit}}
+      - -X main.commitRepo=github.com/awebai/aw
       - -X main.date={{.Date}}
 
 archives:

@@ -22,8 +22,13 @@ detached worktree based on `origin/main`, so no working tree is touched and the
 combination is built and tested before it lands.
 
 Either way: never merge work your reviewer has not ACKed, and always merge
-`origin/main` into your branch before handing off, so what was reviewed is what
-lands.
+`origin/main` into your branch before handing off, so your reviewer reads it
+against current main rather than against a base that has moved.
+
+That merge does **not** by itself make what was reviewed what lands - it is the
+step that makes a SHA-identity check insufficient, because the branch keeps its
+ACKed tip while its contents change underneath. Before you push, follow "Before
+you push to main" in the active team instructions.
 
 A team without a coordinator self-merges everything; follow your team's explicit
 instructions rather than assuming this split is universal.
@@ -65,6 +70,9 @@ coord-awid (Goto) before touching the file.
 ## aweb Coordination Rules
 
 This project uses `aw` for coordination.
+
+This file is not the team's active instructions. Run `aw instructions show` for the
+authoritative version, which carries sections this file does not.
 
 ## Start Here
 
@@ -139,12 +147,20 @@ You are part of a team working toward a shared goal. Optimize for the project ou
 
 ## Who to ask
 
-Roles shown in `aw workspace status` are the profile each agent runs, not who is
-currently leading. When the two disagree, this section is the answer.
+Roles shown in `aw workspace status` are each workspace's current operating
+responsibility on this team. Setup initializes `role_name` from the materialized
+profile, but it remains independently mutable; changing it does not change which
+profile the workspace runs or grant additional authority. Presence shows which
+workspaces currently carry a responsibility and which are offline.
 
-- **Acting lead coordinator: dev.** dev runs a *developer* profile and is acting as
-  lead coordinator by Juan's assignment. Route coordination, scope questions, and
-  handoffs there.
+- **Coordination, scope questions and handoffs: alice.** Route them there.
+- **dev is not reachable and its home is hands-off.** Presence shows dev offline
+  (last seen 2026-07-28), and dev is retired by Juan's authorization: do not
+  refresh, restart, retire, or touch dev's home or its runtime. Earlier
+  instructions named dev acting lead coordinator; that is stale. Note dev's
+  `role_name` reads `coordinator` while its profile is `developer` - those are
+  independent fields, and only the profile decides what a home materializes, so
+  an enumeration keyed on `role_name` will misclassify it.
 - **avi is not reachable.** `aw workspace status` still lists avi as coordinator, but
   avi has been offline for over 90 days and works in a different repository
   (`ai.aweb`). Do not route work there; a stale entry is not an absent one.

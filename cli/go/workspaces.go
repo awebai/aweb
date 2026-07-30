@@ -2,6 +2,10 @@ package aweb
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/awebai/aw/awid"
 )
@@ -132,18 +136,62 @@ func (c *Client) WorkspaceTeam(ctx context.Context, params WorkspaceTeamParams) 
 	return &out, nil
 }
 
+// The two 404s a workspace delete can produce say different things, and a caller
+// that collapses them reports an outcome it did not observe. The server carries a
+// structured code for exactly this reason; keying on it rather than on the message
+// text means rewording the message cannot silently reclassify the result.
+var (
+	// ErrWorkspaceAlreadyDeleted establishes two facts: the workspace row is
+	// deleted, and its bound identity is NOT - that is why the server refused.
+	ErrWorkspaceAlreadyDeleted = errors.New("workspace already deleted; its identity was not cleaned")
+	// ErrWorkspaceNotFound establishes neither. The workspace may never have
+	// existed, or may belong to a team this caller cannot see.
+	ErrWorkspaceNotFound = errors.New("workspace not found")
+)
+
 // WorkspaceDelete soft-deletes a workspace by its ID.
-// Returns nil, nil if the workspace was already deleted (404).
+//
+// A 404 is returned as ErrWorkspaceAlreadyDeleted or ErrWorkspaceNotFound rather
+// than as a nil response. It used to return nil, nil - which the server
+// anticipated and warned against in coordination/routes/workspaces.py: "Re-enter
+// the idempotent post-commit step instead of turning 404 into false terminal
+// success at the client."
 func (c *Client) WorkspaceDelete(ctx context.Context, workspaceID string) (*DeleteWorkspaceResponse, error) {
 	var out DeleteWorkspaceResponse
 	err := c.Do(ctx, "DELETE", "/v1/workspaces/"+urlPathEscape(workspaceID), nil, &out)
 	if err != nil {
 		if code, ok := awid.HTTPStatusCode(err); ok && code == 404 {
-			return nil, nil
+			switch workspaceDeleteRefusalCode(err) {
+			case "workspace_already_deleted":
+				return nil, fmt.Errorf("%w: %s", ErrWorkspaceAlreadyDeleted, workspaceID)
+			case "workspace_not_found":
+				return nil, fmt.Errorf("%w: %s", ErrWorkspaceNotFound, workspaceID)
+			}
+			// An unrecognised 404 establishes nothing, so it must not be reported
+			// as either outcome. A server too old to carry the code lands here.
+			return nil, fmt.Errorf("workspace %s: delete refused with an unrecognised 404: %w", workspaceID, err)
 		}
 		return nil, err
 	}
 	return &out, nil
+}
+
+// workspaceDeleteRefusalCode reads the structured refusal code, or "" when the
+// response does not carry one.
+func workspaceDeleteRefusalCode(err error) string {
+	body, ok := awid.HTTPErrorBody(err)
+	if !ok || strings.TrimSpace(body) == "" {
+		return ""
+	}
+	var envelope struct {
+		Detail struct {
+			Code string `json:"code"`
+		} `json:"detail"`
+	}
+	if json.Unmarshal([]byte(body), &envelope) != nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.Detail.Code)
 }
 
 type WorkspaceListParams struct {

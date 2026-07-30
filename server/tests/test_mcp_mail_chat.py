@@ -2747,3 +2747,271 @@ async def test_mcp_contacts_accept_equivalent_identity_owner_did(aweb_cloud_db, 
         did_key,
     )
     assert remaining == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case,recipient_scope,recipient_did_aw,inbound_mode,alice_is_contact,expect_delivered",
+    [
+        # The defect (aweb-aapo): a GLOBAL recipient whose policy requires contacts,
+        # with the sender NOT a contact. HTTP refuses this on every continuation;
+        # MCP passed skip_policy_check=True and never asked.
+        ("global_revoked", "global", "did:aw:bob", "team_and_contacts", False, False),
+        # The regression guard. For a LOCAL recipient an existing conversation IS an
+        # authorization by design - authorize_message_delivery returns early on
+        # stored_route_continuation. If MCP passes neither flag it becomes STRICTER
+        # than HTTP and ordinary local replies break.
+        ("local_reply", "local", None, "team_and_contacts", False, True),
+        # The case the fix newly subjects to the check: a GLOBAL recipient who IS a
+        # current contact must still receive replies.
+        ("global_contact", "global", "did:aw:bob", "team_and_contacts", True, True),
+        # Open recipients return at messages.py:202 before any contact logic, so the
+        # fix cannot reach them. Free to assert from this fixture, so asserted.
+        ("global_open", "global", "did:aw:bob", "open", False, True),
+    ],
+)
+async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
+    aweb_cloud_db,
+    monkeypatch,
+    case,
+    recipient_scope,
+    recipient_did_aw,
+    inbound_mode,
+    alice_is_contact,
+    expect_delivered,
+):
+    """aweb-aapo: contacts policy must be re-evaluated on every continuation.
+
+    It was evaluated once at conversation establishment and never again on the MCP
+    path, so a revoked contact kept sending. Both directions are asserted because
+    the fix's risk runs the other way: over-tightening breaks every legitimate reply.
+    """
+    team_id = "ops:acme.com"
+    # The recipient sits on a DIFFERENT team deliberately. When both share a team,
+    # authorize_message_delivery:224 authorizes the local arm on same-team grounds and the
+    # arm passes with stored_route_continuation removed - guarding nothing. Split, :219 is
+    # the only thing that can authorize it, so removing the flag reds this arm.
+    recipient_team_id = "ops:other.example"
+    alice_agent_id = uuid4()
+    workspace_id = uuid4()
+    bob_agent_id = uuid4()
+    conversation_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did_key = did_from_public_key(alice_pub)
+    bob_did_key = "did:key:z6MkBobLocal"
+    bob_participant_did = recipient_did_aw or bob_did_key
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam'),
+               ($2, 'other.example', 'ops', 'did:key:z6MkTeamOther')
+        """,
+        team_id,
+        recipient_team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+        (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
+        VALUES
+            ($1, $3, $5, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
+            ($2, $4, $6, $7, 'other.example/bob', 'bob', $8, 'active', $9)
+        """,
+        alice_agent_id,
+        bob_agent_id,
+        team_id,
+        recipient_team_id,
+        alice_did_key,
+        bob_did_key,
+        recipient_did_aw,
+        recipient_scope,
+        inbound_mode,
+    )
+    if alice_is_contact:
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
+            VALUES ($1, 'acme.com/alice', 'Alice')
+            """,
+            bob_participant_did,
+        )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, team_id, created_by_did, created_at, updated_at
+        )
+        VALUES ($1, 'mail', $2, 'did:aw:alice', NOW() - INTERVAL '1 minute', NOW() - INTERVAL '1 minute')
+        """,
+        conversation_id,
+        team_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, transport_hint, role
+        )
+        VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', 'sender', 'initiator'),
+            ($1, $4, $3, 'bob', 'other.example/bob', 'to_alias', 'participant')
+        """,
+        conversation_id,
+        alice_agent_id,
+        bob_agent_id,
+        bob_participant_did,
+    )
+
+    monkeypatch.setattr(
+        mail_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+
+    async def _signer(**kwargs) -> HostedMessageSigningResult:
+        signed_payload = canonical_signed_payload(kwargs["payload"])
+        return HostedMessageSigningResult(
+            from_did=alice_did_key,
+            signature=sign_message(alice_sk, signed_payload.encode("utf-8")),
+            signed_payload=signed_payload,
+            signing_key_id=alice_did_key,
+        )
+
+    class _NoRediscoveryRegistry:
+        async def resolve_address(self, *_args, **_kwargs):
+            raise AssertionError("continuation must not rediscover the recipient address")
+
+    result = json.loads(
+        await mail_tools.send_mail(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=_NoRediscoveryRegistry(),
+            hosted_signer=_signer,
+            plaintext=True,
+            conversation_id=str(conversation_id),
+            subject="Re",
+            body="conversation reply",
+        )
+    )
+
+    delivered = result.get("status") == "delivered"
+    assert delivered is expect_delivered, f"{case}: got {result!r}"
+    stored = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT count(*) AS n FROM {{tables.messages}} WHERE conversation_id = $1",
+        conversation_id,
+    )
+    assert (stored["n"] > 0) is expect_delivered, f"{case}: message rows disagree with the verdict"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "aweb-aaqv: chat_send drops did_aw on the trusted-proxy path "
+        "(mcp/tools/chat.py:379, :659), so the gate at :255-266 cannot match a "
+        "participant row keyed by the caller's own did:aw. Fix is HELD pending Juan's "
+        "ruling - it changes an authorization predicate. strict=True so that fixing it "
+        "reds this as an unexpected pass and forces the marker out."
+    ),
+)
+@pytest.mark.asyncio
+async def test_mcp_chat_send_accepts_a_participant_row_keyed_by_the_callers_did_aw(
+    aweb_cloud_db, monkeypatch
+):
+    """A global agent's two DIDs are one principal; the send gate must accept either.
+
+    Per docs/aweb-sot.md a global identity holds BOTH did:key and did:aw. chat_history
+    and chat_read already accept a participant row keyed by either - see
+    test_mcp_chat_history_and_read_accept_alternate_session_participant_did. chat_send
+    does not, on the trusted-proxy path only: mcp/tools/chat.py:379 drops did_aw and
+    :659 passes the single remaining did_key to the exact-match gate at :255-266.
+
+    This test is test_mcp_chat_send_existing_session_uses_hosted_signer with exactly one
+    variable changed - the participant row is keyed by alice's did:aw rather than her
+    did:key. Same agent, same auth context, same call.
+    """
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    workspace_id = uuid4()
+    bob_agent_id = uuid4()
+    session_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did = did_from_public_key(alice_pub)
+    alice_did_aw = "did:aw:alice"
+    await _insert_mcp_chat_agents(
+        aweb_cloud_db.aweb_db,
+        team_id=team_id,
+        alice_agent_id=alice_agent_id,
+        bob_agent_id=bob_agent_id,
+        alice_did=alice_did,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, $2, 'alice')
+        """,
+        session_id,
+        team_id,
+    )
+    # The only difference from the control: alice's row is keyed by her did:aw.
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
+        VALUES
+            ($1, $2, $3, 'alice'),
+            ($1, 'did:key:z6MkBob', $4, 'bob')
+        """,
+        session_id,
+        alice_did_aw,
+        alice_agent_id,
+        bob_agent_id,
+    )
+
+    monkeypatch.setattr(
+        chat_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=alice_did,
+            did_aw=alice_did_aw,
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+
+    async def _signer(**kwargs) -> dict:
+        signed_payload = canonical_signed_payload(kwargs["payload"])
+        return {
+            "from_did": alice_did,
+            "signature": sign_message(alice_sk, signed_payload.encode("utf-8")),
+            "signed_payload": signed_payload,
+        }
+
+    result = json.loads(
+        await chat_tools.chat_send(
+            DBInfra(aweb_cloud_db.aweb_db),
+            None,
+            registry_client=None,
+            hosted_signer=_signer,
+            session_id=str(session_id),
+            message="did:aw-keyed participant",
+            wait=True,
+            wait_seconds=7,
+            hang_on=True,
+            plaintext=True,
+        )
+    )
+
+    assert result.get("error") != "Not a participant in this session", (
+        "the caller's own did:aw participant row was rejected on the trusted-proxy path"
+    )
+    assert result["delivered"] is True

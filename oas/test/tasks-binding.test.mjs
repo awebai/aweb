@@ -4,6 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, test } from "node:test";
+import { oasCliPath } from "./helpers/oas-test-root.mjs";
 
 const CAPABILITY_SOURCE = resolve(new URL("../.agents/capabilities/owned/aweb-tasks", import.meta.url).pathname);
 const CANONICAL_SKILL = resolve(new URL("../../skills/aweb-coordination", import.meta.url).pathname);
@@ -25,10 +26,7 @@ function write(path, content) {
 }
 
 function oasCli() {
-  const root = process.env.OAS_TEST_ROOT || execFileSync("oas", ["root"], { encoding: "utf8" }).trim();
-  const cli = join(root, "bin", "oas.mjs");
-  assert.equal(existsSync(cli), true, `real OAS CLI not found at ${cli}`);
-  return cli;
+  return oasCliPath();
 }
 
 test("aweb tasks capability owns the exclusive tasks and roster contract", () => {

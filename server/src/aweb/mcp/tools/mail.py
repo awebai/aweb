@@ -336,7 +336,7 @@ async def send_mail(
                 encrypted_metadata=encrypted_metadata,
                 message_id=message_id,
                 conversation_id=conversation_ref,
-                skip_policy_check=True,
+                stored_route_continuation=True,
             )
             await touch_conversation_activity(db_infra, conversation_id=conversation_ref)
         except Exception as exc:

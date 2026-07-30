@@ -22,7 +22,18 @@ def test_default_roles_use_file_inputs_for_multiline_reports() -> None:
 def test_default_team_instructions_teach_shell_safe_long_bodies() -> None:
     instructions = read_default("team_instructions.md")
 
-    assert "before `aw` starts" in instructions
+    # The hazard is an interpolating CONTEXT, not one command's argument. The earlier
+    # wording named the surface - a double-quoted argument to `aw` - and someone
+    # following it used --body-file as instructed and was still bitten, in the heredoc
+    # that wrote the file. Each assertion below fails against that wording.
+    assert "The hazard is a mechanism, not a surface" in instructions
+    assert "interpolates" in instructions
+    # Naming the safe forms is what makes the rule actionable rather than a warning.
+    assert "<<'EOF'" in instructions
+    assert "printf '%s'" in instructions
+    # And the check that catches it after the fact, with the asymmetry that bounds it.
+    assert "grep -c" in instructions
+    assert "cannot distinguish" in instructions
     assert "Markdown, reports, or command examples" in instructions
     assert instructions.count("--body-file") >= 7
     assert '--body "' not in instructions

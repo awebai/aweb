@@ -72,3 +72,36 @@ test("test-oas checks the launch-environment contract before runtime setup or as
     /^test-oas:\s+check-oas-launch-environment-contract\s+build\s+test-node-deps$/m,
   );
 });
+
+// OAS_TEST_ROOT UNSET is a different state from OAS_TEST_ROOT set-but-contractless,
+// and only the second had a readable diagnostic. Unset fell through to an ambient
+// `oas` binary on PATH - the thing the Makefile explicitly refuses to let decide a
+// result - and produced four assertion failures out of eighty-six, which reads as a
+// small real defect rather than a missing environment. It fooled a deliberate
+// baseline run against a detached worktree.
+//
+// Spawned as a DIRECT `node --test`, not through make, because the make target
+// already guards this and the direct path is the one that produced the false report.
+test("a direct run with OAS_TEST_ROOT unset says so instead of failing opaquely", () => {
+  const env = { ...process.env };
+  delete env.OAS_TEST_ROOT;
+  // node --test sets NODE_TEST_CONTEXT, and a child that inherits it reports to a
+  // parent runner instead of standing alone - it then exits 0 while printing the
+  // failure. Removing it is what makes this assertion about the suite rather than
+  // about the nesting.
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(
+    process.execPath,
+    ["--test", "oas/test/tasks-binding.test.mjs"],
+    { cwd: REPO_ROOT, encoding: "utf8", env },
+  );
+
+  assert.notEqual(result.status, 0, "an unset OAS_TEST_ROOT must not pass");
+  const output = `${result.stdout}${result.stderr}`;
+  assert.match(output, /OAS_TEST_ROOT/, "the failure must name the variable that is missing");
+  assert.match(
+    output,
+    /make test-oas|prepare-oas-test-root/,
+    "the failure must name how to get a usable root",
+  );
+});
