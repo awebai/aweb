@@ -105,10 +105,23 @@ usage text as success. That is a property of unrecognised verbs, not of
 
 `aw team remove-agent` covers the network state: it deletes the workspace
 record — which is what releases the task claims held under it — and then
-revokes the certificate, in that order. Do not revoke first. An agent can
+attempts the certificate revoke, in that order. Do not revoke first. An agent can
 release its own claims right up until its certificate is revoked, and the
 hosted removal deletes the same workspace record without releasing
 anything, so a revoke that runs first strands every claim it held.
+
+**On a hosted namespace nothing is actually revoked, in any branch** (aweb-aauy).
+The ordering above still governs what runs; what it ends with is an *attempt*.
+For a local-scope member the CLI calls the cloud revoke with an **empty
+certificate id**, and the endpoint returns `not_found` with
+`revoke_outcome: not_attempted` before reaching the revoke — so the credential
+deletions after it do not run either. A global-scope member is refused earlier
+still. Two of the three branches exit non-zero and say so; the third reports
+`reported_retired` and **exits 0**.
+
+So do not read a completed `remove-agent` on a hosted team as evidence that a
+credential was destroyed. What it establishes is that the workspace record is
+gone and the claims are released — which is the part it really does.
 
 ## Read it back before you delete the home
 
@@ -119,7 +132,7 @@ itself. That independence is the whole point of this step:
 > comes from somewhere other than the command that retired it."
 
 ```bash
-aw team agent-status "$name"        # preferred: reads the stores directly
+aw team agent-status "$name"        # reads workspace + claims directly; NOT certificate
 ```
 
 **Availability, and check this before relying on it.** `aw team agent-status` is
@@ -170,9 +183,22 @@ independently.
   certificate part rests on the hosted service reporting it had nothing to
   revoke. That is not the same as knowing no certificate exists: the hosted
   service answers from its own membership records and may never consult the
-  registry. Establishing the real state needs a read against the registry
-  itself: `aw team agent-status` where it is available (see above), or
-  `aw id team` inspection where it is not.
+  registry.
+
+  **On a hosted namespace this is the normal outcome, not an unusual one, and
+  the credential deletions behind it did not run** (aweb-aauy). The endpoint
+  returns `not_found` before revoking, so the member's API key, cloud
+  certificate blob and custodial signing key are left as they were and no audit
+  row records the attempt. The exit status is 0.
+
+  **`aw team agent-status` cannot settle this and must not be used to try.** It
+  reports `Certificate: unknown` for *every* hosted local agent — a live,
+  working teammate reads the same as a retired one, because there is no read
+  path from the CLI to a hosted local agent's certificate state (aweb-aaum.9).
+  Run it against a live agent once and you will see why: without that control,
+  `unknown` on a retired agent looks like evidence of revocation and is evidence
+  of nothing. What it *can* confirm is the workspace and claims halves, which
+  are the parts that really did happen.
 
 On a customer-controlled team, retiring a name that no longer resolves is
 an error rather than a no-op, so re-running a completed retirement by name
