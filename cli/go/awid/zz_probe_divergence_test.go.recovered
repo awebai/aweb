@@ -1,0 +1,112 @@
+package awid
+
+import (
+	"context"
+	"crypto/ed25519"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+)
+
+// Same aajc.8 malicious-registry fixture as client_address_takeover_repro_test.go,
+// except the ADDRESS row's current_did_key is set to a decoy so ResolveIdentity's
+// "registry address/key mismatch" check throws. In TS that throw makes
+// resolveAgentMeta return resolved:false and the TOFU pin check is skipped
+// entirely (status stays "verified"). Does Go behave the same way?
+func TestProbeAddressKeyRowDisagreementDoesNotBypassPin(t *testing.T) {
+	atkPub, atkPriv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	atkDID := ComputeDIDKey(atkPub)
+	atkStableID := ComputeStableID(atkPub)
+
+	victimPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	victimDID := ComputeDIDKey(victimPub)
+	victimStableID := ComputeStableID(victimPub)
+
+	decoyPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoyDID := ComputeDIDKey(decoyPub)
+
+	ctrlPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerDID := ComputeDIDKey(ctrlPub)
+
+	atkGenesis := signedDidKeyResolution(t, atkPriv, &DidKeyResolution{
+		DIDAW:         atkStableID,
+		CurrentDIDKey: atkDID,
+		LogHead: &DidKeyEvidence{
+			Seq: 1, Operation: "register_did", NewDIDKey: atkDID,
+			AuthorizedBy: atkDID, Timestamp: "2026-02-22T10:00:00Z",
+		},
+	}).LogHead
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/namespaces/acme.com/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id": "addr-1", "domain": "acme.com", "name": "alice",
+				"did_aw": atkStableID,
+				// The decoy makes the address row disagree with the key row.
+				"current_did_key": decoyDID,
+				"reachability":    "public", "created_at": "2026-02-01T00:00:00Z",
+			})
+		case "/v1/did/" + atkStableID + "/key":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"did_aw": atkStableID, "current_did_key": atkDID, "log_head": atkGenesis,
+			})
+		case "/v1/did/" + atkStableID + "/log":
+			_ = json.NewEncoder(w).Encode([]DidKeyEvidence{*atkGenesis})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
+		value:     DomainAuthority{RegistryURL: server.URL, ControllerDID: controllerDID},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+
+	// Show what the resolver itself does with this fixture.
+	if _, err := resolver.ResolveIdentity(context.Background(), "acme.com/alice"); err != nil {
+		t.Logf("ResolveIdentity error: %v", err)
+	} else {
+		t.Logf("ResolveIdentity: no error")
+	}
+
+	c, err := New("http://example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pins := NewPinStore()
+	c.SetPinStore(pins, "")
+	c.SetResolver(resolver)
+
+	address := "acme.com/alice"
+	pins.StorePin(victimStableID, address, "", "")
+	pins.Pins[victimStableID].StableID = victimStableID
+	pins.Pins[victimStableID].DIDKey = victimDID
+
+	status, _ := c.NormalizeSenderTrust(
+		context.Background(), Verified, address, atkDID, atkStableID, nil, nil, nil,
+	)
+	t.Logf("Go NormalizeSenderTrust status = %q (pin now %q)", status, pins.Addresses[address])
+	if status != IdentityMismatch {
+		t.Fatalf("status=%q, want IdentityMismatch", status)
+	}
+	if pins.Addresses[address] != victimStableID {
+		t.Fatalf("victim pin taken over: %q", pins.Addresses[address])
+	}
+}
