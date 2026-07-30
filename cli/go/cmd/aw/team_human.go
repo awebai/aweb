@@ -1078,7 +1078,16 @@ func formatTeamHumanCreate(v any) string {
 		if src := strings.TrimSpace(out.ProfileSource); src != "" {
 			fmt.Fprintf(&b, "Profile materialized from %s\n", src)
 		} else {
-			b.WriteString("Library profile adopted and materialized.\n")
+			// Unreachable today: every materialize branch sets a source. But nothing in
+			// the type system forbids the unset state - it took enumerating all the call
+			// sites to establish even the current-tense version - so this is reachable by
+			// the next branch that forgets, which is precisely how this defect arose.
+			//
+			// Deleting the branch and printing a plausible sentence fail the same way, in
+			// opposite directions: one goes silent, the other repeats the original false
+			// claim. So it says only what is known to be true - a profile was materialized
+			// - and announces the missing part rather than papering over it.
+			b.WriteString("BUG: a profile was materialized but no source was recorded, so this command cannot say where it came from.\n")
 		}
 	} else {
 		b.WriteString("No Library profile was adopted; no profile home was materialized.\n")

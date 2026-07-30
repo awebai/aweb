@@ -662,3 +662,28 @@ func TestLocalBlueprintCreateDoesNotClaimALibraryAdoption(t *testing.T) {
 		t.Fatalf("the line must name the local blueprint it materialized from:\n%s", human)
 	}
 }
+
+// The unset-source branch is unreachable today - every materialize path sets a
+// source - but nothing in the type system forbids the state, and it took
+// enumerating every call site to establish even that. It is reachable by the next
+// branch that forgets, which is exactly how the defect it replaced arose.
+//
+// So it gets a test that REACHES it. A guard nobody can trigger is the thing this
+// team keeps finding; this one fires, and it fires without claiming an adoption.
+func TestCreateOutputAnnouncesAMissingSourceRatherThanClaimingAdoption(t *testing.T) {
+	// The state a forgetful future branch would produce: library mode, no source.
+	human := formatTeamHumanCreate(teamHumanCreateOutput{
+		Status: "created", TeamName: "acme", ProfileMode: "library",
+	})
+	if !strings.Contains(human, "BUG:") {
+		t.Fatalf("an unset source must announce itself loudly:\n%s", human)
+	}
+	if strings.Contains(human, "adopted") {
+		t.Fatalf("the unset branch must not claim an adoption that did not happen:\n%s", human)
+	}
+	// And it must not silently print nothing about the profile either - the failure
+	// mode of deleting the branch outright.
+	if !strings.Contains(human, "materialized") {
+		t.Fatalf("the unset branch must still report that a profile was materialized:\n%s", human)
+	}
+}
