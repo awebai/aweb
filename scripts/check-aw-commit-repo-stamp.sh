@@ -48,6 +48,28 @@ push_target="$(grep -oE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git' "$WOR
 # line anywhere below then satisfies a check on a block that does not contain one. That is
 # this guard's own defect reintroduced through the boundary rather than through the anchor,
 # and it was measured rather than argued.
+#
+# KNOWN LIMITATION, SHIPPED DELIBERATELY - not a bug report, a recorded decision.
+# A COLUMN-0 COMMENT INSIDE THIS BLOCK ENDS IT EARLY. Comments at column 0 are legal YAML
+# anywhere, including inside a nested block, and the unindented test above treats one as a
+# top-level key. The guard then refuses while saying the stamp is missing from a block that
+# plainly contains it, which is a false statement about the artifact.
+#
+#   DIRECTION: it fails CLOSED. Ending early can only drop the stamp out of scope and refuse;
+#   it can never admit a stamp that is absent. So it cannot hide a missing stamp, which is the
+#   direction that would matter.
+#
+# The obvious repair - also exclude comments from the close test - was written, measured, and
+# REVERTED, because excluding them only there leaves a commented-out stamp inside the block
+# able to SUPPLY the match: a false PASS, strictly worse than this false refusal. The verified
+# form needs both roles covered at once, `inblock && !/^[[:space:]]*#/`, and it is not applied
+# here because aweb-aaxi rewrites this extraction to walk EVERY build block rather than pull
+# out one named one - so this awk line is code that task deletes.
+#
+#   REQUIREMENTS CARRIED TO aaxi: comments must neither CLOSE a block nor SUPPLY a stamp, and
+#   the direction set to test is the seven grace enumerated - control; comment above the stamp;
+#   comment straight after the id; indented comment; comment HOLDING a stamp; stamp on another
+#   block; stamp absent.
 aw_block="$(awk '/^  - id: aw$/{inblock=1; next} /^  - id: /{inblock=0} /^[^ ]/{inblock=0} inblock' "$GORELEASER")"
 
 if [[ -z "$aw_block" ]]; then
