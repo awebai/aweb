@@ -65,10 +65,16 @@ test("a probe renamed into a collectable name is still excluded", () => {
     expect(withProbe).toEqual(baseline);
   });
 
-  // Positive control. Without it, a `vitest list` that collected nothing - a broken
-  // instrument, a bad cwd - would satisfy the assertion above and report the exclude
-  // as working. The suffix is what the exclude keys on, so an ordinary name must be
-  // admitted by the same command in the same directory.
+  // Positive control, and it catches a NARROWER case than the empty listing - that one
+  // is already covered three lines up, where an empty baseline fails toBeGreaterThan(0)
+  // before this is reached.
+  //
+  // What only this catches is a listing that does not SEE NEW FILES: stale, cached, or
+  // run from the wrong directory. There the baseline is healthy and non-empty, the
+  // exclusion assertion above passes FOR THE WRONG REASON - the probe fixture is absent
+  // because nothing new is visible, not because the pattern excluded it - and nothing
+  // else notices. Writing a file the exclude does NOT match and requiring it to appear
+  // is what separates "the pattern worked" from "the instrument saw nothing new".
   withFixture("zz_control_exclude_guard.test.ts", () => {
     const withControl = collectedFiles();
     expect(withControl.length).toBe(baseline.length + 1);
