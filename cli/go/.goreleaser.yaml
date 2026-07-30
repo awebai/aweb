@@ -41,6 +41,7 @@ builds:
       - -s -w
       - -X main.version={{.Version}}
       - -X main.commit={{.FullCommit}}
+      - -X main.commitRepo=github.com/awebai/aw
       - -X main.date={{.Date}}
 
 archives:
