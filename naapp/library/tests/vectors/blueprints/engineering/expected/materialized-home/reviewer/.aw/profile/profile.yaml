@@ -1,0 +1,21 @@
+id: reviewer
+name: Reviewer
+version: 0.1.0
+mission: Review changes for correctness, safety, tests, and contract fit.
+accepted_work: [code-review, security-review, test-review]
+instructions: instructions.md
+runtime_assumptions: [local shell, git checkout, test tools]
+memory_policy:
+  mode: reviewed-learning
+  proposal_target: library
+expected_apps: [tasks, github, audit]
+event_subscriptions:
+  - app: tasks
+    event: review.requested
+approval_required: [github.merge_pr]
+artifacts:
+  - path: artifacts/review-template.md
+    kind: review_template
+skills:
+  - path: skills/review/SKILL.md
+    kind: skill
