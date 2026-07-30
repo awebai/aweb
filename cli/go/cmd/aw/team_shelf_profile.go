@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -28,7 +29,35 @@ type teamProfileSource struct {
 	// profile from files with no blueprint, and delete-blueprint detaches shelf
 	// profiles rather than orphaning them.
 	LineageUnknown bool
+	// ShelfConsulted records that the shelf actually answered - found or 404 - as
+	// opposed to never having been askable. The zero value is false so that a source
+	// nobody filled in reports "not consulted" rather than claiming an absence it
+	// never established.
+	ShelfConsulted bool
 }
+
+// A shelf lookup has three outcomes, not two. Collapsing "could not ask" into
+// "absent" is the same defect as the fallback this change exists to remove: it
+// reports a team's own profile as missing on evidence that never addressed the
+// question.
+type shelfLookupOutcome int
+
+const (
+	shelfProfileFound shelfLookupOutcome = iota
+	shelfProfileAbsent
+	shelfNotConsultable
+)
+
+// errTeamShelfNotConsultable marks the one shelf failure that is not a failure of
+// the shelf: the Library plugin the shelf read dispatches through is not installed.
+// The public read is a direct HTTP GET with no such prerequisite, so a plugin-free
+// home can materialize a public profile while being unable to ask about a shelf at
+// all - which is most homes, and every `aw team create` that bootstraps one.
+//
+// Injected into the call and matched with errors.Is rather than recognized from the
+// message text, so rewording the user-facing install hint cannot silently turn this
+// branch into an ordinary error.
+var errTeamShelfNotConsultable = errors.New("the aw Library plugin is not installed, so this team's shelf cannot be consulted")
 
 // Describe states the source of a resolution. It reports a version and digest only
 // for the shelf, because only the shelf payload is in hand here - the public profile
@@ -38,7 +67,14 @@ type teamProfileSource struct {
 // which carries both.
 func (s teamProfileSource) Describe(selector libraryProfileSelector) string {
 	if !s.FromShelf || s.Shelf == nil {
-		return fmt.Sprintf("public catalog %s: %s", strings.TrimSpace(selector.LibraryURL), strings.TrimSpace(selector.ProfileRef))
+		line := fmt.Sprintf("public catalog %s: %s", strings.TrimSpace(selector.LibraryURL), strings.TrimSpace(selector.ProfileRef))
+		// A shelf that was asked and answered 404 is an established absence. A shelf
+		// that could not be asked is not, and saying so is the difference between
+		// reporting a fact and asserting one nothing checked.
+		if !s.ShelfConsulted {
+			line += " (team shelf not consulted: Library plugin is not installed)"
+		}
+		return line
 	}
 	lineage := strings.TrimSpace(s.Shelf.SourceBlueprintRef)
 	if s.LineageUnknown {
@@ -65,12 +101,15 @@ func resolveTeamProfileSourceForHome(homeDir string, selector libraryProfileSele
 	if requested == "" {
 		return teamProfileSource{}, fmt.Errorf("source blueprint ref is required to resolve a team profile source for %s; without it a shelf profile from any blueprint would be accepted", profileRef)
 	}
-	shelf, found, err := lookupTeamShelfProfile(homeDir, profileRef)
+	shelf, outcome, err := lookupTeamShelfProfile(homeDir, profileRef)
 	if err != nil {
 		return teamProfileSource{}, err
 	}
-	if !found {
+	switch outcome {
+	case shelfNotConsultable:
 		return teamProfileSource{}, nil
+	case shelfProfileAbsent:
+		return teamProfileSource{ShelfConsulted: true}, nil
 	}
 	// The shelf is keyed by profile_ref alone - GET /v1/profiles/{profile_ref},
 	// scoped to the team by certificate - so the blueprint the caller named is never
@@ -84,32 +123,38 @@ func resolveTeamProfileSourceForHome(homeDir string, selector libraryProfileSele
 			"team shelf profile %s records source blueprint %q but %q was requested; refusing to materialize a different lineage. Import the profile from %q, or request %q",
 			profileRef, recorded, requested, requested, recorded)
 	}
-	return teamProfileSource{Shelf: shelf, FromShelf: true, LineageUnknown: recorded == ""}, nil
+	return teamProfileSource{Shelf: shelf, FromShelf: true, LineageUnknown: recorded == "", ShelfConsulted: true}, nil
 }
 
-// lookupTeamShelfProfile reports absence separately from failure. Only a 404 means
-// "this team has no shelf profile for that role"; a 403, a 5xx, a missing plugin or
-// a transport failure are all errors, because falling back to the public catalog on
-// any of them substitutes stock bytes for a team's own while reporting success.
-func lookupTeamShelfProfile(homeDir, profileRef string) (*libraryShelfProfileResponse, bool, error) {
+// lookupTeamShelfProfile separates absence from failure from unanswerable. Only a
+// 404 means "this team has no shelf profile for that role". A 403, a 5xx or a
+// transport failure are errors, because falling back to the public catalog on any of
+// them substitutes stock bytes for a team's own while reporting success. An
+// uninstalled Library plugin is neither: the shelf was never askable from here, so
+// the public catalog is the only available source and the caller must say so rather
+// than report an absence.
+func lookupTeamShelfProfile(homeDir, profileRef string) (*libraryShelfProfileResponse, shelfLookupOutcome, error) {
 	var shelf *libraryShelfProfileResponse
 	err := withWorkingDir(homeDir, func() error {
 		var callErr error
-		shelf, callErr = callLibraryGetShelfProfile(profileRef)
+		shelf, callErr = callLibraryGetShelfProfileWithMissingErr(profileRef, errTeamShelfNotConsultable)
 		return callErr
 	})
 	if err != nil {
-		if status, ok := libraryToolStatus(err); ok && status == http.StatusNotFound {
-			return nil, false, nil
+		if errors.Is(err, errTeamShelfNotConsultable) {
+			return nil, shelfNotConsultable, nil
 		}
-		return nil, false, fmt.Errorf("library get-shelf-profile %s: %w", profileRef, err)
+		if status, ok := libraryToolStatus(err); ok && status == http.StatusNotFound {
+			return nil, shelfProfileAbsent, nil
+		}
+		return nil, shelfProfileAbsent, fmt.Errorf("library get-shelf-profile %s: %w", profileRef, err)
 	}
 	// Pin the answer to what was asked. A response for a different profile_ref would
 	// otherwise be written into this home under the requested name.
 	if strings.TrimSpace(shelf.ProfileRef) != strings.TrimSpace(profileRef) {
-		return nil, false, fmt.Errorf("library returned shelf profile_ref %q for a lookup of %q; refusing to materialize a different profile", shelf.ProfileRef, profileRef)
+		return nil, shelfProfileAbsent, fmt.Errorf("library returned shelf profile_ref %q for a lookup of %q; refusing to materialize a different profile", shelf.ProfileRef, profileRef)
 	}
-	return shelf, true, nil
+	return shelf, shelfProfileFound, nil
 }
 
 // applyTeamLibraryProfileToHome materializes whichever source was resolved. The

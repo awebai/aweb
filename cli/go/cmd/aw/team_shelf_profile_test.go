@@ -264,9 +264,21 @@ func TestDescribeReportsOnlyWhatTheSourceHasRead(t *testing.T) {
 	// The shelf arm above stays substring-based on purpose: there the criterion is that
 	// specific things are PRESENT. Direction decides the instrument - presence wants
 	// containment, absence wants equality.
-	public := teamProfileSource{}
+	//
+	// ShelfConsulted is set here because this arm is the shelf answering 404 - an
+	// ESTABLISHED absence. The unconsulted arm is a different line and is asserted in
+	// TestShelfNotConsultableIsReportedAsNotConsultedNotAbsent, also by equality.
+	public := teamProfileSource{ShelfConsulted: true}
 	if got, want := public.Describe(selector), "public catalog https://library.example: coordinator"; got != want {
 		t.Fatalf("public description must state the source and the ref and claim nothing else:\n  got  %q\n  want %q", got, want)
+	}
+
+	// And the zero value must not claim an established absence. A source nobody filled
+	// in has consulted nothing, so the honest line is the not-consulted one - the
+	// polarity of ShelfConsulted is chosen to make the forgetful case fail toward
+	// saying less rather than toward asserting a 404 that never happened.
+	if got, want := (teamProfileSource{}).Describe(selector), "public catalog https://library.example: coordinator (team shelf not consulted: Library plugin is not installed)"; got != want {
+		t.Fatalf("an unfilled source must not report an established absence:\n  got  %q\n  want %q", got, want)
 	}
 
 	// FromShelf set without a payload is a caller error, not a panic.
@@ -448,4 +460,41 @@ func TestShelfSourcedHomeStaysOnShelfAfterRefresh(t *testing.T) {
 		t.Fatalf("refresh after a shelf-sourced create: %v", err)
 	}
 	assertHomeCarriesShelfProfile(t, home, stub.Digest)
+}
+
+// A home with no Library plugin cannot ASK the shelf - the shelf read dispatches
+// through the plugin manifest while the public read is a direct HTTP GET, so the two
+// have different prerequisites. That makes three outcomes, not two: shelf present,
+// shelf established-absent, and could-not-ask. Collapsing the third into absence is
+// the original bug in a new place; making it an error breaks every plugin-free
+// create and add, which is most of them.
+func TestShelfNotConsultableIsReportedAsNotConsultedNotAbsent(t *testing.T) {
+	home := t.TempDir()
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+	// A workspace, so the failure is the MISSING PLUGIN and not an uninitialized
+	// directory - those are different causes and only one is the case under test.
+	writeLocalTeamSignedRequestWorkspaceForTest(t, home, "https://library.invalid", "default:acme.com", "coordinator", did, priv)
+	t.Setenv("AW_HOME", filepath.Join(home, ".aw"))
+
+	selector := libraryProfileSelector{LibraryURL: "https://library.example", ProfileRef: "coordinator", SourceBlueprintRef: "aweb.team", RuntimeKind: "local-shell"}
+	source, err := resolveTeamProfileSourceForHome(home, selector)
+	if err != nil {
+		t.Fatalf("a home without the Library plugin must resolve to the public catalog, not fail: %v", err)
+	}
+	if source.FromShelf {
+		t.Fatal("no plugin means no shelf answer; FromShelf must be false")
+	}
+	if source.ShelfConsulted {
+		t.Fatal("the shelf was never asked, so ShelfConsulted must be false")
+	}
+	// The reported line must not claim an absence it never established.
+	got := source.Describe(selector)
+	want := "public catalog https://library.example: coordinator (team shelf not consulted: Library plugin is not installed)"
+	if got != want {
+		t.Fatalf("describe\n got %q\nwant %q", got, want)
+	}
 }
