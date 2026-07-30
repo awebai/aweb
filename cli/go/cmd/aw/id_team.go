@@ -2453,11 +2453,6 @@ func runHostedTeamRemoveMember(teamID, memberAddress, certificateID string) erro
 // settled at different moments. The service reports the revocation separately, in
 // revoke_outcome (revoked / already_revoked / not_found / not_attempted).
 //
-// This comment previously said not_found meant "there was no active certificate to
-// revoke". The service never established that, and a reader trusting it would
-// conclude a certificate was safe when the same response could accompany a
-// revocation that had just happened. Corrected under aweb-aaum.8.
-//
 // revoke_outcome is deliberately not consumed here yet: reading it would change
 // what this function reports, which is a behaviour change wanting its own review.
 // Unknown fields decode away harmlessly, so leaving it unread is safe.
