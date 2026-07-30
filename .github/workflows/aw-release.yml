@@ -32,6 +32,28 @@ jobs:
       - name: Check the version stamp names the repository this pushes to
         run: ./scripts/check-aw-commit-repo-stamp.sh
 
+      # aweb-aaun.13: goreleaser runs `go mod tidy` as a before hook in the derived repo, and
+      # its hooks run AFTER its git-state validation - so an untidy manifest passes validation,
+      # the hook rewrites go.mod and go.sum, and every binary is stamped vcs.modified=true on a
+      # tree goreleaser has already called clean. That shipped across v1.32.10, v1.33.0, v1.34.0
+      # and v1.34.1 before anyone opened a tarball.
+      #
+      # `make test` carries the same check, but nothing enforces a merge on it and a cancelled
+      # run skips it silently - so on main it detects, and only here can it REFUSE. This is the
+      # second check in this job to have teeth at the tag boundary; the stamp check above is the
+      # first.
+      #
+      # ACCEPTED COST: this is the first Go dependency in this workflow, so setup-go flakiness
+      # can now block a release. That failure is loud, attributable and re-runnable, which is
+      # strictly better than a release that silently ships untraceable binaries.
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+
+      - name: Check the module manifest needs no rewriting at build time
+        run: make check-cli-go-tidy
+
       - name: Push cli/go to awebai/aw
         env:
           AW_REPO_TOKEN: ${{ secrets.AW_REPO_TOKEN }}
