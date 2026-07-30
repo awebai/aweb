@@ -34,20 +34,35 @@ Using `remove-agent` on a local agent produces an accurate refusal about missing
 owner/admin credentials. That error is about the wrong verb, not about a missing
 permission — it is easy to read as a capability boundary and it is not one.
 
-Run from your own agent home:
+## Stop the runtime before you run anything below
+
+**This is a manual prerequisite and it is not in the command block, because it
+cannot be.** Deleting the workspace does not stop the process: it leaves a live
+agent running against an identity that no longer exists. That has already
+happened — four `pi` runtimes kept running after their workspaces were deleted,
+and nothing warned.
+
+**Who does it:** whoever holds the keyboard or the tmux session — in practice the
+human running the fleet. Not the retiring agent: it cannot quit itself, because
+every command it runs is a child of the runtime you are trying to stop, and a
+process cannot exit its own parent by returning from a child. Not a sibling agent
+either: killing another agent's process is fenced by this project's tmux rules.
+So ask the human, and confirm the process is gone before continuing.
+
+    In Claude Code: `/quit` in that agent's own window, or close the window/pane.
+    For pi: quit or close that interactive process.
+
+Confirm it stopped — the old pid gone AND no runtime left in that home — rather
+than assuming the request was acted on.
+
+Then run the rest from your own agent home:
 
 ```bash
 name=<name>
 REPO="$(cd "$(git rev-parse --git-common-dir)" && cd .. && pwd)"
 inst="$REPO/agents/instances/$name"
 
-# 0. STOP THE RUNTIME FIRST. Deleting the workspace does not stop the process:
-#    it leaves a live agent running against an identity that no longer exists.
-#    In Claude Code /quit in that agent's own window; for pi, quit that process.
-#    An agent cannot do this to itself - it is a child of the runtime - and
-#    killing another agent's process is fenced, so this step has an owner.
-
-# 1. LOCAL identity scope (the usual case):
+# LOCAL identity scope (the usual case):
 aw workspace delete "$name"                       # workspace + local identity
 
 # GLOBAL identity scope only — needs an owner/admin key:
@@ -95,6 +110,14 @@ run: it prints the parent help and **exits 0**, and a script reads 1.6 KB of usa
 text as a successful status check. Confirm it exists on your installation before
 trusting its result — and note this is how *any* unrecognised `aw` subcommand
 behaves, not a property of this one.
+
+**How to check, because the obvious way silently says yes.** `aw team
+agent-status --help` exits 0 on an installation without the verb — it prints the
+parent help. The check that discriminates is the listing:
+
+```bash
+aw team --help | grep -w agent-status     # no output -> the verb is not there
+```
 
 **If it is unavailable, say which check you used.** The fallback is to read what
 `aw workspace delete` reported plus the team's workspace listing. That is weaker
