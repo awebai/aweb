@@ -25,6 +25,12 @@ _FOLIO_ROOT = Path(__file__).resolve().parents[1]
 
 # What identifies aweb, as opposed to a directory that merely holds the file being looked
 # for. aweb's server distribution is named aweb and nothing else in these layouts is.
+#
+# This fails CLOSED, which is the point: if aweb ever moves server/ out of this path the
+# marker stops matching and aweb_path raises, rather than continuing the walk and binding
+# to something else. So whoever restructures server/ will see folio's cross-repo tests
+# break, and should read that as the marker doing its job rather than as a bug - the
+# alternative direction would have them silently comparing against the wrong reference.
 _AWEB_MARKER = ("server", "pyproject.toml")
 _AWEB_MARKER_DECLARES = 'name = "aweb"'
 
@@ -48,16 +54,27 @@ def is_aweb_root(root: Path) -> bool:
         return False
 
 
-def aweb_candidate_roots() -> list[Path]:
-    """Every directory that is actually aweb, nearest first.
+def searched_roots(folio_root: Path) -> list[Path]:
+    """Where aweb is looked for, in order, before any filtering.
 
-    The sibling checkout is tried first because that is the layout while the two repos
-    exist separately. The ancestors cover the post-move layout, where folio is inside
-    aweb. Both are filtered through is_aweb_root, so a directory that happens to contain a
-    matching path is never mistaken for the repository.
+    The sibling position comes first because that is the layout while the two repos exist
+    separately; the ancestors cover the post-move layout, where folio is inside aweb.
+
+    Being first makes the sibling position the only place a wrong bind could beat a real
+    aweb further up, which is why the filtering below is applied to these roots rather
+    than to whether the wanted file happens to be present under them.
     """
-    searched = [_FOLIO_ROOT.parent / "aweb", *_FOLIO_ROOT.parents]
-    return [root for root in searched if is_aweb_root(root)]
+    return [folio_root.parent / "aweb", *folio_root.parents]
+
+
+def aweb_candidate_roots(folio_root: Path | None = None) -> list[Path]:
+    """Every searched directory that really is aweb, nearest first.
+
+    Takes an explicit root so the ordering and the filtering can be exercised against
+    constructed layouts; folio's own position is the default.
+    """
+    root = _FOLIO_ROOT if folio_root is None else folio_root
+    return [candidate for candidate in searched_roots(root) if is_aweb_root(candidate)]
 
 
 def aweb_path(*parts: str) -> Path:
@@ -77,7 +94,7 @@ def aweb_path(*parts: str) -> Path:
             "cannot be read. folio's cross-repo conformance tests need aweb checked out "
             "as a sibling of folio (or, after the naapp move, as an ancestor). Looked for "
             f"{'/'.join(_AWEB_MARKER)} declaring {_AWEB_MARKER_DECLARES!r} in: "
-            + ", ".join(str(path) for path in [_FOLIO_ROOT.parent / "aweb", *_FOLIO_ROOT.parents])
+            + ", ".join(str(path) for path in searched_roots(_FOLIO_ROOT))
         )
     tried: list[Path] = []
     for root in roots:

@@ -4,9 +4,11 @@ from pathlib import Path
 from uuid import UUID
 
 from aweb_layout import (
+    aweb_candidate_roots,
     aweb_naapp_local_source_candidates,
     existing_local_sources,
     is_aweb_root,
+    searched_roots,
     shadowing_local_source,
 )
 from fastapi.testclient import TestClient
@@ -105,6 +107,33 @@ def test_aweb_is_identified_by_its_marker_not_by_containing_the_wanted_file(tmp_
     (real / "server" / "pyproject.toml").write_text('[project]\nname = "aweb"\n')
 
     assert is_aweb_root(real)
+
+
+def test_a_decoy_at_the_sibling_position_does_not_beat_a_real_aweb_above(tmp_path: Path) -> None:
+    """The sibling position is searched first, so it is where a wrong bind would win.
+
+    A directory literally NAMED aweb sitting beside folio is the one candidate that
+    outranks a genuine aweb further up, and it is the case the ancestor decoy does not
+    exercise. Filtering the roots rather than checking where the wanted file happens to
+    exist is what makes this come out right.
+    """
+    real_aweb = tmp_path / "real_aweb"
+    (real_aweb / "server").mkdir(parents=True)
+    (real_aweb / "server" / "pyproject.toml").write_text('[project]\nname = "aweb"\n')
+
+    folio_root = real_aweb / "naapp" / "folio"
+    folio_root.mkdir(parents=True)
+
+    # Named aweb, positioned to be found first, and not aweb.
+    impostor = real_aweb / "naapp" / "aweb"
+    (impostor / "docs" / "vectors").mkdir(parents=True)
+    (impostor / "docs" / "vectors" / "team-auth-envelope-v2.json").write_text('{"decoy": true}')
+
+    # It is searched, and searched FIRST - so the ordering claim is not vacuous.
+    assert searched_roots(folio_root)[0] == impostor
+
+    # And it is not accepted, leaving the real aweb above it as the only candidate.
+    assert aweb_candidate_roots(folio_root) == [real_aweb]
 
 
 def test_landing_page_explains_folio_and_links_agent_surfaces() -> None:
