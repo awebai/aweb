@@ -71,6 +71,9 @@ coord-awid (Goto) before touching the file.
 
 This project uses `aw` for coordination.
 
+This file is not the team's active instructions. Run `aw instructions show` for the
+authoritative version, which carries sections this file does not.
+
 ## Start Here
 
 Run these before claiming new work. The order is deliberate.
