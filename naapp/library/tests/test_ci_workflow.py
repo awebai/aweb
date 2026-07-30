@@ -193,6 +193,34 @@ def test_ci_builds_the_e2e_stack_from_the_commit_under_test() -> None:
     assert all("github.workspace" in context for context in contexts), contexts
 
 
+def test_ci_also_covers_naapp_lib() -> None:
+    """naapp-lib is a dependency of both movers and had no CI before the move.
+
+    Guarded here rather than in naapp-lib's own suite for two reasons: both jobs
+    live in this one workflow file, so a single guard over that file is the right
+    granularity; and naapp-lib's dev dependencies are pytest, ruff and mypy with
+    no yaml, so asserting there would mean adding a dependency and touching its
+    lockfile for one test. The coupling is deliberate and stated - if naapp-lib
+    is ever extracted, this assertion moves with its job.
+    """
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+    assert "naapp-lib" in jobs, (
+        "naapp-lib had no CI before the subtree move; leaving it uncovered in a "
+        "repo that has CI is aweb-aavw criterion 5's recorded decision, and that "
+        "decision was to cover it"
+    )
+    steps = jobs["naapp-lib"]["steps"]
+    commands = "\n".join(step.get("run", "") for step in steps)
+    assert "uv sync --locked" in commands
+    assert "uv run pytest" in commands
+    assert "uv run ruff check" in commands
+    assert "uv run mypy" in commands
+    for step in steps:
+        if step.get("run"):
+            assert step.get("working-directory") in (None, "naapp-lib"), step
+
+
 def test_ci_runs_library_targets_from_the_subtree_path() -> None:
     """make runs in naapp/library, not at the aweb root, or it runs aweb's Makefile."""
     workflow = _workflow()

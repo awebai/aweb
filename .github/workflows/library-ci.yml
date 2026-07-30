@@ -9,9 +9,23 @@ name: Library CI
 # The job name is deliberately unchanged. It was the required status check
 # "Lint, test, and real-stack e2e" on library main, so keeping the name means a
 # reader comparing the two finds the same string rather than guessing at a
-# rename. Whether it is required here is a separate question - see aweb-aavw
-# criterion 4 and docs/decisions.md: aweb main is the shared sync branch and is
-# not protected, so this gate is advisory.
+# rename.
+#
+# THIS GATE IS ADVISORY HERE, AND THE SAME-NAMED ONE ELSEWHERE IS NOT. Measured
+# 2026-07-30 (aweb-aavw criterion 4):
+#
+#   awebai/aweb     main NOT protected - the protection endpoint returns 404
+#                   "Branch not protected", there are no rulesets, and
+#                   branches/main reports protected=false. aweb main is the
+#                   shared sync branch and cannot be protected.
+#   awebai/library  main IS protected, still, with an admin-enforced required
+#                   check of THIS EXACT NAME:
+#                     required_status_checks ["Lint, test, and real-stack e2e"]
+#                     enforce_admins true, strict true
+#
+# So the string is identical on purpose and only one of the two is enforced. A
+# reader who finds this job and assumes it blocks a merge here would be wrong;
+# one who assumes the name is a coincidence would also be wrong.
 #
 # NO PATH FILTER, deliberately. Every path-filtered workflow in this repo
 # omitted naapp from its path list, which is how library's coverage went
@@ -112,3 +126,46 @@ jobs:
         env:
           LIBRARY_E2E_AWEB_CONTEXT: ${{ github.workspace }}
         run: make e2e
+
+  # naapp-lib is tested here rather than in its own workflow because it is an
+  # in-repo dependency of BOTH movers - naapp/library and naapp/folio each
+  # declare aweb-naapp - and it shares this workflow's trigger. It is not part
+  # of the Library service; it had no CI of its own before the move, and leaving
+  # it uncovered in a repo that has CI would have been an oversight rather than
+  # a decision (aweb-aavw criterion 5).
+  #
+  # Separate job, not extra steps: it needs no postgres, no docker and no node,
+  # so it must not sit behind the e2e stack's setup or wait on its 40 minutes.
+  naapp-lib:
+    name: naapp-lib lint and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout aweb
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: naapp-lib/uv.lock
+
+      - name: Install locked dependencies
+        working-directory: naapp-lib
+        run: uv sync --locked
+
+      - name: Lint and type-check
+        working-directory: naapp-lib
+        run: |
+          uv run ruff check .
+          uv run mypy src
+
+      - name: Run tests
+        working-directory: naapp-lib
+        run: uv run pytest -q
