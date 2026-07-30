@@ -26,13 +26,18 @@
 # why the retired arm's parity comparison could not have been kept as it was, and it is
 # a fact about the table rather than about the graft.
 #
-# WHAT SURVIVED HERE WAS NOT REVIEWED, AND ONE PART OF IT IS KNOWN TO BE BLIND. The
-# retirement that produced this file was reviewed and ACKed; the reviewer stated, unprompted,
-# that he had audited the retirement - no orphans, control flow intact, no residue - and had
-# NOT audited assert_baseline_ref's semantics, because it survived untouched and so was
-# outside the diff. Recorded because an ACK covers what the reviewer examined, and a later
-# reader otherwise sees "reviewed" sitting over the following defect and concludes it was
-# considered and accepted:
+# THE SURVIVING CODE'S SEMANTICS WERE NOT REVIEWED, AND ONE PART OF IT IS KNOWN TO BE BLIND.
+# The retirement that produced this file was reviewed and ACKed, and the reviewer stated what
+# his ACK covered. Both halves are worth having precisely:
+#
+#   REACHABILITY WAS CHECKED. He ran a reference count per surviving function - that is how an
+#   orphaned fail() was found, and the same pass confirmed run_parity has one call site and that
+#   assert_baseline_ref and tally_of are still reached. Do not redo that work.
+#   SEMANTICS WERE NOT. Whether assert_baseline_ref reads the thing it claims to read was never
+#   examined, because the function survived untouched and so was outside the diff.
+#
+# Recorded because an ACK covers what the reviewer examined, and a later reader otherwise sees
+# "reviewed" sitting over the following defect and concludes it was considered and accepted:
 #
 #   assert_baseline_ref does `git -C "$src" rev-parse "origin/main^{commit}"` where $src is
 #   the LOCAL sibling clone. origin/main there is that clone's last-fetched tracking ref, so
