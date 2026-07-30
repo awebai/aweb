@@ -252,18 +252,21 @@ func TestDescribeReportsOnlyWhatTheSourceHasRead(t *testing.T) {
 	}
 
 	// The public branch holds no payload - the public profile is not fetched until
-	// materialization - so it must not report a version or digest at all. "latest" was
-	// there and was removed: it asserted a property of a profile nothing had read, in a
-	// change whose subject is exactly that.
+	// materialization - so it must not report a version or digest AT ALL.
+	//
+	// Asserted as EXACT EQUALITY rather than as the absence of selected substrings.
+	// The criterion is a property - no output line claims something that did not
+	// happen - and a denylist only ever forbids the violations its author enumerated:
+	// forbidding "latest" leaves "version 9.9.9" green. Equality fails closed for the
+	// whole class, including the claims nobody thought of, and it is shorter than the
+	// denylist it replaces.
+	//
+	// The shelf arm above stays substring-based on purpose: there the criterion is that
+	// specific things are PRESENT. Direction decides the instrument - presence wants
+	// containment, absence wants equality.
 	public := teamProfileSource{}
-	got = public.Describe(selector)
-	if !strings.Contains(got, "public catalog") || !strings.Contains(got, "coordinator") {
-		t.Fatalf("public description must state the source and the ref: %q", got)
-	}
-	for _, forbidden := range []string{"latest", "0.1.11", "sha256:"} {
-		if strings.Contains(got, forbidden) {
-			t.Fatalf("public description claims %q, which nothing has read: %q", forbidden, got)
-		}
+	if got, want := public.Describe(selector), "public catalog https://library.example: coordinator"; got != want {
+		t.Fatalf("public description must state the source and the ref and claim nothing else:\n  got  %q\n  want %q", got, want)
 	}
 
 	// FromShelf set without a payload is a caller error, not a panic.
