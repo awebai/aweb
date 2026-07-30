@@ -165,6 +165,13 @@ again afterwards to identify the deploy the merge itself triggered. Two reads, b
 same session as the push. Anything recorded earlier describes a deploy that has already
 been replaced.
 
+The after-read identifies the merge's own deploy **only if nothing else landed on `main`
+in the interval.** With no path filter every push deploys, so under concurrent traffic the
+after-read finds a deploy and gives no way to tell whose it is — which is a value that
+looks like an answer, the same failure as the stale table above. So push the merge into a
+quiet window, and if something else lands between the two reads, say the deploy is
+unattributed rather than naming the one you found.
+
 ## 4. Dependency pins, recorded because the move changes what they mean
 
 Both movers reach awid and aweb-naapp by git pin today, and the two do not agree
