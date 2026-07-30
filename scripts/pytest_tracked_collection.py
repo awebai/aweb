@@ -41,18 +41,52 @@ class GitUnavailable(RuntimeError):
     """Raised when tracked-ness cannot be established at all."""
 
 
+def _as_named(path: Path) -> Path:
+    """Normalize a path without following a symlink in its final component.
+
+    Resolving the whole path would replace a symlink with its target. A symlink
+    is a file in its own right as far as collection goes: pytest collects it
+    under its own name and runs every test it exposes, so an untracked symlink
+    to a tracked file adds that file's tests to the suite a second time and
+    inflates the count. Resolved, it reads as the tracked target and passes.
+
+    The parent is resolved because it must match the parent of the path git
+    reports; only the final component is left as collected.
+    """
+    return path.parent.resolve() / path.name
+
+
 def _collected_files(items) -> set[Path]:
     paths = set()
     for item in items:
         raw = getattr(item, "path", None) or getattr(item, "fspath", None)
         if raw is None:
             continue
-        paths.add(Path(str(raw)).resolve())
+        paths.add(_as_named(Path(str(raw))))
     return paths
 
 
-def _tracked(paths: set[Path], cwd: Path) -> set[Path]:
+def _repo_root(cwd: Path) -> Path:
+    try:
+        return Path(
+            subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+        ).resolve()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise GitUnavailable(str(exc)) from exc
+
+
+def _tracked(paths: set[Path], root: Path, cwd: Path) -> set[Path]:
     """Return the subset of paths that git reports as tracked.
+
+    Every path must already be known to lie under root. Passing git a path
+    outside the work tree makes it exit 128, which would surface as "cannot
+    establish tracked-ness" and hide the real situation.
 
     Raises GitUnavailable if git cannot answer. That is a refusal rather than a
     pass: these suites are collected from a checkout, so an environment without a
@@ -80,18 +114,9 @@ def _tracked(paths: set[Path], cwd: Path) -> set[Path]:
             text=True,
             check=True,
         )
-        root = Path(
-            subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout.strip()
-        )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise GitUnavailable(str(exc)) from exc
-    return {(root / rel).resolve() for rel in listed.stdout.split("\0") if rel}
+    return {_as_named(root / rel) for rel in listed.stdout.split("\0") if rel}
 
 
 def refuse_untracked(config, items) -> None:
@@ -102,7 +127,13 @@ def refuse_untracked(config, items) -> None:
 
     invocation = Path(str(config.rootpath))
     try:
-        tracked = _tracked(collected, invocation)
+        root = _repo_root(invocation)
+        # A path outside the work tree cannot be tracked, and asking git about one
+        # makes it exit 128 - which would be reported as an inability to establish
+        # tracked-ness and hide a collected file that escaped the repository.
+        inside = {p for p in collected if root in p.parents}
+        outside = collected - inside
+        tracked = _tracked(inside, root, invocation)
     except GitUnavailable as exc:
         raise pytest.UsageError(
             "cannot establish which collected files are tracked, so this suite "
@@ -113,18 +144,24 @@ def refuse_untracked(config, items) -> None:
             "contained these tests."
         ) from exc
 
-    untracked = sorted(collected - tracked)
-    if not untracked:
+    untracked = sorted(inside - tracked)
+    escaped = sorted(outside)
+    if not untracked and not escaped:
         return
 
-    named = "\n".join(f"    {p}" for p in untracked)
-    raise pytest.UsageError(
-        "this suite collected files that git does not track:\n"
-        f"{named}\n\n"
-        "The suite is collected from the working tree, not from the committed "
+    message = ["this suite collected files that are in no commit of this repository:"]
+    if untracked:
+        message.append("\n  not tracked by git:\n")
+        message.extend(f"    {p}\n" for p in untracked)
+    if escaped:
+        message.append("\n  outside the work tree, so not trackable here:\n")
+        message.extend(f"    {p}\n" for p in escaped)
+    message.append(
+        "\nThe suite is collected from the working tree, not from the committed "
         "tree, so these files run and are counted even though they are in no "
         "commit. On CI they would not exist.\n\n"
         "Commit them if they belong to the suite - an uncommitted regression "
         "test is exactly this case, and the answer is to commit it. Move them "
         "out of this package if they do not."
     )
+    raise pytest.UsageError("".join(message))
