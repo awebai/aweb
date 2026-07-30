@@ -15,11 +15,15 @@ COPY . ./
 ARG VERSION=dev
 ARG RELEASE_TAG=dev
 ARG COMMIT=none
+# The repository COMMIT resolves in. This image is built from aweb, while goreleaser
+# builds the same binary in the derived aw repository - so the SHA alone does not say
+# where to look (aweb-aaxi).
+ARG COMMIT_REPO=
 ARG DATE=unknown
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
-    -ldflags="-s -w -X main.version=${VERSION} -X main.releaseTag=${RELEASE_TAG} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.releaseTag=${RELEASE_TAG} -X main.commit=${COMMIT} -X main.commitRepo=${COMMIT_REPO} -X main.date=${DATE}" \
     -o /out/aweb-a2a-gw ./cmd/aweb-a2a-gw
 
 FROM ${RUNTIME_IMAGE} AS runtime

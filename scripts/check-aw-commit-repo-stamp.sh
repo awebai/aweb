@@ -32,54 +32,39 @@ done
 # The repository the sync clones and pushes to.
 push_target="$(grep -oE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git' "$WORKFLOW" | head -1 | sed 's/\.git$//' || true)"
 
-# The repository the AW BINARY will claim its commit resolves in.
+# EVERY build block must say which repository its commit resolves in - not just aw.
 #
-# Bounded to the aw build block rather than read from the whole file. Reading the file
-# and taking the first match passes while the stamp sits on a DIFFERENT binary's block:
-# aw then ships a bare hash and this check affirms, by name, the property it no longer
-# has. That is not hypothetical - aweb-a2a-gw is filed to gain its own commitRepo, and
-# the moment it does, a file-wide read becomes an ordering accident.
+# Every build in THIS file is produced by the one goreleaser run inside the synced clone,
+# so every one of them resolves in the sync target and the same answer is right for all.
+# Enumerating rather than naming `aw` is about coverage, not about differing answers:
+# whoever adds a third build gets a signal instead of a guard that keeps quietly passing.
 #
-# The anchor is exact because "- id: aw" is a prefix of "- id: aweb-a2a-gw".
+# A binary built somewhere else is a separate question with a separate answer - the
+# gateway image is built from aweb by its own workflow and correctly names aweb. That
+# path is stamped in its own files and is not what this file governs.
 #
-# The block ends at the next build id OR at any unindented line - a top-level key such as
-# archives:. Closing only on the next id is not the safe direction: with aw LAST and nothing
-# matching "  - id: " after it, the extraction runs to end of file, and a commitRepo-shaped
-# line anywhere below then satisfies a check on a block that does not contain one. That is
-# this guard's own defect reintroduced through the boundary rather than through the anchor,
-# and it was measured rather than argued.
-#
-# KNOWN LIMITATION, SHIPPED DELIBERATELY - not a bug report, a recorded decision.
-# A COLUMN-0 COMMENT INSIDE THIS BLOCK ENDS IT EARLY. Comments at column 0 are legal YAML
-# anywhere, including inside a nested block, and the unindented test above treats one as a
-# top-level key. The guard then refuses while saying the stamp is missing from a block that
-# plainly contains it, which is a false statement about the artifact.
-#
-#   DIRECTION: it fails CLOSED. Ending early can only drop the stamp out of scope and refuse;
-#   it can never admit a stamp that is absent. So it cannot hide a missing stamp, which is the
-#   direction that would matter.
-#
-# The obvious repair - also exclude comments from the close test - was written, measured, and
-# REVERTED, because excluding them only there leaves a commented-out stamp inside the block
-# able to SUPPLY the match: a false PASS, strictly worse than this false refusal. The verified
-# form needs both roles covered at once, `inblock && !/^[[:space:]]*#/`, and it is not applied
-# here because aweb-aaxi rewrites this extraction to walk EVERY build block rather than pull
-# out one named one - so this awk line is code that task deletes.
-#
-#   REQUIREMENTS CARRIED TO aaxi: comments must neither CLOSE a block nor SUPPLY a stamp, and
-#   the direction set to test is the seven grace enumerated - control; comment above the stamp;
-#   comment straight after the id; indented comment; comment HOLDING a stamp; stamp on another
-#   block; stamp absent.
-aw_block="$(awk '/^  - id: aw$/{inblock=1; next} /^  - id: /{inblock=0} /^[^ ]/{inblock=0} inblock' "$GORELEASER")"
+# Comments neither CLOSE a block nor SUPPLY a stamp. Excluding them from only one of those
+# roles is a defect in whichever direction is left: closing on them ends a block early and
+# refuses a stamp that is present; letting them supply means a commented-out stamp
+# satisfies the check. Both were measured on the earlier aw-only form (aweb-aaun.7).
+blocks="$(awk '
+  /^builds:[[:space:]]*$/ { inbuilds = 1; next }
+  /^[[:space:]]*#/        { next }
+  /^[^ ]/                 { if (inbuilds && id != "") { print id "\t" stamp; id = "" } inbuilds = 0; next }
+  !inbuilds               { next }
+  /^[[:space:]]+- id: /   { if (id != "") print id "\t" stamp
+                            s = $0; sub(/^[[:space:]]*- id:[[:space:]]*/, "", s); sub(/[[:space:]]+$/, "", s)
+                            id = s; stamp = ""; next }
+  /-X main\.commitRepo=/  { s = $0; sub(/.*-X main\.commitRepo=/, "", s); sub(/[[:space:]].*/, "", s); stamp = s }
+  END                     { if (id != "") print id "\t" stamp }
+' "$GORELEASER")"
 
-if [[ -z "$aw_block" ]]; then
-  printf 'FAIL: no "- id: aw" build block found in %s.\n' "$GORELEASER" >&2
-  printf '      This check reads the stamp from that block specifically, so it will not fall back\n' >&2
-  printf '      to a file-wide search that could match another binary.\n' >&2
+if [[ -z "$blocks" ]]; then
+  printf 'FAIL: no build blocks found under builds: in %s.\n' "$GORELEASER" >&2
+  printf '      This check enumerates every build and asks each which repository its commit\n' >&2
+  printf '      resolves in. Finding none means the file shape changed, not that all builds pass.\n' >&2
   exit 1
 fi
-
-stamped="$(printf '%s\n' "$aw_block" | grep -oE '\-X main\.commitRepo=[^[:space:]]+' | head -1 | sed 's/^-X main\.commitRepo=//' || true)"
 
 if [[ -z "$push_target" ]]; then
   printf 'FAIL: no sync target found in %s.\n' "$WORKFLOW" >&2
@@ -87,21 +72,28 @@ if [[ -z "$push_target" ]]; then
   exit 1
 fi
 
-if [[ -z "$stamped" ]]; then
-  printf 'FAIL: no -X main.commitRepo stamp in the "- id: aw" build block of %s.\n' "$GORELEASER" >&2
-  printf '      Without it `aw version` prints a bare commit that resolves in no repository a\n' >&2
-  printf '      reader has, which is aweb-aaun.7.\n' >&2
-  printf '      NOTE: the stamp may exist elsewhere in this file and still fail here - it is only\n' >&2
-  printf '      read from the aw block, because a stamp on another binary does nothing for aw.\n' >&2
-  exit 1
+rc=0
+covered=""
+while IFS=$'\t' read -r id stamp; do
+  [[ -n "$id" ]] || continue
+  covered="$covered $id"
+  if [[ -z "$stamp" ]]; then
+    printf 'FAIL: build %s carries no -X main.commitRepo stamp in %s.\n' "$id" "$GORELEASER" >&2
+    printf '      Its binary would print a commit that resolves in no repository a reader has,\n' >&2
+    printf '      which is aweb-aaun.7. A commented-out stamp does not count as one.\n' >&2
+    rc=1
+    continue
+  fi
+  if [[ "$stamp" != "$push_target" ]]; then
+    printf 'FAIL: build %s names a different repository than the sync pushes to.\n' "$id" >&2
+    printf '      sync pushes to : %s   (%s)\n' "$push_target" "${WORKFLOW#"$ROOT"/}" >&2
+    printf '      binary claims  : %s   (%s)\n' "$stamp" "${GORELEASER#"$ROOT"/}" >&2
+    rc=1
+  fi
+done <<< "$blocks"
+
+if [[ "$rc" -ne 0 ]]; then
+  exit "$rc"
 fi
 
-if [[ "$push_target" != "$stamped" ]]; then
-  printf 'FAIL: the version stamp names a different repository than the sync pushes to.\n' >&2
-  printf '      sync pushes to : %s   (%s)\n' "$push_target" "${WORKFLOW#"$ROOT"/}" >&2
-  printf '      binary claims  : %s   (%s)\n' "$stamped" "${GORELEASER#"$ROOT"/}" >&2
-  printf '      Every binary built from this release would name a repository its commit is not in.\n' >&2
-  exit 1
-fi
-
-printf 'ok   aw version names %s, which is where the sync pushes\n' "$stamped"
+printf 'ok   every build names %s:%s\n' "$push_target" "$covered"

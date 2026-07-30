@@ -29,6 +29,9 @@ var (
 	version    = "dev"
 	releaseTag = "dev"
 	commit     = "unknown"
+	// Set by the build that stamps commit, naming the repository that commit resolves
+	// in. Empty for any build that did not set it (aweb-aaxi).
+	commitRepo = ""
 	date       = "unknown"
 )
 
@@ -96,6 +99,11 @@ type runtimeHealth struct {
 type runtimeBuild struct {
 	ReleaseTag string `json:"release_tag"`
 	GitSHA     string `json:"git_sha"`
+	// The repository GitSHA resolves in. This binary is built two ways - by goreleaser
+	// in the derived aw repository, and from aweb by the gateway image workflow - so the
+	// SHA alone does not say where to look. Omitted when the build was not told, rather
+	// than guessing the repository the reader happens to be standing in (aweb-aaxi).
+	GitSHARepo string `json:"git_sha_repo,omitempty"`
 	Date       string `json:"date,omitempty"`
 }
 
@@ -274,7 +282,7 @@ func acConfigPollInterval() time.Duration {
 func writeRuntimeHealth(w http.ResponseWriter, gateway *a2agw.Gateway, cfg fileConfig) {
 	health := runtimeHealth{
 		Status:             "healthy",
-		Build:              runtimeBuild{ReleaseTag: releaseTag, GitSHA: commit, Date: date},
+		Build:              runtimeBuild{ReleaseTag: releaseTag, GitSHA: commit, GitSHARepo: commitRepo, Date: date},
 		AwebVersion:        version,
 		AWIDServiceVersion: ">=" + minimumAWIDServiceVersion,
 		AWIDRegistry:       checkRegistryHealth(cfg.RegistryURL),

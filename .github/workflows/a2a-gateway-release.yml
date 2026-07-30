@@ -73,6 +73,7 @@ jobs:
             VERSION=${{ env.A2A_GW_VERSION }}
             RELEASE_TAG=${{ env.A2A_GW_RELEASE_TAG }}
             COMMIT=${{ env.A2A_GW_COMMIT }}
+            COMMIT_REPO=github.com/${{ github.repository }}
             DATE=${{ env.A2A_GW_DATE }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

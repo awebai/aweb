@@ -3,7 +3,7 @@
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
-	check-aw-commit-repo-stamp check-server-locked-suite release-server-gate \
+	check-aw-commit-repo-stamp check-cli-go-tidy check-server-locked-suite release-server-gate \
 	check-awid-locked-suite release-awid-pypi-gate release-awid-image-gate \
 	release-server-check release-server-tag release-server-push \
 	release-awid-check release-awid-tag release-awid-push \
@@ -94,7 +94,22 @@ help:
 build:
 	cd cli/go && $(MAKE) build
 
-test: test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-ship-ci-contract test-release-gate-contract check-aw-commit-repo-stamp test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
+# ORDER IS LOAD-BEARING FOR THE FIRST FOUR - do not sort this list.
+#
+# make runs these left to right and ship.yml reaches `make test` on 93% of runs (43/46 over
+# the full retained history) but is CANCELLED partway through it: cancel-in-progress plus a
+# ~120-minute job gives a 54% cancellation rate, and a cancelled run kills the prerequisites
+# it has not reached yet without reporting that it did. The three checks below cost about
+# two seconds together and read committed files only, so anything behind the long suites
+# executes on the runs that survive an hour of tests rather than on the runs that start.
+# Measured while they sat at positions 7-10: the stamp check executed on 1 of the 5 runs whose
+# Makefile contained it and the tidy check on 0 of 2, and every miss was a cancellation that
+# had already reached `make test`. aweb-aaxk.
+#
+# check-cli-go-tidy is here rather than behind test-cli by a deliberate reversal: it was placed
+# after it to inherit a warm module cache, and moving it forward reattributes that fetch rather
+# than adding one - about a second for 85MB when cold.
+test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
@@ -336,6 +351,18 @@ awid-prod-migrate:
 # them. Safe to run anywhere, which is why it is a target rather than only a release step.
 check-aw-commit-repo-stamp:
 	./scripts/check-aw-commit-repo-stamp.sh
+
+# goreleaser runs `go mod tidy` as a before hook, and hooks run AFTER its git-state
+# validation - so an untidy manifest passes validation, the hook then rewrites go.mod
+# and go.sum, and the build stamps vcs.modified=true on a tree goreleaser has already
+# called clean. `-diff` asks the same question without writing: a gate that repaired
+# the manifest would erase the condition it exists to report.
+#
+# This is the first target in `test:` to touch the Go module cache, so a module-resolution or
+# network failure surfaces here rather than in test-cli - the message will name the tidy check
+# for a problem that is not the tidy check's.
+check-cli-go-tidy:
+	cd cli/go && go mod tidy -diff
 
 check-server-locked-suite:
 	cd server && uv lock --check
