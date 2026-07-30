@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -40,60 +40,167 @@ var eventsStreamCmd = &cobra.Command{
 			defer cancel()
 		}
 
-		deadline := time.Now().Add(24 * time.Hour)
-		if dl, ok := ctx.Deadline(); ok {
-			deadline = dl
-		}
+		enc := json.NewEncoder(os.Stdout)
 
-		type streamResult struct {
-			stream *awid.AgentEventStream
-			err    error
-		}
-		openCtx, cancelOpen := context.WithCancel(baseCtx)
-		defer cancelOpen()
-
-		streamCh := make(chan streamResult, 1)
-		go func() {
-			stream, err := client.EventStream(openCtx, deadline)
-			streamCh <- streamResult{stream: stream, err: err}
-		}()
-
-		var stream *awid.AgentEventStream
-		select {
-		case <-ctx.Done():
-			cancelOpen()
-			return nil
-		case result := <-streamCh:
-			if result.err != nil {
+		// The server closes every events stream at its own lifetime cap
+		// (MAX_STREAM_DURATION, server/src/aweb/routes/events.py), and an
+		// intermediary may cut an idle connection sooner. A subscription is
+		// therefore made of several streams, and ending one is not ending the
+		// subscription: reopen until the caller's context says to stop. Reporting
+		// the first close as an error is what surfaced to a customer as
+		// "unexpected EOF" with exit 1 after a single event (aweb-aamn).
+		backoff := eventsReconnectInitialBackoff
+		for {
+			stream, closeStream, err := openEventStream(ctx, baseCtx, client.Client)
+			if err != nil {
 				if ctx.Err() != nil {
 					return nil
 				}
-				return result.err
-			}
-			stream = result.stream
-		}
-		defer stream.Close()
-
-		enc := json.NewEncoder(os.Stdout)
-
-		for {
-			ev, err := stream.Next(ctx)
-			if err != nil {
-				if err == io.EOF || ctx.Err() != nil {
-					return nil
-				}
-				return err
-			}
-
-			if jsonFlag {
-				if err := enc.Encode(ev); err != nil {
+				// A request the server rejects on its merits will be rejected
+				// identically on every retry, so retrying buries the reason in a
+				// reconnect loop instead of reporting it.
+				if isFatalStreamOpenError(err) {
 					return err
 				}
-			} else {
-				printEventText(ev)
+				if !sleepUntil(ctx, backoff) {
+					return nil
+				}
+				backoff = nextEventsBackoff(backoff)
+				continue
+			}
+
+			delivered := drainEventStream(ctx, stream, enc)
+			closeStream()
+
+			if ctx.Err() != nil {
+				return nil
+			}
+			// Any end of a stream - a clean EOF at the lifetime cap or a severed
+			// connection - is a reconnect, not a result. Only the context ends the
+			// subscription.
+			//
+			// A stream that delivered events was working, so the next failure is a
+			// fresh one and starts from the shortest delay. Without this, a
+			// long-lived subscription reconnecting every few minutes would ratchet
+			// its backoff to the maximum and stay there.
+			if delivered {
+				backoff = eventsReconnectInitialBackoff
+			}
+			if !sleepUntil(ctx, backoff) {
+				return nil
+			}
+			if !delivered {
+				backoff = nextEventsBackoff(backoff)
 			}
 		}
 	},
+}
+
+// Reconnect pacing. The common case is one reconnect every few minutes at the
+// server's lifetime cap, where the delay is irrelevant; the backoff exists for the
+// case where a stream ends immediately and repeatedly, so the client does not spin
+// against a server that is refusing or failing.
+const (
+	eventsReconnectInitialBackoff = 250 * time.Millisecond
+	eventsReconnectMaxBackoff     = 30 * time.Second
+)
+
+func nextEventsBackoff(current time.Duration) time.Duration {
+	next := current * 2
+	if next > eventsReconnectMaxBackoff {
+		return eventsReconnectMaxBackoff
+	}
+	return next
+}
+
+// sleepUntil waits for d, reporting false when the context ended first so the
+// caller stops rather than reconnecting after a cancellation.
+func sleepUntil(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// openEventStream opens one stream, honouring cancellation while the open is in
+// flight. The deadline is recomputed per stream: the server clamps it to its own
+// cap, so sending the subscription's remaining lifetime each time keeps the
+// client's intent and the server's policy from disagreeing.
+// It returns a close function that releases both the stream body and the context
+// governing it. They are released together because cancelling the context while
+// the body is still being read would tear down the connection mid-event.
+func openEventStream(ctx, baseCtx context.Context, client *awid.Client) (*awid.AgentEventStream, func(), error) {
+	deadline := time.Now().Add(24 * time.Hour)
+	if dl, ok := ctx.Deadline(); ok {
+		deadline = dl
+	}
+
+	type streamResult struct {
+		stream *awid.AgentEventStream
+		err    error
+	}
+	openCtx, cancelOpen := context.WithCancel(baseCtx)
+	streamCh := make(chan streamResult, 1)
+	go func() {
+		stream, err := client.EventStream(openCtx, deadline)
+		streamCh <- streamResult{stream: stream, err: err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		cancelOpen()
+		return nil, nil, ctx.Err()
+	case result := <-streamCh:
+		if result.err != nil {
+			cancelOpen()
+			return nil, nil, result.err
+		}
+		stream := result.stream
+		return stream, func() {
+			_ = stream.Close()
+			cancelOpen()
+		}, nil
+	}
+}
+
+// drainEventStream emits events until the stream ends, reporting whether this
+// stream delivered anything before it did. How it ended is not interesting to the
+// caller - every ending is a reconnect - but whether it was working is, because
+// that is what separates a healthy subscription hitting the lifetime cap from a
+// server that cannot serve one.
+func drainEventStream(ctx context.Context, stream *awid.AgentEventStream, enc *json.Encoder) bool {
+	delivered := false
+	for {
+		ev, err := stream.Next(ctx)
+		if err != nil {
+			return delivered
+		}
+		delivered = true
+
+		if jsonFlag {
+			if err := enc.Encode(ev); err != nil {
+				return delivered
+			}
+		} else {
+			printEventText(ev)
+		}
+	}
+}
+
+// isFatalStreamOpenError reports whether reopening would fail the same way. A
+// request the server refuses - bad credentials, a revoked certificate, a malformed
+// deadline - is refused identically every time, so retrying turns a clear error
+// into a silent loop.
+func isFatalStreamOpenError(err error) bool {
+	var apiErr *awid.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode >= 400 && apiErr.StatusCode < 500
+	}
+	return false
 }
 
 func printEventText(ev *awid.AgentEvent) {
