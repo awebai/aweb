@@ -42,18 +42,37 @@ agent running against an identity that no longer exists. That has already
 happened — four `pi` runtimes kept running after their workspaces were deleted,
 and nothing warned.
 
-**Who does it:** whoever holds the keyboard or the tmux session — in practice the
-human running the fleet. Not the retiring agent: it cannot quit itself, because
-every command it runs is a child of the runtime you are trying to stop, and a
-process cannot exit its own parent by returning from a child. Not a sibling agent
-either: killing another agent's process is fenced by this project's tmux rules.
-So ask the human, and confirm the process is gone before continuing.
+**The retiring agent cannot do it.** Every command it runs is a child of the
+runtime you are trying to stop, and a process cannot exit its own parent by
+returning from a child. `/quit` is typed *at* a session by whoever holds the
+keyboard; an agent emitting those characters has produced output, not a command.
+
+**Who else may do it is an open question** — see the note below. Until it is
+settled, treat it as: whoever holds the keyboard or the tmux session, in practice
+the human running the fleet. That is what has actually happened every time.
 
     In Claude Code: `/quit` in that agent's own window, or close the window/pane.
     For pi: quit or close that interactive process.
 
+**Whoever does it, these three hold regardless:**
+
+- **Guard by window NAME, never by index.** Indices shift; a loop over numbers
+  can kill a window that moved under it.
+- **Verify the pane pid against the process you intend to stop** before killing
+  anything, and kill only those.
+- **Never stop a runtime to work around a blocker you do not understand.**
+  Destroying state to avoid diagnosing an error is wrong whatever the mechanism —
+  and the blocker is often your own mistake. The retirement-permissions episode
+  that produced this section was a wrong verb, not a missing capability.
+
 Confirm it stopped — the old pid gone AND no runtime left in that home — rather
 than assuming the request was acted on.
+
+> **Open:** whether a coordinator may stop another agent's runtime directly is
+> unsettled and escalated. This project's `CLAUDE.md` fences tmux work: no ad-hoc
+> or inline tmux invocations, and tmux-touching harnesses must be committed,
+> reviewed, and run with `scripts/guard-bin` on `PATH`. Do not read the
+> placeholder above as authorisation for anyone else.
 
 Then run the rest from your own agent home:
 
