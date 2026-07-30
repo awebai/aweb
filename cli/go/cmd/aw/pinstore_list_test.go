@@ -111,6 +111,64 @@ func TestPinStoreListJSONDistinguishesStableIDFromDIDKey(t *testing.T) {
 	}
 }
 
+// A half-written store - an address bound to a key with no pin behind it - never reaches
+// the listing: LoadPinStore checks the forward and reverse indexes against each other and
+// refuses the file as corrupt. So the property to hold is that the refusal REACHES THE
+// READER naming the offending address, rather than that a row is printed for it.
+//
+// This is why the command carries no reporting branch for that state. A branch for it
+// would be unreachable through this command, and an unreachable reporting path reads as
+// coverage of a case nothing can actually produce.
+func TestPinStoreListRefusesAHalfWrittenStoreAndNamesTheAddress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_agents.yaml")
+	store := awid.NewPinStore()
+	store.StorePin("did:key:zIntact", "juan.aweb.ai/alice", "", "")
+	store.Addresses["juan.aweb.ai/orphan"] = "did:key:zNoPinEntry"
+	if err := store.Save(path); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	cmd := newPinStoreListCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--path", path})
+	err := cmd.Execute()
+
+	if err == nil {
+		t.Fatalf("a store whose indexes disagree was reported as if it were readable:\n%s", out.String())
+	}
+	// The reader has to be able to act on it: which address, and that nothing was changed.
+	if !strings.Contains(err.Error(), "juan.aweb.ai/orphan") {
+		t.Fatalf("the refusal does not name the offending address: %v", err)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("the refusal does not name the store it read: %v", err)
+	}
+	// And it must not print a partial listing alongside the refusal, which would read as
+	// the store's contents.
+	if strings.Contains(out.String(), "juan.aweb.ai/alice") {
+		t.Fatalf("a partial listing was printed for a store that was refused:\n%s", out.String())
+	}
+}
+
+// The control for the test above: the same fixture WITHOUT the dangling address must load
+// and list, so the refusal is attributable to the half-written state and not to the
+// fixture being unreadable for some other reason.
+func TestPinStoreListAcceptsTheSameFixtureWithoutTheDanglingAddress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_agents.yaml")
+	store := awid.NewPinStore()
+	store.StorePin("did:key:zIntact", "juan.aweb.ai/alice", "", "")
+	if err := store.Save(path); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	got := runPinStoreList(t, "--path", path)
+	if !strings.Contains(got, "juan.aweb.ai/alice") {
+		t.Fatalf("the intact fixture did not list its binding:\n%s", got)
+	}
+}
+
 // An empty store must say so rather than printing nothing: "no output" is how an
 // absent store and an unreadable one look identical, which is the confusion this
 // command exists to remove.

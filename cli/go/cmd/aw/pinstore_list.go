@@ -34,7 +34,6 @@ type pinBinding struct {
 	Handle    string `json:"handle,omitempty"`
 	FirstSeen string `json:"first_seen,omitempty"`
 	LastSeen  string `json:"last_seen,omitempty"`
-	Orphaned  bool   `json:"orphaned_pin"`
 }
 
 type pinListing struct {
@@ -65,17 +64,16 @@ func collectPinBindings(store *awid.PinStore, addressFilter string) []pinBinding
 			PinKey:  key,
 			KeyKind: pinKeyKind(key),
 		}
-		// A binding whose key has no pin entry is reportable rather than skipped:
-		// the two maps are written separately, so a half-written store is a state
-		// the reader needs to see rather than one that silently lists fewer rows.
+		// No branch for an address whose key has no pin entry. LoadPinStore validates the
+		// forward and reverse indexes against each other and refuses such a store as
+		// corrupt (awid/pinstore.go), so it never reaches here through this command - the
+		// reader gets the loader's refusal, naming the offending address, instead of a row.
 		if pin, ok := store.Pins[key]; ok && pin != nil {
 			binding.StableID = pin.StableID
 			binding.DIDKey = pin.DIDKey
 			binding.Handle = pin.Handle
 			binding.FirstSeen = pin.FirstSeen
 			binding.LastSeen = pin.LastSeen
-		} else {
-			binding.Orphaned = true
 		}
 		bindings = append(bindings, binding)
 	}
@@ -89,8 +87,17 @@ func newPinStoreListCmd() *cobra.Command {
 	var asJSON bool
 
 	cmd := &cobra.Command{
-		Use:          "list",
-		Short:        "List the address-to-key bindings this store holds",
+		Use:   "list",
+		Short: "List the address-to-key bindings this store holds",
+		// What it reports, and what a reader diagnosing a mismatch will otherwise assume
+		// it reports. It shows what is PINNED; it does not resolve each address to its
+		// holder's current key, so it cannot tell you a pin is stale - which is the defect
+		// class in aweb-aava and the question people will be holding when they run it.
+		Long: "List the address-to-key bindings this store holds.\n\n" +
+			"This reports the CONTENTS of the store. It does not verify those contents " +
+			"against the current keys of the agents named, so it cannot tell you a pin is " +
+			"stale: a binding to a retired keypair is listed exactly like a good one. " +
+			"Answering that needs resolution per address.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -132,9 +139,6 @@ func newPinStoreListCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", path)
 			for _, b := range listing.Bindings {
 				fmt.Fprintf(cmd.OutOrStdout(), "  %-32s %-8s %s\n", b.Address, b.KeyKind, b.PinKey)
-				if b.Orphaned {
-					fmt.Fprintf(cmd.OutOrStdout(), "  %-32s %-8s (no pin entry for this key)\n", "", "")
-				}
 				if b.DIDKey != "" && b.DIDKey != b.PinKey {
 					fmt.Fprintf(cmd.OutOrStdout(), "  %-32s %-8s last did:key %s\n", "", "", b.DIDKey)
 				}
