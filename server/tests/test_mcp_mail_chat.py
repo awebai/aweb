@@ -2765,6 +2765,9 @@ async def test_mcp_contacts_accept_equivalent_identity_owner_did(aweb_cloud_db, 
         # The case the fix newly subjects to the check: a GLOBAL recipient who IS a
         # current contact must still receive replies.
         ("global_contact", "global", "did:aw:bob", "team_and_contacts", True, True),
+        # Open recipients return at messages.py:202 before any contact logic, so the
+        # fix cannot reach them. Free to assert from this fixture, so asserted.
+        ("global_open", "global", "did:aw:bob", "open", False, True),
     ],
 )
 async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
@@ -2784,6 +2787,11 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
     the fix's risk runs the other way: over-tightening breaks every legitimate reply.
     """
     team_id = "ops:acme.com"
+    # The recipient sits on a DIFFERENT team deliberately. When both share a team,
+    # authorize_message_delivery:224 authorizes the local arm on same-team grounds and the
+    # arm passes with stored_route_continuation removed - guarding nothing. Split, :219 is
+    # the only thing that can authorize it, so removing the flag reds this arm.
+    recipient_team_id = "ops:other.example"
     alice_agent_id = uuid4()
     workspace_id = uuid4()
     bob_agent_id = uuid4()
@@ -2796,21 +2804,24 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam')
+        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkTeam'),
+               ($2, 'other.example', 'ops', 'did:key:z6MkTeamOther')
         """,
         team_id,
+        recipient_team_id,
     )
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.agents}}
         (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, inbound_mode)
         VALUES
-            ($1, $3, $4, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
-            ($2, $3, $5, $6, 'acme.com/bob', 'bob', $7, 'active', $8)
+            ($1, $3, $5, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', 'open'),
+            ($2, $4, $6, $7, 'other.example/bob', 'bob', $8, 'active', $9)
         """,
         alice_agent_id,
         bob_agent_id,
         team_id,
+        recipient_team_id,
         alice_did_key,
         bob_did_key,
         recipient_did_aw,
@@ -2842,7 +2853,7 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
         )
         VALUES
             ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', 'sender', 'initiator'),
-            ($1, $4, $3, 'bob', 'acme.com/bob', 'to_alias', 'participant')
+            ($1, $4, $3, 'bob', 'other.example/bob', 'to_alias', 'participant')
         """,
         conversation_id,
         alice_agent_id,
