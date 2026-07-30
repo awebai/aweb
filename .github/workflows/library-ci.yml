@@ -1,0 +1,114 @@
+name: Library CI
+
+# Re-homed from naapp/library/.github/workflows/ci.yml. GitHub Actions reads
+# .github/workflows only at the repository root, so after the subtree move that
+# file sits below the root and never runs. This runs the same four steps - lint,
+# AATK structural contract, unit and contract tests, real-stack e2e - against
+# naapp/library.
+#
+# The job name is deliberately unchanged. It was the required status check
+# "Lint, test, and real-stack e2e" on library main, so keeping the name means a
+# reader comparing the two finds the same string rather than guessing at a
+# rename. Whether it is required here is a separate question - see aweb-aavw
+# criterion 4 and docs/decisions.md: aweb main is the shared sync branch and is
+# not protected, so this gate is advisory.
+#
+# NO PATH FILTER, deliberately. Every path-filtered workflow in this repo
+# omitted naapp from its path list, which is how library's coverage went
+# missing in the first place; ship.yml is unfiltered for the same reason. The
+# cost is that a docker e2e runs on every pull request. That is the same cost
+# profile ship.yml already carries, and it is preferred over a gate that can be
+# silently skipped.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AW_VERSION: "1.34.0"
+  LIBRARY_REQUIRE_TEST_DATABASE: "1"
+
+concurrency:
+  group: library-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, test, and real-stack e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # One checkout, no `path:`. The pinned external aweb checkout the previous
+      # workflow needed is gone: aweb IS this repository now, so the e2e stack
+      # builds awid from the very commit under test rather than from a rev that
+      # stops matching the moment someone edits awid/.
+      - name: Checkout aweb
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: naapp/library/uv.lock
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install locked Library dependencies
+        working-directory: naapp/library
+        run: uv sync --locked
+
+      - name: Install the pinned released aw client used by e2e
+        run: |
+          npm install --global "@awebai/aw@$AW_VERSION"
+          aw version
+
+      - name: Lint and type-check
+        working-directory: naapp/library
+        run: make lint
+
+      - name: Validate AATK structural contract
+        working-directory: naapp/library
+        run: make aatk-spec-check
+
+      - name: Run unit and contract tests
+        working-directory: naapp/library
+        run: make test
+
+      # docker-compose.e2e.yml builds the awid service from
+      # ${LIBRARY_E2E_AWEB_CONTEXT:-../aweb}. That default was a sibling
+      # checkout when library was its own repository; from naapp/library it now
+      # resolves to naapp/aweb, which does not exist. Point it at the
+      # repository root so the e2e exercises in-repo awid.
+      - name: Run real-stack e2e
+        working-directory: naapp/library
+        env:
+          LIBRARY_E2E_AWEB_CONTEXT: ${{ github.workspace }}
+        run: make e2e
