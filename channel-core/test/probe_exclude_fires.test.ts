@@ -66,7 +66,7 @@ test("a probe renamed into a collectable name is still excluded", () => {
   });
 
   // Positive control, and it catches a NARROWER case than the empty listing - that one
-  // is already covered three lines up, where an empty baseline fails toBeGreaterThan(0)
+  // is already covered earlier in this test, where an empty baseline fails toBeGreaterThan(0)
   // before this is reached.
   //
   // What only this catches is a listing that does not SEE NEW FILES: stale, cached, or
