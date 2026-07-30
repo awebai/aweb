@@ -7,6 +7,15 @@ Public documentation should live under `https://aweb.ai/docs/`. Agent-facing
 Markdown is served as `https://aweb.ai/docs/<name>.md`, and the human-readable
 HTML rendering is served as `https://aweb.ai/docs/<name>/`.
 
+## Product transition
+
+- [product-transition-plan.md](product-transition-plan.md): the canonical
+  ordered plan for establishing the communication-product direction. It orders
+  the product SOT, document-authority cleanup, orchestrator contract, vertical
+  slice, OAS dogfood, activation path, public-surface change, external
+  validation, and evidence-based retirement decisions. It does not itself
+  redefine shipped protocol or implementation contracts.
+
 ## Source of truth
 
 These documents define the system:
