@@ -52,7 +52,9 @@ blocks="$(awk '
   /^[[:space:]]*#/        { next }
   /^[^ ]/                 { if (inbuilds && id != "") { print id "\t" stamp; id = "" } inbuilds = 0; next }
   !inbuilds               { next }
-  /^  - id: /             { if (id != "") print id "\t" stamp; id = substr($0, 9); stamp = ""; next }
+  /^[[:space:]]+- id: /   { if (id != "") print id "\t" stamp
+                            s = $0; sub(/^[[:space:]]*- id:[[:space:]]*/, "", s); sub(/[[:space:]]+$/, "", s)
+                            id = s; stamp = ""; next }
   /-X main\.commitRepo=/  { s = $0; sub(/.*-X main\.commitRepo=/, "", s); sub(/[[:space:]].*/, "", s); stamp = s }
   END                     { if (id != "") print id "\t" stamp }
 ' "$GORELEASER")"

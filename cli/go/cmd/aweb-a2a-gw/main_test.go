@@ -1161,7 +1161,12 @@ func TestA2AGatewayRuntimeHealthNamesTheRepositoryItsGitSHAResolvesIn(t *testing
 	version = "1.26.9"
 	releaseTag = "a2a-gw-v1.26.9"
 	commit = "abc123"
-	commitRepo = "github.com/awebai/aweb"
+	// Deliberately not either real answer. A handler that ignored commitRepo and named a
+	// plausible repository would satisfy an assertion written against the value it was
+	// likely to invent, so the fixture uses one nothing would arrive at on its own. The
+	// same constant sets and asserts it, so the two cannot drift apart.
+	const stampedRepo = "github.com/awebai/only-the-stamp-produces-this"
+	commitRepo = stampedRepo
 	date = "2026-06-08T00:00:00Z"
 	defer func() {
 		version, releaseTag, commit, commitRepo, date = oldVersion, oldReleaseTag, oldCommit, oldCommitRepo, oldDate
@@ -1187,7 +1192,7 @@ func TestA2AGatewayRuntimeHealthNamesTheRepositoryItsGitSHAResolvesIn(t *testing
 		t.Fatal(err)
 	}
 	build := health["build"].(map[string]any)
-	if build["git_sha_repo"] != "github.com/awebai/aweb" {
+	if build["git_sha_repo"] != stampedRepo {
 		t.Fatalf("health does not say where git_sha resolves, so a reader cannot reach the\n"+
 			"source from a running gateway: %#v", build)
 	}
@@ -1195,16 +1200,34 @@ func TestA2AGatewayRuntimeHealthNamesTheRepositoryItsGitSHAResolvesIn(t *testing
 
 // The other direction: a build not told its origin must not invent one. Unstamped, the
 // field is omitted rather than reporting an empty or guessed repository.
+//
+// This goes through runtimeHandler for the same reason its sibling does. Marshalling a
+// runtimeBuild the test builds itself asserts only that omitempty is on the struct tag,
+// which was never the risk - a handler that ignored commitRepo and substituted a name
+// would satisfy it. The risk is the handler ceasing to pass the stamp through, and only
+// the handler can be asked about that.
 func TestA2AGatewayRuntimeHealthClaimsNoRepositoryWhenItWasNotGivenOne(t *testing.T) {
 	oldCommitRepo := commitRepo
 	commitRepo = ""
 	defer func() { commitRepo = oldCommitRepo }()
 
-	encoded, err := json.Marshal(runtimeBuild{ReleaseTag: releaseTag, GitSHA: commit, GitSHARepo: commitRepo, Date: date})
+	tmp := t.TempDir()
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "healthy", "version": "0.5.11"})
+	}))
+	defer registry.Close()
+	writeGatewayWorkspace(t, tmp, "http://aweb.invalid")
+	cfgPath := filepath.Join(tmp, "a2a-gw.yaml")
+	writeConfig(t, cfgPath, tmp, registry.URL)
+	gateway, err := buildGateway(mustLoadConfig(t, cfgPath))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("buildGateway: %v", err)
 	}
-	if strings.Contains(string(encoded), "git_sha_repo") {
-		t.Fatalf("build payload named a repository it was never given: %s", encoded)
+
+	resp := httptest.NewRecorder()
+	runtimeHandler(gateway, mustLoadConfig(t, cfgPath)).ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if strings.Contains(resp.Body.String(), "git_sha_repo") {
+		t.Fatalf("a gateway never told where its commit resolves named a repository anyway,\n"+
+			"which a reader would then trust: %s", resp.Body.String())
 	}
 }
