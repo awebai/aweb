@@ -1,0 +1,66 @@
+node_modules/
+dist/
+.cache/
+*.tgz
+.DS_Store
+__pycache__/
+.pytest_cache/
+.pytest_tmp/
+.ruff_cache/
+.mypy_cache/
+.coverage
+*.py[cod]
+*.egg-info/
+.aw/
+.claude/settings*
+.claude/worktrees/
+
+# Secrets — never commit
+.env
+.env.*
+.env*
+**/.env
+**/.env.*
+**/.env*
+!.env.example
+!**/.env.example
+.emacs-bu/
+
+# Editor lock/autosave files (can mirror gitignored files like .env.*)
+.#*
+\#*\#
+*~
+*.emacs-bu*
+
+# server/
+server/.venv/
+server/build/
+server/dist/
+server/.pytest_cache/
+server/src/*.egg-info/
+
+# awid/
+awid/.venv/
+awid/build/
+awid/dist/
+awid/.pytest_cache/
+awid/src/*.egg-info/
+awid/site/public/
+awid/site/.hugo_build.lock
+site/public/
+site/.hugo_build.lock
+
+# channel/
+channel/node_modules/
+
+# Generated package assets
+pi-extension/skills/
+/agents/instances/
+site/.serve.pid
+site/.serve.log
+.api.pid
+.api.log
+
+# Vendored conformance fixtures keep their literal .aw layout
+!tests/vectors/**/.aw/
+!tests/vectors/**/.aw/**

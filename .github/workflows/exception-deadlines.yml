@@ -1,0 +1,65 @@
+# The only scheduled workflow in this repository, and it is scheduled for a
+# reason that does not apply to anything else here.
+#
+# .github/go-vulnerability-exceptions.json defers known-reachable Go
+# vulnerabilities until a stated date. Those deferrals lapse on a DATE, not on a
+# commit. Every other gate in this repo answers a question about a change, so an
+# event trigger is the right shape for it; this one answers a question about the
+# passage of time, and an event trigger cannot ask it. Wired to push, it would
+# fire only if somebody happened to push - and a quiet fortnight across a
+# deadline would let every deferral expire with nothing saying so.
+#
+# WHAT THIS DOES NOT DO: it does not run the vulnerability audit. That audit
+# pins the Go toolchain in cli/go/go.mod and refuses to run under any other, and
+# it consults an advisory database that moves without any repo change, so it is
+# neither cheap nor deterministic and it runs at release only. That decision is
+# recorded in the Makefile above check-go-vulnerability-audit and is unchanged.
+#
+# This job reads a checked-in JSON file and compares dates. No toolchain, no
+# scanner, no network, no advisory lookup. That is the whole reason it is
+# allowed to run on a timer when the audit is not.
+name: exception-deadlines
+
+on:
+  schedule:
+    # Daily. A deadline is a date, so the useful resolution is one day; the
+    # offset keeps it off the top of the hour, where scheduled jobs queue.
+    - cron: "17 6 * * *"
+  # Kept alongside the schedule so this can be triggered on demand. A scheduled
+  # workflow that has never been run is indistinguishable from one that does not
+  # work, which is the defect class this job exists to close.
+  workflow_dispatch:
+
+jobs:
+  deadlines:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse any exception whose deadline has arrived
+        run: make check-exception-deadlines
+
+      # The negative control, run every time rather than trusted from a comment.
+      # A check that has only ever been observed to pass cannot be distinguished
+      # from one that cannot fail. This asserts the same command REFUSES when the
+      # earliest deadline in the file is treated as today's date, so a green
+      # result above means the deadlines are unexpired rather than unexamined.
+      - name: Prove the check can fail
+        run: |
+          set -euo pipefail
+          earliest="$(python3 -c "
+          import json
+          b = json.load(open('.github/go-vulnerability-exceptions.json'))
+          print(min([e['review_on'] for e in b['accepted_risks']]
+                    + [e['expires_on'] for e in b['temporary_deferrals']]))
+          ")"
+          echo "earliest deadline in the file: $earliest"
+          if python3 scripts/check_go_vulnerability_audit.py \
+               --deadlines-only \
+               --exceptions .github/go-vulnerability-exceptions.json \
+               --today "$earliest"; then
+            echo "NEGATIVE CONTROL FAILED: the check passed on its own earliest deadline," >&2
+            echo "so a green result from it establishes nothing." >&2
+            exit 1
+          fi
+          echo "negative control ok: the check refuses on $earliest"
