@@ -75,4 +75,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
+# NOTE: widening python_files here makes the *.py.recovered probes in tests/
+# collectible again. They are preserved evidence, two of them red by design.
+# Read tests/RECOVERED-PROBES.md before changing this key.
 pythonpath = ["src", "../awid/src"]
