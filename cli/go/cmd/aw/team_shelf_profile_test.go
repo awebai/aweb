@@ -1,0 +1,353 @@
+package main
+
+import (
+	"crypto/ed25519"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/blueprint"
+)
+
+// The shelf verb is only reachable from a home that can sign as a team member, so
+// every test here needs a workspace before the plugin call will dispatch at all.
+// Without it the call fails with "current directory is not initialized for aw",
+// which is an error - and a test asserting only that an error occurred would pass on
+// it while proving nothing about the shelf.
+func newShelfTestHome(t *testing.T, libraryURL string) string {
+	t.Helper()
+	home := t.TempDir()
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey))
+	// The workspace library URL is deliberately unroutable: the PLUGIN manifest
+	// origin is what dispatches get-shelf-profile, and pointing the workspace at a
+	// real host would let a misrouted call reach the live service instead of failing.
+	writeLocalTeamSignedRequestWorkspaceForTest(t, home, "https://library.invalid", "default:acme.com", "coordinator", did, priv)
+	writeLibraryShelfManifestPluginForTest(t, home, libraryURL)
+	// pluginDir() resolves from AW_HOME (or ~/.aw), NOT from the working directory,
+	// so without this the per-home manifest above is ignored and the real installed
+	// library plugin dispatches to the live service instead of the stub.
+	t.Setenv("AW_HOME", filepath.Join(home, ".aw"))
+	return home
+}
+
+// The shelf and public payloads for the same role must differ in CONTENT, not only
+// in digest. A digest mismatch tells a reader that two things differ; a file whose
+// text is visibly the shelf's tells them which one landed, without reconstructing
+// anything. The mutation in TestShelfResolutionMutation depends on this too: with
+// identical fixtures, deleting the shelf branch reds nothing.
+const (
+	// The shelf version the fixtures declare AND report. materialize cross-checks
+	// profile.yaml against the payload version, so these cannot drift apart.
+	testShelfProfileVersion    = "0.1.11"
+	testShelfInstructionsBody  = "Shelf instructions: the team's evolved copy.\n"
+	testPublicInstructionsBody = "Public instructions: the stock catalog copy.\n"
+)
+
+func testShelfProfileFiles(t *testing.T, scope string) []blueprint.LibraryProfilePayloadFile {
+	t.Helper()
+	return withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
+		{Path: "profile.yaml", ContentUTF8: testProfileYAML("coordinator", scope, testShelfProfileVersion)},
+		{Path: "instructions.md", ContentUTF8: testShelfInstructionsBody},
+	})
+}
+
+func testPublicProfileFiles(t *testing.T, scope string) []blueprint.LibraryProfilePayloadFile {
+	t.Helper()
+	return withLibraryPayloadFileSHA([]blueprint.LibraryProfilePayloadFile{
+		{Path: "profile.yaml", ContentUTF8: testProfileYAML("coordinator", scope, "0.1.0")},
+		{Path: "instructions.md", ContentUTF8: testPublicInstructionsBody},
+	})
+}
+
+func testProfileYAML(profileRef, scope, version string) string {
+	body := "id: " + profileRef + "\nname: Coordinator\nversion: " + version + "\n" +
+		"mission: Coordinate the team.\naccepted_work: [coordination]\n" +
+		"instructions: instructions.md\nruntime_assumptions: [local shell]\n" +
+		"memory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"
+	if strings.TrimSpace(scope) != "" {
+		body += "scope: " + scope + "\n"
+	}
+	return body
+}
+
+// testLibraryProfilePayloadDigest in library_profile_test.go pins the version to
+// 0.1.0 (or 0.2.0 by sniffing the body), and materialize cross-checks profile.yaml
+// against the version it is given - so a fixture on any other version needs its own
+// digest computed at that version.
+func testShelfPayloadDigest(t *testing.T, version string, files []blueprint.LibraryProfilePayloadFile) string {
+	t.Helper()
+	result, err := blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
+		TargetDir:        t.TempDir(),
+		BlueprintRef:     "aweb.team",
+		BlueprintVersion: "0.1.0",
+		ProfileRef:       "coordinator",
+		ProfileVersion:   version,
+		RuntimeKind:      "local-shell",
+		Files:            files,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.ProfileDigest
+}
+
+// shelfStub serves get-shelf-profile for one profile_ref and counts what was asked
+// of it, so a test can assert the shelf was actually consulted rather than that the
+// answer happened to be right.
+type shelfStub struct {
+	Status       int
+	ProfileRef   string
+	Version      string
+	Digest       string
+	BlueprintRef string
+	Files        []blueprint.LibraryProfilePayloadFile
+	ShelfGets    int
+	PublicGets   int
+}
+
+func (s *shelfStub) server(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/blueprints/"):
+			s.PublicGets++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"blueprint_ref": "aweb.team", "blueprint_version": "0.1.0",
+				"profile_ref": s.ProfileRef, "version": "0.1.0",
+				"digest": testShelfPayloadDigest(t, "0.1.0", testPublicProfileFiles(t, "local")),
+				"files":  testPublicProfileFiles(t, "local"),
+			})
+		case strings.HasPrefix(r.URL.Path, "/v1/profiles/"):
+			s.ShelfGets++
+			if s.Status != 0 && s.Status != http.StatusOK {
+				w.WriteHeader(s.Status)
+				_ = json.NewEncoder(w).Encode(map[string]any{"detail": "Shelf profile not found"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"profile_ref": s.ProfileRef, "version": s.Version, "digest": s.Digest,
+				"source_blueprint_ref": s.BlueprintRef, "source_blueprint_version": "0.1.0",
+				"files": s.Files,
+			})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+}
+
+// Criterion 1: a team carrying a shelf profile gets the SHELF bytes, proved by
+// reading them back off disk rather than by trusting a digest the command reported.
+func TestShelfProfileResolutionMaterializesShelfBytes(t *testing.T) {
+	files := testShelfProfileFiles(t, "local")
+	stub := &shelfStub{
+		ProfileRef: "coordinator", Version: testShelfProfileVersion, BlueprintRef: "aweb.team",
+		Digest: testShelfPayloadDigest(t, testShelfProfileVersion, files), Files: files,
+	}
+	server := stub.server(t)
+	defer server.Close()
+	home := newShelfTestHome(t, server.URL)
+
+	selector := libraryProfileSelector{
+		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
+		ProfileRef: "coordinator", RuntimeKind: "claude-code",
+		IdentityScope: "local",
+	}
+	resolved, err := resolveTeamProfileSourceForHome(home, selector)
+	if err != nil {
+		t.Fatalf("resolveTeamProfileSourceForHome: %v", err)
+	}
+	if !resolved.FromShelf {
+		t.Fatalf("shelf profile present but resolution chose public: %+v", resolved)
+	}
+	if stub.ShelfGets == 0 {
+		t.Fatal("the shelf was never consulted; a right answer without a query proves nothing")
+	}
+	// An explicit :local scope consults no profile.yaml on either side, so a public
+	// fetch here would be pure waste and a sign the shelf branch is half-wired.
+	if stub.PublicGets != 0 {
+		t.Fatalf("explicit-scope shelf resolution fetched the public catalog %d times, want 0", stub.PublicGets)
+	}
+
+	if _, _, err := applyTeamLibraryProfileToHome(home, selector, resolved, true); err != nil {
+		t.Fatalf("applyTeamLibraryProfileToHome: %v", err)
+	}
+	assertHomeCarriesShelfProfile(t, home, stub.Digest)
+}
+
+func assertHomeCarriesShelfProfile(t *testing.T, home, shelfDigest string) {
+	t.Helper()
+	ref, err := readRecordedProfileRef(home)
+	if err != nil {
+		t.Fatalf("readRecordedProfileRef: %v", err)
+	}
+	if ref.ProfileDigest != shelfDigest {
+		t.Fatalf("recorded digest %q, want the shelf digest %q", ref.ProfileDigest, shelfDigest)
+	}
+	// The load-bearing omission: refreshLibraryProfileInHome branches on library_url
+	// alone, so recording it would send the next refresh back to the public catalog
+	// and silently undo this.
+	if strings.TrimSpace(ref.LibraryURL) != "" {
+		t.Fatalf("shelf-sourced home recorded library_url %q; the next refresh would revert it to public", ref.LibraryURL)
+	}
+	body, err := os.ReadFile(filepath.Join(home, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read materialized instructions: %v", err)
+	}
+	if !strings.Contains(string(body), strings.TrimSpace(testShelfInstructionsBody)) {
+		t.Fatalf("materialized bytes are not the shelf's: %q", string(body))
+	}
+	if strings.Contains(string(body), strings.TrimSpace(testPublicInstructionsBody)) {
+		t.Fatalf("materialized bytes contain the public copy: %q", string(body))
+	}
+}
+
+// Criterion 2: absence falls back to public, and the shelf must actually have been
+// asked. A fixture where the shelf is never queried cannot fail.
+func TestShelfProfileAbsenceFallsBackToPublic(t *testing.T) {
+	stub := &shelfStub{ProfileRef: "coordinator", Status: http.StatusNotFound}
+	server := stub.server(t)
+	defer server.Close()
+	home := newShelfTestHome(t, server.URL)
+
+	selector := libraryProfileSelector{
+		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
+		ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
+	}
+	resolved, err := resolveTeamProfileSourceForHome(home, selector)
+	if err != nil {
+		t.Fatalf("a 404 from the shelf is absence, not an error: %v", err)
+	}
+	if resolved.FromShelf {
+		t.Fatal("no shelf profile exists but resolution chose the shelf")
+	}
+	if stub.ShelfGets != 1 {
+		t.Fatalf("shelf gets=%d, want exactly 1: absence has to be observed, not assumed", stub.ShelfGets)
+	}
+}
+
+// The distinction eve required: unreachable is not absence. Falling back here would
+// reproduce this very bug with a more confident message.
+func TestShelfProfileUnreachableIsAnErrorNotAFallback(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusInternalServerError, http.StatusBadGateway} {
+		stub := &shelfStub{ProfileRef: "coordinator", Status: status}
+		server := stub.server(t)
+		home := newShelfTestHome(t, server.URL)
+		selector := libraryProfileSelector{
+			LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
+			ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
+		}
+		_, err := resolveTeamProfileSourceForHome(home, selector)
+		shelfGets := stub.ShelfGets
+		server.Close()
+		if err == nil {
+			t.Fatalf("status %d was treated as absence; an unreachable shelf must fail closed", status)
+		}
+		// Asserting only that AN error occurred would pass on a workspace that was
+		// never initialized, which is how this test passed before it could reach the
+		// shelf at all. Require the error to be THIS status, and require the shelf to
+		// have been asked.
+		got, ok := libraryToolStatus(err)
+		if !ok || got != status {
+			t.Fatalf("error did not carry status %d (got %d, typed=%v): %v", status, got, ok, err)
+		}
+		if shelfGets != 1 {
+			t.Fatalf("shelf gets=%d for status %d, want exactly 1", shelfGets, status)
+		}
+	}
+}
+
+// Finding 1: the shelf is keyed by profile_ref alone, so a shelf entry from another
+// blueprint would otherwise be materialized under the requested lineage silently.
+func TestShelfProfileLineageMismatchRefuses(t *testing.T) {
+	files := testShelfProfileFiles(t, "local")
+	stub := &shelfStub{
+		ProfileRef: "coordinator", Version: testShelfProfileVersion, BlueprintRef: "other.blueprint",
+		Digest: testShelfPayloadDigest(t, testShelfProfileVersion, files), Files: files,
+	}
+	server := stub.server(t)
+	defer server.Close()
+	home := newShelfTestHome(t, server.URL)
+
+	selector := libraryProfileSelector{
+		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
+		ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
+	}
+	_, err := resolveTeamProfileSourceForHome(home, selector)
+	if err == nil {
+		t.Fatal("a shelf profile from a different blueprint was accepted for the requested one")
+	}
+	if !strings.Contains(err.Error(), "other.blueprint") || !strings.Contains(err.Error(), "aweb.team") {
+		t.Fatalf("the error must name both lineages so the operator can tell what happened: %v", err)
+	}
+}
+
+// An empty lineage is a state the service produces deliberately -
+// create-shelf-profile takes files with no source blueprint, and delete-blueprint
+// detaches rather than orphans - so it is usable, not a mismatch.
+func TestShelfProfileEmptyLineageIsUsable(t *testing.T) {
+	files := testShelfProfileFiles(t, "local")
+	stub := &shelfStub{
+		ProfileRef: "coordinator", Version: testShelfProfileVersion, BlueprintRef: "",
+		Digest: testShelfPayloadDigest(t, testShelfProfileVersion, files), Files: files,
+	}
+	server := stub.server(t)
+	defer server.Close()
+	home := newShelfTestHome(t, server.URL)
+
+	selector := libraryProfileSelector{
+		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
+		ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
+	}
+	resolved, err := resolveTeamProfileSourceForHome(home, selector)
+	if err != nil {
+		t.Fatalf("a shelf profile with no recorded lineage must be usable: %v", err)
+	}
+	if !resolved.FromShelf || !resolved.LineageUnknown {
+		t.Fatalf("empty lineage must resolve to the shelf and be reported as unknown: %+v", resolved)
+	}
+}
+
+// Criterion 4, and the one a create-only test cannot see: after a shelf-sourced
+// create, a refresh must leave the home on the shelf profile rather than silently
+// restoring the public one.
+func TestShelfSourcedHomeStaysOnShelfAfterRefresh(t *testing.T) {
+	files := testShelfProfileFiles(t, "local")
+	stub := &shelfStub{
+		ProfileRef: "coordinator", Version: testShelfProfileVersion, BlueprintRef: "aweb.team",
+		Digest: testShelfPayloadDigest(t, testShelfProfileVersion, files), Files: files,
+	}
+	server := stub.server(t)
+	defer server.Close()
+	home := newShelfTestHome(t, server.URL)
+
+	selector := libraryProfileSelector{
+		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team",
+		ProfileRef: "coordinator", RuntimeKind: "claude-code", IdentityScope: "local",
+	}
+	resolved, err := resolveTeamProfileSourceForHome(home, selector)
+	if err != nil {
+		t.Fatalf("resolveTeamProfileSourceForHome: %v", err)
+	}
+	if _, _, err := applyTeamLibraryProfileToHome(home, selector, resolved, true); err != nil {
+		t.Fatalf("applyTeamLibraryProfileToHome: %v", err)
+	}
+	assertHomeCarriesShelfProfile(t, home, stub.Digest)
+
+	old, err := readRecordedProfileRef(home)
+	if err != nil {
+		t.Fatalf("readRecordedProfileRef: %v", err)
+	}
+	if _, err := refreshLibraryProfileInHome(home, "coordinator", old, "claude-code"); err != nil {
+		t.Fatalf("refresh after a shelf-sourced create: %v", err)
+	}
+	assertHomeCarriesShelfProfile(t, home, stub.Digest)
+}
