@@ -50,6 +50,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: cli/go/go.mod
+          cache-dependency-path: cli/go/go.sum
 
       - name: Check the module manifest needs no rewriting at build time
         run: make check-cli-go-tidy
