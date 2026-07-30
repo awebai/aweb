@@ -58,6 +58,12 @@ naapp_movers() {
 # So a divergence here now means "this tree changed", not "the move lost something", and
 # whoever changes a mover's tests is the one who updates its row.
 #
+# ONE CONSEQUENCE FOR THE SECOND FIELD: it is now PROVENANCE, not a binding. It records the
+# commit the pre-move verification was taken at, and assert_baseline_ref still checks the
+# mover carries it - but passing that check no longer says anything about whether the tally
+# is right, because the tally describes this repository's tree rather than that ref's. Do
+# not read a passing ref assertion as confirming the number.
+#
 # aweb-naapp has no row on purpose. Both movers install it from git rather than from
 # naapp-lib/, so nothing in this task executes the moved copy; its first execution
 # belongs to the path-source conversion task.
