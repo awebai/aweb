@@ -317,23 +317,9 @@ if [[ "${1:-}" == "--parity" ]]; then
     echo
     echo "parity complete: each mover's suite matches its recorded tally from a fresh clone"
   else
-    # Has the move already landed? The rehearsal grafts each mover at its destination prefix
-# with read-tree --prefix=, and once those prefixes are populated the graft cannot bind -
-# git fails with "Entry ... overlaps with ... Cannot bind" and exit 128.
-#
-# That mattered more than a confusing error. run_parity sat behind an unconditional
-# rehearse, so when the move landed the rehearsal started failing and TOOK CRITERION 4'S
-# INSTRUMENT WITH IT, silently: --parity exited 128 before printing anything. The tool
-# stopped being able to measure at the exact moment there was something to measure.
-move_has_landed() {
-  local mover src dest ref
-  while IFS= read -r mover; do
-    IFS=':' read -r src dest ref <<< "$mover"
-    git -C "$ROOT" cat-file -e "HEAD:$dest" 2>/dev/null || return 1
-  done < <(naapp_movers)
-}
-
-echo "rehearsing the three subtree merges in a throwaway clone"
+    # Pre-move: there is a merge left to rehearse, so measure the rehearsed result rather
+    # than this repository - naapp/library and naapp/folio do not exist here yet.
+    echo "rehearsing the three subtree merges in a throwaway clone"
     rehearse "rehearsal"
     echo
     echo "rehearsal complete: every mover's tree is intact at its destination and aweb's root is unchanged"
