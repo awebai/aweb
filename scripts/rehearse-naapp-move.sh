@@ -164,6 +164,97 @@ rehearse() {
   assert_root_entry_set "$clone" "$WORK/root.before"
 }
 
+# CRITERION 4, fresh-clone parity. Each mover's suite is run from a FRESH CLONE of the
+# merged result rather than from the merged working tree, and its tally must equal the
+# baseline recorded before the move.
+#
+# The fresh clone is the point, not a formality. library's tests/test_blueprint_
+# interpret.py builds its expected set with rglob against the working tree rather than
+# from git, so a file that was written but never committed still satisfies it on the
+# machine that performed the move. Cloning takes the tree from git objects, which is
+# what every other machine will see.
+#
+# Count parity is a weak detector by itself - a renamed or replaced test keeps the
+# count - so it carries the property only together with criterion 1's tree equality,
+# which runs first in the same invocation.
+assert_baseline_ref() {
+  local src="$1" ref="$2" expected="$3" label="$4" actual
+  actual="$(git -C "$src" rev-parse "$ref^{commit}")"
+  if [[ "$actual" != "$expected"* ]]; then
+    printf 'FAIL %s: the baseline was measured at %s but %s is now %s.\n' \
+      "$label" "$expected" "$ref" "${actual:0:12}" >&2
+    printf '      The recorded counts describe a different tree; re-baseline before comparing.\n' >&2
+    return 1
+  fi
+}
+
+# Pull one "key=value" tally out of a pytest summary line.
+tally_of() {
+  local output="$1" key="$2"
+  printf '%s\n' "$output" | grep -oE "[0-9]+ $key" | tail -1 | grep -oE '^[0-9]+'
+}
+
+run_parity() {
+  local merged="$1"
+  local fresh="$WORK/fresh"
+  local baseline dest ref command expectations label src mover msrc mdest mref
+  local rc=0
+
+  # A clone of the merged result, so what runs is what git holds.
+  git clone -q "$merged" "$fresh" || { printf 'FAIL: could not clone the merged result\n' >&2; return 2; }
+
+  while IFS= read -r baseline; do
+    IFS='|' read -r dest ref command expectations <<< "$baseline"
+    label="$(basename "$dest")"
+
+    # The baseline's source commit must still be the commit being merged. src and its
+    # ref are captured together: taking the ref from the loop variable after the loop
+    # would read the LAST mover's ref rather than the matched one, which is invisible
+    # while every mover happens to share a ref.
+    src=""; local src_ref=""
+    while IFS= read -r mover; do
+      IFS=':' read -r msrc mdest mref <<< "$mover"
+      if [[ "$mdest" == "$dest" ]]; then src="$msrc"; src_ref="$mref"; fi
+    done < <(naapp_movers)
+    if [[ -z "$src" ]]; then
+      printf 'FAIL %s: no mover lands on %s, so its baseline cannot be checked\n' "$label" "$dest" >&2
+      rc=1; continue
+    fi
+    assert_baseline_ref "$src" "$src_ref" "$ref" "$label" || { rc=1; continue; }
+
+    if [[ ! -d "$fresh/$dest" ]]; then
+      printf 'FAIL %s: %s is absent from the fresh clone\n' "$label" "$dest" >&2
+      rc=1; continue
+    fi
+
+    printf '  running %s in the fresh clone: %s\n' "$label" "$command"
+    local output status=0
+    output="$(cd "$fresh/$dest" && eval "$command" 2>&1)" || status=$?
+
+    local key expected actual mismatch=0
+    for key in $expectations; do
+      expected="${key#*=}"
+      key="${key%%=*}"
+      actual="$(tally_of "$output" "$key")"
+      if [[ "$actual" != "$expected" ]]; then
+        printf 'FAIL %s: expected %s=%s, measured %s=%s\n' \
+          "$label" "$key" "$expected" "$key" "${actual:-none}" >&2
+        mismatch=1
+      fi
+    done
+    if [[ "$mismatch" -ne 0 || "$status" -ne 0 ]]; then
+      printf '      pytest exited %s. Last lines:\n' "$status" >&2
+      printf '%s\n' "$output" | tail -15 | sed 's/^/        /' >&2
+      rc=1
+      continue
+    fi
+    printf '  ok   %-12s %s, matching the pre-move baseline at %s\n' \
+      "$label" "$(printf '%s\n' "$expectations" | tr '\n' ' ')" "$ref"
+  done < <(naapp_parity_baselines)
+
+  return "$rc"
+}
+
 if [[ "${1:-}" == "--self-test" ]]; then
   echo "self-test: criterion 2 must reject a root-level aweb-naapp merge, naming the collided files"
   if rehearse "mutation-root" "." > "$WORK/mutation.log" 2>&1; then
@@ -204,3 +295,13 @@ echo "rehearsing the three subtree merges in a throwaway clone"
 rehearse "rehearsal"
 echo
 echo "rehearsal complete: every mover's tree is intact at its destination and aweb's root is unchanged"
+
+if [[ "${1:-}" == "--parity" ]]; then
+  echo
+  echo "criterion 4: fresh-clone parity against the pre-move baselines"
+  run_parity "$WORK/rehearsal"
+  echo
+  echo "parity complete: each mover's suite matches its pre-move tally from a fresh clone"
+  echo "note: naapp-lib/ is not exercised - both movers install aweb-naapp from git, so the"
+  echo "      moved copy is executed by nothing in this task."
+fi

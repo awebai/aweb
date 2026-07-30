@@ -32,6 +32,30 @@ naapp_movers() {
     "${AWEB_NAAPP_REPO:-$siblings/aweb-naapp}:$NAAPP_LIB_DEST:origin/main"
 }
 
+# Pre-move test baselines for aweb-aauv.2 criterion 4, recorded before the first
+# merge because the criterion compares two recorded numbers and after the merge the
+# only tree left to read is the one under test.
+#
+# destination | source commit measured | command | expected tally
+#
+# The source commit is part of the baseline, not decoration: if a mover's origin/main
+# has moved past the commit these numbers were taken at, the counts describe a
+# different tree and comparing them silently measures the wrong thing.
+#
+# The command is recorded because a similar command is not the same measurement.
+# library deselects its e2e tests; folio is run through uv rather than through its
+# default make target, which resolves awid and pgdbm through sibling-relative paths
+# that stop existing after the move.
+#
+# aweb-naapp has no row on purpose. Both movers install it from git rather than from
+# naapp-lib/, so nothing in this task executes the moved copy; its first execution
+# belongs to the path-source conversion task.
+naapp_parity_baselines() {
+  printf '%s\n' \
+    "naapp/library|833b4de6a9e9|uv run pytest -q -m \"not e2e\"|passed=468 deselected=17" \
+    "naapp/folio|aaa15cd7dceb|uv run pytest -q|passed=165 skipped=16"
+}
+
 # Every mover must exist, carry the ref being moved, and not carry export-ignore.
 #
 # A missing mover fails rather than skips: a skipped mover reads as a proven one.
