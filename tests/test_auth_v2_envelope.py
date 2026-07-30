@@ -21,13 +21,6 @@ from starlette.requests import Request
 from folio.auth import CachedTeamFacts, authenticate_request, raw_request_target
 from folio.config import Settings
 
-# aweb's server source is imported below so both implementations of the envelope can be
-# checked against the same bytes. Located rather than assumed to be a sibling, and not
-# guarded by exists(): if it cannot be found this module must fail loudly, because the
-# alternative is a cross-repo conformance check that quietly stops comparing anything.
-AWEB_SERVER_SRC = aweb_path("server", "src")
-sys.path.insert(0, str(AWEB_SERVER_SRC))
-
 TEAM_ID = "backend:example.com"
 PUBLIC_ORIGIN = "https://folio.example.com"
 
@@ -37,6 +30,22 @@ def _b64url(value: bytes) -> str:
 
 
 def _aweb_team_auth_envelope() -> Any:
+    """aweb's own implementation of the envelope, so both can be checked against the same
+    bytes.
+
+    aweb's server source is located and added to sys.path here rather than at module
+    import. Doing it at import level makes a missing aweb raise during collection, and
+    pytest then abandons the whole file - measured: 163 tests that do not need aweb stop
+    running at all. Locating it inside the helper keeps the failure loud and confines it
+    to the three tests that genuinely need the other repository.
+
+    Deliberately not guarded by exists(): a cross-repo conformance check that cannot find
+    the other side must say so, because one that quietly stops comparing is
+    indistinguishable from one that passes.
+    """
+    source = str(aweb_path("server", "src"))
+    if source not in sys.path:
+        sys.path.insert(0, source)
     return importlib.import_module("aweb.team_auth_envelope")
 
 
