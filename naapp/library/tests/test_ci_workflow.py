@@ -7,14 +7,33 @@ import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).parents[1]
+_AWEB_ROOT = Path(__file__).parents[3]
 
 
 def _workflow() -> dict:
-    path = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
-    assert path.is_file(), "Library has no pull-request CI workflow"
+    # Library's CI lives at the AWEB repository root, not at Library's own root.
+    # GitHub Actions reads .github/workflows only at the root of the repository
+    # it is running in, so after the subtree move a workflow under
+    # naapp/library/.github/workflows never runs at all. Asserting against a
+    # file in that location would guard a workflow that cannot fire - the exact
+    # shape this programme keeps finding.
+    path = _AWEB_ROOT / ".github" / "workflows" / "library-ci.yml"
+    assert path.is_file(), "Library has no pull-request CI workflow at the aweb root"
     loaded = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     assert isinstance(loaded, dict)
     return loaded
+
+
+def test_library_has_no_buried_workflow_that_cannot_run() -> None:
+    """A workflow below the repository root is dead config that reads as live.
+
+    It is not merely inert: a reader who finds it believes Library is covered,
+    which is how the coverage gap survived the move.
+    """
+    buried = _REPO_ROOT / ".github" / "workflows"
+    assert not buried.exists(), (
+        f"{buried} cannot be reached by GitHub Actions - Library's CI belongs at the aweb root"
+    )
 
 
 def test_pytest_uses_locked_dependencies_and_rejects_warnings() -> None:
@@ -138,15 +157,91 @@ def test_ci_pins_the_released_aw_client_used_by_e2e() -> None:
     assert "aw version" in commands
 
 
-def test_ci_supplies_the_e2e_aweb_source_as_a_sibling_checkout() -> None:
+def test_ci_builds_the_e2e_stack_from_the_commit_under_test() -> None:
+    """The e2e must build awid from THIS checkout, never from a pinned copy.
+
+    Before the subtree move Library was its own repository, so a pinned
+    external aweb was the only way to get awid and pinning it was correct.
+    Now aweb is the repository being tested, and a pinned copy would mean a
+    pull request that changes awid/ gets a green Library e2e built against
+    some other awid. Measured cost of exactly that mistake elsewhere in this
+    repo: ship.yml pins awebai/library at a rev missing 13 files and differing
+    in 22 more, so its 'comprehensive' e2e builds a Library with no AATK in it.
+    """
     workflow = _workflow()
     steps = [step for job in workflow["jobs"].values() for step in job["steps"]]
     checkouts = [step for step in steps if step.get("uses", "").startswith("actions/checkout@")]
 
-    assert any(step.get("with", {}).get("path") == "library" for step in checkouts)
-    assert any(
-        step.get("with", {}).get("repository") == "awebai/aweb"
-        and step.get("with", {}).get("path") == "aweb"
-        and step.get("with", {}).get("ref")
-        for step in checkouts
+    foreign = [
+        step for step in checkouts
+        if (step.get("with") or {}).get("repository") not in (None, "", "${{ github.repository }}")
+    ]
+    assert not foreign, (
+        "the e2e stack must be built from the commit under test; "
+        f"found external checkout(s): {[s.get('with', {}).get('repository') for s in foreign]}"
     )
+
+    # docker-compose.e2e.yml defaults this to ../aweb, a sibling-checkout path
+    # that resolves to naapp/aweb from here and does not exist. It has to be
+    # set explicitly, and it has to point at the checkout root.
+    contexts = [
+        (step.get("env") or {}).get("LIBRARY_E2E_AWEB_CONTEXT")
+        for step in steps
+        if (step.get("env") or {}).get("LIBRARY_E2E_AWEB_CONTEXT")
+    ]
+    assert contexts, "the e2e step must set LIBRARY_E2E_AWEB_CONTEXT"
+    assert all("github.workspace" in context for context in contexts), contexts
+
+
+def test_ci_also_covers_naapp_lib() -> None:
+    """naapp-lib is a dependency of both movers and had no CI before the move.
+
+    Guarded here rather than in naapp-lib's own suite for two reasons: both jobs
+    live in this one workflow file, so a single guard over that file is the right
+    granularity; and naapp-lib's dev dependencies are pytest, ruff and mypy with
+    no yaml, so asserting there would mean adding a dependency and touching its
+    lockfile for one test. The coupling is deliberate and stated - if naapp-lib
+    is ever extracted, this assertion moves with its job.
+    """
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+    assert "naapp-lib" in jobs, (
+        "naapp-lib had no CI before the subtree move; leaving it uncovered in a "
+        "repo that has CI is aweb-aavw criterion 5's recorded decision, and that "
+        "decision was to cover it"
+    )
+    steps = jobs["naapp-lib"]["steps"]
+    commands = "\n".join(step.get("run", "") for step in steps)
+    assert "uv sync --locked" in commands
+    assert "uv run pytest" in commands
+    assert "uv run ruff check" in commands
+    assert "uv run mypy" in commands
+    # Every run step must NAME naapp-lib. Allowing None here would have let the
+    # field be deleted entirely and still pass - caught by mutation, not review:
+    # removing `working-directory` ran the steps at the repository root against
+    # aweb's own pyproject, and the permissive form stayed green. Keying on
+    # "naapp-lib or absent" instead of "naapp-lib" is the same defect charlie
+    # measured in folio's guard, which keys on a spelling rather than a property.
+    for step in steps:
+        if step.get("run"):
+            assert step.get("working-directory") == "naapp-lib", step
+
+
+def test_ci_runs_library_targets_from_the_subtree_path() -> None:
+    """make runs in naapp/library, not at the aweb root, or it runs aweb's Makefile.
+
+    Scoped to the library job on purpose. Iterating every job would force any
+    future job that legitimately runs make elsewhere into naapp/library, which
+    is an assertion about jobs this test knows nothing about.
+
+    The command test is on the first token rather than `"make " in run`: that
+    substring also matches "cmake --build". Only over-constraining, and there is
+    no cmake here, but a containment test keyed on a command name is the shape
+    that has cost this repo repeatedly - a denylist matching by spelling instead
+    of by position is the same defect measured in folio's Makefile guard.
+    """
+    steps = _workflow()["jobs"]["quality"]["steps"]
+    for step in steps:
+        commands = step.get("run", "").splitlines()
+        if any(line.split()[:1] == ["make"] for line in commands if line.split()):
+            assert step.get("working-directory") == "naapp/library", step

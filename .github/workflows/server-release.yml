@@ -67,6 +67,21 @@ jobs:
           fi
           echo "Version: $PKG_VERSION"
 
+      # Monotonicity (aweb-aaun.3). The step above proves the tag AGREES with the
+      # manifest; it says nothing about whether either is newer than what shipped.
+      # Those are different questions and only this one stops a tag republishing
+      # or regressing a version on a surface PyPI will not let us take back.
+      #
+      # It resolves the predecessor with `git ls-remote`, so it needs no tags and
+      # no history in the checkout - a local ref store reads empty under this
+      # workflow's shallow clone, and a guard reading it would find no predecessor
+      # exactly where it matters most.
+      #
+      # Placed before the suite deliberately: it is a two-second network call and
+      # failing here costs nothing, where failing after the gate costs a full run.
+      - name: Require the tag's version to be strictly newer than the last release
+        run: ./scripts/check-release-tag-monotonic.sh server-v "$GITHUB_REF_NAME"
+
       - name: Gate the publish on the aweb suite at this commit
         run: make release-server-gate
 

@@ -3,7 +3,7 @@
 API_PORT ?= 8765
 
 test:
-	PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m pytest -q
+	uv run pytest -q
 
 test-server:
 	uv run pytest -q
@@ -26,14 +26,14 @@ e2e-down:
 	docker compose -p folio-e2e -f docker-compose.e2e.yml down -v --remove-orphans
 
 compile:
-	PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m compileall -q src tests
+	uv run python -m compileall -q src tests
 
 run:
-	PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m uvicorn folio.api:app --host 127.0.0.1 --port $(API_PORT) --reload
+	uv run python -m uvicorn folio.api:app --host 127.0.0.1 --port $(API_PORT) --reload
 
 api-serve:
 	@[ ! -f .api.pid ] || { echo "api server already running (pid $$(cat .api.pid)); make api-stop first"; exit 1; }
-	@nohup env PYTHONPATH=src:../aweb/awid/src:../pgdbm/src python3 -m uvicorn folio.api:app --host 127.0.0.1 --port $(API_PORT) > .api.log 2>&1 & echo $$! > .api.pid
+	@nohup uv run python -m uvicorn folio.api:app --host 127.0.0.1 --port $(API_PORT) > .api.log 2>&1 & echo $$! > .api.pid
 	@echo "api serving at http://127.0.0.1:$(API_PORT)/ (pid $$(cat .api.pid))"
 
 api-stop:

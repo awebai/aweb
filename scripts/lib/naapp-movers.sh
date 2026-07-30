@@ -43,17 +43,61 @@ naapp_movers() {
 # different tree and comparing them silently measures the wrong thing.
 #
 # The command is recorded because a similar command is not the same measurement.
-# library deselects its e2e tests; folio is run through uv rather than through its
-# default make target, which resolves awid and pgdbm through sibling-relative paths
-# that stop existing after the move.
+# library deselects its e2e tests. folio's default make target used to be the wrong
+# command here - it resolved awid and pgdbm through sibling-relative paths and ran a
+# bare python3 that never used the locked environment. Both are repaired, so
+# `make test` and `uv run pytest -q` are now the same measurement.
+#
+# ONCE THE MOVE HAS LANDED THESE ROWS CHANGE MEANING, and the folio row already has.
+# Before the merge they compared a pre-move tree against a post-move one, which is what
+# criterion 4 needed. Afterwards the moved tree evolves on its own, so a row records the
+# CURRENT expected tally of the tree in this repository - still able to catch a loss, no
+# longer evidence about the move. The pre-move verification is historical and recorded on
+# aweb-aauv.2: library 468/17 and folio 168/16, both from a fresh clone of the merge.
+#
+# So a divergence here now means "this tree changed", not "the move lost something", and
+# whoever changes a mover's tests is the one who updates its row.
+#
+# THESE NUMBERS ARE INHERENTLY PERISHABLE AND UPDATING ONE IS A STOPGAP, NOT A FIX. An
+# absolute count against a tree that is still being worked on goes stale on any legitimate
+# test addition. The library row went stale within hours of the move, from ordinary work by
+# two people, and it will do so again. Bumping it clears a false red, which is a real job -
+# but it is a different job from making the check correct, and it must not be mistaken for
+# one.
+#
+# Two hazards follow, and both are easy to walk into while doing the obviously-right thing:
+#
+#   RE-BASELINING TO THE MEASURED VALUE IS SELF-CONFIRMING. Writing down whatever the run
+#   just reported makes the row assert that the tree is what it was last observed to be,
+#   which is not a property and cannot fail for the reason the row exists. A row is evidence
+#   only when the expected value is derived independently of the run being checked - from a
+#   diff, from a count of added tests - and not from the failing output.
+#
+#   A COUNT ABSORBS OFFSETTING CHANGES. Remove three tests and add three and the row stays
+#   green through a real deletion. This has already happened here: one commit removed an
+#   assertion and added four, and only the net reached the number, so the removal was
+#   invisible to this table.
+#
+# A count also cannot answer whether a moved subtree has DIVERGED FROM ITS SOURCE, which is
+# a different question from whether it changed. Blob shas are content-addressed and compare
+# directly across repositories, so that question is answered by a tree diff against the
+# sibling remote at its current head - not by this table, and not by tree equality against a
+# frozen merge parent, which cannot fail. Whether anything needs to answer it is open on
+# aweb-aauv.4.
+#
+# ONE CONSEQUENCE FOR THE SECOND FIELD: it is now PROVENANCE, not a binding. It records the
+# commit the pre-move verification was taken at, and assert_baseline_ref still checks the
+# mover carries it - but passing that check no longer says anything about whether the tally
+# is right, because the tally describes this repository's tree rather than that ref's. Do
+# not read a passing ref assertion as confirming the number.
 #
 # aweb-naapp has no row on purpose. Both movers install it from git rather than from
 # naapp-lib/, so nothing in this task executes the moved copy; its first execution
 # belongs to the path-source conversion task.
 naapp_parity_baselines() {
   printf '%s\n' \
-    "naapp/library|833b4de6a9e9|uv run pytest -q -m \"not e2e\"|passed=468 deselected=17" \
-    "naapp/folio|44e620f68425|uv run pytest -q|passed=168 skipped=16"
+    "naapp/library|833b4de6a9e9|uv run pytest -q -m \"not e2e\"|passed=471 deselected=17" \
+    "naapp/folio|44e620f68425|uv run pytest -q|passed=171 skipped=16"
 }
 
 # Every mover must exist, carry the ref being moved, and not carry export-ignore.
