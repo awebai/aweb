@@ -66,10 +66,27 @@ push_target="$(grep -oE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git' "$WOR
 # here because aweb-aaxi rewrites this extraction to walk EVERY build block rather than pull
 # out one named one - so this awk line is code that task deletes.
 #
-#   REQUIREMENTS CARRIED TO aaxi: comments must neither CLOSE a block nor SUPPLY a stamp, and
-#   the direction set to test is the seven grace enumerated - control; comment above the stamp;
-#   comment straight after the id; indented comment; comment HOLDING a stamp; stamp on another
-#   block; stamp absent.
+#   REQUIREMENTS CARRIED TO aaxi: comments must neither CLOSE a block nor SUPPLY a stamp.
+#
+#   The direction set, written as CONDITIONS rather than names, because a fixture named after
+#   its case gets rebuilt too thin and then tests nothing - which happened here, to the person
+#   who wrote this comment, while reproducing direction 5:
+#
+#     1  control: the aw block carries a real stamp
+#     2  a column-0 comment ABOVE the stamp, stamp still present
+#     3  a column-0 comment immediately AFTER "- id: aw", stamp still present -> the block reads
+#        empty from its first line, so this hits the block-not-found branch, not the no-stamp one
+#     4  a comment INDENTED inside the block, stamp present - the control that separates "column 0"
+#        from "is a comment" as the cause
+#     5  aw block LAST among builds AND its real stamp removed AND nothing matching "  - id: "
+#        after it AND a stamp-shaped line below it. ALL FOUR, or the block closes normally and the
+#        fixture proves nothing.
+#     6  a column-0 comment inside the block HOLDING a stamp-shaped string, no real stamp anywhere
+#     7  the real stamp moved to another build block
+#     8  no stamp anywhere
+#     9  no "- id: aw" block at all. Not in the seven that distinguished the two clauses, because
+#        it does not discriminate between them - but for a rewrite that WALKS every block it is a
+#        different question: what does it do when the block it wants is not among those it found.
 aw_block="$(awk '/^  - id: aw$/{inblock=1; next} /^  - id: /{inblock=0} /^[^ ]/{inblock=0} inblock' "$GORELEASER")"
 
 if [[ -z "$aw_block" ]]; then
