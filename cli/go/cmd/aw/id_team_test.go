@@ -4746,3 +4746,123 @@ func TestVerifyNamedMemberRefusesAResolvedAliasThatIsNotTheOneNamed(t *testing.T
 		t.Fatalf("a resolve that returned a different alias was accepted")
 	}
 }
+
+// captureTeamMembersStdout drains the pipe while fn runs, so a roster large
+// enough to fill the pipe buffer cannot deadlock the test it is proving.
+func captureTeamMembersStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+	fn()
+	_ = w.Close()
+	os.Stdout = oldStdout
+	return <-done
+}
+
+func TestRunTeamMembersListsMembersBeyondTheFirstPage(t *testing.T) {
+	resetTeamMembersGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+
+	// Sixty members against a registry serving fifty per page: a roster that reads
+	// one page reports fifty of them and looks exactly like a complete team of fifty.
+	const total = 60
+	const pageSize = 50
+	alias := func(index int) string { return fmt.Sprintf("member-%03d", index) }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/namespaces/acme.com/teams/backend/certificates" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		offset := 0
+		if cursor := r.URL.Query().Get("cursor"); cursor == "page-2" {
+			offset = pageSize
+		} else if cursor != "" {
+			t.Fatalf("cursor=%q was not one this server issued", cursor)
+		}
+		end := offset + pageSize
+		if end > total {
+			end = total
+		}
+		items := make([]map[string]any, 0, end-offset)
+		for index := offset; index < end; index++ {
+			items = append(items, map[string]any{
+				"certificate_id": fmt.Sprintf("cert-%03d", index),
+				"team_id":        "backend:acme.com",
+				"member_did_key": fmt.Sprintf("did:key:z6Mk%03d", index),
+				"alias":          alias(index),
+				"identity_scope": "global",
+				"issued_at":      "2026-06-22T00:00:00Z",
+			})
+		}
+		body := map[string]any{"certificates": items, "has_more": end < total}
+		if end < total {
+			body["next_cursor"] = "page-2"
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	defer server.Close()
+	teamMembersTeamID = "backend:acme.com"
+	teamMembersRegistryURL = server.URL
+
+	var runErr error
+	output := captureTeamMembersStdout(t, func() {
+		runErr = runTeamMembers(&cobra.Command{}, nil)
+	})
+	if runErr != nil {
+		t.Fatalf("runTeamMembers: %v", runErr)
+	}
+	for index := 0; index < total; index++ {
+		if !strings.Contains(output, alias(index)) {
+			t.Fatalf("%s is missing from the roster; the listing stopped short of the whole team:\n%s", alias(index), output)
+		}
+	}
+}
+
+func TestRunTeamMembersRefusesToPrintATruncatedRoster(t *testing.T) {
+	resetTeamMembersGlobals(t)
+	root := t.TempDir()
+	t.Chdir(root)
+
+	// The registry reports more members but hands back no cursor to reach them.
+	// Printing the page it did return would assert a completeness nobody established.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"certificates": []map[string]any{{
+				"certificate_id": "cert-alice",
+				"team_id":        "backend:acme.com",
+				"member_did_key": "did:key:alice",
+				"alias":          "alice",
+				"identity_scope": "global",
+				"issued_at":      "2026-06-22T00:00:00Z",
+			}},
+			"has_more": true,
+		})
+	}))
+	defer server.Close()
+	teamMembersTeamID = "backend:acme.com"
+	teamMembersRegistryURL = server.URL
+
+	var runErr error
+	output := captureTeamMembersStdout(t, func() {
+		runErr = runTeamMembers(&cobra.Command{}, nil)
+	})
+	if runErr == nil {
+		t.Fatalf("runTeamMembers printed a roster it could not complete:\n%s", output)
+	}
+	if !strings.Contains(runErr.Error(), "truncated") {
+		t.Fatalf("err=%v; the failure must say the listing was truncated", runErr)
+	}
+	if strings.Contains(output, "alice") {
+		t.Fatalf("the partial roster was printed anyway:\n%s", output)
+	}
+}

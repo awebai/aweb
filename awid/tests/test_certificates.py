@@ -643,3 +643,122 @@ async def test_register_certificate_nonexistent_team_returns_404(client, control
         headers=headers,
     )
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/namespaces/{domain}/teams/{name}/certificates — pagination contract
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_certificate_listing_pages_past_the_default_limit(
+    client, controller_identity, awid_db_infra,
+):
+    """A team larger than one page reports that it is larger, and the cursor
+    reaches the rest.
+
+    The listing defaults to DEFAULT_LIMIT rows. A client that takes the default
+    and stops sees a prefix of the team, so the signal that a prefix is all it
+    got has to be present and has to lead somewhere. Revoked certificates stay
+    in the listing permanently, so real teams cross this boundary on churn long
+    before they have this many members.
+
+    The seeded rows deliberately share one issued_at. Bulk-provisioned members
+    do, and a cursor that ordered on the timestamp alone would then skip or
+    repeat rows at every page boundary; the (issued_at, id) key is what makes
+    the walk exact.
+    """
+    ns_key, ns_did = controller_identity
+    await _setup_team(client, ns_key, ns_did, "paging.cert.com", "backend")
+
+    # Seeded directly: registration is not what this test measures, and its
+    # rate limit is well under the team size the listing has to handle.
+    db = awid_db_infra.get_manager("aweb")
+    team_row = await db.fetch_one(
+        "SELECT team_uuid FROM {{tables.teams}} WHERE domain = $1 AND name = $2",
+        "paging.cert.com", "backend",
+    )
+    total = 60  # > DEFAULT_LIMIT of 50
+    registered: list[str] = []
+    for index in range(total):
+        _, member_pub = generate_keypair()
+        cert_id = str(uuid4())
+        await db.execute(
+            """
+            INSERT INTO {{tables.team_certificates}}
+                (team_uuid, certificate_id, member_did_key, alias, identity_scope, issued_at)
+            VALUES ($1, $2, $3, $4, $5, '2026-07-29T00:00:00+00:00'::timestamptz)
+            """,
+            team_row["team_uuid"], cert_id, did_from_public_key(member_pub),
+            f"member-{index:03d}", "local",
+        )
+        registered.append(cert_id)
+
+    # The default page is a prefix, and it says so.
+    resp = await client.get("/v1/namespaces/paging.cert.com/teams/backend/certificates")
+    assert resp.status_code == 200, resp.text
+    first = resp.json()
+    assert len(first["certificates"]) == 50
+    assert first["has_more"] is True
+    assert first["next_cursor"]
+
+    # Walking the cursor reaches every certificate exactly once.
+    seen: list[str] = [cert["certificate_id"] for cert in first["certificates"]]
+    cursor = first["next_cursor"]
+    pages = 1
+    while cursor:
+        resp = await client.get(
+            "/v1/namespaces/paging.cert.com/teams/backend/certificates",
+            params={"cursor": cursor},
+        )
+        assert resp.status_code == 200, resp.text
+        page = resp.json()
+        seen.extend(cert["certificate_id"] for cert in page["certificates"])
+        cursor = page["next_cursor"] if page["has_more"] else None
+        pages += 1
+        assert pages <= 10, "cursor did not terminate"
+
+    assert len(seen) == total, f"walked {len(seen)} certificates, registered {total}"
+    assert len(set(seen)) == total, "the walk returned a certificate more than once"
+    assert set(seen) == set(registered)
+
+    # The final page closes the listing rather than dangling a cursor.
+    assert page["has_more"] is False
+    assert page["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_certificate_listing_serves_a_whole_small_team_in_one_page(client, controller_identity):
+    """Under the limit, has_more is false and there is no cursor - so has_more
+    tracks the team and is not simply always true."""
+    ns_key, ns_did = controller_identity
+    team_key, team_did, _ = await _setup_team(
+        client, ns_key, ns_did, "small.cert.com", "backend",
+    )
+
+    for index in range(3):
+        _, member_pub = generate_keypair()
+        cert_id = str(uuid4())
+        headers = _sign(
+            team_key, team_did,
+            domain="small.cert.com", operation="register_certificate",
+            team_name="backend", certificate_id=cert_id,
+        )
+        resp = await client.post(
+            "/v1/namespaces/small.cert.com/teams/backend/certificates",
+            json={
+                "certificate_id": cert_id,
+                "member_did_key": did_from_public_key(member_pub),
+                "alias": f"member-{index:03d}",
+                "identity_scope": "local",
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+    resp = await client.get("/v1/namespaces/small.cert.com/teams/backend/certificates")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["certificates"]) == 3
+    assert body["has_more"] is False
+    assert body["next_cursor"] is None
