@@ -62,9 +62,11 @@ fi
 # is deliberately belt-and-braces because a peeled name reaching the version
 # parser is unparseable, and how an implementation handles that is a choice
 # nobody should have to make.
-if ! REMOTE_REFS="$(git ls-remote --tags --refs "$REMOTE" "refs/tags/${PREFIX}*" 2>&1)"; then
+REMOTE_ERR="$(mktemp)"
+trap 'rm -f "$REMOTE_ERR"' EXIT
+if ! REMOTE_REFS="$(git ls-remote --tags --refs "$REMOTE" "refs/tags/${PREFIX}*" 2>"$REMOTE_ERR")"; then
   echo "ERROR: could not ask $REMOTE for ${PREFIX}* tags." >&2
-  echo "$REMOTE_REFS" | sed 's/^/  /' >&2
+  sed 's/^/  /' "$REMOTE_ERR" >&2
   echo "A failed query is not an empty result. Refusing to publish." >&2
   exit 1
 fi
@@ -92,17 +94,22 @@ fi
 # Highest prior version wins, not the most recent by ancestry: a tag reachable
 # from an older commit can still carry a higher version, and going backwards
 # past it is the harm.
+# The prefix is stripped in python with a literal string operation. Doing it
+# with `sed "s/^${PREFIX}//"` would interpolate the prefix into a regex, where a
+# metacharacter in a future prefix - a `.` matching any character - would strip
+# the wrong thing silently.
 HIGHEST_PRIOR="$(
   printf '%s\n' "$PRIOR" \
-    | sed "s/^${PREFIX}//" \
     | uv run --quiet --with packaging python3 -c '
 import sys
 from packaging.version import InvalidVersion, Version
+prefix = sys.argv[1]
 best = None
 for line in sys.stdin:
     raw = line.strip()
-    if not raw:
+    if not raw or not raw.startswith(prefix):
         continue
+    raw = raw[len(prefix):]
     try:
         v = Version(raw)
     except InvalidVersion:
@@ -110,7 +117,7 @@ for line in sys.stdin:
     if best is None or v > best[0]:
         best = (v, raw)
 print(best[1] if best else "")
-'
+' "$PREFIX"
 )"
 
 if [ -z "$HIGHEST_PRIOR" ]; then
