@@ -248,8 +248,8 @@ run_parity() {
       rc=1
       continue
     fi
-    printf '  ok   %-12s %s, matching the pre-move baseline at %s\n' \
-      "$label" "$(printf '%s\n' "$expectations" | tr '\n' ' ')" "$ref"
+    printf '  ok   %-12s %s, matching the recorded tally for %s at %s\n' \
+      "$label" "$(printf '%s\n' "$expectations" | tr '\n' ' ')" "$dest" "$ref"
   done < <(naapp_parity_baselines)
 
   return "$rc"
