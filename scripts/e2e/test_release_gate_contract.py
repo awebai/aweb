@@ -247,6 +247,57 @@ class ReleaseGateContractTests(unittest.TestCase):
                 for other in ("workflow_dispatch", "pull_request", "schedule", "branches:"):
                     self.assertNotIn(other, triggers)
 
+    def test_the_dry_run_targets_carry_no_recursive_make(self) -> None:
+        """The `make --dry-run` above is only a dry run while these targets stay free of $(MAKE).
+
+        make exempts any recipe LINE containing $(MAKE) from -n and executes it in full,
+        and a backslash-continued block is one line. So a recursive make added to a gate
+        target would turn the test above into a real release build - uv build, rm -rf
+        dist/, a full pytest - inside a unit test, against whatever checkout it runs in.
+
+        30aadbec recorded that condition as a comment. This asserts it, because a
+        constraint that depends on being read fails silently and only for the person who
+        did not read it.
+        """
+        makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+
+        def recipe_of(target: str) -> str:
+            lines, collecting = [], False
+            for line in makefile.splitlines():
+                if line.startswith(f"{target}:"):
+                    collecting = True
+                    continue
+                if collecting:
+                    if line and not line[0].isspace():
+                        break
+                    lines.append(line)
+            return "\n".join(lines)
+
+        def prerequisites_of(target: str) -> list[str]:
+            for line in makefile.splitlines():
+                if line.startswith(f"{target}:"):
+                    return line.split(":", 1)[1].split()
+            return []
+
+        targets = [surface.gate_command.split("make ", 1)[1] for surface in SURFACES]
+        # A wrong extraction yields an empty list, and every assertion below then passes
+        # vacuously. The list is the detector; assert it counted before trusting a zero.
+        self.assertTrue(targets, "no dry-run targets extracted - the gate_command parse is broken")
+
+        for target in targets:
+            with self.subTest(target=target):
+                # The named target, AND its prerequisite chain: -n expands the whole
+                # chain, so a recursive make one level up executes just as surely. This
+                # second half is the part that reads as redundant and is not.
+                for name in [target, *prerequisites_of(target)]:
+                    self.assertNotIn(
+                        "$(MAKE)",
+                        recipe_of(name),
+                        f"{name} contains $(MAKE), so `make --dry-run {target}` would EXECUTE it "
+                        "rather than print it. Either drop the recursive make, or stop using "
+                        "--dry-run to inspect this target.",
+                    )
+
     def test_the_gate_target_runs_the_artifact_suite_against_the_committed_lock(
         self,
     ) -> None:
