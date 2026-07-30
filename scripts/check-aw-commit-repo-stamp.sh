@@ -48,7 +48,13 @@ push_target="$(grep -oE 'github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git' "$WOR
 # line anywhere below then satisfies a check on a block that does not contain one. That is
 # this guard's own defect reintroduced through the boundary rather than through the anchor,
 # and it was measured rather than argued.
-aw_block="$(awk '/^  - id: aw$/{inblock=1; next} /^  - id: /{inblock=0} /^[^ ]/{inblock=0} inblock' "$GORELEASER")"
+# The unindented test excludes comments: a column-0 comment is legal YAML anywhere,
+# including inside a nested block, and treating it as a top-level key ends the block
+# early. That direction fails CLOSED - it can only drop the stamp out of scope and
+# refuse, never admit one that is absent - but it refuses while SAYING the stamp is
+# not in a block the stamp is plainly in, which sends the reader to grep, find it, and
+# conclude the check is broken.
+aw_block="$(awk '/^  - id: aw$/{inblock=1; next} /^  - id: /{inblock=0} /^[^ #]/{inblock=0} inblock' "$GORELEASER")"
 
 if [[ -z "$aw_block" ]]; then
   printf 'FAIL: no "- id: aw" build block found in %s.\n' "$GORELEASER" >&2
