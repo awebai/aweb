@@ -33,7 +33,7 @@ EXCLUDED_DIRS = frozenset(
 
 
 def _sha256_hex(data: bytes) -> str:
-    return "sha256:" + hashlib.sha256(data + b"aavw-sensitivity-probe").hexdigest()
+    return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
 def _payload_path(root: Path, path: Path) -> str:
