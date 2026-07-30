@@ -546,6 +546,21 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 	if got, _ := signed["to_did"].(string); got != "" {
 		t.Fatalf("signed continuation should leave unresolved to_did empty for stored did:aw route: %+v", signed)
 	}
+
+	// aweb-aauz: --json must stay machine-clean on THIS path. A status line in JSON
+	// breaks every downstream parser, and the failure is silent. Asserted per path
+	// because a single --json check would inherit the one-of-three reachability
+	// coverage this file just fixed - the same defect one layer up.
+	runJSON := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--conversation-id", conversationID, "--subject", "Re", "--body", "reply", "--json")
+	runJSON.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	runJSON.Dir = tmp
+	jsonOut, jsonErr := runJSON.CombinedOutput()
+	if jsonErr != nil {
+		t.Fatalf("conversation --json run failed: %v\n%s", jsonErr, string(jsonOut))
+	}
+	if strings.Contains(string(jsonOut), "Acceptance is not delivery") {
+		t.Fatalf("conversation --json output carries the boundary notice, breaking parsers:\n%s", string(jsonOut))
+	}
 }
 
 func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
@@ -990,6 +1005,11 @@ func TestAwMailSendAliasToSelfSkipsConversationDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
+	// aweb-aauz site 2: the --to path prints a different success line, so it needs
+	// its own reachability proof. Removing this wiring left the suite green.
+	if !strings.Contains(string(out), "Acceptance is not delivery") {
+		t.Fatalf("--to path omits the boundary notice:\n%s", string(out))
+	}
 	if !strings.Contains(string(out), "Sent mail to gsk") {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
@@ -1005,6 +1025,21 @@ func TestAwMailSendAliasToSelfSkipsConversationDiscovery(t *testing.T) {
 	}
 	if signed["conversation_id"] != got.ConversationID {
 		t.Fatalf("signed conversation_id=%v, want %s", signed["conversation_id"], got.ConversationID)
+	}
+
+	// aweb-aauz: --json must stay machine-clean on THIS path. A status line in JSON
+	// breaks every downstream parser, and the failure is silent. Asserted per path
+	// because a single --json check would inherit the one-of-three reachability
+	// coverage this file just fixed - the same defect one layer up.
+	runJSON := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to", "gsk", "--subject", "self", "--body", "hello from integration test", "--json")
+	runJSON.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	runJSON.Dir = tmp
+	jsonOut, jsonErr := runJSON.CombinedOutput()
+	if jsonErr != nil {
+		t.Fatalf("to-address --json run failed: %v\n%s", jsonErr, string(jsonOut))
+	}
+	if strings.Contains(string(jsonOut), "Acceptance is not delivery") {
+		t.Fatalf("to-address --json output carries the boundary notice, breaking parsers:\n%s", string(jsonOut))
 	}
 }
 
@@ -1106,6 +1141,10 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 	if !strings.Contains(string(out), "Sent mail in conversation "+conversationID) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
+	// aweb-aauz site 3: mail reply is a separate command with its own output path.
+	if !strings.Contains(string(out), "Acceptance is not delivery") {
+		t.Fatalf("reply path omits the boundary notice:\n%s", string(out))
+	}
 	if got.ConversationID != conversationID || got.Body != "reply" {
 		t.Fatalf("unexpected body: %+v", got)
 	}
@@ -1127,6 +1166,21 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 	}
 	if signed["to"] != "did:aw:bob" || signed["to_stable_id"] != "did:aw:bob" {
 		t.Fatalf("signed reply did not bind rediscovered participant identity: %+v", signed)
+	}
+
+	// aweb-aauz: --json must stay machine-clean on THIS path. A status line in JSON
+	// breaks every downstream parser, and the failure is silent. Asserted per path
+	// because a single --json check would inherit the one-of-three reachability
+	// coverage this file just fixed - the same defect one layer up.
+	runJSON := exec.CommandContext(ctx, bin, "mail", "reply", "--plaintext", "msg-in", "--body", "reply", "--json")
+	runJSON.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	runJSON.Dir = tmp
+	jsonOut, jsonErr := runJSON.CombinedOutput()
+	if jsonErr != nil {
+		t.Fatalf("reply --json run failed: %v\n%s", jsonErr, string(jsonOut))
+	}
+	if strings.Contains(string(jsonOut), "Acceptance is not delivery") {
+		t.Fatalf("reply --json output carries the boundary notice, breaking parsers:\n%s", string(jsonOut))
 	}
 }
 
