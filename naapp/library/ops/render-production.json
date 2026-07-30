@@ -1,0 +1,10 @@
+{
+  "service_id": "srv-d8qm4jvavr4c73dhrmgg",
+  "service_name": "library",
+  "region": "virginia",
+  "repo": "https://github.com/awebai/library",
+  "branch": "main",
+  "origin_url": "https://library-02jf.onrender.com",
+  "public_url": "https://library.aweb.ai",
+  "health_path": "/health"
+}

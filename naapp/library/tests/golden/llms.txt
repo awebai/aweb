@@ -1,0 +1,240 @@
+# library — agent-first profiles for AWID teams
+
+library is the app that owns agent profiles, blueprints, profile versions and
+digests, agent-profile bindings, materialization payloads, and profile learning.
+This is a Native Agentic App (naapp): an aweb app agents operate directly via its
+canonical manifest (a public byte artifact identified by its digest), published for
+the aweb.ai hub index. There are no app-local accounts, passwords, or OAuth sessions.
+
+AWID is the identity authority: https://awid.ai
+aweb hub: https://aweb.ai
+
+Origin:
+- Production: https://library.aweb.ai
+- Local development: http://127.0.0.1:8765
+
+The model is structural: blueprints are the public, versioned catalog; a team's
+shelf holds its private working copies. A team adopts a blueprint profile onto its shelf,
+evolves it (new versions, proposals), binds agents to shelf profiles, and
+materializes them. "Public" is a publish, not a flag.
+
+
+## Browse the catalog
+
+Human-readable pages render the live catalog for a person choosing a role — the
+same data the /v1/blueprints endpoints serve as JSON:
+
+- Catalog index:  https://library.aweb.ai/blueprints
+- A blueprint:    https://library.aweb.ai/blueprints/BLUEPRINT_REF
+- A profile:      https://library.aweb.ai/blueprints/BLUEPRINT_REF/profiles/PROFILE_REF
+- A skill:        https://library.aweb.ai/blueprints/BLUEPRINT_REF/profiles/PROFILE_REF/skills/SKILL_NAME
+
+For example, the starter team: https://library.aweb.ai/blueprints/aweb.team,
+https://library.aweb.ai/blueprints/aweb.team/profiles/developer, and
+https://library.aweb.ai/blueprints/aweb.team/profiles/reviewer.
+
+
+## Getting started
+
+The minimal do-this-now onboarding. This is the single canonical shape landing
+pages and naapp sites quote verbatim. `aw init` creates the account, workspace,
+and first team; `aw team add` materializes starter agents from the `aweb.team`
+blueprint over a public read (no Library plugin on aw 1.30+); then you run each
+agent **interactively in its home** with its runtime.
+
+```bash
+# Install the aw CLI, create your account + first team
+npm install -g @awebai/aw
+aw init
+
+# Add starter agents from the aweb.team blueprint
+aw team add alice@aweb.team/developer=claude-code
+aw team add bob@aweb.team/reviewer=claude-code
+```
+
+Then run an agent. **Two runtimes work — Claude Code or pi.** Materialize the
+agent for the runtime you will run (`=claude-code` or `=pi`), then launch it
+directly in the agent home.
+
+**Claude Code** — install the channel plugin once, inside Claude Code:
+
+```
+/plugin marketplace add awebai/claude-plugins
+/plugin install aweb-channel@awebai-marketplace
+```
+
+then launch it in the agent home:
+
+```bash
+cd agents/instances/alice
+claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+```
+
+**pi** — install the extension once, then launch it in the agent home:
+
+```bash
+pi install npm:@awebai/pi@latest
+cd agents/instances/alice
+pi
+```
+
+Add an agent to an existing hosted team with a team API key (no dashboard
+session; the key is the whole credential):
+
+```bash
+AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code
+```
+
+The blueprint is always `aweb.team`; override it with `--blueprint` (or
+`AWEB_BLUEPRINT`) and the catalog provider with `--library-url` (or
+`AWEB_LIBRARY_URL`).
+
+The authenticated shelf/evolution loop is opt-in. Install the library plugin only
+when you want private shelf copies, proposals, approvals, or updates from source:
+aw plugin install https://library.aweb.ai/.well-known/aweb-app.json
+aw library import-to-shelf --source_blueprint_ref aweb.team --source_blueprint_version 0.1.0 --profile_ref developer
+
+A blueprint's runtime_hints and runtime_assumptions are advisory metadata you read
+to choose the runtime; they are not auto-applied.
+
+
+## How to call it
+
+The start path is core aw: aw init, aw team add NAME@aweb.team/PROFILE=RUNTIME,
+then cd agents/instances/NAME and launch Claude Code or pi directly. The aw library plugin verbs are the authenticated shelf surface for teams that
+want to evolve profiles after onboarding (e.g. aw library import-to-shelf,
+aw library shelf, aw library materialize). The HTTP endpoints below are the same
+surface; call them directly with aw id request --team-auth (the low-level escape
+hatch) if you are not using the plugin.
+
+
+## Authentication
+
+Public catalog reads (list-blueprints, get-blueprint, get-profile) need no auth. Every other
+operation is team-scoped and authenticated with your AWID team certificate. When you
+call through the aw plugin verbs (or the low-level aw id request --team-auth), aw
+signs each request for you with your team member key — you never assemble auth
+headers by hand.
+
+For raw HTTP without aw, every team-certificate request carries four headers:
+- Authorization: DIDKey <did:key> <signature> — base64 Ed25519 signature (standard alphabet, no padding) over the canonical payload bytes
+- X-AWEB-Timestamp: <RFC3339 UTC> — equals the envelope timestamp; 300s replay window
+- X-AWEB-Signed-Payload: base64url WITHOUT padding of the canonical JSON envelope — sorted keys, no whitespace; v=2; reserved fields aud, body_sha256, method, path, team_id, timestamp, v
+- X-AWID-Team-Certificate: standard base64 of the team certificate JSON
+
+This wire format tracks the aweb team-auth-envelope-v2 conformance vector. The full
+signing recipe with per-operation curl is at https://library.aweb.ai/reference.
+
+
+## Operations
+
+Public operations (no auth):
+
+aw library list-blueprints  (GET /v1/blueprints)
+    Browse the public blueprint catalog, optionally filtered by tag overlap.
+    optional: tags
+
+aw library get-blueprint  (GET /v1/blueprints/{blueprint_ref})
+    Get a public blueprint and its profile summaries.
+    required: blueprint_ref
+
+aw library get-profile  (GET /v1/blueprints/{blueprint_ref}/profiles/{profile_ref})
+    Get a public profile's full content from the latest version of a blueprint.
+    required: blueprint_ref, profile_ref
+
+Team operations (AWID team certificate):
+
+aw library publish-blueprint  (POST /v1/blueprints/import)
+    Publish or update a public blueprint. The body is the canonical import payload directly.
+    required: files, schema
+
+aw library register  (POST /v1/team/register)
+    Register the team with library (idempotent; team identified from the cert).
+    optional: owner, display_name
+
+aw library create-shelf-profile  (POST /v1/profiles)
+    Create a private shelf profile from a profile payload.
+    required: files
+    optional: tags
+
+aw library shelf-version  (POST /v1/profiles/{profile_ref}/versions)
+    Add a new content version of an owned shelf profile.
+    required: profile_ref, files
+
+aw library update-from-source  (POST /v1/profiles/{profile_ref}/update-from-source)
+    Per-part 3-way merge of a shelf profile against a newer version of its source blueprint: pull upstream improvements into un-evolved parts, keep local edits. A real merge mints target_version; nothing pullable is a no-op.
+    required: profile_ref, target_version
+    optional: source_blueprint_version
+
+aw library import-to-shelf  (POST /v1/shelf/import)
+    Copy a public-blueprint profile onto the team's private shelf. Idempotent per source profile: re-import returns the existing copy unchanged.
+    required: source_blueprint_ref, profile_ref
+    optional: source_blueprint_version, tags
+
+aw library publish-profile  (POST /v1/profiles/{profile_ref}/publish)
+    Publish a private shelf profile into a public blueprint (new blueprint or a new version of an owned blueprint); blueprint.yaml is library-generated and the profile set accumulates.
+    required: profile_ref, blueprint_version
+    optional: profile_version, target_blueprint_ref, new_blueprint
+
+aw library set-profile-tags  (PUT /v1/profiles/{profile_ref}/tags)
+    Replace a profile's organizational tags.
+    required: profile_ref, tags
+
+aw library set-blueprint-tags  (PUT /v1/blueprints/{blueprint_ref}/tags)
+    Replace a blueprint's organizational tags.
+    required: blueprint_ref, tags
+
+aw library bind  (POST /v1/agents/{agent_id}/profile-binding)
+    Bind an agent identity to a profile ref/version/digest.
+    required: agent_id, profile_ref, profile_version, profile_digest
+    optional: source_blueprint_ref
+
+aw library get-binding  (GET /v1/agents/{agent_id}/profile-binding)
+    Get the profile binding for an agent identity.
+    required: agent_id
+
+aw library shelf  (GET /v1/shelf)
+    List the team's shelf working set: each profile's latest version, source provenance, and whether a newer source-blueprint version is available.
+
+aw library materialize  (POST /v1/materialize)
+    Materialize a profile payload for a local or custodial runtime.
+    required: runtime_kind, target
+    optional: agent_id, profile_ref
+
+aw library propose  (POST /v1/proposals)
+    Submit an asset-scoped profile learning proposal. content.schema must be aweb.library.profile-asset-changeset.v1. File assets use path/content_utf8; profile.yaml fields use path profile.yaml#<field> and native JSON content. Read exact base_asset_digest values from get-shelf-profile include=files proposal_asset_digests. Submission rejects invalid or colliding changes before review; approval rechecks stale bases and mints the next patch version.
+    required: target, profile_ref, content
+    optional: summary, rationale
+
+aw library proposals  (GET /v1/proposals)
+    List the team's profile learning proposals.
+
+aw library approve  (POST /v1/proposals/{proposal_id}/approve)
+    Approve a profile learning proposal.
+    required: proposal_id
+
+aw library reject  (POST /v1/proposals/{proposal_id}/reject)
+    Reject a profile learning proposal.
+    required: proposal_id
+
+aw library get-shelf-profile  (GET /v1/profiles/{profile_ref})
+    Get the team's private shelf profile. ?include=files adds the profile content and proposal_asset_digests keyed by exact proposal path, including profile.yaml#<field> entries.
+    required: profile_ref
+    optional: include
+
+aw library delete-blueprint  (DELETE /v1/blueprints/{blueprint_ref})
+    Hard-delete a public blueprint your team owns (all versions). Shelf profiles that source-track it are detached, not orphaned. Irreversible.
+    required: blueprint_ref
+
+aw library delete-shelf-profile  (DELETE /v1/profiles/{profile_ref})
+    Hard-delete one of your team's private shelf profiles (all versions), and its bindings and proposals. Irreversible.
+    required: profile_ref
+
+
+## Invariants
+
+- AWID is authority for team keys, certificates, and revocation.
+- Every team-scoped read/write is keyed by the verified certificate team_id.
+- Public catalog reads are unauthenticated; profiles do not grant app access.
+- Shelf versions are immutable: a version's digest is its identity, never overwritten.
+- library owns its own binding, materialization, and proposal state.

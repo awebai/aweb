@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>library — API reference</title>
+  <meta name="description" content="Every library operation in parallel: the canonical aw library verb and the raw HTTP wire format with AWID team-certificate signing.">
+  <link rel="canonical" href="https://library.aweb.ai/">
+  <meta name="theme-color" content="#faf7f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0a09" media="(prefers-color-scheme: dark)">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="library">
+  <meta property="og:title" content="library — API reference">
+  <meta property="og:description" content="Every library operation in parallel: the canonical aw library verb and the raw HTTP wire format with AWID team-certificate signing.">
+  <meta property="og:url" content="https://library.aweb.ai/">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:image" content="https://library.aweb.ai/og-card.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="library — API reference">
+  <meta name="twitter:image" content="https://library.aweb.ai/og-card.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="library — API reference">
+  <meta name="twitter:description" content="Every library operation in parallel: the canonical aw library verb and the raw HTTP wire format with AWID team-certificate signing.">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('aweb-theme');
+        if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/css/aweb.3508eaba766a.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/"><span class="dot"></span>library</a>
+      <nav class="nav-links">
+        <a href="/blueprints">Blueprints</a>
+        <a href="/reference">Reference</a>
+        <a href="/skills/">Skills</a>
+        <a href="https://awid.ai" class="brand-word">awid</a>
+        <a href="https://aweb.ai" class="brand-word">aweb</a>
+      </nav>
+      <div class="header-right">
+        <button class="theme-toggle" type="button" aria-label="Toggle dark mode" onclick="awebToggleTheme()">
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        </button>
+        <a class="gh-link" href="https://github.com/awebai/library" target="_blank" rel="noopener" aria-label="Source on GitHub" title="Source on GitHub"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55v-1.93c-3.2.69-3.87-1.54-3.87-1.54-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.73-1.53-2.55-.29-5.23-1.28-5.23-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.21-1.49 3.18-1.18 3.18-1.18.62 1.59.23 2.76.11 3.05.74.81 1.18 1.84 1.18 3.1 0 4.42-2.69 5.39-5.25 5.68.41.35.78 1.05.78 2.11v3.13c0 .3.21.66.79.55C20.21 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg></a>
+        <div class="split-btn" data-llms-url="/llms.txt">
+          <button class="split-btn__main" type="button" data-llms-copy aria-label="Copy llms.txt to clipboard" title="The plain-text guide for LLMs and agents">
+            <svg class="icon-clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <svg class="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+            <span class="split-btn__label">llms.txt</span>
+          </button>
+          <button class="split-btn__caret" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="llms-menu" aria-label="More llms.txt options">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div class="split-btn__menu" id="llms-menu" role="menu">
+            <button class="split-btn__item" type="button" role="menuitem" data-llms-copy>
+              <span class="lead">Copy for LLMs</span><span class="sub">Copy llms.txt to clipboard</span>
+            </button>
+            <a class="split-btn__item" role="menuitem" href="/llms.txt" target="_blank" rel="noopener">
+              <span class="lead">Open llms.txt</span><span class="sub">View the plain-text guide</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+  <main>
+    <div class="wrap ref-page-header">
+      <h1 class="ref-page-title">API reference</h1>
+      <p class="ref-page-desc">Generated from <a href="/aweb-app.json">aweb-app.json</a> · <a href="/llms.txt">llms.txt</a></p>
+    </div>
+    <div class="wrap ref-layout">
+      <aside class="ref-sidebar">
+        <nav class="ref-nav">
+        <div class="ref-nav-group">
+          <p class="ref-nav-label">Public</p>
+          <a href="#op-list-blueprints">list-blueprints</a>
+          <a href="#op-get-blueprint">get-blueprint</a>
+          <a href="#op-get-profile">get-profile</a>
+        </div>        <div class="ref-nav-group">
+          <p class="ref-nav-label">Authenticated</p>
+          <a href="#op-publish-blueprint">publish-blueprint</a>
+          <a href="#op-register">register</a>
+          <a href="#op-create-shelf-profile">create-shelf-profile</a>
+          <a href="#op-shelf-version">shelf-version</a>
+          <a href="#op-update-from-source">update-from-source</a>
+          <a href="#op-import-to-shelf">import-to-shelf</a>
+          <a href="#op-publish-profile">publish-profile</a>
+          <a href="#op-set-profile-tags">set-profile-tags</a>
+          <a href="#op-set-blueprint-tags">set-blueprint-tags</a>
+          <a href="#op-bind">bind</a>
+          <a href="#op-get-binding">get-binding</a>
+          <a href="#op-shelf">shelf</a>
+          <a href="#op-materialize">materialize</a>
+          <a href="#op-propose">propose</a>
+          <a href="#op-proposals">proposals</a>
+          <a href="#op-approve">approve</a>
+          <a href="#op-reject">reject</a>
+          <a href="#op-get-shelf-profile">get-shelf-profile</a>
+          <a href="#op-delete-blueprint">delete-blueprint</a>
+          <a href="#op-delete-shelf-profile">delete-shelf-profile</a>
+        </div>
+          <div class="ref-nav-divider"></div>
+          <a class="ref-nav-link" href="#auth">Authentication</a>
+        </nav>
+      </aside>
+      <div class="ref-content">
+        <div class="ref-section-label"><h2>Catalog reads — no auth</h2><span class="count">three</span></div>
+        <article class="ref-op" id="op-list-blueprints">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-list-blueprints" aria-label="Link to list-blueprints">#</a>
+              <code class="ref-op-verb">aw library list-blueprints</code>
+              <span class="ref-op-method">GET</span>
+              <code class="ref-op-path">/v1/blueprints</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:read</span><span class="ref-auth-tag ref-auth-tag--public">public</span></span>
+          </div>
+          <p class="ref-op-desc">Browse the public blueprint catalog, optionally filtered by tag overlap.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>tags</code></td><td>query</td><td>array</td><td class="ref-opt">optional</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library list-blueprints</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><p class="ref-wire-note">Raw HTTP, no auth — copy-paste runnable.</p><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/blueprints</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-get-blueprint">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-get-blueprint" aria-label="Link to get-blueprint">#</a>
+              <code class="ref-op-verb">aw library get-blueprint</code>
+              <span class="ref-op-method">GET</span>
+              <code class="ref-op-path">/v1/blueprints/{blueprint_ref}</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:read</span><span class="ref-auth-tag ref-auth-tag--public">public</span></span>
+          </div>
+          <p class="ref-op-desc">Get a public blueprint and its profile summaries.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>blueprint_ref</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library get-blueprint --blueprint_ref aweb.team</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><p class="ref-wire-note">Raw HTTP, no auth — copy-paste runnable.</p><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/blueprints/aweb.team</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-get-profile">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-get-profile" aria-label="Link to get-profile">#</a>
+              <code class="ref-op-verb">aw library get-profile</code>
+              <span class="ref-op-method">GET</span>
+              <code class="ref-op-path">/v1/blueprints/{blueprint_ref}/profiles/{profile_ref}</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:read</span><span class="ref-auth-tag ref-auth-tag--public">public</span></span>
+          </div>
+          <p class="ref-op-desc">Get a public profile&#x27;s full content from the latest version of a blueprint.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>blueprint_ref</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>profile_ref</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library get-profile --blueprint_ref aweb.team --profile_ref developer</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><p class="ref-wire-note">Raw HTTP, no auth — copy-paste runnable.</p><div class="cmd"><pre>curl -s https://library.aweb.ai/v1/blueprints/aweb.team/profiles/developer</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <div class="ref-section-label"><h2>Shelf, bindings, materialize, proposals — AWID team certificate</h2><span class="count">20</span></div>
+        <p class="ref-section-note">aw signs every team-certificate request for you. The HTTP wire format under each operation is only needed to port a signer — see <a href="#auth">Authentication</a>.</p>
+        <article class="ref-op" id="op-publish-blueprint">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-publish-blueprint" aria-label="Link to publish-blueprint">#</a>
+              <code class="ref-op-verb">aw library publish-blueprint</code>
+              <span class="ref-op-method ref-op-method--write">POST</span>
+              <code class="ref-op-path">/v1/blueprints/import</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Publish or update a public blueprint. The body is the canonical import payload directly.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>files</code></td><td>body</td><td>array</td><td class="ref-req">required</td></tr>
+            <tr><td><code>schema</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library publish-blueprint --files &lt;files&gt; --schema &lt;schema&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/blueprints/import
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"files": "...", "schema": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/blueprints/import --body '{"files": "...", "schema": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-register">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-register" aria-label="Link to register">#</a>
+              <code class="ref-op-verb">aw library register</code>
+              <span class="ref-op-method ref-op-method--write">POST</span>
+              <code class="ref-op-path">/v1/team/register</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Register the team with library (idempotent; team identified from the cert).</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>owner</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
+            <tr><td><code>display_name</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library register</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/team/register
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/team/register</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-create-shelf-profile">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-create-shelf-profile" aria-label="Link to create-shelf-profile">#</a>
+              <code class="ref-op-verb">aw library create-shelf-profile</code>
+              <span class="ref-op-method ref-op-method--write">POST</span>
+              <code class="ref-op-path">/v1/profiles</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Create a private shelf profile from a profile payload.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>files</code></td><td>body</td><td>array</td><td class="ref-req">required</td></tr>
+            <tr><td><code>tags</code></td><td>body</td><td>array</td><td class="ref-opt">optional</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library create-shelf-profile --files &lt;files&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/profiles
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"files": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/profiles --body '{"files": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-shelf-version">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-shelf-version" aria-label="Link to shelf-version">#</a>
+              <code class="ref-op-verb">aw library shelf-version</code>
+              <span class="ref-op-method ref-op-method--write">POST</span>
+              <code class="ref-op-path">/v1/profiles/{profile_ref}/versions</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Add a new content version of an owned shelf profile.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>profile_ref</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>files</code></td><td>body</td><td>array</td><td class="ref-req">required</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library shelf-version --profile_ref &lt;profile_ref&gt; --files &lt;files&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/profiles/{profile_ref}/versions
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"files": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/profiles/{profile_ref}/versions --body '{"files": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-update-from-source">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-update-from-source" aria-label="Link to update-from-source">#</a>
+              <code class="ref-op-verb">aw library update-from-source</code>
+              <span class="ref-op-method ref-op-method--write">POST</span>
+              <code class="ref-op-path">/v1/profiles/{profile_ref}/update-from-source</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Per-part 3-way merge of a shelf profile against a newer version of its source blueprint: pull upstream improvements into un-evolved parts, keep local edits. A real merge mints target_version; nothing pullable is a no-op.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>profile_ref</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>target_version</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>source_blueprint_version</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library update-from-source --profile_ref &lt;profile_ref&gt; --target_version &lt;target_version&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/profiles/{profile_ref}/update-from-source
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"target_version": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/profiles/{profile_ref}/update-from-source --body '{"target_version": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-import-to-shelf">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-import-to-shelf" aria-label="Link to import-to-shelf">#</a>
+              <code class="ref-op-verb">aw library import-to-shelf</code>
+              <span class="ref-op-method ref-op-method--write">POST</span>
+              <code class="ref-op-path">/v1/shelf/import</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Copy a public-blueprint profile onto the team&#x27;s private shelf. Idempotent per source profile: re-import returns the existing copy unchanged.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>source_blueprint_ref</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>source_blueprint_version</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
+            <tr><td><code>profile_ref</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>tags</code></td><td>body</td><td>array</td><td class="ref-opt">optional</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library import-to-shelf --source_blueprint_ref &lt;source_blueprint_ref&gt; --profile_ref &lt;profile_ref&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/shelf/import
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"source_blueprint_ref": "...", "profile_ref": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/shelf/import --body '{"source_blueprint_ref": "...", "profile_ref": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-publish-profile">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-publish-profile" aria-label="Link to publish-profile">#</a>
+              <code class="ref-op-verb">aw library publish-profile</code>
+              <span class="ref-op-method ref-op-method--write">POST</span>
+              <code class="ref-op-path">/v1/profiles/{profile_ref}/publish</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Publish a private shelf profile into a public blueprint (new blueprint or a new version of an owned blueprint); blueprint.yaml is library-generated and the profile set accumulates.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>profile_ref</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>profile_version</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
+            <tr><td><code>blueprint_version</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>target_blueprint_ref</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
+            <tr><td><code>new_blueprint</code></td><td>body</td><td>object</td><td class="ref-opt">optional</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library publish-profile --profile_ref &lt;profile_ref&gt; --blueprint_version &lt;blueprint_version&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/profiles/{profile_ref}/publish
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"blueprint_version": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/profiles/{profile_ref}/publish --body '{"blueprint_version": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-set-profile-tags">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-set-profile-tags" aria-label="Link to set-profile-tags">#</a>
+              <code class="ref-op-verb">aw library set-profile-tags</code>
+              <span class="ref-op-method ref-op-method--write">PUT</span>
+              <code class="ref-op-path">/v1/profiles/{profile_ref}/tags</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Replace a profile&#x27;s organizational tags.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>profile_ref</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>tags</code></td><td>body</td><td>array</td><td class="ref-req">required</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library set-profile-tags --profile_ref &lt;profile_ref&gt; --tags &lt;tags&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>PUT /v1/profiles/{profile_ref}/tags
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"tags": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth PUT https://library.aweb.ai/v1/profiles/{profile_ref}/tags --body '{"tags": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-set-blueprint-tags">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-set-blueprint-tags" aria-label="Link to set-blueprint-tags">#</a>
+              <code class="ref-op-verb">aw library set-blueprint-tags</code>
+              <span class="ref-op-method ref-op-method--write">PUT</span>
+              <code class="ref-op-path">/v1/blueprints/{blueprint_ref}/tags</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Replace a blueprint&#x27;s organizational tags.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>blueprint_ref</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>tags</code></td><td>body</td><td>array</td><td class="ref-req">required</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library set-blueprint-tags --blueprint_ref &lt;blueprint_ref&gt; --tags &lt;tags&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>PUT /v1/blueprints/{blueprint_ref}/tags
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"tags": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth PUT https://library.aweb.ai/v1/blueprints/{blueprint_ref}/tags --body '{"tags": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-bind">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-bind" aria-label="Link to bind">#</a>
+              <code class="ref-op-verb">aw library bind</code>
+              <span class="ref-op-method ref-op-method--write">POST</span>
+              <code class="ref-op-path">/v1/agents/{agent_id}/profile-binding</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Bind an agent identity to a profile ref/version/digest.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>agent_id</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>profile_ref</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>profile_version</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>profile_digest</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>source_blueprint_ref</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library bind --agent_id &lt;agent_id&gt; --profile_ref &lt;profile_ref&gt; --profile_version &lt;profile_version&gt; --profile_digest &lt;profile_digest&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/agents/{agent_id}/profile-binding
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"profile_ref": "...", "profile_version": "...", "profile_digest": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/agents/{agent_id}/profile-binding --body '{"profile_ref": "...", "profile_version": "...", "profile_digest": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-get-binding">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-get-binding" aria-label="Link to get-binding">#</a>
+              <code class="ref-op-verb">aw library get-binding</code>
+              <span class="ref-op-method">GET</span>
+              <code class="ref-op-path">/v1/agents/{agent_id}/profile-binding</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:read</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Get the profile binding for an agent identity.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>agent_id</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library get-binding --agent_id &lt;agent_id&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>GET /v1/agents/{agent_id}/profile-binding
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth GET https://library.aweb.ai/v1/agents/{agent_id}/profile-binding</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-shelf">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-shelf" aria-label="Link to shelf">#</a>
+              <code class="ref-op-verb">aw library shelf</code>
+              <span class="ref-op-method">GET</span>
+              <code class="ref-op-path">/v1/shelf</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:read</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">List the team&#x27;s shelf working set: each profile&#x27;s latest version, source provenance, and whether a newer source-blueprint version is available.</p>
+          <div class="cmd ref-cmd-primary"><pre>aw library shelf</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>GET /v1/shelf
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth GET https://library.aweb.ai/v1/shelf</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-materialize">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-materialize" aria-label="Link to materialize">#</a>
+              <code class="ref-op-verb">aw library materialize</code>
+              <span class="ref-op-method ref-op-method--write">POST</span>
+              <code class="ref-op-path">/v1/materialize</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Materialize a profile payload for a local or custodial runtime.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>agent_id</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
+            <tr><td><code>profile_ref</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
+            <tr><td><code>runtime_kind</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>target</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library materialize --runtime_kind &lt;runtime_kind&gt; --target &lt;target&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/materialize
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"runtime_kind": "...", "target": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/materialize --body '{"runtime_kind": "...", "target": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-propose">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-propose" aria-label="Link to propose">#</a>
+              <code class="ref-op-verb">aw library propose</code>
+              <span class="ref-op-method ref-op-method--write">POST</span>
+              <code class="ref-op-path">/v1/proposals</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Submit an asset-scoped profile learning proposal. content.schema must be aweb.library.profile-asset-changeset.v1. File assets use path/content_utf8; profile.yaml fields use path profile.yaml#&lt;field&gt; and native JSON content. Read exact base_asset_digest values from get-shelf-profile include=files proposal_asset_digests. Submission rejects invalid or colliding changes before review; approval rechecks stale bases and mints the next patch version.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>target</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>profile_ref</code></td><td>body</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>content</code></td><td>body</td><td>object</td><td class="ref-req">required</td></tr>
+            <tr><td><code>summary</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
+            <tr><td><code>rationale</code></td><td>body</td><td>string</td><td class="ref-opt">optional</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library propose --target &lt;target&gt; --profile_ref &lt;profile_ref&gt; --content &lt;content&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/proposals
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;
+Content-Type: application/json
+
+{"target": "...", "profile_ref": "...", "content": "..."}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/proposals --body '{"target": "...", "profile_ref": "...", "content": "..."}'</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-proposals">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-proposals" aria-label="Link to proposals">#</a>
+              <code class="ref-op-verb">aw library proposals</code>
+              <span class="ref-op-method">GET</span>
+              <code class="ref-op-path">/v1/proposals</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:read</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">List the team&#x27;s profile learning proposals.</p>
+          <div class="cmd ref-cmd-primary"><pre>aw library proposals</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>GET /v1/proposals
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth GET https://library.aweb.ai/v1/proposals</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-approve">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-approve" aria-label="Link to approve">#</a>
+              <code class="ref-op-verb">aw library approve</code>
+              <span class="ref-op-method ref-op-method--write">POST</span>
+              <code class="ref-op-path">/v1/proposals/{proposal_id}/approve</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Approve a profile learning proposal.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>proposal_id</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library approve --proposal_id &lt;proposal_id&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/proposals/{proposal_id}/approve
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/proposals/{proposal_id}/approve</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-reject">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-reject" aria-label="Link to reject">#</a>
+              <code class="ref-op-verb">aw library reject</code>
+              <span class="ref-op-method ref-op-method--write">POST</span>
+              <code class="ref-op-path">/v1/proposals/{proposal_id}/reject</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Reject a profile learning proposal.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>proposal_id</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library reject --proposal_id &lt;proposal_id&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>POST /v1/proposals/{proposal_id}/reject
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth POST https://library.aweb.ai/v1/proposals/{proposal_id}/reject</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-get-shelf-profile">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-get-shelf-profile" aria-label="Link to get-shelf-profile">#</a>
+              <code class="ref-op-verb">aw library get-shelf-profile</code>
+              <span class="ref-op-method">GET</span>
+              <code class="ref-op-path">/v1/profiles/{profile_ref}</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:read</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Get the team&#x27;s private shelf profile. ?include=files adds the profile content and proposal_asset_digests keyed by exact proposal path, including profile.yaml#&lt;field&gt; entries.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>profile_ref</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            <tr><td><code>include</code></td><td>query</td><td>string</td><td class="ref-opt">optional</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library get-shelf-profile --profile_ref &lt;profile_ref&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>GET /v1/profiles/{profile_ref}
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth GET https://library.aweb.ai/v1/profiles/{profile_ref}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-delete-blueprint">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-delete-blueprint" aria-label="Link to delete-blueprint">#</a>
+              <code class="ref-op-verb">aw library delete-blueprint</code>
+              <span class="ref-op-method ref-op-method--write">DELETE</span>
+              <code class="ref-op-path">/v1/blueprints/{blueprint_ref}</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Hard-delete a public blueprint your team owns (all versions). Shelf profiles that source-track it are detached, not orphaned. Irreversible.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>blueprint_ref</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library delete-blueprint --blueprint_ref &lt;blueprint_ref&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>DELETE /v1/blueprints/{blueprint_ref}
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth DELETE https://library.aweb.ai/v1/blueprints/{blueprint_ref}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <article class="ref-op" id="op-delete-shelf-profile">
+          <div class="ref-op-sig">
+            <span class="ref-op-id">
+              <a class="ref-op-anchor" href="#op-delete-shelf-profile" aria-label="Link to delete-shelf-profile">#</a>
+              <code class="ref-op-verb">aw library delete-shelf-profile</code>
+              <span class="ref-op-method ref-op-method--write">DELETE</span>
+              <code class="ref-op-path">/v1/profiles/{profile_ref}</code>
+            </span>
+            <span class="ref-op-tags"><span class="ref-scope-tag">library:write</span><span class="ref-auth-tag ref-auth-tag--team">team cert</span></span>
+          </div>
+          <p class="ref-op-desc">Hard-delete one of your team&#x27;s private shelf profiles (all versions), and its bindings and proposals. Irreversible.</p>
+          <table class="ref-params">
+            <thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Required</th></tr></thead>
+            <tbody>
+            <tr><td><code>profile_ref</code></td><td>path</td><td>string</td><td class="ref-req">required</td></tr>
+            </tbody>
+          </table>
+          <div class="cmd ref-cmd-primary"><pre>aw library delete-shelf-profile --profile_ref &lt;profile_ref&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+          <details class="ref-wire-details"><summary>HTTP wire format</summary><div class="ref-wire-body"><div class="cmd"><pre>DELETE /v1/profiles/{profile_ref}
+Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div><p class="ref-wire-note">Hand-runnable with the aw CLI, no plugin:</p><div class="cmd"><pre>aw id request --team-auth DELETE https://library.aweb.ai/v1/profiles/{profile_ref}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div></div></details>
+        </article>
+        <div class="ref-section-label" id="auth"><h2>Authentication</h2></div>
+        <p class="ref-op-desc">The three public catalog reads take no auth. Every other operation is team-scoped and authenticated with your AWID team certificate. Through the <code>aw</code> plugin verbs (or <code>aw id request --team-auth</code>), aw signs each request for you — you never assemble these headers by hand. Build your own client only if you are porting the signer to another language.</p>
+        <p class="ref-wire-note">This wire format tracks the canonical <strong>team-auth-envelope-v2</strong> conformance vector at <a href="https://github.com/awebai/aweb/blob/main/cli/go/internal/conformance/vectors/team-auth-envelope-v2.json"><code>cli/go/internal/conformance/vectors/team-auth-envelope-v2.json</code></a> — match it byte for byte to port a signer.</p>
+        <p class="cmd-label">Four headers on every team-certificate request</p>
+        <div class="cmd"><pre>Authorization: DIDKey &lt;did:key&gt; &lt;base64 Ed25519 signature, standard alphabet, no padding&gt;
+X-AWEB-Timestamp: &lt;RFC3339 UTC, equal to the envelope timestamp field&gt;
+X-AWEB-Signed-Payload: &lt;base64url WITHOUT padding of the canonical JSON payload bytes&gt;
+X-AWID-Team-Certificate: &lt;standard base64 of the team certificate JSON&gt;</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+        <p class="ref-wire-note">Mind the three encodings: the <code>Authorization</code> signature and the certificate use standard base64; the signed payload uses base64url <strong>without padding</strong> (Library rejects values containing <code>=</code>). The certificate's <code>member_did_key</code> must equal the <code>Authorization</code> did:key.</p>
+        <p class="cmd-label">The signed payload — a canonical-JSON envelope (version 2)</p>
+        <div class="cmd"><pre>{
+  "aud": "https://library.aweb.ai",
+  "body_sha256": "&lt;lowercase hex sha256 of the exact request body bytes; empty body hashes the empty string&gt;",
+  "method": "&lt;uppercase HTTP method, e.g. POST&gt;",
+  "path": "&lt;escaped request target incl. query, e.g. /v1/shelf/import or /v1/blueprints?tags=starter&gt;",
+  "team_id": "&lt;your AWID team id&gt;",
+  "timestamp": "&lt;RFC3339 UTC, equal to X-AWEB-Timestamp&gt;",
+  "v": 2
+}</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+        <p class="ref-wire-note">The bytes signed are <strong>canonical JSON</strong>: sorted keys, no insignificant whitespace, UTF-8, no HTML escaping (the awid <code>canonical_json_bytes</code> convention). The signature is over those canonical payload bytes <strong>after</strong> the timestamp is injected — not over the base64url <code>X-AWEB-Signed-Payload</code> header value.</p>
+        <p class="ref-wire-note">Reserved fields are <code>aud</code>, <code>body_sha256</code>, <code>method</code>, <code>path</code>, <code>team_id</code>, <code>timestamp</code>, and <code>v</code>; a surface may add custom fields only in addition to these. aw sets <code>aud</code> to this origin (scheme and host), <code>method</code> uppercase, <code>path</code> to the exact escaped request target the server receives (root-mounted <code>/v1/...</code> with query string, no <code>/api</code> prefix), <code>body_sha256</code> to the lowercase hex SHA-256 of the exact body bytes, <code>timestamp</code> equal to <code>X-AWEB-Timestamp</code>, and <code>team_id</code> from the certificate. The server recomputes and verifies all of it within a 300-second replay window.</p>
+      </div>
+    </div>
+  </main>
+  <footer class="site-footer">
+    <div class="wrap">
+      <div class="footer-cols">
+        <div class="footer-brand">
+          <a class="brand" href="/"><span class="dot"></span>library</a>
+          <p>Public blueprints and private team shelves for <span class="brand-word">awid</span> teams — adopt, bind, materialize, and evolve your agents' profiles.</p>
+          <p class="footer-oss">Open source, MIT-licensed. <a href="https://github.com/awebai/library" target="_blank" rel="noopener">View on GitHub &rarr;</a></p>
+        </div>
+        <div class="footer-col">
+          <h4>Agents</h4>
+          <a href="/blueprints">Blueprints</a>
+          <a href="/llms.txt">llms.txt</a>
+          <a href="/reference">API reference</a>
+          <a href="/skills/">Skills</a>
+          <a href="/aweb-app.json">App manifest</a>
+        </div>
+        <div class="footer-col">
+          <h4>aweb</h4>
+          <a href="https://aweb.ai">aweb.ai</a>
+          <a href="https://awid.ai" class="brand-word">awid</a>
+        </div>
+      </div>
+      <div class="footer-bottom">library is a Native Agentic App on the <span class="brand-word">aweb</span>.ai hub. <span class="brand-word">awid</span> is the identity authority. Origin: https://library.aweb.ai</div>
+    </div>
+  </footer>
+  <script>
+    function awebToggleTheme() {
+      var el = document.documentElement;
+      var cur = el.getAttribute('data-theme');
+      if (!cur) {
+        cur = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      var next = cur === 'dark' ? 'light' : 'dark';
+      el.setAttribute('data-theme', next);
+      try { localStorage.setItem('aweb-theme', next); } catch (e) {}
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('.cmd .copy-btn'), function (button) {
+      button.addEventListener('click', function () {
+        var pre = button.parentElement.querySelector('pre');
+        if (!pre) return;
+        navigator.clipboard.writeText(pre.textContent).then(function () {
+          button.classList.add('copied');
+          setTimeout(function () { button.classList.remove('copied'); }, 1600);
+        });
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.split-btn'), function (sb) {
+      var url = sb.getAttribute('data-llms-url');
+      var caret = sb.querySelector('.split-btn__caret');
+      var main = sb.querySelector('.split-btn__main');
+      var label = main ? main.querySelector('.split-btn__label') : null;
+      function items() { return Array.prototype.slice.call(sb.querySelectorAll('.split-btn__item')); }
+      function close() { sb.setAttribute('data-open', 'false'); if (caret) caret.setAttribute('aria-expanded', 'false'); }
+      function open() { sb.setAttribute('data-open', 'true'); if (caret) caret.setAttribute('aria-expanded', 'true'); }
+      function doCopy() {
+        fetch(url).then(function (r) { return r.text(); }).then(function (text) {
+          navigator.clipboard.writeText(text).then(function () {
+            if (!main) return;
+            main.classList.add('copied');
+            if (label) label.textContent = 'Copied!';
+            main.setAttribute('aria-label', 'Copied to clipboard');
+            setTimeout(function () {
+              main.classList.remove('copied');
+              if (label) label.textContent = 'llms.txt';
+              main.setAttribute('aria-label', 'Copy llms.txt to clipboard');
+            }, 1600);
+          });
+        });
+      }
+      Array.prototype.forEach.call(sb.querySelectorAll('[data-llms-copy]'), function (b) {
+        b.addEventListener('click', function () { doCopy(); if (b.getAttribute('role') === 'menuitem') close(); });
+      });
+      if (caret) caret.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (sb.getAttribute('data-open') === 'true') { close(); } else { open(); var it = items()[0]; if (it) it.focus(); }
+      });
+      sb.addEventListener('keydown', function (e) {
+        if (sb.getAttribute('data-open') !== 'true') return;
+        var list = items(); var i = list.indexOf(document.activeElement);
+        if (e.key === 'ArrowDown') { e.preventDefault(); (list[i + 1] || list[0]).focus(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); (list[i - 1] || list[list.length - 1]).focus(); }
+        else if (e.key === 'Escape') { close(); if (caret) caret.focus(); }
+      });
+      document.addEventListener('click', function (e) { if (!sb.contains(e.target)) close(); });
+    });
+    // Reference page: highlight the sidebar link for the operation in view.
+    var refOps = document.querySelectorAll('.ref-op[id]');
+    if (refOps.length && 'IntersectionObserver' in window) {
+      var refLinks = {};
+      Array.prototype.forEach.call(document.querySelectorAll('.ref-sidebar a[href^="#"]'), function (a) {
+        refLinks[a.getAttribute('href').slice(1)] = a;
+      });
+      var refSpy = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (!e.isIntersecting) return;
+          var link = refLinks[e.target.id];
+          if (!link) return;
+          Array.prototype.forEach.call(document.querySelectorAll('.ref-sidebar a.active'), function (a) { a.classList.remove('active'); });
+          link.classList.add('active');
+        });
+      }, { rootMargin: '-80px 0px -68% 0px' });
+      Array.prototype.forEach.call(refOps, function (op) { refSpy.observe(op); });
+    }
+  </script>
+</body>
+</html>

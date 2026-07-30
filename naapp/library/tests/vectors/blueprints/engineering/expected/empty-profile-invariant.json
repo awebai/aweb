@@ -1,0 +1,18 @@
+{
+  "agent_add": {
+    "default_profile": "empty",
+    "must_succeed_without_library": true,
+    "profile_binding_required": false
+  },
+  "library_unreachable": true,
+  "materialize": {
+    "empty_profile_is_not_error": true,
+    "requires_bound_profile": true
+  },
+  "schema": "aweb.blueprint.empty-profile-invariant.v1",
+  "team_create": {
+    "default_profile": "empty",
+    "must_succeed_without_library": true,
+    "blueprint_required": false
+  }
+}

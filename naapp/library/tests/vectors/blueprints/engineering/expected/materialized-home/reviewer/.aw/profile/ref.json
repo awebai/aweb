@@ -1,0 +1,21 @@
+{
+  "managed_set": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".aw/profile/profile.yaml",
+    ".aw/profile/instructions.md",
+    "skills/review/SKILL.md",
+    ".aw/profile/skills/review/SKILL.md",
+    ".claude/skills/review",
+    "artifacts/review-template.md",
+    ".aw/profile/artifacts/review-template.md",
+    ".aw/profile/ref.json"
+  ],
+  "profile_digest": "sha256:1ea7930bbb43c956133d9f277a24e777e56e69efedab40cae128b6f7880c98c3",
+  "profile_ref": "reviewer",
+  "profile_version": "0.1.0",
+  "runtime_kind": "claude-code",
+  "source_blueprint_digest": "sha256:7a5d7dd34036d3f1e0f04e30afd0e42821d2b6f708868f34744dccc87ea765b5",
+  "source_blueprint_ref": "aweb.engineering",
+  "source_blueprint_version": "0.1.0"
+}
