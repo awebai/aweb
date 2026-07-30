@@ -18,6 +18,9 @@ soul is committed (see `self-maintenance`).
 These are different lifecycle stories and `aweb-sot.md` says they must not be
 conflated. Establish the scope before choosing a command.
 
+Read your own with `aw workspace status`; the spawn spec that created the agent
+carries it too: `[NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]`.
+
 - **Local identity scope** — spawned `:local`, a name on one team, no `did:aw`,
   no registry certificate. This is the common case: a coordinator's own workers
   are local. The verb is **`aw workspace delete`**, which the SOT calls "the
@@ -38,7 +41,13 @@ name=<name>
 REPO="$(cd "$(git rev-parse --git-common-dir)" && cd .. && pwd)"
 inst="$REPO/agents/instances/$name"
 
-# LOCAL identity scope (the usual case):
+# 0. STOP THE RUNTIME FIRST. Deleting the workspace does not stop the process:
+#    it leaves a live agent running against an identity that no longer exists.
+#    In Claude Code /quit in that agent's own window; for pi, quit that process.
+#    An agent cannot do this to itself - it is a child of the runtime - and
+#    killing another agent's process is fenced, so this step has an owner.
+
+# 1. LOCAL identity scope (the usual case):
 aw workspace delete "$name"                       # workspace + local identity
 
 # GLOBAL identity scope only — needs an owner/admin key:
@@ -50,9 +59,15 @@ git -C "$REPO" branch -D "$name" 2>/dev/null
 git -C "$REPO" worktree prune
 ```
 
-**Check the exit status, not the output.** `aw team remove-agent` prints its
-refusal and still exits 0, so a shell that branches on `$?` sees success. Read
-what the command actually said.
+**`aw team remove-agent`'s exit status is reliable — branch on it.** It returns
+non-zero when a store did not reach a terminal state (`cliError{code: 1}`), and
+the owner/admin refusal is a usage error (code 2). Its own help calls the status
+values a contract.
+
+**What is not reliable is an `aw` subcommand you have not confirmed exists.** An
+unknown subcommand prints the parent help and exits 0, so a script sees 1.6 KB of
+usage text as success. That is a property of unrecognised verbs, not of
+`remove-agent`.
 
 `aw team remove-agent` covers the network state: it deletes the workspace
 record — which is what releases the task claims held under it — and then
@@ -64,16 +79,28 @@ anything, so a revoke that runs first strands every claim it held.
 ## Read it back before you delete the home
 
 Confirm the retirement from something other than the retire command reporting on
-itself. `aw workspace delete` prints what it removed, including whether the local
-identity went with it — read that, and confirm the name no longer appears in the
-team's workspace listing.
+itself. That independence is the whole point of this step:
 
-**`aw team agent-status` does not exist.** Earlier versions of this skill told you
-to run it as the read-back. In aw 1.34.1 it is not a verb: it prints the parent
-help and **exits 0**, so a script treats 1.6 KB of usage text as a successful
-status check. Do not use it, and do not trust an exit code from any `aw`
-subcommand you have not confirmed exists — an unknown subcommand is indistinguishable
-from a working one by exit status alone.
+> `team_agent_status.go:68` — "It exists so that the evidence an agent is retired
+> comes from somewhere other than the command that retired it."
+
+```bash
+aw team agent-status "$name"        # preferred: reads the stores directly
+```
+
+**Availability, and check this before relying on it.** `aw team agent-status` is
+registered on `main` (`team_human.go:264`, added in `52995ab6`) but that commit is
+**not in `aw-v1.34.1`**, so on an installation at that release the verb does not
+run: it prints the parent help and **exits 0**, and a script reads 1.6 KB of usage
+text as a successful status check. Confirm it exists on your installation before
+trusting its result — and note this is how *any* unrecognised `aw` subcommand
+behaves, not a property of this one.
+
+**If it is unavailable, say which check you used.** The fallback is to read what
+`aw workspace delete` reported plus the team's workspace listing. That is weaker
+and you should know why: the first half is the retire command reporting on itself,
+which is exactly the dependence `agent-status` exists to remove. Substituting it
+is acceptable; presenting it as equivalent is not.
 
 `clear` describes what the stores hold now, not how they came to hold it. A
 name retired this morning and a name never used read the same way, because
@@ -102,8 +129,8 @@ independently.
   revoke. That is not the same as knowing no certificate exists: the hosted
   service answers from its own membership records and may never consult the
   registry. Establishing the real state needs a read against the registry
-  itself — `aw id team` inspection rather than the hosted answer, since no
-  `aw team agent-status` verb exists to do it for you.
+  itself: `aw team agent-status` where it is available (see above), or
+  `aw id team` inspection where it is not.
 
 On a customer-controlled team, retiring a name that no longer resolves is
 an error rather than a no-op, so re-running a completed retirement by name
