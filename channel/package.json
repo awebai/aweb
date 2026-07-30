@@ -21,7 +21,7 @@
     "sync-plugin-version": "node -e \"const p=JSON.parse(require('fs').readFileSync('.claude-plugin/plugin.json','utf8')); p.version=require('./package.json').version; require('fs').writeFileSync('.claude-plugin/plugin.json',JSON.stringify(p,null,2)+'\\n')\"",
     "test:package": "node scripts/check-package-dist.mjs",
     "pretest": "npm run build",
-    "prepack": "npm run build && npm run sync-plugin-version && npm run test:package",
+    "prepack": "npm run test && npm run sync-plugin-version && npm run test:package",
     "prepublishOnly": "npm run prepack",
     "test": "vitest run --exclude test/integration.test.ts",
     "test:integration": "vitest run test/integration.test.ts",
