@@ -22,8 +22,13 @@ detached worktree based on `origin/main`, so no working tree is touched and the
 combination is built and tested before it lands.
 
 Either way: never merge work your reviewer has not ACKed, and always merge
-`origin/main` into your branch before handing off, so what was reviewed is what
-lands.
+`origin/main` into your branch before handing off, so your reviewer reads it
+against current main rather than against a base that has moved.
+
+That merge does **not** by itself make what was reviewed what lands - it is the
+step that makes a SHA-identity check insufficient, because the branch keeps its
+ACKed tip while its contents change underneath. Before you push, follow "Before
+you push to main" in the active team instructions.
 
 A team without a coordinator self-merges everything; follow your team's explicit
 instructions rather than assuming this split is universal.
