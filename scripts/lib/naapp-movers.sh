@@ -69,7 +69,7 @@ naapp_movers() {
 # belongs to the path-source conversion task.
 naapp_parity_baselines() {
   printf '%s\n' \
-    "naapp/library|833b4de6a9e9|uv run pytest -q -m \"not e2e\"|passed=468 deselected=17" \
+    "naapp/library|833b4de6a9e9|uv run pytest -q -m \"not e2e\"|passed=471 deselected=17" \
     "naapp/folio|44e620f68425|uv run pytest -q|passed=171 skipped=16"
 }
 
