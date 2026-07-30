@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -289,6 +290,27 @@ func releaseCoordinationState(
 				Store:  storeCoordination,
 				Result: storeBlocked,
 				Detail: fmt.Sprintf("released nothing: %s", reason),
+			}, nil
+		}
+		// The server refuses an already-deleted workspace ONLY when its identity is
+		// still bound, so this establishes a BAD fact, not a neutral one. Blocked
+		// rather than unchanged: unchanged is terminal, and a terminal result here
+		// lets the revoke proceed and the command exit 0 while an identity nobody
+		// cleaned keeps working credentials. It is also exactly the released-nothing
+		// state the non-terminal branch below declines to revoke on top of.
+		if errors.Is(err, aweb.ErrWorkspaceAlreadyDeleted) {
+			return retireStoreOutcome{
+				Store:  storeCoordination,
+				Result: storeBlocked,
+				Detail: fmt.Sprintf("released nothing: workspace record for %s was already deleted and its identity was NOT cleaned; clean the identity before this retirement can be reported complete", alias),
+			}, nil
+		}
+		// Establishes nothing: not present, or not visible to this caller.
+		if errors.Is(err, aweb.ErrWorkspaceNotFound) {
+			return retireStoreOutcome{
+				Store:  storeCoordination,
+				Result: storeBlocked,
+				Detail: fmt.Sprintf("could not establish coordination state: no workspace %s is visible to this caller", matches[0].WorkspaceID),
 			}, nil
 		}
 		return retireStoreOutcome{

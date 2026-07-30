@@ -34,6 +34,10 @@ type retirementStores struct {
 	workspaceMissing bool
 	// deleteConflict serves the presence gate: a workspace seen too recently.
 	deleteConflict bool
+	// deleteAlreadyDeleted serves the server's already-deleted refusal, which is
+	// reached only when the row is deleted AND its identity is still bound - so it
+	// establishes that the identity was NOT cleaned.
+	deleteAlreadyDeleted bool
 	// certificateStatus is the wire status the hosted endpoint answers with.
 	certificateStatus string
 	// omitClaimsReleased serves a server too old to report the count.
@@ -96,6 +100,16 @@ func newRetirementStores(t *testing.T) *retirementStores {
 			_ = json.NewEncoder(w).Encode(map[string]any{"claims": claims, "has_more": s.claimsTruncated})
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/workspaces/"+s.workspaceID:
 			s.record("coordination:delete")
+			if s.deleteAlreadyDeleted {
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]any{"detail": map[string]any{
+					"code":                  "workspace_already_deleted",
+					"workspace_id":          s.workspaceID,
+					"identity_scope":        "local",
+					"recommended_next_step": "The workspace is deleted; its identity is not.",
+				}})
+				return
+			}
 			if s.deleteConflict {
 				w.WriteHeader(http.StatusConflict)
 				_ = json.NewEncoder(w).Encode(map[string]any{"detail": map[string]any{
@@ -767,5 +781,33 @@ func TestTeamRemoveAgentBinaryRefusesAForeignNamespaceBeforeDeletingAnything(t *
 	defer mu.Unlock()
 	if deleteIssued {
 		t.Fatalf("a workspace was deleted despite the named namespace not being this team's\n%s", string(out))
+	}
+}
+
+
+// The server refuses an already-deleted workspace ONLY when its identity is still
+// bound, so that 404 establishes a bad fact rather than a neutral one. A retirement
+// that reads it as convergence revokes the certificate and exits 0, leaving an
+// identity nobody cleaned and no credential able to clear the coordination state -
+// which is the very thing the non-terminal branch declines to do.
+//
+// Asserts on status and on whether the revoke happened, never on the Detail string:
+// a bad fact recorded only in prose is what this test exists to prevent.
+func TestRetireTeamAgentWillNotReportRetiredWhenTheIdentityWasNotCleaned(t *testing.T) {
+	stores := newRetirementStores(t)
+	stores.deleteAlreadyDeleted = true
+	out := stores.retire(t)
+
+	for _, call := range stores.order() {
+		if call == "certificate:revoke" {
+			t.Fatalf("revoked while the identity was still bound; calls=%v", stores.order())
+		}
+	}
+	if out.Status != retirementIncomplete {
+		t.Fatalf("status=%q, want %q - the server said the identity was not cleaned", out.Status, retirementIncomplete)
+	}
+	coordination := storeOutcome(t, out, storeCoordination)
+	if coordination.terminal() {
+		t.Fatalf("coordination=%+v, want a non-terminal result while the identity is uncleaned", coordination)
 	}
 }

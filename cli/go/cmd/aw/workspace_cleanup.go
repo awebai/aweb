@@ -97,10 +97,15 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 				g.CleanupBlocked = deleteWorkspaceErr.Error()
 			}
 		} else {
-			if deleteResp != nil {
+			// WorkspaceDeleted says this call removed the record. It is set only on a
+			// response that says so: a 404 arrives as an error above, where it is
+			// reported as blocked rather than as a removal nobody observed.
+			if deleteResp == nil {
+				g.CleanupBlocked = "delete returned no response body; the removal was not established"
+			} else {
 				g.IdentityDeleted = deleteResp.IdentityDeleted
+				g.WorkspaceDeleted = true
 			}
-			g.WorkspaceDeleted = true
 		}
 
 		deleted[ws.WorkspaceID] = true

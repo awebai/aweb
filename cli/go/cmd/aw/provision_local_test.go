@@ -98,7 +98,20 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 				t.Fatalf("workspace cleanup did not use declared authority: cert=%+v err=%v", authorityCert, err)
 			}
 			if workspaceDeleted {
-				http.NotFound(w, r)
+				// The server's real refusal for this case, not a bare 404. It is
+				// reached only inside `deleted_at is not None`, so it establishes that
+				// the row IS deleted and that the bound identity is NOT - which is why
+				// it refuses. A bare http.NotFound would let the client treat an
+				// unidentifiable 404 as this one.
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"detail": map[string]any{
+						"code":                  "workspace_already_deleted",
+						"workspace_id":          "workspace-provisioned",
+						"identity_scope":        "local",
+						"recommended_next_step": "The workspace is deleted; its identity is not.",
+					},
+				})
 				return
 			}
 			workspaceDeleted = true
@@ -365,8 +378,16 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	if err := json.Unmarshal(extractJSON(t, cleanupOutput), &cleaned); err != nil {
 		t.Fatal(err)
 	}
-	if cleaned["status"] != "complete" || cleaned["workspace"] != "soft-deleted" || cleaned["identity"] != "soft-deleted" || cleaned["certificate"] != "revoked" || cleaned["credentials"] != "physically-absent" {
+	// The reconciliation run re-deletes and is refused with "already deleted". That
+	// refusal establishes the workspace IS gone and the identity is NOT cleaned, so
+	// the tuple must say both. It used to say identity "soft-deleted" here on the
+	// strength of a hardcoded literal - the value the OAS retire flow verifies
+	// against, which is why an unobserved field in this tuple is not a log-line bug.
+	if cleaned["status"] != "complete" || cleaned["workspace"] != "soft-deleted" || cleaned["certificate"] != "revoked" || cleaned["credentials"] != "physically-absent" {
 		t.Fatalf("cleanup=%v", cleaned)
+	}
+	if cleaned["identity"] != "not-deleted" {
+		t.Fatalf("the server refused because the identity was still bound; tuple says identity=%v\ncleanup=%v", cleaned["identity"], cleaned)
 	}
 	_, _, _, _, _, certificateWasRevoked, deleteCalls := snapshot()
 	if deleteCalls != 2 || !certificateWasRevoked {

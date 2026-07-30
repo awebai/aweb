@@ -2908,3 +2908,110 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
         conversation_id,
     )
     assert (stored["n"] > 0) is expect_delivered, f"{case}: message rows disagree with the verdict"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "aweb-aaqv: chat_send drops did_aw on the trusted-proxy path "
+        "(mcp/tools/chat.py:379, :659), so the gate at :255-266 cannot match a "
+        "participant row keyed by the caller's own did:aw. Fix is HELD pending Juan's "
+        "ruling - it changes an authorization predicate. strict=True so that fixing it "
+        "reds this as an unexpected pass and forces the marker out."
+    ),
+)
+@pytest.mark.asyncio
+async def test_mcp_chat_send_accepts_a_participant_row_keyed_by_the_callers_did_aw(
+    aweb_cloud_db, monkeypatch
+):
+    """A global agent's two DIDs are one principal; the send gate must accept either.
+
+    Per docs/aweb-sot.md a global identity holds BOTH did:key and did:aw. chat_history
+    and chat_read already accept a participant row keyed by either - see
+    test_mcp_chat_history_and_read_accept_alternate_session_participant_did. chat_send
+    does not, on the trusted-proxy path only: mcp/tools/chat.py:379 drops did_aw and
+    :659 passes the single remaining did_key to the exact-match gate at :255-266.
+
+    This test is test_mcp_chat_send_existing_session_uses_hosted_signer with exactly one
+    variable changed - the participant row is keyed by alice's did:aw rather than her
+    did:key. Same agent, same auth context, same call.
+    """
+    team_id = "ops:acme.com"
+    alice_agent_id = uuid4()
+    workspace_id = uuid4()
+    bob_agent_id = uuid4()
+    session_id = uuid4()
+    alice_sk, alice_pub = generate_keypair()
+    alice_did = did_from_public_key(alice_pub)
+    alice_did_aw = "did:aw:alice"
+    await _insert_mcp_chat_agents(
+        aweb_cloud_db.aweb_db,
+        team_id=team_id,
+        alice_agent_id=alice_agent_id,
+        bob_agent_id=bob_agent_id,
+        alice_did=alice_did,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, $2, 'alice')
+        """,
+        session_id,
+        team_id,
+    )
+    # The only difference from the control: alice's row is keyed by her did:aw.
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
+        VALUES
+            ($1, $2, $3, 'alice'),
+            ($1, 'did:key:z6MkBob', $4, 'bob')
+        """,
+        session_id,
+        alice_did_aw,
+        alice_agent_id,
+        bob_agent_id,
+    )
+
+    monkeypatch.setattr(
+        chat_tools,
+        "get_auth",
+        lambda: AuthContext(
+            team_id=team_id,
+            agent_id=str(alice_agent_id),
+            workspace_id=str(workspace_id),
+            alias="alice",
+            did_key=alice_did,
+            did_aw=alice_did_aw,
+            address="acme.com/alice",
+            trusted_proxy=True,
+        ),
+    )
+
+    async def _signer(**kwargs) -> dict:
+        signed_payload = canonical_signed_payload(kwargs["payload"])
+        return {
+            "from_did": alice_did,
+            "signature": sign_message(alice_sk, signed_payload.encode("utf-8")),
+            "signed_payload": signed_payload,
+        }
+
+    result = json.loads(
+        await chat_tools.chat_send(
+            DBInfra(aweb_cloud_db.aweb_db),
+            None,
+            registry_client=None,
+            hosted_signer=_signer,
+            session_id=str(session_id),
+            message="did:aw-keyed participant",
+            wait=True,
+            wait_seconds=7,
+            hang_on=True,
+            plaintext=True,
+        )
+    )
+
+    assert result.get("error") != "Not a participant in this session", (
+        "the caller's own did:aw participant row was rejected on the trusted-proxy path"
+    )
+    assert result["delivered"] is True

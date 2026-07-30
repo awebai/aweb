@@ -13,6 +13,7 @@ import {
   validateBindingReceipt,
   validateBindingSettings,
 } from "../lib/binding-policy.mjs";
+import { parseLocalCleanupOutput } from "../lib/local-cleanup-tuple.mjs";
 import { localControllerMintingAuthorityReceipt } from "../lib/provisioning-authority.mjs";
 import {
   createProvisionIntent,
@@ -960,26 +961,6 @@ function attach(binding, verifiedPrincipal = null) {
   });
 }
 
-function parseLocalCleanupOutput(stdout, operationID) {
-  let result;
-  try {
-    result = JSON.parse(stdout);
-  } catch {
-    throw new Error("aw id team cleanup-local-provision returned invalid JSON");
-  }
-  if (!exactFields(result, ["status", "operation_id", "grants", "workspace", "identity", "certificate", "credentials", "audit"])
-      || result.status !== "complete"
-      || result.operation_id !== operationID
-      || result.grants !== "physically-absent"
-      || result.workspace !== "soft-deleted"
-      || result.identity !== "soft-deleted"
-      || result.certificate !== "revoked"
-      || result.credentials !== "physically-absent"
-      || result.audit !== "intentionally-retained-operation-record") {
-    throw new Error("aw id team cleanup-local-provision returned a contradictory cleanup tuple");
-  }
-  return result;
-}
 
 function executeLocalCleanup(receipt, instanceID) {
   const principalHome = resolvePrincipalHome();
