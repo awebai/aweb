@@ -259,6 +259,20 @@ class ReleaseGateContractTests(unittest.TestCase):
                 # asserted below is the committed Makefile's rather than one
                 # bent by how the caller happened to invoke `make test` -
                 # command-line variable overrides propagate through MAKEFLAGS.
+                #
+                # --dry-run DOES NOT MEAN NOTHING RUNS. make executes two things
+                # regardless of -n: a recipe line containing $(MAKE), and every
+                # $(shell ...) in a := assignment, which is evaluated when the
+                # Makefile is PARSED. This test is safe today because the gate
+                # targets' recipes contain no $(MAKE) - they are rm -rf, uv build
+                # and test -f, which -n prints - and because the four := $(shell)
+                # assignments only read files (two sed, two node -p). CLI_VERSION
+                # calls a script but is recursive (=), so it expands only where it
+                # is used.
+                #
+                # ADDING A $(MAKE) LINE TO A GATE TARGET WOULD MAKE THIS TEST RUN
+                # IT. That is the condition to preserve; the flag's name will not
+                # warn you. aweb-aaxk.
                 env = {
                     key: value
                     for key, value in os.environ.items()
