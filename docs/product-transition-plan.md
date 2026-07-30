@@ -8,7 +8,10 @@ continue to govern shipped behavior until reviewed changes replace that
 behavior.
 
 Owner: Juan (product direction), with one cross-repository coordinator for
-execution across `aweb`, `ac`, and OAS.
+execution across the `aweb` and `ac` repositories.
+
+Repository scope: exactly two repositories, `aweb` and `ac`. OAS is the
+reference orchestrator within `aweb`, not a third repository.
 
 ## Direction being established
 
