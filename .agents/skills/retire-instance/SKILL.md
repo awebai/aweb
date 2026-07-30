@@ -197,7 +197,17 @@ independently.
   path from the CLI to a hosted local agent's certificate state (aweb-aaum.9).
   Run it against a live agent once and you will see why: without that control,
   `unknown` on a retired agent looks like evidence of revocation and is evidence
-  of nothing. What it *can* confirm is the workspace and claims halves, which
+  of nothing.
+
+  **The command is not silent about this** — it reports the gap alongside the
+  value: *"a hosted team's local agents hold cloud certificates that the registry
+  never sees, so the registry not knowing X establishes nothing about whether it
+  holds one"* (`team_agent_status.go`, in its `Unreadable` output). So the tool
+  agrees with the limitation; what it cannot do is tell a live agent from a
+  retired one. If you are running it to check this, confirm your binary has the
+  verb first — see the availability check above, because an installation without
+  it prints the parent help and **exits 0**, which reads as "the command was
+  removed" rather than "my binary is old". What it *can* confirm is the workspace and claims halves, which
   are the parts that really did happen.
 
 On a customer-controlled team, retiring a name that no longer resolves is
