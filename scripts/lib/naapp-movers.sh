@@ -53,7 +53,7 @@ naapp_movers() {
 naapp_parity_baselines() {
   printf '%s\n' \
     "naapp/library|833b4de6a9e9|uv run pytest -q -m \"not e2e\"|passed=468 deselected=17" \
-    "naapp/folio|aaa15cd7dceb|uv run pytest -q|passed=165 skipped=16"
+    "naapp/folio|a888fa20e2b9|uv run pytest -q|passed=168 skipped=16"
 }
 
 # Every mover must exist, carry the ref being moved, and not carry export-ignore.
