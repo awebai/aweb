@@ -513,6 +513,11 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 	if !strings.Contains(string(out), "Sent mail in conversation "+conversationID) {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
+	// aweb-aauz: the id line alone reads as delivered-and-verified. The boundary
+	// notice must reach real command output, not merely exist as a string.
+	if !strings.Contains(string(out), "Acceptance is not delivery") {
+		t.Fatalf("send output omits the boundary notice, so exit 0 still reads as delivery:\n%s", string(out))
+	}
 	if got.ConversationID != conversationID {
 		t.Fatalf("conversation_id=%q, want %q", got.ConversationID, conversationID)
 	}
@@ -1597,5 +1602,39 @@ func TestMailAndChatDefaultPlaintextAndE2EEOptInFailsClosed(t *testing.T) {
 				t.Fatalf("expected explicit E2E recipient-key error, got:\n%s", string(out))
 			}
 		})
+	}
+}
+
+// The send path reports that the server accepted a message. It cannot report
+// delivery, presentation, or any recipient's trust verdict: the first two are
+// not returned to a sender, and the third is computed per-recipient-machine
+// against a local pin store the sender cannot see (aweb-aauz).
+//
+// So the notice is a statement of LIMITS, not a warning. At send time nothing
+// is known to be wrong, and an alert would imply knowledge we do not have.
+func TestMailSendBoundaryNoticeStatesWhatAcceptanceDoesNotEstablish(t *testing.T) {
+	notice := mailSendBoundaryNotice()
+
+	if strings.TrimSpace(notice) == "" {
+		t.Fatal("boundary notice is empty; acceptance by the server would read as delivery")
+	}
+
+	// Each clause the sender must not infer from exit 0.
+	for _, want := range []string{"deliver", "present", "trust"} {
+		if !strings.Contains(strings.ToLower(notice), want) {
+			t.Errorf("notice does not mention %q, so a reader cannot tell that acceptance excludes it:\n%s", want, notice)
+		}
+	}
+
+	// It must attribute what IS established to the server, or "accepted" is unanchored.
+	if !strings.Contains(strings.ToLower(notice), "server") {
+		t.Errorf("notice does not say WHO accepted the message:\n%s", notice)
+	}
+
+	// A statement of limits, not an alert. Alarm words imply a detected problem.
+	for _, banned := range []string{"warning", "error", "failed", "problem"} {
+		if strings.Contains(strings.ToLower(notice), banned) {
+			t.Errorf("notice uses alarm word %q; at send time nothing is known to be wrong:\n%s", banned, notice)
+		}
 	}
 }
