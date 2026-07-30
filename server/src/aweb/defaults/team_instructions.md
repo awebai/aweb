@@ -52,6 +52,7 @@ That works because the corruption and its evidence are the same characters. Note
 the asymmetry: a zero is only meaningful if you *meant* to write backticks — for a
 file that never had any, "none present" cannot distinguish "I wrote none" from
 "the shell ate them", and that absence is not recoverable afterwards.
+
 ## Mail
 
 ```bash
