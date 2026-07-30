@@ -223,6 +223,55 @@ func assertHomeCarriesShelfProfile(t *testing.T, home, shelfDigest string) {
 	}
 }
 
+// Describe carries two acceptance criteria - the output states which source was used
+// with version and digest, and no line claims something that did not happen - so it
+// needs assertions of its own rather than being covered incidentally by whatever
+// output line eventually calls it.
+func TestDescribeReportsOnlyWhatTheSourceHasRead(t *testing.T) {
+	selector := libraryProfileSelector{
+		LibraryURL: "https://library.example", SourceBlueprintRef: "aweb.team",
+		ProfileRef: "coordinator",
+	}
+
+	shelf := teamProfileSource{FromShelf: true, Shelf: &libraryShelfProfileResponse{
+		ProfileRef: "coordinator", Version: "0.1.11", Digest: "sha256:abc123",
+		SourceBlueprintRef: "aweb.team",
+	}}
+	got := shelf.Describe(selector)
+	for _, want := range []string{"team shelf", "coordinator", "0.1.11", "sha256:abc123", "aweb.team"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("shelf description omits %q, which an acceptance criterion requires: %q", want, got)
+		}
+	}
+
+	unknown := teamProfileSource{FromShelf: true, LineageUnknown: true, Shelf: &libraryShelfProfileResponse{
+		ProfileRef: "coordinator", Version: "0.1.11", Digest: "sha256:abc123",
+	}}
+	if !strings.Contains(unknown.Describe(selector), "no recorded source blueprint") {
+		t.Fatalf("an absent lineage must be stated rather than left blank: %q", unknown.Describe(selector))
+	}
+
+	// The public branch holds no payload - the public profile is not fetched until
+	// materialization - so it must not report a version or digest at all. "latest" was
+	// there and was removed: it asserted a property of a profile nothing had read, in a
+	// change whose subject is exactly that.
+	public := teamProfileSource{}
+	got = public.Describe(selector)
+	if !strings.Contains(got, "public catalog") || !strings.Contains(got, "coordinator") {
+		t.Fatalf("public description must state the source and the ref: %q", got)
+	}
+	for _, forbidden := range []string{"latest", "0.1.11", "sha256:"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("public description claims %q, which nothing has read: %q", forbidden, got)
+		}
+	}
+
+	// FromShelf set without a payload is a caller error, not a panic.
+	if broken := (teamProfileSource{FromShelf: true}).Describe(selector); !strings.Contains(broken, "public catalog") {
+		t.Fatalf("a shelf source with no payload must degrade rather than dereference nil: %q", broken)
+	}
+}
+
 // Criterion 2: absence falls back to public, and the shelf must actually have been
 // asked. A fixture where the shelf is never queried cannot fail.
 func TestShelfProfileAbsenceFallsBackToPublic(t *testing.T) {
