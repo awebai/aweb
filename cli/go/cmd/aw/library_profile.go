@@ -299,17 +299,6 @@ func applyPublicLibraryProfileToHome(homeDir string, selector libraryProfileSele
 	return materialized, materialized.FilesWritten, nil
 }
 
-func applyPublicLibraryProfileToHomeAndConfigure(homeDir string, selector libraryProfileSelector, force bool) (*blueprint.MaterializeResult, []string, error) {
-	materialized, written, err := applyPublicLibraryProfileToHome(homeDir, selector, force)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := configureMaterializedAgentHome(homeDir); err != nil {
-		return nil, nil, err
-	}
-	return materialized, written, nil
-}
-
 func applyLocalBlueprintProfileToHome(homeDir string, selector libraryProfileSelector, sourceDir string, force bool) (*blueprint.MaterializeResult, []string, error) {
 	if strings.TrimSpace(sourceDir) == "" {
 		return nil, nil, fmt.Errorf("local blueprint source is required")

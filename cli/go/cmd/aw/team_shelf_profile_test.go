@@ -190,7 +190,7 @@ func TestShelfProfileResolutionMaterializesShelfBytes(t *testing.T) {
 		t.Fatalf("explicit-scope shelf resolution fetched the public catalog %d times, want 0", stub.PublicGets)
 	}
 
-	if _, _, err := applyTeamLibraryProfileToHome(home, selector, resolved, true); err != nil {
+	if _, _, err := applyTeamLibraryProfileToHome(home, selector, &resolved, true); err != nil {
 		t.Fatalf("applyTeamLibraryProfileToHome: %v", err)
 	}
 	assertHomeCarriesShelfProfile(t, home, stub.Digest)
@@ -447,7 +447,7 @@ func TestShelfSourcedHomeStaysOnShelfAfterRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveTeamProfileSource: %v", err)
 	}
-	if _, _, err := applyTeamLibraryProfileToHome(home, selector, resolved, true); err != nil {
+	if _, _, err := applyTeamLibraryProfileToHome(home, selector, &resolved, true); err != nil {
 		t.Fatalf("applyTeamLibraryProfileToHome: %v", err)
 	}
 	assertHomeCarriesShelfProfile(t, home, stub.Digest)

@@ -157,11 +157,52 @@ func lookupTeamShelfProfile(teamAuthorityDir, profileRef string) (*libraryShelfP
 	return shelf, shelfProfileFound, nil
 }
 
+// resolveTeamProfileSourcesForPlans resolves where every plan's profile comes from
+// BEFORE any home is created, so a roster either knows the source of all of them or
+// fails having written nothing. The target homes do not exist yet at this point,
+// which is why the read is authorized from teamAuthorityDir instead.
+//
+// Each role is resolved ONCE and the payload carried forward. Resolving again at
+// materialization would reopen the window teamProfileSource exists to close: an
+// approved proposal can mint a new version between the check and the write, so the
+// bytes that were inspected need not be the bytes that land.
+//
+// Plans materializing from a local blueprint directory are skipped: their bytes come
+// from disk and there is no shelf in the question.
+func resolveTeamProfileSourcesForPlans(teamAuthorityDir string, plans []teamHumanAddedAgent) error {
+	// One role can appear on several plans, and the shelf answers the same for each.
+	resolved := map[string]teamProfileSource{}
+	for i := range plans {
+		if plans[i].Profile == nil || strings.TrimSpace(plans[i].LocalBlueprintDir) != "" {
+			continue
+		}
+		key := strings.TrimSpace(plans[i].Profile.ProfileRef) + "\x00" + strings.TrimSpace(plans[i].Profile.SourceBlueprintRef)
+		source, ok := resolved[key]
+		if !ok {
+			var err error
+			source, err = resolveTeamProfileSource(teamAuthorityDir, *plans[i].Profile)
+			if err != nil {
+				return fmt.Errorf("resolve profile source for %s: %w", strings.TrimSpace(plans[i].Name), err)
+			}
+			resolved[key] = source
+		}
+		plans[i].Source = &source
+		plans[i].ProfileSource = source.Describe(*plans[i].Profile)
+	}
+	return nil
+}
+
 // applyTeamLibraryProfileToHome materializes whichever source was resolved. The
 // shelf branch records NO library_url on purpose: refreshLibraryProfileInHome
 // branches on that field alone, so recording it would make this home correct exactly
 // once and send its next refresh back to the public catalog.
-func applyTeamLibraryProfileToHome(homeDir string, selector libraryProfileSelector, source teamProfileSource, force bool) (*blueprint.MaterializeResult, []string, error) {
+func applyTeamLibraryProfileToHome(homeDir string, selector libraryProfileSelector, source *teamProfileSource, force bool) (*blueprint.MaterializeResult, []string, error) {
+	// An unresolved source is a wiring mistake, not a public profile. Defaulting it
+	// would make a call site that skipped the preflight materialize stock bytes and
+	// report success - the exact failure this change exists to remove.
+	if source == nil {
+		return nil, nil, fmt.Errorf("internal: the profile source for %s was not resolved before materialization", homeDir)
+	}
 	if !source.FromShelf {
 		return applyPublicLibraryProfileToHome(homeDir, selector, force)
 	}

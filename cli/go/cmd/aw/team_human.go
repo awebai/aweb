@@ -430,6 +430,9 @@ type teamHumanCreateOutput struct {
 	NoLibrary    bool   `json:"no_library"`
 	NoProfile    bool   `json:"no_profile"`
 	IdentityOnly bool   `json:"identity_only"`
+	// ProfileSource states where the materialized profile came from, built from
+	// teamProfileSource.Describe.
+	ProfileSource string `json:"profile_source,omitempty"`
 }
 
 type teamHumanCreateFoundingResult struct {
@@ -653,8 +656,26 @@ func finishTeamHumanCreateFounding(result teamHumanCreateFoundingResult, rosterS
 			if err := configureMaterializedAgentHome(result.HomeDir); err != nil {
 				return err
 			}
-		} else if _, _, err := applyPublicLibraryProfileToHomeAndConfigure(result.HomeDir, *result.Selector, true); err != nil {
-			return err
+		} else {
+			// The founding home already carries the team credential by this point, so
+			// it is what authorizes the shelf read.
+			source, err := resolveTeamProfileSource(result.HomeDir, *result.Selector)
+			if err != nil {
+				return err
+			}
+			if _, _, err := applyTeamLibraryProfileToHome(result.HomeDir, *result.Selector, &source, true); err != nil {
+				return err
+			}
+			// Configure explicitly rather than through the AndConfigure wrapper: the two
+			// materialize sites call it with DIFFERENT arguments - the roster path passes
+			// a target identity home, this one does not - and folding that into one helper
+			// would hide the asymmetry behind a parameter that exists only to carry it.
+			if err := configureMaterializedAgentHome(result.HomeDir); err != nil {
+				return err
+			}
+			if result.HumanOutput != nil {
+				result.HumanOutput.ProfileSource = source.Describe(*result.Selector)
+			}
 		}
 		if result.HumanOutput != nil {
 			result.HumanOutput.ProfileMode = "library"
@@ -1043,7 +1064,14 @@ func formatTeamHumanCreate(v any) string {
 		fmt.Fprintf(&b, "Agent home: %s\n", out.HomeDir)
 	}
 	if out.ProfileMode == "library" {
-		b.WriteString("Library profile adopted and materialized.\n")
+		// Name the source rather than asserting a bare success: "adopted and
+		// materialized" is true of a team's own shelf profile and of the stock catalog
+		// copy alike, so on its own it cannot tell a reader which one landed.
+		if src := strings.TrimSpace(out.ProfileSource); src != "" {
+			fmt.Fprintf(&b, "Library profile materialized from %s\n", src)
+		} else {
+			b.WriteString("Library profile adopted and materialized.\n")
+		}
 	} else {
 		b.WriteString("No Library profile was adopted; no profile home was materialized.\n")
 	}
@@ -1074,6 +1102,12 @@ type teamHumanAddedAgent struct {
 	ProfileMode       string                  `json:"profile_mode"`
 	Profile           *libraryProfileSelector `json:"-"`
 	LocalBlueprintDir string                  `json:"-"`
+	// Source is resolved in preflight and carried to materialization, so the bytes
+	// that were inspected are the bytes that land. Nil until the preflight runs.
+	Source *teamProfileSource `json:"-"`
+	// ProfileSource states where this agent's profile came from, built from
+	// Source.Describe so the reported line and the resolution cannot drift apart.
+	ProfileSource string `json:"profile_source,omitempty"`
 	Scope             string                  `json:"scope,omitempty"`
 	Alias             string                  `json:"alias,omitempty"`
 	TeamID            string                  `json:"team_id,omitempty"`
@@ -1442,6 +1476,13 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	if err := preflightTeamHumanAddRosterAuthority(inviteAnchorDir, plans, apiKeyBootstrapMode, opts); err != nil {
 		return err
 	}
+	// Resolve where each profile comes from before any home is created, so a shelf
+	// that cannot be read fails the roster rather than half-building it from stock
+	// bytes. Authorized from the anchor, which holds the team credential - the target
+	// homes do not exist until the loop below.
+	if err := resolveTeamProfileSourcesForPlans(inviteAnchorDir, plans); err != nil {
+		return err
+	}
 	noLibrary, noProfile := teamHumanAddProfileModes(plans)
 	createdTeamID := ""
 	reportRosterFailure := func(failedIndex int, failure error) error {
@@ -1524,7 +1565,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 				if _, _, err := applyLocalBlueprintProfileToHome(plans[i].HomeDir, *plans[i].Profile, plans[i].LocalBlueprintDir, true); err != nil {
 					return reportRosterFailure(i, rollbackOnErr(err))
 				}
-			} else if _, _, err := applyPublicLibraryProfileToHome(plans[i].HomeDir, *plans[i].Profile, true); err != nil {
+			} else if _, _, err := applyTeamLibraryProfileToHome(plans[i].HomeDir, *plans[i].Profile, plans[i].Source, true); err != nil {
 				return reportRosterFailure(i, rollbackOnErr(err))
 			}
 			if !plans[i].Connected {
@@ -2312,11 +2353,15 @@ func formatTeamHumanAdd(v any) string {
 	}
 	for _, agent := range out.Agents {
 		fmt.Fprintf(&b, "- %s: %s\n", agent.Name, agent.HomeDir)
+		// Per agent, because a roster can draw different roles from different sources -
+		// one role on the team's shelf, another only in the public catalog - and a
+		// single summary line at the end cannot say which was which.
+		if src := strings.TrimSpace(agent.ProfileSource); src != "" {
+			fmt.Fprintf(&b, "    profile from %s\n", src)
+		}
 	}
 	if out.NoLibrary {
 		b.WriteString("No Library profile was adopted; no profile home was materialized.\n")
-	} else {
-		b.WriteString("Library profile(s) adopted and materialized.\n")
 	}
 	return b.String()
 }
