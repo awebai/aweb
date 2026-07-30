@@ -27,6 +27,11 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#aw-v}" >> "$GITHUB_OUTPUT"
 
+      # Before the push, not after: a stamp that names the wrong repository would ship a
+      # binary whose commit resolves nowhere a reader looks, and the build would succeed.
+      - name: Check the version stamp names the repository this pushes to
+        run: ./scripts/check-aw-commit-repo-stamp.sh
+
       - name: Push cli/go to awebai/aw
         env:
           AW_REPO_TOKEN: ${{ secrets.AW_REPO_TOKEN }}

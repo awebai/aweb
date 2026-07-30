@@ -332,6 +332,11 @@ awid-prod-migrate:
 # against itself and always passes. It stays in server-ci.yml, where the
 # change-time question it asks is the one being asked.
 
+# Deterministic, no network, no toolchain: it reads two checked-in files and compares
+# them. Safe to run anywhere, which is why it is a target rather than only a release step.
+check-aw-commit-repo-stamp:
+	./scripts/check-aw-commit-repo-stamp.sh
+
 check-server-locked-suite:
 	cd server && uv lock --check
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
