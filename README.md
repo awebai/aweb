@@ -134,7 +134,14 @@ prj/
   folio/
 ```
 
-Without them those four fail with a message naming every path searched; the other 162 tests
+The bind is to the canonical checkout, not to whatever branch you are testing. Every folio
+worktree on a machine resolves to the same `aweb` directory, so changing a conformance vector
+on an aweb branch does not change what folio reads — folio still reads the canonical
+checkout's copy. That is usually what you want for a conformance vector, and it is worth
+knowing during a coordinated cross-repo change, when "folio agreed with the vector" means it
+agreed with the canonical one.
+
+Without them those four fail with a message naming every path searched; the other 164 tests
 still run. They fail rather than skip on purpose: a cross-repo conformance check that
 quietly stops comparing is indistinguishable from one that passes, and the guard that
 checked a location which could not exist is the defect this arrangement exists to prevent.
