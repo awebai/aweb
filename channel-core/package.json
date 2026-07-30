@@ -10,7 +10,6 @@
     "README.md",
     "package.json"
   ],
-  "//vitest-guard": "test/*.recovered files are preserved probe evidence, kept out of the suite ONLY by vitest's default include (**/*.test.ts) applying - this package has no vitest config. Adding one, or a vitest key here, can make them collectible again. See server/tests/RECOVERED-PROBES.md first.",
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
     "pretest": "npm run build",
