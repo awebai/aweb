@@ -58,6 +58,33 @@ naapp_movers() {
 # So a divergence here now means "this tree changed", not "the move lost something", and
 # whoever changes a mover's tests is the one who updates its row.
 #
+# THESE NUMBERS ARE INHERENTLY PERISHABLE AND UPDATING ONE IS A STOPGAP, NOT A FIX. An
+# absolute count against a tree that is still being worked on goes stale on any legitimate
+# test addition. The library row went stale within hours of the move, from ordinary work by
+# two people, and it will do so again. Bumping it clears a false red, which is a real job -
+# but it is a different job from making the check correct, and it must not be mistaken for
+# one.
+#
+# Two hazards follow, and both are easy to walk into while doing the obviously-right thing:
+#
+#   RE-BASELINING TO THE MEASURED VALUE IS SELF-CONFIRMING. Writing down whatever the run
+#   just reported makes the row assert that the tree is what it was last observed to be,
+#   which is not a property and cannot fail for the reason the row exists. A row is evidence
+#   only when the expected value is derived independently of the run being checked - from a
+#   diff, from a count of added tests - and not from the failing output.
+#
+#   A COUNT ABSORBS OFFSETTING CHANGES. Remove three tests and add three and the row stays
+#   green through a real deletion. This has already happened here: one commit removed an
+#   assertion and added four, and only the net reached the number, so the removal was
+#   invisible to this table.
+#
+# A count also cannot answer whether a moved subtree has DIVERGED FROM ITS SOURCE, which is
+# a different question from whether it changed. Blob shas are content-addressed and compare
+# directly across repositories, so that question is answered by a tree diff against the
+# sibling remote at its current head - not by this table, and not by tree equality against a
+# frozen merge parent, which cannot fail. Whether anything needs to answer it is open on
+# aweb-aauv.4.
+#
 # ONE CONSEQUENCE FOR THE SECOND FIELD: it is now PROVENANCE, not a binding. It records the
 # commit the pre-move verification was taken at, and assert_baseline_ref still checks the
 # mover carries it - but passing that check no longer says anything about whether the tally
