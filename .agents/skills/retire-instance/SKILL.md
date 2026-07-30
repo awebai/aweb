@@ -101,8 +101,9 @@ independently.
   certificate part rests on the hosted service reporting it had nothing to
   revoke. That is not the same as knowing no certificate exists: the hosted
   service answers from its own membership records and may never consult the
-  registry. Run `aw team agent-status` to establish the real state; it reads
-  the registry.
+  registry. Establishing the real state needs a read against the registry
+  itself — `aw id team` inspection rather than the hosted answer, since no
+  `aw team agent-status` verb exists to do it for you.
 
 On a customer-controlled team, retiring a name that no longer resolves is
 an error rather than a no-op, so re-running a completed retirement by name
