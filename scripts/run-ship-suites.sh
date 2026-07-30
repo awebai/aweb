@@ -23,6 +23,11 @@
 # a 120-minute timeout with cancel-in-progress, so being killed part-way is a
 # normal outcome and needs to be legible.
 #
+# That covers a graceful cancellation. SIGKILL runs no trap, so a hard kill - where
+# a timeout or a cancellation ends up after its grace period - prints no summary at
+# all. The exposure is bounded rather than closed: a hard-killed run is not green,
+# so the CI conclusion still carries what the summary would have said.
+#
 # Usage: run-ship-suites.sh <make-target>...
 #        MAKE=... to override the make used for each suite (the self-test does).
 #
@@ -38,7 +43,11 @@ STATE=""
 
 # Written before any suite starts, so the summary can name suites that never ran.
 init_state() {
-  STATE="$(mktemp)"
+  STATE="$(mktemp)" || STATE=""
+  if [[ -z "$STATE" || ! -f "$STATE" ]]; then
+    printf 'FAIL: could not create the suite state file, so which suites ran could not be tracked\n' >&2
+    return 1
+  fi
   local suite
   for suite in "$@"; do
     printf '%s\tNOT RUN\n' "$suite" >> "$STATE"
@@ -47,6 +56,11 @@ init_state() {
 
 record() {
   local suite="$1" result="$2" tmp
+  # An empty $STATE would make awk below read stdin and block rather than fail.
+  if [[ -z "$STATE" || ! -f "$STATE" ]]; then
+    printf 'FAIL: suite state vanished mid-run; results cannot be recorded\n' >&2
+    exit 1
+  fi
   tmp="$(mktemp)"
   awk -F'\t' -v s="$suite" -v r="$result" \
     'BEGIN { OFS="\t" } $1 == s { $2 = r } { print }' "$STATE" > "$tmp"
@@ -54,7 +68,18 @@ record() {
 }
 
 summarize() {
-  [[ -n "$STATE" && -f "$STATE" ]] || return 0
+  # Criterion 3's whole deliverable is this summary, so losing it must complain
+  # rather than produce nothing. Reachable only through an mktemp failure, but a
+  # silent skip in a reporting path is what makes a partial run look like a full one.
+  #
+  # exit rather than return: this runs from the EXIT trap, and a trap's return value
+  # does not set the script's exit status - measured, `return 1` here leaves a run
+  # that printed FAIL exiting 0, which is the same defect one level down. `exit`
+  # inside an EXIT trap overrides the status without re-entering the trap.
+  if [[ -z "$STATE" || ! -f "$STATE" ]]; then
+    printf '\nFAIL: no suite state was recorded, so which suites ran cannot be reported\n' >&2
+    exit 1
+  fi
   printf '\n=== ship suites: which ran and what they reported ===\n'
   local suite result failed=0 notrun=0
   while IFS=$'\t' read -r suite result; do
@@ -71,7 +96,7 @@ summarize() {
 
 run_suites() {
   local suite status overall=0
-  init_state "$@"
+  init_state "$@" || return 1
   # The summary must appear even when this script is killed part-way, which is
   # what a CI timeout or a concurrency cancellation looks like.
   trap summarize EXIT
@@ -214,7 +239,33 @@ STUB
   fi
   printf '  ok   an interrupted run reports suite-a PASSED and suite-c NOT RUN, and says it is not full evidence\n'
 
-  echo "self-test passed: a failure does not stop the others, the aggregate stays red, an unreached suite reads as NOT RUN"
+  # The summary is criterion 3's deliverable, so losing it must be red rather than
+  # quiet. My first attempt at that guard used `return 1` from the EXIT trap, which
+  # printed FAIL and exited 0 - the same shape as the defect this runner exists to
+  # remove, one level down. So this arm asserts the status, not the text.
+  echo "self-test: losing the suite state must be red, not a missing summary"
+  local probe="$work/no-state.sh"
+  sed 's|^  STATE="\$(mktemp)" \|\| STATE=""|  STATE=""|' "${BASH_SOURCE[0]}" > "$probe"
+  if ! grep -Fq '  STATE=""' "$probe"; then
+    printf 'FAIL: the no-state probe did not apply, so this arm never reached the state it tests\n' >&2
+    return 1
+  fi
+  out="$(MAKE="$stub" bash "$probe" suite-a 2>&1)" && status=0 || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    printf 'FAIL: a run that could not report which suites ran still exited 0\n' >&2
+    printf -- '--- the run being judged ---\n%s\n' "$out" >&2
+    return 1
+  fi
+  # Either guard may catch it - init_state at creation, or summarize as a backstop -
+  # so the arm asserts the property rather than which one fired.
+  if ! grep -q 'suite state' <<< "$out"; then
+    printf 'FAIL: the run was red but did not say the suite state was lost\n' >&2
+    printf -- '--- the run being judged ---\n%s\n' "$out" >&2
+    return 1
+  fi
+  printf '  ok   a lost summary is red and says so, rather than printing nothing\n'
+
+  echo "self-test passed: a failure does not stop the others, the aggregate stays red, an unreached suite reads as NOT RUN, a lost summary is red"
 }
 
 if [[ "${1:-}" == "--self-test" ]]; then

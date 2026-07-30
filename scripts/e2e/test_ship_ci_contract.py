@@ -181,6 +181,7 @@ class ShipCIContractTests(unittest.TestCase):
         "suite-b failed, suite-c still ran",
         "an unlaunchable suite reports FAILED and the run is red",
         "an interrupted run reports suite-a PASSED and suite-c NOT RUN",
+        "a lost summary is red and says so",
     )
 
     def run_runner_self_test(self, runner: Path) -> subprocess.CompletedProcess[str]:
