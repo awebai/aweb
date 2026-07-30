@@ -94,6 +94,13 @@ def _tracked(paths: set[Path], root: Path, cwd: Path) -> set[Path]:
     be assumed. Since the tests no longer ship in the sdist, no legitimate caller
     runs them outside a repository.
     """
+    # With no pathspec, git ls-files lists every tracked file in the repository.
+    # Nothing downstream would be wrong - an empty collection has nothing to refuse
+    # - but the listing is wasted, and returning early says so rather than relying
+    # on the caller never asking.
+    if not paths:
+        return set()
+
     # Both flags are load-bearing, and both fail toward a refusal of the whole
     # suite rather than toward a pass:
     #
@@ -106,6 +113,12 @@ def _tracked(paths: set[Path], root: Path, cwd: Path) -> set[Path]:
     # C string - "test_caf\303\251.py" for test_café.py. That does not
     # string-match the collected path, so without -z any tracked file with a
     # non-ASCII name reads as untracked.
+    #
+    # Every collected path is passed as an argument, so this scales with the size
+    # of the suite. A suite large enough to exceed ARG_MAX would raise OSError,
+    # which is treated as git being unable to answer and refuses the run - the
+    # right direction, but the message would blame git rather than the argument
+    # list. Batch the call if that ever happens.
     try:
         listed = subprocess.run(
             ["git", "ls-files", "-z", "--full-name", "--", *[str(p) for p in sorted(paths)]],
