@@ -104,7 +104,17 @@ type certificateRevokeRequest struct {
 
 type certificateListResponse struct {
 	Certificates []RegistryCertificate `json:"certificates"`
+	HasMore      bool                  `json:"has_more"`
+	NextCursor   string                `json:"next_cursor,omitempty"`
 }
+
+// certificateListPageLimit is the registry's MAX_LIMIT, the largest page it will
+// serve. certificateListPageCap bounds the walk so a registry that never stops
+// reporting more pages cannot spin here forever.
+const (
+	certificateListPageLimit = 200
+	certificateListPageCap   = 500
+)
 
 // CreateTeam registers a team under a namespace at awid.
 // Auth: namespace controller DIDKey signature.
@@ -366,7 +376,10 @@ func (c *RegistryClient) FetchTeamCertificate(
 	return cert, nil
 }
 
-// ListCertificates lists certificates for a team.
+// ListCertificates lists every certificate for a team, following the registry's
+// pagination to the end. Callers read the result as a complete roster, so a
+// listing that cannot be completed is returned as an error rather than as a
+// short list that reads like the whole team.
 func (c *RegistryClient) ListCertificates(
 	ctx context.Context,
 	registryURL string,
@@ -376,15 +389,44 @@ func (c *RegistryClient) ListCertificates(
 ) ([]RegistryCertificate, error) {
 	domain = canonicalizeDomain(domain)
 	name = strings.TrimSpace(name)
-	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/certificates"
+	teamID := BuildTeamID(domain, name)
+	basePath := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) +
+		"/certificates?limit=" + itoa(certificateListPageLimit)
 	if activeOnly {
-		path += "?active_only=true"
+		basePath += "&active_only=true"
 	}
-	var out certificateListResponse
-	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, nil, nil, &out); err != nil {
-		return nil, err
+
+	var certificates []RegistryCertificate
+	cursor := ""
+	for page := 0; page < certificateListPageCap; page++ {
+		path := basePath
+		if cursor != "" {
+			path += "&cursor=" + urlQueryEscape(cursor)
+		}
+		var out certificateListResponse
+		if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, nil, nil, &out); err != nil {
+			return nil, err
+		}
+		certificates = append(certificates, out.Certificates...)
+		if !out.HasMore {
+			return certificates, nil
+		}
+		next := strings.TrimSpace(out.NextCursor)
+		if next == "" {
+			return nil, fmt.Errorf(
+				"certificate listing for %s is truncated at %d: registry reports more certificates but returned no cursor to reach them",
+				teamID, len(certificates))
+		}
+		if next == cursor {
+			return nil, fmt.Errorf(
+				"certificate listing for %s is truncated at %d: registry repeated cursor %q instead of advancing",
+				teamID, len(certificates), next)
+		}
+		cursor = next
 	}
-	return out.Certificates, nil
+	return nil, fmt.Errorf(
+		"certificate listing for %s is truncated at %d: registry still reports more certificates after %d pages",
+		teamID, len(certificates), certificateListPageCap)
 }
 
 // ResolveTeamMember resolves an active (team_id, alias) team-member reference.
