@@ -635,7 +635,7 @@ func managedEnvConfig() (fileConfig, bool, error) {
 				return fileConfig{}, false, fmt.Errorf("%s is required for managed gateway environment startup", name)
 			}
 		}
-		return fileConfig{
+		cfg := fileConfig{
 			Host:        values["AWEB_A2A_GW_HOST"],
 			RegistryURL: values["AWEB_A2A_GW_REGISTRY_URL"],
 			ManagedConfig: managedConfig{
@@ -644,7 +644,11 @@ func managedEnvConfig() (fileConfig, bool, error) {
 				GatewayID:   values["AWEB_A2A_GW_MANAGED_GATEWAY_ID"],
 				BearerToken: values["AWEB_A2A_GW_MANAGED_BEARER_TOKEN"],
 			},
-		}, true, nil
+		}
+		if err := validateManagedConfig(cfg.ManagedConfig); err != nil {
+			return fileConfig{}, false, fmt.Errorf("managed gateway environment: %w", err)
+		}
+		return cfg, true, nil
 	}
 	return fileConfig{}, false, nil
 }
@@ -836,6 +840,7 @@ func mergeManagedRuntimeConfig(cfg *fileConfig, payload managedRuntimeConfigPayl
 	cfg.Routes = make([]routeConfig, 0, len(payload.Routes))
 	defaultRouteID := ""
 	routerRoutes := 0
+	routeAddresses := make(map[string]string, len(payload.Routes))
 	for index, route := range payload.Routes {
 		if strings.TrimSpace(route.RouteID) == "" {
 			return fmt.Errorf("managed runtime config routes[%d].route_id is required", index)
@@ -845,6 +850,14 @@ func mergeManagedRuntimeConfig(cfg *fileConfig, payload managedRuntimeConfigPayl
 		}
 		if strings.TrimSpace(route.Mode) != "mail" {
 			return fmt.Errorf("managed runtime config routes[%d].mode must be mail", index)
+		}
+		normalizedAddress := strings.TrimSpace(route.Address)
+		if existingRouteID, duplicate := routeAddresses[normalizedAddress]; duplicate {
+			return fmt.Errorf("managed runtime config routes[%d].address %q duplicates route %q", index, normalizedAddress, existingRouteID)
+		}
+		routeAddresses[normalizedAddress] = strings.TrimSpace(route.RouteID)
+		if strings.TrimSpace(route.RootBehavior) == "default_for_host" && defaultRouteID != "" {
+			return fmt.Errorf("managed runtime config has multiple default_for_host routes: %q and %q", defaultRouteID, route.RouteID)
 		}
 		converted := routeConfig{
 			RouteID:         strings.TrimSpace(route.RouteID),
@@ -958,6 +971,20 @@ func validateManagedConfig(cfg managedConfig) error {
 	}
 	if managedBearerToken(cfg) == "" {
 		return fmt.Errorf("managed_config bearer token is required")
+	}
+	if err := validateManagedURL("config_url", cfg.ConfigURL); err != nil {
+		return err
+	}
+	if err := validateManagedURL("bridge_url", cfg.BridgeURL); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateManagedURL(field, value string) error {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return fmt.Errorf("managed_config.%s must be an absolute HTTP(S) URL", field)
 	}
 	return nil
 }

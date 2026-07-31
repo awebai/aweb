@@ -330,6 +330,49 @@ func TestManagedRuntimeConfigRejectsMissingAndMismatchedTopLevelFields(t *testin
 	}
 }
 
+func TestManagedConfigURLsMustBeAbsoluteHTTP(t *testing.T) {
+	tests := []struct {
+		name      string
+		configURL string
+		bridgeURL string
+		wantError bool
+	}{
+		{name: "valid http", configURL: "http://control.example/config", bridgeURL: "http://bridge.example/a2a"},
+		{name: "valid https", configURL: "https://control.example/config", bridgeURL: "https://bridge.example/a2a"},
+		{name: "malformed config", configURL: ":// not-a-url", bridgeURL: "https://bridge.example/a2a", wantError: true},
+		{name: "relative config", configURL: "/config", bridgeURL: "https://bridge.example/a2a", wantError: true},
+		{name: "missing config host", configURL: "https:///config", bridgeURL: "https://bridge.example/a2a", wantError: true},
+		{name: "malformed bridge", configURL: "https://control.example/config", bridgeURL: ":// not-a-url", wantError: true},
+		{name: "relative bridge", configURL: "https://control.example/config", bridgeURL: "/bridge", wantError: true},
+		{name: "missing bridge host", configURL: "https://control.example/config", bridgeURL: "https:///bridge", wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run("yaml "+tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "gateway.yaml")
+			data := fmt.Sprintf("managed_config:\n  config_url: %q\n  bridge_url: %q\n  gateway_id: gw-test\n  bearer_token: token\n", tt.configURL, tt.bridgeURL)
+			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := loadFileConfig(path)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("loadFileConfig error=%v wantError=%v", err, tt.wantError)
+			}
+		})
+		t.Run("environment "+tt.name, func(t *testing.T) {
+			t.Setenv("AWEB_A2A_GW_HOST", "gateway.example")
+			t.Setenv("AWEB_A2A_GW_REGISTRY_URL", "https://registry.example")
+			t.Setenv("AWEB_A2A_GW_MANAGED_CONFIG_URL", tt.configURL)
+			t.Setenv("AWEB_A2A_GW_MANAGED_BRIDGE_URL", tt.bridgeURL)
+			t.Setenv("AWEB_A2A_GW_MANAGED_GATEWAY_ID", "gw-test")
+			t.Setenv("AWEB_A2A_GW_MANAGED_BEARER_TOKEN", "token")
+			_, _, err := managedEnvConfig()
+			if (err != nil) != tt.wantError {
+				t.Fatalf("managedEnvConfig error=%v wantError=%v", err, tt.wantError)
+			}
+		})
+	}
+}
+
 func TestManagedRuntimeConfigRoutesJSONShape(t *testing.T) {
 	prefix := `{"gateway_id":"gw-test","gateway_identity":"did:aw:gateway","gateway_identity_status":"active","config_revision":"rev-1","expires_at":"2099-01-01T00:00:00Z","routes":`
 	tests := []struct {
@@ -402,6 +445,58 @@ func TestManagedRuntimeConfigRejectsUnusableRouteBinding(t *testing.T) {
 				t.Fatalf("merge error=%v want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestManagedRuntimeConfigRejectsAmbiguousRouteTopology(t *testing.T) {
+	baseRoute := managedRuntimeRoute{RouteID: "r-one", Address: "gateway.example/one", Mode: "mail", RootBehavior: "default_for_host"}
+	tests := []struct {
+		name   string
+		routes []managedRuntimeRoute
+		want   string
+	}{
+		{name: "duplicate normalized address", routes: []managedRuntimeRoute{baseRoute, {RouteID: "r-two", Address: " gateway.example/one ", Mode: "mail"}}, want: "duplicates route"},
+		{name: "multiple defaults", routes: []managedRuntimeRoute{baseRoute, {RouteID: "r-two", Address: "gateway.example/two", Mode: "mail", RootBehavior: "default_for_host"}}, want: "multiple default_for_host"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload := managedRuntimeConfigPayload{
+				GatewayID: "gw-test", GatewayIdentity: "did:aw:gateway", GatewayIdentityStatus: "active",
+				ConfigRevision: "rev-1", ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339), Routes: tt.routes,
+			}
+			cfg := fileConfig{ManagedConfig: managedConfig{GatewayID: "gw-test"}}
+			err := mergeManagedRuntimeConfig(&cfg, payload)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("merge error=%v want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestManagedBridgePreservesRouteAddressBinding(t *testing.T) {
+	var gotRouteID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		gotRouteID, _ = payload["route_id"].(string)
+		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent"})
+	}))
+	defer server.Close()
+	cfg := fileConfig{
+		ManagedConfig: managedConfig{BridgeURL: server.URL, GatewayID: "gw-test", BearerToken: "token"},
+		Routes:        []routeConfig{{RouteID: "r-one", Address: "gateway.example/one"}, {RouteID: "r-two", Address: "gateway.example/two"}},
+	}
+	transport, err := managedBridgeTransportFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("managedBridgeTransportFromConfig: %v", err)
+	}
+	if _, err := transport.SendMessage(context.Background(), &awid.SendMessageRequest{ToAddress: "gateway.example/one", Body: "hello"}); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if gotRouteID != "r-one" {
+		t.Fatalf("provider route_id=%q want r-one", gotRouteID)
 	}
 }
 
