@@ -104,7 +104,9 @@ that rule.
 ## Validation
 
 The vectors are consumed from their canonical `docs/vectors/` paths by the
-relevant component suites. Focused examples:
+relevant component suites. Go's conformance package embeds its release copy;
+its test first requires that copy to be byte-identical to the canonical corpus.
+Focused examples:
 
 ```bash
 cd awid && uv run --frozen pytest -q tests/test_conformance_vectors.py
