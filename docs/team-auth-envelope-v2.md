@@ -86,9 +86,10 @@ be replayed inside the accepted timestamp skew window if an attacker can capture
 the signed request. Product copy and protocol docs must not claim replay
 protection.
 
-Nonce-based replay protection is tracked separately in `aweb-aaqo`; it requires
-a shared deduplication store and an explicit fail-open versus fail-closed
-availability decision.
+A future nonce-bearing protocol revision must define nonce scope and lifetime,
+use a shared deduplication store, and specify fail-closed behavior when that
+store is unavailable. Until clients and relying services implement that complete
+contract, the timestamp window above is the replay limit.
 
 ## Conformance vectors
 
