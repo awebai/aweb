@@ -43,7 +43,7 @@ PRIVATE_CUSTODIAL_SHA256 = (
 
 FORBIDDEN_PUBLIC_IMPLEMENTATION_PATTERNS = [
     re.compile(r"\bAC\b"),
-    re.compile(r"aweb-aapv"),
+    re.compile(r"\baweb-[a-z]{4}(?:\.\d+)*\b"),
     re.compile(r"default-[a-z]+"),
     re.compile(r"aweb_cloud"),
     re.compile(r"\bRender\b"),
@@ -66,22 +66,40 @@ def test_customer_language_does_not_call_hosted_custodial_e2ee() -> None:
     )
 
 
-def test_public_e2ee_family_has_no_private_implementation_or_task_references() -> None:
+def _public_e2ee_reference_offenders(
+    overrides: dict[Path, str] | None = None,
+) -> list[str]:
     offenders: list[str] = []
+    overrides = overrides or {}
     for path in PUBLIC_E2E_DOCS:
         if not path.is_file():
             continue
-        text = path.read_text(encoding="utf-8")
+        text = overrides.get(path, path.read_text(encoding="utf-8"))
         for pattern in FORBIDDEN_PUBLIC_IMPLEMENTATION_PATTERNS:
             for match in pattern.finditer(text):
                 line = text.count("\n", 0, match.start()) + 1
                 offenders.append(
                     f"{path.relative_to(REPO_ROOT)}:{line}: {match.group(0)!r}"
                 )
+    return offenders
+
+
+def test_public_e2ee_family_has_no_private_implementation_or_task_references() -> None:
+    offenders = _public_e2ee_reference_offenders()
 
     assert not offenders, "Private implementation/task references found:\n" + "\n".join(
         offenders
     )
+
+
+def test_public_e2ee_task_reference_guard_rejects_current_task_id() -> None:
+    path = PUBLIC_E2E_DOCS[0]
+    text = path.read_text(encoding="utf-8") + "\nTracked internally as aweb-aazc.\n"
+
+    offenders = _public_e2ee_reference_offenders({path: text})
+    line = text.count("\n", 0, text.index("aweb-aazc")) + 1
+
+    assert offenders == [f"{path.relative_to(REPO_ROOT)}:{line}: 'aweb-aazc'"]
 
 
 def test_private_custodial_transition_source_is_verbatim_and_unlinked() -> None:
