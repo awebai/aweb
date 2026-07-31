@@ -61,6 +61,7 @@ MANAGED_GATEWAY_PRIVATE_TOKENS = (
     "AWEB_A2A_GW_" + "AC_BASE_URL",
     "a2a-" + "ac-managed-gateway-contract",
     "a2a-gateway-" + "ac-managed",
+    "a2a-gw-" + "ac",
     "a" + "c_config_expired",
     "/api/v1/a2a/gateway/" + "config",
     "AC-" + "managed",
@@ -354,6 +355,12 @@ def self_test(root: Path) -> int:
             print("self-test failed: missing tracked Markdown was not detected")
             return 1
 
+        managed_authority = tmp / "docs/a2a.md"
+        managed_authority.write_text(
+            managed_authority.read_text(encoding="utf-8") + "\nold fixture: " + "a2a-gw-" + "ac.yaml\n",
+            encoding="utf-8",
+        )
+
         hook = tmp / "docs/aw-hooks-sot.md"
         hook.write_text(hook.read_text(encoding="utf-8").replace("`task.created`", "`task-created`"), encoding="utf-8")
 
@@ -383,6 +390,7 @@ def self_test(root: Path) -> int:
             "removed repeated-event call site": "inventory retains absent call site",
             "dynamic event expression": "unsupported non-literal",
             "real workspace release mount": "mounts the real repository workspace",
+            "private managed-gateway fixture name": "retains private managed-gateway token",
         }
         for label, expected in required_failures.items():
             if not any(expected in failure for failure in failures):
@@ -390,8 +398,8 @@ def self_test(root: Path) -> int:
                 return 1
 
     print(
-        "self-test passed: tracked corpus, event/call-site multiplicity, dynamic-expression, "
-        "and real-workspace release-mount drift controls reject their mutations"
+        "self-test passed: tracked corpus, managed-gateway neutrality, event/call-site multiplicity, "
+        "dynamic-expression, and real-workspace release-mount drift controls reject their mutations"
     )
     return 0
 
