@@ -132,7 +132,8 @@ func TestPinStoreForgetIsReachableFromTheCommandTree(t *testing.T) {
 
 func TestPinStoreForgetRefusesAnUnreadableStore(t *testing.T) {
 	path := pinStoreFixture(t)
-	if err := os.WriteFile(path, []byte("addresses: [not, a, mapping]\n"), 0o600); err != nil {
+	const corrupt = "addresses: [not, a, mapping]\n"
+	if err := os.WriteFile(path, []byte(corrupt), 0o600); err != nil {
 		t.Fatalf("corrupt fixture: %v", err)
 	}
 
@@ -145,5 +146,16 @@ func TestPinStoreForgetRefusesAnUnreadableStore(t *testing.T) {
 	// other bindings it would silently drop by saving its own partial reading.
 	if err := cmd.Execute(); err == nil {
 		t.Fatalf("forget accepted an unreadable store instead of refusing it:\n%s", out.String())
+	}
+
+	// Refusing and not-rewriting are different properties, and the second is the one
+	// that protects the other agents sharing this file. An error return says nothing
+	// about what happened to the bytes, so read them back.
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(after) != corrupt {
+		t.Fatalf("the refused command rewrote the store anyway:\nbefore: %q\nafter:  %q", corrupt, string(after))
 	}
 }
