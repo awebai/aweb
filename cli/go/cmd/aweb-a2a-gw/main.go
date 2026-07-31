@@ -670,7 +670,7 @@ func (p *managedRuntimeConfigPayload) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	routes, present := fields["routes"]
-	decoded.routesPresent = present && string(routes) != "null"
+	decoded.routesPresent = present && !bytes.Equal(bytes.TrimSpace(routes), []byte("null"))
 	*p = managedRuntimeConfigPayload(decoded)
 	return nil
 }
@@ -836,7 +836,16 @@ func mergeManagedRuntimeConfig(cfg *fileConfig, payload managedRuntimeConfigPayl
 	cfg.Routes = make([]routeConfig, 0, len(payload.Routes))
 	defaultRouteID := ""
 	routerRoutes := 0
-	for _, route := range payload.Routes {
+	for index, route := range payload.Routes {
+		if strings.TrimSpace(route.RouteID) == "" {
+			return fmt.Errorf("managed runtime config routes[%d].route_id is required", index)
+		}
+		if strings.TrimSpace(route.Address) == "" {
+			return fmt.Errorf("managed runtime config routes[%d].address is required", index)
+		}
+		if strings.TrimSpace(route.Mode) != "mail" {
+			return fmt.Errorf("managed runtime config routes[%d].mode must be mail", index)
+		}
 		converted := routeConfig{
 			RouteID:         strings.TrimSpace(route.RouteID),
 			Address:         strings.TrimSpace(route.Address),

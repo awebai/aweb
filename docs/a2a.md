@@ -500,9 +500,10 @@ and a `routes` array (which may be empty). Each usable route requires
 `route_id`, `address`, `mode`, and valid `card` content. `host` may supply the
 listener host when it is not configured globally. `disabled`, `root_behavior`,
 `verification_tier`, `card_digest`, `auth`, and `limits` are optional or
-zero/default-valued route controls; when supplied, their values still undergo
-the same fail-closed gateway validation. Unknown additive provider fields at the
-response or route level are tolerated but are not thereby part of this contract.
+zero/default-valued route controls. The gateway enforces the constraints stated
+for a control where that control affects runtime routing, authentication, card,
+or limit behavior; unrecognized additive provider fields are tolerated but are
+not thereby part of this contract.
 Invalid identity, revision, expiry, route, or auth data fails closed.
 
 The bridge uses the same Bearer token. Sending posts to

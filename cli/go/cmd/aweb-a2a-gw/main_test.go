@@ -172,7 +172,7 @@ func TestA2AGatewayBuildsFromManagedRuntimeConfig(t *testing.T) {
 		}
 	}))
 	defer managedServer.Close()
-	cfgPath := filepath.Join(tmp, "a2a-gw-ac.yaml")
+	cfgPath := filepath.Join(tmp, "a2a-gw-managed.yaml")
 	writeManagedConfig(t, cfgPath, "http://registry.invalid", managedServer.URL, "gw-test", "test-token")
 	cfg := mustLoadConfig(t, cfgPath)
 	if err := applyManagedRuntimeConfig(&cfg); err != nil {
@@ -300,6 +300,7 @@ func TestManagedRuntimeConfigRejectsMissingAndMismatchedTopLevelFields(t *testin
 		{name: "missing gateway id", mutate: func(v map[string]any) { delete(v, "gateway_id") }, want: "gateway_id is required"},
 		{name: "mismatched gateway id", mutate: func(v map[string]any) { v["gateway_id"] = "other" }, want: "does not match"},
 		{name: "missing identity", mutate: func(v map[string]any) { delete(v, "gateway_identity") }, want: "gateway_identity is required"},
+		{name: "missing identity status", mutate: func(v map[string]any) { delete(v, "gateway_identity_status") }, want: "gateway_identity_status is required"},
 		{name: "missing revision", mutate: func(v map[string]any) { delete(v, "config_revision") }, want: "config_revision is required"},
 		{name: "missing expiry", mutate: func(v map[string]any) { delete(v, "expires_at") }, want: "expires_at is required"},
 		{name: "missing routes", mutate: func(v map[string]any) { delete(v, "routes") }, want: "routes is required"},
@@ -324,6 +325,81 @@ func TestManagedRuntimeConfigRejectsMissingAndMismatchedTopLevelFields(t *testin
 			err = mergeManagedRuntimeConfig(&cfg, payload)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("mergeManagedRuntimeConfig error=%v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestManagedRuntimeConfigRoutesJSONShape(t *testing.T) {
+	prefix := `{"gateway_id":"gw-test","gateway_identity":"did:aw:gateway","gateway_identity_status":"active","config_revision":"rev-1","expires_at":"2099-01-01T00:00:00Z","routes":`
+	tests := []struct {
+		name       string
+		routesJSON string
+		decodeFail bool
+		mergeFail  bool
+		wantRoutes int
+	}{
+		{name: "plain null", routesJSON: `null`, mergeFail: true},
+		{name: "whitespace null", routesJSON: " \n null \t", mergeFail: true},
+		{name: "non array", routesJSON: `{}`, decodeFail: true},
+		{name: "empty array", routesJSON: `[]`, wantRoutes: 0},
+		{name: "populated array", routesJSON: `[{"route_id":"r-1","address":"gateway.example/agent","mode":"mail"}]`, wantRoutes: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var payload managedRuntimeConfigPayload
+			err := json.Unmarshal([]byte(prefix+tt.routesJSON+`}`), &payload)
+			if tt.decodeFail {
+				if err == nil {
+					t.Fatal("expected routes JSON decode failure")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			cfg := fileConfig{ManagedConfig: managedConfig{GatewayID: "gw-test"}}
+			err = mergeManagedRuntimeConfig(&cfg, payload)
+			if tt.mergeFail {
+				if err == nil || !strings.Contains(err.Error(), "routes is required") {
+					t.Fatalf("merge error=%v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("merge: %v", err)
+			}
+			if len(cfg.Routes) != tt.wantRoutes {
+				t.Fatalf("routes=%d want %d", len(cfg.Routes), tt.wantRoutes)
+			}
+		})
+	}
+}
+
+func TestManagedRuntimeConfigRejectsUnusableRouteBinding(t *testing.T) {
+	validRoute := managedRuntimeRoute{RouteID: "r-1", Address: "gateway.example/agent", Mode: "mail"}
+	tests := []struct {
+		name   string
+		mutate func(*managedRuntimeRoute)
+		want   string
+	}{
+		{name: "missing route id", mutate: func(route *managedRuntimeRoute) { route.RouteID = "" }, want: "route_id is required"},
+		{name: "missing address", mutate: func(route *managedRuntimeRoute) { route.Address = "" }, want: "address is required"},
+		{name: "missing mode", mutate: func(route *managedRuntimeRoute) { route.Mode = "" }, want: "mode must be mail"},
+		{name: "unsupported mode", mutate: func(route *managedRuntimeRoute) { route.Mode = "webhook" }, want: "mode must be mail"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := validRoute
+			tt.mutate(&route)
+			payload := managedRuntimeConfigPayload{
+				GatewayID: "gw-test", GatewayIdentity: "did:aw:gateway", GatewayIdentityStatus: "active",
+				ConfigRevision: "rev-1", ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339), Routes: []managedRuntimeRoute{route},
+			}
+			cfg := fileConfig{ManagedConfig: managedConfig{GatewayID: "gw-test"}}
+			err := mergeManagedRuntimeConfig(&cfg, payload)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("merge error=%v want %q", err, tt.want)
 			}
 		})
 	}
@@ -442,7 +518,7 @@ func TestA2AGatewayRejectsExpiredManagedRuntimeConfig(t *testing.T) {
 		})
 	}))
 	defer managedServer.Close()
-	cfgPath := filepath.Join(tmp, "a2a-gw-ac.yaml")
+	cfgPath := filepath.Join(tmp, "a2a-gw-managed.yaml")
 	writeManagedConfig(t, cfgPath, "http://aweb.invalid", managedServer.URL, "gw-test", "test-token")
 	cfg := mustLoadConfig(t, cfgPath)
 	if err := applyManagedRuntimeConfig(&cfg); err == nil || !strings.Contains(err.Error(), "expired") {
@@ -822,7 +898,7 @@ func TestA2AGatewayRuntimeHealthReportsManagedConfig(t *testing.T) {
 	}))
 	defer managedServer.Close()
 
-	cfgPath := filepath.Join(tmp, "a2a-gw-ac-health.yaml")
+	cfgPath := filepath.Join(tmp, "a2a-gw-managed-health.yaml")
 	writeManagedConfig(t, cfgPath, registry.URL, managedServer.URL, "gw-test", "test-token")
 	cfg := mustLoadConfig(t, cfgPath)
 	if err := applyManagedRuntimeConfig(&cfg); err != nil {
