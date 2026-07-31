@@ -7,7 +7,9 @@ stability promise.
 
 These files prevent cross-language drift in canonical JSON, signing and base64,
 DID/key derivation, trust continuity, team-auth request binding, E2E wire bytes,
-address claims, and optional A2A interoperability.
+address claims, and optional A2A interoperability. Identity and continuity
+semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
+[identity-key verification](../identity-key-verification.md).
 
 ## Authority and copies
 
@@ -154,13 +156,13 @@ dynamic gateway ships.
 Decoder strictness follows the producer and field format; it is not a global
 base64 consistency sweep.
 
-| Class | Examples | Required behavior |
+| Class | Production sites or examples | Required behavior and reason |
 |---|---|---|
-| Remote signatures | Message, identity log, rotation, A2A assertion, E2E signature fields | Raw standard base64 without padding; malformed remote signatures fail before cryptographic acceptance. |
-| E2E binary protocol fields | Public keys, ciphertext, nonce, encapsulated/wrapped keys | Raw standard base64 as defined by the encrypted-v2 wire contract. |
-| Team-certificate transport envelope | `X-AWID-Team-Certificate` | Padded standard base64 for compatibility with existing producers. |
+| Remote signatures | TypeScript `identity/signing.ts` (message envelopes), `identity/trust.ts` (rotation/replacement announcements), and `identity/registry.ts` (DID-log heads); Go `awid/{signing,rotate,a2a_publication,certificate,e2ee_keys,e2ee_messages,atomic_address_claim,stable_identity}.go` signature decodes | Raw standard base64 without padding, with Go/TypeScript acceptance parity. Malformed remote signatures fail before cryptographic acceptance, so rejection does not depend on a verifier accepting an empty signature. |
+| E2E binary protocol fields | Go `awid/e2ee_keys.go`, `awid/e2ee_messages.go`, and `cmd/aw/id_encryption_key.go` public-key, ciphertext, nonce, encapsulated-key, and wrapped-key decodes | Raw standard base64 because the encrypted-v2 wire contract defines those fields that way. These are protocol bytes, not signature-verdict sites. |
+| Team-certificate transport envelope | TypeScript `identity/certificate.ts` encoder and Go `awid/certificate.go` header encoder/decoder | Padded standard base64. TypeScript emits padding and has no header decoder; switching Go to raw decoding would reject every TypeScript-produced certificate header. |
 | Team-auth signed-payload header | `X-AWEB-Signed-Payload` | Base64url without padding of exact canonical JSON bytes. |
-| Local private-key material | PEM and CLI partial-init files | Follow the local file format, validate decoded size and identity binding, and do not apply remote-signature syntax blindly. |
+| Local private-key material | TypeScript `identity/keys.ts` PEM loader and Go `cmd/aw/init_apikey.go` partial-init state | Follow the file format: PEM is padded and line-wrapped; Go partial-init state uses padded standard base64. Both paths validate decoded size and identity binding. Remote-signature strictness does not apply. |
 | Public content digests | A2A Agent Card digest | `sha256:<lowercase hex>` over the specified canonical card bytes. |
 | Signed assertion digests | A2A delegation/publication assertion digest | `sha256:<raw-standard-base64-no-padding>` over the contract-defined bytes. |
 
