@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -69,9 +70,12 @@ var eventsStreamCmd = &cobra.Command{
 				continue
 			}
 
-			delivered := drainEventStream(ctx, stream, enc)
+			delivered, outputErr := drainEventStream(ctx, stream, enc)
 			closeStream()
 
+			if outputErr != nil {
+				return outputErr
+			}
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -167,23 +171,38 @@ func openEventStream(ctx, baseCtx context.Context, client *awid.Client) (*awid.A
 	}
 }
 
-// drainEventStream emits events until the stream ends, reporting whether this
-// stream delivered anything before it did. How it ended is not interesting to the
-// caller - every ending is a reconnect - but whether it was working is, because
-// that is what separates a healthy subscription hitting the lifetime cap from a
-// server that cannot serve one.
-func drainEventStream(ctx context.Context, stream *awid.AgentEventStream, enc *json.Encoder) bool {
-	delivered := false
+// drainEventStream emits events until the stream ends. It reports whether the
+// stream did any real work, and separately an output failure, which is fatal.
+//
+// "Real work" deliberately excludes the connected preamble. The server sends
+// `event: connected` on EVERY stream before anything else
+// (server/src/aweb/routes/events.py), so a flag set by any event at all is set by
+// every stream that opens - which would make the backoff escalation below
+// unreachable and pin the reconnect rate at its floor against a server that is
+// only ever accepting and hanging up. The codebase already classifies connected as
+// informational rather than delivery: see "connected never wakes" in
+// awid/event_source_test.go.
+//
+// How the stream ENDED is not interesting - every ending is a reconnect - but
+// whether it was working is, because that is what separates a healthy subscription
+// reaching the lifetime cap from a server that cannot serve one.
+func drainEventStream(ctx context.Context, stream *awid.AgentEventStream, enc *json.Encoder) (delivered bool, outputErr error) {
 	for {
 		ev, err := stream.Next(ctx)
 		if err != nil {
-			return delivered
+			return delivered, nil
 		}
-		delivered = true
+		if ev.Type != awid.AgentEventConnected {
+			delivered = true
+		}
 
 		if jsonFlag {
+			// An output failure is not a stream problem and reconnecting cannot fix
+			// it. Dropping the event and silently carrying on would lose it with
+			// nothing reported anywhere, which is the opposite of what a delivery
+			// fix should do.
 			if err := enc.Encode(ev); err != nil {
-				return delivered
+				return delivered, err
 			}
 		} else {
 			printEventText(ev)
@@ -198,6 +217,12 @@ func drainEventStream(ctx context.Context, stream *awid.AgentEventStream, enc *j
 func isFatalStreamOpenError(err error) bool {
 	var apiErr *awid.APIError
 	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusRequestTimeout, http.StatusTooManyRequests:
+			// Whose entire meaning is "retry later". Treating them as fatal ends the
+			// subscription at exactly the moment the server is asking it to wait.
+			return false
+		}
 		return apiErr.StatusCode >= 400 && apiErr.StatusCode < 500
 	}
 	return false

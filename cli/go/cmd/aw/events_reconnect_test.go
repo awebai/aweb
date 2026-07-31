@@ -198,4 +198,77 @@ func TestEventsStreamSurvivesRepeatedServerClosesAcrossFiveAttempts(t *testing.T
 	if got := opens.Load(); got < 5 {
 		t.Fatalf("only %d stream opens across five attempts; the client is not re-establishing", got)
 	}
+	// An upper bound as well as a lower one. Without it this assertion is satisfied
+	// by 5 opens and by 80 equally, so it cannot tell a client that reconnects with
+	// escalating backoff from one hammering the server at its floor - which is the
+	// defect charlie found on review. Each 4s attempt is a fresh process starting at
+	// the 250ms floor, so about five opens per attempt is expected.
+	if got := opens.Load(); got > 40 {
+		t.Fatalf("%d stream opens across five 4s attempts; the backoff is not escalating between reconnects", got)
+	}
+	t.Logf("stream opens across five 4s attempts: %d", opens.Load())
+}
+
+// aweb-aamn, charlie's finding on review. The server emits `event: connected`
+// unconditionally on every stream (server/src/aweb/routes/events.py:383), so a
+// "did this stream deliver anything" flag keyed on ANY event is true for every
+// stream that opens at all. That made the backoff escalation dead code and pinned
+// the reconnect rate at the 250ms floor forever - measured at 3.2 opens/sec,
+// sustained, against a server that only ever sends the preamble and cuts.
+//
+// An agent subscribed to a failing server then amplifies load on it, which is the
+// exact scenario the backoff exists to prevent and it bites hardest when the server
+// is already in trouble.
+//
+// The codebase already draws this line: awid/event_source_test.go asserts
+// "connected never wakes" - connected is informational, not delivery.
+func TestConnectedPreambleAloneDoesNotHoldTheBackoffAtItsFloor(t *testing.T) {
+	t.Parallel()
+
+	var opens atomic.Int64
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/events/stream"):
+			requireCertificateAuthForTest(t, r)
+			opens.Add(1)
+			// Only the preamble, then cut. This server is not serving a
+			// subscription; it just answers and hangs up.
+			abruptlyCloseStream(t, w,
+				"event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := buildAwForTest(t, ctx, tmp)
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	const windowSeconds = 6
+	run := exec.CommandContext(ctx, bin, "events", "stream", "--json", "--timeout", fmt.Sprint(windowSeconds))
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("run exited non-zero (%v):\n%s", err, string(out))
+	}
+
+	// With escalation running, a 6s window admits about five opens
+	// (250ms + 500ms + 1s + 2s + 4s). Without it, the floor is permanent and the
+	// count runs an order of magnitude higher. The bound is deliberately loose:
+	// it discriminates "escalating" from "pinned at the floor", not a schedule.
+	const maxOpens = 8
+	if got := opens.Load(); got > maxOpens {
+		t.Fatalf("%d stream opens in %ds against a server that only sends the preamble; the backoff is not escalating, so this is a %0.1f/sec load amplifier",
+			got, windowSeconds, float64(got)/float64(windowSeconds))
+	}
+	// The other direction: it must still be reconnecting at all, or this passes
+	// for the wrong reason.
+	if got := opens.Load(); got < 2 {
+		t.Fatalf("only %d open(s); the client stopped reconnecting entirely", got)
+	}
 }
