@@ -1,9 +1,16 @@
 # Identity and Team Model
 
-This document is the canonical aweb model for identities, namespaces, addresses,
-teams, and team membership. Protocol details live in [awid-sot.md](awid-sot.md)
-and aweb service details live in [aweb-sot.md](aweb-sot.md), but product docs and
-CLI work should use the vocabulary and invariants here.
+Status: **canonical conceptual authority** for identities, namespaces,
+addresses, teams, and membership. Product docs and CLI work use the vocabulary
+and invariants here. The operator path is [identity-guide.md](identity-guide.md),
+registry protocol details live in [awid-sot.md](awid-sot.md), and aweb verifier,
+routing, and coordination behavior lives in [aweb-sot.md](aweb-sot.md).
+
+AWID is authoritative for public identity/team facts. The aweb server consumes
+and verifies those facts; it is not identity, address, or certificate-issuance
+authority. A hosted operator may hold controller or identity private keys only
+for an explicitly hosted-authority or custodial flow. AWID itself never holds
+private keys or signs on anyone's behalf.
 
 ## Entities
 
@@ -42,8 +49,9 @@ The registry invariants are:
 
 The team-certificate scope column is the canonical `identity_scope` added by
 `awid/src/awid_service/migrations/004_team_certificate_identity_scope.sql:5`.
-Legacy storage or wire fields named `lifetime` are deprecated-read-compat inputs
-only and must be normalized to `identity_scope=local|global` at boundaries.
+That migration removed the old registry `lifetime` column. Legacy certificate,
+config, or wire fields named `lifetime` remain deprecated-read-compat inputs
+only and are normalized to `identity_scope=local|global` at boundaries.
 
 ### Identity
 
@@ -83,7 +91,8 @@ Team membership is proven by a team certificate signed by the team controller.
 The certificate binds an identity's current `did:key` to a team and gives that
 membership a **member name**: the per-team routing key. The current registry and
 certificate wire field for this value is still `alias`; product docs and new CLI
-work should call it **name** until the scheduled wire/schema rename completes.
+work call it **name**. Compatibility output may dual-emit `alias` and `name`;
+that does not create two concepts.
 
 ## Name and address rules
 
@@ -103,8 +112,8 @@ work should call it **name** until the scheduled wire/schema rename completes.
   address from another namespace, such as `partner.com/alice`, while joining
   `backend:acme.com`. The member name is still the address local part,
   `alice`.
-- A global member may join with no member address (`--no-address` in planned CLI
-  vocabulary). The certificate still carries the global `did:aw` and member
+- A global member may join with no member address (`aw team join --global
+  --no-address`). The certificate still carries the global `did:aw` and member
   name, but that membership is not first-contactable by a team-domain address.
 
 ### Authority-gated default address claim
@@ -134,13 +143,13 @@ Everything user-facing composes three orthogonal verbs.
 or reuses a `did:aw` and binds a `domain/name` address under namespace
 authority.
 
-Current primitive:
+Current primitives:
 
 - `aw id create --domain DOMAIN --name NAME` creates a standalone
-  self-custodial global identity and claims `DOMAIN/NAME`.
-
-Planned address-claim work adds the path for an existing global identity to
-claim an additional address.
+  self-custodial global identity and claims its first `DOMAIN/NAME`;
+- `aw id address claim DOMAIN/NAME` claims an additional address for the
+  current self-custodial global identity when the local machine holds that
+  namespace's controller authority.
 
 ### 2. Create team
 
@@ -148,7 +157,7 @@ claim an additional address.
 The team is neither local nor global; the enrolled first member is local or
 global.
 
-Current and planned surfaces:
+Current surfaces:
 
 - `aw team create NAME` is the everyday workflow wrapper.
 - `aw id team create --namespace DOMAIN --name NAME` is the controller/admin
@@ -189,12 +198,11 @@ Rules:
   claim/create a global identity first.
 
 Current surfaces include `aw id team accept-invite <token>` and `aw team join
-<token>`. During the alias-to-name transition, CLI JSON output dual-emits
-`alias` and `name` for one release, and emits `identity_scope` beside any
-legacy `lifetime` field. The deprecated `--alias` flag remains accepted as a
-hidden alias for `--name` with a warning during that same compatibility window;
-the later wire/schema cleanup removes the legacy names. The model term is
-`name`, and the scope terms are `local` and `global`.
+<token>`. During compatibility, CLI JSON output may dual-emit `alias` and
+`name`, and may emit `identity_scope` beside a decoded legacy `lifetime` field.
+The deprecated `--alias` flag remains a hidden, warning compatibility alias for
+`--name`. New requests, registry storage, and product language use `name` as the
+concept and `identity_scope=local|global` for scope.
 
 ## Command-to-verb mapping
 
@@ -207,8 +215,14 @@ the later wire/schema cleanup removes the legacy names. The model term is
 | Add local/profile agent home | Materialize an agent home and then perform team join/enrollment | `aw team add [NAME@]BLUEPRINT/PROFILE[:local\|global][=RUNTIME]` or `aw team add NAME[:local\|global]` | Omitted names use the server-authoritative classic sequence; omitted profile scope comes from `profile.yaml`. |
 | Add existing member by controller | Sign/register a certificate for a supplied identity key | `aw id team add-member` | Controller/admin primitive; not the everyday join verb. |
 | Fetch certificate | Install an already-issued certificate | `aw id team fetch-cert` | Cross-machine BYOT recovery/install path. |
-| Replace local member key | Team-authorized compare-and-swap of a local identity key, old certificate revocation, and replacement certificate issuance | Lost key: `aw team replace-key NAME --old-did-key OLD --home AGENT_HOME --generate-new-key`; pre-generated key: pass `--new-did-key NEW` instead | Local-controller/BYOT teams in phase 1; requires the locally held team controller key. Hosted owner/admin integration is pending. |
+| Replace local member key | Team-authorized compare-and-swap of a local identity key, old certificate revocation, and replacement certificate issuance | Lost key: `aw team replace-key NAME --old-did-key OLD --home AGENT_HOME --generate-new-key`; pre-generated key: pass `--new-did-key NEW` instead | Current OSS CLI path requires the locally held BYOT/team controller key; hosted-authority replacement requires an authorized hosted-operator equivalent. |
 | Remove member | Revoke a team certificate | `aw team remove-agent <member-address>`; primitive `aw id team remove-member` | Team-scoped revocation; does not delete a global identity. |
+
+These identity/team verbs do not require Library. `aw team create` without an
+`--agent`, `--profile`, or `--blueprint` selector creates an empty-profile team
+workspace; identity enrollment and communication remain complete OSS paths.
+Library-backed materialization is an optional orchestration layer above this
+model.
 
 ## Key material and local files
 
@@ -250,9 +264,10 @@ private key. Complete loss of `.aw/` still requires restoring the membership
 state from backup or operator records first.
 
 Old-key-signed self-service handover is intentionally unsupported: a stolen
-member key must not be able to bless its own replacement. Phase 1 requires a
-locally held team controller key; hosted owner/admin replacement awaits the AC
-integration and currently goes through operator support.
+member key must not be able to bless its own replacement. The current OSS CLI
+path requires a locally held team controller key; hosted-authority replacement
+requires an authorized equivalent from that hosted operator and otherwise goes
+through operator support.
 
 Because the roster/audit database and AWID certificate registry are separate
 systems, the CLI reconciles an ambiguous roster response by replaying the exact
@@ -311,10 +326,14 @@ signature. Recipients verify the signature against the sender's public key. The
 CLI reports verification status on reads such as `aw mail inbox` and
 `aw chat open`.
 
-The CLI uses Trust on First Use (TOFU) pinning for peer verification. On first
-contact it records the sender's observed identity key. Future messages are
-checked against that pin unless a valid rotation or replacement flow explains
-the change.
+The clients use Trust on First Use (TOFU) pinning for globally addressed peer
+continuity. A stable identity is pinned by `did:aw` when available, together
+with its observed current key and durable DID-log checkpoint; otherwise the
+first verified contact is pinned by `did:key`. Future changes require verified
+DID-log/rotation continuity or a namespace-controller-signed address
+replacement. Local single-team identities are refreshed against the live team
+roster rather than persisted as global address pins. See
+[trust-model.md](trust-model.md#tofu-pins-and-durable-continuity).
 
 ## Lifecycle terms
 

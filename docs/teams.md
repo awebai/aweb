@@ -3,9 +3,14 @@ title: "Teams in aweb"
 weight: 30
 ---
 
+Status: **current user guide**. The conceptual authority is
+[Identity and Team Model](identity.md), the operator identity/membership path is
+[Identity and Teams Guide](identity-guide.md), and the registry protocol is
+[awid-sot.md](awid-sot.md).
+
 A **team** is the coordination boundary in aweb. Tasks, roles, locks,
 instructions, workspace status, and same-team member lookup are scoped to a
-team. The canonical identity/team model is [Identity and Team Model](identity.md):
+team. The canonical identity/team model says:
 a team is `name:domain` inside a namespace, identities are either local or
 global, and a team certificate gives each membership a team-local **member
 name**. Current wire fields and some commands may still call that member name an
@@ -105,8 +110,11 @@ Teams can optionally have:
 - **Locks**: named coordination locks members can acquire/release to serialize
   work on contested resources.
 
-All three are optional. The minimum-viable team is identities + team
-certificates + the mail/chat/task primitives.
+All three are optional. The minimum viable communication team is identities,
+team certificates, and mail/chat/events; tasks are an optional coordination
+feature. Library profiles and blueprints are also optional: an empty-profile,
+one-repository team can create/join identities and communicate using only AWID,
+aweb, and `aw`.
 
 ## Reaching across teams
 

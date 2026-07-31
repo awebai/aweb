@@ -1,7 +1,10 @@
-# aw ↔ aweb: verifying `GET /v1/did/{did_aw}/key` (`log_head`)
+# Verifying the AWID identity-log head
 
-This document specifies how an `aw` client or any other verifier should
-validate the stable-identity response from OSS `aweb`:
+Status: **canonical verifier protocol** for
+`GET /v1/did/{did_aw}/key` and its `log_head`.
+
+This document specifies how `aw` or any other verifier validates the
+stable-identity response served by an AWID registry:
 
 - `GET /v1/did/{did_aw}/key`
 
@@ -11,7 +14,7 @@ remaining honest about current limits (no global transparency yet).
 
 ## Scope
 
-- Verifying the `aweb` `/key` response and its `log_head`
+- Verifying the AWID `/key` response and its `log_head`
 - Cache rules and failure modes (what is a “hard error” vs “degraded trust”)
 
 Not in scope:
@@ -54,7 +57,8 @@ Canonical JSON is defined as:
 - literal UTF-8 (no `\uXXXX` escaping for non-ASCII)
 - minimal JSON string escaping (only what JSON requires: `"`, `\`, and control characters)
 
-This MUST be compatible with the message-signing canonicalization described in `sot.md` §4.2.
+This MUST use the same canonical JSON rules as the canonical identity-entry
+payload in [`awid-sot.md`](awid-sot.md#canonical-entry-payload-shared-by-all-identity-ops).
 
 ### Signature encoding
 
@@ -144,7 +148,7 @@ Rules:
 5. **Verify `state_hash`**
    - Compute `computed_state_hash = sha256(canonical_json({"current_did_key":
      log_head.new_did_key, "did_aw": did_aw}))` (lowercase hex). This is the
-     `identity_state_hash` produced by `aweb`.
+     `identity_state_hash` used by AWID identity-log implementations.
    - Require `computed_state_hash == log_head.state_hash`. A valid signature over
      a payload whose `state_hash` does not equal the canonical state MUST NOT pass.
 
@@ -235,7 +239,8 @@ When receiving a message with `from_stable_id = did_aw`:
 
 - Resolve `GET /v1/did/{did_aw}/key` and run the verification algorithm above.
 - If result is `OK_VERIFIED`:
-  - Treat `current_did_key` as `aweb`'s signed view of the current key.
+  - Treat `current_did_key` as the identity-signed, genesis-anchored view
+    served by AWID. AWID did not sign the identity transition.
   - If it conflicts with the message envelope’s `from_did`, treat as a hard identity mismatch (reject or quarantine).
   - Only this result — a genesis-anchored verification — may replace a stale
     TOFU-pinned key for this `did_aw`.

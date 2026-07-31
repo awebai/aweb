@@ -1,39 +1,56 @@
 # Trust Model
 
-This document maps the complete key hierarchy, ownership model, and key
-management mechanisms in the aweb ecosystem.  It is the single place to
-understand "what keys exist, who holds them, and what happens when one is
-lost."
+Status: **canonical trust and key-authority reference**. The conceptual
+identity/team vocabulary lives in
+[identity.md](https://github.com/awebai/aweb/blob/main/docs/identity.md); this
+page answers which key authorizes each fact, who holds it, and what continuity
+or recovery claim exists when it changes.
 
-For protocol-level details of each key's signed envelope format, see
-[awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md) and [aweb-sot.md](https://github.com/awebai/aweb/blob/main/docs/aweb-sot.md).
+For protocol-level details of each signed envelope, see
+[awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md) and
+[aweb-sot.md](https://github.com/awebai/aweb/blob/main/docs/aweb-sot.md).
+AWID stores public registry facts and signed assertions. It never holds the
+private keys below or signs on behalf of an identity, namespace, or team. The
+aweb coordination server verifies those facts; it is not controller authority.
+A hosted operator may hold keys only for an explicitly hosted-authority or
+custodial flow.
 
 ---
 
-## Key Hierarchy
+## Authority Graph
 
-Three key types form a trust chain.  DNS is the root of trust.  Each key
-is recoverable by the authority one level above it.
+Three Ed25519 key types authorize different facts. They are related, but they
+are not one ownership chain: a team controller certifies that an independently
+held identity key is a member; it does not own, create, rotate, or recover that
+identity key.
 
 ```
-DNS (root of trust)
+DNS (root for namespace control)
   |
   +-- Namespace controller key
-  |     |
-  |     +-- Team controller key
-  |     |     |
-  |     |     +-- Identity signing key
-  |     |
-  |     +-- Addresses (namespace/name handles)
-  |
-  +-- Parent delegation (namespace controllers can authorize
-        child namespace creation, e.g. aweb.ai → juan.aweb.ai)
+        |-- creates/rotates team public-key records
+        |-- assigns or replaces namespace/name addresses
+        +-- delegates child namespace creation
+
+Team controller key
+  +-- signs/revokes membership certificates that bind member identity keys
+
+Identity signing key
+  |-- self-authorizes initial did:aw registration
+  |-- retiring key authorizes global key rotation
+  +-- signs messages and requests
 ```
 
-Each key type has two custody modes: **locally held** (BYOD / CLI) or
-**deployment held** (managed / hosted).  Custody determines who stores the
-private key and who can perform recovery, but the key type and its
-authority are the same regardless of custody.
+The namespace controller can rotate a lost team controller because it owns the
+team record. It cannot rotate somebody else's global identity key. It can move
+an address to a replacement identity, which is a different and weaker
+controller-authorized continuity claim.
+
+Each key type can be **locally held** (self-controlled/self-custodial) or
+**hosted-operator held** (hosted authority/custodial identity). Custody
+determines who stores the private key and can perform authorized recovery, but
+it does not change the key type's authority. Identity custody, team authority,
+and coordination hosting are independent axes.
 
 ---
 
@@ -47,28 +64,26 @@ team key rotation within the namespace.
 | Aspect                   | Detail                                                                                                                                               |
 |--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Algorithm**            | Ed25519                                                                                                                                              |
-| **Private key location** | BYOD: `~/.awid/controllers/<domain>.key`. Managed: held by the operator (e.g., app.aweb.ai)                                                          |
+| **Private key location** | Self-controlled/BYOT: `~/.awid/controllers/<domain>.key`. Hosted authority: held by the operator                                                         |
 | **Public key location**  | awid `dns_namespaces.controller_did` + DNS TXT record (`_awid.<domain>`)                                                                             |
 | **Authorizes**           | Namespace operations, child namespace creation (parent delegation), team creation/deletion, team key rotation, address create/delete/reassign        |
-| **Created by**           | BYOD: `aw id create` on first identity for a domain. Managed: the operator on behalf of the user                                                     |
+| **Created by**           | Self-controlled/BYOT: `aw id namespace prepare-controller` or first `aw id create` for a domain. Hosted authority: the operator                       |
 | **Rotation**             | `aw id namespace rotate-controller` (requires DNS reverify)                                                                                          |
 | **Recovery if lost**     | DNS reverify: DNS is the root of trust.  The `rotate-controller` command proves domain ownership via DNS TXT and re-establishes a new controller key |
 
-For BYOD namespaces, keep `~/.awid` safe and backed up. It contains the
-namespace controller private key.
+For self-controlled namespaces, keep `~/.awid` safe and backed up. It contains
+the namespace controller private key.
 
 #### Parent delegation
 
-A namespace controller can authorize child namespace creation.  For
-example, the `aweb.ai` namespace controller can create `juan.aweb.ai` or
-`myteam.aweb.ai`.  awid verifies this by looking up the parent namespace
-(`aweb.ai`) and checking that the signer matches the parent's
-`controller_did`.
+A namespace controller can authorize child namespace creation. For example,
+the `example.com` controller can create `agents.example.com`. AWID verifies
+this by looking up the parent namespace and checking that the signer matches
+the parent's `controller_did`.
 
-This is the standard mechanism, not a special case.  Any namespace owner
-can delegate child namespaces.  For example, the operator at app.aweb.ai
-holds the `aweb.ai` namespace controller key and uses standard parent
-delegation to create managed child namespaces like `myteam.aweb.ai`.
+This is the standard mechanism, not a hosted special case. Any namespace owner
+can delegate child namespaces; a hosted operator uses the same public protocol
+under the base domain it controls.
 
 Authority flows downward: a namespace controller can rotate the team
 controller key, but the team controller cannot rotate the namespace
@@ -81,7 +96,7 @@ The authority over team membership.  Issues and revokes team certificates.
 | Aspect                   | Detail                                                                                                                                                       |
 |--------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Algorithm**            | Ed25519                                                                                                                                                      |
-| **Private key location** | BYOD: `~/.awid/team-keys/<domain>/<team>.key`. Managed: held by the operator (encrypted)                                                                     |
+| **Private key location** | Self-controlled/BYOT: `~/.awid/team-keys/<domain>/<team>.key`. Hosted authority: held by the operator                                                        |
 | **Public key location**  | awid `teams.team_did_key`                                                                                                                                    |
 | **Authorizes**           | Certificate issuance, certificate revocation, team visibility toggle                                                                                         |
 | **Created by**           | `aw id team create` generates the keypair and registers the public key at awid                                                                               |
@@ -119,14 +134,36 @@ The identity signing key has two custody modes:
 - **Self-custodial**: the agent holds its own private key locally in
   `.aw/signing.key`.  Created from the CLI.  The private key never leaves
   the local machine.
-- **Custodial**: an operator holds the encrypted private key on behalf
-  of the agent.  Created from the operator's dashboard (e.g.,
-  app.aweb.ai) for hosted or browser MCP runtimes that don't have
-  filesystem access.  The operator signs on behalf of the identity.
+- **Custodial**: an operator holds the private key on behalf of the agent.
+  Created by an explicit hosted-custody flow for browser or service runtimes
+  that do not have filesystem access. The operator signs on behalf of the
+  identity.
 
 The key type is the same — Ed25519, same operations, same authority.
 Custody determines who stores the private key and who can perform
 recovery.
+
+### 4. E2E Message Encryption Key (separate from the authority chain)
+
+E2E message v2 uses an X25519 encryption keypair that is distinct from the
+Ed25519 identity signing key. It is not a fourth controller layer:
+
+- the X25519 private key decrypts message content;
+- the identity signing key authorizes the published encryption public-key
+  assertion;
+- AWID may publish a global identity's signed assertion, and aweb may publish a
+  local member's signed assertion, but neither registry/service can substitute
+  its own encryption key for the member's;
+- self-custodial clients keep active and archived private keys under
+  `.aw/encryption-keys/` and select the active key in `.aw/encryption.yaml`;
+- `assertion_custody=self` and `assertion_custody=hosted_custodial` describe who
+  controls decryption capability; they do not grant namespace or team authority.
+
+Losing an archived encryption private key makes messages encrypted to that key
+unrecoverable. Signing-key recovery or certificate reissuance does not recover
+old ciphertext. See
+[e2e-messaging-contract.md](https://github.com/awebai/aweb/blob/main/docs/e2e-messaging-contract.md)
+for the normative encryption protocol.
 
 #### Identity vs address authority
 
@@ -151,7 +188,7 @@ this is stored on the team-scoped `agents` row for that membership.
 Identity-auth verification proves the key binding only and must not infer
 a canonical address by listing all addresses for the `did_aw`.
 
-For mail/chat routing, private address reads, recipient binding, and the
+For mail/chat routing, address reads, recipient binding, and the
 boundary between awid authority and aweb local routing state, see
 [`identity-messaging-contract.md`](identity-messaging-contract.md).
 
@@ -159,7 +196,7 @@ boundary between awid authority and aweb local routing state, see
 
 ## Key Storage Summary
 
-### BYOD (self-hosted / CLI-only)
+### Self-controlled (BYOT / CLI)
 
 ```
 ~/.awid/controllers/<domain>.key       # Namespace controller key
@@ -171,25 +208,28 @@ boundary between awid authority and aweb local routing state, see
 Back up `~/.awid` after creating a namespace or team controller. These keys
 control namespace addresses and team membership.
 
-### Managed (hosted at app.aweb.ai)
+### Hosted authority and custodial identity
 
-Controller keys and custodial identity keys are held encrypted by the
-operator.  The `aweb.ai` namespace controller key enables parent
-delegation for managed child namespaces.  Child namespace controller keys
-are generated per-organization and stored encrypted.  The human interacts
-through the dashboard; the CLI interacts through API keys.
+Controller keys and custodial identity keys are held by the hosted operator for
+the explicit resources it controls. Parent delegation creates hosted child
+namespaces under the operator's base domain. This custody does not extend to a
+customer-controlled BYOT namespace/team or make the aweb server key authority.
 
 ---
 
-## Recovery Chain
+## Recovery and Replacement Paths
 
-Each key type is recoverable by the authority one level above it:
+Recovery follows the authority for the affected fact, not a universal parent
+chain. Team-controller recovery preserves the team record. Global signing-key
+rotation preserves `did:aw` only when the retiring key signs. Address replacement
+creates a different stable identity and preserves only controller-authorized
+address continuity.
 
 | Key lost                  | Recovered by                    | Mechanism                                                  | Status          |
 |---------------------------|---------------------------------|------------------------------------------------------------|-----------------|
 | Namespace controller      | DNS ownership                   | `aw id namespace rotate-controller` — DNS reverify         | **Implemented** |
 | Team controller           | Namespace controller            | `POST /v1/namespaces/{domain}/teams/{name}/rotate` at awid | **Implemented** |
-| Identity (custodial)      | Operator (namespace controller) | Replace — new keypair, re-register DID, reassign address   | **Implemented** |
+| Identity (custodial)      | Custody operator plus the actual address/team controllers | Replace — new keypair and new DID; authorized controllers reassign address and membership | **Operator-specific** |
 | Local identity (self-custodial, local-controller team) | Team controller | `aw team replace-key` — roster CAS + certificate replacement + audit | **Implemented** |
 | Global identity (self-custodial) | Namespace + team controllers | Stable-identity/address recovery flow | **Gap** |
 
@@ -213,8 +253,10 @@ The replacement is recorded in `replacement_announcements` with the
 namespace controller's signature.  Recipients can distinguish this from
 a key rotation (which would be signed by the old identity key).
 
-The app.aweb.ai dashboard provides this operation for custodial identities
-it manages.
+A hosted operator may provide this operation for custodial identities and
+hosted addresses it manages. A BYOT address still requires the customer's
+namespace controller, and BYOT membership still requires the customer's team
+controller.
 
 ### Self-custodial global identity (CLI-created)
 
@@ -222,11 +264,13 @@ it manages.
 
 - `aw id rotate-key` requires the old key to sign the rotation — useless
   if the key is lost.
-- The dashboard replace endpoint exists but requires a dashboard account
-  (the user must have run `aw claim-human` previously).
-- There is no CLI command for archive or replace.
-- A CLI-only user who never claimed a dashboard account and loses their
-  signing key has no way to recover the identity or reassign the address.
+- Hosted account recovery applies only when the identity was enrolled in that
+  operator's custody/recovery system and the required address/team authorities
+  cooperate.
+- There is no OSS CLI command for global archive or controller-authorized
+  replacement.
+- A CLI-only user without a separately established recovery authority cannot
+  recover stable-identity continuity after losing the signing key.
 
 The natural recovery authority is the **namespace controller**: it already
 controls address assignment, and the pattern is consistent with how team
@@ -269,15 +313,49 @@ deliberately before using `--generate-new-key`. It never accepts an old-member-k
 self-service handover. Without `--home`, the operator must pass
 `--old-cert-id`; the command outputs the new public certificate with placement
 instructions. Phase 1 supports locally held team-controller keys only. Hosted
-owner/admin replacement is a separate AC integration; until then it requires
-operator support.
+authority owner/admin replacement is not part of the current OSS CLI path; until
+a hosted operator exposes an authorized equivalent, it requires that operator's
+support.
 
 ---
 
 ## Trust Verification
 
-Recipients of signed messages can verify trust through two independent
-paths:
+Message trust has two layers: Ed25519 signature/recipient-binding verification,
+then continuity handling for a globally addressed sender.
+
+### TOFU pins and durable continuity
+
+For global identities, current Go and TypeScript clients keep an address-to-pin
+index. A first verified contact is pinned by `did:aw` when a valid stable id is
+available, otherwise by the observed `did:key`. A stable-identity pin also keeps
+the last verified current key and the highest verified DID-log sequence/hash so
+rollback detection survives process restarts.
+
+Local single-team identities skip persistent global TOFU pinning. Their current
+key is refreshed against the live team roster; a changed key that cannot be
+reconciled is not silently accepted.
+
+The visible outcomes mean:
+
+- `verified` — signature and recipient binding passed, and any new/changed
+  continuity state was durably committed;
+- `verified_custodial` — the same verification result with hosted-custodial
+  sender metadata; it is not stronger cryptography;
+- `verification_stale` — the signature may be valid, but authoritative
+  continuity/freshness could not be completed or a required new checkpoint
+  could not be persisted; it must not overwrite a pin;
+- `identity_mismatch` — recipient binding, stable-key verification, rollback
+  protection, or the pinned address identity conflicts;
+- `unverified` — the signature/identity input was absent or not verifiable.
+
+A failed first pin, rotation update, replacement, or DID-log checkpoint write is
+not reported as verified: continuity that did not reach durable storage would be
+forgotten on restart. Raw pin-store parser behavior is shared through
+[`vectors/pin-store-raw-wire-v1.json`](https://github.com/awebai/aweb/blob/main/docs/vectors/pin-store-raw-wire-v1.json),
+including explicitly recorded cross-runtime compatibility differences.
+
+Recipients can authorize a continuity change through two distinct paths:
 
 ### Key rotation (signed continuity)
 
@@ -318,8 +396,8 @@ compromised registry cannot forge it. The announcement is carried on the message
 and self-authenticating, so it needs no registry read route to be verified.
 
 Operationally this means an address handover that is not accompanied by a
-controller-signed announcement will be refused. See `default-aakj` for
-publishing announcements registry-side.
+controller-signed announcement will be refused. Publishing and transporting
+that announcement is a separate operation from changing the address row.
 
 ---
 

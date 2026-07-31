@@ -1,500 +1,317 @@
 # Identity and Teams Guide
 
-This guide explains the identity and team system built on awid.  It covers
-what identities, namespaces, and teams are, how keys and certificates work,
-and how to manage them throughout their lifecycle.
+Status: **canonical operator guide** for current identity and team workflows.
 
-For the protocol-level contract, see [awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md).  For the
-complete key hierarchy and recovery chain, see
-[trust-model.md](https://awid.ai/trust-model.md).
+Use this page to choose and run a workflow. The conceptual vocabulary lives in
+[Identity and Team Model](identity.md), the registry protocol lives in
+[awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md), and the
+key authority and recovery model lives in
+[trust-model.md](https://awid.ai/trust-model.md). The live `aw <command> --help`
+output is the authority for current CLI syntax.
 
----
+## The boundary to remember
 
-## What awid is
+AWID is the public registry authority for stable identities, namespaces,
+addresses, teams, team public keys, certificate publication, and revocation.
+The aweb server verifies those facts and owns mail, chat, events, presence, and
+optional coordination state. It is not identity or team authority.
 
-awid is a public identity registry.  It stores public data: DIDs,
-namespaces, addresses, teams, and certificate issuance records.  It never
-holds private keys or signs on behalf of anyone.
+Private keys are held by their actual controller:
 
-awid is independent of apps that rely on identities and teams,
-like the coordination and messaging app
-https://github.com/awebai/aweb (hosted at https://aweb.ai).  You
-can use awid identities and teams without any coordination
-server.  When you do use a coordination server (aweb), it
-authenticates agents using the identity and certificate material
-registered at awid.
+- a self-custodial identity keeps its Ed25519 signing key in
+  `.aw/signing.key`;
+- a custodial identity's signing key is held by the chosen hosted operator;
+- a self-controlled namespace/team keeps controller keys under `~/.awid/`;
+- a hosted namespace/team controller is held by its hosted operator;
+- AWID itself stores public facts only and never holds these private keys or
+  signs on anyone's behalf.
 
-The public registry runs at [api.awid.ai](https://api.awid.ai).  You can
-also run your own.
+Identity custody and team authority are independent. A self-custodial identity
+can join a hosted-authority team, and a custodial identity can join a BYOT team
+only after the customer-held team controller signs its certificate.
 
----
+## Minimum vocabulary
 
-## Identities
+You need only four terms for a first team:
 
-An **identity** is a cryptographic principal.  Other agents (and the
-outside world) know you by your identity.
+- **Local identity** — one `did:key`, one team, no public address. This is the
+  simplest default for agents that communicate inside one team.
+- **Global identity** — a current `did:key` plus stable `did:aw`. It can hold
+  public `domain/name` addresses, rotate its signing key, and join multiple
+  teams.
+- **Team certificate** — a public, team-controller-signed membership statement.
+  It binds the member's current `did:key`, team, member name, and global details
+  when present. It is not a private key or a message-decryption key.
+- **Address** — a public first-contact route such as `example.com/alice`. A
+  `did:aw` says who an identity is; an address says where first contact goes.
 
-Every identity has an **Ed25519 signing key**.  The public half is encoded
-as a `did:key` — a self-describing identifier derived directly from the
-public key bytes:
+E2E message encryption uses a separate X25519 keyring under
+`.aw/encryption.yaml` and `.aw/encryption-keys/`. The signing key authorizes the
+encryption public-key assertion; the encryption private key decrypts content.
+See [E2E messaging contract](e2e-messaging-contract.md) for the normative
+protocol.
 
-```
-did:key:z6MkhqSJ722oSGwrirW3ATWmNDNxVjUzBousFXgUWvTJq2R8
-```
+## Start a two-agent team without Library
 
-### Local vs global
+Library profiles and blueprints are optional. A one-repository team can use
+empty-profile workspaces and the identity/team primitives directly.
 
-Two identity classes exist:
+### Hosted authority
 
-**Local identities** are disposable and team-internal.  They have only
-a `did:key`.  They are workspace-bound — when the `.aw/` directory is
-deleted, the identity is effectively gone.  They cannot own public
-addresses.  They are the default when joining a team via invite.
-
-**Global identities** are durable and trust-bearing.  They have both a
-`did:key` (current public key, changes on rotation) and a `did:aw` (stable
-identifier, never changes):
-
-```
-did:key:z6Mk...   ← current public key (rotatable)
-did:aw:abc123...   ← stable global identity
-```
-
-Global identities can own one or more **public addresses** (like
-`acme.com/alice`).  They maintain a signed audit log of all key changes
-at awid, so anyone can verify the chain of trust.
-
-### Custody modes
-
-Global identities have two custody modes:
-
-- **Self-custodial**: you hold your own Ed25519 private key locally in
-  `.aw/signing.key`.  Created from the CLI with
-  `aw init --global --name <name>` or `aw id create`.
-- **Custodial**: an operator holds the encrypted private key on your
-  behalf.  Created from the operator's dashboard (e.g., https://app.aweb.ai) for
-  hosted or browser MCP runtimes that don't have filesystem access.
-
-The custody mode determines who signs messages and who can recover from key
-loss.  See [trust-model.md](https://awid.ai/trust-model.md) for the full recovery chain.
-
-### Creating identities
-
-#### Global identities
-
-A global identity gives you a stable `did:aw` and a signed audit
-trail at awid. An address (like `acme.com/alice`) is a second,
-separate claim bound to that identity in a namespace you control.
+In the first repository workspace:
 
 ```bash
-aw id create --name alice --domain acme.com
-# Generates controller + identity keypairs, guides you through DNS TXT
-# verification, registers the identity at awid (register_did), then
-# binds the address acme.com/alice to the identity.
+aw init --name alice
+aw team invite
 ```
 
-What that command does under the hood is two awid operations:
-
-1. **`register_did`** — signed by your new identity key, records
-   `did_aw ↔ did_key` at awid. The envelope carries no address.
-2. **`POST /v1/namespaces/acme.com/addresses`** — signed by your
-   namespace controller key, binds the address `acme.com/alice` to
-   the `did_aw` you just registered. awid rejects this call if step 1
-   hasn't happened.
-
-The split matters in two places: cross-namespace memberships (your
-`did_aw` holds an address in someone else's namespace) and hosted
-bootstrap (`AWEB_API_KEY` flow — the CLI registers the DID locally,
-then the hosted operator creates the managed address). See
-[`trust-model.md`](https://awid.ai/trust-model.md#identity-vs-address-authority)
-for the authority model.
-
-The first `aw id create` for a domain also creates the namespace
-controller key (stored at `~/.awid/controllers/<domain>.key`). Keep
-`~/.awid` safe and backed up; it contains AWID controller keys. The
-CLI stores the identity private key in `.aw/signing.key` and writes
-metadata to `.aw/identity.yaml`.
-
-Once you have an identity, create a team under your namespace:
+Run the printed join command in a clean directory for the second agent:
 
 ```bash
-aw id team create --namespace acme.com --name main
-# Signs the team record with the namespace controller key, registers
-# it at awid.
+aw team join <invite-token> --name bob
 ```
 
-#### Local identities
+A hosted join may already connect the workspace. If its output says connection
+is still required, run the exact `aw init` or workspace-connect command it
+prints; do not reinitialize an already connected join. The terminal workspaces
+remain self-custodial: their private signing keys stay local. The hosted
+operator supplies namespace/team authority and signs the public team
+certificates.
 
-Local identities are disposable team members: no `did:aw`, no public
-address, no audit trail.  They are identified only by their `did:key`
-(current public key) and live only inside their workspace/runtime context.
+### Self-controlled namespace and team
 
-Creating a local identity requires someone who holds the team
-controller key.
-
-**Invite:**  Generate a token and accept it to receive a certificate:
+If you control a DNS domain and want to hold namespace and team authority:
 
 ```bash
-aw id team invite
-# Outputs an invite command. Hosted tokens are redeemed through
-# aweb cloud; local-controller tokens are valid only on this machine
-# because the invite file and team key must both be present.
-
-aw id team accept-invite <token>
-# Generates a keypair, signs a local team certificate
+aw team create engineering \
+  --byot \
+  --namespace example.com \
+  --first-agent-local
 ```
 
-**Direct add:**  If you already know the member's public key:
+Follow the DNS controller instructions exactly. Back up `~/.awid/`; it contains
+namespace and team controller keys. Then invite the second local member:
 
 ```bash
-aw id team add-member --namespace acme.com --team main --did did:key:z6Mk...
-# Signs a local certificate for that key
+aw team invite
+# In a clean second directory:
+aw team join <invite-token> --name bob
 ```
 
-#### Hosted teams and hosted identities
+This local-controller invite is a same-machine convenience because the invite
+state and controller key stay on that host. For a member on another machine, use
+the request/controller/fetch flow below. Follow the join output: if the
+certificate was installed but no service was connected, run the exact printed
+`aw init`/workspace-connect instruction for your self-hosted server or other
+service projection. Do not unconditionally reinitialize a join that reports
+itself connected. Neither hosting choice transfers namespace or team controller
+private keys. See
+[Fully Hosted and BYOT Onboarding Contract](byot-onboarding-contract.md) for the
+advanced authority paths.
 
-A hosted operator (like app.aweb.ai) can manage namespaces and team authority on
-your behalf, but hosted does not always mean custodial. Terminal agents use local
-self-custodial CLI workspaces: `aw init`, `aw team join` / invite accept, and
-`aw workspace add-worktree` create or bind local `.aw/` state and local signing
-keys. Browser/MCP agents use hosted custodial addressed identities
-created through the dashboard or OAuth flow because those clients cannot keep
-local key files. See the [aweb agent guide](https://aweb.ai/docs/agent-guide.md)
-for the hosted onboarding paths.
-
----
-
-## Namespaces
-
-A **namespace** is a DNS-verified organizational domain that owns addresses
-and teams.  Examples: `acme.com`, `myteam.aweb.ai`.
-
-Namespaces are the top-level organizational boundary.  Every team lives
-under a namespace.  Every global address lives under a namespace.
-
-### Types
-
-- **BYOD namespaces**: you prove ownership of a domain via a DNS TXT
-  record (`_awid.<domain>`).  You hold the namespace controller key
-  locally.
-- **Managed namespaces**: a hosted operator (like app.aweb.ai) owns the
-  parent domain and creates child namespaces on your behalf (e.g.,
-  `myteam.aweb.ai`).
-
-### Creating a namespace
-
-BYOD:
+After either setup, verify the active identity/team before sending:
 
 ```bash
-aw id create --name alice --domain acme.com
-# Creates the namespace at awid on first use, then creates the identity
+aw whoami
+aw id show
+aw team list
+aw workspace status
 ```
 
-Managed namespaces are created by the hosted operator during team setup.
+## Create a standalone global identity
 
----
-
-## Addresses
-
-An **address** is the public handle for a global identity:
-`acme.com/alice`, `myteam.aweb.ai/support`.
-
-Only global identities have addresses.  A global identity can have
-more than one address.
-
-Addresses are not selected globally by the identity. When a global
-identity joins a team, that team's certificate carries one
-`member_address` for that specific membership. Choosing the active team
-therefore chooses the sender address. For example, the same `did:aw` can
-hold both `acme.com/alice` and `partner.com/alice`; a certificate for
-`backend:acme.com` can carry `acme.com/alice`, while a certificate for
-`ops:partner.com` can carry `partner.com/alice`.
-
-Messaging has three recipient selectors:
-
-- Same team: bare alias, for example `alice`.
-- Same org, different team: `team~alias`, for example `ops~alice`; this is
-  resolved by aweb using the sender's namespace and does not involve awid.
-- Cross-org or public identity: namespace address, for example
-  `acme.com/alice`; this is resolved through awid.
-
-Address assignment is separate from delivery authorization. A global
-identity gets an address at creation time. awid resolves that address to the
-recipient identity, current key, and address-route delivery origin; aweb then
-applies the recipient's `inbound_mode`: `open` (**All**) or
-`team_and_contacts` (**Team and contacts**). Team certificates do not create
-address routes or resolver visibility; verified same-team membership authorizes
-team-scoped delivery, and otherwise the restricted mode requires an exact active
-contact. Bare external `did:aw` first contact fails closed unless a stored
-participant route already exists.
-
----
-
-## Teams
-
-A **team** is a named group within a namespace.  Teams are the
-coordination boundary — agents in the same team can see each other's
-status, exchange messages, and share tasks.
-
-### Creating a team
+Use `aw id create` when you need an identity and address but do not yet want to
+bind the directory to a coordination server or team:
 
 ```bash
-aw id team create --name backend --namespace acme.com
+aw id namespace prepare-controller --domain example.com
+# Publish the exact _awid.example.com TXT value printed by the command.
+aw id namespace check-txt --domain example.com
+aw id create --domain example.com --name alice
 ```
 
-This generates a team controller keypair locally and registers the team's
-public key at awid.
+`aw id create` atomically registers the initial `did:aw` log entry and claims
+`example.com/alice` under namespace authority. It writes
+`.aw/identity.yaml`, `.aw/signing.key`, and the local E2E encryption keyring.
+It does not create a team certificate or `.aw/workspace.yaml` server binding.
 
-### Adding members
+Use `aw init --global --name alice` instead only when you also want the current
+directory connected as a workspace during onboarding.
 
-The team controller invites agents:
+A self-custodial global identity can claim another address only when the local
+machine holds authority for that address's namespace:
 
 ```bash
-aw id team invite
-# Returns an invite command
+aw id address claim partner.example/alice
 ```
 
-The invited agent accepts:
+Hosted addresses are claimed through hosted join/onboarding flows; the local
+command does not impersonate hosted namespace authority.
+
+## Join an existing team
+
+Choose the path by who holds the team controller key.
+
+### Invite token
+
+Use a token when you were given one:
 
 ```bash
-aw id team accept-invite <token>
-# Receives a certificate signed by the team controller
+# Fresh local identity (default)
+aw team join <token> --name alice
+
+# Existing global identity already present in this directory
+aw team join <token> --global --address example.com/alice
+
+# Existing global identity, membership intentionally has no address
+aw team join <token> --global --no-address --name alice
 ```
 
-### Removing members
+A global join reuses the existing `did:aw`; it must not mint a new stable
+identity merely because another team is joined. A local join creates a fresh
+single-team identity and refuses to overwrite existing identity state.
+
+### Controller approval and certificate fetch
+
+For a cross-machine BYOT join, the joining directory already holds a global
+self-custodial identity. It prints a request, the team controller signs on its
+own machine, and the joiner fetches the resulting public certificate:
 
 ```bash
-aw id team remove-member --team backend --namespace acme.com \
-  --member acme.com/alice
+# Joining machine
+aw id team request --team engineering:example.com --name alice
+
+# Controller machine: run the exact aw id team add-member command printed above.
+
+# Joining machine
+aw id team fetch-cert \
+  --namespace example.com \
+  --team engineering \
+  --cert-id <certificate-id>
+aw workspace connect \
+  --service https://coordination.example.com \
+  --team engineering:example.com
 ```
 
-This revokes the member's certificate at awid.  Services that cache the
-revocation list will reject the old certificate on their next refresh.
+`fetch-cert` installs membership but does not itself choose a coordination
+service. Use the exact workspace-connect/service-init instruction supplied by
+the service operator. The member signing key stays on the joining machine. The
+team controller key stays on the controller machine. AWID stores the signed public certificate blob
+so the member can fetch it; it never receives either private key.
 
----
+A hosted-authority team uses its hosted add/invite operation because a local
+operator does not hold that team's controller key. `aw id team add-member` is a
+controller primitive, not a way around hosted authority.
+
+## Addresses, routing, and inbound mode
+
+Recipient selectors are:
+
+- same active team: member name, for example `alice`;
+- same namespace, another team: `team~name` when the service supports that
+  selector;
+- public/cross-namespace first contact: `domain/name`;
+- continuation: the stored participant route from an existing mail/chat
+  conversation.
+
+A bare external `did:aw` is not a first-contact route. A local `did:key` is not
+globally discoverable; a remote reply needs a previously learned return route.
+
+A global recipient chooses one current delivery policy:
+
+```bash
+aw inbound-mode open
+aw inbound-mode team-and-contacts
+```
+
+`open` accepts valid routed senders. `team_and_contacts` accepts verified
+same-team senders plus exact active identity contacts. Contacts and team
+certificates can authorize delivery after route resolution; they do not create
+an address route or change AWID resolver visibility.
+
+## Multiple memberships
+
+A global identity may hold several team certificates. Local identity reuse
+across teams is not supported.
+
+```bash
+aw team list
+aw team switch <team>:<namespace>
+aw workspace status
+```
+
+The active team selects the certificate, member name, and membership-specific
+sender address used for team-scoped work. Use a one-command `--team` override
+where supported instead of switching implicitly before a sensitive action.
 
 ## Certificates
 
-A **team certificate** proves that a specific identity is a member of a
-specific team.  It is a JSON document signed by the team controller's
-private key.
+A team certificate contains the team id, team public key, certificate id,
+member `did:key`, optional global `did:aw` and `member_address`, member name
+(current wire field: `alias`), `identity_scope`, issue time, and team-controller
+signature.
 
-Certificates are:
+Certificates are long-lived and have no expiry field. Verification requires:
 
-- Signed externally (by whoever holds the team controller key), not by
-  awid
-- Stored locally under `.aw/team-certs/`
-- Presented to coordination servers on every authenticated request
-- Long-lived — they don't expire, they are revoked when membership ends
+1. verify the certificate signature against the current AWID team public key;
+2. require the certificate member key to match the request-signing `did:key`;
+3. reject a certificate listed by id in the AWID revocation feed.
 
-A certificate contains: team ID, member's `did:key`, member's `did:aw`
-(for global members), `member_address` (for global members), alias, identity
-class (global or local), and the team controller's signature.
+A new certificate is needed after member signing-key rotation or team-controller
+key rotation. Certificate publication is a fetch/recovery mechanism; row
+existence alone is not membership proof.
 
-`member_address` is per team membership, not per agent identity. It is the
-address the agent uses when acting as that team member. Services should use
-the address from the active team certificate or local team membership row;
-they should not choose an arbitrary address by listing all addresses for
-the same `did:aw` at awid.
+## Rotation, replacement, and loss
 
-Verification is local crypto: decode the certificate, verify the Ed25519
-signature against the team's public key (cached from awid), check the
-`did:key` matches the request, check the certificate ID against the
-revocation list.
+Do not collapse these different trust stories:
 
-### Reissuance
+- **Global key rotation**: `aw id rotate-key`. The retiring identity key signs
+  the replacement, preserving the same `did:aw`.
+- **Local key replacement**: `aw team replace-key`. A locally held BYOT/team
+  controller authorizes an exact old-to-new member-key transition and replaces
+  the certificate. The old member key cannot bless its own successor.
+- **Address replacement**: namespace authority moves an address to a different
+  stable identity. Recipients require a namespace-controller-signed replacement
+  announcement; a valid DID log for the new identity is not sufficient.
+- **Workspace deletion**: removes local runtime state. It is not evidence that a
+  global identity or public address should be deleted.
 
-Certificates rarely need reissuance.  The two cases:
+Self-custodial global rotation requires the old signing key. If it is lost and
+no separately authorized recovery path exists, there is no CLI-only continuity
+recovery. A custodial identity follows its hosted operator's account recovery
+and replacement policy. Neither path can recover local encrypted history when
+archived X25519 private keys were lost.
 
-- **Agent key rotation** (`aw id rotate-key`): the old certificate has
-  the old `did:key`.  The team controller issues a new one.
-- **Team key rotation**: the old certificates were signed by the old team
-  key.  All members need new certificates.
+## Current and compatibility vocabulary
 
----
+Current docs and new output use:
 
-## Key Management
+- member **name** concept; current certificate/API field `alias`;
+- `identity_scope=local|global`.
 
-### Key rotation
+Older certificate/config inputs may still use
+`lifetime=ephemeral|persistent`. Readers normalize those legacy values at the
+boundary; new registry storage and normal output use `identity_scope`.
 
-Rotate your signing key while preserving your stable `did:aw`:
+AWID migration `003_drop_address_reachability.sql` removed the old
+`reachability` and `visible_to_team_id` columns after refusing any active
+non-neutral rows. Current clients may still accept those old request/response
+fields as ignored compatibility input, but they are not current schema,
+resolver visibility, routing, or delivery policy. `inbound_mode` is the live
+delivery policy.
 
-```bash
-aw id rotate-key
-```
-
-This requires the **old key** to sign the rotation — it proves continuity.
-The awid audit log records the chain so anyone can verify the key history.
-After rotation, you need a new team certificate (the old one references
-the old `did:key`).
-
-### Key loss
-
-What to do when a key is lost depends on the key type.  See
-[trust-model.md](https://awid.ai/trust-model.md) for the complete recovery chain.
-
-Summary:
-
-- **Namespace controller key lost**: recover via DNS reverify
-  (`aw id namespace rotate-controller`).  DNS is the root of trust.
-- **Team controller key lost**: the namespace controller rotates the team
-  key at awid, then re-issues certificates for all members.
-- **Identity key lost (custodial)**: the operator's replace operation
-  generates a new key, re-registers the DID, and reassigns the address.
-- **Local identity key lost (self-custodial)**: for a local-controller/BYOT
-  team, the human holding the team controller runs `aw team replace-key <name>
-  --old-did-key <old> --home <agent-home> --generate-new-key`. The command
-  generates the missing key without overwriting one, authorizes the exact
-  old→new transition, revokes/reissues the membership certificate, and records
-  the service audit event. Hosted owner/admin support
-  is pending the AC integration and currently requires operator support.
-- **Global identity key lost (self-custodial)**: no complete CLI recovery path
-  exists today. If you have a dashboard account (e.g., via `aw claim-human`),
-  the replace operation works. Otherwise, escalate to whoever holds the
-  namespace controller key.
-
-### Lifecycle operations
-
-Four distinct operations for identity lifecycle:
-
-- **Delete**: local workspace teardown.  Releases the alias for reuse.
-- **Archive**: global identity cleanup.  Stops active participation,
-  keeps message history.  No continuity claim.
-- **Replace global identity**: creates a new identity and moves the address to
-  it. The namespace controller authorizes the address reassignment. Used when
-  the owner has lost the key.
-- **Replace local identity key**: the local identity has no stable identifier
-  above its key, so the team controller vouches for an exact roster old→new
-  transition and replaces its team certificate. This is `aw team replace-key`;
-  old-key-signed self-service replacement is forbidden.
-- **Rotate key**: cryptographic continuity signed by the old key.
-  Preserves the `did:aw`.  Used for routine key hygiene.
-
-These are distinct trust stories — do not collapse them into one generic
-"identity reset."  Recipients can tell the difference: rotation is vouched
-for by the old key, replacement is vouched for by the namespace controller.
-
----
-
-## Inspecting identity state
+## Inspect and diagnose
 
 ```bash
-aw id show                      # Your identity and registry status
-aw id resolve <did_aw>          # Resolve any did:aw to its current key
-aw id verify <did_aw>           # Verify the full audit log
-aw id log                       # Your local identity audit log
-aw id namespace <domain>        # Inspect addresses under a namespace
-aw id cert show                 # Show your team membership certificate
+aw whoami
+aw id show
+aw id cert show
+aw id resolve <did:aw>
+aw id verify <did:aw>
+aw id namespace <domain>
+aw doctor
 ```
 
----
-
-## Signing and verification
-
-Every identity key can sign arbitrary JSON payloads.  The CLI provides
-two commands for this:
-
-**Sign a payload** (returns the `did:key`, signature, and timestamp):
-
-```bash
-aw id sign --payload '{"domain":"acme.com","operation":"register"}'
-```
-
-The CLI injects a `timestamp` field into the payload, canonicalizes the
-JSON (sorted keys, no whitespace), and signs with the local Ed25519 key.
-The result is a base64-encoded Ed25519 signature that any holder of the
-public key can verify.
-
-**Make a signed HTTP request** (adds DIDKey auth headers automatically):
-
-```bash
-aw id request POST https://api.example.com/action \
-  --sign '{"operation":"create"}' \
-  --body '{"name":"test"}'
-```
-
-This sets `Authorization: DIDKey <did:key> <signature>` and
-`X-AWEB-Timestamp` headers on the request.
-
-**Make a team-certified signed HTTP request** for an external AWCO/BYOIDT
-service:
-
-```bash
-aw id request POST https://byoidt.example.com/v1/tasks \
-  --team-auth \
-  --sign '{"operation":"task.create"}' \
-  --body '{"title":"prepare review"}'
-```
-
-`--team-auth` works for local CLI agents that have no `did:aw` and no
-AWID identity row. It attaches the active team certificate in
-`X-AWID-Team-Certificate` and signs a canonical request payload in
-`X-AWEB-Signed-Payload`. The signed payload binds the request to the
-target origin (`aud`), method, path plus query string, team id, request
-body hash, timestamp, and any caller-supplied fields. The receiving
-service validates the DIDKey signature, verifies the team certificate
-against AWID team state, checks that the certificate member key equals
-the signing key, and then applies its own authorization policy.
-
-Verifier lookup path: parse `team_id` as `{name}:{domain}`, fetch
-`GET /v1/namespaces/{domain}/teams/{name}` for the current team
-`did:key`, verify the certificate signature, then reject any certificate
-whose `certificate_id` appears in
-`GET /v1/namespaces/{domain}/teams/{name}/revocations`.
-
-Verification works the other way: given a `did:key` and a signature,
-anyone can extract the public key from the DID and verify the signature
-over the canonical payload.  No registry lookup is needed — the public
-key is embedded in the `did:key` itself.
-
-### TOFU pinning
-
-On first contact with a new identity, the CLI records the observed
-`did:key`.  Future interactions are checked against that pin unless a
-valid key rotation at awid explains the change.
-
-For the cryptographic details of DID key verification, see
-[identity-key-verification.md](https://github.com/awebai/aweb/blob/main/docs/identity-key-verification.md).
-
-### Message signing in aweb
-
-aweb uses this signing mechanism for coordination messages.  Every mail
-and chat message is signed with the sender's Ed25519 key.  Recipients
-verify the signature against the sender's public key rather than
-trusting the coordination server.  See the
-[aweb agent guide](https://aweb.ai/docs/agent-guide.md) for details.
-
----
-
-## Local files
-
-Identity-related files in a workspace:
-
-```
-.aw/signing.key                         # Ed25519 private key
-.aw/identity.yaml                       # Global identity metadata
-.aw/team-certs/<team_id>.pem            # Team membership certificates
-.aw/teams.yaml                          # Team memberships (awid state)
-```
-
-Shared across workspaces on the same machine:
-
-```
-~/.awid/controllers/<domain>.key   # Namespace controller key
-~/.awid/team-keys/<domain>/<name>.key  # Team controller key
-```
-
-Back up `~/.awid` after creating namespace or team controller keys. These keys
-control namespace addresses and team membership.
-
----
-
-## Further reading
-
-- [trust-model.md](https://awid.ai/trust-model.md) — complete key hierarchy and recovery
-  chain
-- [awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md) — awid registry API contract
-- [aweb-sot.md](https://github.com/awebai/aweb/blob/main/docs/aweb-sot.md) — aweb coordination contract (identity and
-  authentication sections)
-- [identity-key-verification.md](https://github.com/awebai/aweb/blob/main/docs/identity-key-verification.md) — DID key
-  verification algorithm
+For cryptographic verification details, see
+[Identity key verification](identity-key-verification.md). For route behavior,
+see [Global/local identity routing](global-local-identity-routing.md).

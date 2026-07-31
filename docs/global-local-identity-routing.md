@@ -1,412 +1,203 @@
-# Global/local identity routing SOT
+# Global/local identity routing
 
-Status: supporting SOT for the shipped route-level global/local messaging
-contract. The canonical identity/team vocabulary and invariants live in
-[`identity.md`](identity.md). The normative messaging behavior summary lives in
-[`identity-messaging-contract.md`](identity-messaging-contract.md); this document
-explains the routing model, migration direction, and deleted legacy routing
-concepts.
+Status: **current supporting protocol** for shipped route-level global/local
+messaging behavior.
 
-This document uses the canonical local/global model from `identity.md`:
+The canonical concepts live in [identity.md](identity.md). The normative
+cross-component summary lives in
+[identity-messaging-contract.md](identity-messaging-contract.md). This page
+explains the route model and clearly separates current behavior from legacy
+compatibility input.
 
-- **Global agent**: an agent with a registered `did:aw`. It is globally routable
-  through addresses and can be enrolled in many teams.
-- **Local agent**: an agent with only a `did:key`. It is local to one aweb
-  server/team until it writes outward and the remote side learns a return route.
+## Identities and routes are different facts
 
-## Goals
+A **global identity** has a stable `did:aw`, a current `did:key`, and zero or
+more addresses. A **local identity** has only a `did:key` and team/service-local
+routing state.
 
-1. Make identity routing understandable: `did:aw` means global, `did:key` only
-   means local.
-2. Preserve one durable identity invariant: a `did:aw` names one actual agent.
-3. Treat multiple addresses for one `did:aw` as handles for the same identity,
-   not separate routable principals.
-4. Remove reachability and visibility gates from the resolver/auth model.
-5. Remove conversation/thread identifiers as routing authority or authorization
-   capabilities.
-6. Keep migration deliberate for existing rows that still carry reachability,
-   visibility, messaging-policy, and conversation-auth state.
+A global `did:aw` identifies one actual key-holding principal. It may rotate its
+current key, hold several addresses, and join several teams, but it must not be
+used to represent several independently routable agents.
 
-## Definitions
+An address such as `example.com/alice` is a first-contact route to a global
+identity. A bare `did:aw` is an identity binding, not a delivery route. Multiple
+addresses may resolve to the same `did:aw`; those addresses are handles for the
+same principal and may carry different route origins.
 
-### Actual agent
+A local `did:key` is not globally discoverable. A remote service can reply only
+when an authenticated earlier message established a valid learned return route.
 
-An **actual agent** is the key-holding principal that sends and receives
-messages. It may be a self-custodial CLI workspace or a hosted custodial MCP
-runtime. Runtime workspaces, team memberships, and addresses are projections of
-that agent; they do not create independent routable principals.
+## Authority boundaries
 
-### Global agent
+- **AWID** is authoritative for global `did:aw` key history, address bindings,
+  and each address route's delivery origin.
+- **The sender identity key** signs message and recipient-binding fields.
+- **The aweb server** validates, routes, stores, and delivers messages; it stores
+  participant route state for continuations.
+- **Team certificates** prove team membership. They do not create addresses,
+  resolver visibility, or delivery routes.
+- **Contacts** can authorize delivery under `team_and_contacts`; they do not
+  create routes or registry facts.
+- **Conversation/session ids** group UX and retries. They are not routing or
+  authorization capabilities.
 
-A **global agent** has:
+## Current route model
 
-- a `did:aw` row in AWID;
-- a current `did:key` bound to that `did:aw`; and
-- zero or more addresses such as `acme.com/alice`.
+### Global first contact uses an address
 
-A global agent is globally identifiable to global senders and reachable by any
-sender with a valid address route and signed payload. First contact starts from
-an address handle, not a bare `did:aw`. A local agent
-can also write outbound to a global agent through its home server. The sender and
-recipient still prove key possession with signed envelopes. No team
-certificate, address visibility flag, or conversation id creates a route or
-resolver visibility. Contacts do not create routes or resolver visibility, but an exact active
-identity contact or verified same-team membership is required for delivery when
-the recipient's `inbound_mode` is `team_and_contacts`.
+1. The sender targets `recipient.example/bob`.
+2. AWID resolves that concrete address to Bob's stable `did:aw`, current
+   `did:key`, and address-route delivery origin.
+3. The sender signs the message with the target address and resolved recipient
+   binding.
+4. The sending aweb service delivers to the resolved origin.
+5. The receiving service revalidates the signed outer fields and recipient
+   binding before storing the message.
+6. After route and identity validation, the recipient's current `inbound_mode`
+   decides whether delivery is authorized.
 
-### Local agent
+`inbound_mode=open` accepts valid routed senders.
+`inbound_mode=team_and_contacts` accepts verified same-team senders plus exact
+active identity contacts. Neither setting changes AWID resolution.
 
-A **local agent** has:
+### Global continuation uses stored participant route state
 
-- a `did:key`;
-- no `did:aw`;
-- no AWID identity row; and
-- local routing state on one aweb server/team.
+A reply may use the participant identity/address/origin recorded by the earlier
+message. The conversation id is only a lookup/threading input. The stored route
+must still match the signed sender/recipient bindings and current delivery
+policy.
 
-Local identity reuse across teams is not part of the model. A second local team
-membership is a second workspace/identity; reuse is for global identities only.
-
-A local agent is not globally discoverable. A remote sender cannot first-contact
-`did:key:z6Mk...` unless it already has a learned return route from a previous
-inbound message by that local agent.
-
-Local agents may send outbound messages to global agents. Their outbound signed
-message includes their `did:key` and return-route metadata supplied by their
-home aweb server. The global recipient may reply using that learned route. The
-learned route is scoped to the observed local sender and route; it does not make
-that bare `did:key` globally routable.
-
-## Invariants
-
-### `did:aw` maps to one actual agent
-
-`did:aw <-> actual agent` is a system invariant.
-
-- A `did:aw` may rotate its current `did:key` through the AWID DID log.
-- A `did:aw` may have many addresses.
-- A `did:aw` may hold team memberships in many teams.
-- A `did:aw` must not represent multiple independently routable agents.
-
-If product UX wants several named bots, create several `did:aw` identities. Do
-not model them as multiple addresses for one identity and then route them as if
-they were independent principals.
-
-### Addresses are handles
-
-An address (`domain/name`) resolves to a `did:aw`. It is a human-friendly handle,
-not the agent itself. Multiple addresses that resolve to the same `did:aw` are
-handles for the same global agent.
-
-Consequences:
-
-- Message delivery binds to the resolved `did:aw`, not to a separate address
-  principal.
-- Recipient history may display the addressed handle for UX, but authorization
-  and routing use the identity.
-- Address replacement changes which `did:aw` the handle points to; it does not
-  mutate the old identity.
-
-### Delivery origin is route-level
-
-The target model uses **route-level delivery origin**.
-
-First contact to a global identity uses a concrete address (`domain/name`). AWID
-address resolution returns the address route: target `did:aw`, current
-`did:key`, and delivery origin for that address. In the current schema that
-origin may be inherited from `dns_namespaces.default_delivery_origin`; it is
-still metadata for the address route, not an identity-level canonical route.
-
-A single `did:aw` may have multiple addresses with different route origins. No
-resolver or server path may collapse them to one canonical identity origin.
-Direct bare `did:aw` first contact is unsupported unless an existing
-conversation/session supplies stored participant route state.
-
-Rationale:
-
-- It preserves explicit route authority: address first contact or stored
-  participant route continuation.
-- It lets one global identity participate through multiple authorized address
-  routes without one address overwriting another.
-- It avoids inventing delivery routes from `did:aw` key lookup alone.
-- It keeps namespace `default_delivery_origin` as address-route inheritance, not
-  identity routing authority.
-
-### Conversation IDs are metadata only
-
-Conversation IDs, chat session IDs, message thread IDs, and in-reply-to fields
-are UX/local metadata. They may group messages, dedupe retries, and help a client
-choose a reply target, but they must not be routing authority or an authorization
-capability.
-
-A reply is valid because the sender signs it and the recipient route is either a
-global identity route or a learned local return route. It is not valid merely
-because the request contains a known `conversation_id`.
-
-### Learned local return routes are vouched capabilities
-
-A learned return route for a local `did:key` is learned from authenticated
-inbound transport and the local home server's route assertion. It is not learned
-merely from arbitrary fields inside the local agent's sender-signed payload. A
-local `did:key` signature proves the local agent key, but it does not prove that
-a claimed delivery origin is authoritative for that key.
-
-The route should be represented as a server-verifiable route assertion or
-capability (or an equivalent transport primitive) that binds at minimum:
-
-- local `did:key`;
-- home delivery origin or concrete return route;
-- issuing server identity or origin;
-- timestamp and expiry;
-- route scope; and
-- revocation semantics.
-
-Replies to local `did:key` require a valid learned route. Stale, missing,
-malformed, mismatched, or revoked route assertions fail closed. A receiving
-global server must not treat a bare self-asserted `did:key -> origin` claim in a
-signed message as sufficient routing authority.
-
-## Deleted concepts
-
-The target model deletes these concepts as resolver/auth layers:
-
-- AWID address reachability values: `public`, `org_only`,
-  `team_members_only`, and `nobody`.
-- `visible_to_team_id` on address rows.
-- Private address lookup authorization through team certificates.
-- Team-certificate address visibility gates.
-- The old five-value recipient policy gate as a live delivery authorization
-  surface. The replacement live surface is the explicit global
-  `inbound_mode=open|team_and_contacts`; old broader org/block-all semantics
-  are not renamed or preserved. Contacts may authorize non-team delivery under
-  `team_and_contacts`, but they remain exact address-book state and never
-  resolver visibility or routing authority. Team certificates prove same-team
-  membership; they do not create routes. Recipient-side blocklists, abuse
-  throttles, and spam controls may still run after identity/route resolution;
-  they are not resolver visibility rules.
-- Known-pin or local-row fallback that bypasses global identity resolution for a
-  global address.
-- Conversation-id auth bypasses for mail/chat continuation.
-
-Team certificates remain the credential for team-scoped coordination endpoints:
-tasks, claims, roles, locks, instructions, workspace state, and presence. They
-do not grant special powers to discover a global address or create a route; they
-do prove same-team membership for `team_and_contacts` delivery.
-
-## Routing model
-
-### Global first contact by address
-
-1. Alice is global (`did:aw:alice`) and sends to `beta.example/bob`.
-2. Alice's client resolves `beta.example/bob` at AWID.
-3. AWID returns Bob's `did:aw`, current `did:key`, and the address-route delivery origin for `beta.example/bob`.
-4. Alice signs the message payload binding:
-   - Alice `did:aw` and current `did:key`;
-   - selected sender address, if any;
-   - target address `beta.example/bob`;
-   - resolved recipient `did:aw` and current `did:key`;
-   - recipient delivery origin;
-   - message id, type, body, and timestamp.
-5. Alice's aweb server delivers to Bob's address-route delivery origin.
-6. Bob's server verifies the signed payload, re-resolves or verifies the
-   recipient identity binding, and stores the message.
-
-No reachability flag, contact membership, or conversation id creates the route.
-After route and identity binding, the recipient's `inbound_mode` decides
-delivery: `open` accepts valid routed senders, and `team_and_contacts` accepts
-verified same-team members plus exact active contacts.
-
-### Global reply
-
-1. Bob replies to Alice.
-2. Bob's client uses the participant identity/route metadata from the received
-   message as a convenience input.
-3. The reply is signed by Bob and binds Alice's global `did:aw`, current key,
-   and stored participant route origin.
-4. Alice's server accepts only if the signed sender identity and recipient
-   identity/route verify.
-
-The existing conversation id may be included to thread the UI. It is not the
-reason delivery is allowed.
+A direct bare external `did:aw` send fails closed when no stored participant
+route exists.
 
 ### Local outbound to global
 
-1. Local agent `did:key:zLocal` has no `did:aw` and is known only to its local
-   aweb server/team.
-2. It sends to global `beta.example/bob`.
-3. The local server resolves Bob's global address route and delivery origin.
-4. The local agent signs the message as `did:key:zLocal`.
-5. The local home server/transport adds a verifiable route assertion that
-   identifies where replies for this local key should be delivered.
-6. Bob's server stores both the local sender key and validated learned return
-   route with the message participant record.
+A local agent signs as its `did:key` and sends to a global address through its
+home aweb service. The transport supplies an authenticated return-route
+assertion or equivalent vouched route state. The remote service records the
+local sender key and validated return route.
 
-The local sender is not inserted into AWID and does not become discoverable by
-other global agents.
+The local sender is not inserted into AWID and does not become globally
+discoverable.
 
-### Global reply to local via learned route
+### Global reply to local
 
-1. Bob replies to `did:key:zLocal` from the inbound message.
-2. Bob's server uses the learned return route captured from that inbound message.
-3. Bob signs the reply payload to the local `did:key` and route context.
-4. The local agent's home server accepts the reply only if the route assertion is
-   still valid, the route matches the learned local route, and the signed payload
-   binds the expected sender and recipient keys.
+A remote reply targets the local `did:key` through the stored learned route. A
+local-key signature proves the key, but a self-asserted `did:key -> origin`
+field is not sufficient route authority.
 
-The learned route is a return path, not a global directory entry. It can expire,
-be revoked, or be scoped to the server/team that issued it. If it is stale,
-missing, or revoked, the reply fails closed.
+A learned local route must bind at least:
 
-### Failed first contact to unknown local `did:key`
+- local `did:key`;
+- home delivery origin or concrete return route;
+- issuing service/origin;
+- route scope;
+- issuance/expiry information; and
+- revocation semantics.
 
-1. Bob tries to send a first-contact message to `did:key:zUnknownLocal`.
-2. There is no `did:aw` resolver row and no learned route.
-3. The client/server must fail closed with a not-routable/not-found result.
-4. The server must not guess from local member names, stale participant rows,
-   known pins, or team certificate records.
+Missing, stale, malformed, mismatched, or revoked learned routes fail closed.
 
-Bare local `did:key` values are not globally routable.
+### Unknown local first contact fails
 
-## Data model direction
+A bare unknown `did:key` has neither an AWID address route nor learned return
+route. The sender must receive a not-routable/not-found result. The server must
+not guess from member names, old participant rows, trust pins, or certificates.
 
-### AWID
+## Signed recipient binding
 
-Target AWID identity records need to represent:
+For global first contact, signed content binds the behavior-shaping fields,
+including the target address, target stable identity and current key, message
+identity/type/content, and timestamp. Mail and chat carry their own additional
+fields.
 
-- `did_aw`;
-- current `did_key`;
-- DID log / rotation state;
-- addresses bound to the identity.
+If a request supplies several recipient selectors (`to_stable_id`, `to_did`,
+`to_address`, local member name, or agent id), every supplied selector must
+resolve to the same recipient. Conflicts fail with a validation error instead
+of being resolved by precedence.
 
-Delivery origin is address-route metadata, inherited from namespace default in
-the current schema, not identity record metadata.
+Trust pins are not route authority. A pinned identity helps detect continuity
+changes, but it cannot make an unresolved address deliverable or authorize an
+address to move to a different `did:aw`.
 
-Address records should no longer carry reachability or `visible_to_team_id` as
-auth fields. Reads of addresses and address-route metadata are public
-resolver operations. Write authority remains unchanged: identity key controls DID
-state; namespace controller controls address assignment.
+## Address route origin
 
-### aweb server
+Delivery origin is route-level metadata. In the current AWID schema an address
+inherits it from `dns_namespaces.default_delivery_origin`; address resolution
+returns it as the concrete route's delivery metadata.
 
-The aweb server needs distinct routing tables for:
+A single `did:aw` may therefore have:
 
-- stored participant routes (`did:aw`, current key, address, delivery origin);
-- local agents (`did:key`, local server/team/workspace projection);
-- learned routes from inbound local-origin messages; and
-- UX thread/conversation metadata.
+- `example.com/alice` delivered to one origin; and
+- `partner.example/alice` delivered to another.
 
-Team-scoped projections can still store alias, team id, certificate id, role,
-workspace, and presence. Those fields do not authorize global message delivery.
+Clients and servers must not collapse those routes into one canonical
+identity-level origin. `GET /v1/did/{did_aw}/key` resolves a key and never
+invents a delivery route.
 
-### CLI and channel clients
+## Current storage responsibilities
 
-CLI/channel send paths should classify targets as:
+AWID stores:
 
-- global address (`domain/name`) -> resolve to `did:aw` + key + address-route
-  delivery origin;
-- global identity (`did:aw`) -> unsupported for first contact unless stored route state exists;
-- local member name in the active team -> same-server local routing only;
-- local `did:key` -> allowed only with a learned route.
+- stable identity mapping and append-only key log;
+- namespace/address bindings;
+- namespace default delivery origin used by concrete address routes;
+- team public keys and certificate publication/revocation facts.
 
-Signed payloads must include enough binding for recipient servers to reject
-mismatched outer fields and stale routes.
+Aweb stores:
 
-## Migration phases
+- team-local agent/workspace projections;
+- mail/chat state;
+- conversation participants with address, delivery origin, and current-key
+  hints;
+- local learned return routes; and
+- UX conversation/thread metadata.
 
-### Phase 0: design and inventory
+Aweb copies are operational cache/route state, not registry authority.
 
-- Land this SOT.
-- Inventory all uses of address reachability, `visible_to_team_id`, private
-  address lookup auth, legacy aweb delivery policy gates, conversation-id auth,
-  known-pin fallback, and namespace/address delivery origin.
-- Add conformance cases for the five routing examples above before broad code
-  deletion.
+## Compatibility: removed reachability and visibility fields
 
-### Phase 1: route-level delivery origin
+AWID migration `003_drop_address_reachability.sql` is current shipped schema. It
+refused to run while any active row had non-neutral legacy visibility, then
+dropped both `public_addresses.reachability` and
+`public_addresses.visible_to_team_id`.
 
-- Remove unshipped identity-level delivery-origin artifacts.
-- Use namespace `default_delivery_origin` as address-route inheritance.
-- Make address resolution return route origin for the concrete address.
-- Fail bare external `did:aw` first contact closed; use address first contact or stored participant route continuation.
+Therefore those columns are **not current resolver schema**. Current AWID API
+models may still accept or decode `reachability` and `visible_to_team_id` from
+older clients/servers as ignored compatibility fields. They must not affect:
 
-### Phase 2: global resolver reads ignore reachability
+- address lookup or listing;
+- route origin;
+- delivery authorization;
+- team-certificate powers; or
+- current `inbound_mode`.
 
-- Make address and identity resolver reads return global identity bindings
-  without reachability gates.
-- Keep deprecated reachability columns readable for rollback/diagnostics, but do
-  not use them for authorization.
-- Stop requiring team certificates for private address reads.
+Old five-value messaging-policy concepts are likewise not current delivery
+policy. The live surface is `open|team_and_contacts`. Rows without a valid
+current `inbound_mode` fail with an explicit migration-required diagnostic;
+they are not silently widened.
 
-### Phase 3: route by address routes, participant routes, and learned local routes
+## Compatibility: stored selectors and old envelopes
 
-- Update mail/chat send and receive paths to route global first contact by
-  address-route delivery origin and continuations by stored participant route.
-- Add learned-return-route storage for local outbound senders.
-- Make direct local `did:key` first contact fail closed unless a learned route is
-  present.
-- Preserve thread IDs only as metadata.
+Existing conversations keep their ids and display history, but continuations
+must be authorized by signed identity/route bindings. Mixed-version federation
+may accept the four deprecated v1 routing fields named in
+[identity-messaging-contract.md](identity-messaging-contract.md) only as ignored
+input during its release window.
 
-### Phase 4: compatibility reads and UX cleanup
+Legacy clients may still decode old address visibility fields or older
+`lifetime` identity vocabulary. Normalization at a read boundary does not make
+those fields current authority.
 
-- Keep old CLI/API fields as deprecated no-ops for one compatibility window.
-- Render old reachability settings as ignored/deprecated in dashboard/support
-  views with repair guidance.
-- Contacts remain exact address-book state. They do not route or affect resolver
-visibility, but exact active identity contacts authorize delivery for the
-  `team_and_contacts` and local-contact gates. Team certificates still do not
-  route or affect resolver visibility; they prove same-team delivery authority.
+## Required evidence
 
-### Phase 5: delete dead code and schema
+Changes to address resolution, identity lookup, participant routes, local member
+selectors, contacts, mail, chat, federation, or registry caching must prove:
 
-- Remove reachability and `visible_to_team_id` write paths.
-- Remove AWID private address lookup authorization.
-- Remove aweb messaging-policy enforcement.
-- Remove conversation-id authorization bypasses.
-- Remove fallback code that routes global messages from local rows/pins without
-  resolver proof.
-- Drop deprecated columns only after production data has been audited and the
-  rollback window has closed.
-
-## Compatibility rules for existing users
-
-- Existing legacy lifetime identities with a `did:aw` become global identities;
-  first-contact delivery additionally requires an address route.
-- Existing legacy lifetime identities without a `did:aw` become local identities.
-  They retain team-local coordination behavior and may send outward to globals
-  through learned-route capable aweb servers.
-- Existing neutral/public address rows resolve by address-route metadata.
-  Existing non-neutral legacy rows (`reachability != public` or
-  `visible_to_team_id IS NOT NULL`) are migration-blocked for public address
-  resolution until an explicit owner/operator action normalizes them. During the
-  compatibility window, writes may be accepted for old clients but must not
-  affect resolver or delivery authorization.
-- Existing conversations continue to display and thread by their old ids, but
-  continuation requests must be authorized by signed identity/route bindings,
-  not by the id alone.
-- Existing namespace/address delivery origins are route metadata. The target
-  invariant is no canonical identity delivery origin; each address route may have
-  its own origin.
-
-## Blast radius
-
-Implementation touches at least:
-
-- `docs/awid-sot.md`, `docs/aweb-sot.md`, and
-  `docs/identity-messaging-contract.md`;
-- AWID schema/API/client models for address-route delivery origin and address reads;
-- aweb server mail/chat resolver, federation, signed-payload verification,
-  conversation participant storage, contacts/messaging-policy enforcement, and
-  known-peer fallback;
-- CLI target classification, signed payloads, diagnostics, and channel wake-up
-  metadata;
-- AC/dashboard identity UI, legacy reachability support views, support tools,
-  and migration repair flows;
-- e2e/conformance suites for global first contact, global replies, local to
-  global sends, global replies to local via learned route, and failed first
-  contact to unknown local `did:key`.
-
-## Evidence gates
-
-Changes to routing, authorization, identity resolution, address lookup, mail,
-chat, local member-name handling, contacts, or registry caching must provide e2e
-or conformance evidence that matches this SOT. Isolated unit tests are useful for
-local mechanics but are not sufficient proof for the routing/auth model.
+- global address first contact through AWID resolution;
+- global continuation through stored participant route state;
+- local outbound plus remote reply through a vouched learned route;
+- failed first contact to an unknown local `did:key`;
+- failed bare external `did:aw` first contact without stored route state;
+- no route/policy bypass through stale local rows, trust pins, contacts, team
+  certificates, or conversation ids; and
+- recipient identity and delivery-origin binding at federation boundaries.
