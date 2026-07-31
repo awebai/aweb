@@ -53,6 +53,18 @@ func withFakePiExtensionRunner(t *testing.T, fn func(args ...string) ([]byte, er
 	return &calls
 }
 
+// Stubbing per test closes the instances that exist today and nothing about the
+// one added tomorrow. The package default is the guarantee: no test in cmd/aw
+// reaches the real claude, so none of them can install a plugin at user scope on
+// the host running the suite. Tests that assert on the commands install their own
+// recorder over this.
+func TestChannelPluginRunnerDefaultsToNotExecutingClaude(t *testing.T) {
+	if reflect.ValueOf(runClaudeChannelPluginCommand).Pointer() ==
+		reflect.ValueOf(runClaudeChannelPluginCommandExec).Pointer() {
+		t.Fatal("the package default runner execs claude: any test reaching channel setup writes the host's user-scope plugin cache")
+	}
+}
+
 func TestEnsureClaudeChannelPluginRunsMarketplaceAndInstall(t *testing.T) {
 	withFakeClaudeOnPath(t)
 	calls := withFakeClaudePluginRunner(t, nil)
