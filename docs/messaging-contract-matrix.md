@@ -1,85 +1,155 @@
 # Messaging Contract Matrix
 
-This note records the architectural checkpoint from the 2026-05-05 release
-failure review. It is intentionally a contract note, not an implementation
-patch.
+Status: **subordinate maintainer conformance inventory**. These cases identify
+what tests and release evidence must prove. They do not override the current
+user, event, identity-routing, or E2E authorities listed in
+[`messaging.md`](messaging.md).
 
-## Assessment
+## Authority controls
 
-The core trust model is sound, but recent implementation work drifted away from
-the full contract. The failures are consistent with applying local fixes faster
-than we re-grounded them against all messaging use cases.
+- AWID owns global identity/address bindings, current keys, address-route
+  origins, team public keys, and revocation records. Active same-team delivery
+  authority comes from a presented controller-signed certificate verified
+  against the current team key and non-revocation, not registry row existence.
+- Aweb owns durable mail/chat, conversations, participant routes, recipient
+  delivery policy, read state, and wake events.
+- First-contact routing uses a concrete global address or valid same-team alias.
+  A conversation/session continuation uses stored participant route state but
+  still evaluates the recipient's current delivery policy.
+- `conversation_id` and chat `session_id` select existing state; neither is
+  routing or participant authority by itself.
+- Self-custodial clients own private keys and local plaintext presentation.
+  Hosted custodial tools are server-readable hosted messaging.
 
-The intended authority split is:
+## Identity, routing, and continuation cases
 
-- `awid` owns identity, address bindings, route/delivery metadata, team
-  membership, certificates, and key rotation.
-- `aweb` owns coordination state: mail, chat, conversations, tasks, roles, and
-  workspace behavior.
-- Address resolution controls first contact routing; delivery authorization is
-  the recipient's aweb `inbound_mode`: `open` (**All**) or
-  `team_and_contacts` (**Team and contacts**). Team certificates do not create
-  routes or resolver visibility; verified same-team membership authorizes
-  delivery when the recipient uses `team_and_contacts`.
-- Once a conversation exists, replies use stored conversation participation and
-  route state instead of re-running address discovery, but they still re-run
-  the recipient's current delivery policy.
-- A global identity can belong to multiple teams without becoming a new
-  identity.
-- Bare aliases are local to the active team/namespace. Cross-namespace
-  communication uses an address or an explicit selector.
-
-This is necessary complexity for BYOIDT, hosted identities, address routing,
-key rotation, and multi-team membership. The main architectural smell
-is duplicated authority: some routes historically inferred visibility from mail
-rows, while conversation continuation relies on `conversation_participants`.
-Conversation participants must be the authority for existing conversations.
-
-## Use Cases
-
-The release gate must cover these cases for both mail and chat where applicable:
+Cover these cases for mail and chat wherever the operation exists:
 
 1. Same-team bare alias.
 2. Same-team full address.
-3. Same-team alias-first, then full-address continuation.
-4. Cross-team same namespace with explicit team selector.
+3. Same-team alias first contact followed by full-address continuation.
+4. Cross-team same-namespace send with an explicit team selector.
 5. Cross-namespace address first contact with `inbound_mode=open`.
-6. Cross-namespace address first contact with `inbound_mode=team_and_contacts`
-   and an exact active identity contact.
-7. Cross-namespace address first contact with `inbound_mode=team_and_contacts`
-   and verified same-team membership but no exact active contact.
-8. Cross-namespace address first contact without a valid route or required
-   exact contact fails closed.
-9. Reply by existing participant route after first contact, without re-running
-   address discovery, while still satisfying current delivery policy.
-13. Bare external `did:aw` first contact fails closed; stored-route continuation works.
-14. Key rotation preserves conversation continuity.
-15. Local identity: team-local alias only.
-16. Global identity in multiple teams: active team selects sender context.
-17. Existing identity added to another hosted or BYOIDT team without cloning the
-    identity.
-18. Duplicate aliases across teams require explicit address or team context.
-19. Hosted custodial identity follows the same messaging contract.
-20. Local pin fallback is only for already-known peers, not address authority.
-21. Mismatched recipient bindings fail closed.
-22. Duplicate active one-to-one conversations are rejected or cleaned up.
-23. Closed or expired conversations cannot be continued.
-24. Conversation listing shows conversations where the actor is a participant.
+6. Cross-namespace address first contact with `team_and_contacts` and an exact
+   active identity contact.
+7. Cross-namespace address first contact with `team_and_contacts` and verified
+   same-team membership but no exact contact.
+8. Cross-namespace first contact without the required route/contact/team
+   authority fails closed.
+9. An existing participant continues by stored route without repeating address
+   discovery, while current recipient policy is still enforced.
+10. Bare external `did:aw` first contact fails closed; stored-route continuation
+    remains valid.
+11. Identity key rotation preserves a correctly bound conversation route.
+12. A local identity has only team-local alias/stored-route delivery.
+13. A global identity in multiple teams remains one identity; active team selects
+    sender context.
+14. Adding an existing identity to another hosted or customer-controlled team
+    does not clone the identity.
+15. Duplicate aliases across teams require concrete address or team context.
+16. A hosted custodial identity satisfies the same signed routing contract.
+17. Local trust-pin fallback applies only to an already-known peer and never
+    creates first-contact address authority.
+18. Mismatched recipient identity/address bindings fail closed.
+19. Duplicate active one-to-one conversations are rejected or repaired rather
+    than creating ambiguous routing.
+20. Closed or expired conversations cannot be continued.
+21. Conversation listing returns only conversations where the actor is a
+    participant.
+22. Federation v1 tolerates only the named deprecated routing fields as ignored
+    compatibility input; they cannot shape routing or policy.
+23. Federated responses are uncompressed and remain inside the response-size
+    bound.
 
-## Current Documentation Anchors
+## Durable mail and read-state cases
 
-- `docs/awid-sot.md`: identity, address, delivery metadata, team certs, and
-  legacy reachability compatibility/audit state.
-- `docs/aweb-sot.md`: aweb coordination and identity-scoped messaging.
-- `docs/identity-messaging-contract.md`: messaging authority split and direct
-  address send protocol.
-- `docs/contributing.md`: release validation expectations.
-- `scripts/e2e-oss-user-journey.sh`: executable OSS messaging and inbound-mode
-  matrix.
+1. Send acceptance returns `message_id` and `conversation_id` but does not claim
+   wake, presentation, read state, or a recipient trust verdict.
+2. Exact mail reads do not change read state: both `show --message-id` and
+   conversation `show` are read-only.
+3. Conversation history is oldest-first, defaults to 200, has a 500-message
+   ceiling, and has no paging flag. A full-size window cannot prove completeness.
+4. Inbox is newest-first. The CLI defaults to 50 while the server accepts at most
+   200; returned unread rows are presented and acknowledged, and a bounded result
+   is not mailbox completeness evidence.
+5. Mail reply resolves the source `conversation_id`; reply sends before its
+   best-effort source acknowledgement. Failure of that acknowledgement does not
+   unsend the reply.
+6. `aw mail ack` is the authenticated recipient-side read transition. It
+   idempotently sets `read_at` for unread recipient mail and emits the mutation
+   event only on a state change.
+7. Read mail leaves unread inbox/actionable reconnect delivery but remains
+   durable and exactly fetchable.
+8. Encrypted mail events expose routing/wake metadata without plaintext subject
+   or body.
 
-## Release Discipline
+## Chat wait, selection, and read cases
 
-Do not ship messaging or identity changes unless the affected rows above are
-covered by focused tests and the release gate runs against the exact artifact
-that will be consumed downstream. For cloud integration, AC must validate
-against the published or locally installed aweb artifact intended for release.
+1. Chat `session_id` is the chat `conversation_id`; exact session commands avoid
+   alias re-selection after an event supplies the id.
+2. Pending includes sessions with unread messages or an active counterpart wait.
+   It exposes `sender_waiting` and remaining wait time.
+3. Recipient-based open prefers a `sender_waiting` direct session, then direct
+   over group, then recent activity. Ambiguous identities fail with a choose-one
+   diagnostic rather than guessing.
+4. Open fetches unread content before acknowledgement. It presents and marks the
+   exact returned ids best-effort, surfaces a mark-read error, and refuses to
+   acknowledge an incomplete snapshot above 1,000 unread messages.
+5. Chat history is read-only. The CLI default is 1,000 messages and the server
+   maximum is 2,000; exact `session_id` plus `message_id` selects one item.
+6. `send-and-wait` defaults to 120 seconds. `--start-conversation` raises the
+   implicit wait to 300 seconds unless the caller explicitly supplied `--wait`.
+7. Wait/listen marks reply ids read after presentation, best-effort. A failed
+   mark leaves them eligible for later pending presentation.
+8. `extend-wait` continues the selected session; it does not create a replacement
+   thread merely because a process restarted.
+9. `sender_leaving` ends the current wait/turn, not durable participant
+   membership. Explicit participant removal governs future group key wraps.
+
+## Wake and reconnect cases
+
+1. Communication events are wake signals; durable mail/chat remains content
+   authority.
+2. The raw stream emits no SSE `id`, accepts no `Last-Event-ID`, and has no
+   resumable server cursor.
+3. Each connection emits a fresh actionable snapshot. The mail snapshot contains
+   the newest 50 unread messages plus total unread count, not a complete mailbox.
+4. Raw `aw events stream` exits on EOF/error and leaves bounded backoff to its
+   caller; managed runtime adapters own their documented reconnect behavior.
+5. A consumer deduplicates stable message/session ids, fetches durable state,
+   acknowledges only after its presentation point, and makes downstream actions
+   idempotent.
+6. Control signals are at-most-once and may be consumed before a dropped frame;
+   reconnect must re-read authoritative state instead of assuming replay.
+7. Authentication or authorization failure stops the retry loop for identity or
+   membership repair.
+
+## Content mode and custody cases
+
+1. Current CLI plaintext is server-readable by default; explicit `--e2ee` fails
+   closed on missing or invalid key/capability with no silent downgrade.
+2. For self-custodial encrypted v2, plaintext never enters the routing service;
+   events, server storage, and support surfaces remain metadata/ciphertext-only.
+3. Hosted custodial MCP/dashboard/server-side compose or read is server-readable
+   hosted messaging even when it uses the v2 wire format.
+4. Lost archived self-custodial encryption keys make that history unrecoverable
+   by the routing service or support.
+5. Accepted asynchronous encrypted mail is verified on later read without
+   reapplying the ingestion freshness window.
+6. Legacy plaintext remains labeled server-readable and is never relabeled as
+   retroactive E2E.
+
+## Release evidence and document anchors
+
+- Current user behavior: [`mail-and-chat.md`](mail-and-chat.md).
+- Wake/reconnect behavior: [`receiving-events.md`](receiving-events.md).
+- Identity/routing protocol: [`identity-messaging-contract.md`](identity-messaging-contract.md).
+- Encryption/content modes: [`e2e-messaging-contract.md`](e2e-messaging-contract.md)
+  and [`e2e-legacy-plaintext-policy.md`](e2e-legacy-plaintext-policy.md).
+- Command/tool inventory: generated [`cli-command-reference.md`](cli-command-reference.md)
+  and [`mcp-tools-reference.md`](mcp-tools-reference.md).
+- Executable cross-surface proof: [`../scripts/e2e-oss-user-journey.sh`](../scripts/e2e-oss-user-journey.sh).
+
+A change touching a case above must name and run its focused test plus the
+applicable release gate against the exact artifact being reviewed. A passing
+case does not authorize prose to redefine its upstream contract.
