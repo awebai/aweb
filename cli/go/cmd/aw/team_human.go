@@ -112,8 +112,9 @@ var teamHumanJoinCmd = &cobra.Command{
 	Short: "Join a team from an invite token",
 	Long: "Join a team from an invite token.\n\n" +
 		"Run this in a clean target directory. It refuses to overwrite an existing\n" +
-		".aw identity/key. After joining, run `aw init` if the output says the\n" +
-		"workspace still needs to be connected to the service.",
+		".aw identity/key. Join installs identity and membership state but does not create\n" +
+		"`.aw/workspace.yaml` or report service-connection state. After joining, always\n" +
+		"run `aw workspace connect --service <service-url>` before checks or messaging.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamAcceptInvite,
 }

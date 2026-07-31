@@ -63,8 +63,10 @@ is:
 aw team join <invite-token> --name bob
 ```
 
-`aw team join` refuses to overwrite existing `.aw` identity state. If its
-output says Bob still needs a service connection, run:
+`aw team join` refuses to overwrite existing `.aw` identity state. It installs
+Bob's identity and membership but does not create `.aw/workspace.yaml` or report
+service-connection state. Connect Bob explicitly before checks, events, or
+messaging:
 
 ```bash
 aw workspace connect --service https://app.aweb.ai/api

@@ -1040,8 +1040,9 @@ Flags:
 Join a team from an invite token.
 
 Run this in a clean target directory. It refuses to overwrite an existing
-.aw identity/key. After joining, run `aw init` if the output says the
-workspace still needs to be connected to the service.
+.aw identity/key. Join installs identity and membership state but does not create
+`.aw/workspace.yaml` or report service-connection state. After joining, always
+run `aw workspace connect --service <service-url>` before checks or messaging.
 
 Flags:
 - `--address string Advanced: existing owned address to place in the global member certificate`

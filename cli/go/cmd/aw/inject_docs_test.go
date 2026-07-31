@@ -295,6 +295,46 @@ func TestSelfHostingGuideUsesTheCurrentExistingDirectoryLocalIdentityPath(t *tes
 	}
 }
 
+func TestPublicTeamJoinGuidanceRequiresExplicitServiceConnection(t *testing.T) {
+	joinHelp := strings.Join(strings.Fields(teamHumanJoinCmd.Long), " ")
+	if !strings.Contains(joinHelp, "does not create `.aw/workspace.yaml`") ||
+		!strings.Contains(joinHelp, "aw workspace connect --service <service-url>") {
+		t.Fatalf("team join help does not state the unconditional service-connection contract:\n%s", teamHumanJoinCmd.Long)
+	}
+
+	formatted := formatTeamAcceptInvite(teamAcceptInviteOutput{
+		Status: "accepted", TeamID: "default:example.com", Alias: "bob", CertPath: ".aw/team-certs/default_example.com.json",
+	})
+	if strings.Contains(strings.ToLower(formatted), "connect") || strings.Contains(strings.ToLower(formatted), "workspace") {
+		t.Fatalf("team join output unexpectedly claims workspace connection state:\n%s", formatted)
+	}
+
+	root := cmdMonorepoRootForTest(t)
+	required := map[string][]string{
+		"README.md":                  {"aw workspace connect --service https://app.aweb.ai/api"},
+		"docs/cli-tutorial.md":       {"aw workspace connect --service https://app.aweb.ai/api", "aw workspace connect --service \"$AWEB_URL\""},
+		"docs/identity-guide.md":     {"aw workspace connect --service https://app.aweb.ai/api", "aw workspace connect --service <service-url>"},
+		"docs/self-hosting-guide.md": {"aw workspace connect --service http://localhost:8000"},
+	}
+	for relative, commands := range required {
+		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(body)
+		for _, command := range commands {
+			if !strings.Contains(text, command) {
+				t.Errorf("%s omits required post-join command %q", relative, command)
+			}
+		}
+		for _, conditional := range []string{"if its output says", "if the join output says", "if the output says", "may already connect", "follow the join output"} {
+			if strings.Contains(strings.ToLower(text), conditional) {
+				t.Errorf("%s conditions required connection on impossible join output %q", relative, conditional)
+			}
+		}
+	}
+}
+
 func TestAwebTeamInstructionsExplainRosterResponsibility(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(cmdMonorepoRootForTest(t), "agents", "instructions.md"))
 	if err != nil {

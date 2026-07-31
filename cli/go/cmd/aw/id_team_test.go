@@ -1820,6 +1820,11 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 	if acceptGot["alias"] != "bob" {
 		t.Fatalf("alias=%v", acceptGot["alias"])
 	}
+	for _, absent := range []string{"workspace_id", "aweb_url", "connected"} {
+		if _, ok := acceptGot[absent]; ok {
+			t.Fatalf("accept-invite output unexpectedly reports service connection field %q: %v", absent, acceptGot)
+		}
+	}
 	if strings.Contains(string(acceptOut), "aw_sk_child_not_printed") {
 		t.Fatalf("accept output leaked child api key:\n%s", string(acceptOut))
 	}
