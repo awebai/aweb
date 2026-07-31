@@ -14,11 +14,14 @@ dismissed as demos.
 However, their strongest public evidence establishes different, narrower
 claims:
 
-- Gas Town can produce high coding throughput for an expert operator who has
-  many well-specified, mostly independent tasks and accepts high cost, risk,
-  and operational complexity.
+- Gas Town can produce extraordinary coding throughput for an expert operator
+  who has well-specified, independently verifiable work and accepts high cost,
+  risk, and operational complexity. There are identifiable professionals using
+  it for real work, not only demos.
 - Paperclip can provision, invoke, schedule, observe, budget, and govern
   heterogeneous agent processes through a common task-oriented control plane.
+  There are repeat operators, but little public evidence ties their fleets to
+  independently verifiable business or engineering outcomes.
 
 The public evidence does **not** yet establish either of these stronger claims:
 
@@ -36,6 +39,12 @@ The right current posture for aweb is therefore:
 3. Treat integrations as bounded experiments and distribution channels.
 4. Build for the smaller, already-real case: a few independently running agent
    processes that need durable reachability, handoff, wake-up, and reply.
+
+For the immediate operating decision: **do not replace the team currently
+building aweb with Gas Town.** Test Gas Town on a bounded, test-rich,
+non-critical epic if there is a genuine throughput bottleneck. A wholesale
+replacement would exchange a tuned, working coordination system for an
+experimental system optimized for a different kind of work.
 
 ## What counts as productivity evidence
 
@@ -89,6 +98,50 @@ throughput result. It supports the value of:
 These are valuable mechanisms even if the complete Gas Town product is not the
 right abstraction.
 
+The strongest attributable real-work case located for this review is DoltHub
+CEO Tim Sehn's
+[week building DoltLite](https://www.dolthub.com/blog/2026-03-24-a-week-in-gas-town/).
+DoltLite is a non-toy attempt to replace SQLite's B-tree storage with a
+Dolt-style Prolly Tree and add version-control operations. The resulting
+release added roughly 18,000 lines of C. On the first day, Gas Town worked for
+about four hours with minimal prompting and reached a state where SQLite's
+87,000 acceptance tests passed. By the end of the week Sehn had released a
+"mostly working" 0.1.0 and concluded that Gas Town had been critical to the
+implementation speed.
+
+This is real work by an identifiable domain expert, with a public repository,
+tests, a release, and a stated cost. It is the clearest evidence that Gas Town
+can create a step-change in prototype throughput.
+
+The boundary conditions are equally important. Sehn attributes the result to
+two existing reference implementations, a clean interface, a large acceptance
+suite, a relatively small codebase, his eight years of domain expertise, and a
+near-unlimited model budget. It cost $3,000 for the week. Once the project
+reached coupled performance debugging, he stopped using most Gas Town
+mechanisms: the work became direct interaction between him and the Mayor, with
+Beads retained as the ledger. He still found broken indexes near the deadline
+and described the result as "mostly working," not production-ready.
+
+There is also evidence of retained professional use. Datopian CTO Anuar Ustayev
+described
+[several months using Gas Town as his primary orchestration
+tool](https://www.datopian.com/blog/multi-agent-ai-workflow-infrastructure).
+He reported spending 80% of his time planning and supervising and 20%
+debugging, while no longer writing code himself. Yet his recommendation to a
+new user was not to adopt Gas Town wholesale: start with the coding tool already
+subscribed to and a few agents. Datopian's account says the bottleneck moved
+from implementation to defining good work, and that poorly specified work can
+cost more to unwind than to restart.
+
+A
+[launch-thread participant](https://news.ycombinator.com/item?id=46458936)
+supplied another concrete but shorter case. After about 15 hours, the operator
+reported that Gas Town improved the UI of a Postgres time-series project, fixed
+remote Docker failures with some nudging, and opened and resolved roughly 50
+Beads. They considered it useful for a complex, repetitive epic while still
+calling the system early and inference-heavy. This is credible practitioner
+evidence, but not a longitudinal productivity comparison.
+
 ### What is not demonstrated
 
 The same independent report did not result in adoption. It describes broken
@@ -127,6 +180,50 @@ ordinary developers or for complex, ambiguous product development. Most users
 should not be expected to invest enough in its concepts and operating discipline
 to reach the creator's results.
 
+### Should Gas Town replace the current aweb team?
+
+No.
+
+The current aweb workflow has already paid the setup cost that Gas Town asks a
+new operator to pay. It has evolved project-specific roles and instructions,
+durable mail and chat, claims and locks, isolated worktrees, explicit review,
+repository authority rules, cross-repository escalation, and human product
+judgment. Those are not incidental mechanics. They encode what has been learned
+while building identity and communication infrastructure where subtle authority
+or lifecycle mistakes matter.
+
+Gas Town's most distinctive operating doctrine is also a poor fit for that
+work. Its speed benefit assumes that the operator does not read all generated
+code and instead relies on specifications, tests, and cheap replacement of bad
+work. Aweb currently needs:
+
+- ambiguous product discovery, not only execution against a settled spec;
+- protocol, identity, security, and lifecycle correctness;
+- careful independent review;
+- coordinated changes across OSS and SaaS repositories;
+- durable project understanding across changes.
+
+Those are precisely the conditions in which parallelism stops helping in the
+best Gas Town reports. Replacing the current team would likely preserve agent
+cost while losing accumulated operating knowledge and adding a new
+orchestration system to debug.
+
+The sensible experiment is narrower:
+
+1. Select one self-contained, non-critical epic with a stable interface and
+   strong tests.
+2. Freeze the same acceptance criteria for the current aweb team and a Gas Town
+   run.
+3. Measure elapsed time, total model cost, human minutes spent specifying,
+   supervising, reviewing, and recovering, first-pass acceptance, rework, and
+   defects.
+4. Keep the existing team as the authority and reviewer.
+5. Adopt only the mechanisms that produce a clear net gain.
+
+If Gas Town wins that test, it has earned a role as a burst execution engine.
+It has not earned control of product direction or wholesale replacement of the
+team.
+
 ## Paperclip
 
 ### What is demonstrated
@@ -155,6 +252,91 @@ explicitly records human review and multiple quality gates.
 Paperclip therefore has credible value as a task, invocation, and observability
 layer. An operator with existing agents may prefer one place to see their state,
 cost, work, and approvals.
+
+There is also evidence of actual repeat operation:
+
+- one operator reported a self-hosted, two-company, eight-agent factory on a
+  Mac Mini;
+- another reported fourteen agents "in production" and had optimized away the
+  roughly 90% of heartbeats in which no work was available;
+- another documented five weeks operating a single CEO agent;
+- public discussions contain reports of ten to twenty-eight configured agents
+  and multiple companies.
+
+These reports establish that Paperclip is installed, retained, and used to
+invoke agents. They do not by themselves establish what useful outcomes those
+agents produced, whether the fleet beat a simpler workflow, or how much operator
+attention it consumed.
+
+### What operators say after trying it
+
+The public comments are polarized, but a consistent pattern emerges.
+
+Positive operators in a
+[discussion explicitly asking whether Paperclip is
+useful](https://www.reddit.com/r/aisolobusinesses/comments/1s9gfma/is_paperclip_ai_actually_useful_or_just_another/)
+like the dashboard, centralized task state, agent-specific roles, and the
+feeling of control compared with several opaque terminal sessions. One user who
+built a seventeen-agent SaaS organization said the value appeared only after
+extensive configuration and summarized the lesson as: the tool is not magic;
+the Markdown instructions and skills make or break it. Another user reported
+ten agents over roughly three months but also said a separate, more expensive
+project-manager agent was needed to alleviate setup and team-management
+problems.
+
+Critical operators report:
+
+- getting more done by working with one agent directly;
+- agents following the corporate metaphor into make-work, such as inventing
+  human hiring processes instead of completing the requested task;
+- heavy ticket proliferation and manual comments needed to close parent tasks;
+- drift into random tangents;
+- large amounts of planning and governance activity that look productive in
+  the dashboard without moving the actual goal;
+- substantial effort stripping and rewriting the default configuration.
+
+The strongest reports are reproducible issue reports rather than anonymous
+reviews. A
+[two-company, eight-agent operator](https://github.com/paperclipai/paperclip/issues/3819)
+documented agents silently appearing healthy while doing no work; two incidents
+in 24 hours required manual database intervention. A
+[five-week, one-agent operator](https://github.com/paperclipai/paperclip/issues/5544)
+found that 40% of 27 system-generated issues were meta-issues, producing a
+recursive babysitting loop in which the agent audited its own stalls instead of
+working. A
+[fourteen-agent operator](https://github.com/paperclipai/paperclip/discussions/2744)
+reported that about 90% of scheduled heartbeats found no work and described
+local changes needed to avoid paying tokens for them.
+
+There are positive outcome claims, but they are not yet dependable evidence. A
+named solo founder
+[reported that a sixteen-agent Paperclip
+pipeline](https://www.reddit.com/r/AI_Agents/comments/1v3ft8c/running_16_agents_for_a_one_person_business_while/)
+sent 214 cold emails and autonomously found the first pilot customer. In a
+[separate post the same
+day](https://www.reddit.com/r/SaaS/comments/1v3f5ie/10_weeks_of_cold_email_for_a_b2b_tool_in_a_blue/),
+the founder reported that those 214 cold emails produced zero demos and that
+the real pipeline came from three warm contacts, including the founder's
+employer. The underlying company and workflow are real, but the conflicting
+attribution means this case should not be counted as proof that the Paperclip
+fleet produced the customer outcome.
+
+Even if the stronger version of that account were fully verified, it would
+validate a narrow pipeline, not Paperclip's autonomous-company thesis. The
+agents had fixed functions in one funnel—research, enrichment, draft
+preparation, quality checking, and CRM updates. The operator described moving
+important rules from prompts into hard API gates, manually reviewed outbound
+email, handled calls and the demo, and remained the product and commercial
+decision-maker. That is a useful multi-step automation system with LLM workers.
+It is far short of a fleet that chooses strategy, coordinates general work, and
+runs a company.
+
+The fairest synthesis of operator comments is:
+
+> Paperclip can be a useful cockpit for an operator willing to engineer the
+> organization. Out of the box it often turns agent activity into management
+> activity, and the operator still supplies the real operating system through
+> prompts, skills, gates, and intervention.
 
 ### Fleet claims exceed the acceptance contract
 
@@ -227,6 +409,11 @@ its owner built those missing systems. That would validate Paperclip as a
 control plane, but not the claim that a new user can create a fleet from a
 template and obtain autonomous value.
 
+The direct answer to "is anyone using it?" is therefore **yes**. The direct
+answer to "is anyone publicly demonstrating that a Paperclip fleet runs a real
+company or software team better than a skilled operator with a few agents?" is
+**not yet**.
+
 ## Broader evidence about multi-agent systems
 
 The skepticism is consistent with current controlled research.
@@ -265,6 +452,16 @@ found that most actively supervise two to four foreground agents. Larger counts
 are primarily background agents doing narrow, low-to-medium complexity tasks
 whose pull requests are cheap to accept or reject later. This is consistent
 with the strongest Gas Town evidence.
+
+The April 2026
+[Thoughtworks Technology Radar entry on coding-agent
+swarms](https://www.thoughtworks.com/radar/techniques/coding-agent-swarms)
+reaches the same operating conclusion and assigns the technique "Caution."
+Thoughtworks notes that the prominent successes had detailed specifications
+and, in the compiler case, comprehensive tests. It says those conditions are
+not representative of typical product development, where requirements are less
+defined and verification is harder, and concludes that swarms remain costly
+and far from mature.
 
 ## Implications for aweb
 
