@@ -126,6 +126,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
+	const selfAgentID = "22222222-2222-2222-2222-222222222222"
 	const peerID = "44444444-4444-4444-4444-444444444444"
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -136,6 +137,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 				"workspaces": []map[string]any{
 					{
 						"workspace_id":     selfID,
+						"agent_id":         selfAgentID,
 						"alias":            "alice",
 						"role":             "developer",
 						"status":           "active",
@@ -187,7 +189,7 @@ func TestAwWorkspaceStatusShowsTeamState(t *testing.T) {
 				"reservations": []map[string]any{
 					{
 						"resource_key":    "src/main.go",
-						"holder_agent_id": selfID,
+						"holder_agent_id": selfAgentID,
 						"holder_alias":    "alice",
 						"acquired_at":     "2026-03-10T10:00:00Z",
 						"expires_at":      "2099-03-10T10:00:00Z",

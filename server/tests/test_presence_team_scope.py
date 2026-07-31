@@ -12,11 +12,12 @@ from aweb.routes import agents as agent_routes
 
 
 class _FakeAwebDB:
-    def __init__(self, alias: str = "ivy"):
+    def __init__(self, alias: str = "ivy", workspace_id: str = "workspace-1"):
         self.alias = alias
+        self.workspace_id = workspace_id
 
     async def fetch_one(self, _query: str, *_args):
-        return {"alias": self.alias}
+        return {"alias": self.alias, "workspace_id": self.workspace_id}
 
     async def execute(self, _query: str, *_args):
         return None
@@ -51,6 +52,48 @@ async def test_mcp_heartbeat_passes_team_id(monkeypatch):
     assert payload["agent_id"] == "agent-1"
     assert seen["team_id"] == "default:acme.com"
     assert seen["alias"] == "ivy"
+    assert seen["workspace_id"] == "workspace-1"
+    assert "agent_id" not in seen
+
+
+@pytest.mark.asyncio
+async def test_mcp_agent_list_reads_presence_by_workspace_id(monkeypatch):
+    seen: list[str] = []
+
+    monkeypatch.setattr(
+        common_tools,
+        "get_auth",
+        lambda: SimpleNamespace(agent_id="agent-1", team_id="default:acme.com"),
+    )
+
+    class _ListDB:
+        async def fetch_all(self, _query: str, *_args):
+            return [
+                {
+                    "agent_id": "agent-1",
+                    "workspace_id": "workspace-1",
+                    "alias": "ivy",
+                    "human_name": "",
+                    "agent_type": "agent",
+                    "identity_scope": "local",
+                    "status": "active",
+                }
+            ]
+
+    class _ListInfra:
+        def get_manager(self, _name: str = "aweb"):
+            return _ListDB()
+
+    async def _presence(_redis, workspace_ids):
+        seen.extend(workspace_ids)
+        return [{"workspace_id": "workspace-1", "status": "active"}]
+
+    monkeypatch.setattr(mcp_agents, "list_agent_presences_by_workspace_ids", _presence)
+
+    payload = json.loads(await mcp_agents.list_agents(db_infra=_ListInfra(), redis=object()))
+
+    assert seen == ["workspace-1"]
+    assert payload["agents"][0]["online"] is True
 
 
 @pytest.mark.asyncio
@@ -79,6 +122,7 @@ async def test_route_heartbeat_passes_team_id(monkeypatch):
     assert response.agent_id == "agent-1"
     assert seen["team_id"] == "default:acme.com"
     assert seen["alias"] == "ivy"
+    assert seen["workspace_id"] == "workspace-1"
 
 
 @pytest.mark.asyncio

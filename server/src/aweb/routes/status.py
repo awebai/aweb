@@ -347,6 +347,7 @@ async def status(
         f"""
         SELECT
             w.workspace_id,
+            w.agent_id,
             w.alias,
             w.human_name,
             w.role,
@@ -373,6 +374,10 @@ async def status(
     ordered_workspace_ids = [
         ws_id for ws_id in workspace_ids if ws_id in workspace_rows_by_id
     ] or [str(row["workspace_id"]) for row in workspace_rows]
+    workspace_ids_by_agent: Dict[str, List[str]] = {}
+    for row in workspace_rows:
+        workspace_ids_by_agent.setdefault(str(row["agent_id"]), []).append(str(row["workspace_id"]))
+    agent_ids = list(workspace_ids_by_agent)
 
     claim_rows = await aweb_db.fetch_all(
         f"""
@@ -447,7 +452,7 @@ async def status(
         ORDER BY resource_key ASC
         """,
         team_id,
-        workspace_ids,
+        agent_ids,
     )
     reservations: List[Dict[str, Any]] = []
     reservations_by_workspace: Dict[str, List[Dict[str, Any]]] = {}
@@ -468,7 +473,8 @@ async def status(
             "metadata": metadata,
         }
         reservations.append(reservation)
-        reservations_by_workspace.setdefault(str(row["holder_agent_id"]), []).append(reservation)
+        for ws_id in workspace_ids_by_agent.get(str(row["holder_agent_id"]), []):
+            reservations_by_workspace.setdefault(ws_id, []).append(reservation)
 
     agents: List[Dict[str, Any]] = []
     for ws_id in ordered_workspace_ids:

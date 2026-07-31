@@ -245,3 +245,73 @@ func TestRealStackSeededBlueprintVisible(t *testing.T) {
 		t.Fatalf("%s not found in catalog; got %d blueprints", seededBlueprintRef, len(catalog))
 	}
 }
+
+func TestRealStackWorkspacePresenceAndLocksUseDistinctIdentifiers(t *testing.T) {
+	requireE2E(t)
+	tm := newThrowawayTeam(t)
+
+	if err := os.Remove(filepath.Join(tm.workspace, ".aw", "workspace.yaml")); err != nil {
+		t.Fatalf("remove library-only workspace binding: %v", err)
+	}
+	tm.run(t, "workspace", "connect", "--service", awebURL(), "--team", tm.teamID)
+	tm.run(t, "heartbeat")
+
+	resourceKey := "e2e-status-" + randSuffix(t)
+	tm.run(t, "lock", "acquire", "--resource-key", resourceKey, "--ttl-seconds", "60")
+
+	status := tm.runJSON(t, "workspace", "status")
+	workspace, ok := status["workspace"].(map[string]any)
+	if !ok {
+		t.Fatalf("workspace status omitted its workspace object: %v", status)
+	}
+	workspaceID, _ := workspace["workspace_id"].(string)
+	agentID, _ := workspace["agent_id"].(string)
+	if workspaceID == "" || agentID == "" || workspaceID == agentID {
+		t.Fatalf("workspace and agent identifiers were not distinct: workspace=%v", workspace)
+	}
+	if got, _ := workspace["status"].(string); got != "active" {
+		t.Fatalf("workspace status = %q, want active: %v", got, workspace)
+	}
+	locks, _ := status["locks"].([]any)
+	if len(locks) != 1 {
+		t.Fatalf("workspace status locks = %v, want one lock", locks)
+	}
+	lock, ok := locks[0].(map[string]any)
+	if !ok || lock["resource_key"] != resourceKey {
+		t.Fatalf("workspace status lock = %v, want %q", locks[0], resourceKey)
+	}
+
+	body, stderr, err := tm.idRequest("GET", awebURL()+"/v1/status?workspace_id="+workspaceID)
+	if err != nil {
+		t.Fatalf("GET /v1/status failed: %v\nstdout:\n%s\nstderr:\n%s", err, body, stderr)
+	}
+	var serverStatus map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &serverStatus); err != nil {
+		t.Fatalf("GET /v1/status did not return an object: %v\noutput:\n%s", err, body)
+	}
+	serverLocks, _ := serverStatus["locks"].([]any)
+	if len(serverLocks) != 1 {
+		t.Fatalf("server status locks = %v, want one lock", serverLocks)
+	}
+	serverLock, ok := serverLocks[0].(map[string]any)
+	if !ok || serverLock["holder_agent_id"] != agentID {
+		t.Fatalf("server status lock = %v, want holder agent %s", serverLocks[0], agentID)
+	}
+
+	body, stderr, err = tm.idRequest("GET", awebURL()+"/v1/agents")
+	if err != nil {
+		t.Fatalf("GET /v1/agents failed: %v\nstdout:\n%s\nstderr:\n%s", err, body, stderr)
+	}
+	var agents map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &agents); err != nil {
+		t.Fatalf("GET /v1/agents did not return an object: %v\noutput:\n%s", err, body)
+	}
+	listed, _ := agents["agents"].([]any)
+	if len(listed) != 1 {
+		t.Fatalf("agent roster = %v, want one agent", listed)
+	}
+	listedAgent, ok := listed[0].(map[string]any)
+	if !ok || listedAgent["online"] != true {
+		t.Fatalf("agent roster did not report the connected workspace online: %v", listed[0])
+	}
+}
