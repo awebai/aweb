@@ -25,7 +25,7 @@
     "pretest": "npm run build",
     "test": "node --import tsx --test test/*.test.ts",
     "test:package": "node scripts/check-package-dist.mjs",
-    "prepack": "npm run build && npm run test:package",
+    "prepack": "npm run test && npm run test:package",
     "prepublishOnly": "npm run prepack",
     "start": "tsx src/index.ts"
   },

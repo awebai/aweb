@@ -2,6 +2,9 @@
 
 This project uses `aw` for coordination.
 
+This file is not the team's active instructions. Run `aw instructions show` for the
+authoritative version, which carries sections this file does not.
+
 ## Authority
 
 Active team instructions are authoritative for this team's branch and
@@ -31,8 +34,13 @@ detached worktree based on `origin/main`, so no working tree is touched and the
 combination is built and tested before it lands.
 
 Either way: never merge work your reviewer has not ACKed, and always merge
-`origin/main` into your branch before handing off, so what was reviewed is what
-lands.
+`origin/main` into your branch before handing off, so your reviewer reads it
+against current main rather than against a base that has moved.
+
+That merge does **not** by itself make what was reviewed what lands - it is the
+step that makes a SHA-identity check insufficient, because the branch keeps its
+ACKed tip while its contents change underneath. Before you push, follow "Before
+you push to main" in the active team instructions.
 
 A team without a coordinator self-merges everything; follow your team's active
 instructions rather than assuming this split is universal.
@@ -73,9 +81,36 @@ than choosing silently.
 ## Shell-safe message bodies
 
 For Markdown, reports, or command examples, write the body to a file and use the
-command's `--body-file` flag. A shell expands backticks and `$(...)` in a
-double-quoted argument before `aw` starts, so `aw` cannot detect text the shell
-already replaced.
+command's `--body-file` flag.
+
+**The hazard is a mechanism, not a surface.** *Any* shell context that
+interpolates will expand backticks and `$(...)` before the program ever sees the
+text - and it does so at every layer between your keyboard and the artifact, not
+just on the `aw` command line:
+
+```
+<<EOF        interpolates          <<'EOF'      does not
+printf "..." interpolates          printf '%s'  does not
+echo "..."   interpolates          a quoted heredoc into a file  does not
+```
+
+Using `--body-file` protects the last layer only. A file written by an *unquoted*
+heredoc is already corrupted before `aw` reads it - this has happened here, in a
+document about not trusting unreviewed text, and nothing failed: the writer
+reported success and the diff reported the expected line count. Both were true and
+neither measured the thing that mattered.
+
+**The check is a read-back, not more care.** After writing any file you intend to
+publish, read the bytes back and look for the characters you meant to write:
+
+```bash
+grep -c '`' <the-written-file>    # non-zero => backticks survived, so the context did not interpolate
+```
+
+That works because the corruption and its evidence are the same characters. Note
+the asymmetry: a zero is only meaningful if you *meant* to write backticks - for a
+file that never had any, "none present" cannot distinguish "I wrote none" from
+"the shell ate them", and that absence is not recoverable afterwards.
 
 ## Mail
 
@@ -123,9 +158,14 @@ profile, but it remains independently mutable; changing it does not change which
 profile the workspace runs or grant additional authority. Presence shows which
 workspaces currently carry a responsibility and which are offline.
 
-- **Acting lead coordinator: dev.** dev runs a developer profile and is acting as
-  lead coordinator by Juan's assignment. Route coordination, scope questions,
-  and handoffs there.
+- **Coordination, scope questions and handoffs: alice.** Route them there.
+- **dev is not reachable and its home is hands-off.** Presence shows dev offline
+  (last seen 2026-07-28), and dev is retired by Juan's authorization: do not
+  refresh, restart, retire, or touch dev's home or its runtime. Earlier
+  instructions named dev acting lead coordinator; that is stale. Note dev's
+  `role_name` reads `coordinator` while its profile is `developer` - those are
+  independent fields, and only the profile decides what a home materializes, so
+  an enumeration keyed on `role_name` will misclassify it.
 - **avi is not reachable.** `aw workspace status` still lists avi as
   coordinator, but avi has been offline for over 90 days and works in another
   repository (`ai.aweb`). Do not route work there; a stale entry is not an

@@ -2910,16 +2910,6 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
     assert (stored["n"] > 0) is expect_delivered, f"{case}: message rows disagree with the verdict"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "aweb-aaqv: chat_send drops did_aw on the trusted-proxy path "
-        "(mcp/tools/chat.py:379, :659), so the gate at :255-266 cannot match a "
-        "participant row keyed by the caller's own did:aw. Fix is HELD pending Juan's "
-        "ruling - it changes an authorization predicate. strict=True so that fixing it "
-        "reds this as an unexpected pass and forces the marker out."
-    ),
-)
 @pytest.mark.asyncio
 async def test_mcp_chat_send_accepts_a_participant_row_keyed_by_the_callers_did_aw(
     aweb_cloud_db, monkeypatch

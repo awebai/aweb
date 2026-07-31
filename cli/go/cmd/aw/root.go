@@ -214,7 +214,40 @@ func bindTeamSelector(cmd *cobra.Command) {
 	cmd.PersistentFlags().StringVar(&teamFlag, "team", "", "Override the selected team_id for this command")
 }
 
+// refuseUnknownSubcommands makes a grouping command reject a token it does not
+// implement, instead of printing its own help and exiting 0.
+//
+// aweb-aaxl: `aw id pin-store list` answered with the help for `aw id pin-store` and
+// EXIT 0 on a binary without `list`. A missing subcommand did not fail - it returned
+// success and a plausible page of text - so the author of that command could not tell it
+// was absent from the binary they were running, and read the file by hand instead.
+//
+// SETTING Args ON THESE COMMANDS DOES NOTHING, which is the trap here. cobra returns
+// flag.ErrHelp for a command that is not Runnable BEFORE it validates arguments, and
+// ExecuteC turns that into "print help, return nil". So a parent with no Run is never
+// asked what arguments it accepts. The command has to become runnable for any argument
+// policy to be consulted at all.
+//
+// Bare invocation stays exactly as it was - help on stdout, exit 0 - because that is how
+// a reader asks what a group offers. Only a command that names an unknown token fails.
+func refuseUnknownSubcommands(cmd *cobra.Command) {
+	if cmd.HasSubCommands() && cmd.Run == nil && cmd.RunE == nil {
+		group := cmd
+		group.RunE = func(c *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return c.Help()
+			}
+			return usageError("unknown command %q for %q", args[0], c.CommandPath())
+		}
+		group.SilenceUsage = true
+	}
+	for _, sub := range cmd.Commands() {
+		refuseUnknownSubcommands(sub)
+	}
+}
+
 func Execute() {
+	refuseUnknownSubcommands(rootCmd)
 	if argsContainTraceFlag(os.Args[1:]) {
 		_ = os.Setenv("AW_TRACE", "1")
 	}
