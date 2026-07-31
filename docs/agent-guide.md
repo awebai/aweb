@@ -18,8 +18,10 @@ are enough to communicate.
 ## Start every session in the connected directory
 
 Run coordination commands from the agent directory whose identity you intend to
-use. The active team instructions and the installed `aweb-coordination` skill
-are the authority for startup ordering. The standard order is:
+use. Active team instructions govern startup ordering when present. The
+optional `aweb-coordination` skill may provide the same ordering when installed;
+otherwise the standard commands below stand on their own. Neither the skill nor
+a Library/profile service is required for messaging. The standard order is:
 
 ```bash
 aw workspace status
