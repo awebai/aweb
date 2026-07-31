@@ -21,7 +21,7 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 101 tracked Markdown documents. This front door does not
+The baseline contains 100 tracked Markdown documents. This front door does not
 self-link. Private-purpose artifacts are deliberately not exposed by public path
 or title. The remaining 97 public Markdown paths appear below exactly once.
 Private transition artifacts remain represented by neutral, unlinked transition
@@ -240,12 +240,6 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
 <details>
 <summary>Show the transition inventory and reviewed next action</summary>
 
-- **Managed A2A gateway application contract** — private-purpose Markdown,
-  deliberately unlinked; relocate to its application owner after the public
-  release-runbook consumer is rewritten.
-- **Managed A2A gateway configuration example** — private-purpose YAML,
-  deliberately unlinked; relocate with the application contract after its
-  public consumer is rewritten.
 - [aapm.6 equivalence evidence](aapm6-equivalence-evidence.md) — relocate as
   dated, unrendered migration history.
 - [AWID registry-unavailable log](awid-registry-unavailable-log.md) — move useful

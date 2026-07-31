@@ -86,15 +86,14 @@ func run(args []string, stdout, _ *os.File) error {
 }
 
 type runtimeHealth struct {
-	Status             string                      `json:"status"`
-	Build              runtimeBuild                `json:"build"`
-	AwebVersion        string                      `json:"aweb_version"`
-	AWIDServiceVersion string                      `json:"awid_service_version"`
-	AWIDRegistry       runtimeRegistryHealth       `json:"awid_registry"`
-	ManagedConfig      runtimeManagedConfigHealth  `json:"managed_config"`
-	LegacyConfig       *runtimeManagedConfigHealth `json:"ac_config,omitempty"`
-	GatewayIdentity    runtimeIdentityHealth       `json:"gateway_identity"`
-	Gateway            map[string]interface{}      `json:"gateway"`
+	Status             string                     `json:"status"`
+	Build              runtimeBuild               `json:"build"`
+	AwebVersion        string                     `json:"aweb_version"`
+	AWIDServiceVersion string                     `json:"awid_service_version"`
+	AWIDRegistry       runtimeRegistryHealth      `json:"awid_registry"`
+	ManagedConfig      runtimeManagedConfigHealth `json:"managed_config"`
+	GatewayIdentity    runtimeIdentityHealth      `json:"gateway_identity"`
+	Gateway            map[string]interface{}     `json:"gateway"`
 }
 
 type runtimeBuild struct {
@@ -291,10 +290,6 @@ func writeRuntimeHealth(w http.ResponseWriter, gateway *a2agw.Gateway, cfg fileC
 		GatewayIdentity:    gatewayIdentityHealth(cfg),
 		Gateway:            map[string]interface{}{},
 	}
-	if cfg.legacyManagedMode {
-		legacy := health.ManagedConfig
-		health.LegacyConfig = &legacy
-	}
 	gatewayHealthBytes, err := json.Marshal(gateway.Health())
 	if err == nil {
 		_ = json.Unmarshal(gatewayHealthBytes, &health.Gateway)
@@ -468,40 +463,29 @@ func stringField(payload map[string]interface{}, key string) string {
 }
 
 type fileConfig struct {
-	Listen                    string              `yaml:"listen"`
-	Host                      string              `yaml:"host"`
-	WorkspaceDir              string              `yaml:"workspace_dir"`
-	TeamID                    string              `yaml:"team_id"`
-	RootCardMode              string              `yaml:"root_card_mode"`
-	DefaultRouteID            string              `yaml:"default_route_id"`
-	GatewayIdentity           string              `yaml:"gateway_identity"`
-	RegistryURL               string              `yaml:"registry_url"`
-	PollInterval              string              `yaml:"poll_interval"`
-	PollTimeout               string              `yaml:"poll_timeout"`
-	UseIdentityAuth           *bool               `yaml:"use_identity_auth"`
-	RequireVerifiedReplies    *bool               `yaml:"require_verified_replies"`
-	AllowUnverifiedLocalReply bool                `yaml:"allow_unverified_local_reply"`
-	AllowQuestionReply        bool                `yaml:"allow_question_reply"`
-	RouterCard                cardConfig          `yaml:"router_card"`
-	Routes                    []routeConfig       `yaml:"routes"`
-	Audit                     auditConfig         `yaml:"audit"`
-	ManagedConfig             managedConfig       `yaml:"managed_config"`
-	LegacyManagedConfig       legacyManagedConfig `yaml:"ac_config"`
-	ManagedRuntime            managedRuntimeMeta  `yaml:"-"`
-	legacyManagedMode         bool                `yaml:"-"`
+	Listen                    string             `yaml:"listen"`
+	Host                      string             `yaml:"host"`
+	WorkspaceDir              string             `yaml:"workspace_dir"`
+	TeamID                    string             `yaml:"team_id"`
+	RootCardMode              string             `yaml:"root_card_mode"`
+	DefaultRouteID            string             `yaml:"default_route_id"`
+	GatewayIdentity           string             `yaml:"gateway_identity"`
+	RegistryURL               string             `yaml:"registry_url"`
+	PollInterval              string             `yaml:"poll_interval"`
+	PollTimeout               string             `yaml:"poll_timeout"`
+	UseIdentityAuth           *bool              `yaml:"use_identity_auth"`
+	RequireVerifiedReplies    *bool              `yaml:"require_verified_replies"`
+	AllowUnverifiedLocalReply bool               `yaml:"allow_unverified_local_reply"`
+	AllowQuestionReply        bool               `yaml:"allow_question_reply"`
+	RouterCard                cardConfig         `yaml:"router_card"`
+	Routes                    []routeConfig      `yaml:"routes"`
+	Audit                     auditConfig        `yaml:"audit"`
+	ManagedConfig             managedConfig      `yaml:"managed_config"`
+	ManagedRuntime            managedRuntimeMeta `yaml:"-"`
 }
 
 type managedConfig struct {
 	ConfigURL      string `yaml:"config_url"`
-	BridgeURL      string `yaml:"bridge_url"`
-	GatewayID      string `yaml:"gateway_id"`
-	BearerToken    string `yaml:"bearer_token"`
-	BearerTokenEnv string `yaml:"bearer_token_env"`
-}
-
-type legacyManagedConfig struct {
-	BaseURL        string `yaml:"base_url"`
-	URL            string `yaml:"url"`
 	BridgeURL      string `yaml:"bridge_url"`
 	GatewayID      string `yaml:"gateway_id"`
 	BearerToken    string `yaml:"bearer_token"`
@@ -583,19 +567,17 @@ func loadFileConfig(path string) (fileConfig, error) {
 		return fileConfig{}, err
 	}
 	var cfg fileConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
 		return fileConfig{}, fmt.Errorf("decode gateway config %s: %w", path, err)
 	}
-	if managedConfigEnabled(cfg.ManagedConfig) && legacyManagedConfigEnabled(cfg.LegacyManagedConfig) {
-		return fileConfig{}, fmt.Errorf("gateway config %s: managed_config and the temporary legacy config are mutually exclusive", path)
-	}
-	if legacyManagedConfigEnabled(cfg.LegacyManagedConfig) {
-		translated, err := translateLegacyManagedConfig(cfg.LegacyManagedConfig)
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
 		if err != nil {
-			return fileConfig{}, fmt.Errorf("gateway config %s: %w", path, err)
+			return fileConfig{}, fmt.Errorf("decode gateway config %s: %w", path, err)
 		}
-		cfg.ManagedConfig = translated
-		cfg.legacyManagedMode = true
+		return fileConfig{}, fmt.Errorf("decode gateway config %s: exactly one YAML document is required", path)
 	}
 	if err := validateManagedConfig(cfg.ManagedConfig); err != nil {
 		return fileConfig{}, fmt.Errorf("gateway config %s: %w", path, err)
@@ -664,34 +646,16 @@ func managedEnvConfig() (fileConfig, bool, error) {
 			},
 		}, true, nil
 	}
-	if strings.TrimSpace(os.Getenv("AWEB_A2A_GATEWAY_CONFIG_TOKEN")) == "" {
-		return fileConfig{}, false, nil
-	}
-	legacy := legacyManagedConfig{
-		BaseURL:        firstNonEmpty(os.Getenv("AWEB_A2A_GW_AC_BASE_URL"), "https://app.aweb.ai"),
-		GatewayID:      firstNonEmpty(os.Getenv("AWEB_A2A_GW_ID"), "a2a-gateway"),
-		BearerTokenEnv: "AWEB_A2A_GATEWAY_CONFIG_TOKEN",
-	}
-	translated, err := translateLegacyManagedConfig(legacy)
-	if err != nil {
-		return fileConfig{}, false, err
-	}
-	return fileConfig{
-		Host:              firstNonEmpty(os.Getenv("AWEB_A2A_GW_HOST"), "a2a.aweb.ai"),
-		RegistryURL:       firstNonEmpty(os.Getenv("AWEB_A2A_GW_REGISTRY_URL"), "https://api.awid.ai"),
-		ManagedConfig:     translated,
-		legacyManagedMode: true,
-	}, true, nil
+	return fileConfig{}, false, nil
 }
 
 type managedRuntimeConfigPayload struct {
-	GatewayID             string                 `json:"gateway_id"`
-	GatewayIdentity       string                 `json:"gateway_identity"`
-	GatewayIdentityStatus string                 `json:"gateway_identity_status"`
-	ConfigRevision        string                 `json:"config_revision"`
-	ExpiresAt             string                 `json:"expires_at"`
-	Routes                []managedRuntimeRoute  `json:"routes"`
-	RouteCounts           map[string]interface{} `json:"route_counts"`
+	GatewayID             string                `json:"gateway_id"`
+	GatewayIdentity       string                `json:"gateway_identity"`
+	GatewayIdentityStatus string                `json:"gateway_identity_status"`
+	ConfigRevision        string                `json:"config_revision"`
+	ExpiresAt             string                `json:"expires_at"`
+	Routes                []managedRuntimeRoute `json:"routes"`
 	routesPresent         bool
 }
 
@@ -712,25 +676,21 @@ func (p *managedRuntimeConfigPayload) UnmarshalJSON(data []byte) error {
 }
 
 type managedRuntimeRoute struct {
-	RouteID          string                 `json:"route_id"`
-	Host             string                 `json:"host"`
-	Address          string                 `json:"address"`
-	Mode             string                 `json:"mode"`
-	Disabled         bool                   `json:"disabled"`
-	RootBehavior     string                 `json:"root_behavior"`
-	VerificationTier string                 `json:"verification_tier"`
-	CardDigest       string                 `json:"card_digest"`
-	CardRevision     string                 `json:"card_revision"`
-	Auth             managedRuntimeAuth     `json:"auth"`
-	Limits           managedRuntimeLimits   `json:"limits"`
-	Card             managedRuntimeCard     `json:"card"`
-	AWIDPublication  managedRuntimeAWID     `json:"awid_publication"`
-	Extra            map[string]interface{} `json:"-"`
+	RouteID          string               `json:"route_id"`
+	Host             string               `json:"host"`
+	Address          string               `json:"address"`
+	Mode             string               `json:"mode"`
+	Disabled         bool                 `json:"disabled"`
+	RootBehavior     string               `json:"root_behavior"`
+	VerificationTier string               `json:"verification_tier"`
+	CardDigest       string               `json:"card_digest"`
+	Auth             managedRuntimeAuth   `json:"auth"`
+	Limits           managedRuntimeLimits `json:"limits"`
+	Card             managedRuntimeCard   `json:"card"`
 }
 
 type managedRuntimeAuth struct {
-	Mode      string `json:"mode"`
-	SecretRef string `json:"secret_ref"`
+	Mode string `json:"mode"`
 }
 
 type managedRuntimeLimits struct {
@@ -751,17 +711,6 @@ type managedRuntimeCard struct {
 	DefaultInputModes  []string     `json:"default_input_modes"`
 	DefaultOutputModes []string     `json:"default_output_modes"`
 	Skills             []skillYAML  `json:"skills"`
-}
-
-type managedRuntimeAWID struct {
-	PublicationID        string `json:"publication_id"`
-	PublicationDigest    string `json:"publication_digest"`
-	PublicationStatus    string `json:"publication_status"`
-	PublicationExpiresAt string `json:"publication_expires_at"`
-	DelegationID         string `json:"delegation_id"`
-	DelegationDigest     string `json:"delegation_digest"`
-	DelegationStatus     string `json:"delegation_status"`
-	DelegationExpiresAt  string `json:"delegation_expires_at"`
 }
 
 type managedRuntimeConfigFetchError struct {
@@ -892,7 +841,7 @@ func mergeManagedRuntimeConfig(cfg *fileConfig, payload managedRuntimeConfigPayl
 			RouteID:         strings.TrimSpace(route.RouteID),
 			Address:         strings.TrimSpace(route.Address),
 			Mode:            strings.TrimSpace(route.Mode),
-			Disabled:        route.Disabled || managedRuntimeAuthRequiresUnavailableSecret(route.Auth),
+			Disabled:        route.Disabled,
 			ResponseTimeout: secondsDuration(route.Limits.ResponseTimeoutSeconds),
 			Auth:            authConfig{Mode: strings.TrimSpace(route.Auth.Mode)},
 			Limits: limitsConfig{
@@ -950,10 +899,6 @@ func mergeManagedRuntimeConfig(cfg *fileConfig, payload managedRuntimeConfigPayl
 	return nil
 }
 
-func managedRuntimeAuthRequiresUnavailableSecret(auth managedRuntimeAuth) bool {
-	return strings.TrimSpace(auth.Mode) == "static_api_key" && strings.TrimSpace(auth.SecretRef) != ""
-}
-
 func secondsDuration(seconds int) string {
 	if seconds <= 0 {
 		return ""
@@ -975,43 +920,11 @@ func rateLimitFromManaged(value map[string]interface{}) string {
 }
 
 func managedConfigEnabled(cfg managedConfig) bool {
-	return strings.TrimSpace(cfg.ConfigURL) != "" || strings.TrimSpace(cfg.BridgeURL) != ""
-}
-
-func legacyManagedConfigEnabled(cfg legacyManagedConfig) bool {
-	return strings.TrimSpace(cfg.URL) != "" || strings.TrimSpace(cfg.BaseURL) != "" || strings.TrimSpace(cfg.BridgeURL) != ""
-}
-
-func translateLegacyManagedConfig(cfg legacyManagedConfig) (managedConfig, error) {
-	configURL := strings.TrimSpace(cfg.URL)
-	bridgeURL := strings.TrimRight(strings.TrimSpace(cfg.BridgeURL), "/")
-	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
-	gatewayID := strings.TrimSpace(cfg.GatewayID)
-	if configURL == "" && baseURL != "" {
-		if gatewayID == "" {
-			return managedConfig{}, fmt.Errorf("temporary legacy config gateway_id is required when base_url is used")
-		}
-		configURL = baseURL + "/api/v1/a2a/gateway/config/" + url.PathEscape(gatewayID)
-	}
-	if bridgeURL == "" && baseURL != "" {
-		bridgeURL = baseURL + "/api/v1/a2a/gateway/bridge"
-	}
-	if bridgeURL == "" && configURL != "" {
-		const marker = "/api/v1/a2a/gateway/config/"
-		if idx := strings.Index(configURL, marker); idx >= 0 {
-			bridgeURL = strings.TrimRight(configURL[:idx], "/") + "/api/v1/a2a/gateway/bridge"
-		}
-	}
-	if configURL == "" || bridgeURL == "" {
-		return managedConfig{}, fmt.Errorf("temporary legacy config requires resolvable config and bridge URLs")
-	}
-	return managedConfig{
-		ConfigURL:      configURL,
-		BridgeURL:      bridgeURL,
-		GatewayID:      gatewayID,
-		BearerToken:    cfg.BearerToken,
-		BearerTokenEnv: cfg.BearerTokenEnv,
-	}, nil
+	return strings.TrimSpace(cfg.ConfigURL) != "" ||
+		strings.TrimSpace(cfg.BridgeURL) != "" ||
+		strings.TrimSpace(cfg.GatewayID) != "" ||
+		strings.TrimSpace(cfg.BearerToken) != "" ||
+		strings.TrimSpace(cfg.BearerTokenEnv) != ""
 }
 
 func validateManagedConfig(cfg managedConfig) error {
@@ -1231,10 +1144,6 @@ func gatewayConfigFromFile(cfg fileConfig, bridge a2agw.Bridge, audit a2agw.Audi
 	if err != nil {
 		return a2agw.Config{}, err
 	}
-	expiredCode := "managed_config_expired"
-	if cfg.legacyManagedMode {
-		expiredCode = "ac_config_expired"
-	}
 	return a2agw.Config{
 		Host:                strings.TrimSpace(cfg.Host),
 		RootCardMode:        a2agw.RootCardMode(strings.TrimSpace(cfg.RootCardMode)),
@@ -1244,7 +1153,6 @@ func gatewayConfigFromFile(cfg fileConfig, bridge a2agw.Bridge, audit a2agw.Audi
 		Bridge:              bridge,
 		Audit:               audit,
 		AcceptNewTasksUntil: acceptUntil,
-		ConfigExpiredCode:   expiredCode,
 	}, nil
 }
 

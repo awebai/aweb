@@ -27,7 +27,6 @@ scan_roots = [
 allowlisted_files = {
     Path("docs/a2a.md"),
     Path("docs/a2a-awid-publication-contract.md"),
-    Path("docs/a2a-ac-managed-gateway-contract.md"),
     Path("docs/a2a-release-runbook.md"),
 }
 

@@ -115,7 +115,7 @@ func TestA2AGatewayBuildsFromManagedRuntimeConfig(t *testing.T) {
 	var pollMu sync.Mutex
 	var pollPath string
 
-	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	managedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			http.Error(w, "bad auth", http.StatusUnauthorized)
 			return
@@ -168,12 +168,12 @@ func TestA2AGatewayBuildsFromManagedRuntimeConfig(t *testing.T) {
 			pollMu.Unlock()
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		default:
-			t.Fatalf("unexpected AC request %s %s", r.Method, r.URL.Path)
+			t.Fatalf("unexpected managed request %s %s", r.Method, r.URL.Path)
 		}
 	}))
-	defer acServer.Close()
+	defer managedServer.Close()
 	cfgPath := filepath.Join(tmp, "a2a-gw-ac.yaml")
-	writeManagedConfig(t, cfgPath, "http://registry.invalid", acServer.URL, "gw-test", "test-token")
+	writeManagedConfig(t, cfgPath, "http://registry.invalid", managedServer.URL, "gw-test", "test-token")
 	cfg := mustLoadConfig(t, cfgPath)
 	if err := applyManagedRuntimeConfig(&cfg); err != nil {
 		t.Fatalf("applyManagedRuntimeConfig: %v", err)
@@ -224,7 +224,7 @@ func TestA2AGatewayBuildsFromManagedRuntimeConfig(t *testing.T) {
 	}
 }
 
-func TestA2AGatewayManagedRuntimeStaticSecretRefDisablesRouteWithoutBrickingGateway(t *testing.T) {
+func TestA2AGatewayManagedRuntimeDisabledRouteDoesNotBrickGateway(t *testing.T) {
 	cfg := fileConfig{
 		Host:          "a2a.aweb.ai",
 		ManagedConfig: managedConfigForTest("http://ac.invalid", "gw-test", "test-token"),
@@ -241,7 +241,8 @@ func TestA2AGatewayManagedRuntimeStaticSecretRefDisablesRouteWithoutBrickingGate
 			Address:      "a2a.aweb.ai/private",
 			Mode:         "mail",
 			RootBehavior: "default_for_host",
-			Auth:         managedRuntimeAuth{Mode: "static_api_key", SecretRef: "server.api_keys:11111111-1111-4111-8111-111111111111"},
+			Disabled:     true,
+			Auth:         managedRuntimeAuth{Mode: "none"},
 			Limits: managedRuntimeLimits{
 				TaskTTLSeconds:         3600,
 				ResponseTimeoutSeconds: 30,
@@ -328,26 +329,29 @@ func TestManagedRuntimeConfigRejectsMissingAndMismatchedTopLevelFields(t *testin
 	}
 }
 
-func TestA2AGatewayP1LegacyConfigCompatibilityIsExplicit(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.yaml")
-	data := `
-ac_config:
-  base_url: https://control.example
-  gateway_id: gw-legacy
-  bearer_token: token
-`
-	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
-		t.Fatal(err)
+func TestA2AGatewayRejectsUnknownNestedAndSecondDocumentYAML(t *testing.T) {
+	removedPrivateKey := "a" + "c_config"
+	tests := []struct {
+		name string
+		data string
+		want string
+	}{
+		{name: "removed private key", data: removedPrivateKey + ": {}\n", want: "field " + removedPrivateKey},
+		{name: "unknown top level", data: "manged_config: {}\n", want: "field manged_config"},
+		{name: "unknown nested", data: "managed_config:\n  config_urll: https://control.example/config\n", want: "field config_urll"},
+		{name: "second document", data: "host: gateway.example\n---\nhost: other.example\n", want: "exactly one YAML document"},
 	}
-	cfg, err := loadFileConfig(path)
-	if err != nil {
-		t.Fatalf("loadFileConfig: %v", err)
-	}
-	if !cfg.legacyManagedMode {
-		t.Fatal("legacy compatibility was not measured")
-	}
-	if cfg.ManagedConfig.ConfigURL != "https://control.example/api/v1/a2a/gateway/config/gw-legacy" || cfg.ManagedConfig.BridgeURL != "https://control.example/api/v1/a2a/gateway/bridge" {
-		t.Fatalf("unexpected translated compatibility config: %#v", cfg.ManagedConfig)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "gateway.yaml")
+			if err := os.WriteFile(path, []byte(tt.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := loadFileConfig(path)
+			if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("loadFileConfig error=%v, want config path and %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -357,13 +361,13 @@ func TestA2AGatewayLoadsExplicitManagedEnvWhenConfigFileMissing(t *testing.T) {
 	t.Setenv("AWEB_A2A_GW_HOST", "gateway.example")
 	t.Setenv("AWEB_A2A_GW_MANAGED_GATEWAY_ID", "gw-test")
 
-	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	managedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			http.Error(w, "bad auth", http.StatusUnauthorized)
 			return
 		}
 		if r.URL.Path != "/runtime/config/gw-test" {
-			t.Fatalf("unexpected AC request %s %s", r.Method, r.URL.Path)
+			t.Fatalf("unexpected managed request %s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"gateway_id":              "gw-test",
@@ -393,15 +397,15 @@ func TestA2AGatewayLoadsExplicitManagedEnvWhenConfigFileMissing(t *testing.T) {
 			}},
 		})
 	}))
-	defer acServer.Close()
-	t.Setenv("AWEB_A2A_GW_MANAGED_CONFIG_URL", acServer.URL+"/runtime/config/gw-test")
-	t.Setenv("AWEB_A2A_GW_MANAGED_BRIDGE_URL", acServer.URL+"/runtime/bridge")
+	defer managedServer.Close()
+	t.Setenv("AWEB_A2A_GW_MANAGED_CONFIG_URL", managedServer.URL+"/runtime/config/gw-test")
+	t.Setenv("AWEB_A2A_GW_MANAGED_BRIDGE_URL", managedServer.URL+"/runtime/bridge")
 
 	cfg, err := loadConfigOrHostedEnv(filepath.Join(t.TempDir(), "missing.yaml"))
 	if err != nil {
 		t.Fatalf("loadConfigOrHostedEnv: %v", err)
 	}
-	if cfg.ManagedConfig.ConfigURL != acServer.URL+"/runtime/config/gw-test" || cfg.ManagedConfig.GatewayID != "gw-test" || cfg.RegistryURL != "http://registry.invalid" {
+	if cfg.ManagedConfig.ConfigURL != managedServer.URL+"/runtime/config/gw-test" || cfg.ManagedConfig.GatewayID != "gw-test" || cfg.RegistryURL != "http://registry.invalid" {
 		t.Fatalf("unexpected env config: %#v", cfg)
 	}
 	if err := applyManagedRuntimeConfig(&cfg); err != nil {
@@ -427,7 +431,7 @@ func TestA2AGatewayMissingConfigWithoutManagedEnvFailsActionably(t *testing.T) {
 
 func TestA2AGatewayRejectsExpiredManagedRuntimeConfig(t *testing.T) {
 	tmp := t.TempDir()
-	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	managedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"gateway_id":              "gw-test",
 			"gateway_identity":        "did:aw:gateway",
@@ -437,9 +441,9 @@ func TestA2AGatewayRejectsExpiredManagedRuntimeConfig(t *testing.T) {
 			"routes":                  []map[string]any{},
 		})
 	}))
-	defer acServer.Close()
+	defer managedServer.Close()
 	cfgPath := filepath.Join(tmp, "a2a-gw-ac.yaml")
-	writeManagedConfig(t, cfgPath, "http://aweb.invalid", acServer.URL, "gw-test", "test-token")
+	writeManagedConfig(t, cfgPath, "http://aweb.invalid", managedServer.URL, "gw-test", "test-token")
 	cfg := mustLoadConfig(t, cfgPath)
 	if err := applyManagedRuntimeConfig(&cfg); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("applyManagedRuntimeConfig err=%v, want expired", err)
@@ -451,18 +455,18 @@ func TestA2AGatewayManagedStartsPendingWhenIdentityMissing(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "healthy", "version": "0.5.11"})
 	}))
 	defer registry.Close()
-	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	managedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			http.Error(w, "bad auth", http.StatusUnauthorized)
 			return
 		}
 		http.Error(w, `{"detail":{"code":"gateway_identity_missing"}}`, http.StatusNotFound)
 	}))
-	defer acServer.Close()
+	defer managedServer.Close()
 	cfg := fileConfig{
 		Host:          "a2a.aweb.ai",
 		RegistryURL:   registry.URL,
-		ManagedConfig: managedConfigForTest(acServer.URL, "a2a-gateway", "test-token"),
+		ManagedConfig: managedConfigForTest(managedServer.URL, "a2a-gateway", "test-token"),
 	}
 	snapshot, err := buildManagedSnapshot(cfg, true)
 	if err != nil {
@@ -500,14 +504,14 @@ func TestA2AGatewayManagedStartsPendingWhenIdentityMissing(t *testing.T) {
 }
 
 func TestA2AGatewayManagedRejectsBadTokenAtStartup(t *testing.T) {
-	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	managedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"detail":{"code":"gateway_config_auth_invalid"}}`, http.StatusUnauthorized)
 	}))
-	defer acServer.Close()
+	defer managedServer.Close()
 	cfg := fileConfig{
 		Host:          "a2a.aweb.ai",
 		RegistryURL:   "http://registry.invalid",
-		ManagedConfig: managedConfigForTest(acServer.URL, "a2a-gateway", "wrong-token"),
+		ManagedConfig: managedConfigForTest(managedServer.URL, "a2a-gateway", "wrong-token"),
 	}
 	if _, err := buildManagedSnapshot(cfg, true); err == nil || !strings.Contains(err.Error(), "HTTP 401") {
 		t.Fatalf("buildManagedSnapshot err=%v, want HTTP 401", err)
@@ -583,7 +587,7 @@ func TestA2AGatewayManagedRefreshFailureKeepsLastGoodRoutes(t *testing.T) {
 
 func TestA2AGatewayManagedRefreshExtendsAcceptWindowForStableRevision(t *testing.T) {
 	var posted map[string]any
-	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	managedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/runtime/bridge/a2a-gateway/messages":
 			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
@@ -593,14 +597,14 @@ func TestA2AGatewayManagedRefreshExtendsAcceptWindowForStableRevision(t *testing
 		case "/runtime/bridge/a2a-gateway/conversations/conv-1":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		default:
-			t.Fatalf("unexpected AC request %s %s", r.Method, r.URL.Path)
+			t.Fatalf("unexpected managed request %s %s", r.Method, r.URL.Path)
 		}
 	}))
-	defer acServer.Close()
+	defer managedServer.Close()
 
 	cfg := fileConfig{
 		Host:          "a2a.aweb.ai",
-		ManagedConfig: managedConfigForTest(acServer.URL, "a2a-gateway", "test-token"),
+		ManagedConfig: managedConfigForTest(managedServer.URL, "a2a-gateway", "test-token"),
 	}
 	expiresAt := time.Now().Add(2 * time.Second).Format(time.RFC3339)
 	payload := managedRuntimeConfigPayload{
@@ -673,19 +677,19 @@ func TestA2AGatewayManagedRefreshExtendsAcceptWindowForStableRevision(t *testing
 }
 
 func TestA2AGatewayManagedRefreshSwapsUnderLoad(t *testing.T) {
-	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	managedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/conversations/") {
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: nil})
 			return
 		}
 		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/messages") {
-			http.Error(w, "unexpected AC request", http.StatusNotFound)
-			t.Errorf("unexpected AC request %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected managed request", http.StatusNotFound)
+			t.Errorf("unexpected managed request %s %s", r.Method, r.URL.Path)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent"})
 	}))
-	defer acServer.Close()
+	defer managedServer.Close()
 
 	payloadForRevision := func(revision string) managedRuntimeConfigPayload {
 		return managedRuntimeConfigPayload{
@@ -718,7 +722,7 @@ func TestA2AGatewayManagedRefreshSwapsUnderLoad(t *testing.T) {
 	}
 	base := fileConfig{
 		Host:          "a2a.aweb.ai",
-		ManagedConfig: managedConfigForTest(acServer.URL, "a2a-gateway", "test-token"),
+		ManagedConfig: managedConfigForTest(managedServer.URL, "a2a-gateway", "test-token"),
 	}
 	cfg := base
 	if err := mergeManagedRuntimeConfig(&cfg, payloadForRevision("rev-1")); err != nil {
@@ -780,13 +784,13 @@ func TestA2AGatewayRuntimeHealthReportsManagedConfig(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "healthy", "version": "0.5.11"})
 	}))
 	defer registry.Close()
-	acServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	managedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			http.Error(w, "bad auth", http.StatusUnauthorized)
 			return
 		}
 		if r.URL.Path != "/runtime/config/gw-test" {
-			t.Fatalf("unexpected AC request %s %s", r.Method, r.URL.Path)
+			t.Fatalf("unexpected managed request %s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"gateway_id":              "gw-test",
@@ -816,10 +820,10 @@ func TestA2AGatewayRuntimeHealthReportsManagedConfig(t *testing.T) {
 			}},
 		})
 	}))
-	defer acServer.Close()
+	defer managedServer.Close()
 
 	cfgPath := filepath.Join(tmp, "a2a-gw-ac-health.yaml")
-	writeManagedConfig(t, cfgPath, registry.URL, acServer.URL, "gw-test", "test-token")
+	writeManagedConfig(t, cfgPath, registry.URL, managedServer.URL, "gw-test", "test-token")
 	cfg := mustLoadConfig(t, cfgPath)
 	if err := applyManagedRuntimeConfig(&cfg); err != nil {
 		t.Fatalf("applyManagedRuntimeConfig: %v", err)

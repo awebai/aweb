@@ -14,8 +14,6 @@ from collections import Counter
 from pathlib import Path
 
 PRIVATE_TRANSITION_DOCS = {
-    "a2a-ac-managed-gateway-contract.md",
-    "custodial-managed-encryption.md",
     "restructuring/ac-cross-boundary-fk-inventory.md",
     "support/aasn-migration-evidence-runbook.md",
 }
@@ -42,6 +40,34 @@ PUBLIC_EXTENSION_DOCS = (
 
 HOOK_INVENTORY = "vectors/mutation-hook-call-sites-v1.json"
 
+MANAGED_GATEWAY_NEUTRAL_FILES = (
+    "cli/go/cmd/aweb-a2a-gw/main.go",
+    "cli/go/cmd/aweb-a2a-gw/main_test.go",
+    "cli/go/a2agw/gateway.go",
+    "cli/go/a2agw/gateway_rpc_test.go",
+    "cli/go/a2agw/rpc.go",
+    "cli/go/Dockerfile.a2a-gw",
+    "cli/go/.goreleaser.yaml",
+    ".github/workflows/a2a-gateway-release.yml",
+    "Makefile",
+    "scripts/e2e-a2a-gateway-docker.sh",
+    "docs/a2a.md",
+    "docs/README.md",
+)
+
+MANAGED_GATEWAY_PRIVATE_TOKENS = (
+    "a" + "c_config",
+    "a" + "c_base_url",
+    "AWEB_A2A_GW_" + "AC_BASE_URL",
+    "a2a-" + "ac-managed-gateway-contract",
+    "a2a-gateway-" + "ac-managed",
+    "a" + "c_config_expired",
+    "/api/v1/a2a/gateway/" + "config",
+    "AC-" + "managed",
+    "AC runtime " + "config",
+    "AC " + "bridge",
+)
+
 HOOK_SOURCES = (
     "server/src/aweb/routes/messages.py",
     "server/src/aweb/routes/chat.py",
@@ -54,8 +80,6 @@ FORBIDDEN_PUBLIC_REFERENCES = (
     "../ac",
     "ac/docs/",
     "awebai/naapp-specs",
-    "a2a-ac-managed-gateway-contract",
-    "a2a-gateway-ac-managed",
     "restructuring/app-event-subscriptions-contract.md",
     "restructuring/app-manifest-schema.md",
     "restructuring/app-registry-grants-read-api.md",
@@ -151,6 +175,24 @@ def _tracked_docs_markdown(root: Path, failures: list[str]) -> set[str]:
 
 def check(root: Path, tracked_markdown: set[str] | None = None) -> list[str]:
     failures: list[str] = []
+
+    neutrality_paths = [root / relative for relative in MANAGED_GATEWAY_NEUTRAL_FILES]
+    neutrality_paths.extend(sorted((root / "cli/go/npm").rglob("*")))
+    neutrality_paths.extend(sorted((root / "docs/examples").glob("a2a-gateway*")))
+    for path in neutrality_paths:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
+            if token in text:
+                failures.append(f"{path.relative_to(root)} retains private managed-gateway token {token!r}")
+    removed_private_paths = (
+        root / "docs" / ("a2a-" + "ac-managed-gateway-contract.md"),
+        root / "docs/examples" / ("a2a-gateway-" + "ac-managed.yaml"),
+    )
+    for path in removed_private_paths:
+        if path.exists():
+            failures.append(f"removed private managed-gateway path returned: {path.relative_to(root)}")
     docs = root / "docs"
 
     for relative in REMOVED_DOCS:

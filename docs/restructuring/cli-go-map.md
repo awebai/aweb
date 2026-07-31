@@ -136,7 +136,7 @@ A2A CLI and library:
 - `aw a2a card|send|status|cancel|publish` is a static root command (`cmd/aw/a2a.go:93`, `cmd/aw/a2a.go:98`, `cmd/aw/a2a.go:117`, `cmd/aw/a2a.go:142`, `cmd/aw/a2a.go:164`, `cmd/aw/a2a.go:186`, `cmd/aw/a2a.go:221`).
 - A2A client fetches Agent Cards and calls JSON-RPC methods with optional API key/bearer/caller/task credentials (`a2a/client.go:116`, `a2a/client.go:141`).
 - `a2agw.Gateway` builds per-route cards and serves A2A HTTP (`a2agw/gateway.go:88`, `a2agw/gateway.go:130`, `a2agw/gateway.go:138`, `a2agw/gateway.go:304`).
-- Separate `aweb-a2a-gw` binary loads config or AC-managed env config and serves the gateway (`cmd/aweb-a2a-gw/main.go:37`, `cmd/aweb-a2a-gw/main.go:44`, `cmd/aweb-a2a-gw/main.go:82`, `cmd/aweb-a2a-gw/main.go:146`).
+- Separate `aweb-a2a-gw` binary loads static or managed-provider config and serves the gateway (`cmd/aweb-a2a-gw/main.go:37`, `cmd/aweb-a2a-gw/main.go:44`, `cmd/aweb-a2a-gw/main.go:82`, `cmd/aweb-a2a-gw/main.go:146`).
 
 Packaging / release:
 
