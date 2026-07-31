@@ -25,7 +25,7 @@ _INTEGER_OPERATORS = {
 
 
 def extract_sql_tables(migrations_dir: Path) -> list[str]:
-    """Apply ordered CREATE/DROP events and return current table names."""
+    """Apply ordered CREATE/DROP events and return component application tables."""
     tables: list[str] = []
     for migration in sorted(migrations_dir.glob("*.sql")):
         for operation, table in _TABLE_EVENT_PATTERN.findall(migration.read_text()):
@@ -180,7 +180,8 @@ def main() -> int:
     awid_tables = extract_sql_tables(root / "awid/src/awid_service/migrations")
     print(
         "canonical SOT inventories match source "
-        f"(aweb tables={len(aweb_tables)}, routers={len(routers)}, awid tables={len(awid_tables)})"
+        f"(aweb application tables={len(aweb_tables)}, routers={len(routers)}, "
+        f"awid application tables={len(awid_tables)})"
     )
     return 0
 

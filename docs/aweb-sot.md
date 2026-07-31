@@ -7,7 +7,7 @@ This is the canonical contract for the OSS coordination server (Python FastAPI)
 and the `aw` CLI (Go). Implementers and operators must preserve its normative
 authentication, identity, routing, delivery, and compatibility rules.
 
-> **Mechanical inventory contract:** the current database-table and top-level
+> **Mechanical inventory contract:** the current application-table and top-level
 > REST-router inventories below are checked against ordered migrations and the
 > FastAPI application mount source. Endpoint tables in this document describe
 > selected normative routes, not an exhaustive OpenAPI listing. The live
@@ -420,9 +420,11 @@ AWID service, and any hosted operator schema). Once shipped, immutable.
 
 ### Current table inventory
 
-The following list is exhaustive for current table names after applying the
-ordered aweb migration chain. `scripts/check_sot_source_inventories.py` derives
-it from `server/src/aweb/migrations/aweb/*.sql`, applies `CREATE`/`DROP` events,
+The following list is exhaustive for current **aweb application tables declared
+by** the ordered component migration chain. It intentionally excludes pgdbm's
+manager-created `schema_migrations` metadata table.
+`scripts/check_sot_source_inventories.py` derives the list from
+`server/src/aweb/migrations/aweb/*.sql`, applies `CREATE`/`DROP` events,
 preserves first-creation order, and deduplicates guarded repeated creation
 (currently `chat_message_reads` in the orphan guard and its canonical
 migration). Column, constraint, and index

@@ -6,9 +6,10 @@ and trust behavior**.
 This is the canonical contract for **awid**, the public identity registry for
 DIDs, namespaces, addresses, teams, and certificate issuance records.
 
-> **Mechanical inventory contract:** the current table inventory below is
-> checked against the complete ordered migration chain. Endpoint blocks in this
-> document are selected normative protocol surfaces, not an exhaustive OpenAPI
+> **Mechanical inventory contract:** the current application-table inventory
+> below is checked against the complete ordered component migration chain.
+> Endpoint blocks in this document are selected normative protocol surfaces,
+> not an exhaustive OpenAPI
 > listing; live route source/OpenAPI remains the mechanical endpoint inventory.
 > This distinction does not weaken the normative identity, certificate,
 > signature, revocation, or authority rules in this contract.
@@ -734,11 +735,13 @@ Current ordered effects are:
 7. `007_a2a_publications.sql` adds digest-bound A2A delegation/publication
    records.
 
-The following table-name inventory is exhaustive for that ordered chain.
-`scripts/check_sot_source_inventories.py` derives it from the SQL, preserves
-first-creation order, and fails when source and this list diverge. Current
-column, constraint, and index authority is the full ordered SQL, not a copied
-`001` snapshot.
+The following inventory is exhaustive for current **AWID application tables
+declared by** that ordered component chain. It intentionally excludes pgdbm's
+manager-created `schema_migrations` metadata table.
+`scripts/check_sot_source_inventories.py` derives it from the SQL, applies
+`CREATE`/`DROP` events, preserves first-creation order, and fails when source
+and this list diverge. Current column, constraint, and index authority is the
+full ordered SQL, not a copied `001` snapshot.
 
 <!-- BEGIN SOURCE INVENTORY: awid-tables -->
 - `did_aw_mappings`
