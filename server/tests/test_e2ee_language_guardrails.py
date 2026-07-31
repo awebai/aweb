@@ -1,4 +1,5 @@
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -16,12 +17,6 @@ FILES_TO_SCAN = [
     REPO_ROOT / "pi-extension" / "README.md",
     REPO_ROOT / "pi-extension" / "src" / "index.ts",
 ]
-
-# Customer-published Markdown comes from this explicit source corpus. Agent/task
-# history and dependency/generated trees are deliberately not publication inputs.
-PUBLIC_MARKDOWN_FILES_TO_SCAN = sorted(
-    {path for path in FILES_TO_SCAN if path.suffix.lower() == ".md"}
-)
 
 FORBIDDEN_PATTERNS = [
     re.compile(r"\bhosted\s+E2E\b", re.IGNORECASE),
@@ -105,12 +100,27 @@ def test_public_e2ee_task_reference_guard_rejects_current_task_id() -> None:
     assert offenders == [f"{path.relative_to(REPO_ROOT)}:{line}: 'aweb-aazc'"]
 
 
+def _tracked_markdown_files() -> list[Path]:
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "--", "*.md"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return sorted(
+        REPO_ROOT / relative_path
+        for relative_path in result.stdout.split("\0")
+        if relative_path
+    )
+
+
 def _private_custodial_transition_reference_offenders(
     overrides: dict[Path, str] | None = None,
 ) -> list[str]:
     offenders: list[str] = []
     overrides = overrides or {}
-    for path in PUBLIC_MARKDOWN_FILES_TO_SCAN:
+    for path in _tracked_markdown_files():
         if not path.is_file():
             continue
         text = overrides.get(path, path.read_text(encoding="utf-8"))
@@ -137,3 +147,14 @@ def test_private_custodial_transition_guard_scans_root_readme() -> None:
     offenders = _private_custodial_transition_reference_offenders({path: text})
 
     assert offenders == ["README.md: 'custodial-managed-encryption.md'"]
+
+
+def test_private_custodial_transition_guard_scans_all_tracked_markdown() -> None:
+    path = REPO_ROOT / "CONTRIBUTING.md"
+    text = path.read_text(encoding="utf-8") + (
+        "\nRemoved transition inventory: Hosted custody implementation contract\n"
+    )
+
+    offenders = _private_custodial_transition_reference_offenders({path: text})
+
+    assert offenders == ["CONTRIBUTING.md: 'Hosted custody implementation contract'"]
