@@ -322,22 +322,15 @@ profile, but it remains independently mutable; changing it does not change which
 profile the workspace runs or grant additional authority. Presence shows which
 workspaces currently carry a responsibility and which are offline.
 
-- **Coordination, scope questions and handoffs: alice.** Route them there.
-- **dev is live again and working, by Juan's direct assignment.** An earlier
-  version of this section said dev was retired and hands-off; that was written
-  from a two-day-old presence reading and is wrong. Treat dev as an active
-  teammate: route to it normally, and do not refresh, restart or retire its home
-  without asking Juan, since he placed that session there himself. Note dev's
-  `role_name` reads `coordinator` while its profile is `developer` — those are
-  independent fields, and only the profile decides what a home materializes, so
-  an enumeration keyed on `role_name` will misclassify it.
-- **avi is not reachable.** `aw workspace status` still lists avi as
-  coordinator, but avi has been offline for over 90 days and works in another
-  repository (`ai.aweb`). Do not route work there; a stale entry is not an
-  absent one.
-- **Identity, provisioning, profiles, and the roster: ar** (agent-resources).
+Do not copy teammate names, presence timestamps, or current availability into
+repository or profile instructions. Those facts change independently of the
+files and turn a once-correct routing rule into a durable contradiction.
+Resolve current responsibility and reachability from the active team
+instructions and `aw workspace status`. Follow the responsibility named there;
+if no reachable owner is named, ask a reachable coordinator or the human rather
+than inferring authority from a stale role or profile.
 
-If an instruction tells you to consult shared state for who to ask and the
-answer is offline or contradicts a live teammate, report the conflict instead
-of quietly choosing.
+If a repository or profile copy contradicts active team instructions or live
+presence, the active instructions win. Stop and report the stale copy instead
+of quietly choosing or editing another teammate's home.
 <!-- AWEB:END -->

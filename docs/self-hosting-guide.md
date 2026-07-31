@@ -64,22 +64,28 @@ automatically:
 
 What gets written under `.aw/`:
 
-- a global identity in the local test namespace with address `local/alice`
-- a team certificate for `default:local`
-- workspace binding pointing at your local `aweb`
+- a local self-custodial identity for `default:local`, represented by its
+  `did:key` and with no public address or `did:aw`;
+- a team certificate for `default:local`; and
+- a workspace binding pointing at your local `aweb`.
 
-The default team membership is local. That is fine for local try-it-out use.
+### Connect More Existing Agents
 
-### Add More Local Agents
-
-Create a sibling worktree for another agent:
+From Alice's directory, create an invite:
 
 ```bash
-aw workspace add-worktree developer --name bob
+aw team invite
 ```
 
-That creates another local workspace in a sibling git worktree and joins it to
-the same team.
+Run the join command from a second existing agent directory. Its equivalent
+form is:
+
+```bash
+aw team join <invite-token> --name bob
+```
+
+This connects an agent directory you already operate. Aweb does not create its
+definition, home, worktree, runtime, or process.
 
 Useful checks:
 
@@ -222,14 +228,10 @@ the workspace to `aweb`.
 ### Additional Teams and Agents
 
 Create more teams with `aw id team create`, then invite and accept as usual.
-For more local agents on one machine, use:
-
-```bash
-aw workspace add-worktree developer --name bob
-```
-
-For more repos or machines, repeat invite, accept, and init in each target
-directory.
+For every additional agent, start with an existing target directory and repeat
+the invite, accept, and service-connect steps there. The operator or
+orchestrator remains responsible for creating and running that agent's home,
+worktree, runtime, and process.
 
 ### Key Rotation
 

@@ -237,6 +237,55 @@ func TestAwebOwnedStartupGuidanceHasSingleCanonicalOrder(t *testing.T) {
 	}
 }
 
+func TestRepositoryInstructionCopiesDoNotFreezeLiveRoster(t *testing.T) {
+	root := cmdMonorepoRootForTest(t)
+	for _, relative := range []string{"AGENTS.md", "agents/instructions.md", "cli/go/AGENTS.md"} {
+		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		guidance := strings.Join(strings.Fields(string(body)), " ")
+		for _, want := range []string{
+			"Do not copy teammate names, presence timestamps, or current availability into repository or profile instructions.",
+			"Resolve current responsibility and reachability from the active team instructions and `aw workspace status`.",
+		} {
+			if !strings.Contains(guidance, want) {
+				t.Errorf("%s missing durable roster-precedence guidance %q", relative, want)
+			}
+		}
+		for _, stale := range []string{"dev is live", "dev is not reachable", "avi is not reachable", "last seen 2026-"} {
+			if strings.Contains(strings.ToLower(guidance), stale) {
+				t.Errorf("%s freezes mutable roster claim %q", relative, stale)
+			}
+		}
+	}
+}
+
+func TestSelfHostingGuideUsesTheCurrentExistingDirectoryLocalIdentityPath(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(cmdMonorepoRootForTest(t), "docs", "self-hosting-guide.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	guidance := strings.Join(strings.Fields(string(body)), " ")
+	for _, want := range []string{
+		"a local self-custodial identity for `default:local`",
+		"Run the join command from a second existing agent directory",
+		"aw team join <invite-token> --name bob",
+	} {
+		if !strings.Contains(guidance, want) {
+			t.Errorf("self-hosting guide missing current local path %q", want)
+		}
+	}
+	for _, stale := range []string{
+		"a global identity in the local test namespace",
+		"aw workspace add-worktree",
+	} {
+		if strings.Contains(guidance, stale) {
+			t.Errorf("self-hosting guide retains stale setup path %q", stale)
+		}
+	}
+}
+
 func TestAwebTeamInstructionsExplainRosterResponsibility(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(cmdMonorepoRootForTest(t), "agents", "instructions.md"))
 	if err != nil {

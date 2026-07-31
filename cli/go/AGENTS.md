@@ -85,20 +85,15 @@ profile, but it remains independently mutable; changing it does not change which
 profile the workspace runs or grant additional authority. Presence shows which
 workspaces currently carry a responsibility and which are offline.
 
-- **Coordination, scope questions and handoffs: alice.** Route them there.
-- **dev is not reachable and its home is hands-off.** Presence shows dev offline
-  (last seen 2026-07-28), and dev is retired by Juan's authorization: do not
-  refresh, restart, retire, or touch dev's home or its runtime. Earlier
-  instructions named dev acting lead coordinator; that is stale. Note dev's
-  `role_name` reads `coordinator` while its profile is `developer` - those are
-  independent fields, and only the profile decides what a home materializes, so
-  an enumeration keyed on `role_name` will misclassify it.
-- **avi is not reachable.** `aw workspace status` still lists avi as coordinator, but
-  avi has been offline for over 90 days and works in a different repository
-  (`ai.aweb`). Do not route work there; a stale entry is not an absent one.
-- **Identity, provisioning, profiles, and the roster: ar** (agent-resources).
+Do not copy teammate names, presence timestamps, or current availability into
+repository or profile instructions. Those facts change independently of the
+files and turn a once-correct routing rule into a durable contradiction.
+Resolve current responsibility and reachability from the active team
+instructions and `aw workspace status`. Follow the responsibility named there;
+if no reachable owner is named, ask a reachable coordinator or the human rather
+than inferring authority from a stale role or profile.
 
-If you are following an instruction that tells you to consult shared state for who
-to ask, and the answer you get is offline or contradicts a live teammate, treat that
-as a finding and say so - do not quietly pick one.
+If a repository or profile copy contradicts active team instructions or live
+presence, the active instructions win. Stop and report the stale copy instead
+of quietly choosing or editing another teammate's home.
 <!-- AWEB:END -->

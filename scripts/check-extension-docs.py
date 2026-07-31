@@ -229,12 +229,14 @@ def check(
             if token.casefold() in normalized_relative:
                 failures.append(f"tracked path {relative} retains private managed-gateway name {token!r}")
 
-    neutrality_relatives = [relative for relative in sorted(tracked_files) if _is_managed_gateway_surface(relative)]
-    for relative in neutrality_relatives:
+    for relative in sorted(tracked_files):
         path = root / relative
         if not path.is_file():
             continue
-        normalized_text = path.read_text(encoding="utf-8", errors="replace").casefold()
+        raw = path.read_bytes()
+        if b"\0" in raw:
+            continue
+        normalized_text = raw.decode("utf-8", errors="replace").casefold()
         for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
             if token.casefold() in normalized_text:
                 failures.append(f"{relative} retains private managed-gateway token {token!r}")
@@ -440,6 +442,7 @@ def self_test(root: Path) -> int:
             return 1
 
         neutrality_mutations = (
+            ("README.md", "a" + "c_config", False),
             ("cli/go/cmd/aweb-a2a-gw/audit.go", "a" + "c_config", False),
             ("cli/go/a2a/client.go", "a" + "c_config", False),
             ("awid/src/awid/a2a_publication.py", "a" + "c_config", False),
