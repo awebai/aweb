@@ -1,329 +1,179 @@
-# E2E Messaging Release Rollout Runbook
+# E2E Messaging Rollout Readiness Runbook
 
-This runbook defines release sequencing, mixed-version behavior, rollout gates,
-observability, and rollback posture for encrypted message v2. It is subordinate
-to the normative protocol contract in
-[`e2e-messaging-contract.md`](e2e-messaging-contract.md) and the operational
-metadata contract in
-[`e2e-operational-metadata.md`](e2e-operational-metadata.md). If this runbook
-conflicts with those contracts, stop the rollout and route the conflict back
-through the relevant `aweb-aapv` contract review instead of shipping a local
-exception.
+Status: **generic OSS maintainer procedure**, not protocol authority and not
+permission to tag, deploy, or enable production traffic. The normative sources
+are the [E2E messaging contract](e2e-messaging-contract.md),
+[operational metadata contract](e2e-operational-metadata.md), and
+[legacy/no-downgrade policy](e2e-legacy-plaintext-policy.md).
 
-This is a release/ops plan, not permission to publish, tag, deploy, or enable
-production traffic. Hestia owns release mechanics before tags are pushed.
+E2E is a shipped advanced, explicit `--e2ee` path. Ordinary mail/chat remains a
+valid server-readable default. This runbook describes evidence required before a
+maintainer makes E2E automatic, policy-required, or broadly enabled. Its feature
+gates and version matrix are rollout requirements, not a claim that every gate
+or preflight is currently implemented.
 
-## Release objective
+## Public release objective
 
-Ship encrypted message v2 so local clients encrypt/decrypt message content while
-AC/aweb servers route ciphertext plus approved metadata. Mixed-version clients,
-servers, hosted surfaces, and federation peers must fail closed rather than
-silently sending plaintext when an intended encrypted send cannot be completed.
+A compatible rollout preserves these facts across every component:
 
-## Release train components
+- self-custodial clients encrypt/decrypt locally;
+- services route ciphertext plus approved metadata;
+- recipient keys come from identity-signed assertions;
+- route support never substitutes for recipient key authority;
+- intended E2E failures never retry as plaintext;
+- hosted custody is disclosed as server-readable hosted managed encryption;
+- rollback disables new E2E sends without rewriting encrypted history.
 
-Exact semver/tag numbers are filled by the release owner after implementation
-commits are selected. The train should move in this order:
+## Component readiness order
 
-1. **Contract baseline**
-   - `aweb` docs: `docs/e2e-messaging-contract.md`.
-   - `aweb` docs: `docs/e2e-operational-metadata.md`.
-   - Release gate: Mia support/implementation review and Athena metadata review
-     are complete for the docs in the release branch.
-2. **AWID / identity authority**
-   - Encryption-key assertion publication/discovery.
-   - Identity-authorized key facts; service signatures may assert route support
-     only, not recipient key authority.
-   - Treat `awid-service` (PyPI package/tag `awid-service-vX.Y.Z`) and `awid`
-     (Docker image/tag `awid-vX.Y.Z`) as independently released artifacts. They
-     may or may not move together. If `awid-service` is unchanged and only the
-     Docker image moves, record that asymmetry in the verified-live mail; never
-     push an `awid-service-v...` tag when there is no diff for that artifact.
-   - Release gate: key discovery can distinguish supported, missing assertion,
-     stale assertion, unsigned assertion, and mismatched identity.
-3. **aweb server + `aw` CLI**
-   - Server accepts, verifies, routes, stores, returns, and emits events for v2
-     encrypted envelopes as opaque ciphertext plus metadata.
-   - CLI/client creates encryption keys, signs key assertions, encrypts,
-     decrypts locally, verifies inner-header/hash/signature binding, and reports
-     structured failures.
-   - Release gate: no known plaintext string appears in server DB rows, logs,
-     SSE payloads, dashboard/API responses, support bundles, DB dumps, or release
-     artifacts for v2 test messages.
-4. **AC/dashboard and hosted surfaces**
-   - Remove, hide, or downgrade plaintext mail/chat views for v2 encrypted
-     content.
-   - Hosted custodial MCP, dashboard-side compose/read, and other server-side
-     tools may use managed encrypted v2 storage/routing, but remain labeled
-     **server-readable hosted messaging**, not E2E/local-client encrypted
-     messaging.
-   - AC production deployment remains a manual Render step: tag, wait for GHCR
-     image/workflow completion, mail the human operator for the Render deploy,
-     verify `/health` flips to the expected version, then run the smoke probe.
-   - Release gate: dashboard/API/support surfaces show metadata-only or a clear
-     blocked/unavailable state for v2 plaintext.
-5. **Channel, Pi, `aw run`, skills, and package docs**
-   - Channel events are metadata-only until local decryption succeeds.
-   - Pi/skills/docs explain local decryption, key loss, no silent plaintext
-     fallback, and server-readable hosted exceptions.
-   - Release gate: package docs and canonical skills use the same boundary words
-     as the release branch docs.
-6. **Federation enablement**
-   - Federated peers advertise v2 route support separately from recipient
-     encryption-key authority.
-   - Release gate: version skew cases in the mixed-version matrix pass against
-     the exact release artifacts or staged deployments.
+1. **Contract and vectors**
+   - canonical wire/crypto contract and subordinate policies agree;
+   - Python↔Go vector consumers decrypt each other's envelopes;
+   - policy fixtures are parsed and completeness/forbidden-field controls pass.
+2. **Identity discovery**
+   - AWID publishes/verifies global identity assertions;
+   - service-local discovery handles local/team identities without AWID fallback;
+   - missing, stale, unsigned, mismatched, and hosted-custody assertions are
+     distinguishable.
+3. **Service and CLI**
+   - service verifies, routes, stores, returns, and emits encrypted v2 as opaque
+     content plus metadata;
+   - CLI creates/archives keys, encrypts/decrypts locally, and reports structured
+     failures;
+   - known plaintext is absent from server rows, logs, events, APIs, bundles, and
+     dumps for self-custodial test messages.
+4. **Local runtimes**
+   - channel/Pi/agent runtimes receive metadata-only events until local decrypt;
+   - decrypt failure yields metadata/error only, never ciphertext-as-prompt or a
+     plaintext retry.
+5. **Hosted-custody extensions**
+   - signed `custody: "hosted_custodial"` is preserved and surfaced;
+   - hosted plaintext boundaries are labeled non-E2E;
+   - operator-specific key storage/backfill/deploy procedure is reviewed in its
+     own system, not copied into this public runbook.
+6. **Federation**
+   - recipient key authority and service route support are verified separately;
+   - version skew and replay/idempotency cases pass against exact artifacts.
 
-## Capability and feature gates
+## Capability conditions
 
-Use additive capability signals. Do not infer encrypted-message support from a
-new binary version alone.
+Before a route is treated as E2E-ready, establish:
 
-Required capability facts before a sender may send v2:
+- current identity-signed recipient encryption-key assertion;
+- supported encrypted message version, suite, and kind;
+- sender key stored locally before assertion publication;
+- target service acceptance of the protected envelope;
+- delivery policy authorization independent of sender-declared envelope fields.
 
-- recipient identity has a current identity-authorized encryption-key assertion,
-- recipient route advertises support for `message_version = 2` and the requested
-  kind (`mail` or `chat`),
-- sender local client has generated and stored its encryption key before
-  publishing an assertion,
-- server route accepts the configured suite,
-- policy requires encrypted v2 or permits the explicit named legacy plaintext
-  escape hatch.
+Current senders establish recipient key authority and then rely on service
+acceptance/rejection. A future complete route-capability preflight must be gated
+and tested before docs claim it is universally shipped.
 
-Feature gates should be independently disableable:
+## Logical rollout gates
 
-| Gate | Meaning when enabled | Safe disabled behavior |
+These are behavioral gates; implementations may choose different flag names.
+
+| Gate | Enabled behavior | Safe disabled behavior |
 | --- | --- | --- |
-| `e2ee_key_publish` | clients may publish identity encryption-key assertions | receive/send v2 is unavailable; diagnostics name missing key setup |
-| `e2ee_key_discovery` | senders may discover recipient encryption keys/capability | intended encrypted sends fail closed before message creation |
-| `e2ee_send_mail` | clients may create v2 mail envelopes | intended encrypted sends fail closed; no plaintext retry |
-| `e2ee_send_chat` | clients may create v2 chat envelopes | intended encrypted sends fail closed; no plaintext retry |
-| `e2ee_server_accept_mail` | server accepts v2 mail envelopes | server rejects v2 clearly; sender does not downgrade automatically |
-| `e2ee_server_accept_chat` | server accepts v2 chat envelopes | server rejects v2 clearly; sender does not downgrade automatically |
-| `e2ee_events_metadata_only` | server emits metadata-only v2 events | keep v2 production send disabled until this is true |
-| `e2ee_dashboard_metadata_only` | dashboard/support surfaces avoid v2 plaintext | keep v2 production send disabled until this is true |
-| `legacy_plaintext_escape_hatch` | explicit user-selected legacy mode remains available where policy allows | no implicit fallback; old senders follow legacy policy |
-
-Gate names are descriptive placeholders for rollout/runbook discussion; final
-flag names may differ, but their disabled behavior must preserve fail-closed
-semantics.
-
-## Minimum compatibility rule
-
-A client/server pair is compatible for encrypted v2 only when both sides confirm
-support for the same envelope version, suite, message kind, route support, and
-identity-authorized recipient encryption key. Otherwise the result is a
-structured failure before plaintext crosses a server boundary.
-
-Do not publish a broad rollout until the release owner records the exact minimum
-compatible versions for:
-
-- `awid` / registry service,
-- `aweb` server package,
-- `aw` CLI,
-- AC/dashboard backend/frontend,
-- channel/Pi/`aw run` packages,
-- canonical skills / packaged skills,
-- any federated peer deployments included in the rollout.
+| key publication | clients publish identity-signed X25519 assertions | diagnostics say key publication unavailable |
+| key discovery | senders resolve current recipient assertions | intended E2E fails before message creation |
+| encrypted mail/chat send | clients construct v2 envelopes | intended E2E fails; no plaintext retry |
+| service v2 acceptance | service validates/stores/routes v2 | clear unsupported response |
+| metadata-only events/support | no self-custodial plaintext leaves service | keep broader E2E enablement off |
+| hosted managed encryption | custody operator handles its own recipient keys | disclose unavailable hosted mode; never borrow self-custodial keys |
+| explicit plaintext | user chooses server-readable mode where policy allows | no fallback from failed E2E |
 
 ## Mixed-version matrix
 
-The fixture at
-[`../test-vectors/e2e/mixed-version-rollout-v1.json`](../test-vectors/e2e/mixed-version-rollout-v1.json)
-contains the machine-checkable version of this matrix. Every row is a release
-blocker for the relevant component before broad enablement. Run the matrix
-against the exact release artifacts or a staged deployment. For federation, use
-and extend the existing two-server/multi-client harness
-[`../scripts/e2e-oss-federation.sh`](../scripts/e2e-oss-federation.sh) rather
-than building a parallel version-skew stack.
+The machine-checkable matrix is
+[`../test-vectors/e2e/mixed-version-rollout-v1.json`](../test-vectors/e2e/mixed-version-rollout-v1.json).
+Every row marked `release_blocker` must be demonstrated against the exact
+artifacts or staged deployment for the component being enabled.
 
-| Case | Expected behavior | Release-blocking assertion |
-| --- | --- | --- |
-| new sender, new recipient, new server | v2 encrypted mail/chat send succeeds | recipient decrypts locally; sender self-copy decrypts; server stores no plaintext |
-| new sender, old recipient or missing recipient key assertion | send fails before storage | sender key is created/published if missing; failure names missing/stale/unsupported recipient key capability; no plaintext row/event |
-| old sender, new recipient | legacy plaintext may arrive only if recipient/team policy still allows it | message is labeled legacy plaintext and never claimed as v2 |
-| new client, old server | v2 send fails clearly | client does not retry plaintext silently |
-| old client, new server on encrypted-required route | server rejects legacy plaintext | no plaintext row is stored |
-| old hosted server-readable MCP/dashboard sender, new local encrypted recipient | hosted/server-readable path is not treated as encrypted v2 | UI/copy labels server-readable mode; no encrypted-product claim |
-| new sender, federated peer lacks v2 route support | send fails before delivery | route-support failure is distinct from recipient key failure |
-| new sender, peer claims route support but recipient key assertion is missing/stale/unsigned | send fails before storage/delivery | service route support does not substitute for recipient key authority |
-| duplicate `message_id`, same signed envelope | idempotent success or same-result response | stored envelope hash matches original |
-| duplicate `message_id`, different signed envelope | replay/mutation rejection | no second row, no event with mutated metadata |
-| stale timestamp at ingestion | reject at ingress | already-accepted stored mail remains readable later |
-| rollback after v2 messages exist | v2 send disabled; existing encrypted history remains retrievable as ciphertext/metadata | rollback does not convert intended encrypted messages to plaintext |
+Minimum cases:
 
-## Failure messages
+- new sender/recipient/service: recipient and sender-copy decrypt; service has no
+  plaintext;
+- missing/stale recipient key: fail before storage;
+- new client/old service: clear failure, no plaintext retry;
+- old client/E2E-required future route: reject plaintext without storing it;
+- peer route support without recipient key authority: reject;
+- duplicate id/same signed envelope: idempotent same result;
+- duplicate id/different envelope: reject mutation;
+- stale ingress timestamp: reject, while already accepted history remains
+  readable later;
+- rollback: new E2E disabled, existing ciphertext and local decrypt preserved.
 
-Failure messages must be specific enough for support and agents to choose the
-right next step without encouraging plaintext fallback:
+The current plaintext flag is `--plaintext`; `--legacy-plaintext` is a
+deprecated alias. Update this runbook and the matrix together if that naming
+changes.
 
-- missing local encryption private key,
-- missing published encryption-key assertion,
-- stale encryption-key assertion,
-- unsigned or identity-mismatched assertion,
-- route lacks v2 support,
-- old client or old server,
-- unsupported suite,
-- malformed ciphertext or key wrap,
-- replay or idempotency conflict,
-- inner-header mismatch,
-- explicit `--plaintext` mode required but not selected.
+## No-plaintext and observability gates
 
-The message should say that no plaintext fallback occurred. If legacy plaintext
-is allowed, it must be the separate explicit `--plaintext` command/UX path and
-visually distinct from encrypted v2. If the product renames the plaintext flag
-or UX label in a future release, update this runbook and
-[`../test-vectors/e2e/mixed-version-rollout-v1.json`](../test-vectors/e2e/mixed-version-rollout-v1.json)
-in the same change so release tests and user-facing naming stay aligned.
+Allowed rollout evidence is metadata-only:
 
-## Observability and support gates
+- ids, key ids, suite/version, hashes/sizes, wrap count/purpose;
+- route/federation target, timestamps, delivery/read/ack state;
+- safe verification/decrypt categories, counts, and latency.
 
-Operational observability uses only the metadata allowed in
-[`e2e-operational-metadata.md`](e2e-operational-metadata.md):
-
-- encryption version, suite, message kind,
-- message/conversation ids,
-- sender/recipient ids, key ids, route kind, delivery origin, federation peer,
-- ciphertext hash and bytes, envelope bytes, key-wrap count, wrap purposes,
-- delivery/read/ack/failure states,
-- verification/decryption error categories,
-- usage/billing counters, abuse/rate-limit signals, and support request ids.
-
-Release blockers:
-
-- support/admin endpoints either return metadata/ciphertext only or a clear
-  blocked response for v2 plaintext,
-- support bundles contain no plaintext, previews, summaries, embeddings,
-  content-derived labels, private keys, archived encryption keys, API keys, auth
-  headers, or decrypted exports unless the user intentionally attaches a support
-  export as a separate artifact,
-- billing and abuse dashboards do not include content-derived categories for v2,
-- dashboard/conversation lists do not generate server-side plaintext previews.
-
-If a slice introduces background reconciliation such as encryption-key assertion
-staleness checks, document the cron ownership and expiry. Cron jobs created with
-`CronCreate` expire after seven days; the weekly operations check must recreate
-or confirm them rather than assuming an indefinite background job.
+Release-blocking scans cover server database rows, logs, events, API responses,
+support bundles, exports, and dumps. They reject plaintext subject/body,
+previews, summaries, embeddings, content-derived labels, private keys, CEKs,
+auth headers, and API keys.
 
 ## Rollout phases
 
-1. **Dark launch**
-   - Ship code paths disabled by default.
-   - Run fixture, unit, and integration gates in CI.
-   - Verify docs/skills/package wording in release branch.
-2. **Internal canary**
-   - Enable key publication/discovery and local decrypt diagnostics for internal
-     self-custodial workspaces only.
-   - Keep broad v2 send disabled until metadata-only events/dashboard/support
-     gates pass.
-3. **Limited encrypted mail canary**
-   - Enable one-to-one mail for a named internal team or allowlist.
-   - Monitor metadata-only delivery, decrypt error categories, no-plaintext
-     scans, support bundle output, and rollback rehearsals.
-4. **Limited encrypted chat canary**
-   - Enable one-to-one chat for the same internal team or allowlist after the
-     mail canary is stable.
-   - Verify `aw chat pending`, `aw chat history`, channel/Pi/local-client
-     display, sender sent-history, and unread/wait metadata all decrypt only
-     locally and keep server responses metadata-only.
-   - Verify small group chat with per-message content keys and per-recipient
-     wraps: new members can read future messages only, and explicitly removed
-     members cannot decrypt future messages. Do not treat ordinary
-     `sender_leaving` / `send-and-leave` turn completion as group removal.
-5. **Federation canary**
-   - Enable only peers that advertise v2 route support and have passed the
-     matrix cases.
-   - Treat route support as separate from recipient key authority.
-   - Record evidence for federated encrypted mail and federated encrypted chat:
-     recipient decrypt, sender self-copy decrypt, reply decrypt, and plaintext
-     absence in every peer database/log/dump inspected.
-6. **Broader enablement**
-   - Release owner records exact versions, flags, test evidence, Hestia release
-     mechanics review, Mia implementation/support review, Athena metadata
-     allowance, and any AC/dashboard approvals.
+1. **Disabled-by-default build** — ship compatible readers/verifiers and run
+   unit/vector/integration controls.
+2. **Internal key/discovery validation** — exercise setup, publication, rotation,
+   archive restore, and diagnostics without broad E2E policy.
+3. **Limited mail canary** — explicit `--e2ee`, one-to-one, metadata/no-plaintext
+   monitoring, and rollback rehearsal.
+4. **Limited chat canary** — one-to-one then small groups; future wraps exclude
+   explicitly removed participants. `sender_leaving` ends a turn, not membership.
+5. **Federation canary** — only peers with separately verified v2 route support;
+   test decrypt, reply, sender copy, replay, and plaintext absence at each peer.
+6. **Broader/policy enablement** — only after the full matrix, metadata gates,
+   exact-version record, artifact verification, and rollback evidence pass.
 
-Run a rollback rehearsal before advancing out of each phase, not only once at
-the end of the rollout. The rehearsal should prove the phase's disabled behavior
-and confirm that already-stored encrypted history stays ciphertext/metadata with
-local-client decryption only.
+Run rollback rehearsal before leaving each phase.
 
 ## Rollback posture
 
-Rollback must disable new encrypted sends without corrupting encrypted history or
-enabling unsafe downgrade.
+Allowed:
 
-Allowed rollback actions:
+- disable new encrypted mail/chat sends;
+- keep ciphertext/metadata read paths and local decryption available;
+- stop v2 federation egress to an incompatible peer;
+- show clear encrypted-send-unavailable diagnostics.
 
-- disable `e2ee_send_mail`, `e2ee_send_chat`, or equivalent send gates,
-- keep read paths for already-stored v2 ciphertext/metadata available,
-- keep local decryption available in clients that already have keys,
-- stop federation v2 egress to a peer whose route support is failing,
-- show clear “encrypted send unavailable” diagnostics.
+Forbidden:
 
-Forbidden rollback actions apply across server rollback, clients, and agents
-participating in the release response. Servers cannot ask for these actions, and
-clients/agents must not perform them during a panic rollback:
-
-- rewrite encrypted messages into plaintext,
-- ask the server/support to decrypt,
-- silently resend a failed encrypted message as plaintext,
-- discard archived encryption key material,
-- remove metadata needed for idempotency/replay/mutation checks,
+- rewrite encrypted messages into plaintext;
+- ask routing/support services to decrypt self-custodial content;
+- silently resend plaintext;
+- discard archived encryption keys;
+- remove replay/idempotency metadata;
 - relabel legacy plaintext as encrypted v2.
 
-If a release must roll back after users have sent v2 messages, keep a forward-fix
-plan for read/decrypt compatibility. Message history remains encrypted content
-plus metadata; rollback cannot make it server-readable.
+A rollback after v2 history exists requires forward-compatible ciphertext reads;
+it cannot make that history server-readable.
 
-## Release mechanics review bar
+## Evidence checklist
 
-Hestia release-mechanics review for each train component checks:
+Before any release or enablement, record:
 
-- the full component release chain is green (`make release-ready`, `make ship`,
-  or the component's equivalent), not only focused tests,
-- verified-live mail has four explicit points: what fixed, what did not fix,
-  evidence, and live check,
-- published tarballs/images/artifacts are content-verified, not only version
-  bumped; for packaged skills, the published `SKILL.md` body must match the
-  canonical source,
-- CLI-only slices use the tag-only-at-target-sha pattern when no in-tree server
-  bump is required,
-- `awid-service` is listed explicitly iff its diff is non-zero; otherwise the
-  verified-live mail says `awid-service` was unchanged and not released.
+- exact commits, versions, and artifacts for each participating component;
+- ordered migrations and confirmation that applied migration baselines were not
+  edited in place;
+- cross-language vector, policy fixture, mixed-version, and mutation results;
+- no-plaintext scan results;
+- key publication/discovery and rotation/archive evidence;
+- metadata-only event/support evidence;
+- rollback rehearsal for the proposed phase;
+- separate review for any hosted operator's custody, migration, and deployment
+  procedure.
 
-Tags are pushed individually. Never batch tag pushes for the E2E train. Use one
-`git push origin <tag>` per tag, watch the workflow complete, verify the
-published artifact, then push the next tag.
-
-## Release evidence checklist
-
-Before tags or production enablement, collect and link:
-
-- exact commits and package versions for every release train component,
-- migration list and confirmation no existing migration baseline was edited for
-  additive schema changes,
-- mixed-version matrix results from the exact release artifacts or staged
-  deployment,
-- no-plaintext scan results for DB rows, logs, SSE events, dashboard/API
-  responses, support bundles, DB dumps, and release artifacts,
-- PyPI artifact checks use the per-version endpoint
-  `/pypi/<package>/<version>/json`; top-level `info.version` may lag behind
-  because of cache propagation,
-- metadata-only billing/usage/support fixture validation,
-- rollback rehearsal notes for every rollout phase,
-- Hestia release-mechanics review,
-- Mia implementation/support review,
-- Athena metadata allowance review,
-- AC/dashboard review for server-readable hosted surface wording and plaintext
-  surface removal.
-
-## Ownership
-
-- Release owner / Hestia: tags, package publish, deploy sequencing, rollback
-  decision, final version table, individual tag pushes, artifact verification,
-  verified-live mail, and manual AC Render deploy coordination.
-- Grace: `aweb-aapv` epic sequencing and cross-slice contract integrity.
-- Mia: implementation-readiness and support/admin wording review.
-- Athena: cryptographic/metadata allowance review.
-- Slice owners: provide tests/evidence for the rows and gates touched by their
-  slice before requesting rollout inclusion.
+Tags, package publication, hosted deployment, and production feature switches
+remain outside this documentation procedure and require the repository/operator
+approval path that owns them.

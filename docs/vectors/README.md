@@ -94,8 +94,14 @@ client mapping.
 
 ### `e2ee-v2-cross-language.json`
 
-Deterministic Go/Python encrypted-v2 wire fixture. It contains test-only private
-keys that must never be reused outside tests.
+Deterministic identities, X25519 test-only private material, identity-signed key
+assertions, and encrypted mail envelopes for Python↔Go interoperability. Python
+decrypts the Go envelope and Go decrypts the Python envelope; both consumers
+assert plaintext is absent from the outer envelope. Policy fixtures under
+`test-vectors/e2e/` separately pin stored content modes, metadata-only fields,
+current/deprecated plaintext flags, and rollout requirements; server tests
+consume all three fixtures. The private material must never be reused outside
+tests.
 
 ### `team-auth-envelope-v2.json`
 

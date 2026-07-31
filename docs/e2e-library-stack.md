@@ -1,6 +1,11 @@
-# Combined e2e stack: awid + aweb + Library, seeded
+# Optional Library Integration Test Stack
 
-The self-hosted end-to-end stack the profile/team/Library flow runs against. It
+Status: **optional cross-repository maintainer harness**. In this filename and
+Make target, `e2e` means end-to-end integration testing; it does **not** mean the
+encrypted-message E2E protocol. Library is unnecessary for basic communication,
+identity/team membership, or encrypted-v2 interoperability.
+
+The self-hosted integration stack the optional profile/team/Library flow runs against. It
 brings up, from source, on one Docker network:
 
 | Service  | Source            | Host port (default) | In-container |
@@ -16,10 +21,9 @@ real AWID team-certificate auth, so the materializer is exercised against the
 real folded-block-scalar blueprint content (the same flow Library's own e2e
 suite runs).
 
-This is the *self-hosted* tier (`default-aabq.1`): postgres + redis + awid + OSS
-aweb + Library. The *hosted* tier (awid + aweb-cloud + Library, exercising the
-server-side controller-key flow) is a separate, AC-coordinated piece and is not
-part of this compose.
+This harness contains postgres + redis + AWID + OSS aweb + Library. Hosted
+service infrastructure and hosted controller-key flows are not part of this
+compose or prerequisites for using it.
 
 ## Cross-repo dependencies
 
