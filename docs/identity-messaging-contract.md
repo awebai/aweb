@@ -4,6 +4,24 @@ Status: **canonical current cross-component protocol** between AWID, `aw`, and
 the aweb server for identity-scoped mail and chat. It follows the global/local model
 in [`global-local-identity-routing.md`](global-local-identity-routing.md).
 
+## Scope and document authority
+
+This contract governs identity binding, first-contact routing, delivery policy,
+stored participant routes, and federation compatibility. It does not restate
+user commands, presentation acknowledgement, event reconnect, or cryptographic
+envelope rules:
+
+- [`mail-and-chat.md`](mail-and-chat.md) is the current user guide for durable
+  mail, chat, reply, and read state.
+- [`receiving-events.md`](receiving-events.md) governs wake, presentation, and
+  reconnect behavior.
+- [`e2e-messaging-contract.md`](e2e-messaging-contract.md) governs encrypted
+  content, custody, and downgrade rules.
+- [`messaging-contract-matrix.md`](messaging-contract-matrix.md) is a subordinate
+  maintainer test inventory and cannot override this contract.
+- CLI and MCP references own command/tool inventory; they do not redefine the
+  protocol authority above.
+
 ## Authority Boundaries
 
 | Component | Authority | Not authority |
@@ -16,9 +34,11 @@ in [`global-local-identity-routing.md`](global-local-identity-routing.md).
 
 ## Global And Local Identities
 
-- **Global identity**: durable `did:aw`, AWID-registered current `did:key`,
-  and one or more address aliases. Delivery routes belong to addresses, not to
-  the identity row.
+- **Global identity**: durable `did:aw` and AWID-registered current `did:key`.
+  It may have zero, one, or many address aliases. Delivery routes belong to
+  addresses, not to the identity row. An addressless global identity remains
+  global but has no address-based first-contact route. Address-based first
+  contact requires a concrete assigned address; identity registration does not.
 - **Local identity**: `did:key` only, no AWID row, no `did:aw`, no stable/global
   ID, and no global first-contact address.
 

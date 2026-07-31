@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -54,6 +54,8 @@ help:
 	@echo "  test-pi-extension Run pi-extension tests"
 	@echo "  test-ship-ci-contract Verify the canonical mandatory ship workflow"
 	@echo "  test-sot-source-inventories Verify canonical SOT tables and REST routers against source"
+	@echo "  test-mcp-tools-reference Verify the generated MCP inventory against live registration"
+	@echo "  regenerate-mcp-tools-reference Regenerate the MCP inventory from live registration"
 	@echo "  prepare-oas-test-root Materialize the clean committed OAS test pin"
 	@echo "  check-oas-launch-environment-contract Verify the pinned OAS seam dependency"
 	@echo "    opt-in local OAS: make test-oas OAS_TEST_ROOT=/path/to/local/oas"
@@ -111,7 +113,7 @@ build:
 # check-cli-go-tidy is here rather than behind test-cli by a deliberate reversal: it was placed
 # after it to inherit a warm module cache, and moving it forward reattributes that fetch rather
 # than adding one - about a second for 85MB when cold.
-test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-sot-source-inventories test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-sot-source-inventories test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
 
 # Canonical implementation SOT inventories are derived from ordered migrations
 # and FastAPI mounts. The unit suite includes source-addition and stale-doc
@@ -120,6 +122,16 @@ test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contrac
 test-sot-source-inventories:
 	python3 scripts/check_sot_source_inventories.py
 	python3 -m unittest discover -s scripts -p "test_check_sot_source_inventories.py" -v
+
+# The public MCP inventory comes from an offline FastMCP registration. The
+# explicit category map must cover the live tool set exactly, and the unit suite
+# proves that both newly registered and removed tools fail closed.
+test-mcp-tools-reference:
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python ../scripts/regenerate_mcp_reference.py --check
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python -m unittest discover -s ../scripts -p "test_regenerate_mcp_reference.py" -v
+
+regenerate-mcp-tools-reference:
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python ../scripts/regenerate_mcp_reference.py
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and

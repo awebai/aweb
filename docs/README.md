@@ -182,8 +182,8 @@ notice where one exists.
 - [Retired bootstrap layout contract](bootstrap-layout-contract.md) — historical
   layout compatibility.
 - [Coordination](coordination.md) — overlapping guide pending consolidation.
-- [Messaging](messaging.md) — overlapping guide pending correction and
-  consolidation into the canonical messaging workflow.
+- [Messaging documentation authority](messaging.md) — compatibility authority
+  map for current user, wake, routing, encryption, and conformance documents.
 - [Team create and membership model](restructuring/team-create-and-membership-model.md)
   — compatibility command facts pending consolidation.
 - [CLI setup surface release gates](setup-surface-release-gates.md) — compatibility
@@ -202,8 +202,9 @@ notice where one exists.
 - [Configuration](configuration.md) — local `.aw/` files, environment, and docs
   injection.
 - [Current limitations](current-limitations.md) — known operational boundaries.
-- [Messaging contract matrix](messaging-contract-matrix.md) — conformance and
-  release-case inventory pending maintainer consolidation.
+- [Messaging contract matrix](messaging-contract-matrix.md) — subordinate
+  maintainer cases for routing, read state, chat waits, reconnect, and content
+  modes.
 - [Protocol conformance vectors](vectors/README.md) — canonical index for all 16
   root JSON fixtures, with current, experimental, compatibility, and digest-only
   authority distinguished.

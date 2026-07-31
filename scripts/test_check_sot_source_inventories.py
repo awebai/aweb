@@ -19,6 +19,29 @@ class SourceInventoryTests(unittest.TestCase):
         self.assertIn("`aw mail show --message-id <id>`", text)
         self.assertNotIn("`aw mail show <id>`", text)
 
+    def test_global_identity_does_not_require_an_address(self) -> None:
+        contract = (ROOT / "docs/identity-messaging-contract.md").read_text()
+        contract_flat = " ".join(contract.split())
+        awid_sot = (ROOT / "docs/awid-sot.md").read_text()
+        awid_sot_flat = " ".join(awid_sot.split())
+        did_source = (ROOT / "awid/src/awid_service/routes/did.py").read_text()
+        register_model = did_source.split("class DidRegisterRequest", 1)[1].split(
+            "class DidKeyEvidence", 1
+        )[0]
+
+        self.assertIn("zero, one, or many address aliases", contract_flat)
+        self.assertIn(
+            "Address-based first contact requires a concrete assigned address",
+            contract_flat,
+        )
+        self.assertNotIn("and one or more address aliases", contract_flat)
+        self.assertIn("zero, one, or many addresses", awid_sot_flat)
+        self.assertIn('ConfigDict(extra="forbid")', register_model)
+        self.assertIn(
+            'legacy_fields = {"address", "server", "handle", "did_key"}',
+            register_model,
+        )
+
     def test_sql_table_extraction_is_ordered_and_deduplicated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             migrations = Path(tmp)

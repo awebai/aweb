@@ -566,8 +566,12 @@ restart, so singling out one message would dress a general crash up as a
 delivery defect. See default-aaka.) Acking before presentation (the original defect) risks
 silent message loss; never acking (manual-only) leaves mail unread so the server
 re-delivers it on every reconnect — the replay burst regression (default-aajy).
-`aw mail ack` is a courtesy read-receipt for the sender, not the mechanism that
-prevents redelivery.
+`aw mail ack` is the authenticated recipient-side read transition. For unread
+recipient mail, the endpoint idempotently sets `read_at`; that removes the
+message from unread inbox and actionable reconnect delivery, and emits
+`message.acknowledged` only when the state changes. The command does not itself
+prove downstream presentation, so a harness must call it at the correct
+post-presentation acknowledgement point. It is not a sender-owned receipt API.
 
 **Contacts** are stored per-identity in aweb. Contacts management:
 `POST/GET/DELETE /v1/contacts`. For display and address-book UX, a contact may
