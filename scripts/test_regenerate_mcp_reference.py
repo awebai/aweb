@@ -16,19 +16,25 @@ class MCPReferenceGeneratorTests(unittest.TestCase):
 
     def test_live_registration_renders_complete_mail_chat_schema(self) -> None:
         rendered = generator.render_reference(self.tools)
-        send_mail = next(line for line in rendered.splitlines() if line.startswith("| `send_mail`"))
-        send_chat = next(line for line in rendered.splitlines() if line.startswith("| `send_chat`"))
+
+        def row(name: str) -> str:
+            return next(
+                line
+                for line in rendered.splitlines()
+                if line.startswith(f"| `{name}`")
+            )
+
+        send_mail = row("send_mail")
+        check_mail = row("check_mail")
+        send_chat = row("send_chat")
 
         self.assertIn("`plaintext=False`", send_mail)
         self.assertIn("`plaintext=False`", send_chat)
         self.assertIn("Hosted custodial sends encrypt by default", send_mail)
+        self.assertIn("marks returned unread messages read", check_mail)
         self.assertIn("Hosted custodial sends encrypt by default", send_chat)
-        read_chat = next(
-            line for line in rendered.splitlines() if line.startswith("| `read_chat`")
-        )
-        task_create = next(
-            line for line in rendered.splitlines() if line.startswith("| `task_create`")
-        )
+        read_chat = row("read_chat")
+        task_create = row("task_create")
         self.assertIn("`conversation_id`, `unread_only=False`, `limit=50`", read_chat)
         self.assertIn("`title`, `description=\"\"`", task_create)
         self.assertIn("`labels=None`", task_create)
@@ -39,14 +45,20 @@ class MCPReferenceGeneratorTests(unittest.TestCase):
         tools = dict(self.tools)
         tools["unclassified_tool"] = SimpleNamespace(name="unclassified_tool")
 
-        with self.assertRaisesRegex(generator.CoverageError, "unclassified registered tool: unclassified_tool"):
+        with self.assertRaisesRegex(
+            generator.CoverageError,
+            "unclassified registered tool: unclassified_tool",
+        ):
             generator.validate_coverage(tools)
 
     def test_documented_tool_absent_from_registration_fails_closed(self) -> None:
         tools = dict(self.tools)
         del tools["whoami"]
 
-        with self.assertRaisesRegex(generator.CoverageError, "documented tool absent from registration: whoami"):
+        with self.assertRaisesRegex(
+            generator.CoverageError,
+            "documented tool absent from registration: whoami",
+        ):
             generator.validate_coverage(tools)
 
     def test_check_rejects_stale_output_without_rewriting_it(self) -> None:

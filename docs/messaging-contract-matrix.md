@@ -80,7 +80,10 @@ Cover these cases for mail and chat wherever the operation exists:
    event only on a state change.
 7. Read mail leaves unread inbox/actionable reconnect delivery but remains
    durable and exactly fetchable.
-8. Encrypted mail events expose routing/wake metadata without plaintext subject
+8. Hosted MCP `check_mail` marks returned unread rows read before the tool
+   returns. That is its server-side hosted read transition; it does not prove a
+   local self-custodial runtime presented or decrypted content.
+9. Encrypted mail events expose routing/wake metadata without plaintext subject
    or body.
 
 ## Chat wait, selection, and read cases
