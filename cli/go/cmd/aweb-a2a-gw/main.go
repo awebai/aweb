@@ -851,7 +851,7 @@ func mergeManagedRuntimeConfig(cfg *fileConfig, payload managedRuntimeConfigPayl
 		if strings.TrimSpace(route.Mode) != "mail" {
 			return fmt.Errorf("managed runtime config routes[%d].mode must be mail", index)
 		}
-		normalizedAddress := strings.TrimSpace(route.Address)
+		normalizedAddress := strings.ToLower(strings.TrimSpace(route.Address))
 		if existingRouteID, duplicate := routeAddresses[normalizedAddress]; duplicate {
 			return fmt.Errorf("managed runtime config routes[%d].address %q duplicates route %q", index, normalizedAddress, existingRouteID)
 		}
@@ -983,7 +983,7 @@ func validateManagedConfig(cfg managedConfig) error {
 
 func validateManagedURL(field, value string) error {
 	parsed, err := url.Parse(strings.TrimSpace(value))
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
 		return fmt.Errorf("managed_config.%s must be an absolute HTTP(S) URL", field)
 	}
 	return nil

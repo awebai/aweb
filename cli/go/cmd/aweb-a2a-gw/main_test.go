@@ -342,9 +342,11 @@ func TestManagedConfigURLsMustBeAbsoluteHTTP(t *testing.T) {
 		{name: "malformed config", configURL: ":// not-a-url", bridgeURL: "https://bridge.example/a2a", wantError: true},
 		{name: "relative config", configURL: "/config", bridgeURL: "https://bridge.example/a2a", wantError: true},
 		{name: "missing config host", configURL: "https:///config", bridgeURL: "https://bridge.example/a2a", wantError: true},
+		{name: "port-only config authority", configURL: "http://:8080/config", bridgeURL: "https://bridge.example/a2a", wantError: true},
 		{name: "malformed bridge", configURL: "https://control.example/config", bridgeURL: ":// not-a-url", wantError: true},
 		{name: "relative bridge", configURL: "https://control.example/config", bridgeURL: "/bridge", wantError: true},
 		{name: "missing bridge host", configURL: "https://control.example/config", bridgeURL: "https:///bridge", wantError: true},
+		{name: "port-only bridge authority", configURL: "https://control.example/config", bridgeURL: "http://:8080/bridge", wantError: true},
 	}
 	for _, tt := range tests {
 		t.Run("yaml "+tt.name, func(t *testing.T) {
@@ -455,7 +457,7 @@ func TestManagedRuntimeConfigRejectsAmbiguousRouteTopology(t *testing.T) {
 		routes []managedRuntimeRoute
 		want   string
 	}{
-		{name: "duplicate normalized address", routes: []managedRuntimeRoute{baseRoute, {RouteID: "r-two", Address: " gateway.example/one ", Mode: "mail"}}, want: "duplicates route"},
+		{name: "duplicate normalized address", routes: []managedRuntimeRoute{baseRoute, {RouteID: "r-two", Address: " GATEWAY.EXAMPLE/ONE ", Mode: "mail"}}, want: "duplicates route"},
 		{name: "multiple defaults", routes: []managedRuntimeRoute{baseRoute, {RouteID: "r-two", Address: "gateway.example/two", Mode: "mail", RootBehavior: "default_for_host"}}, want: "multiple default_for_host"},
 	}
 	for _, tt := range tests {

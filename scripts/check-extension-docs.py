@@ -175,12 +175,19 @@ def _is_managed_gateway_surface(relative: str) -> bool:
         or relative in {
             "docs/README.md",
             "docs/vectors/README.md",
-            "cli/go/Dockerfile.a2a-gw",
             "cli/go/.goreleaser.yaml",
-            ".github/workflows/a2a-gateway-release.yml",
             "Makefile",
             "scripts/check-extension-docs.py",
         }
+        or (
+            relative.startswith(".github/workflows/")
+            and "a2a" in Path(relative).name.lower()
+        )
+        or (
+            relative.startswith("cli/go/")
+            and relative.count("/") == 2
+            and "a2a" in Path(relative).name.lower()
+        )
         or (relative.startswith("scripts/") and "a2a" in Path(relative).name.lower())
     )
 
@@ -384,6 +391,7 @@ def self_test(root: Path) -> int:
             ("cli/go/cmd/aweb-a2a-gw/audit.go", "a" + "c_config", False),
             ("docs/a2a-release-runbook.md", "a" + "c_config", False),
             ("cli/go/cmd/aweb-a2a-gw/new_surface.go", "a" + "c_config", True),
+            (".github/workflows/a2a-gateway-secondary.yml", "a" + "c_config", True),
             ("docs/a2a.md", "a2a-gw-" + "ac.yaml", False),
         )
         for relative, token, newly_tracked_surface in neutrality_mutations:
