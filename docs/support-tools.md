@@ -6,8 +6,9 @@
 
 This page documents the OSS `aw` support surface: lifecycle semantics,
 `aw doctor`, registry reads, and redacted support bundles. Hosted dashboard
-actions are intentionally described only as boundaries here. Cloud support
-APIs and operator runbooks live in the cloud support documentation.
+actions are intentionally described only as generic boundaries here. A hosted
+operator owns its support APIs, authority roles, and runbooks; no private
+application document defines the OSS behavior on this page.
 
 ## Lifecycle Semantics
 
@@ -67,8 +68,9 @@ Doctor statuses use the shared support vocabulary:
 | `unknown` | The check could not run, for example offline mode or dependency unavailable. |
 | `blocked` | The check could not run because the caller lacks authority. |
 
-JSON output follows `doctor.v1` today and uses the same status vocabulary as
-[`support-contract-v1`](support-contract-v1.md). Support tooling should read
+JSON output follows the standalone `doctor.v1` shape today and uses the same
+status vocabulary as [`support-contract-v1`](support-contract-v1.md). It is not
+wrapped in the support-contract registry envelope. Support tooling should read
 check IDs, statuses, sources, targets, details, fixes, and handoffs as stable
 machine-readable fields.
 
