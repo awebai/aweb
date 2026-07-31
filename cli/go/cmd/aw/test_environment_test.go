@@ -13,13 +13,26 @@ import (
 	"github.com/awebai/aw/awconfig"
 )
 
-const hermeticClaudeDirEnv = "AW_TEST_HERMETIC_CLAUDE_DIR"
+const (
+	hermeticClaudeDirEnv             = "AW_TEST_HERMETIC_CLAUDE_DIR"
+	windowsNoCurrentDirectoryPathEnv = "NoDefaultCurrentDirectoryInExePath"
+)
 
 func hermeticClaudeExecutableName(goos string) string {
 	if goos == "windows" {
 		return "claude.exe"
 	}
 	return "claude"
+}
+
+func hermeticClaudeLookupEnvironment(goos string) map[string]string {
+	if goos != "windows" {
+		return nil
+	}
+	return map[string]string{
+		"PATHEXT":                        ".COM;.EXE;.BAT;.CMD",
+		windowsNoCurrentDirectoryPathEnv: "1",
+	}
 }
 
 func sameHermeticExecutablePath(left, right string) bool {
@@ -109,6 +122,13 @@ func TestHermeticClaudeExecutableNameIsRunnableOnTargetOS(t *testing.T) {
 	}
 }
 
+func TestHermeticClaudeWindowsLookupExcludesCurrentDirectory(t *testing.T) {
+	environment := hermeticClaudeLookupEnvironment("windows")
+	if _, ok := environment[windowsNoCurrentDirectoryPathEnv]; !ok {
+		t.Fatal("Windows hermetic Claude environment permits current-directory lookup ahead of PATH")
+	}
+}
+
 func TestHermeticClaudeExecutableRunsInChildProcess(t *testing.T) {
 	assertHermeticClaudeOnPath(t)
 	if output, err := exec.Command("claude", "plugin", "install", "must-stay-inert").CombinedOutput(); err != nil {
@@ -132,6 +152,7 @@ func TestMain(m *testing.M) {
 	oldRunner := runClaudeChannelPluginCommand
 	oldPath, hadPath := os.LookupEnv("PATH")
 	oldPathExt, hadPathExt := os.LookupEnv("PATHEXT")
+	oldNoCurrentDirectoryPath, hadNoCurrentDirectoryPath := os.LookupEnv(windowsNoCurrentDirectoryPathEnv)
 	oldHermeticDir, hadHermeticDir := os.LookupEnv(hermeticClaudeDirEnv)
 
 	dir, err := os.MkdirTemp("", "aw-cmd-test-claude-")
@@ -150,7 +171,15 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	if runtime.GOOS == "windows" {
-		if err := os.Setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD"); err != nil {
+		lookupEnvironment := hermeticClaudeLookupEnvironment(runtime.GOOS)
+		if err := os.Setenv(windowsNoCurrentDirectoryPathEnv, lookupEnvironment[windowsNoCurrentDirectoryPathEnv]); err != nil {
+			_ = restoreTestEnvironment(hermeticClaudeDirEnv, oldHermeticDir, hadHermeticDir)
+			_ = os.RemoveAll(dir)
+			fmt.Fprintf(os.Stderr, "disable Windows current-directory executable lookup: %v\n", err)
+			os.Exit(1)
+		}
+		if err := os.Setenv("PATHEXT", lookupEnvironment["PATHEXT"]); err != nil {
+			_ = restoreTestEnvironment(windowsNoCurrentDirectoryPathEnv, oldNoCurrentDirectoryPath, hadNoCurrentDirectoryPath)
 			_ = restoreTestEnvironment(hermeticClaudeDirEnv, oldHermeticDir, hadHermeticDir)
 			_ = os.RemoveAll(dir)
 			fmt.Fprintf(os.Stderr, "set deterministic PATHEXT: %v\n", err)
@@ -164,6 +193,7 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("PATH", testPath); err != nil {
 		if runtime.GOOS == "windows" {
 			_ = restoreTestEnvironment("PATHEXT", oldPathExt, hadPathExt)
+			_ = restoreTestEnvironment(windowsNoCurrentDirectoryPathEnv, oldNoCurrentDirectoryPath, hadNoCurrentDirectoryPath)
 		}
 		_ = restoreTestEnvironment(hermeticClaudeDirEnv, oldHermeticDir, hadHermeticDir)
 		_ = os.RemoveAll(dir)
@@ -189,6 +219,10 @@ func TestMain(m *testing.M) {
 	if runtime.GOOS == "windows" {
 		if err := restoreTestEnvironment("PATHEXT", oldPathExt, hadPathExt); err != nil {
 			fmt.Fprintf(os.Stderr, "restore PATHEXT after cmd/aw tests: %v\n", err)
+			code = 1
+		}
+		if err := restoreTestEnvironment(windowsNoCurrentDirectoryPathEnv, oldNoCurrentDirectoryPath, hadNoCurrentDirectoryPath); err != nil {
+			fmt.Fprintf(os.Stderr, "restore %s after cmd/aw tests: %v\n", windowsNoCurrentDirectoryPathEnv, err)
 			code = 1
 		}
 	}
