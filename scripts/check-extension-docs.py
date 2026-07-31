@@ -76,7 +76,7 @@ def _source_hook_events(root: Path, failures: list[str]) -> set[str]:
         relative = str(path.relative_to(root))
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or len(node.args) < 2:
+            if not isinstance(node, ast.Call):
                 continue
             function = node.func
             if isinstance(function, ast.Name):
@@ -85,14 +85,19 @@ def _source_hook_events(root: Path, failures: list[str]) -> set[str]:
                 name = function.attr
             else:
                 name = ""
-            if name == "fire_mutation_hook":
-                literals = _string_literals(node.args[1])
-                if not literals:
-                    failures.append(
-                        f"unsupported non-literal fire_mutation_hook event expression: {relative}:{node.lineno}"
-                    )
-                    continue
-                events.update(literals)
+            if name != "fire_mutation_hook":
+                continue
+            event_expression = node.args[1] if len(node.args) >= 2 else next(
+                (keyword.value for keyword in node.keywords if keyword.arg == "event_type"),
+                None,
+            )
+            literals = _string_literals(event_expression) if event_expression is not None else set()
+            if not literals:
+                failures.append(
+                    f"unsupported non-literal fire_mutation_hook event expression: {relative}:{node.lineno}"
+                )
+                continue
+            events.update(literals)
     if not events:
         failures.append("no fire_mutation_hook event calls found under server/src/aweb")
     return events
