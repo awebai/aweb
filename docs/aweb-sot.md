@@ -253,13 +253,15 @@ aweb has two authentication classes:
   `Authorization`, `X-AWEB-Timestamp`, `X-AWID-Team-Certificate`, and,
   for request-bound v2, `X-AWEB-Signed-Payload`.
 - **Identity-only auth** for identity-scoped messaging routes:
-  `Authorization` and `X-AWEB-Timestamp` only.
+  `Authorization`, `X-AWEB-Timestamp`, and optional `X-AWEB-DID-AW`. A
+  global caller must send its `did:aw`; a local caller omits the header.
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
 X-AWEB-Timestamp: <RFC 3339 UTC timestamp, e.g. 2026-04-09T08:47:23Z>
-X-AWID-Team-Certificate: <base64-encoded certificate JSON>
-X-AWEB-Signed-Payload: <optional base64url canonical JSON for v2>
+X-AWID-Team-Certificate: <base64-encoded certificate JSON; team auth only>
+X-AWEB-Signed-Payload: <optional base64url canonical JSON for team-auth v2>
+X-AWEB-DID-AW: <optional did:aw; global identity-only auth only>
 ```
 
 Team-certificate routes accept two signed envelopes:
@@ -277,9 +279,12 @@ not replay-proof envelopes: an identical signed request can be replayed inside
 the accepted window.
 
 For identity-only auth, the signed canonical JSON is
-`{did_aw, timestamp, body_sha256}`. This is used by the messaging
-routes that are explicitly identity-scoped and do not require a team
-certificate.
+`{did_aw, timestamp, body_sha256}`. `did_aw` is exactly the trimmed
+`X-AWEB-DID-AW` value, or the empty string when the header is absent. A global
+caller sends the header; the server resolves that DID through AWID and requires
+its current `did:key` to match `Authorization`. A local caller omits it, signs
+the empty value, and remains bound by its `did:key` plus an unambiguous local
+runtime projection. These messaging routes do not require a team certificate.
 
 Identity-scoped messaging routes route by authenticated DID and address, not
 by local team membership. If a global `did:aw` has multiple active local
@@ -303,8 +308,9 @@ standard RFC 4648 alphabet with no `=` padding.
 
 The `X-AWID-Team-Certificate` header is a team membership certificate
 issued by the team controller at awid. A base64 team certificate is on
-the order of 500–1000 bytes and is included on every authenticated
-request. For long-lived SSE connections this is a one-handshake cost
+the order of 500–1000 bytes and is included on every request that uses
+team-certificate auth, not identity-only requests. For long-lived SSE
+connections this is a one-handshake cost
 and negligible. For high-frequency unary HTTP requests it adds
 sub-millisecond and bytes-of-overhead per call. v1 ships with
 cert-on-every-request; if measured workloads show the per-request cost
@@ -325,8 +331,10 @@ remains the canonical credential.
    `certificate.member_did_key` to match the signing did:key; and reject a
    certificate listed in AWID revocations.
 5. For identity-only auth, verify canonical JSON of `{did_aw, timestamp,
-   body_sha256}` and bind the caller to that global identity. No team
-   certificate is required for that path.
+   body_sha256}`. A non-empty `did_aw` must resolve to the signing key and binds
+   a global caller; an empty value binds a local caller by `did:key`, with local
+   projection lookup required to be unambiguous. No team certificate is
+   required for that path.
 6. Team-certificate routes extract coordination `team_id`, alias, identity
    scope, and certificate id from the verified certificate. They then resolve
    the matching active aweb runtime projection.
@@ -567,11 +575,13 @@ pending contacts, handle contacts, and labels/display names do not authorize
 delivery.
 
 **Auth for messaging endpoints:** the sender authenticates with a
-DIDKey signature over `{body_sha256, did_aw, timestamp}`. A team
-certificate is NOT required for messaging — the sender's identity
-(`did:aw`) is sufficient. The server resolves the sender's identity
-via the awid registry and evaluates the recipient's `inbound_mode` against
-the verified sender address.
+DIDKey signature over `{body_sha256, did_aw, timestamp}`. A global sender puts
+its `did:aw` in `X-AWEB-DID-AW`; a local sender omits the header and signs an
+empty `did_aw`. A team certificate is not required for messaging. The server
+resolves a supplied global identity through AWID; local identity-only auth
+requires an unambiguous active local projection. Delivery then evaluates the
+recipient's `inbound_mode` against the verified sender identity/address and any
+verified shared-team authority.
 
 **Recipient resolution:** first-contact global mail/chat uses an address
 (`domain/name`) resolved via awid. A bare external `did:aw` is an identity
