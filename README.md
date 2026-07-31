@@ -113,13 +113,17 @@ thread with:
 aw mail show --conversation-id <conversation-id>
 ```
 
-Success is this completed wake/reply round trip, not account, team, task, or
-profile creation. Events are wake signals; mail is durable server state. The
-current raw stream has no resumable server cursor and must be reopened after it
-ends. Reopening produces a fresh snapshot of actionable unread state; exact
-mail remains available after it is read. See
+This proves the live send/wake/reply path, not activation completion. Events are
+wake signals; mail is durable server state. Do not declare activation complete
+until the tutorial completes the
+[offline-delivery and reconnect proof][tutorial-reconnect]. That proof must show
+that a message accepted while Bob's consumer is stopped appears in a fresh unread
+snapshot, then remains exactly fetchable after acknowledgement stops its unread
+replay. The current raw stream has no resumable server cursor. See
 [Receiving events](docs/receiving-events.md) for acknowledgement and reconnect
 semantics.
+
+[tutorial-reconnect]: docs/cli-tutorial.md#6-prove-offline-delivery-and-reconnect
 
 ## Run the OSS stack
 

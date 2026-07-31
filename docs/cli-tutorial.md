@@ -228,15 +228,21 @@ Alice's stream emits its own `actionable_mail`. In Alice's directory:
 
 ```bash
 aw mail show --message-id <bob-reply-message-id>
-aw mail show --conversation-id <conversation-id>
+aw mail show --conversation-id <conversation-id> --limit 500
 ```
 
-The conversation command returns the oldest messages first, defaults to 200,
-and cannot return more than 500 in one call. For this tutorial it should contain
-exactly the initial message and reply.
+The conversation command returns the oldest messages first and cannot return
+more than 500 in one call. Its result must include both returned message IDs:
+`<alice-message-id>` and `<bob-reply-message-id>`. The command
+`aw mail send --to bob` may reuse an existing active one-to-one mail
+conversation, so older messages are valid. Expect exactly the initial message
+and reply only for a fresh Alice/Bob pair. If either returned ID is absent
+from a 500-message result, the current unpaged command cannot prove the
+conversation beyond its ceiling;
+repeat the journey with a fresh pair.
 
-At this point activation is complete: two existing agents exchanged durable
-mail and both wake paths observed the right recipient.
+The live send/wake/reply path is now proven. Keep going before declaring
+activation complete.
 
 ## 6. Prove offline delivery and reconnect
 
@@ -281,6 +287,18 @@ aw mail show --conversation-id <conversation-id>
 That distinction is the reconnect contract: unread actionable state can wake a
 new consumer; read mail remains durable and queryable but is not replayed as an
 unread event.
+
+Activation is complete only now. The demonstrated success criterion is:
+
+- the initial and reply message IDs appear in the durable conversation;
+- Bob and Alice each received the live wake intended for them;
+- mail accepted while Bob's consumer was stopped appeared in Bob's fresh unread
+  snapshot after reconnect; and
+- acknowledging that mail stopped its unread replay without removing its exact
+  durable content.
+
+No account, task, profile, Library service, or orchestrator-owned runtime was
+created to reach that result.
 
 ## Current event and acknowledgement behavior
 
