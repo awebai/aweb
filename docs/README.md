@@ -246,10 +246,6 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
 - **Managed A2A gateway configuration example** — private-purpose YAML,
   deliberately unlinked; relocate with the application contract after its
   public consumer is rewritten.
-- **Hosted custody implementation contract** — private-purpose Markdown,
-  deliberately unlinked; extract public custody/interoperability semantics into
-  canonical E2E contracts, then relocate the implementation detail to its
-  application owner.
 - [aapm.6 equivalence evidence](aapm6-equivalence-evidence.md) — relocate as
   dated, unrendered migration history.
 - [AWID registry-unavailable log](awid-registry-unavailable-log.md) — move useful

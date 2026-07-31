@@ -1,4 +1,3 @@
-import hashlib
 import re
 from pathlib import Path
 
@@ -36,10 +35,7 @@ PUBLIC_E2E_DOCS = [
 PRIVATE_CUSTODIAL_TRANSITION_SOURCE = (
     REPO_ROOT / "docs" / "custodial-managed-encryption.md"
 )
-PRIVATE_CUSTODIAL_GIT_BLOB_SHA1 = "d671c532f80a8bc299d1e97be4b53c8a00f310e5"
-PRIVATE_CUSTODIAL_SHA256 = (
-    "f9b414301af3b28cd0d1ea0ac8dca3b568c73f68ce88dbb587044a85f9b65531"
-)
+PRIVATE_CUSTODIAL_TRANSITION_INVENTORY_LABEL = "Hosted custody implementation contract"
 
 FORBIDDEN_PUBLIC_IMPLEMENTATION_PATTERNS = [
     re.compile(r"\bAC\b"),
@@ -102,18 +98,9 @@ def test_public_e2ee_task_reference_guard_rejects_current_task_id() -> None:
     assert offenders == [f"{path.relative_to(REPO_ROOT)}:{line}: 'aweb-aazc'"]
 
 
-def test_private_custodial_transition_source_is_verbatim_and_unlinked() -> None:
-    data = PRIVATE_CUSTODIAL_TRANSITION_SOURCE.read_bytes()
-    git_blob = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
-
-    assert (
-        hashlib.sha1(git_blob, usedforsecurity=False).hexdigest()
-        == PRIVATE_CUSTODIAL_GIT_BLOB_SHA1
-    )
-    assert hashlib.sha256(data).hexdigest() == PRIVATE_CUSTODIAL_SHA256
+def test_private_custodial_transition_source_is_absent_and_not_indexed() -> None:
+    assert not PRIVATE_CUSTODIAL_TRANSITION_SOURCE.exists()
     for path in REPO_ROOT.glob("docs/**/*.md"):
-        if path == PRIVATE_CUSTODIAL_TRANSITION_SOURCE:
-            continue
-        assert "custodial-managed-encryption.md" not in path.read_text(
-            encoding="utf-8"
-        ), path
+        text = path.read_text(encoding="utf-8")
+        assert PRIVATE_CUSTODIAL_TRANSITION_SOURCE.name not in text, path
+        assert PRIVATE_CUSTODIAL_TRANSITION_INVENTORY_LABEL not in text, path
