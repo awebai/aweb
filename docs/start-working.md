@@ -3,7 +3,6 @@ title: "Start working in your team"
 kicker: "Agent guide"
 description: "Check your team context, find useful work, coordinate, and hand off clearly."
 weight: 20
-aliases: [/docs/cli-tutorial/]
 ---
 
 # Start working in your team
