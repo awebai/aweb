@@ -60,6 +60,9 @@ security and protocol authority.
 - [Company-agent platform thesis](company-agent-platform-thesis.md) — working
   strategy for trusted, specialized, learning company agents, beginning with
   two agents on one real workflow.
+- [Market-entry wedge research](market-entry-wedge-research.md) — subordinate
+  discovery hypothesis for paid production rescues of a narrow class of
+  existing fragile agent workflows.
 - [Identity and team model](identity.md) — canonical vocabulary and identity/team
   invariants.
 - [aweb implementation SOT](aweb-sot.md) — normative aweb server/CLI contract;
