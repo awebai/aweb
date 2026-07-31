@@ -981,22 +981,24 @@ var mailAckCmd = &cobra.Command{
 
 var mailShowCmd = &cobra.Command{
 	Use:   "show",
-	Short: "Show a mail conversation",
-	// Which end the window takes belongs in the help rather than only in the
-	// output, because a reader deciding whether this command can answer "did I
-	// miss something recent" needs it BEFORE they run it and believe the result.
-	Long: "Show a mail conversation.\n\n" +
-		"--limit caps how many messages are returned and defaults to 200. The messages " +
-		"returned are the OLDEST ones, so on a conversation longer than the limit the " +
-		"newest messages are the ones missing - which is the opposite of what someone " +
-		"checking for recent mail expects.\n\n" +
+	Short: "Show a mail conversation or exact message",
+	// Which end the conversation window takes belongs in the help rather than only
+	// in the output, because a reader deciding whether this command can answer "did
+	// I miss something recent" needs it BEFORE they run it and believe the result.
+	Long: "Show mail by conversation or exact message ID.\n\n" +
+		"With --message-id, one unique message is selected. The conversation-window " +
+		"direction and 500-message ceiling below do not apply.\n\n" +
+		"With --conversation-id, --limit caps how many messages are returned and defaults " +
+		"to 200. The messages returned are the OLDEST ones, so on a conversation longer " +
+		"than the limit the newest messages are the ones missing - which is the opposite " +
+		"of what someone checking for recent mail expects.\n\n" +
 		"aw mail inbox windows from the other end and has a different default and ceiling. " +
 		"Do not carry an expectation from one command to the other.\n\n" +
 		"To read a whole conversation, pass --limit above its length and check the " +
 		"returned count. If it equals the limit, there may be more; raise it and re-run, up to " +
 		"500. At the 500-message ceiling, an exact full window cannot establish completeness. " +
-		"The server rejects higher limits and there is no paging flag, so a conversation longer " +
-		"than 500 messages cannot be returned whole by this command.",
+		"The conversation endpoint rejects higher limits and has no paging flag, so a " +
+		"conversation longer than 500 messages cannot be returned whole by this command.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		conversationID := strings.TrimSpace(mailShowConversationID)
 		messageID := strings.TrimSpace(mailShowMessageID)
@@ -1045,12 +1047,16 @@ var mailShowCmd = &cobra.Command{
 		// it and a consumer reading stdout is unaffected. Without this, the
 		// machine-readable path is the one surface that reports a partial read as a
 		// whole one with nothing anywhere to say otherwise.
-		if jsonFlag {
+		if jsonFlag && conversationID != "" {
 			if notice := mailWindowNotice(len(resp.Messages), mailShowLimit); notice != "" {
 				fmt.Fprintln(os.Stderr, strings.TrimSpace(notice))
 			}
 		}
-		printOutput(resp, formatMailConversation)
+		formatter := formatMailExactMessage
+		if conversationID != "" {
+			formatter = formatMailConversation
+		}
+		printOutput(resp, formatter)
 		return nil
 	},
 }
@@ -1081,7 +1087,7 @@ func init() {
 	_ = mailReplyCmd.Flags().MarkHidden("legacy-plaintext")
 	mailShowCmd.Flags().StringVar(&mailShowConversationID, "conversation-id", "", "Mail conversation to inspect")
 	mailShowCmd.Flags().StringVar(&mailShowMessageID, "message-id", "", "Legacy mail message to inspect")
-	mailShowCmd.Flags().IntVar(&mailShowLimit, "limit", 200, "Max messages, taken from the OLDEST end; if the count returned equals this, there may be more")
+	mailShowCmd.Flags().IntVar(&mailShowLimit, "limit", 200, "For --conversation-id, max messages from the OLDEST end; exact --message-id reads are not windowed")
 
 	mailCmd.AddCommand(mailSendCmd, mailReplyCmd, mailInboxCmd, mailShowCmd, mailAckCmd)
 	rootCmd.AddCommand(mailCmd)

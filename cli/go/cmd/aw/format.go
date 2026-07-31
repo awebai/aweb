@@ -185,6 +185,14 @@ func mailWindowNotice(returned, limit int) string {
 
 func formatMailConversation(v any) string {
 	resp := v.(*awid.InboxResponse)
+	return formatMailShowResponse(resp, mailWindowNotice(len(resp.Messages), mailShowLimit))
+}
+
+func formatMailExactMessage(v any) string {
+	return formatMailShowResponse(v.(*awid.InboxResponse), "")
+}
+
+func formatMailShowResponse(resp *awid.InboxResponse, notice string) string {
 	if len(resp.Messages) == 0 {
 		return "No messages.\n"
 	}
@@ -195,7 +203,7 @@ func formatMailConversation(v any) string {
 	} else {
 		sb.WriteString(fmt.Sprintf("Mail conversation (%d messages):\n", len(resp.Messages)))
 	}
-	if notice := mailWindowNotice(len(resp.Messages), mailShowLimit); notice != "" {
+	if notice != "" {
 		sb.WriteString(notice + "\n")
 	}
 	sb.WriteString("\n")

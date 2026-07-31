@@ -138,6 +138,80 @@ func TestMailConversationAtCeilingDoesNotRecommendAnImpossibleRerun(t *testing.T
 	}
 }
 
+// The exact-message path shares the response type and --limit flag with conversation
+// reads, but message_id is unique and the inbox route filters by it before LIMIT. An
+// exact-limit response here is one complete message, never an oldest-end window.
+func TestMailShowExactMessageDoesNotReportAConversationWindow(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	messageID := "99999999-9999-4999-8999-999999999999"
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			if got := r.URL.Query().Get("message_id"); got != messageID {
+				t.Fatalf("message_id=%q, want %q", got, messageID)
+			}
+			if got := r.URL.Query().Get("limit"); got != "1" {
+				t.Fatalf("limit=%q, want exact-limit control 1", got)
+			}
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{{
+				MessageID: messageID,
+				FromAlias: "alice",
+				Subject:   "exact",
+				Body:      "one message",
+				Priority:  awid.PriorityNormal,
+				CreatedAt: "2026-05-02T00:00:00Z",
+			}}})
+		case "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID:       did,
+		StableID:  stableIDFromDidForTest(t, did),
+		Custody:   awid.CustodySelf,
+		Lifetime:  awid.LifetimePersistent,
+		CreatedAt: "2026-05-02T00:00:00Z",
+	})
+	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
+		t.Fatalf("write signing key: %v", err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "mail", "show", "--message-id", messageID, "--limit", "1")
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	run.Dir = tmp
+	var stdout, stderr bytes.Buffer
+	run.Stdout = &stdout
+	run.Stderr = &stderr
+	if err := run.Run(); err != nil {
+		t.Fatalf("run failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	combined := strings.ToLower(stdout.String() + stderr.String())
+	if !strings.Contains(combined, "one message") {
+		t.Fatalf("exact message was not rendered:\n%s", combined)
+	}
+	for _, forbidden := range []string{"oldest", "may be more", "higher --limit", "500-message"} {
+		if strings.Contains(combined, forbidden) {
+			t.Fatalf("exact-message read was mislabeled with conversation-window guidance %q:\n%s", forbidden, combined)
+		}
+	}
+}
+
 // The JSON path is where getting this wrong is worst: a notice written to stdout
 // would corrupt the document every machine consumer parses. It goes to stderr, so
 // stdout stays a clean JSON body and a human still sees the warning.
