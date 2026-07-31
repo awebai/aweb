@@ -25,7 +25,7 @@ run_self_test "Python lock" \
   "self-test passed: clean locks pass and a stale AWID version fails" \
   bash scripts/check-python-locks.sh --self-test
 run_self_test "generated CLI reference" \
-  "self-test passed: a clean CLI reference passes and a duplicate fails" \
+  "self-test passed: clean generation plus visible-addition, removed-command, and stale-output controls" \
   bash scripts/regenerate-cli-reference.sh --self-test
 run_self_test "AWID public site document mirrors" \
   "self-test passed: clean AWID site document mirrors pass and every configured stale copy fails" \
