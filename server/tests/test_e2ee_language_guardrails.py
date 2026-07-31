@@ -7,6 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 FILES_TO_SCAN = [
     # Extend this list when adding new customer-visible string sources.
+    REPO_ROOT / "README.md",
     *REPO_ROOT.glob("docs/**/*.md"),
     *REPO_ROOT.glob("skills/**/*.md"),
     *REPO_ROOT.glob("packages/codex-plugin/skills/**/*.md"),
@@ -15,6 +16,12 @@ FILES_TO_SCAN = [
     REPO_ROOT / "pi-extension" / "README.md",
     REPO_ROOT / "pi-extension" / "src" / "index.ts",
 ]
+
+# Customer-published Markdown comes from this explicit source corpus. Agent/task
+# history and dependency/generated trees are deliberately not publication inputs.
+PUBLIC_MARKDOWN_FILES_TO_SCAN = sorted(
+    {path for path in FILES_TO_SCAN if path.suffix.lower() == ".md"}
+)
 
 FORBIDDEN_PATTERNS = [
     re.compile(r"\bhosted\s+E2E\b", re.IGNORECASE),
@@ -98,9 +105,35 @@ def test_public_e2ee_task_reference_guard_rejects_current_task_id() -> None:
     assert offenders == [f"{path.relative_to(REPO_ROOT)}:{line}: 'aweb-aazc'"]
 
 
+def _private_custodial_transition_reference_offenders(
+    overrides: dict[Path, str] | None = None,
+) -> list[str]:
+    offenders: list[str] = []
+    overrides = overrides or {}
+    for path in PUBLIC_MARKDOWN_FILES_TO_SCAN:
+        if not path.is_file():
+            continue
+        text = overrides.get(path, path.read_text(encoding="utf-8"))
+        for forbidden in [
+            PRIVATE_CUSTODIAL_TRANSITION_SOURCE.name,
+            PRIVATE_CUSTODIAL_TRANSITION_INVENTORY_LABEL,
+        ]:
+            if forbidden in text:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden!r}")
+    return offenders
+
+
 def test_private_custodial_transition_source_is_absent_and_not_indexed() -> None:
     assert not PRIVATE_CUSTODIAL_TRANSITION_SOURCE.exists()
-    for path in REPO_ROOT.glob("docs/**/*.md"):
-        text = path.read_text(encoding="utf-8")
-        assert PRIVATE_CUSTODIAL_TRANSITION_SOURCE.name not in text, path
-        assert PRIVATE_CUSTODIAL_TRANSITION_INVENTORY_LABEL not in text, path
+    assert not _private_custodial_transition_reference_offenders()
+
+
+def test_private_custodial_transition_guard_scans_root_readme() -> None:
+    path = REPO_ROOT / "README.md"
+    text = path.read_text(encoding="utf-8") + (
+        "\n[Removed managed custody source](docs/custodial-managed-encryption.md)\n"
+    )
+
+    offenders = _private_custodial_transition_reference_offenders({path: text})
+
+    assert offenders == ["README.md: 'custodial-managed-encryption.md'"]
