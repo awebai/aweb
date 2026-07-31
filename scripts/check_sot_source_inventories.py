@@ -15,6 +15,11 @@ _TABLE_EVENT_PATTERN = re.compile(
     r"\{\{tables\.([A-Za-z0-9_]+)\}\}",
     re.IGNORECASE,
 )
+_RAW_TABLE_EVENT_PATTERN = re.compile(
+    r"\b(?:CREATE\s+(?:(?:GLOBAL|LOCAL)\s+)?(?:(?:TEMP|TEMPORARY|UNLOGGED)\s+)?|DROP\s+)TABLE\b",
+    re.IGNORECASE,
+)
+_SQL_COMMENT_PATTERN = re.compile(r"--[^\n]*|/\*.*?\*/", re.DOTALL)
 _ITEM_PATTERN = re.compile(r"^- `([^`]+)`$")
 _INTEGER_OPERATORS = {
     ast.Add: operator.add,
@@ -28,7 +33,15 @@ def extract_sql_tables(migrations_dir: Path) -> list[str]:
     """Apply ordered CREATE/DROP events and return component application tables."""
     tables: list[str] = []
     for migration in sorted(migrations_dir.glob("*.sql")):
-        for operation, table in _TABLE_EVENT_PATTERN.findall(migration.read_text()):
+        sql = _SQL_COMMENT_PATTERN.sub("", migration.read_text())
+        raw_events = _RAW_TABLE_EVENT_PATTERN.findall(sql)
+        events = _TABLE_EVENT_PATTERN.findall(sql)
+        if len(events) != len(raw_events):
+            raise ValueError(
+                f"unsupported table declaration in {migration}: every CREATE/DROP TABLE "
+                "must use the {{tables.name}} templated form"
+            )
+        for operation, table in events:
             if operation.upper() == "CREATE":
                 if table not in tables:
                     tables.append(table)
@@ -41,19 +54,26 @@ def extract_fastapi_routers(api_source: Path) -> list[str]:
     """Return top-level REST router names in application mount order."""
     calls: list[tuple[int, str]] = []
     for node in ast.walk(ast.parse(api_source.read_text())):
-        if not isinstance(node, ast.Call) or not node.args:
+        if not isinstance(node, ast.Call):
             continue
         function = node.func
-        router = node.args[0]
-        if (
+        is_app_include = (
             isinstance(function, ast.Attribute)
             and function.attr == "include_router"
             and isinstance(function.value, ast.Name)
             and function.value.id == "app"
-            and isinstance(router, ast.Name)
-            and router.id.endswith("_router")
-        ):
-            calls.append((node.lineno, router.id.removesuffix("_router")))
+        )
+        if not is_app_include:
+            continue
+        if not node.args:
+            raise ValueError(f"unsupported app.include_router call at line {node.lineno}: missing router")
+        router = node.args[0]
+        if not isinstance(router, ast.Name) or not router.id.endswith("_router"):
+            raise ValueError(
+                "unsupported app.include_router argument at "
+                f"line {node.lineno}: {ast.unparse(router)}"
+            )
+        calls.append((node.lineno, router.id.removesuffix("_router")))
     return [name for _, name in sorted(calls)]
 
 
@@ -170,7 +190,11 @@ def check_repository(root: Path) -> list[str]:
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
-    errors = check_repository(root)
+    try:
+        errors = check_repository(root)
+    except ValueError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
     if errors:
         for error in errors:
             print(f"FAIL: {error}", file=sys.stderr)

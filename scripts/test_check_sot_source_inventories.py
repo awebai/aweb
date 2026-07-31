@@ -33,6 +33,13 @@ class SourceInventoryTests(unittest.TestCase):
                 ["alpha", "gamma"],
             )
 
+    def test_sql_table_extraction_rejects_unsupported_literal_declaration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            migrations = Path(tmp)
+            (migrations / "001.sql").write_text("CREATE TABLE literal_table (id INTEGER);\n")
+            with self.assertRaisesRegex(ValueError, "unsupported table declaration.*001.sql"):
+                inventories.extract_sql_tables(migrations)
+
     def test_router_extraction_follows_application_mount_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "api.py"
@@ -44,6 +51,13 @@ class SourceInventoryTests(unittest.TestCase):
                 "app.mount('/mcp', mcp_app)\n"
             )
             self.assertEqual(inventories.extract_fastapi_routers(source), ["alpha", "beta"])
+
+    def test_router_extraction_rejects_dynamic_router_expression(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "api.py"
+            source.write_text("app.include_router(build_router())\n")
+            with self.assertRaisesRegex(ValueError, "unsupported app.include_router.*line 1"):
+                inventories.extract_fastapi_routers(source)
 
     def test_cache_fact_extraction_evaluates_source_constants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
