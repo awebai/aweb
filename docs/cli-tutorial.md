@@ -297,8 +297,11 @@ Activation is complete only now. The demonstrated success criterion is:
 - acknowledging that mail stopped its unread replay without removing its exact
   durable content.
 
-No account, task, profile, Library service, or orchestrator-owned runtime was
-created to reach that result.
+Hosted account/team provisioning or local team creation may occur during
+bootstrap. None of those setup facts is activation. Activation is the durable
+send/wake/reply plus offline acceptance, reconnect snapshot, acknowledgement,
+and exact post-read fetch demonstrated above. No task, Library/profile service,
+or orchestrator-owned runtime is required.
 
 ## Current event and acknowledgement behavior
 
