@@ -179,7 +179,7 @@ memberships), and a managed address can be assigned to a
 self-custodial `did_aw` without the hosted operator ever touching
 the identity key. The awid-side invariant — `did_aw` must be
 registered before any address can be bound to it — enforces the
-ordering; see [`awid-sot.md`](awid-sot.md#identity-operations).
+ordering; see [`awid-sot.md`](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md#identity-operations).
 
 A single `did_aw` may hold multiple addresses. Address choice is therefore
 not an identity-auth decision. For team-scoped work, the active team
@@ -190,7 +190,7 @@ a canonical address by listing all addresses for the `did_aw`.
 
 For mail/chat routing, address reads, recipient binding, and the
 boundary between awid authority and aweb local routing state, see
-[`identity-messaging-contract.md`](identity-messaging-contract.md).
+[`identity-messaging-contract.md`](https://github.com/awebai/aweb/blob/main/docs/identity-messaging-contract.md).
 
 ---
 

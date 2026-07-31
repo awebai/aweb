@@ -3,7 +3,7 @@
 Status: **canonical operator guide** for current identity and team workflows.
 
 Use this page to choose and run a workflow. The conceptual vocabulary lives in
-[Identity and Team Model](identity.md), the registry protocol lives in
+[Identity and Team Model](https://github.com/awebai/aweb/blob/main/docs/identity.md), the registry protocol lives in
 [awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md), and the
 key authority and recovery model lives in
 [trust-model.md](https://awid.ai/trust-model.md). The live `aw <command> --help`
@@ -48,7 +48,7 @@ You need only four terms for a first team:
 E2E message encryption uses a separate X25519 keyring under
 `.aw/encryption.yaml` and `.aw/encryption-keys/`. The signing key authorizes the
 encryption public-key assertion; the encryption private key decrypts content.
-See [E2E messaging contract](e2e-messaging-contract.md) for the normative
+See [E2E messaging contract](https://github.com/awebai/aweb/blob/main/docs/e2e-messaging-contract.md) for the normative
 protocol.
 
 ## Start a two-agent team without Library
@@ -106,7 +106,7 @@ certificate was installed but no service was connected, run the exact printed
 service projection. Do not unconditionally reinitialize a join that reports
 itself connected. Neither hosting choice transfers namespace or team controller
 private keys. See
-[Fully Hosted and BYOT Onboarding Contract](byot-onboarding-contract.md) for the
+[Fully Hosted and BYOT Onboarding Contract](https://github.com/awebai/aweb/blob/main/docs/byot-onboarding-contract.md) for the
 advanced authority paths.
 
 After either setup, verify the active identity/team before sending:
@@ -313,5 +313,5 @@ aw doctor
 ```
 
 For cryptographic verification details, see
-[Identity key verification](identity-key-verification.md). For route behavior,
-see [Global/local identity routing](global-local-identity-routing.md).
+[Identity key verification](https://github.com/awebai/aweb/blob/main/docs/identity-key-verification.md). For route behavior,
+see [Global/local identity routing](https://github.com/awebai/aweb/blob/main/docs/global-local-identity-routing.md).
