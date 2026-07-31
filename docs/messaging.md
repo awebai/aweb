@@ -13,7 +13,7 @@ one current document; it is not a second mail/chat workflow.
 | Encrypted content and downgrade policy | [E2E messaging contract](e2e-messaging-contract.md) and [legacy plaintext policy](e2e-legacy-plaintext-policy.md). |
 | Maintainer conformance cases | [Messaging contract matrix](messaging-contract-matrix.md) — subordinate release cases, not a competing behavior contract. |
 | CLI command inventory | [Generated CLI command reference](cli-command-reference.md), produced from current help. Live `aw <command> --help` is direct authority if a checked-in generated copy is stale. |
-| Hosted MCP tool inventory | [MCP tools reference](mcp-tools-reference.md), maintained against live server registration. |
+| OSS MCP tool inventory | Generated [MCP tools reference](mcp-tools-reference.md), checked against live server registration. |
 
 When these documents appear to disagree, follow the specialized authority in the
 table and correct the stale document. Do not combine partial claims from several

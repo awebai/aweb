@@ -71,7 +71,10 @@ GOCACHE=/tmp/go-build-aweb go test ./...
 2. Register the tool in
    [`server/src/aweb/mcp/server.py`](../server/src/aweb/mcp/server.py).
 3. Keep tool parameters narrow and explicit.
-4. Document the tool in [`docs/mcp-tools-reference.md`](./mcp-tools-reference.md).
+4. Classify the registered tool in `scripts/regenerate_mcp_reference.py`.
+5. Run `make regenerate-mcp-tools-reference`, then
+   `make test-mcp-tools-reference`. Do not edit the generated
+   [`docs/mcp-tools-reference.md`](./mcp-tools-reference.md) by hand.
 
 ## How to Add a CLI Command
 

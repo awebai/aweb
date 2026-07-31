@@ -4,7 +4,7 @@
 # WHAT THIS CHECKS, stated precisely because the previous wording claimed more
 # than it validated:
 #   1. Intentionally committed GENERATED artifacts are regenerated and must not
-#      drift from their source (uv locks, cli reference, resource packs,
+#      drift from their source (uv locks, CLI and MCP references, resource packs,
 #      reserved app ids, the claude-channel and pi bundles).
 #   2. Public AWID site document mirrors exactly match their canonical docs.
 #   3. Repository paths REFERENCED IN DOCUMENTATION exist (check-doc-paths.sh).
@@ -53,7 +53,18 @@ else
   status=1
 fi
 
-# 3. channel-core is a file: dependency of the claude-channel plugin and the pi
+# 3. The public MCP inventory is generated from the real offline FastMCP
+#    registration. Its focused suite also proves that registration additions
+#    and removals fail until the explicit public grouping is reconciled.
+section "MCP tools reference"
+if make --no-print-directory test-mcp-tools-reference; then
+  echo "MCP tools reference matches live OSS registration"
+else
+  echo "FAIL: MCP tools reference drift or incomplete registration coverage"
+  status=1
+fi
+
+# 4. channel-core is a file: dependency of the claude-channel plugin and the pi
 #    extension; both rebuild it from source and the plugin bundle is gated by
 #    scripts/check-package-dist.mjs (default-aaju). Verify a clean plugin build
 #    still carries the security surface (the bundle reflects current src).
@@ -65,7 +76,7 @@ else
   status=1
 fi
 
-# 4. pi-extension/dist is likewise untracked (default-aajc.5) and rebuilt from
+# 5. pi-extension/dist is likewise untracked (default-aajc.5) and rebuilt from
 #    src by prebuild/ensure-channel-core; verify a clean build produces a valid
 #    bundle so the published pi package can never carry stale channel-core.
 section "pi-extension bundle freshness"
@@ -76,7 +87,7 @@ else
   status=1
 fi
 
-# 5. Public docs served by the AWID site are tracked mirrors of their canonical
+# 6. Public docs served by the AWID site are tracked mirrors of their canonical
 #    docs. This is a comparison gate, not a release-time repair step.
 section "AWID public site document mirrors"
 if make --no-print-directory check-awid-site-docs; then
@@ -86,8 +97,9 @@ else
   status=1
 fi
 
-# 6. Negative controls for every generated-artifact and mirror check above. Each
-#    self-test first accepts the clean artifact, then seeds the exact stale
+# 7. Negative controls for the other generated-artifact and mirror checks above.
+#    The MCP inventory's negative controls run in its focused suite in section 3.
+#    Each self-test first accepts the clean artifact, then seeds the exact stale
 #    artifact and requires a diagnostic failure. Both directions matter: an
 #    always-red gate is no more trustworthy than an always-green one.
 section "freshness negative fixtures (clean pass + stale fail)"
@@ -98,7 +110,7 @@ else
   status=1
 fi
 
-# 7. Documentation path references. Deleted code must not be described as live;
+# 8. Documentation path references. Deleted code must not be described as live;
 #    default-aajc.6 removed the channel shadow modules while the architecture
 #    map still documented them as existing. The self-test proves this check can
 #    still FAIL, so it cannot decay into an always-green no-op.
@@ -110,7 +122,7 @@ else
   status=1
 fi
 
-# 8. The moved fixtures' ignore negations must stay EFFECTIVE, measured as an effect:
+# 9. The moved fixtures' ignore negations must stay EFFECTIVE, measured as an effect:
 #    a new file written into a protected subtree has to be visible to git. Stripping a
 #    negation does not untrack the files already tracked, so the loss appears only at
 #    the next regeneration - and library builds its expected golden set from the
