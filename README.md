@@ -29,8 +29,8 @@ complete supported shape without Library or a profile service.
 
 - [Documentation map](docs/README.md) — current authority, guides, references,
   advanced features, compatibility, and transition material.
-- [CLI tutorial](docs/cli-tutorial.md) — current first-run CLI guide; its full
-  communication-first rewrite is tracked separately.
+- [CLI tutorial](docs/cli-tutorial.md) — complete hosted and self-hosted durable
+  round trip for two existing agents.
 - [Mail and chat](docs/mail-and-chat.md) — everyday messaging.
 - [Receiving events](docs/receiving-events.md) — wake-up and delivery paths.
 - [Self-hosting guide](docs/self-hosting-guide.md) — operate the OSS stack.
