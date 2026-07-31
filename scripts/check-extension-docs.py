@@ -298,6 +298,14 @@ def self_test(root: Path) -> int:
         if failures := check(tmp, tracked_markdown):
             print(f"self-test failed: untracked Markdown changed the tracked corpus: {failures[0]}")
             return 1
+        newly_tracked = tracked_markdown | {"untracked-self-test-note.md"}
+        failures = check(tmp, newly_tracked)
+        if not any(
+            "omits public Markdown paths: untracked-self-test-note.md" in failure
+            for failure in failures
+        ):
+            print("self-test failed: existing newly tracked public Markdown was not rejected")
+            return 1
         untracked_note.unlink()
         failures = check(tmp, tracked_markdown | {"missing-tracked-self-test-note.md"})
         if not any("tracked Markdown is missing" in failure for failure in failures):
