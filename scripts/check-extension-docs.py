@@ -43,9 +43,9 @@ HOOK_INVENTORY = "vectors/mutation-hook-call-sites-v1.json"
 MANAGED_GATEWAY_PRIVATE_TOKENS = (
     "a" + "c_config",
     "a" + "c_base_url",
-    "AWEB_A2A_GW_" + "AC_BASE_URL",
-    "a2a-" + "ac-managed-gateway-contract",
-    "a2a-gateway-" + "ac-managed",
+    "AWEB_A2A_GW_AC_" + "BASE_URL",
+    "a2a-ac-" + "managed-gateway-contract",
+    "a2a-gateway-ac-" + "managed",
     "a2a-gw-" + "ac",
     "a" + "c_config_expired",
     "/api/v1/a2a/gateway/" + "config",
@@ -200,17 +200,22 @@ def check(
 
     if tracked_files is None:
         tracked_files = _tracked_files(root, failures)
-    neutrality_paths = [root / relative for relative in sorted(tracked_files) if _is_managed_gateway_surface(relative)]
-    for path in neutrality_paths:
+    neutrality_relatives = [relative for relative in sorted(tracked_files) if _is_managed_gateway_surface(relative)]
+    for relative in neutrality_relatives:
+        path = root / relative
+        normalized_relative = relative.casefold()
+        for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
+            if token.casefold() in normalized_relative:
+                failures.append(f"tracked A2A path {relative} retains private managed-gateway name {token!r}")
         if not path.is_file():
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
+        normalized_text = path.read_text(encoding="utf-8", errors="replace").casefold()
         for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
-            if token in text:
-                failures.append(f"{path.relative_to(root)} retains private managed-gateway token {token!r}")
+            if token.casefold() in normalized_text:
+                failures.append(f"{relative} retains private managed-gateway token {token!r}")
     removed_private_paths = (
-        root / "docs" / ("a2a-" + "ac-managed-gateway-contract.md"),
-        root / "docs/examples" / ("a2a-gateway-" + "ac-managed.yaml"),
+        root / "docs" / ("a2a-ac-" + "managed-gateway-contract.md"),
+        root / "docs/examples" / ("a2a-gateway-ac-" + "managed.yaml"),
     )
     for path in removed_private_paths:
         if path.exists():
@@ -414,6 +419,22 @@ def self_test(root: Path) -> int:
                 path.unlink()
             else:
                 path.write_text(original, encoding="utf-8")
+
+        path_mutations = (
+            "docs/examples/A2A-GW-" + "AC.yaml",
+            "reviewer/a2a/AC_" + "CONFIG.go",
+            "docs/examples/a2a-ac-" + "managed-gateway-contract-copy.yaml",
+        )
+        for relative in path_mutations:
+            path = tmp / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("generic: true\n", encoding="utf-8")
+            mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            expected = f"tracked A2A path {relative} retains private managed-gateway name"
+            if not any(expected in failure for failure in mutation_failures):
+                print(f"self-test failed: private managed-gateway path was not detected: {relative}")
+                return 1
+            path.unlink()
 
         hook = tmp / "docs/aw-hooks-sot.md"
         hook.write_text(hook.read_text(encoding="utf-8").replace("`task.created`", "`task-created`"), encoding="utf-8")
