@@ -990,12 +990,13 @@ var mailShowCmd = &cobra.Command{
 		"returned are the OLDEST ones, so on a conversation longer than the limit the " +
 		"newest messages are the ones missing - which is the opposite of what someone " +
 		"checking for recent mail expects.\n\n" +
-		"aw mail inbox windows from the other end and enforces a server cap that this " +
-		"command does not. Do not carry an expectation from one to the other.\n\n" +
+		"aw mail inbox windows from the other end and has a different default and ceiling. " +
+		"Do not carry an expectation from one command to the other.\n\n" +
 		"To read a whole conversation, pass --limit above its length and check the " +
-		"returned count: if it equals the limit you were truncated, so raise it and re-run. " +
-		"The server accepts --limit up to 500 and rejects more, so a conversation longer than " +
-		"500 messages cannot be returned whole by this command and there is no paging flag.",
+		"returned count. If it equals the limit, there may be more; raise it and re-run, up to " +
+		"500. At the 500-message ceiling, an exact full window cannot establish completeness. " +
+		"The server rejects higher limits and there is no paging flag, so a conversation longer " +
+		"than 500 messages cannot be returned whole by this command.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		conversationID := strings.TrimSpace(mailShowConversationID)
 		messageID := strings.TrimSpace(mailShowMessageID)

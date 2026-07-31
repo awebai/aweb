@@ -167,10 +167,18 @@ func mailWindowNotice(returned, limit int) string {
 	if limit <= 0 || returned < limit {
 		return ""
 	}
+	if limit < 500 {
+		return fmt.Sprintf(
+			"  NOTE: this is the OLDEST %d, which is all --limit allowed. There may be more, and any newer\n"+
+				"  messages are not shown. Re-run with a higher --limit (up to 500) to find out. A conversation\n"+
+				"  longer than 500 cannot be returned whole by this command because there is no pagination.",
+			limit,
+		)
+	}
 	return fmt.Sprintf(
 		"  NOTE: this is the OLDEST %d, which is all --limit allowed. There may be more, and any newer\n"+
-			"  messages are not shown. Re-run with a higher --limit (the server accepts up to 500) to\n"+
-			"  find out. A conversation longer than 500 cannot be returned whole by this command.",
+			"  messages are not shown. Completeness cannot be established at the server's 500-message\n"+
+			"  ceiling; there is no pagination, so a longer conversation cannot be returned whole.",
 		limit,
 	)
 }

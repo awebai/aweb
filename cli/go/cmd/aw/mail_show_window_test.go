@@ -110,6 +110,34 @@ func TestMailConversationWindowNoticeNamesTheCeiling(t *testing.T) {
 	}
 }
 
+func TestMailConversationExactLimitLanguageStaysConditional(t *testing.T) {
+	for surface, got := range map[string]string{
+		"window notice": mailWindowNotice(200, 200),
+		"command help":  mailShowCmd.Long,
+	} {
+		t.Run(surface, func(t *testing.T) {
+			lower := strings.ToLower(got)
+			if !strings.Contains(lower, "may") {
+				t.Fatalf("%s does not state the one-sided inference conditionally:\n%s", surface, got)
+			}
+			if strings.Contains(lower, "you were truncated") {
+				t.Fatalf("%s claims truncation is proven when returned == limit can also be an exact-size conversation:\n%s", surface, got)
+			}
+		})
+	}
+}
+
+func TestMailConversationAtCeilingDoesNotRecommendAnImpossibleRerun(t *testing.T) {
+	got := strings.ToLower(mailWindowNotice(500, 500))
+
+	if strings.Contains(got, "higher --limit") || strings.Contains(got, "re-run") {
+		t.Fatalf("the notice recommends a request above the server's 500 ceiling:\n%s", got)
+	}
+	if !strings.Contains(got, "cannot be established") || !strings.Contains(got, "no pagination") {
+		t.Fatalf("the ceiling notice does not explain why completeness cannot be established:\n%s", got)
+	}
+}
+
 // The JSON path is where getting this wrong is worst: a notice written to stdout
 // would corrupt the document every machine consumer parses. It goes to stderr, so
 // stdout stays a clean JSON body and a human still sees the warning.
