@@ -71,12 +71,16 @@ Run the printed join command in a clean directory for the second agent:
 aw team join <invite-token> --name bob
 ```
 
-A hosted join may already connect the workspace. If its output says connection
-is still required, run the exact `aw init` or workspace-connect command it
-prints; do not reinitialize an already connected join. The terminal workspaces
-remain self-custodial: their private signing keys stay local. The hosted
-operator supplies namespace/team authority and signs the public team
-certificates.
+Joining installs the second agent's identity and membership but does not create
+`.aw/workspace.yaml` or report service-connection state. Connect it explicitly:
+
+```bash
+aw workspace connect --service https://app.aweb.ai/api
+```
+
+The terminal workspaces remain self-custodial: their private signing keys stay
+local. The hosted operator supplies namespace/team authority and signs the
+public team certificates.
 
 ### Self-controlled namespace and team
 
@@ -100,12 +104,15 @@ aw team join <invite-token> --name bob
 
 This local-controller invite is a same-machine convenience because the invite
 state and controller key stay on that host. For a member on another machine, use
-the request/controller/fetch flow below. Follow the join output: if the
-certificate was installed but no service was connected, run the exact printed
-`aw init`/workspace-connect instruction for your self-hosted server or other
-service projection. Do not unconditionally reinitialize a join that reports
-itself connected. Neither hosting choice transfers namespace or team controller
-private keys. See
+the request/controller/fetch flow below. Join installs membership but does not
+create the aweb workspace projection, so connect the second directory to the
+intended coordination service explicitly:
+
+```bash
+aw workspace connect --service <service-url>
+```
+
+Neither hosting choice transfers namespace or team controller private keys. See
 [Fully Hosted and BYOT Onboarding Contract](https://github.com/awebai/aweb/blob/main/docs/byot-onboarding-contract.md) for the
 advanced authority paths.
 
