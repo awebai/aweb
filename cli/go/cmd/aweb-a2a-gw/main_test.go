@@ -272,6 +272,62 @@ func TestA2AGatewayManagedRuntimeStaticSecretRefDisablesRouteWithoutBrickingGate
 	}
 }
 
+func TestManagedConfigValidationReportsMissingFieldsDeterministically(t *testing.T) {
+	cfg := managedConfig{ConfigURL: "https://control.example/config", BearerToken: "token"}
+	for i := 0; i < 20; i++ {
+		err := validateManagedConfig(cfg)
+		if err == nil || err.Error() != "managed_config.bridge_url is required" {
+			t.Fatalf("validation %d error=%v", i, err)
+		}
+	}
+}
+
+func TestManagedRuntimeConfigRejectsMissingAndMismatchedTopLevelFields(t *testing.T) {
+	valid := map[string]any{
+		"gateway_id":              "gw-test",
+		"gateway_identity":        "did:aw:gateway",
+		"gateway_identity_status": "active",
+		"config_revision":         "rev-1",
+		"expires_at":              time.Now().Add(time.Hour).Format(time.RFC3339),
+		"routes":                  []any{},
+	}
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+		want   string
+	}{
+		{name: "missing gateway id", mutate: func(v map[string]any) { delete(v, "gateway_id") }, want: "gateway_id is required"},
+		{name: "mismatched gateway id", mutate: func(v map[string]any) { v["gateway_id"] = "other" }, want: "does not match"},
+		{name: "missing identity", mutate: func(v map[string]any) { delete(v, "gateway_identity") }, want: "gateway_identity is required"},
+		{name: "missing revision", mutate: func(v map[string]any) { delete(v, "config_revision") }, want: "config_revision is required"},
+		{name: "missing expiry", mutate: func(v map[string]any) { delete(v, "expires_at") }, want: "expires_at is required"},
+		{name: "missing routes", mutate: func(v map[string]any) { delete(v, "routes") }, want: "routes is required"},
+		{name: "null routes", mutate: func(v map[string]any) { v["routes"] = nil }, want: "routes is required"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value := make(map[string]any, len(valid))
+			for key, item := range valid {
+				value[key] = item
+			}
+			tt.mutate(value)
+			data, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload managedRuntimeConfigPayload
+			if err := json.Unmarshal(data, &payload); err != nil {
+				t.Fatal(err)
+			}
+			cfg := fileConfig{ManagedConfig: managedConfig{GatewayID: "gw-test"}}
+			err = mergeManagedRuntimeConfig(&cfg, payload)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("mergeManagedRuntimeConfig error=%v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestA2AGatewayP1LegacyConfigCompatibilityIsExplicit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.yaml")
 	data := `

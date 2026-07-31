@@ -692,6 +692,23 @@ type managedRuntimeConfigPayload struct {
 	ExpiresAt             string                 `json:"expires_at"`
 	Routes                []managedRuntimeRoute  `json:"routes"`
 	RouteCounts           map[string]interface{} `json:"route_counts"`
+	routesPresent         bool
+}
+
+func (p *managedRuntimeConfigPayload) UnmarshalJSON(data []byte) error {
+	type payloadAlias managedRuntimeConfigPayload
+	var decoded payloadAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	routes, present := fields["routes"]
+	decoded.routesPresent = present && string(routes) != "null"
+	*p = managedRuntimeConfigPayload(decoded)
+	return nil
 }
 
 type managedRuntimeRoute struct {
@@ -822,6 +839,27 @@ func degradedManagedConfig(base fileConfig, err error) fileConfig {
 }
 
 func mergeManagedRuntimeConfig(cfg *fileConfig, payload managedRuntimeConfigPayload) error {
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "gateway_id", value: payload.GatewayID},
+		{name: "gateway_identity", value: payload.GatewayIdentity},
+		{name: "gateway_identity_status", value: payload.GatewayIdentityStatus},
+		{name: "config_revision", value: payload.ConfigRevision},
+		{name: "expires_at", value: payload.ExpiresAt},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("managed runtime config %s is required", field.name)
+		}
+	}
+	if !payload.routesPresent && payload.Routes == nil {
+		return fmt.Errorf("managed runtime config routes is required and must be an array")
+	}
+	if configuredID := strings.TrimSpace(cfg.ManagedConfig.GatewayID); configuredID != "" && configuredID != strings.TrimSpace(payload.GatewayID) {
+		return fmt.Errorf("managed runtime config gateway_id %q does not match configured gateway_id %q", payload.GatewayID, configuredID)
+	}
 	if strings.TrimSpace(payload.GatewayIdentityStatus) != "active" {
 		return fmt.Errorf("managed runtime config gateway identity is not active: %s", payload.GatewayIdentityStatus)
 	}
@@ -980,13 +1018,17 @@ func validateManagedConfig(cfg managedConfig) error {
 	if !managedConfigEnabled(cfg) {
 		return nil
 	}
-	for field, value := range map[string]string{
-		"config_url": cfg.ConfigURL,
-		"bridge_url": cfg.BridgeURL,
-		"gateway_id": cfg.GatewayID,
-	} {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("managed_config.%s is required", field)
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "config_url", value: cfg.ConfigURL},
+		{name: "bridge_url", value: cfg.BridgeURL},
+		{name: "gateway_id", value: cfg.GatewayID},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("managed_config.%s is required", field.name)
 		}
 	}
 	if strings.TrimSpace(cfg.BearerToken) != "" && strings.TrimSpace(cfg.BearerTokenEnv) != "" {

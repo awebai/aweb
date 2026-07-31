@@ -496,11 +496,14 @@ free startup, all six generic environment variables must be set explicitly:
 
 The authenticated `GET config_url` response requires `gateway_id`,
 `gateway_identity`, `gateway_identity_status`, `config_revision`, `expires_at`,
-and `routes`. Each route requires `route_id`, `host`, `address`, `mode`,
-`disabled`, `root_behavior`, `verification_tier`, `card_digest`, `auth`, `limits`,
-and `card`. Unknown additive provider fields at the response or route level are
-tolerated but are not thereby part of this contract. Invalid identity, revision,
-expiry, route, or auth data fails closed.
+and a `routes` array (which may be empty). Each usable route requires
+`route_id`, `address`, `mode`, and valid `card` content. `host` may supply the
+listener host when it is not configured globally. `disabled`, `root_behavior`,
+`verification_tier`, `card_digest`, `auth`, and `limits` are optional or
+zero/default-valued route controls; when supplied, their values still undergo
+the same fail-closed gateway validation. Unknown additive provider fields at the
+response or route level are tolerated but are not thereby part of this contract.
+Invalid identity, revision, expiry, route, or auth data fails closed.
 
 The bridge uses the same Bearer token. Sending posts to
 `{bridge_url}/{gateway_id}/messages` with `route_id`, `to_address`,
