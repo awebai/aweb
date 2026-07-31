@@ -1,313 +1,210 @@
-# Support Contract v1
+# Support contract v1
 
-Shared JSON vocabulary for `aw doctor` output, `aw id` registry
-read commands, and cloud support endpoints. This is the
-machine-readable contract that lets humans and agents parse output
-from any of these tools without learning per-tool field names.
+Status: **current for OSS registry-read envelopes and shared status vocabulary;
+experimental for any other producer**. Owner: the `aw` CLI support surface.
+Current source and tests:
 
-**Registry agnosticism.** The awid protocol is one thing; awid.ai
-is one implementation. Registries are discovered via DNS TXT at
-`_awid.<domain>` or via `identity.yaml`. Nothing in this contract
-assumes awid.ai specifically. Payloads that cite a registry MUST
-include the `registry_url` that served the call so callers can see
-which registry instance answered.
+- `cli/go/cmd/aw/id_registry_read.go`
+- `cli/go/cmd/aw/id_registry_read_test.go`
+- `cli/go/cmd/aw/doctor.go` and `doctor_test.go`
 
-The mental-model companion is
-[`ac/docs/support-tools.md`](https://app.aweb.ai/docs/support-tools)
-(cloud repo). The implementation plan is
-[`ac/docs/support/agent-lifetime-support-epic.md`](https://app.aweb.ai/docs/support/agent-lifetime-support-epic).
-This doc is the byte-level contract those docs assume.
+The registry-read commands ship the `support-contract-v1` envelope with a
+`registry_read.v1` payload. `aw doctor` shares the status vocabulary but emits a
+separate top-level `doctor.v1` document; it is **not** wrapped in the support
+contract envelope. No public hosted-support endpoint, `audit.v1` payload, or
+cross-implementation fixture ships today.
 
-## Scope
+The practical OSS guide is [`support-tools.md`](support-tools.md). A hosted
+operator may adopt this format, but its account roles, internal endpoints,
+audit records, and lifecycle mutations are application-owned and do not extend
+this public contract automatically.
 
-- **OSS `aw doctor`** output (JSON + human).
-- **`aw id` registry read commands** (resolve, addresses, namespace
-  state/addresses/resolve — any awid-protocol registry, not only
-  awid.ai).
-- **Cloud support read endpoints** under `/api/v1/admin/support/…`.
-- **Cloud lifecycle dry-run output** (`repair-managed-address`,
-  `replace-agent`, `archive-agent` dry-runs).
+## Registry agnosticism
 
-Write operations emit an audit record whose JSON shape is covered
-in **AC-04**, not here.
+AWID is a protocol; awid.ai is one implementation. Registry reads use the
+registry selected from local identity configuration or namespace discovery.
+Every registry envelope includes the concrete `registry_url` that answered so a
+support consumer does not mistake one registry's result for another's.
+
+## Current producers
+
+The following `aw id` JSON reads use this envelope:
+
+```bash
+aw id resolve <did:aw> --json
+aw id addresses <did:aw> --json
+aw id namespace <domain> --json
+aw id namespace addresses <domain> --authority <mode> --json
+aw id namespace resolve <domain/name> --authority <mode> --json
+```
+
+Human output is a rendering, not the stable JSON shape. Usage errors and missing
+local credentials fail before an envelope is emitted.
 
 ## Envelope
 
-Every response (single-shot tool output or endpoint body) wraps
-its payload in an envelope. The envelope carries **transport and
-identity metadata only** — the minimal set of fields every
-response needs regardless of payload shape. Payload-specific
-semantics (including status) live inside `payload` under the
-appropriate schema. This boundary is strict:
-
-- The envelope MUST carry exactly the fields listed below. No more.
-- `status` is NOT an envelope field. It is a payload-schema concern
-  and different payload schemas may define it differently (see
-  `registry_read.v1` single-fact status vs `doctor.v1` per-check
-  status). Consumers read status from the payload.
-- New payload schemas MUST NOT promote their status into the
-  envelope. If a schema wants a rollup for convenience, that
-  rollup belongs in the payload, not above it.
-
 ```json
 {
   "version": "support-contract-v1",
-  "source": "aweb | awid | aweb-cloud | local",
-  "authority_mode": "anonymous | did-key | namespace-controller | team-controller | support | user | user-admin",
-  "authority_subject": "<did:key | user id | support actor id>",
+  "source": "awid",
+  "authority_mode": "anonymous",
+  "authority_subject": "did:key:...",
   "authoritative": true,
-  "generated_at": "<RFC 3339 UTC, millisecond precision>",
-  "request_id": "<string; echo of incoming id or server-generated>",
+  "generated_at": "2026-07-31T12:34:56.789Z",
+  "request_id": "aw-...",
   "target": {
-    "type": "agent | workspace | team | address | did | namespace | identity",
-    "identifier": "<canonical identifier of the target>",
-    "label": "<human-readable label, optional>"
+    "type": "did",
+    "identifier": "did:aw:...",
+    "label": "did:key:..."
   },
-  "redactions": ["<dotted JSON path of any redacted field>", "..."],
-  "payload": { ... }
-}
-```
-
-Field contracts:
-
-- **`version`**: literal string `"support-contract-v1"`. Version
-  bumps are not breaking for the envelope; payload shape changes
-  go under per-tool schemas.
-- **`source`**: the authoritative system for the *payload*. A cloud
-  endpoint returning awid registry data uses `source: "awid"` (the
-  protocol name, not an implementation URL); a cloud endpoint
-  returning its own operational state uses `source:
-  "aweb-cloud"`; doctor checks that observe local files use
-  `source: "local"`. When `source: "awid"`, the payload MUST
-  include `registry_url` naming the registry instance that served
-  the call.
-- **`authority_mode`**: how the caller was authenticated. `anonymous`
-  means no caller credential. `did-key` is a DIDKey signature.
-  `namespace-controller` and `team-controller` are controller-key
-  signatures. `support` and `user-admin` are hosted-operator roles.
-  `user` is a human-held authority lower than admin.
-- **`authority_subject`**: the concrete identifier corresponding to
-  `authority_mode`. For `anonymous`, omit or set to `null`.
-- **`authoritative`**: `true` if the payload is served from its
-  source of truth. `false` if it's a cached or derived projection
-  — in that case the payload MUST also state the originating
-  source as a nested field so the caller can fetch fresh.
-- **`generated_at`**: wall clock. Used for cache freshness decisions.
-- **`request_id`**: set by the server or echoed from the client's
-  `X-Request-ID` header. Always present. Support audit trails
-  reference this.
-- **`target`**: what the response is *about*. If the response is a
-  list, `target` describes the scoping entity (e.g. the team
-  whose agents are listed). Per-item targets live inside `payload`.
-- **`redactions`**: every field that was in the data model but
-  omitted from output. Dotted JSON path syntax
-  (`"payload.agent.signing_key_enc"`). If nothing is redacted,
-  empty array — NOT null, NOT omitted.
-
-## Status vocabulary (payload-level)
-
-Status is a payload concern, not an envelope concern. Each payload
-schema decides where in its payload the status lives and which of
-the six values it uses. The values themselves are shared across
-all schemas that report status:
-
-```
-ok       — the operation ran and the state is correct.
-info     — the operation ran; state is acceptable but worth noting.
-warn     — the operation ran; state is degraded or unusual; not broken.
-fail     — the operation ran; state is wrong; action required.
-unknown  — the operation could not run (offline, dependency unreachable,
-           insufficient input). Never a claim about state.
-blocked  — the operation could not run because the caller lacks authority.
-           Distinct from `unknown` so the next-step guidance is
-           correct.
-```
-
-Not every schema uses every value. `registry_read.v1` uses only
-`ok | fail | unknown | blocked` because reads are single facts
-where `info` and `warn` do not apply. `doctor.v1` uses all six
-because per-check semantics cover the full range.
-
-Order from best to worst (for rollup badges): `ok < info < warn <
-fail < unknown < blocked` — i.e. `blocked` outranks `fail` because
-an unknown-authority state is more ambiguous than a known failure.
-
-## Payload schemas
-
-Per-tool payload shapes are named schemas nested under the
-envelope `payload` field. Known schemas in v1:
-
-- **`registry_read.v1`** — response shape for `aw id` registry
-  read commands (resolve-key, list-did-addresses, namespace
-  addresses, resolve-address, namespace-state). MUST include:
-  - `status` — one of `ok | fail | unknown | blocked`. This is
-    the single-fact status of the read; consumers read it from
-    `payload.status`, never from the envelope.
-  - `registry_url` — the registry instance that served the call.
-  - `operation` — the read op (matches command name).
-  - `target` — the requested identifier (did_aw, domain,
-    domain/name).
-  - `ownership_proof: false` for anonymous/public views — prevents
-    public listing being misread as ownership evidence.
-  - One typed raw registry field: `did_key`, `addresses`,
-    `address`, or `namespace` — populated when `status == "ok"`.
-  - `error` — populated when `status` is not `ok`, with a stable
-    dotted code from the error-codes list.
-- **`doctor.v1`** — per-check entries (see Per-check structure
-  below).
-- **`audit.v1`** — support audit records (defined by AC-04,
-  referenced here for completeness).
-
-New payload schemas may be added without bumping the envelope
-version; consumers MUST handle unknown `payload.schema` values
-gracefully.
-
-## Per-check structure (doctor output)
-
-Each entry under `payload.checks[]` for an `aw doctor` run:
-
-```json
-{
-  "id": "<stable.dotted.id>",
-  "status": "ok | info | warn | fail | unknown | blocked",
-  "source": "aweb | awid | aweb-cloud | local",
-  "authority": "<mode used by this specific check>",
-  "target": { "type": "...", "identifier": "...", "label": "..." },
-  "authoritative": true,
-  "message": "<one-line human summary>",
-  "detail": { "<arbitrary diagnostic JSON>" },
-  "next_step": {
-    "kind": "run_command | open_url | contact_support | none",
-    "command": "<shell command, when kind == run_command>",
-    "url": "<URL, when kind == open_url>",
-    "summary": "<one-line what this next step does>"
-  },
-  "fix": {
-    "available": false,
-    "safe": false,
-    "authority_required": "<enum from authority_mode>",
-    "apply_command": "<shell command>",
-    "refusal_reason": "<string if not available or not safe>"
-  }
-}
-```
-
-- `id` is stable across releases. Format:
-  `<category>.<subcategory>.<name>` with dots; lowercase snake_case
-  within segments. Example: `local.workspace.signing_key_present`.
-- `message` is ≤120 chars, human-readable, no secrets.
-- `detail` may contain structured diagnostics. Any field in here
-  that was redacted must appear in the envelope `redactions` list.
-- `fix.available = true` means the doctor has a mechanical repair.
-  `fix.safe = true` means the caller can apply it without escalating
-  authority. If `fix.available = false`, `refusal_reason` must
-  explain why.
-
-## Per-target reference shapes
-
-For cross-tool references, use these stable shapes:
-
-**Agent**:
-```json
-{"type": "agent", "identifier": "<agent_id UUID>", "label": "<alias>"}
-```
-
-**Workspace**:
-```json
-{"type": "workspace", "identifier": "<workspace_id UUID>", "label": "<path or host>"}
-```
-
-**Team**:
-```json
-{"type": "team", "identifier": "<canonical team id: name:domain>", "label": "<display name>"}
-```
-
-**Address**:
-```json
-{"type": "address", "identifier": "<domain/name>", "label": "<domain>/<name>"}
-```
-
-**DID**:
-```json
-{"type": "did", "identifier": "<did:aw:...>", "label": "<did:key:... or null>"}
-```
-
-**Namespace**:
-```json
-{"type": "namespace", "identifier": "<domain>", "label": "<domain>"}
-```
-
-## Error responses
-
-On 4xx/5xx, the envelope still applies; payload is an error object:
-
-```json
-{
-  "version": "support-contract-v1",
-  "source": "...",
-  "authority_mode": "...",
-  "generated_at": "...",
-  "request_id": "...",
-  "target": { ... or null },
   "redactions": [],
   "payload": {
-    "error": {
-      "code": "<stable.dotted.code>",
-      "message": "<one-line human summary>",
-      "detail": { "<optional structured context>" },
-      "next_step": { ... same shape as checks[].next_step }
+    "schema": "registry_read.v1",
+    "status": "ok",
+    "registry_url": "https://registry.example",
+    "operation": "resolve-key",
+    "target": {
+      "type": "did",
+      "identifier": "did:aw:...",
+      "label": "did:key:..."
+    },
+    "ownership_proof": false,
+    "did_key": {
+      "did_aw": "did:aw:...",
+      "current_did_key": "did:key:...",
+      "log_head": {}
     }
   }
 }
 ```
 
-Error codes are stable. First-version codes both repos should agree on:
+Field rules:
 
-- `auth.unauthenticated`
+- `version` is the literal `support-contract-v1`.
+- `source` is `awid` for the shipped producer.
+- `authority_mode` is `anonymous`, `did-key`, or `namespace-controller`.
+- `authority_subject` is omitted for anonymous reads and is the concrete
+  controller/member `did:key` for signed modes.
+- `authoritative` says whether the registry answered authoritatively. A 404 or
+  authority refusal is authoritative; a transport/service failure is not.
+- `generated_at` is UTC with exactly millisecond precision.
+- `request_id` is generated by the CLI and sent to the registry client.
+- `target` is one of the shipped target shapes below.
+- `redactions` is always an array. DID-log signatures omitted from output are
+  recorded as `payload.did_key.log_head.signature`.
+- `payload.schema` is the literal `registry_read.v1`.
+
+The envelope has no top-level `status`. Consumers read
+`payload.status`.
+
+## Registry payload
+
+Common fields:
+
+```json
+{
+  "schema": "registry_read.v1",
+  "status": "ok | fail | unknown | blocked",
+  "registry_url": "https://registry.example",
+  "operation": "resolve-key | list-did-addresses | namespace-state | list-addresses | resolve-address",
+  "target": {"type": "did | namespace | address", "identifier": "...", "label": "..."},
+  "ownership_proof": false
+}
+```
+
+Exactly one typed result is populated on success:
+
+- `did_key` — resolved current key and optional log head;
+- `addresses` — address list;
+- `address` — one address record; or
+- `namespace` — namespace record.
+
+On a non-`ok` outcome, `error` carries `code`, `message`, and optional structured
+`detail`.
+
+## Authority and ownership proof
+
+- `anonymous` uses no caller credential and always reports
+  `ownership_proof: false`.
+- `did-key` signs with the current local identity key and proves control of that
+  DID key only. It does not prove namespace ownership.
+- `namespace-controller` signs with the local namespace controller key and is
+  the only current mode that can report `ownership_proof: true` for a namespace
+  read.
+
+The public contract does not define `support`, `user-admin`, or service-bypass
+authority. Those are hosted-application concerns unless a future public protocol
+and fixture add them.
+
+## Status and errors
+
+Shared status meanings:
+
+| Status | Meaning |
+|---|---|
+| `ok` | The read ran and returned the requested fact. |
+| `fail` | The registry authoritatively reported a wrong/absent state, currently `target.not_found`. |
+| `unknown` | The state could not be established because the registry/transport was unavailable. |
+| `blocked` | The registry authoritatively refused the supplied authority. |
+
+Current stable registry error codes are:
+
+- `target.not_found`
+- `registry.unavailable`
 - `auth.forbidden`
 - `auth.authority_insufficient`
-- `target.not_found`
-- `target.ambiguous`
-- `state.stale`
-- `state.inconsistent`
-- `registry.unavailable`
-- `registry.conflict`
-- `operation.refused.high_impact`
-- `operation.refused.authority_mismatch`
-- `operation.refused.dry_run_only`
-- `internal.unexpected`
 
-## Contract tests
+A 404 maps to `fail` with `authoritative: true`; 401/403 map to `blocked` with
+`authoritative: true`; other registry/transport failures map to `unknown` with
+`authoritative: false`. These are structured command outcomes, not shell
+failures.
 
-**Not yet implemented.** The intent is that both repos land a shared test
-helper validating response bytes against this contract. These are *proposed*
-locations — none of these files exist yet, so do not read this section as
-evidence that the contract is covered by tests:
+## Target shapes
 
-- **aweb**: cli/go/internal/supportcontract/v1_test.go (Go) and
-  server/src/aweb/support_contract/v1_test.py (Python).
-- **ac**: backend/tests/support_contract_v1_test.py.
+```json
+{"type": "did", "identifier": "did:aw:...", "label": "did:key:..."}
+{"type": "namespace", "identifier": "example.com", "label": "example.com"}
+{"type": "address", "identifier": "example.com/alice", "label": "example.com/alice"}
+```
 
-Helper checks:
-- Envelope has all required fields.
-- `version == "support-contract-v1"`.
-- `redactions` is a list (possibly empty), not null.
-- `generated_at` is RFC 3339 UTC with millisecond precision.
-- For doctor outputs, each check's `status` is one of the six
-  values; each has a stable `id`.
-- Error envelopes carry a code from the approved list.
+`label` is optional. The same target appears at the envelope and payload levels.
 
-## Versioning
+## Doctor compatibility boundary
 
-This is v1. Breaking changes bump to v2 and are advertised via a
-top-level `version` field. Additive changes (new enum values, new
-next_step kinds) are allowed within v1 as long as consumers handle
-unknown values gracefully (log and treat as the worst of the
-neighboring statuses, or as a no-op for next_step kinds).
+`aw doctor --json` currently emits a standalone document:
 
-## Cross-references
+```json
+{
+  "version": "doctor.v1",
+  "generated_at": "...",
+  "status": "ok | info | warn | fail | unknown | blocked",
+  "mode": "auto | offline | online",
+  "subject": {},
+  "checks": [],
+  "redactions": [],
+  "support_bundle": null,
+  "fixes": []
+}
+```
 
-- Epic: [`ac/docs/support/agent-lifetime-support-epic.md`](https://app.aweb.ai/docs/support/agent-lifetime-support-epic).
-- aweb tracking subtask: `aweb-aaka.29` (CROSS-01).
-- Consumers blocked on this contract: AWEB-05 (`aw doctor`), AC-10
-  (support CLI/API wrappers).
+Each check carries `id`, `status`, `source`, `authority`, optional `target`,
+`authoritative`, `message`, optional `detail`, `next_step`, `fix`, and `handoff`.
+The exact source and target structs live in `doctor.go` and are covered by
+`doctor_test.go`.
+
+Doctor reuses the six status words, but its source tokens include compatibility
+values such as `aweb-cloud` and `dashboard`, and its target shape uses `id` /
+`display` rather than support-envelope `identifier` / `label`. Consumers must
+not wrap, rename, or reinterpret doctor output as `support-contract-v1`.
+
+## Change control
+
+Breaking registry envelope or payload changes require a new version/schema.
+Additive typed result fields must preserve unknown-field tolerance for consumers.
+Before another implementation claims support-contract compatibility, add a
+public repository-owned fixture and exercise identical bytes/semantics from all
+producers and consumers.
+
+Operator-specific audit schemas, admin endpoints, and lifecycle dry runs remain
+outside this contract until they have public source, fixtures, and an explicit
+owner/lifecycle here.

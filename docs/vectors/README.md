@@ -1,105 +1,193 @@
 # Protocol conformance vectors
 
-This directory publishes **deterministic conformance vectors** for the OSS
-`aweb` identity, continuity, and verification rules defined in:
+Status: **canonical index for public JSON fixtures in `docs/vectors/`**. Each
+fixture's lifecycle below is part of its authority: current protocol vectors,
+experimental A2A vectors, and compatibility vectors do not make the same
+stability promise.
 
-- [aweb-sot.md](../aweb-sot.md) (Concepts section)
-- [identity-key-verification.md](../identity-key-verification.md)
+These files prevent cross-language drift in canonical JSON, signing and base64,
+DID/key derivation, trust continuity, team-auth request binding, E2E wire bytes,
+address claims, and optional A2A interoperability.
 
-These vectors exist to prevent subtle cross-language drift (Python ↔ Go) in:
-- Canonical JSON serialization
-- Signature base64 encoding
-- `did:key` ↔ public key parsing
-- Stable ID derivation (`did:aw:`)
-- audit-log entry hashing + signing
+## Authority and copies
 
-## Files
+- `docs/vectors/*.json` is the public root authority for the 15 fixtures indexed
+  here.
+- `server/docs/vectors/` contains compatibility/package copies used by older
+  server consumers. Those files are not a second authority and their presence
+  does not mean every root fixture is mirrored there.
+- `cli/go/internal/conformance/vectors/` contains consumer-local fixtures and
+  compatibility copies needed by the Go package. Public protocol changes start
+  from the root authority when one exists.
+- `test-vectors/app-manifests/` contains digest-pinned experimental app-manifest
+  snapshots. They are documented by [`app-manifest.md`](../app-manifest.md), not
+  silently promoted into the identity/trust vector family.
 
-- `message-signing-v1.json`
-  - Canonical message payload (UTF-8 bytes)
-  - Expected Ed25519 signature (base64, **no padding**)
-  - Includes variants with and without stable ID fields
+A duplicate path must either be checked against its authority or clearly remain
+a compatibility copy. File-name equality alone is not proof that bytes match.
 
-- `identity-log-v1.json`
-  - Canonical identity-only `register_did` and `rotate_key` envelope payloads
-  - Expected identity-only `state_hash` inputs and hashes
-  - Expected `entry_hash` (sha256 hex)
-  - Expected Ed25519 signature (base64, **no padding**)
+## Current protocol fixtures
 
-- `identity-log-negative-v1.json`
-  - Shared DID-log verifier outcome vectors (positive + negative)
-  - Each `cases` entry feeds a `log_head` (and optional `cached` head) to the
-    verifier and asserts `expected_outcome`
-    (`OK_VERIFIED` / `OK_DEGRADED` / `HARD_ERROR`)
-  - `log_cases` feed full logs to the genesis-anchored chain verifier
-  - Consumed byte-for-byte by the Go (`VerifyDidKeyResolution`) and TypeScript
-    (`verifyDidKeyResolution`) verifiers to keep authorization, state-hash, and
-    anchoring semantics aligned
+These fixtures govern shipped non-A2A protocol behavior.
 
-- `identity-log-raw-wire-v1.json`
-  - Carries complete JSON text rather than pre-decoded typed structures, so
-    decoder-level cases such as fractional and unsafe sequence numbers remain
-    expressible to every runtime
-  - BOTH runtimes reject BOTH cases; there is no outstanding divergence here.
-    They reject at different LAYERS, which the vector records as positive
-    per-runtime expectations rather than as a note: for a fractional seq Go
-    fails during typed JSON decoding (`seq` is an int field, so the value never
-    reaches the verifier) while TypeScript's `JSON.parse` accepts it and the
-    verifier's safe-integer guard rejects it. Above 2^53, 64-bit Go decodes the
-    value and the verifier's safe-integer bound rejects it; 32-bit Go cannot
-    represent it in `int` and fails during decoding
+### `message-signing-v1.json`
 
-- `pin-store-raw-wire-v1.json`
-  - Decode-level trust-store (`known_agents.yaml`) cases carrying RAW YAML wire
-    text, so each runtime feeds the same on-disk bytes through its own
-    load-and-validate path (Go `LoadPinStore`, TypeScript `PinStore.fromYAML`).
-    Pre-decoded structures could not express a malformed document at all
-  - Expectations are POSITIVE PER RUNTIME and include error substrings, so a
-    case asserts WHY a document was rejected. Outcomes alone are not enough:
-    two runtimes can reject the same input for different reasons, which reads
-    as agreement while hiding a divergence
-  - Three cases record a real, measured divergence: Go rejects non-string
-    mapping keys while js-yaml coerces them to strings and TypeScript accepts.
-    Not reachable through our own write path — `aw` is the sole writer.
-    Tightening TypeScript is tracked separately
+Canonical message payloads and expected Ed25519 signatures, including stable-ID
+variants. Signatures use raw standard base64 without padding.
 
-- `stable-id-v1.json`
-  - `did:key` → stable ID derivation vectors
+### `identity-log-v1.json`
 
-- `rotation-announcements-v1.json`
-  - Canonical rotation-announcement payloads (single link + chaining)
-  - Expected Ed25519 signatures (base64, **no padding**)
+Canonical `register_did` and `rotate_key` payloads, state and entry hashes, and
+real expected signatures for identity continuity.
 
-- `dns-txt-v1.json`
-  - Canonical `_awid.<domain>` TXT record name/value pairs
-  - Covers default public-registry records and explicit `registry=` declarations
+### `identity-log-negative-v1.json`
 
-## Encoding notes
+Positive and negative DID-log verifier outcomes consumed by Go and TypeScript.
+Cases cover full-chain and cached-head verification with explicit
+`OK_VERIFIED`, `OK_DEGRADED`, or `HARD_ERROR` expectations.
 
-- **Canonical JSON:** lexicographic key sort, compact separators, literal UTF-8 (no `\uXXXX` escapes).
-- **Signatures:** Ed25519 signature bytes encoded as base64 (RFC 4648), no `=` padding.
+### `identity-log-raw-wire-v1.json`
 
-### Base64 decoder-site classification
+Complete wire JSON for decoder-level sequence-number cases. Go and TypeScript
+may reject at different layers, so the fixture records positive per-runtime
+expectations rather than treating a shared rejection label as sufficient.
+
+### `pin-store-raw-wire-v1.json`
+
+Raw YAML pin-store bytes and per-runtime outcomes/error substrings. It records a
+known compatibility divergence for non-string mapping keys instead of hiding it
+behind a common outcome.
+
+### `stable-id-v1.json`
+
+`did:key` to stable `did:aw` derivation.
+
+### `rotation-announcements-v1.json`
+
+Canonical single-link and chained rotation announcements with real expected
+signatures.
+
+### `dns-txt-v1.json`
+
+Canonical `_awid.<domain>` TXT names and values, including default and explicit
+registry declarations.
+
+### `atomic-address-claim-v1.json`
+
+Cross-language canonical bytes, proofs, and digests for atomic address claims.
+
+### `atomic-address-claim-conflict-codes-v1.json`
+
+The complete stable conflict-code vocabulary shared by AWID route tests and Go
+client mapping.
+
+### `e2ee-v2-cross-language.json`
+
+Deterministic Go/Python encrypted-v2 wire fixture. It contains test-only private
+keys that must never be reused outside tests.
+
+### `team-auth-envelope-v2.json`
+
+Current request-bound team-auth canonical bytes, signatures, replay window, and
+negative binding cases. It is consumed by the aweb server, Go conformance suite,
+and public naapp verifiers. See
+[`team-auth-envelope-v2.md`](../team-auth-envelope-v2.md).
+
+## Experimental and compatibility A2A fixtures
+
+A2A is shipped but experimental and optional. These fixtures are release gates
+for that surface, not promises that A2A belongs to the default aweb journey.
+
+### `a2a-v1.json` — experimental current protocol fixture
+
+Pins the upstream A2A v1.0.1 source commit, proto-derived field sets, Agent Card
+shapes/digests, and JSON-RPC request/response cases used by the current CLI and
+gateway. Generated cards are checked against it.
+
+### `a2a-bridge-envelope-v0.json` — current compatibility fixture
+
+Pins the current zero-SDK bridge envelope's semantic section order and required
+`a2a-task`/`a2a-reply` fields. The `v0` name is deliberate: it is the gateway's
+current compatibility envelope, not a general A2A standard and not a stable v1
+wire promise. Prose wording is intentionally not byte-pinned.
+
+### `a2a-awid-publication-v1.json` — digest-only fixture
+
+Pins publication/delegation canonical JSON, assertion digest construction, and
+conflict-code order. Its `signature` strings are deterministic placeholder
+bytes. They are **not valid Ed25519 verification fixtures** and must not be used
+to claim signature verification coverage.
+
+Real cryptographic route tests generate Ed25519 keypairs/signatures at runtime
+in `awid/tests/test_a2a_publication_route.py`. The digest-only fixture proves
+byte/digest parity; those tests prove verification and authority enforcement.
+Both are required.
+
+## Consumer-local extension fixtures
+
+Two extension fixtures currently live under
+`cli/go/internal/conformance/vectors/` because that package owns their direct
+consumer harness:
+
+- `app-manifest-interpretation-v1.json` — experimental manifest interpretation
+  before dynamic signing; see [`app-manifest.md`](../app-manifest.md).
+- `app-emit-credential-v1.json` — experimental app-event auth canonical bytes;
+  see [`app-events.md`](../app-events.md).
+
+They are current for their experimental surfaces. Their location does not make
+old restructuring documents authoritative, and they do not imply a hosted
+dynamic gateway ships.
+
+## Encoding classes
 
 Decoder strictness follows the producer and field format; it is not a global
-consistency sweep.
+base64 consistency sweep.
 
-| Class | Production sites | Required behavior and reason |
-| --- | --- | --- |
-| Remote signatures | TypeScript `identity/signing.ts` (message envelopes), `identity/trust.ts` (rotation/replacement announcements), and `identity/registry.ts` (DID-log heads); Go `awid/{signing,rotate,a2a_publication,certificate,e2ee_keys,e2ee_messages,atomic_address_claim,stable_identity}.go` signature decodes | Use raw standard base64 without padding, with Go/TypeScript acceptance parity. TypeScript throws on malformed input before calling Ed25519 verification, so rejection does not depend on the verifier's treatment of an empty signature. Aligning mechanisms within this class is required. |
-| E2EE binary protocol fields | Go `awid/e2ee_keys.go`, `awid/e2ee_messages.go`, and `cmd/aw/id_encryption_key.go` public-key, ciphertext, nonce, encapsulated-key, and wrapped-key decodes | Use raw standard base64 because the E2EE wire contract defines those fields that way. These are protocol bytes, not signature-verdict sites. |
-| Team-certificate transport envelope | TypeScript `identity/certificate.ts` encoder and Go `awid/certificate.go` header encoder/decoder | Use padded standard base64. TypeScript emits padding and has no header decoder; changing Go to raw decoding would reject every TypeScript-produced certificate header and break authentication. |
-| Local private-key material | TypeScript `identity/keys.ts` PEM loader and Go `cmd/aw/init_apikey.go` partial-init state | Follow the file format: PEM is padded and line-wrapped, while the Go partial-init state is written and read with padded standard base64. Both paths validate the decoded key size and identity binding. Remote-signature strictness does not apply to local key files. |
+| Class | Examples | Required behavior |
+|---|---|---|
+| Remote signatures | Message, identity log, rotation, A2A assertion, E2E signature fields | Raw standard base64 without padding; malformed remote signatures fail before cryptographic acceptance. |
+| E2E binary protocol fields | Public keys, ciphertext, nonce, encapsulated/wrapped keys | Raw standard base64 as defined by the encrypted-v2 wire contract. |
+| Team-certificate transport envelope | `X-AWID-Team-Certificate` | Padded standard base64 for compatibility with existing producers. |
+| Team-auth signed-payload header | `X-AWEB-Signed-Payload` | Base64url without padding of exact canonical JSON bytes. |
+| Local private-key material | PEM and CLI partial-init files | Follow the local file format, validate decoded size and identity binding, and do not apply remote-signature syntax blindly. |
+| Public content digests | A2A Agent Card digest | `sha256:<lowercase hex>` over the specified canonical card bytes. |
+| Signed assertion digests | A2A delegation/publication assertion digest | `sha256:<raw-standard-base64-no-padding>` over the contract-defined bytes. |
 
-The important boundary is the class: make remote-signature decoders agree with
-one another, but do not flatten transport envelopes or local key formats into
-that rule.
+Canonical JSON uses sorted object keys, compact separators, literal UTF-8, and
+no insignificant whitespace. A fixture may further constrain default-field
+materialization or array ordering; its governing contract wins.
 
 ## Validation
 
-The backend test suite validates these vectors:
+Focused commands from the repository root:
 
 ```bash
-cd backend
-uv run pytest
+make test-a2a
+
+cd awid
+uv run pytest \
+  tests/test_conformance_vectors.py \
+  tests/test_atomic_claim.py \
+  tests/test_atomic_claim_route.py \
+  tests/test_a2a_publication_route.py
+
+cd ../server
+uv run pytest \
+  tests/test_identity_conformance_vectors.py \
+  tests/test_team_auth_envelope.py \
+  tests/test_e2ee_crypto_helpers.py
+
+cd ../cli/go
+go test ./internal/conformance ./a2a ./a2agw ./awid
 ```
+
+TypeScript trust/pin-store consumers run through the normal channel-core test
+suite after its declared npm dependencies are installed:
+
+```bash
+cd channel-core
+npm test
+```
+
+A vector change is incomplete until every listed consumer for that fixture
+passes and the lifecycle label above still describes what the bytes prove.

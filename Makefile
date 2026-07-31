@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -68,6 +68,7 @@ help:
 	@echo "  test-federation-e2e Run the OSS federation journey (requires Docker)"
 	@echo "  test-a2a-gateway-e2e Run the A2A gateway Docker journey against real aweb+awid"
 	@echo "  check-a2a-copy-guardrails Block premature A2A trust/E2EE copy"
+	@echo "  check-extension-docs Verify extension docs, source events, vectors, and authority map"
 	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
 	@echo "  awid-up / -down / -logs       Manage the standalone awid docker-compose stack"
 	@echo "  e2e-library-stack             Bring up awid+aweb+Library, seed aweb.team, verify, tear down (requires Docker + ../library + ../blueprints)"
@@ -274,6 +275,10 @@ test-a2a-gateway-e2e:
 
 check-a2a-copy-guardrails:
 	./scripts/check-a2a-copy-guardrails.sh
+
+check-extension-docs:
+	python3 scripts/check-extension-docs.py
+	python3 scripts/check-extension-docs.py --self-test
 
 selfhost-up:
 	cd server && docker compose up --build -d
