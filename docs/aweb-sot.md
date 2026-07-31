@@ -667,8 +667,15 @@ unbind operation in this path. The CLI uses this path during heartbeat to
 repair stale or missing repo
 bindings. `aw heartbeat` reports `repo_status` (`repaired`, `current`,
 `unavailable`, or `repair_failed`) and the canonical binding when available so
-the repair is observable. Repo association remains workspace state:
-`POST /v1/connect` stays repo-independent and does not carry `repo_origin`.
+the repair is observable. Repo association remains workspace state.
+
+`POST /v1/connect` also retains a `repo_origin` compatibility field. When it is
+non-empty, the server canonicalizes it, ensures the team-scoped repo row, and
+binds that repo to the workspace; a newly created workspace is typed `agent`.
+An invalid origin returns HTTP 422. Omitting the field leaves an existing repo
+binding unchanged and creates a new workspace as `manual`. The current `aw
+init` client intentionally omits `repo_origin`; heartbeat's
+`PATCH /v1/agents/me` path performs the normal observable binding/repair.
 
 `POST /v1/agents/{alias}/replace-key` is deliberately controller-authorized.
 Its signed payload binds team, alias, expected old and proposed new `did:key`,
@@ -1197,88 +1204,104 @@ the advertised resource URL keep working.
 
 ### Authentication
 
-MCP requests authenticate with the **same team certificate** that
-coordination requests use — DIDKey signature plus team certificate
-header:
+`MCPAuthMiddleware` accepts three shipped authentication branches, in this
+order:
+
+1. **Trusted internal proxy context.** This branch is disabled unless the
+   operator sets `AWEB_TRUST_PROXY_HEADERS` and configures
+   `AWEB_INTERNAL_AUTH_SECRET`. The upstream sends an HMAC-protected
+   `X-AWEB-Auth` v2 context plus `X-Team-ID`, `X-AWEB-Actor-ID`, and a
+   principal id (`X-User-ID`, or `X-API-Key` when no user id is present). aweb
+   validates the HMAC and UUIDs,
+   then requires the actor id to identify an active agent in that exact team.
+   The resulting context has `trusted_proxy=True`. Raw proxy headers are never
+   trusted when the opt-in is off, and an enabled proxy without the shared
+   secret fails closed.
+2. **Identity-only DIDKey auth.** A DIDKey request without
+   `X-AWID-Team-Certificate` uses the same `{body_sha256, did_aw, timestamp}`
+   contract as identity-scoped REST messaging. A global caller supplies
+   `X-AWEB-DID-AW`; a local caller omits it. The middleware may enrich the
+   context from one matching active local agent row. No matching row leaves the
+   team/agent/workspace fields empty; more than one matching row is ambiguous
+   and returns HTTP 409 rather than choosing a team.
+3. **Team-certificate DIDKey auth.** A DIDKey request with
+   `X-AWID-Team-Certificate` uses compact v1 or request-bound v2 team auth,
+   verifies the certificate against current AWID team key/revocation state,
+   requires a connected active agent projection, and resolves its latest
+   team-scoped workspace when one exists.
+
+Identity-only request headers are:
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
-X-AWEB-Timestamp: <RFC 3339 UTC timestamp, e.g. 2026-04-09T08:47:23Z>
-X-AWID-Team-Certificate: <base64-encoded certificate JSON>
+X-AWEB-Timestamp: <RFC 3339 UTC timestamp>
+X-AWEB-DID-AW: <required for a global caller; omitted for local>
 ```
 
-External AWCO/BYOIDT-style services use the same membership proof when a
-local CLI agent needs to act outside aweb without a `did:aw` identity
-row. `aw id request --team-auth` sends:
+Team-certificate request headers are:
 
 ```
 Authorization: DIDKey <member did:key> <signature>
 X-AWEB-Timestamp: <RFC 3339 UTC timestamp>
-X-AWEB-Signed-Payload: <base64url canonical JSON>
+X-AWEB-Signed-Payload: <optional base64url canonical JSON for v2>
 X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 
-The signed payload is the versioned team-auth request envelope described in
-[`team-auth-envelope-v2.md`](team-auth-envelope-v2.md). Version 2 binds `aud`,
-`method`, `path`, `team_id`, `body_sha256`, `timestamp`, and `v: 2`, plus
-operation-specific fields. The
-service verifier extracts the DIDKey public key, verifies the signature
-over `X-AWEB-Signed-Payload`, decodes and verifies
-`X-AWID-Team-Certificate` against AWID team authority/revocation state,
-requires `certificate.member_did_key == signed did:key`, checks the
-request target/body hash against the live HTTP request, and then applies
-service-local authorization. No AWID identity row is required for local
-agents; the team certificate is the team-membership credential.
+Version 2 is the envelope in
+[`team-auth-envelope-v2.md`](team-auth-envelope-v2.md): it binds `aud`,
+`method`, raw `path`, `team_id`, `body_sha256`, `timestamp`, and `v: 2`, plus
+operation-specific fields. It is request-bound but not replay-proof; an
+identical request can be replayed inside the timestamp skew window.
 
-Version 2 is request-bound but not replay-proof: a byte-identical request can
-be replayed inside the accepted timestamp skew window. Do not describe
-team-auth as replay-proof until the nonce follow-up lands.
-
-The external verifier's AWID lookup path is:
+For services verifying that same team-auth envelope outside aweb, the AWID
+lookup path is:
 
 1. Parse `team_id` as `{name}:{domain}`.
-2. `GET /v1/namespaces/{domain}/teams/{name}` to obtain the current
+2. Read `GET /v1/namespaces/{domain}/teams/{name}` for the current
    `team_did_key`.
-3. Verify the certificate signature against that team key and reject if
-   the certificate `team_id` or `member_did_key` does not match the
-   signed request.
-4. Check revocation with
-   `GET /v1/namespaces/{domain}/teams/{name}/revocations` (or an
-   equivalent cached revocation feed). Reject the certificate if its
-   `certificate_id` is listed.
+3. Verify the certificate signature and require its `team_id` and
+   `member_did_key` to match the signed request.
+4. Reject any certificate id returned by
+   `GET /v1/namespaces/{domain}/teams/{name}/revocations` (or an equivalent
+   cached revocation feed).
 
-The MCP middleware (`MCPAuthMiddleware` in
-`server/src/aweb/mcp/auth.py`) parses both headers, runs the same
-verification protocol as the REST API (parse signature, verify against
-the request envelope, decode and verify the team certificate against
-the cached team public key, check the revocation list), and resolves
-the calling identity.
+API keys, OAuth tokens, and opaque bearer tokens are **not direct credentials**
+on aweb's MCP path. A hosted operator may authenticate one of those credentials
+upstream and then use the explicitly enabled HMAC-protected internal proxy
+branch; the external credential itself is never accepted by
+`MCPAuthMiddleware`. `X-API-Key` in trusted proxy context is a protected
+principal identifier, not a raw API-key secret.
 
-API keys are NOT accepted on aweb's MCP path. The team certificate is
-the sole credential — consistent with the aweb principle that team
-certificates are the single credential for coordination endpoints. A
-hosted operator running its own MCP surface on top of aweb may accept
-other auth shapes (OAuth, opaque bearer tokens, etc.); those are
-operator-specific and not part of this contract.
+### Auth context and tool confinement
 
-### Auth context for tools
-
-After authentication, MCP tool handlers can read the calling identity
-via `aweb.mcp.auth.get_auth()`, which returns:
+After authentication, tool handlers read the per-request context from
+`aweb.mcp.auth.get_auth()`:
 
 ```python
 @dataclass
 class AuthContext:
-    team_id: str   # e.g., "backend:acme.com"
-    agent_id: str        # the aweb-side agent UUID
-    alias: str           # routing name within the team
-    did_key: str         # the calling agent's did:key
+    team_id: str | None
+    agent_id: str | None
+    alias: str | None
+    did_key: str
+    did_aw: str | None = None
+    address: str | None = None
+    workspace_id: str | None = None
+    trusted_proxy: bool = False
 ```
 
-The context is stored in a contextvar and is per-request. Tools that
-need to know who the caller is read from `get_auth()`; tools that
-operate on the team's coordination data scope by `team_id`. Tools
-do NOT receive the raw certificate or signing material.
+Identity-scoped mail, chat, contact, and identity operations use the
+authenticated DID fields and can run without team context where the operation
+does not require an alias/team selector. Alias routing and team-scoped task,
+work, role, instruction, presence, and workspace tools require a non-empty
+`team_id`; those handlers reject a context that cannot identify one. A team
+certificate or trusted proxy context supplies an explicit team. Identity-only
+auth supplies team context only when exactly one active local projection is
+found; ambiguity is rejected rather than guessed.
+
+Tools receive neither raw certificates nor signing material. Trusted-proxy
+status remains explicit because the hosted custodial signing, encryption, and
+decryption helpers are gated on that branch.
 
 ### Tool inventory
 
@@ -1303,8 +1326,8 @@ families are:
 Identity-creating operations (DID registration, team creation, address
 registration, certificate issuance) are deliberately NOT exposed as MCP
 tools — those operations belong to awid and the CLI / dashboard, not to
-agent runtime tool calls. Tools operate on team-scoped coordination
-state only.
+agent runtime tool calls. Identity-scoped tools operate on the authenticated
+DID; team-scoped tool families require the team context described above.
 
 All registered tools currently return human-readable strings. Callers
 should treat the result as tool output text rather than a stable JSON

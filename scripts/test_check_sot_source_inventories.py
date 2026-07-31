@@ -59,6 +59,13 @@ class SourceInventoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unsupported app.include_router.*line 1"):
                 inventories.extract_fastapi_routers(source)
 
+    def test_router_extraction_rejects_alias_receiver(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "api.py"
+            source.write_text("mounted_app = app\nmounted_app.include_router(beta_router)\n")
+            with self.assertRaisesRegex(ValueError, "unsupported include_router receiver.*line 2"):
+                inventories.extract_fastapi_routers(source)
+
     def test_cache_fact_extraction_evaluates_source_constants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "registry.py"

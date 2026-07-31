@@ -57,14 +57,14 @@ def extract_fastapi_routers(api_source: Path) -> list[str]:
         if not isinstance(node, ast.Call):
             continue
         function = node.func
-        is_app_include = (
-            isinstance(function, ast.Attribute)
-            and function.attr == "include_router"
-            and isinstance(function.value, ast.Name)
-            and function.value.id == "app"
-        )
-        if not is_app_include:
+        is_include_router = isinstance(function, ast.Attribute) and function.attr == "include_router"
+        if not is_include_router:
             continue
+        if not isinstance(function.value, ast.Name) or function.value.id != "app":
+            raise ValueError(
+                "unsupported include_router receiver at "
+                f"line {node.lineno}: {ast.unparse(function.value)}"
+            )
         if not node.args:
             raise ValueError(f"unsupported app.include_router call at line {node.lineno}: missing router")
         router = node.args[0]
