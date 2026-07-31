@@ -656,7 +656,7 @@ async def chat_send(
         session_actor_did = await _resolve_session_actor_did(
             db_infra,
             session_id=sid,
-            actor_dids=[actor_did] if auth.trusted_proxy else actor_dids,
+            actor_dids=actor_dids,
         )
         if not session_actor_did:
             return json.dumps({"error": "Not a participant in this session"})
@@ -794,7 +794,7 @@ async def chat_send(
         msg = await send_in_session(
             db_infra,
             session_id=sid,
-            sender_did=signed.from_did if signed else session_actor_did,
+            sender_did=session_actor_did,
             sender_agent_id=actor_agent_id,
             sender_address=sender_address,
             body="" if encrypted_envelope is not None else message,
