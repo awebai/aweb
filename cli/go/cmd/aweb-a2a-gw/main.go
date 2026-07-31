@@ -1450,16 +1450,31 @@ func (t *managedBridgeTransport) send(ctx context.Context, req *awid.SendMessage
 		return nil, fmt.Errorf("send request is required")
 	}
 	address := strings.TrimSpace(req.ToAddress)
-	if address == "" {
-		return nil, fmt.Errorf("managed A2A bridge requires to_address")
-	}
 	t.mu.RLock()
 	routeID := strings.TrimSpace(t.routeByAddress[address])
-	gatewayID := t.gatewayID
 	t.mu.RUnlock()
-	if routeID == "" {
-		return nil, fmt.Errorf("managed A2A bridge has no route for address %s", address)
+	return t.SendMessageForRoute(ctx, routeID, address, false, req)
+}
+
+func (t *managedBridgeTransport) SendMessageForRoute(ctx context.Context, expectedRouteID, expectedAddress string, _ bool, req *awid.SendMessageRequest) (*awid.SendMessageResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("send request is required")
 	}
+	routeID := strings.TrimSpace(expectedRouteID)
+	address := strings.TrimSpace(expectedAddress)
+	if address == "" || address != strings.TrimSpace(req.ToAddress) {
+		return nil, fmt.Errorf("managed A2A bridge route binding has mismatched to_address")
+	}
+	t.mu.RLock()
+	currentRouteID := strings.TrimSpace(t.routeByAddress[address])
+	gatewayID := t.gatewayID
+	bridgeURL := t.bridgeURL
+	bearerToken := t.bearerToken
+	if routeID == "" || currentRouteID != routeID {
+		t.mu.RUnlock()
+		return nil, fmt.Errorf("managed A2A bridge route binding changed for address %s: expected %s", address, routeID)
+	}
+	t.mu.RUnlock()
 	payload := map[string]interface{}{
 		"route_id":        routeID,
 		"to_address":      address,
@@ -1474,7 +1489,7 @@ func (t *managedBridgeTransport) send(ctx context.Context, req *awid.SendMessage
 		payload["priority"] = string(awid.PriorityNormal)
 	}
 	var out awid.SendMessageResponse
-	if err := t.doJSON(ctx, http.MethodPost, "/"+url.PathEscape(gatewayID)+"/messages", payload, &out); err != nil {
+	if err := t.doJSONWithSnapshot(ctx, bridgeURL, bearerToken, http.MethodPost, "/"+url.PathEscape(gatewayID)+"/messages", payload, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -1518,6 +1533,10 @@ func (t *managedBridgeTransport) doJSON(ctx context.Context, method, path string
 	bridgeURL := t.bridgeURL
 	bearerToken := t.bearerToken
 	t.mu.RUnlock()
+	return t.doJSONWithSnapshot(ctx, bridgeURL, bearerToken, method, path, payload, out)
+}
+
+func (t *managedBridgeTransport) doJSONWithSnapshot(ctx context.Context, bridgeURL, bearerToken, method, path string, payload interface{}, out interface{}) error {
 	var body io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)

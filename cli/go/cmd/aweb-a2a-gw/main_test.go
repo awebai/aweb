@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/a2a"
+	"github.com/awebai/aw/a2agw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
@@ -499,6 +500,59 @@ func TestManagedBridgePreservesRouteAddressBinding(t *testing.T) {
 	}
 	if gotRouteID != "r-one" {
 		t.Fatalf("provider route_id=%q want r-one", gotRouteID)
+	}
+}
+
+func TestManagedBridgeCapturedOldGenerationFailsClosedAfterRouteRevision(t *testing.T) {
+	for _, identityAuth := range []bool{false, true} {
+		t.Run(fmt.Sprintf("identity_auth_%t", identityAuth), func(t *testing.T) {
+			var mu sync.Mutex
+			var emittedRoutes []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var payload map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatal(err)
+				}
+				mu.Lock()
+				emittedRoutes = append(emittedRoutes, payload["route_id"].(string))
+				mu.Unlock()
+				_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent"})
+			}))
+			defer server.Close()
+
+			oldConfig := fileConfig{
+				ManagedConfig: managedConfig{BridgeURL: server.URL, GatewayID: "gw-test", BearerToken: "token"},
+				Routes:        []routeConfig{{RouteID: "old-route", Address: "gateway.example/agent"}},
+			}
+			transport, err := managedBridgeTransportFromConfig(oldConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bridge, err := a2agw.NewMailBridge(a2agw.MailBridgeConfig{Client: transport, UseIdentityAuth: identityAuth})
+			if err != nil {
+				t.Fatal(err)
+			}
+			capturedSend := a2agw.BridgeTask{RouteID: "old-route", Address: "gateway.example/agent", TaskID: "task-old", ContextID: "ctx-old", Text: "hello"}
+			if err := bridge.SendTask(context.Background(), capturedSend); err != nil {
+				t.Fatalf("old generation initial send: %v", err)
+			}
+
+			newConfig := oldConfig
+			newConfig.Routes = []routeConfig{{RouteID: "new-route", Address: "gateway.example/agent"}}
+			transport.UpdateFromConfig(newConfig)
+			if err := bridge.SendTask(context.Background(), capturedSend); err == nil || !strings.Contains(err.Error(), "route binding changed") {
+				t.Fatalf("captured old send error=%v", err)
+			}
+			capturedCancel := a2agw.BridgeCancel{RouteID: "old-route", Address: "gateway.example/agent", TaskID: "task-old", ContextID: "ctx-old"}
+			if err := bridge.CancelTask(context.Background(), capturedCancel); err == nil || !strings.Contains(err.Error(), "route binding changed") {
+				t.Fatalf("captured old cancel error=%v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(emittedRoutes) != 1 || emittedRoutes[0] != "old-route" {
+				t.Fatalf("provider emissions=%v; old captured operations must never emit as new-route", emittedRoutes)
+			}
+		})
 	}
 }
 
