@@ -8,6 +8,7 @@ import ast
 import json
 import re
 import shutil
+import subprocess
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -132,7 +133,23 @@ def _source_hook_call_sites(root: Path, failures: list[str]) -> list[dict[str, s
     return call_sites
 
 
-def check(root: Path) -> list[str]:
+def _tracked_docs_markdown(root: Path, failures: list[str]) -> set[str]:
+    result = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z", "--", "docs"],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        failures.append("cannot derive tracked Markdown corpus with git ls-files")
+        return set()
+    return {
+        path.removeprefix("docs/")
+        for path in result.stdout.decode("utf-8").split("\0")
+        if path.startswith("docs/") and path.endswith(".md")
+    }
+
+
+def check(root: Path, tracked_markdown: set[str] | None = None) -> list[str]:
     failures: list[str] = []
     docs = root / "docs"
 
@@ -225,7 +242,10 @@ def check(root: Path) -> list[str]:
         if "Accept-Encoding: identity" not in text or "Federation Compatibility" not in text:
             failures.append("current identity messaging authority lacks retained federation compatibility rules")
 
-    all_markdown = {str(path.relative_to(docs)) for path in docs.rglob("*.md")}
+    all_markdown = tracked_markdown if tracked_markdown is not None else _tracked_docs_markdown(root, failures)
+    for relative in sorted(all_markdown):
+        if not (docs / relative).is_file():
+            failures.append(f"tracked Markdown is missing from the working tree: docs/{relative}")
     expected_public = all_markdown - {"README.md"} - PRIVATE_TRANSITION_DOCS
     readme = (docs / "README.md").read_text(encoding="utf-8")
     links = [
@@ -258,6 +278,12 @@ def self_test(root: Path) -> int:
             print(f"- {failure}")
         return 1
 
+    tracked_failures: list[str] = []
+    tracked_markdown = _tracked_docs_markdown(root, tracked_failures)
+    if tracked_failures:
+        print(f"self-test setup failed: {tracked_failures[0]}")
+        return 1
+
     with tempfile.TemporaryDirectory() as raw_tmp:
         tmp = Path(raw_tmp)
         shutil.copytree(root / "docs", tmp / "docs")
@@ -266,6 +292,18 @@ def self_test(root: Path) -> int:
             destination = tmp / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(root / relative, destination)
+
+        untracked_note = tmp / "docs/untracked-self-test-note.md"
+        untracked_note.write_text("not part of the tracked corpus\n", encoding="utf-8")
+        if failures := check(tmp, tracked_markdown):
+            print(f"self-test failed: untracked Markdown changed the tracked corpus: {failures[0]}")
+            return 1
+        untracked_note.unlink()
+        failures = check(tmp, tracked_markdown | {"missing-tracked-self-test-note.md"})
+        if not any("tracked Markdown is missing" in failure for failure in failures):
+            print("self-test failed: missing tracked Markdown was not detected")
+            return 1
+
         hook = tmp / "docs/aw-hooks-sot.md"
         hook.write_text(hook.read_text(encoding="utf-8").replace("`task.created`", "`task-created`"), encoding="utf-8")
 
@@ -288,7 +326,7 @@ def self_test(root: Path) -> int:
             ),
             encoding="utf-8",
         )
-        failures = check(tmp)
+        failures = check(tmp, tracked_markdown)
         required_failures = {
             "missing documented event": "task.created",
             "new repeated-event call site": "inventory omits source call site",
@@ -302,8 +340,8 @@ def self_test(root: Path) -> int:
                 return 1
 
     print(
-        "self-test passed: event, call-site multiplicity, dynamic-expression, "
-        "and real-workspace release-mount drift is rejected"
+        "self-test passed: tracked corpus, event/call-site multiplicity, dynamic-expression, "
+        "and real-workspace release-mount drift controls reject their mutations"
     )
     return 0
 
