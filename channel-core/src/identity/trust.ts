@@ -103,7 +103,10 @@ export class SenderTrustManager {
     verificationAddress?: string,
   ): Promise<TrustResult> {
     let status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
-    const recipientBindingMismatch = verificationStatus === "verified" && status === "identity_mismatch";
+    const acceptedInput = verificationStatus === "verified"
+      || verificationStatus === "verified_legacy"
+      || verificationStatus === "verified_custodial";
+    const recipientBindingMismatch = acceptedInput && status === "identity_mismatch";
     if (!status || !rawAddress.trim()) {
       return { status, stored: false };
     }
@@ -187,7 +190,7 @@ export class SenderTrustManager {
     toDID: string | undefined,
     toStableID: string | undefined,
   ): VerificationStatus | undefined {
-    if (status !== "verified") {
+    if (status !== "verified" && status !== "verified_legacy" && status !== "verified_custodial") {
       return status;
     }
     const selfStableID = this.selfStableID.trim();

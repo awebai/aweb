@@ -212,8 +212,9 @@ func TestNormalizeSenderTrustRejectsUnauthoritativeRosterRefreshes(t *testing.T)
 	}
 }
 
-func TestNormalizeSenderTrustDoesNotReconcileRecipientBindingMismatch(t *testing.T) {
+func TestNormalizeSenderTrustDoesNotReconcileLegacyRecipientBindingMismatch(t *testing.T) {
 	c, _ := New("http://example")
+	c.did = "did:key:self"
 	pins := NewPinStore()
 	c.SetPinStore(pins, "")
 	resolver := &localFreshResolver{
@@ -224,7 +225,11 @@ func TestNormalizeSenderTrustDoesNotReconcileRecipientBindingMismatch(t *testing
 	address := "default:acme.com/alice"
 	pins.StorePin("did:key:old", address, "", "")
 
-	status, _ := c.NormalizeSenderTrust(context.Background(), IdentityMismatch, address, "did:key:current", "", nil, nil, nil)
+	bindingStatus := c.NormalizeRecipientBinding(VerifiedLegacy, "did:key:wrong", "")
+	if bindingStatus != IdentityMismatch {
+		t.Fatalf("legacy recipient-binding status=%q, want %q", bindingStatus, IdentityMismatch)
+	}
+	status, _ := c.NormalizeSenderTrust(context.Background(), bindingStatus, address, "did:key:current", "", nil, nil, nil)
 	if status != IdentityMismatch {
 		t.Fatalf("recipient-binding status=%q, want %q", status, IdentityMismatch)
 	}

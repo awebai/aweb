@@ -1027,7 +1027,7 @@ func (c *Client) commitRefresh(status VerificationStatus) VerificationStatus {
 // A matching stable binding is sufficient across local key rotation; otherwise
 // we fall back to the current did:key binding.
 func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, toStableID string) VerificationStatus {
-	if status != Verified {
+	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
 		return status
 	}
 	if stableID := strings.TrimSpace(c.stableID); stableID != "" && strings.TrimSpace(toStableID) != "" {

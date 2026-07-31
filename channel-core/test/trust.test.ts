@@ -59,19 +59,23 @@ function authenticatedTeamClient(methods: Record<string, unknown>) {
 }
 
 describe("SenderTrustManager", () => {
-  test("marks recipient binding mismatches as identity_mismatch", async () => {
-    const { did } = await didFromSeed(1);
-    const store = new PinStore();
-    const trust = new SenderTrustManager(
-      { get: async () => ({ did, identity_scope: "global", custody: "self" }) } as never,
-      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
-      "backend:acme.com",
-      "did:key:zrecipient",
-    );
+  test.each(["verified", "verified_legacy", "verified_custodial"] as const)(
+    "marks %s recipient binding mismatches as identity_mismatch without roster recovery",
+    async (status) => {
+      const { did } = await didFromSeed(1);
+      const getFresh = vi.fn();
+      const trust = new SenderTrustManager(
+        authenticatedTeamClient({ getFresh }),
+        { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+        "backend:acme.com",
+        "did:key:zrecipient",
+      );
 
-    const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, "did:key:zwrong");
-    expect(result.status).toBe("identity_mismatch");
-  });
+      const result = await trust.normalizeTrust(new PinStore(), status, "alice", did, undefined, "did:key:zwrong");
+      expect(result.status).toBe("identity_mismatch");
+      expect(getFresh).not.toHaveBeenCalled();
+    },
+  );
 
   test("returns verified_custodial for custodial senders", async () => {
     const { did } = await didFromSeed(2);
