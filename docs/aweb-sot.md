@@ -153,12 +153,14 @@ Customer onboarding has exactly two supported authority shapes:
 
 - **Fully Hosted**: a hosted operator owns namespace/team authority under its
   managed base domain, such as `*.aweb.ai`. That operator may create hosted
-  namespaces, team certificates, addresses, and custodial identities; the aweb
-  coordination server is only the runtime projection/coordination layer.
+  namespaces, team certificates, addresses, and custodial identities. The OSS
+  aweb server receives membership/runtime facts when a certified member calls
+  `POST /v1/connect`; any additional operator projection adapter is outside the
+  OSS server contract.
 - **BYOT**: the customer brings the DNS-backed namespace and AWID team. The
   customer holds the namespace controller private key and team controller
-  private key. A deployment imports customer-signed AWID facts and stores aweb
-  runtime projections, but must not hold or use the customer
+  private key. A certified member projects into the OSS aweb server through
+  `POST /v1/connect`; neither that path nor aweb stores or uses the customer
   namespace/team controller keys.
 
 Identity custody remains independent of namespace/team authority. A BYOT
@@ -988,7 +990,7 @@ relies on are:
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly by signing an AWID certificate with a local team controller key; no cloud runtime projection side effect |
 | `aw id team register --service URL --team X:Y` | Register or sync a customer-controlled AWID team with a service using the team controller signature; no private controller keys are uploaded |
 | `aw service init --service URL --team X:Y` | Connect the current certified worktree to a service projection for an existing AWID team; does not create identities or mutate AWID membership |
-| `aw id team import-request --team X --namespace Y --organization-id ORG` | Produce the customer team-controller-signed BYOT import/sync request body for aweb cloud; no private controller keys are uploaded |
+| `aw id team import-request --team X --namespace Y --organization-id ORG` | Compatibility generator for a customer team-controller-signed request to an optional external hosted import adapter; that adapter/endpoint is outside the OSS aweb server contract, and no private controller keys are uploaded |
 | `aw id team fetch-cert --team X --namespace Y --cert-id ID` | Fetch and install a blob-backed certificate after controller approval |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
 | `aw id cert show` | Show current certificate |
@@ -1464,7 +1466,7 @@ falls back to `DATABASE_USES_TRANSACTION_POOLER`, and
 | Namespace management | awid |
 | Team certificate issuance | CLI (BYOD) or hosted operator (managed namespaces) |
 | Team membership verification | Certificate (local crypto) |
-| Agent bootstrap/runtime projection | Auto-provisioned from certificate on `POST /v1/connect`, hosted Add existing identity, or BYOIDT import/sync |
+| Agent bootstrap/runtime projection | OSS aweb auto-provisions from a verified certificate on `POST /v1/connect`; optional external operator adapters are outside this server contract |
 | Custody (signing on behalf) | Agent (self-custodial) or hosted operator (custodial) |
 | Billing | Out of scope for aweb (hosted operator concern) |
 | Dashboard | Out of scope for aweb (any external service that holds `AWEB_DASHBOARD_JWT_SECRET`) |
