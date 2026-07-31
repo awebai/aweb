@@ -202,8 +202,9 @@ def register_tools(
     @mcp.tool(
         name="check_mail",
         description=(
-            "Check hosted mail. Hosted custodial identities decrypt encrypted E2E "
-            "mail for this MCP session; self-custodial encrypted content remains metadata-only."
+            "Check hosted mail. The tool marks returned unread messages read before returning. "
+            "Hosted custodial identities decrypt encrypted E2E mail for this MCP session; "
+            "self-custodial encrypted content remains metadata-only."
         ),
     )
     async def check_mail(
@@ -578,8 +579,9 @@ def register_tools(
     @mcp.tool(
         name="check_inbox",
         description=(
-            "Legacy compatibility alias for check_mail. Prefer check_mail. "
-            "Hosted custodial identities decrypt encrypted E2E mail for this MCP session."
+            "Legacy compatibility alias for check_mail. Prefer check_mail. It marks returned "
+            "unread messages read before returning. Hosted custodial identities decrypt "
+            "encrypted E2E mail for this MCP session."
         ),
     )
     async def check_inbox(

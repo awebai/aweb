@@ -1,21 +1,34 @@
-# aweb-a2a: A2A Interoperability for aweb
+# A2A interoperability for aweb
 
-**Status:** Draft v0.2 product contract
-**Authors:** Juan Reyero, Grace, Athena
-**Date:** 2026-06-07
-**Audience:** aweb maintainers, awid maintainers, A2A gateway implementers, CLI implementers
+Status: **shipped experimental interoperability surface**. Owner: the aweb OSS
+A2A CLI/gateway and AWID publication implementation. It is optional and is not
+part of the default communication journey.
 
----
+Current source and test anchors:
+
+- `cli/go/a2a/` — Agent Card model, validation, digest, and client;
+- `cli/go/a2agw/` — gateway cards, JSON-RPC task handling, bridge envelopes, and
+  in-memory task state;
+- `cli/go/cmd/aw/a2a.go` and `cli/go/cmd/aweb-a2a-gw/` — shipped commands;
+- `awid/src/awid_service/routes/a2a_publications.py` — publication/delegation
+  registry routes;
+- `docs/vectors/a2a-v1.json`, `a2a-bridge-envelope-v0.json`, and
+  `a2a-awid-publication-v1.json` — classified fixtures described in
+  [`vectors/README.md`](vectors/README.md).
+
+The focused source gate is `make test-a2a`.
 
 ## 1. Summary
 
 A2A standardizes how agents communicate once a client has an Agent Card. It keeps discovery and durable identity deliberately minimal. aweb and awid supply the missing product layer: names that resolve, persistent agent identity, key rotation history, delegation, and directory discovery.
 
-This contract defines the product path for making aweb identities first-class participants in the A2A ecosystem without creating a hackathon-only adapter:
+This document defines the current experimental path for exposing aweb
+identities to the A2A ecosystem:
 
 1. **A2A gateway (`aweb-a2a-gw`)**: a real gateway service that exposes existing aweb agents as normal A2A agents through schema-correct Agent Cards and JSON-RPC endpoints.
 2. **AWID A2A publication assertions**: durable registry facts that bind an aweb address to a card URL, route, gateway identity, card digest, expiry, and delegation. AWID is the trust registry, not the default runtime card host.
-3. **Signed/delegated Agent Card profile**: A2A Agent Card signatures and/or delegation chains that aweb-aware verifiers can resolve through AWID.
+3. **AWID delegation profile**: implemented publication/delegation chains for
+   aweb-aware verification. Agent Card JWS verification remains unimplemented.
 4. **Outbound `aw a2a` client**: CLI support for aweb agents to inspect and call external A2A agents.
 
 A future **native aweb A2A transport binding** is explicitly deferred. The gateway is a compatibility bridge for standard A2A HTTP clients. The native binding would be a protocol proposal that maps A2A task semantics onto signed/E2EE aweb messages; it should only be built after external demand exists.
@@ -28,16 +41,16 @@ In scope:
 
 - A2A v1.0 Agent Card generation and validation.
 - Root well-known card plus per-address direct card URL conventions.
-- JSON-RPC gateway for `SendMessage`, `GetTask`, `ListTasks`, and `CancelTask`.
-- Optional `SendStreamingMessage` when task event streaming is available.
+- JSON-RPC gateway for the shipped `SendMessage`, `GetTask`, `ListTasks`, and
+  `CancelTask` methods.
 - Mapping A2A tasks to durable aweb messages and agent replies.
 - AWID A2A publication and bridge delegation data model.
 - A2A card verification tiers in `aw a2a card`.
 - Security, custody, plaintext boundary, and product terminology.
 
-Out of scope for the first product slice:
+Out of scope for the current experimental surface:
 
-- A2A push-notification methods.
+- `SendStreamingMessage`, `SubscribeToTask`, and A2A push-notification methods.
 - gRPC binding.
 - HTTP/REST binding beyond direct card serving.
 - File parts and large attachments.
@@ -57,7 +70,7 @@ https://{host}/.well-known/agent-card.json
 
 An Agent Card declares skills, supported interfaces, protocol binding, protocol version, capabilities, input/output media types, and auth requirements. A2A v1.0 supports multiple protocol bindings; this contract targets **JSON-RPC** first.
 
-The gateway ingress contract is strict A2A v1.0. It does not silently accept pre-1.0 method aliases such as `message/send` or lowercase task-state values. Any compatibility mode for older event harnesses or SDKs must be explicit, separately tested, and not mixed into the product-trusted v1.0 contract.
+The gateway ingress contract is strict A2A v1.0. It does not silently accept pre-1.0 method aliases such as `message/send` or lowercase task-state values. Any compatibility mode for older event harnesses or SDKs must be explicit, separately tested, and not mixed into the strict v1.0 contract.
 
 The JSON-RPC method names in this contract use the A2A v1.0 names:
 
@@ -245,11 +258,15 @@ The fixture source was cross-checked against the upstream A2A repository's `scri
 
 Hex is intentional for A2A card digests because the digest is a public content-addressing value for a served document. This differs deliberately from some AWID signed-proof hashes that use raw-standard-base64-no-padding for compact signed payload fields. Do not unify these encodings without a contract amendment and fixture update.
 
-For the first product slice, generated aweb Agent Cards expose JSON-RPC v1.0 interfaces only. Every generated `supportedInterfaces[]` entry must therefore use `protocolBinding: "JSONRPC"` and `protocolVersion: "1.0"`. A later gRPC/HTTP/native binding requires a contract update and new fixtures before generated cards can include mixed bindings.
+Current generated aweb Agent Cards expose JSON-RPC v1.0 interfaces only. Every generated `supportedInterfaces[]` entry must therefore use `protocolBinding: "JSONRPC"` and `protocolVersion: "1.0"`. A later gRPC/HTTP/native binding requires a contract update and new fixtures before generated cards can include mixed bindings.
 
 Unauthenticated routes omit `securitySchemes` and `securityRequirements` rather than emitting empty objects/arrays in canonical digest vectors. `streaming: false` and `pushNotifications: false` are deliberate advertised capabilities for initial generated cards and are part of the digest bytes; `extendedAgentCard: false` is omitted unless we deliberately advertise extended-card support state.
 
-This digest is the byte contract used by AWID A2A publication assertions. A later change to the A2A source version, card field shape, digest bytes, or canonicalization rule must update the fixture and receive Athena review before implementation follows it.
+This digest is the byte contract used by AWID A2A publication assertions. A
+later change to the A2A source version, card field shape, digest bytes, or
+canonicalization rule must update the canonical fixture, pass the relevant
+conformance tests, and receive independent protocol/security review before
+implementation follows it.
 
 ### 5.3 Root Router Card
 
@@ -306,66 +323,52 @@ An agent or operator does not primarily "upload an Agent Card to AWID." It publi
 
 > address X / did:aw Y is exposed through card URL U, RPC URL V, route R, gateway identity G, card digest H, revision N, and expiry T.
 
-### 6.2 Assertion Fields
+### 6.2 Wire authority
 
-The first product contract for an AWID A2A publication assertion MUST include:
+The exact signed fields, canonical bytes, authority sources, conflict codes, and
+HTTP routes live in
+[`a2a-awid-publication-contract.md`](a2a-awid-publication-contract.md). Do not
+copy a second field inventory into an integration guide. The current operation
+names are:
 
-```yaml
-operation: a2a_publish_card
-assertion_id: a2a-pub-...
-address: acme.com/help
-did_aw: did:aw:...
-identity_did_key: did:key:...
-signer_did: did:aw:...
-signer_kid: did:aw:...#key-...
-card_url: https://acme.com/a2a/agents/r_help_01/agent-card.json
-rpc_url: https://acme.com/a2a/agents/r_help_01/rpc
-route_id: r_help_01
-tenant: null
-gateway_identity: did:aw:...
-delegation_id: a2a-delegation-...
-delegation_ref: awid://delegations/a2a-delegation-...
-delegation_digest: sha256:...
-card_digest_alg: sha256
-card_digest: sha256:...
-card_revision: 3
-default_for_host: false
-status: active
-published_at: "2026-06-07T00:00:00Z"
-expires_at: "2026-07-07T00:00:00Z"
-registry_url: https://api.awid.ai
+```text
+publish_a2a_route
+delegate_a2a_bridge
 ```
 
-`card_digest` is load-bearing. Aweb-aware Tier-2 verification MUST reject or hard-warn when the served card digest does not match the active AWID publication assertion.
+`card_digest` is load-bearing. Aweb-aware verification rejects a served card
+whose digest or URL differs from the active AWID publication. A material card
+change requires an explicit new publication/revision; changing bytes at the URL
+does not update registry truth.
 
-Material Agent Card changes require republishing the assertion with a new digest/revision. This is intentional: an Agent Card is a public service contract, not per-request dynamic state.
+### 6.3 Current publication authority
 
-The assertion MUST identify the exact signed publication and delegation material used for verification. If AWID's existing revocation/event-log model supplies assertion ids, signer ids, and delegation references indirectly, the implementation can derive these fields from that model, but the verifier must still be able to report the exact assertion and delegation it trusted.
+- Direct self-custodial publication is signed by the address identity's current
+  `did:key` and declares `authority_source: self_identity_key`.
+- Direct hosted-custodial publication is signed by that custodial identity's
+  current key and declares `authority_source: hosted_session`.
+- A gateway whose identity differs from the published identity requires an
+  active bridge delegation. The delegator identity's current key signs the
+  delegation; a team certificate or team controller key is not a substitute.
+- The write path validates the registered address binding and full identity key
+  history before storing either assertion.
+- Expired/revoked publication or delegation state is omitted from anonymous
+  active discovery.
 
-Revocation follows the AWID event/revocation model: a revoked publication or revoked delegation is not active even if its expiry is in the future.
-
-### 6.3 Publication Authority
-
-Allowed publication authority depends on custody:
-
-| Address / identity custody | Who can publish A2A binding | Notes |
-|---|---|---|
-| Self-custodial personal/global identity | identity signing key | The agent/operator signs the publication assertion. |
-| Self-custodial team address | team/address authority defined by AWID team/address rules | Must not require handing the agent key to the gateway. |
-| Hosted-custodial identity | hosted service authority for that identity | Must be labeled hosted-custodial/plaintext bridge. |
-| Delegated bridge | address/team authority signs delegation to gateway identity | Gateway signs cards or bridge messages under scoped delegation. |
-
-AWID publication is separate from A2A card serving. Generic A2A clients can ignore it.
-
-### 6.4 Optional Card Cache
-
-AWID MAY later cache/mirror full Agent Cards for audit, availability, or "what did this address claim at time T?" views. That cache is not the authoritative runtime endpoint unless a later contract explicitly changes this model.
+AWID stores assertion bytes and route metadata, not a canonical mutable Agent
+Card body. Generic A2A clients may ignore AWID and use the ordinary card URL;
+that gives interoperability without the stronger aweb address binding.
 
 ## 7. Signed and Delegated Agent Cards
 
-### 7.1 A2A Signature Semantics
+### 7.1 A2A signature semantics
 
-A2A Agent Cards MAY carry a `signatures` array. The signing profile MUST follow A2A v1.0 semantics:
+A2A Agent Cards may carry a `signatures` array. Current generated aweb gateway
+cards are unsigned, and `aw a2a card` reports but does not verify card JWS. The
+following profile constrains any future signed-card producer; it is not a claim
+that JWS verification ships today:
+
+A signed card MUST follow A2A v1.0 semantics:
 
 - The card is canonicalized according to the A2A/JCS signing rules with the `signatures` field absent.
 - The JWS signing input is the protected header plus `.` plus base64url payload, as defined by JWS.
@@ -387,29 +390,36 @@ Aweb-aware verification derives or allowlists JWKS location from AWID/directory 
 
 ### 7.3 Verification Tiers
 
-| Tier | Behavior | Guarantee |
+| Tier | Behavior | Current implementation |
 |---|---|---|
-| 0 | Ignore signatures/publication | Plain A2A interop only. |
-| 1 | Verify card JWS with trusted key/JWKS | Card integrity and possession of signing key. |
-| 2 | Verify AWID publication, digest, signer/delegation, and key history | Durable aweb identity/address binding with rollback/split-view protection from AWID. |
+| 0 | Validate/use ordinary A2A card without AWID publication | Shipped default `aw a2a card` result. |
+| 1 | Verify card JWS with a trusted key/JWKS | Defined profile only; not implemented by `aw a2a card`. |
+| 2 | Resolve active AWID publication and compare live card digest/URL | Shipped with `aw a2a card --address`; AWID verifies assertion signatures, address binding, delegation, expiry, and identity key history when accepting writes. The CLI trusts that registry read and does not independently replay the write verifier. |
 
-Tier 2 does not claim the agent is competent or truthful. It claims identity continuity, publication authority, and card integrity.
+Tier 2 does not claim the agent is competent or truthful. It binds the live card
+bytes/URL to active AWID publication state.
 
-### 7.4 Direct vs Delegated Signing
+### 7.4 Direct and delegated publication
 
-Supported signing models:
+Current AWID publication supports:
 
-- **Direct identity card**: the bridged identity/address authority signs the card and publishes the AWID assertion.
-- **Delegated bridge card**: the gateway identity signs the card; AWID stores a delegation from the address/team authority to the gateway identity scoped to route, card URL, RPC URL, operations, and expiry.
-- **Hosted-custodial card**: hosted authority signs/publishes for hosted identities. The card/directory MUST label hosted bridge/plaintext boundary.
+- **Direct identity publication**: the address identity's current key signs the
+  route assertion and the gateway identity equals the published identity.
+- **Delegated bridge publication**: the address identity's current key signs a
+  scoped delegation to a separately registered gateway identity, and the route
+  assertion binds its digest.
+- **Hosted-custodial publication**: the custodial identity's current key signs
+  under the hosted-session authority source.
 
-Self-custodial/BYOT gateways MUST NOT require the bridged agent's private key.
+These are publication/delegation signatures, not proof that the served Agent
+Card contains a JWS. Self-hosted/BYOT gateways do not receive the bridged
+agent's private key.
 
 ## 8. Gateway Architecture
 
-### 8.1 Product Path
+### 8.1 Current bridge path
 
-`aweb-a2a-gw` is a real product service, not a throwaway hackathon adapter.
+`aweb-a2a-gw` is the shipped experimental compatibility service.
 
 ```text
 A2A caller
@@ -420,7 +430,10 @@ A2A caller
   -> gateway updates A2A task/artifact
 ```
 
-The first deployment can front three aweb agents running on Hetzner, but it MUST use the same gateway/card/task architecture that product deployments use.
+The aweb mail sent to the target agent is durable. The gateway's A2A task store
+is currently in memory, so gateway restart loses task/poll state even though the
+underlying mail remains. Operators must not describe the experimental gateway
+as a durable A2A task service until a persistent store ships.
 
 ### 8.2 Gateway Identity
 
@@ -433,7 +446,7 @@ For operator-configured internal/event routes before AWID delegation enforcement
 - docs/cards MUST label this as locally configured/unverified delegation, not AWID-verified delegation.
 - customer-facing UI, CLI, cards, and docs MUST NOT call the route "verified", "AWID-backed", or "authorized for address X" until AWID publication and delegation checks are enforced. Operator-configured routes are only "configured by gateway operator."
 
-For product-trusted external routes:
+For AWID-verified external routes:
 
 - AWID publication assertion is active;
 - AWID bridge delegation is active;
@@ -441,64 +454,42 @@ For product-trusted external routes:
 - gateway key matches delegation;
 - expiry and route scope are enforced.
 
-### 8.3 Gateway Configuration
+### 8.3 Gateway configuration
 
-Gateway config is the source of operational card generation in v0:
+[`docs/examples/a2a-gateway.yaml`](examples/a2a-gateway.yaml) is the maintained public
+self-hosted/BYOT example. Validate it from a real gateway workspace before
+starting the listener:
 
-```yaml
-host: a2a.aweb.ai
-root_card:
-  mode: router # router | default_agent
-  default_route_id: null
-routes:
-  - route_id: personal
-    address: demo.aweb.ai/personal
-    rpc_path: /a2a/agents/personal/rpc
-    card_path: /a2a/agents/personal/agent-card.json
-    mode: mail
-    response_timeout_s: 120
-    auth:
-      scheme: none
-    limits:
-      max_tasks_per_minute: 30
-      task_expiry_s: 900
-    card:
-      name: "Personal Agent"
-      description: "Personal agent for the A2A customer-service chain."
-      version: "1.0.0"
-      defaultInputModes: ["text/plain"]
-      defaultOutputModes: ["text/plain"]
-      skills:
-        - id: customer-intake
-          name: "Customer intake"
-          description: "Receives customer requests and coordinates with service agents."
-          tags: ["personal", "customer-service"]
-    awid_publication:
-      required: false
-      expected_digest: null
-      expires_at: null
+```bash
+aweb-a2a-gw -config docs/examples/a2a-gateway.yaml -workspace-dir /srv/aweb-gateway -check
+aweb-a2a-gw -config docs/examples/a2a-gateway.yaml -workspace-dir /srv/aweb-gateway
 ```
 
-When AWID publication is enabled, config MUST not override AWID truth silently. Conflicts fail closed.
+The config selects listener/host, gateway workspace, root-card mode, route
+address, auth mode, limits, card content, response polling, and optional AWID
+publication expectations. `--check` parses the same configuration and builds the
+same gateway without starting HTTP service. It does not prove the target agent
+will answer.
+
+When a route requires an AWID publication, configured address and digest
+expectations must match registry truth; conflicts fail closed. A hosted operator
+may supply routes through a private control plane, but that application's schema,
+credentials, and deployment runbook are not part of this public contract.
 
 ## 9. Gateway Task Mapping
 
 ### 9.1 Required JSON-RPC Methods
 
-First product/event slice MUST implement:
+The gateway currently implements exactly:
 
 - `SendMessage`
 - `GetTask`
 - `ListTasks`
 - `CancelTask`
 
-`SendStreamingMessage` SHOULD be implemented if task event streaming is available. It can be built on the same task store and event updates.
-
-Deferred:
-
-- `SubscribeToTask`
-- push notification config methods
-- `GetExtendedAgentCard`
+`SendStreamingMessage`, `SubscribeToTask`, push-notification configuration, and
+`GetExtendedAgentCard` do not ship. Unsupported methods return the JSON-RPC
+method-not-found path; clients must not infer streaming from this document.
 
 ### 9.2 `SendMessage`
 
@@ -511,16 +502,21 @@ On new A2A message:
 5. Transition task to `TASK_STATE_WORKING`.
 6. Return task immediately, optionally waiting up to a short configured window for a reply.
 
-The gateway MUST NOT require synchronous agent liveness for `SendMessage` to succeed unless the route is explicitly configured as sync-only.
+The gateway does not require synchronous agent liveness for `SendMessage` to
+succeed when `configuration.returnImmediately: true`.
 
-For the product async path, A2A clients SHOULD send `configuration.returnImmediately: true`. In that case the gateway returns after creating/updating the task and sending the durable aweb bridge message.
+For the current async path, A2A clients SHOULD send
+`configuration.returnImmediately: true`. In that case the gateway returns after creating/updating the task and sending the durable aweb bridge message.
 
 If `configuration.returnImmediately` is absent or false, the gateway follows A2A semantics by waiting until the task reaches a terminal or interrupted state. If the route response wait timeout expires before an agent reply, the gateway returns the current non-terminal task state, usually `TASK_STATE_WORKING`, and leaves the task pollable until task TTL expiry. The route response timeout is only an HTTP wait bound; it is not a terminal task failure.
 
-Our own CLI mapping:
+CLI mapping:
 
-- `aw a2a send --no-wait` sets `configuration.returnImmediately: true`.
-- `aw a2a send --wait` prefers `SendStreamingMessage`; if streaming is unavailable, it uses `SendMessage` without `returnImmediately` when supported, otherwise `SendMessage` with polling `GetTask`.
+- default send and `aw a2a send --no-wait` set
+  `configuration.returnImmediately: true`;
+- `aw a2a send --wait` uses `SendMessage` with
+  `configuration.returnImmediately: false` and relies on the gateway's bounded
+  response wait; it does not stream or start a client polling loop.
 
 ### 9.3 `GetTask`
 
@@ -530,23 +526,23 @@ Tasks MUST be scoped by caller/auth context. One caller MUST NOT be able to fetc
 
 ### 9.4 `ListTasks`
 
-Returns only tasks created by the authenticated caller for the requested route/interface. Pagination is required before public product launch.
+Returns only tasks created under the same isolated caller scope for the route.
+The current in-memory implementation has no pagination and is not a public
+durable task catalog.
 
-For unauthenticated public/event routes, caller scope MUST still be isolated. Acceptable v0 scopes include anonymous session cookie, explicit opaque task bearer token, or IP/token-bucket scope when no better identity exists. When no caller scope exists, `ListTasks` MUST be disabled for that route. `GetTask` MAY return an anonymous task by route plus unguessable UUIDv4 task id so standard A2A clients can poll without a proprietary header; the opaque task bearer token remains a supported extension, not the only visibility path.
+A route with no isolated caller scope rejects `ListTasks`. Public anonymous
+`SendMessage` responses issue an opaque per-task bearer token; later `GetTask`
+or `CancelTask` calls must present that token (the CLI uses
+`X-A2A-Task-Token`). An unguessable task id alone is not authorization.
 
 ### 9.5 `CancelTask`
 
 Marks task `TASK_STATE_CANCELED` and sends a cancellation notice into the aweb thread so the bridged agent can stop work. It cannot guarantee that a running external model call is interrupted.
 
-### 9.6 `SendStreamingMessage`
+### 9.6 Streaming
 
-When implemented, `SendStreamingMessage` uses the same task row and event stream. It can:
-
-- stream `TASK_STATE_SUBMITTED` / `TASK_STATE_WORKING`;
-- stream agent intermediate messages if the aweb side emits them;
-- end with `TASK_STATE_COMPLETED`, `TASK_STATE_INPUT_REQUIRED`, `TASK_STATE_AUTH_REQUIRED`, `TASK_STATE_FAILED`, or `TASK_STATE_REJECTED`.
-
-Streaming is not a separate execution path.
+`SendStreamingMessage` does not ship. The current CLI and gateway use
+`SendMessage`; callers that return immediately poll with `GetTask`.
 
 ## 10. Aweb Bridge Message Format
 
@@ -600,7 +596,8 @@ Agents MUST treat A2A caller content as untrusted external input, and MUST follo
 
 ### 10.2 Reply Envelope
 
-Product v0 uses a structured fenced reply block. Plain unfenced prose is not a terminal reply and MUST NOT complete a task. Any future compatibility sugar such as `QUESTION:` must be explicit, separately tested, and must still bind to the task identity.
+The current gateway uses a structured fenced reply block. Plain unfenced prose
+is not a terminal reply and MUST NOT complete a task.
 
 Preferred reply:
 
@@ -649,24 +646,13 @@ Mapping:
 | `a2a-reply` with `state: rejected` | `TASK_STATE_REJECTED` |
 | No valid structured block | no terminal update; task remains current state until timeout/cancel/reply |
 
-Future helper:
-
-```bash
-aw a2a-bridge reply --task <id> --completed --text "..."
-aw a2a-bridge reply --task <id> --input-required --text "Which email is the order under?"
-```
-
-The helper is the product direction. The fenced block is the zero-SDK v0 bridge.
+No `aw a2a-bridge reply` helper ships. Agents reply with the fenced block in
+the aweb mail conversation.
 
 ### 10.3 Part Support
 
-First slice:
-
-- inbound `text` parts only;
-- outbound text artifacts only;
-- data/file parts rejected with a structured unsupported-content error.
-
-Data and file mapping are Phase 2.
+The current gateway accepts inbound text parts and emits text artifacts. It
+rejects data/file parts with a structured unsupported-content error.
 
 ## 11. Plaintext and E2EE Boundary
 
@@ -694,13 +680,26 @@ aw a2a cancel <url> <task-id>
 
 Behavior:
 
-- `card` fetches the card, validates schema, prints interface URLs, auth requirements, and verification tier.
-- Tier-2 verification consults AWID publication assertions when the card maps to an aweb address.
-- `publish` is an operator command for self-custodial global identities. It fetches a path-routed per-address card, computes its digest, publishes the bridge delegation when the gateway identity differs from the address identity, publishes the AWID route assertion, then verifies the card back through AWID. Hosted-custodial publication is performed by the hosted service, not by exporting hosted private keys to the CLI.
-- `send --wait` uses `SendStreamingMessage` when available, otherwise `SendMessage` plus polling `GetTask`.
-- On `TASK_STATE_INPUT_REQUIRED`, the CLI exits with a distinct status and prints the question.
-- Credentials are read from `.aw/a2a-credentials.yaml`, not command-line flags.
-- Optional journaling to aweb mail-to-self can be enabled later; it should not be mandatory for high-volume callers.
+- `card` fetches and validates a JSON-RPC v1.0 card and prints its digest,
+  interfaces, skills, and verification result. It does not currently verify card
+  JWS signatures. With `--address`, it asks AWID for the active publication and
+  checks the served card digest and URL against that registry result.
+- `publish` is for a self-custodial global identity. It fetches a path-routed
+  per-address card, computes its digest, publishes a bridge delegation when the
+  gateway identity differs, publishes the route assertion, and reads the card
+  back through AWID. A custodial operator publishes with its own custody
+  boundary; private keys are never exported to this CLI path.
+- `send` defaults to `configuration.returnImmediately: true`. `--wait` sends
+  `SendMessage` with `returnImmediately: false`; it does not negotiate
+  `SendStreamingMessage` or perform a separate polling loop. `--no-wait` and
+  `--wait` are mutually exclusive.
+- `status` and `cancel` use `GetTask` and `CancelTask`. After send, the CLI
+  best-effort stores an issued task bearer token in `.aw/a2a-credentials.yaml`
+  with mode `0600` so later task calls can present it. Static API/bearer
+  credentials can also be selected from that file; secrets do not belong in
+  command-line examples.
+- `TASK_STATE_INPUT_REQUIRED`, failed, rejected, and canceled task states map to
+  distinct non-success CLI exits.
 
 ## 13. Security Considerations
 
@@ -710,7 +709,9 @@ Anyone can serve a card claiming a name. Tier-2 AWID verification is what binds 
 
 ### 13.2 Gateway Impersonation
 
-The gateway must not silently impersonate self-custodial agents. Messages sent by the gateway should be visibly from the gateway identity and include on-behalf-of metadata until a stronger product-specific sender model is designed.
+The gateway must not silently impersonate self-custodial agents. Messages sent by the gateway should be visibly from the gateway identity and
+include on-behalf-of metadata unless a separate reviewed sender model replaces
+it.
 
 ### 13.3 Replay and Stale Cards
 
@@ -734,114 +735,66 @@ Gateway enforces:
 
 A2A caller content is external untrusted input. Gateway task envelopes must make origin/caller/task explicit in the agent-visible message.
 
-## 14. Implementation Plan
+## 14. Current implementation and limits
 
-### Phase 1: Spec Correction and Fixtures
+Implemented and source-tested:
 
-- Patch this document to exact A2A v1.0 method/schema/enum/signature language.
-- Add golden fixtures from pinned A2A proto/schema:
-  - hosted default Agent Card;
-  - BYOT default Agent Card;
-  - BYOT multi-agent gateway/root router card;
-  - `SendMessage` JSON-RPC request/response;
-  - `GetTask` JSON-RPC request/response.
-- Add schema validation tests for generated cards.
-- Decide and document exact canonical digest bytes for cards.
+- pinned A2A v1.0 card and JSON-RPC fixtures;
+- root/router and per-route cards;
+- deterministic card digest with signatures omitted;
+- `SendMessage`, `GetTask`, `ListTasks`, and `CancelTask`;
+- caller scope and task bearer-token isolation;
+- aweb mail bridge and fenced reply parser;
+- AWID publication/delegation write and anonymous read routes;
+- CLI card, publish, send, status, and cancel commands;
+- static self-hosted/BYOT gateway configuration.
 
-### Phase 2: Gateway Skeleton and Cards
+Experimental limits:
 
-- Add `aweb-a2a-gw` service.
-- Load route config.
-- Serve root card and per-route cards.
-- Generate path-routed `supportedInterfaces`, no tenant by default.
-- Compute deterministic card digest.
-- Mark cards unsigned/unverified until AWID publication is implemented.
+- task rows live in gateway memory and do not survive restart;
+- streaming, push notifications, file/data parts, and persistent task storage do
+  not ship;
+- `aw a2a card` does not verify Agent Card JWS;
+- gateway traffic is plaintext at the gateway;
+- operator-configured routes without an active AWID publication/delegation are
+  local/unverified routes, not verified public identity bindings;
+- native A2A semantics over signed or E2E aweb messages are deferred.
 
-### Phase 3: JSON-RPC Task Store
+These limits are lifecycle facts, not an implementation backlog promised by the
+default product. A new capability requires source, tests/vectors, and this
+contract to change together.
 
-- Implement `SendMessage`, `GetTask`, `ListTasks`, `CancelTask`.
-- Store task id, context id, caller scope, route id, state, aweb thread/message ids, history, artifacts.
-- Validate caller scoping.
-- Reject unsupported content types cleanly.
+## 15. Self-hosted and BYOT operation
 
-### Phase 4: Aweb Bridge Adapter
+A self-hosted/BYOT operator:
 
-- Send structured `a2a-task` message to real aweb agent.
-- Receive/poll/subscribe for replies.
-- Parse `a2a-reply` envelopes; unfenced prose is non-terminal status/missing-envelope, not default completion.
-- Update task store.
-- Deploy first three agents on Hetzner using normal aweb workspaces.
+1. creates a dedicated gateway workspace and identity;
+2. copies and edits `docs/examples/a2a-gateway.yaml` without committing secrets;
+3. validates it with `aweb-a2a-gw -check`;
+4. runs the gateway behind HTTPS termination;
+5. tests the direct Agent Card and JSON-RPC route;
+6. for a public trusted binding, publishes the route/delegation with
+   `aw a2a publish` and pins the resulting address and card digest in config;
+7. verifies with `aw a2a card <url> --address <domain/name>`.
 
-### Phase 5: AWID Publication and Delegation
+A BYOT gateway keeps self-custodial identity/controller keys inside the
+operator's trust boundary. The gateway gets only the identity/workspace material
+needed for its own dedicated identity. It never receives the bridged agent's
+private key. Static API or bearer secrets are supplied through environment or
+local credential state, not committed YAML.
 
-- Define AWID A2A publication assertion.
-- Define bridge delegation assertion.
-- Add directory fields.
-- Add `aw a2a card` Tier-2 verification.
-- Enforce digest/delegation/expiry for product-trusted routes.
+The public release and rollback gates live in
+[`a2a-release-runbook.md`](a2a-release-runbook.md). A hosted operator owns its
+application-specific route database, custody implementation, deployment, and
+private configuration contract; those are intentionally not specified here.
 
-### Phase 6: Streaming and Product Hardening
+Public `verified`, `AWID-backed`, or `authorized for address` claims remain
+blocked until the live publication, digest, delegation, expiry, and key-history
+checks pass.
 
-- Implement `SendStreamingMessage`.
-- Add optional API key/OAuth auth modes.
-- Add metrics, logs, and operational dashboards.
-- Add BYOT gateway deployment guide.
+## Appendix A: routing examples
 
-### Deferred: Native Aweb Transport Binding
-
-Define only after external A2A clients show demand for A2A semantics over signed/E2EE aweb messages.
-
-## 15. Hackathon Deployment Using Product Path
-
-The A2A hackathon should use this product gateway, not bespoke throwaway SDK agents.
-
-Initial event deployment:
-
-```text
-https://a2a.aweb.ai/a2a/agents/personal/agent-card.json
-https://a2a.aweb.ai/a2a/agents/customer-service/agent-card.json
-https://a2a.aweb.ai/a2a/agents/research/agent-card.json
-```
-
-Each card points at:
-
-```text
-https://a2a.aweb.ai/a2a/agents/{route}/rpc
-```
-
-Behind the gateway:
-
-- three real aweb agents run on Hetzner;
-- each has a normal workspace, role instructions, and `.aw` identity;
-- gateway sends A2A task envelopes through aweb;
-- agents reply with `a2a-reply` fenced blocks;
-- gateway updates A2A tasks.
-
-If event infrastructure only supports root well-known discovery per domain, use subdomain fallback:
-
-```text
-https://personal.a2a.aweb.ai/.well-known/agent-card.json
-https://customer-service.a2a.aweb.ai/.well-known/agent-card.json
-https://research.a2a.aweb.ai/.well-known/agent-card.json
-```
-
-Subdomains are compatibility fallback, not the default product model.
-
-## 16. Open Questions
-
-1. Whether `ListTasks` is required by the event harness.
-2. Exact gateway wake path for Hetzner agents.
-3. Whether public event routes stay unauthenticated with strict per-route limits or move behind event-provided bearer tokens.
-4. Whether the first public deployment should expose root router discovery only, or also compatibility subdomains for event harnesses that cannot consume direct card URLs.
-
-Release and rollback sequencing is specified in
-[`a2a-release-runbook.md`](a2a-release-runbook.md). Public `verified`,
-`AWID-backed`, or `authorized for address` claims remain blocked until the
-runbook's live publication and verification gates pass.
-
-## Appendix A: Product Examples
-
-### A.1 Hosted Default Agent
+### A.1 Operator-managed default agent
 
 ```text
 Root card:
@@ -895,4 +848,5 @@ Directory:
 
 A future `https://aweb.ai/a2a/binding/v1` could map A2A operations onto signed and optionally E2EE aweb messages between AWID identities. That would provide A2A task semantics with aweb identity, offline-verifiable authorship, and E2EE.
 
-This is not part of the gateway product slice. It becomes worth specifying only if external A2A SDKs or clients want to implement it.
+This is not part of the current gateway surface. It should be specified only if
+external A2A SDKs or clients need it.

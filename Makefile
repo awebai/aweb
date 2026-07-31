@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -54,6 +54,8 @@ help:
 	@echo "  test-pi-extension Run pi-extension tests"
 	@echo "  test-ship-ci-contract Verify the canonical mandatory ship workflow"
 	@echo "  test-sot-source-inventories Verify canonical SOT tables and REST routers against source"
+	@echo "  test-mcp-tools-reference Verify the generated MCP inventory against live registration"
+	@echo "  regenerate-mcp-tools-reference Regenerate the MCP inventory from live registration"
 	@echo "  prepare-oas-test-root Materialize the clean committed OAS test pin"
 	@echo "  check-oas-launch-environment-contract Verify the pinned OAS seam dependency"
 	@echo "    opt-in local OAS: make test-oas OAS_TEST_ROOT=/path/to/local/oas"
@@ -69,6 +71,7 @@ help:
 	@echo "  test-federation-e2e Run the OSS federation journey (requires Docker)"
 	@echo "  test-a2a-gateway-e2e Run the A2A gateway Docker journey against real aweb+awid"
 	@echo "  check-a2a-copy-guardrails Block premature A2A trust/E2EE copy"
+	@echo "  check-extension-docs Verify extension docs, source events, vectors, and authority map"
 	@echo "  selfhost-up / -down / -logs   Manage the OSS docker-compose stack (aweb + awid)"
 	@echo "  awid-up / -down / -logs       Manage the standalone awid docker-compose stack"
 	@echo "  e2e-library-stack             Bring up awid+aweb+Library, seed aweb.team, verify, tear down (requires Docker + ../library + ../blueprints)"
@@ -110,7 +113,7 @@ build:
 # check-cli-go-tidy is here rather than behind test-cli by a deliberate reversal: it was placed
 # after it to inherit a warm module cache, and moving it forward reattributes that fetch rather
 # than adding one - about a second for 85MB when cold.
-test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-sot-source-inventories test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-sot-source-inventories test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
 
 # Canonical implementation SOT inventories are derived from ordered migrations
 # and FastAPI mounts. The unit suite includes source-addition and stale-doc
@@ -119,6 +122,16 @@ test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contrac
 test-sot-source-inventories:
 	python3 scripts/check_sot_source_inventories.py
 	python3 -m unittest discover -s scripts -p "test_check_sot_source_inventories.py" -v
+
+# The public MCP inventory comes from an offline FastMCP registration. The
+# explicit category map must cover the live tool set exactly, and the unit suite
+# proves that both newly registered and removed tools fail closed.
+test-mcp-tools-reference:
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python ../scripts/regenerate_mcp_reference.py --check
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python -m unittest discover -s ../scripts -p "test_regenerate_mcp_reference.py" -v
+
+regenerate-mcp-tools-reference:
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python ../scripts/regenerate_mcp_reference.py
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
@@ -267,7 +280,7 @@ test-tmux-guard:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-migrate-agent-tmux.sh
 
 test-a2a:
-	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./a2a ./a2agw ./awid -count=1
+	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./a2a ./a2agw ./awid ./tools/a2a-gateway-check-workspace -count=1
 	cd cli/go && GOCACHE=/tmp/go-build go test ./cmd/aw ./cmd/aweb-a2a-gw -run A2A -count=1
 	cd awid && uv run pytest tests/test_a2a_publication_route.py -q
 	./scripts/check-a2a-copy-guardrails.sh
@@ -284,6 +297,10 @@ test-a2a-gateway-e2e:
 
 check-a2a-copy-guardrails:
 	./scripts/check-a2a-copy-guardrails.sh
+
+check-extension-docs:
+	python3 scripts/check-extension-docs.py
+	python3 scripts/check-extension-docs.py --self-test
 
 selfhost-up:
 	cd server && docker compose up --build -d
@@ -453,19 +470,21 @@ release-awid-pypi-push:
 
 release-a2a-gateway-check:
 	./scripts/check-a2a-copy-guardrails.sh
-	cd cli/go && GOCACHE=/tmp/go-build go test ./a2a ./a2agw ./awid ./cmd/aweb-a2a-gw -count=1
+	cd cli/go && GOCACHE=/tmp/go-build go test ./a2a ./a2agw ./awid ./cmd/aweb-a2a-gw ./tools/a2a-gateway-check-workspace -count=1
 	docker build -f cli/go/Dockerfile.a2a-gw \
 		--build-arg VERSION=$(A2A_GATEWAY_VERSION) \
 		--build-arg RELEASE_TAG=a2a-gw-v$(A2A_GATEWAY_VERSION) \
 		--build-arg COMMIT=$$(git rev-parse HEAD) \
 		--build-arg DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
 		-t a2a-gateway:release-test cli/go
-	docker run --rm \
-		--user "$$(id -u):$$(id -g)" \
-		-v "$(CURDIR)/docs/examples/a2a-gateway.yaml:/config/gateway.yaml:ro" \
-		-v "$(CURDIR):/workspace:ro" \
-		a2a-gateway:release-test \
-		sh -c 'aweb-a2a-gw -config /config/gateway.yaml -workspace-dir /workspace -check'
+	@set -eu; workspace="$$(mktemp -d)"; trap 'rm -rf "$$workspace"' EXIT; \
+		(cd cli/go && go run ./tools/a2a-gateway-check-workspace -output "$$workspace"); \
+		docker run --rm \
+			--user "$$(id -u):$$(id -g)" \
+			-v "$(CURDIR)/docs/examples/a2a-gateway.yaml:/config/gateway.yaml:ro" \
+			-v "$$workspace:/workspace:ro" \
+			a2a-gateway:release-test \
+			aweb-a2a-gw -config /config/gateway.yaml -workspace-dir /workspace -check
 	./scripts/e2e-a2a-gateway-docker.sh
 
 release-a2a-gateway-tag:

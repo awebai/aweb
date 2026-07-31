@@ -91,8 +91,6 @@ security and protocol authority.
   request contract.
 - [AWID A2A publication contract](a2a-awid-publication-contract.md) — publication
   and bridge-delegation assertions.
-- [Support contract v1](support-contract-v1.md) — public support and diagnostic
-  interoperability contract.
 
 </details>
 
@@ -146,8 +144,6 @@ profiles and runtime materialization are optional.
   OSS/hosted split.
 - [Materialize and start one team member](add-ai-tool.md) — optional
   member/home/worktree/runtime workflow.
-- [App manifest schema](restructuring/app-manifest-schema.md) — working extension
-  contract awaiting relocation out of restructuring material.
 
 </details>
 
@@ -157,15 +153,20 @@ Experimental means implemented or actively specified with a deliberately
 narrower stability promise. It does not mean planned commands should be
 presented as shipped.
 
-- [A2A interoperability](a2a.md) — experimental external agent protocol surface.
-- [Mutation hook seam](aw-hooks-sot.md) — must be rewritten to the public
-  `on_mutation` seam actually exposed by source.
+- [A2A interoperability](a2a.md) — shipped experimental CLI/gateway and
+  self-hosted/BYOT bridge surface.
+- [Mutation hook seam](aw-hooks-sot.md) — shipped experimental in-process
+  `app.state.on_mutation` callback and exact current route call sites.
+- [App manifest v1](app-manifest.md) — current experimental manifest and
+  byte-identical CLI interpretation contract.
+- [App registry and team grants](app-registry.md) — current experimental install,
+  digest-pin, and grants read surface.
+- [App-emitted events and subscriptions](app-events.md) — shipped experimental
+  emit auth, subscription, SSE, and channel-core consumer contract.
+- [Support contract v1](support-contract-v1.md) — current registry-read envelope
+  and doctor compatibility boundary; other producers remain experimental.
 - [Hermes gateway integration memo](hermes-aweb-gateway-integration.md) —
   prototype integration evidence.
-- [App-emitted events and subscriptions](restructuring/app-event-subscriptions-contract.md)
-  — experimental app event contract awaiting relocation.
-- [App registry and grants read API](restructuring/app-registry-grants-read-api.md)
-  — experimental extension seam awaiting relocation.
 - [Session admission leases](session-admission-leases.md) — shipped experimental
   session primitive with explicit non-fencing limits.
 
@@ -181,8 +182,8 @@ notice where one exists.
 - [Retired bootstrap layout contract](bootstrap-layout-contract.md) — historical
   layout compatibility.
 - [Coordination](coordination.md) — overlapping guide pending consolidation.
-- [Messaging](messaging.md) — overlapping guide pending correction and
-  consolidation into the canonical messaging workflow.
+- [Messaging documentation authority](messaging.md) — compatibility authority
+  map for current user, wake, routing, encryption, and conformance documents.
 - [Team create and membership model](restructuring/team-create-and-membership-model.md)
   — compatibility command facts pending consolidation.
 - [CLI setup surface release gates](setup-surface-release-gates.md) — compatibility
@@ -201,12 +202,12 @@ notice where one exists.
 - [Configuration](configuration.md) — local `.aw/` files, environment, and docs
   injection.
 - [Current limitations](current-limitations.md) — known operational boundaries.
-- [Messaging contract matrix](messaging-contract-matrix.md) — conformance and
-  release-case inventory pending maintainer consolidation.
-- [Protocol conformance vectors](vectors/README.md) — canonical index currently
-  names 8 of 15 tracked JSON fixtures. The seven not yet named there are three
-  A2A fixtures, two atomic-address-claim fixtures, the E2E cross-language
-  fixture, and team-auth envelope v2; all remain public conformance artifacts.
+- [Messaging contract matrix](messaging-contract-matrix.md) — subordinate
+  maintainer cases for routing, read state, chat waits, reconnect, and content
+  modes.
+- [Protocol conformance vectors](vectors/README.md) — canonical index for all 16
+  root JSON fixtures, with current, experimental, compatibility, and digest-only
+  authority distinguished.
 - [Self-hosted A2A gateway configuration](examples/a2a-gateway.yaml) — retained
   public YAML example for advanced self-hosted/BYOT gateway operation.
 
@@ -219,8 +220,8 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   extension workflow.
 - [Open-source repository boundary](oss-boundary.md) — canonical framework versus
   application ownership and `.aw/` state policy.
-- [A2A gateway release runbook](a2a-release-runbook.md) — release and rollback
-  controls pending standalone-hosting normalization.
+- [A2A gateway release runbook](a2a-release-runbook.md) — public OSS gateway,
+  AWID, self-hosted/BYOT release and rollback controls.
 - [E2E messaging rollout runbook](e2e-release-rollout-runbook.md) — generic OSS
   compatibility, readiness, evidence, and rollback procedure.
 - [Optional Library integration test stack](e2e-library-stack.md) — advanced
@@ -259,9 +260,9 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   — remove after confirming incorporated text.
 - [Duplicate 1:1 conversation cleanup](duplicate-1to1-conversation-cleanup.md) —
   remove after consumer migration and reusable-authority extraction.
-- [Federated messaging architecture](federation-architecture.md) — consolidate
-  durable rationale into current routing authority, then relocate the snapshot
-  to the reviewed historical archive location.
+- [Federated messaging architecture](federation-architecture.md) — durable rules
+  are consolidated in current routing authority; relocate this historical
+  snapshot during the reviewed archive/pruning lane.
 - [Launch readiness](launch-readiness-sot.md) — superseded product narrative;
   extract current facts and remove after index/consumer migration.
 - [naapp move preflight](naapp-move-preflight.md) — completed preflight; remove

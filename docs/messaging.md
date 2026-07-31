@@ -1,171 +1,57 @@
-# Messaging
+# Messaging documentation authority
 
-`aw` has two messaging modes:
+Status: **compatibility authority map**. This stable URL routes each question to
+one current document; it is not a second mail/chat workflow.
 
-- mail: asynchronous, durable, good for handoffs and updates
-- chat: synchronous, presence-aware, good for quick coordination
+## Use the right authority
 
-Mail and chat are identity-scoped. First contact to a global address
-(`domain/name`) resolves through awid to the recipient identity, current key,
-and address-route delivery origin, then aweb applies the recipient's
-`inbound_mode`: `open` (**All**) or `team_and_contacts` (**Team and contacts**).
-Verified same-team membership is delivery authority for team-scoped work;
-otherwise `team_and_contacts` requires an exact active contact. Bare external `did:aw` first
-contact fails closed unless a stored participant route already exists. Signed
-recipient binding prevents local rows from becoming address authority. The
-normative routing and identity trust boundary is
-[`identity-messaging-contract.md`](identity-messaging-contract.md). The normative
-E2E encrypted-message contract is
-[`e2e-messaging-contract.md`](e2e-messaging-contract.md).
+| Question | Authority |
+| --- | --- |
+| Everyday mail and chat | [Mail and chat](mail-and-chat.md) — send, exact fetch, reply, acknowledgement, chat waiting, and shell-safe bodies. |
+| Wake, presentation, and reconnect | [Receiving events and waking agents](receiving-events.md) — events as wake signals, presentation points, read state, fresh snapshots, and the current no-cursor reconnect contract. |
+| Identity, address, and stored-route authority | [Identity and messaging contract](identity-messaging-contract.md) — first contact, delivery policy, participant routes, and federation compatibility. |
+| Encrypted content and downgrade policy | [E2E messaging contract](e2e-messaging-contract.md) and [legacy plaintext policy](e2e-legacy-plaintext-policy.md). |
+| Maintainer conformance cases | [Messaging contract matrix](messaging-contract-matrix.md) — subordinate release cases, not a competing behavior contract. |
+| CLI command inventory | [Generated CLI command reference](cli-command-reference.md), produced from current help. Live `aw <command> --help` is direct authority if a checked-in generated copy is stale. |
+| OSS MCP tool inventory | Generated [MCP tools reference](mcp-tools-reference.md), checked against live server registration. |
 
-Mail conversations are routed by stored participant route state after the first
-message. A participant can reply to an existing conversation without
-rediscovering the address, but the recipient's current delivery policy is still
-checked. Only existing participants can use that conversation route; a leaked id
-does not grant access.
+When these documents appear to disagree, follow the specialized authority in the
+table and correct the stale document. Do not combine partial claims from several
+pages into a new behavior.
 
-## E2E vs server-readable hosted messaging
+## Cross-surface boundaries
 
-For encrypted message v2, plaintext subject/body never crosses AC/aweb servers.
-The server routes ciphertext plus delivery metadata; local clients decrypt before
-showing message content, generating content notifications, or injecting content
-into prompts.
+Server acceptance, a wake signal, runtime presentation, recipient read state,
+and sender-visible evidence are separate facts. The user and event guides define
+where each supported surface changes read state. A message read is not a
+transaction around model or tool execution.
 
-Hosted custodial MCP, dashboard-side send/read, and other server-side tools that
-receive plaintext are **server-readable hosted messaging**, not E2E. Do not call
-those modes E2E unless plaintext and decryption stay fully outside AC/aweb.
+`message_id` identifies one durable item. Mail `conversation_id` identifies a
+thread and its stored participant route. Chat uses `session_id` as its
+`conversation_id`. Those identifiers select existing state; possession of an id
+alone does not grant participant or routing authority.
 
-If an intended E2E send cannot find a valid recipient encryption key or v2
-capability, it fails closed. Recipient encryption keys and recipient E2E
-capability must be identity-authorized; service signatures can assert only route
-support, not recipient key authority. There is no silent plaintext fallback; the
-user must explicitly choose `--plaintext` when that server-readable mode is
-allowed. Losing local archived encryption keys makes historical
-encrypted messages unrecoverable; AC/aweb cannot decrypt them for support.
+The raw communication event stream is a wake path, not durable content or an
+audit log. Current events have no resumable server cursor. Consumers reconnect,
+fetch authoritative mail/chat state, deduplicate stable ids, and make runtime
+actions idempotent as described in the event guide.
 
-Interim CLI posture: current aw sends mail/chat as server-readable plaintext by
-default. Use `--e2ee` only when the human explicitly wants encrypted send; that
-path creates and publishes the sender's local encryption key when needed and
-fails closed before storage if the recipient lacks a valid E2E key/capability.
-It cannot create keys for another recipient. If the recipient is still running
-old aw/channel/Pi and has no published encryption key, the sender may use the
-plaintext default or `--plaintext` only for a server-readable upgrade note when
-policy and the human allow it.
+## Content mode and custody boundary
 
-Async mail remains readable after ingestion. Clients must not reject already
-accepted stored mail merely because its original timestamp is old; the freshness
-window is an ingestion rule, while later reads still verify signatures, hashes,
-policy, and envelope consistency.
+Current CLI mail/chat defaults to server-readable plaintext. Explicit `--e2ee`
+selects encrypted delivery and fails closed when the required identity-authorized
+key or capability is unavailable; it never silently downgrades.
 
-For E2E messages, the server may retain routing and delivery metadata such as
-participants, timestamps, message/conversation ids, key ids, ciphertext size,
-delivery/read/ack state, and error state. Local/team identities may omit
-`stable_id` and address fields rather than sending empty strings. Sender-declared
-routing or policy fields are signed context/debugging data, not delivery-policy
-authority; the server recomputes delivery authorization from trusted state.
-Support, billing, abuse, and retention workflows use metadata-only signals unless
-the customer exports decrypted content from a local client. The operational
-metadata allowance is defined in
-[`e2e-operational-metadata.md`](e2e-operational-metadata.md).
+For **self-custodial encrypted v2**, plaintext subject/body stays outside the
+routing service. The local client encrypts before send and decrypts before
+presentation. The routing service may retain only the ciphertext and allowed
+metadata defined by the E2E contract.
 
-Existing plaintext history stays `legacy_plaintext_v1`: it may remain readable
-while retained, but it must be labeled as legacy/server-readable and must never
-be described as retroactively E2E. The no-downgrade and mixed-version policy is
-defined in
-[`e2e-legacy-plaintext-policy.md`](e2e-legacy-plaintext-policy.md). An intended
-E2E send may use plaintext only through an explicit, separately named legacy
-plaintext command or flag when policy allows it.
+Hosted custodial MCP, dashboard compose/read, and any server-side tool that
+receives or decrypts plaintext are **server-readable hosted messaging**, not
+proof of self-custodial E2E behavior. The same v2 wire format does not by itself
+establish the custody boundary.
 
-Publishing ripple for E2E wording changes: keep the aw CLI docs/help, PyPI
-`aweb`/server docs, AC dashboard copy, canonical skills, Codex/Claude skill
-packages, and Pi/channel package wording aligned. The staged rollout and
-mixed-version release checklist lives in
-[`e2e-release-rollout-runbook.md`](e2e-release-rollout-runbook.md). Do not
-publish or tag from a docs-only edit unless the release owner routes that
-action.
-
-## Mail
-
-For Markdown, reports, or command examples, write the message to a file and use
-`--body-file`. This avoids shell expansion before `aw` starts; see
-[Mail and chat](mail-and-chat.md#shell-safe-message-bodies) for the boundary and
-safe fallback details.
-
-Send a message:
-
-```bash
-aw mail send --to eve --subject "Handoff" --body-file message.md
-```
-
-Reply by conversation id when continuing a known conversation:
-
-```bash
-aw mail send --conversation-id <conversation-id> --body-file message.md
-```
-
-Priorities are:
-
-- `low`
-- `normal`
-- `high`
-- `urgent`
-
-Example:
-
-```bash
-aw mail send --to dave --priority urgent --body-file message.md
-```
-
-Read inbox messages:
-
-```bash
-aw mail inbox
-aw mail inbox --show-all
-```
-
-Important behavior: there is no separate `aw mail ack` command in the current
-CLI. Reading mail with `aw mail inbox` marks unread messages as acknowledged.
-
-## Chat
-
-Start a synchronous exchange and wait for a reply:
-
-```bash
-aw chat send-and-wait eve --body-file message.md --start-conversation
-```
-
-Reply in an existing conversation:
-
-```bash
-aw chat send-and-wait eve --body-file message.md
-```
-
-Send a message and leave:
-
-```bash
-aw chat send-and-leave eve --body-file message.md
-```
-
-Other useful commands:
-
-```bash
-aw chat pending
-aw chat open eve
-aw chat history eve
-aw chat extend-wait eve --body-file message.md
-```
-
-`aw chat open` is optimized for pending replies and may prioritize a waiting
-conversation. `aw chat history` selects the latest active conversation for the
-target.
-
-## When To Use Which
-
-- Use mail for non-blocking updates, handoffs, and status reports.
-- Use chat when you need an answer in the current working session.
-- If a chat becomes asynchronous, move the longer update to mail.
-
-## `aw run` Integration
-
-If you are using `aw run`, incoming mail and chat can wake the agent loop.
-`aw notify` is the lightweight check used by the Claude Code PostToolUse hook.
+Losing archived self-custodial encryption keys makes the corresponding history
+unrecoverable by the routing service or support. Key, envelope, downgrade,
+metadata, and retention rules remain solely in the E2E contract family.

@@ -1,327 +1,204 @@
-# A2A Gateway Release Runbook
+# A2A gateway release runbook
 
-This runbook defines release sequencing, live verification, site-copy gates, and rollback posture for the aweb A2A gateway product slice described in [`a2a.md`](a2a.md) and [`a2a-awid-publication-contract.md`](a2a-awid-publication-contract.md).
+Status: **current public maintainer runbook for the experimental OSS A2A
+surface**. Owner: aweb OSS maintainers. This runbook covers the gateway binary,
+AWID publication primitive, public container, self-hosted/BYOT configuration,
+and public conformance evidence in this repository.
 
-The goal is a product deployment, not a hackathon-only adapter: schema-correct A2A cards, a real `aweb-a2a-gw` binary, AWID publication/delegation assertions, and live route verification before any customer-facing trust claim.
+A hosted operator's route database, custody service, deployment credentials,
+and production rollout are application-owned. They must have a private runbook
+and are not release authority for the OSS gateway.
 
-## Release Surfaces
+## Release surfaces
 
-The A2A slice can touch these release surfaces:
-
-| Surface | Why |
+| Surface | Authority |
 |---|---|
-| `awid-service` PyPI | AWID A2A publication/delegation write and read APIs, migrations, verification data. |
-| `awid` GHCR | Hosted AWID service image for `api.awid.ai`. |
-| `aweb` PyPI / server tag | Shared server/library code if AC imports new aweb APIs. |
-| `@awebai/aw` npm | `aw a2a` CLI and packaged `aweb-a2a-gw` binary. |
-| `a2a-gateway` GHCR | Hosted `a2a.aweb.ai` data-plane service running `aweb-a2a-gw`. |
-| AC / Render | Dashboard/control-plane route management and hosted-custodial publication paths if used. |
-| `site/` | Public A2A product copy after live verification only. |
-| docs/skills/Pi | Operator and agent instructions if the public workflow changes. |
+| Agent Card / JSON-RPC / bridge behavior | `cli/go/a2a/`, `cli/go/a2agw/`, and `docs/vectors/a2a-v1.json` / `a2a-bridge-envelope-v0.json` |
+| `aw a2a` commands | `cli/go/cmd/aw/a2a.go` and live Cobra help |
+| Gateway binary/image | `cli/go/cmd/aweb-a2a-gw/`, `cli/go/Dockerfile.a2a-gw`, and release workflow/Make targets |
+| AWID publication/delegation | `a2a-awid-publication-contract.md`, `awid/src/awid_service/routes/a2a_publications.py`, migration `007_a2a_publications.sql`, and publication vector |
+| Public operator config | `docs/examples/a2a-gateway.yaml` |
 
-Hestia owns release mechanics. Do not push release tags or ask Juan to deploy from this document alone; use it as the gate checklist.
+The A2A gateway is experimental. Releasing it does not move A2A into aweb's
+default communication journey and does not promise persistent A2A task storage,
+streaming, push notifications, or gateway E2E.
 
-## Pre-Release Gates
+## Required pre-release gates
 
-Before any release handoff:
-
-1. Athena signs off all protocol-affecting A2A changes: card schema, method names, `returnImmediately` behavior, path convention, AWID publication fields, custody/delegation model, digest bytes, and idempotency natural keys.
-2. Mia signs off implementation-readiness and code slices that affect storage, publication, gateway routing, public-route security, packaging, and release sequencing.
-3. `make test-a2a` passes at the exact release candidate SHA.
-4. `make test-a2a-gateway-e2e` passes locally. This starts the real aweb + AWID Docker Compose backend, runs the A2A gateway container, and proves SendMessage -> real aweb mail -> agent reply -> GetTask completion for the self-host/static config lane.
-5. For the hosted product lane, `cd ../ac && make test-a2a-gateway-ac-managed-e2e` passes locally. This starts real AC + aweb + AWID Docker services, provisions an AC-managed route, runs the gateway container in AC-managed mode, sends `SendMessage`, receives a real hosted aweb reply, completes `GetTask`, and asserts `ListTasks` isolation.
-6. `make check-a2a-copy-guardrails` passes in this repo, and AC's A2A language guardrail test passes in `../ac`. These checks prevent premature trust/E2EE wording in public docs, skills, generated references, dashboard copy, and site copy.
-7. `scripts/regenerate-cli-reference.sh --check` passes at the exact release candidate SHA.
-8. `git diff --check` is clean in every touched repo.
-9. The generated `@awebai/aw` package includes both `aw` and `aweb-a2a-gw` binaries and a smoke test invokes `aweb-a2a-gw --help` from the packed artifact.
-10. No site/docs/skills copy claims `verified`, `AWID-backed`, or `authorized for address` for A2A routes unless the live AWID publication and gateway verification gates below have already passed.
-11. No site/docs/skills copy calls hosted A2A gateway traffic end-to-end encrypted.
-12. Known fixture limitation is recorded: the A2A AWID publication fixture pins canonical bytes and signed-assertion digest bytes, while real Ed25519 verification is covered by runtime AWID tests. A future release-blocking fixture upgrade should add static real-signature vectors for both publication and delegation assertions before relying on fixture-only cryptographic verification.
-
-## Hosted Gateway Deployment Model
-
-The hosted gateway is not a static card host and is not a manually packaged aweb workspace. In the product path, AC is the control plane and custody boundary; `aweb-a2a-gw` is the data plane.
-
-AC owns:
-
-- platform gateway service identity creation, hosted custody, and internal transport authority state;
-- encrypted storage of gateway signing material;
-- route/card/auth/rate/task policy;
-- AWID publication/delegation projection and verification state;
-- route disable, revocation, rotation, and compromise response.
-
-The gateway deployment receives only minimal AC-managed configuration:
-
-```yaml
-listen: ":8080"
-registry_url: "https://api.awid.ai"
-ac_config:
-  base_url: "https://app.aweb.ai"
-  gateway_id: "a2a-gateway"
-  bearer_token_env: "AWEB_A2A_GATEWAY_CONFIG_TOKEN"
-```
-
-The hosted deployment config must not contain route definitions, `.aw` workspace state, signing keys, controller keys, user API keys, raw A2A caller identifiers, or caller plaintext. Static YAML route files remain supported only for local development, self-host, and test fixtures such as [`docs/examples/a2a-gateway.yaml`](examples/a2a-gateway.yaml).
-[`docs/examples/a2a-gateway-ac-managed.yaml`](examples/a2a-gateway-ac-managed.yaml)
-is the hosted-shape config template.
-
-Before first hosted deployment:
-
-1. AC production has `AWEB_A2A_GATEWAY_CONFIG_TOKEN` set to the same secret value mounted in the gateway Render service. The token is a service credential for fetching runtime config and bridge endpoints; it is not a user API key.
-2. AC production has the hosted-custodial key protection env vars required by the gateway identity custody implementation.
-3. An AC operator provisions the single platform-managed hosted gateway identity through the guarded admin setup path. The default identity is `a2a-gateway` at `a2a.aweb.ai/gateway`. It must be dedicated to the gateway, must not reuse a human agent key, and must not be exposed as a customer dashboard control.
-4. Customers or operators create route records in AC for target agents they control. AC assigns the hosted gateway identity and collision-safe route ids server-side; route forms must not ask customers to choose a gateway identity.
-5. An operator publishes/refreshes AWID publication state in AC for routes that should become customer-visible as verified. The hosted product path does not require Render shell access.
-6. The gateway Render service starts with the minimal config above, fetches runtime config from AC, and reports AC config plus gateway identity dimensions in `/health`.
-
-Rotation procedure:
-
-1. Create or rotate the gateway identity in AC.
-2. Publish or update route delegations to the replacement gateway identity through the reviewed AC/AWID route path.
-3. Wait for the gateway to fetch a fresh config revision.
-4. Verify `/health` and the live route publication gate.
-5. Revoke the old route delegation and old gateway team certificate through reviewed AC/AWID paths.
-
-For suspected gateway key compromise, disable public routes in AC or stop the gateway first, then revoke the old delegation/certificate, then rotate the identity. Do not keep a compromised gateway online while relying on future route updates to limit damage.
-
-## Release Order
-
-If the release includes AWID migrations or AWID API changes:
-
-1. Release `awid-service` first.
-2. Let the GHCR image build.
-3. Apply AWID migrations and deploy `api.awid.ai`.
-4. Verify `api.awid.ai/health` reports the new version and all migrations are applied. The first A2A gateway release requires AWID migration `007_a2a_publications.sql` to be applied before the gateway deploy proceeds.
-5. Smoke the A2A AWID routes directly:
-   - delegation publish succeeds for a self-custodial route;
-   - publication publish succeeds;
-   - same active route with identical natural key returns `already_applied`;
-   - same route with different `card_url`, `rpc_url`, `card_revision`, gateway, or digest returns structured 409;
-   - anonymous lookup returns the active publication fields.
-
-Only after AWID is live:
-
-6. Release the aweb CLI/server surfaces that call the new AWID A2A APIs.
-7. Verify `npm view @awebai/aw version` and install/run the exact published version.
-8. From the installed package, smoke:
-   - `aw a2a card <card-url>`;
-   - `aw a2a publish <card-url> ...` from a self-custodial global identity workspace;
-   - `aweb-a2a-gw --help`;
-   - `aweb-a2a-gw --config <config> --check`.
-
-If the release includes AC or hosted gateway deployment:
-
-9. Deploy AC after its migrations and backend/frontend release gates pass. AC must expose route management, gateway identity custody, publication/refresh/revoke, runtime config, bridge send, bridge poll, route-change audit events, dashboard plaintext-boundary copy, and the AC-managed Docker e2e command listed above.
-
-10. Build and publish the gateway image before creating/updating the Render service:
-
-   The banked `ghcr.io/awebai/a2a-gateway:1.26.9` image does not support
-   AC-managed runtime config. It was built before the gateway learned
-   `ac_config`, AC bridge transport, AWID served-card digest enforcement, and
-   AC config expiry rejection for new tasks. Do not deploy that image for the
-   AC-managed product path.
-
-   Because the gateway tag currently follows `CLI_VERSION`, and
-   `CLI_VERSION` follows `server/pyproject.toml`, cutting an AC-managed
-   gateway image requires a fresh aweb server/CLI version bump at a source SHA
-   that includes the AC-managed gateway commits. The next AC-managed gateway
-   release must use a fresh tag such as `a2a-gw-v1.26.11` or the next reviewed
-   release-train version. If the gateway is later versioned independently,
-   update this runbook before release.
-
-   `make release-a2a-gateway-check` is the narrow gateway container lane. It assumes the server, AWID, migration, and A2A release-ready checks for the same source SHA have already passed. For a fresh full release train, run the full server/AWID release-ready gates for that train before this narrow gateway check.
-
-   ```bash
-   make release-a2a-gateway-check
-   make release-a2a-gateway-tag
-   make release-a2a-gateway-push
-   ```
-
-   The `a2a-gw-vX.Y.Z` tag publishes:
-
-   ```text
-   ghcr.io/awebai/a2a-gateway:X.Y.Z
-   ghcr.io/awebai/a2a-gateway:latest
-   ```
-
-11. Deploy `a2a.aweb.ai` as a Render Web Service backed by the gateway image, not as a static site and not as a Hetzner/systemd service for this slice. The service is the A2A data plane; it must handle JSON-RPC task calls and cannot be replaced by static card hosting. A Hetzner deployment can be revisited later only with a separate reviewed runbook.
-
-    Render does not auto-deploy from the GHCR push. After the tag workflow publishes the image, Hestia mails Juan with the exact image tag and asks him to trigger the Render deploy manually. Hestia waits for the `/health` flip before posting verified-live.
-
-    Minimum Render configuration:
-
-    ```text
-    Image: ghcr.io/awebai/a2a-gateway:X.Y.Z
-    Port: 8080 or Render-provided $PORT
-    Env:
-      AWEB_A2A_GATEWAY_CONFIG_TOKEN=<same service token configured in AC>
-      AWEB_A2A_GW_AC_BASE_URL=https://app.aweb.ai
-      AWEB_A2A_GW_ID=a2a-gateway
-      AWEB_A2A_GW_REGISTRY_URL=https://api.awid.ai
-    Command:
-      default image command is acceptable.
-    Secret files:
-      none required for the hosted AC-managed product path
-    ```
-
-    If a mounted config file is present, it still takes precedence. If the
-    configured file is missing and `AWEB_A2A_GATEWAY_CONFIG_TOKEN` is set, the
-    gateway falls back to the hosted AC-managed environment above. This keeps
-    Render deploys from failing before they can reach AC while still failing
-    closed when the service token is absent.
-
-    Do not upload `.aw` workspace tarballs, route YAML, signing keys, controller keys, or customer-specific route state to Render for the hosted product path. The abandoned manual lane is not customer documentation and must not be used for the product deploy.
-
-    The hosted gateway identity is a platform service identity and bridge
-    sender, not a customer-owned team member. Operators must not be asked to
-    choose a customer `owner_team_id` for the gateway. If the current AC
-    implementation reuses hosted workspace/team-certificate machinery for aweb
-    transport authorization, AC must resolve that as an internal
-    transport-authority reference from platform-admin context or server-side
-    platform configuration. Customer route records still carry their own
-    `owner_team_id`; that field scopes the customer's route, not the gateway
-    service identity.
-
-12. Confirm TLS terminates at the public host and `/.well-known/agent-card.json`, `/a2a/agents/<route>/agent-card.json`, and `/a2a/agents/<route>/rpc` are reachable.
-
-13. Verify `https://a2a.aweb.ai/health` before marking the gateway live. Required fields:
-
-    ```json
-    {
-      "status": "healthy",
-      "build": {
-        "release_tag": "a2a-gw-vX.Y.Z",
-        "git_sha": "<release sha>"
-      },
-      "aweb_version": "X.Y.Z",
-      "awid_service_version": ">=0.5.11",
-      "awid_registry": {
-        "reachable": true,
-        "compatible": true,
-        "version": "0.5.11",
-        "minimum_version": "0.5.11"
-      },
-      "ac_config": {
-        "enabled": true,
-        "gateway_id": "a2a-gateway",
-        "config_revision": "<opaque AC revision>",
-        "expired": false,
-        "routes": 1
-      },
-      "gateway_identity": {
-        "status": "active",
-        "usable": true
-      }
-    }
-    ```
-
-    `build.release_tag` must match the pushed `a2a-gw-vX.Y.Z` tag, `build.git_sha` must match the release source SHA, `awid_registry.reachable` must be true against `api.awid.ai`, and `awid_registry.compatible` must be true. `ac_config.enabled` must be true, `ac_config.expired` must be false, `gateway_identity.usable` must be true, and the gateway must report an AWID registry `version` or `service_version` greater than or equal to `awid_registry.minimum_version` before Hestia marks the service live.
-
-## Live Route Publication Gate
-
-For each public route, record:
-
-- aweb address, e.g. `a2a.aweb.ai/research`;
-- route id;
-- card URL;
-- RPC URL;
-- card digest;
-- gateway identity;
-- publication assertion id;
-- delegation id and digest when delegated;
-- expiry;
-- command transcript for `aw a2a publish`;
-- command transcript for `aw a2a card --address`.
-
-The minimum live route smoke:
+From a clean reviewed candidate in the aweb repository:
 
 ```bash
-aw a2a card https://a2a.aweb.ai/a2a/agents/research/agent-card.json \
-  --address a2a.aweb.ai/research \
-  --registry-url https://api.awid.ai
-
-aw a2a send https://a2a.aweb.ai/a2a/agents/research/agent-card.json \
-  "Return one sentence proving this A2A route reached the real aweb agent." \
-  --no-wait
-
-aw a2a status https://a2a.aweb.ai/a2a/agents/research/agent-card.json <task-id>
+make test-a2a
+make release-a2a-gateway-check
 ```
 
-The status path must show a task state produced by the gateway from a real aweb agent reply. Do not count a gateway-only fixture response as live product verification.
+`make test-a2a` runs:
 
-## Verification Labels
+- Go card/client/gateway/AWID and conformance packages;
+- A2A-focused `aw` and gateway command tests;
+- AWID publication route tests; and
+- the public-copy wording guard.
 
-Hosted gateway reply handling may surface `verified_custodial` for an
-encrypted v2 reply that AC decrypted for the hosted gateway identity. This
-label has a narrow meaning: the normal `decrypt_e2ee_message` path verified
-the encrypted v2 envelope signature, `signing_key_id == from.did`, ciphertext
-hash/size, key-wraps hash, envelope-derived AAD, `inner_header_hash`, and the
-inner-header mirror before plaintext was accepted.
+`make release-a2a-gateway-check` additionally builds the release Docker image,
+validates the maintained public YAML inside the container, and runs the real
+Docker gateway journey against aweb and AWID.
 
-`verified_custodial` is therefore valid for the gateway's strict reply gate,
-but it is not an E2EE/local-client verification claim and it is not the same as
-a legacy plaintext row-signature verification. If hosted decrypt fails, or if a
-future implementation bypasses the encrypted v2 signature/hash/header checks,
-the gateway must not promote the message to `verified_custodial`.
+Also run:
 
-## Site and Copy Gate
+```bash
+./scripts/check-doc-paths.sh
+./scripts/check-a2a-copy-guardrails.sh
+git diff --check
+git status --short
+```
 
-Olivia owns site-copy implementation. The release owner must not ask Olivia to publish A2A trust claims until:
+The copy guard's control is its forbidden public wording set: it fails if
+non-authority copy claims verified/AWID-backed routing before the verification
+gates or calls gateway traffic E2E. The source contracts are allowlisted only so
+they can state those prohibitions precisely.
 
-1. Athena and Mia have approved the implementation;
-2. Hestia has verified AWID and CLI release surfaces live;
-3. all public routes have passed the live route publication gate;
-4. gateway plaintext boundary copy is present;
-5. the site copy distinguishes:
-   - generic A2A interop;
-   - AWID-verified publication after the live route publication gate has passed;
-   - hosted gateway plaintext boundary;
-   - no E2EE claim for hosted gateway traffic.
+## Candidate evidence
 
-Allowed pre-live wording:
+Record:
 
-- "A2A gateway support is in implementation."
-- "Aweb uses AWID as the naming and identity layer for A2A publication."
-- "Hosted A2A gateway traffic is plaintext to the gateway operator."
+- exact candidate commit from `git rev-parse HEAD`;
+- exact non-merge commit count reviewed;
+- `make test-a2a` and `make release-a2a-gateway-check` results;
+- the gateway image tag and source repository/commit stamped into the image;
+- AWID service version and confirmation that migration
+  `007_a2a_publications.sql` is applied on the target registry;
+- validated public config digest or the operator's reviewed derivative;
+- live Agent Card URL, digest, RPC URL, route id, and publication assertion id;
+- whether the route is local/unverified or AWID publication-verified; and
+- rollback owner and tested removal/disable path.
 
-Blocked before live route verification:
+Do not type or expand abbreviated hashes manually. Read exact hashes from Git at
+the point they are recorded.
 
-- "verified A2A agents";
-- "AWID-backed A2A routes";
-- "authorized for address X";
-- any wording implying hosted gateway traffic is end-to-end encrypted.
+## Release order
+
+When both AWID and gateway behavior change:
+
+1. Land reviewed protocol/source/vector changes.
+2. Deploy an AWID version that understands the new assertion shape and has all
+   ordered migrations applied.
+3. Confirm the registry `/health` response is reachable and version-compatible
+   with the gateway binary.
+4. Build and publish the reviewed gateway image.
+5. Deploy the gateway with a dedicated workspace identity and reviewed config.
+6. Publish or refresh the route/delegation only after the served card is live
+   and its digest is known.
+7. Verify the served card back through AWID.
+8. Enable public traffic last.
+
+Do not edit migration `007_a2a_publications.sql` after application. Every schema
+change is a new ordered AWID migration.
+
+## Image and configuration check
+
+The release image must pass its own configuration check:
+
+```bash
+workspace="$(mktemp -d)"
+trap 'rm -rf "$workspace"' EXIT
+(
+  cd cli/go
+  go run ./tools/a2a-gateway-check-workspace -output "$workspace"
+)
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$PWD/docs/examples/a2a-gateway.yaml:/config/gateway.yaml:ro" \
+  -v "$workspace:/workspace:ro" \
+  aweb-a2a-gateway:<candidate> \
+  aweb-a2a-gw -config /config/gateway.yaml -workspace-dir /workspace -check
+```
+
+The generator refuses a non-empty output directory. It creates a new random
+throwaway member signing key and a matching synthetic controller-signed team
+certificate for
+`a2a-check.invalid`; it never reads an existing workspace. The recorded server
+URL points at a local refusing port and `-check` does not contact it.
+
+Never mount a real production workspace into an unreviewed image or CI log. The
+`-check` result proves parsing and gateway construction only; the Docker e2e
+proves live bridge behavior.
+
+Public/static config contains no signing key, team/namespace controller key,
+API key, or bearer token. Secrets come from the dedicated workspace or named
+environment inputs supported by the operator deployment.
+
+## Live verification gate
+
+For a route intended to be AWID-verified:
+
+```bash
+aw a2a card https://gateway.example/a2a/agents/<route>/agent-card.json \
+  --address example.com/agent \
+  --registry-url https://registry.example
+```
+
+The release evidence must show:
+
+- card parses as the pinned A2A v1.0 JSON-RPC profile;
+- served digest equals the active publication digest;
+- served card URL equals the active publication URL;
+- publication is active and unexpired;
+- any delegation is active, unexpired, and digest-matched; and
+- the registry accepted the signed assertion only after identity key-history
+  verification.
+
+Current `aw a2a card` does not verify Agent Card JWS. Do not report Tier-1 JWS
+verification as a passing gate. Its AWID result relies on registry-verified
+publication/delegation state plus the live digest and URL comparison.
+
+For an intentionally local route without publication, label it
+`operator-configured` or `local/unverified`. Do not describe it as verified,
+AWID-backed, or authorized for the address.
+
+## Plaintext boundary
+
+The gateway terminates TLS and reads A2A task text to create the aweb bridge
+message. Its process and operator can read that text. A self-hosted/BYOT
+operator can place the gateway inside its own trust boundary, but that does not
+turn gateway traffic into protocol E2E.
+
+Every public card/guide/operator surface must keep this distinction:
+
+- HTTPS protects traffic in transit to the gateway;
+- aweb mail may use its own content mode after the gateway creates it;
+- the gateway plaintext boundary remains;
+- a future native A2A-over-aweb binding is not shipped.
 
 ## Rollback
 
-Allowed rollback actions:
+Before deployment, prove the operator can perform each applicable rollback:
 
-- Disable or remove a gateway route from config.
-- Set `awid_publication.required: false` only for explicitly local/unverified development routes, not public verified routes.
-- Stop the gateway service.
-- Roll back the gateway binary/image.
-- Roll back site copy to pre-A2A or opt-in/preview wording.
-- Disable new A2A publication writes at the AWID service flag if a server-side regression is found.
-- Disable or rotate the hosted gateway identity through AC.
+1. stop accepting new gateway tasks or disable the route;
+2. roll back the gateway image to the last reviewed digest;
+3. revoke or expire the AWID publication and delegation;
+4. revoke/replace the dedicated gateway team certificate or identity when
+   compromise is suspected; and
+5. restore the previous config without reusing revoked credentials.
 
-Forbidden rollback actions:
+Disable public ingress before rotating a compromised identity. Do not delete a
+self-custodial private key merely to clean up registry publication state; revoke
+the public assertion/delegation through the signed AWID path.
 
-- Do not delete self-custodial private keys to clean up a publication.
-- Do not edit shipped AWID migrations in place.
-- Do not silently downgrade a public verified route to operator-configured local delegation while leaving verified/AWID-backed copy visible.
-- Do not call hosted gateway traffic E2EE during rollback.
-- Do not resurrect the manual Render tarball/static route lane as the hosted customer workflow.
+Because the current task store is in memory, gateway restart loses A2A polling
+state. Rollback communication must say this explicitly. Durable aweb mail may
+still exist, but callers cannot resume a lost in-memory A2A task id after the
+restart.
 
-If AWID publication has succeeded but local gateway deployment fails, leave the AWID assertion intact and either fix-forward the gateway or publish a revocation assertion through the reviewed AWID path. Do not manually mutate AWID database rows.
+## Tagging and publishing
 
-## Verified-Live Mail
+Only after exact-head review and all required gates:
 
-The verified-live message must include:
+```bash
+make release-a2a-gateway-tag
+make release-a2a-gateway-push
+```
 
-- exact commits and released versions for every changed surface;
-- migration ids applied;
-- package install smoke evidence for `aw` and `aweb-a2a-gw`;
-- public card URLs and route ids;
-- AWID publication assertion ids and card digests;
-- one task transcript per public route proving real aweb-agent handling;
-- explicit statement that hosted gateway traffic is server-readable/plaintext to the gateway;
-- explicit statement of what did not ship.
+These targets create external artifacts. Confirm the tag removal/rollback path
+and holder before running them. Never tag or publish from an unreviewed or dirty
+worktree, and never treat a successful image push as evidence that the live
+publication gate passed.

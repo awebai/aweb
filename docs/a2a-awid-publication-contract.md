@@ -1,8 +1,16 @@
-# AWID A2A Publication and Bridge Delegation Contract
+# AWID A2A publication and bridge delegation contract
 
-Status: normative contract for `aweb-aaqa.7`. Downstream AWID/aweb/AC code must cite this document and the fixtures in `docs/vectors/a2a-awid-publication-v1.json`.
+Status: **current optional protocol authority**. Owner: the AWID implementation
+in this OSS repository. Normative source lives in
+`awid/src/awid/a2a_publication.py` and
+`awid/src/awid_service/routes/a2a_publications.py`; route behavior is covered by
+`awid/tests/test_a2a_publication_route.py`. Cross-language canonical and digest
+bytes are pinned by `docs/vectors/a2a-awid-publication-v1.json`.
 
-This contract defines how AWID publishes A2A Agent Card routes for aweb identities. AWID is the durable identity, address, delegation, and directory registry. AWID is not the default runtime card host and does not make hosted gateway traffic end-to-end encrypted.
+This contract defines how AWID publishes A2A Agent Card routes for aweb
+identities. AWID is the durable identity, address, delegation, and directory
+registry. AWID is not the runtime card host and does not make gateway traffic
+end-to-end encrypted.
 
 ## Invariants
 
@@ -37,9 +45,33 @@ The fixture `docs/vectors/a2a-awid-publication-v1.json` contains release-blockin
 
 Go producer tests and AWID/Python verifier tests must assert the same bytes before implementation release.
 
-The v1 fixture is a canonical/digest fixture, not a cryptographic verification fixture: its `signature` values are deterministic placeholder bytes used only to pin signed-payload digest bytes. Before any verifier release, `.8` must add real Ed25519 verification fixtures with valid `did:key` material and signatures for both publication and delegation assertions.
+The v1 fixture is a **canonical/digest-only fixture**, not a cryptographic
+verification fixture: its `signature` values are deterministic placeholder
+bytes used only to pin signed-assertion digest bytes. Do not feed those values
+to a signature verifier. Cryptographic route tests generate real Ed25519 keys
+and signatures at runtime in `awid/tests/test_a2a_publication_route.py`; the
+digest-only fixture and the verifier tests cover different properties.
 
-## Publication Assertion
+## Public endpoints
+
+```http
+POST /v1/a2a/delegations
+POST /v1/a2a/publications
+GET /v1/namespaces/{domain}/addresses/{name}/a2a
+```
+
+Writes carry the complete signed assertion in the JSON body and return
+`applied`, `already_applied`, or `revoked` with the assertion digest and route
+identity. The read is anonymous directory data and returns only a currently
+active, unexpired publication whose referenced delegation is also active,
+unexpired, and digest-matched.
+
+Operators can disable publication/delegation writes with
+`AWID_ENABLE_A2A_PUBLICATION=false`; disabled writes return the structured
+`a2a_primitive_disabled` error. The anonymous read route remains available for
+stored active assertions. The feature flag does not change their meaning.
+
+## Publication assertion
 
 Operation: `publish_a2a_route`.
 
@@ -80,7 +112,7 @@ Exact signed payload fields:
 
 The wire object also carries `signature`, but `signature` is not part of the signed payload.
 
-## Bridge Delegation Assertion
+## Bridge delegation assertion
 
 Operation: `delegate_a2a_bridge`.
 
@@ -136,7 +168,7 @@ V1 intentionally avoids a mutual digest cycle. The delegation assertion independ
 | Publication mode | Identity custody | Gateway custody | Authority source | Supported |
 |---|---|---|---|---|
 | Direct self-custodial | self | same identity/operator | Local identity signing key plus current AWID did log | yes |
-| Hosted custodial | hosted_custodial | hosted gateway | Authenticated hosted session; AC/AWID signs with hosted custody authority | yes |
+| Hosted custodial | hosted_custodial | hosted gateway | Authenticated hosted-operator session; the custodial identity key signs | yes |
 | Self-custodial delegated bridge | self | delegated_bridge | Local identity signs delegation to gateway; gateway signs route operations with delegation reference | yes |
 | Hosted identity to self-hosted gateway | hosted_custodial | delegated_bridge | Hosted session creates delegation to external gateway identity | yes, only if gateway identity is separately registered and delegation expiry is bounded |
 | Gateway without delegation for self-custodial address | self | delegated_bridge | Operator config only | no product-trusted verified claim; may be labeled local/unverified only |
@@ -148,9 +180,13 @@ Missing authority errors must name both:
 
 Generic `authority invalid` errors are rejected at review.
 
-## Verification Rules
+## Verification rules
 
-An aweb-aware verifier for an A2A card must:
+The AWID write routes verify assertion signatures, registered address binding,
+current identity key history, delegation digest/status/expiry, and request
+freshness before storage. Anonymous reads return only active, unexpired rows.
+
+A **full independent** aweb-aware verifier for an A2A card must:
 
 1. Resolve the aweb address in AWID.
 2. Fetch active A2A publication assertions for that address.
@@ -165,6 +201,12 @@ An aweb-aware verifier for an A2A card must:
     - Tier 0: ignored/unsigned generic A2A.
     - Tier 1: card signature verifies but no AWID publication/delegation verification.
     - Tier 2: AWID publication + digest + delegation + identity history verified.
+
+Current `aw a2a card --address` is not that full independent verifier: it trusts
+the AWID registry's verified active-row read, then compares the live card digest
+and URL. It also does not verify Agent Card JWS. Output and product copy must not
+claim independent assertion replay or Tier-1 JWS verification until source and
+tests implement them.
 
 ## Replay, Expiry, and Idempotency
 
@@ -190,6 +232,7 @@ AWID publication/delegation write APIs must return structured machine codes. Min
 - `a2a_rpc_url_invalid`
 - `a2a_route_id_invalid`
 - `a2a_identity_signature_invalid`
+- `a2a_identity_key_history_invalid`
 - `a2a_delegation_signature_invalid`
 - `a2a_timestamp_stale`
 - `a2a_namespace_not_registered`
@@ -231,15 +274,13 @@ Anonymous read/discovery is allowed. Minimum response for aweb-aware discovery:
 
 Read APIs must not require authenticated caller identity for public directory verification.
 
-## Schema and Migration Rules
+## Schema and migration rules
 
-If AWID storage changes are needed, implementation must add new ordered migrations after the current latest migration. At the time of this contract, the next AWID migration would be:
-
-```text
-awid/src/awid_service/migrations/007_a2a_publications.sql
-```
-
-Do not edit `001_registry.sql` or any already shipped migration.
+The current tables were introduced by
+`awid/src/awid_service/migrations/007_a2a_publications.sql`. That migration and
+every already-applied migration are immutable. Any later storage change must be
+a new ordered migration after the current latest file. Never edit
+`001_registry.sql` or fold A2A DDL back into an applied file.
 
 ## Operational Observability
 

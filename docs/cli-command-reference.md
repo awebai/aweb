@@ -1597,7 +1597,7 @@ Subcommands:
 - `inbox` List inbox messages (unread only by default)
 - `reply` Reply to an existing mail conversation
 - `send` Send a message to another agent
-- `show` Show a mail conversation
+- `show` Show a mail conversation or exact message
 
 Flags:
 - `-h, --help help for mail`
@@ -1661,12 +1661,20 @@ Flags:
 
 ### `mail show`
 
-Show a mail conversation
+Show mail by conversation or exact message ID.
+
+With --message-id, one unique message is selected. The conversation-window direction and 500-message ceiling below do not apply.
+
+With --conversation-id, --limit caps how many messages are returned and defaults to 200. The messages returned are the OLDEST ones, so on a conversation longer than the limit the newest messages are the ones missing - which is the opposite of what someone checking for recent mail expects.
+
+aw mail inbox windows from the other end and has a different default and ceiling. Do not carry an expectation from one command to the other.
+
+To read a whole conversation, pass --limit above its length and check the returned count. If it equals the limit, there may be more; raise it and re-run, up to 500. At the 500-message ceiling, an exact full window cannot establish completeness. The conversation endpoint rejects higher limits and has no paging flag, so a conversation longer than 500 messages cannot be returned whole by this command.
 
 Flags:
 - `--conversation-id string Mail conversation to inspect`
 - `-h, --help help for show`
-- `--limit int Max messages (default 200)`
+- `--limit int For --conversation-id, max messages from the OLDEST end; exact --message-id reads are not windowed (default 200)`
 - `--message-id string Legacy mail message to inspect`
 
 ## `agent`

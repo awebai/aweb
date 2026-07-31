@@ -1,10 +1,11 @@
 # aw plugin mechanism — design brief for the aweb team
 
-Status: **SUPERSEDED (2026-06-16)** by the frozen app-manifest contract
-(`aweb/docs/restructuring/app-manifest-schema.md`). The aweb team chose a
-**manifest-driven generic dispatcher** — one declaration drives both the hosted
-gateway's MCP tools and `aw <app>` verbs over `aw id request --team-auth`, with
-no per-app binary. That dissolves this brief's core problem: a private repo
+Status: **SUPERSEDED (2026-06-16)** by the current experimental app-manifest
+contract (`aweb/docs/app-manifest.md`). The shipped aweb consumer is the
+**manifest-driven generic `aw <app>` dispatcher** over
+`aw id request --team-auth`; another consumer must match the same public
+conformance vectors rather than inventing a second mapping. That dissolves this
+brief's core problem: an application-owned codebase
 can't ship a distributable binary, but it can publish a static manifest. folio's
 verb surface and the end-to-end proof are tracked in `default-aaai.3`. This brief
 is kept only as the record of the external-binary path that was considered and

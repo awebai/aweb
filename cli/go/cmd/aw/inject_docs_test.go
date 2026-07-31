@@ -155,17 +155,40 @@ func TestAwebOwnedStartupGuidanceHasSingleCanonicalOrder(t *testing.T) {
 		return string(body)
 	}
 
-	canonical := read("skills/aweb-coordination/SKILL.md")
-	previous := -1
-	for _, command := range []string{"aw workspace status", "aw mail inbox", "aw chat pending", "aw work ready"} {
-		position := strings.Index(canonical, command)
-		if position <= previous {
-			t.Fatalf("canonical startup command %q missing or out of order", command)
+	assertStartupOrder := func(source, guidance string) {
+		t.Helper()
+		previous := -1
+		for _, command := range []string{"aw workspace status", "aw mail inbox", "aw chat pending", "aw work ready"} {
+			position := strings.Index(guidance, command)
+			if position <= previous {
+				t.Fatalf("%s startup command %q missing or out of order", source, command)
+			}
+			previous = position
 		}
-		previous = position
 	}
+
+	canonical := read("skills/aweb-coordination/SKILL.md")
+	assertStartupOrder("canonical skill", canonical)
 	if !strings.Contains(strings.Join(strings.Fields(canonical), " "), "Read waiting mail and chat before claiming work") {
 		t.Fatal("canonical startup loop must state why message checks precede work claims")
+	}
+
+	standaloneGuide := read("docs/agent-guide.md")
+	assertStartupOrder("standalone agent guide", standaloneGuide)
+	standaloneGuidance := strings.Join(strings.Fields(standaloneGuide), " ")
+	for _, want := range []string{
+		"Active team instructions govern startup ordering when present.",
+		"optional `aweb-coordination` skill may provide the same ordering when installed",
+		"otherwise the standard commands below stand on their own",
+		"Neither the skill nor a Library/profile service is required for messaging.",
+		"Mail and waiting chat come before new work because another agent may already be blocked on you.",
+	} {
+		if !strings.Contains(standaloneGuidance, want) {
+			t.Errorf("standalone agent guide missing startup contract %q", want)
+		}
+	}
+	if strings.Contains(standaloneGuidance, "canonical start-of-session loop in the `aweb-coordination` skill") {
+		t.Error("standalone agent guide must not require the optional coordination skill")
 	}
 
 	for _, rel := range []string{
@@ -181,7 +204,6 @@ func TestAwebOwnedStartupGuidanceHasSingleCanonicalOrder(t *testing.T) {
 		"agents/souls/consultant/AGENTS.md",
 		"agents/souls/coordinator/AGENTS.md",
 		"agents/souls/developer/AGENTS.md",
-		"docs/agent-guide.md",
 		"docs/configuration.md",
 		"docs/coordination.md",
 		"docs/start-working.md",
