@@ -1,44 +1,75 @@
 # Open-source repository boundary
 
-This repository is the public, MIT-licensed home of the **aweb framework**. It
-contains the reusable protocol, runtime, tooling, and conformance assets needed
-to build, operate, and extend aweb-compatible systems.
+Status: **canonical maintainer policy**.
+
+This repository is the public, MIT-licensed home of the aweb framework. It must
+contain enough implementation, protocol authority, conformance evidence, and
+operator guidance to build and understand the OSS system without another
+checkout.
 
 ## What belongs here
 
-The framework includes:
+Framework material belongs in aweb when it defines or verifies reusable,
+interoperable behavior shared by aweb-compatible systems. That includes:
 
-- the aweb coordination server in `server/`;
+- the coordination server in `server/`;
 - the `aw` CLI and Go libraries in `cli/go/`;
-- the shared channel protocol and maintained integrations in `channel-core/`,
-  `channel/`, and `pi-extension/`;
 - the AWID identity and team registry in `awid/`;
-- public conformance fixtures in `test-vectors/`;
-- reusable skills and resource-pack assets; and
-- public documentation and engineering sources of truth in `docs/`.
+- channel/event protocol code and maintained runtime integrations in
+  `channel-core/`, `channel/`, and `pi-extension/`;
+- public protocol contracts, conformance fixtures, generated references, and
+  self-hosting guidance;
+- reusable skills and resource-pack assets that operate only on public
+  contracts; and
+- tests that keep implementations and their public authority reviewable
+  together.
 
-These surfaces belong together because they define interoperable framework
-behavior. Protocol changes, implementations, test vectors, and their normative
-documentation should remain reviewable against one another.
+A framework change should be understandable from this repository's source,
+tests, and documentation. Public contracts must not require a separate
+application checkout or unpublished implementation note to explain their
+meaning.
 
-The `agents/` tree is also retained here by explicit maintainer decision. Its
-team architecture, roles, souls, and deliberately curated instance content are
-engineering assets used to develop the framework. This decision was recorded
-on 2026-07-24 and may be revisited; until then, contributors should treat those
-assets as part of this repository rather than moving them piecemeal.
+The `agents/` tree is retained here by explicit maintainer decision. Its team
+architecture, roles, profiles, and deliberately curated instance content are
+engineering assets used to develop the framework. Contributors should treat
+those assets as part of this repository rather than moving them piecemeal.
 
-## What belongs elsewhere
+## What belongs with an application owner
 
-Applications and business-specific systems live in separate repositories and
-consume the public framework contracts. In particular:
+Application and business implementation belongs with the system that owns it.
+Examples include:
 
-- AC is a private application and business repository;
-- Library and the maintained blueprint catalogs are public repositories; and
-- Folio is a separate application repository and may remain private.
+- human accounts, organizations, billing, and pricing policy;
+- a particular hosted dashboard or onboarding implementation;
+- customer-specific workflows and business rules;
+- application databases, deployment procedures, provider credentials, and
+  production operations;
+- app-specific UI, retention policy, integrations, and release cadence.
 
-An application being public does not make it part of the framework. Separate
-repositories keep application release cadence, business logic, access policy,
-and product-specific dependencies independent from the reusable core.
+An application may consume aweb's public identity, team-auth, messaging, event,
+app-manifest, or conformance contracts without becoming part of the framework.
+An application being public does not by itself make it framework code.
+
+The durable rule is about ownership, not visibility:
+
+- reusable protocol/framework behavior and its normative evidence live here;
+- application/business behavior lives with its application owner;
+- generic hosted-operator extension points may be documented here, but one
+  operator's schema, paths, deployment, or internal repository may not govern
+  the OSS contract.
+
+## Dependency direction
+
+Framework documentation may define the public interface an application uses.
+It must not depend on an application's source tree, internal file path, database
+schema, private runbook, or unpublished design document.
+
+When extracting a reusable contract from an application-specific design:
+
+1. state the interoperable behavior in aweb;
+2. anchor it to public source, tests, or conformance vectors;
+3. keep operator-specific implementation details with their owner; and
+4. migrate every consumer before removing or relocating the old path.
 
 ## `.aw/` state invariant
 
@@ -50,6 +81,6 @@ and other machine- or identity-specific material. The repository-wide
 **Contributors must preserve this invariant:** real `.aw/` state is never
 tracked. The only tracked `.aw/` paths are deliberate fixtures under
 `test-vectors/`; those fixtures must be synthetic and contain no real key
-material, tokens, identities, or other secrets. New tests that need an
-`.aw/` layout must use sanitized fixture data under `test-vectors/`; they must
-not weaken or bypass the repository ignore rule.
+material, tokens, identities, or other secrets. New tests that need an `.aw/`
+layout must use sanitized fixture data under `test-vectors/`; they must not
+weaken or bypass the repository ignore rule.

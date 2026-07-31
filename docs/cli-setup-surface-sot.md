@@ -7,7 +7,13 @@ weight: 23
 
 # aw setup surface taxonomy
 
-This document is the source of truth for the customer-facing `aw` setup
+> **SUPERSEDED — NON-AUTHORITATIVE PRODUCT SOT.** The communication-first
+> `aweb-product-sot.md` governs product direction. Current command facts belong
+> to live CLI help and the generated command reference; useful taxonomy here
+> will be consolidated there before this competing SOT is retired. This
+> document must not generate new product work.
+
+This document was the source of truth for a customer-facing `aw` setup
 surface. It classifies team, identity, workspace, template, and BYOT operations
 so the CLI, docs, dashboard copy, and agent skills all teach the same model.
 
@@ -156,7 +162,7 @@ the categories stable unless this document is updated.
 | `aw id team fetch-cert` | Protocol/admin/agent primitive bridge | Installs a cert minted elsewhere. Use in BYOT cross-machine and hosted add-existing-identity flows. |
 | `aw id team request` | Protocol/admin bridge primitive | Joiner prints the controller-side add-member command. Useful for BYOT; not the hosted invite happy path. |
 | `aw id team register` | Protocol/admin service projection primitive | Registers/syncs customer-controlled AWID team with a service; does not initialize workspaces. |
-| `aw id team import-request` | Protocol/admin BYOT import primitive | Signs customer-controller import/sync payload for AC/aweb Cloud. Never ask for private controller keys in dashboard. |
+| `aw id team import-request` | Protocol/admin BYOT import primitive | Signs a customer-controller import/sync payload for a hosted operator. Never ask for private controller keys in a dashboard. |
 | `aw id team cleanup-cloud` | Protocol/admin cleanup primitive | Projection cleanup after registry team deletion or recovery. |
 | `aw id team delete` | Protocol/admin destructive primitive | AWID team deletion after revocation; controller-holder only. |
 | `aw id register` / `resolve` / `verify` / `addresses` / `log` / `sign` / `request` | Protocol/admin or diagnostic identity primitives | Keep available for debugging, automation, and registry-aware tooling. |
@@ -282,7 +288,7 @@ connecting workspaces, and creating git worktrees.
 6. Define and validate resource-pack templates.
 7. Replace `aweb-team-coord-worktrees` and `aweb-team-company-surfaces` with
    resource-pack designs or clear successor repos.
-8. Update AC dashboard, site, and public docs copy.
+8. Update hosted-operator dashboard, site, and public documentation copy.
 9. Add release gates for help/docs drift, no-TTY partial-bootstrap regression,
    skills packaging, template validation, and end-to-end invite/join/remove
    journeys.

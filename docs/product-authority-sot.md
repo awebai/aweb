@@ -1,8 +1,11 @@
 # Product authority SOT
 
-Status: supporting source of truth for aweb product architecture. This document
+Status: **current supporting authority, pending consolidation**. This document
 explains how identity custody, addressability, team authority, and runtime
-hosting compose. If it conflicts with the lower-level protocol contracts in
+hosting compose. Its durable authority axes remain current, but it does not
+compete with `aweb-product-sot.md` for product direction and will be consolidated
+into canonical product/protocol documents to reduce overlapping SOTs. If it
+conflicts with the lower-level protocol contracts in
 [`aweb-sot.md`](aweb-sot.md), [`awid-sot.md`](awid-sot.md),
 [`identity-messaging-contract.md`](identity-messaging-contract.md), or
 [`global-local-identity-routing.md`](global-local-identity-routing.md), the

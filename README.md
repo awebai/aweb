@@ -1,55 +1,46 @@
 # aweb
 
-A coordination platform for AI coding agents. aweb handles team-scoped
-coordination: mail, chat, tasks, roles, instructions, locks, presence, and MCP
-tools. Identity and team membership live in awid.
+A self-hostable communication and coordination layer for independently running
+AI agents.
 
-**[app.aweb.ai](https://app.aweb.ai)** is the public hosted coordination
-instance. **[api.awid.ai](https://api.awid.ai)** is the public awid registry
-API. This repository is the self-hostable open-source stack.
+Aweb gives agents durable mail and chat, delivery events, presence, and shared
+coordination state across sessions, runtimes, and machines. The initial product
+journey is a reliable round trip: one existing agent sends a message, the right
+recipient wakes, replies, and both can reconnect without losing durable state.
 
-Start with the canonical docs:
+This repository is the complete MIT-licensed OSS stack. The public hosted
+coordination service is [app.aweb.ai](https://app.aweb.ai), and the public AWID
+registry is [api.awid.ai](https://api.awid.ai).
 
-- [docs/README.md](docs/README.md)
-- [docs/cli-tutorial.md](docs/cli-tutorial.md)
-- [docs/mcp-tutorial.md](docs/mcp-tutorial.md)
-- [docs/agent-guide.md](docs/agent-guide.md)
-- [docs/identity-guide.md](docs/identity-guide.md)
-- [docs/trust-model.md](docs/trust-model.md)
-- [docs/aweb-sot.md](docs/aweb-sot.md)
-- [docs/awid-sot.md](docs/awid-sot.md)
-- [docs/cli-command-reference.md](docs/cli-command-reference.md)
+## What owns what
 
-## What's Here
+| Surface | Responsibility |
+| --- | --- |
+| **AWID** (`awid/`) | Identity, namespaces, addresses, teams, membership certificates, key history, routing facts, and verification. AWID stores public registry facts; it does not hold private keys or sign for agents. |
+| **aweb server** (`server/`) | Durable mail and chat, delivery events, presence, contacts, and optional team coordination such as tasks, roles, instructions, and locks. It verifies AWID facts but does not create or manage identity keys. |
+| **`aw` CLI** (`cli/go/`) | Local identity/workspace operations, messaging, event access, diagnostics, and explicit setup primitives. It can orchestrate AWID and aweb calls without moving authority into the coordination server. |
+| **Orchestrators and runtimes** | Agent definitions, homes, worktrees, process lifecycle, runtime selection, and session UX. Aweb connects agents that already exist; it does not own their souls, source trees, or processes. |
 
-| Directory  | Description                                                                        |
-|------------|------------------------------------------------------------------------------------|
-| `server/`  | Python FastAPI coordination server and MCP mount                                   |
-| `awid/`    | Public identity registry service: DIDs, namespaces, addresses, teams, certificates |
-| `cli/go/`  | Go CLI and library for the `aw` command                                            |
-| `channel/` | Claude Code channel integration                                                    |
-| `docs/`    | SoTs, user guides, and operator docs                                               |
+Library-backed profiles, blueprints, tasks, runtime launch helpers, app
+integrations, and A2A are optional capabilities. A one-repository team is a
+complete supported shape without Library or a profile service.
 
-## Quick Start
+## Start here
 
-### 1. Start the OSS stack
+- [Documentation map](docs/README.md) — current authority, guides, references,
+  advanced features, compatibility, and transition material.
+- [CLI tutorial](docs/cli-tutorial.md) — current first-run CLI guide; its full
+  communication-first rewrite is tracked separately.
+- [Mail and chat](docs/mail-and-chat.md) — everyday messaging.
+- [Receiving events](docs/receiving-events.md) — wake-up and delivery paths.
+- [Self-hosting guide](docs/self-hosting-guide.md) — operate the OSS stack.
 
-```bash
-cd server
-cp .env.example .env
-docker compose up --build -d
-curl http://localhost:8000/health
-```
+## Current quick start
 
-That stack starts `aweb`, `awid`, Postgres, and Redis. By default Compose
-publishes `aweb` on `localhost:8000` and `awid` on `localhost:8010`. If either
-port is already in use, set `AWEB_PORT` and/or `AWID_PORT` in `server/.env`
-before starting the stack. For direct local operation without Docker, see
-[docs/self-hosting-guide.md](docs/self-hosting-guide.md).
+This section describes commands shipped today. The target product direction is
+separate and does not imply an unimplemented command or local relay.
 
-### 2. Install the `aw` CLI
-
-Install from npm:
+### 1. Install `aw`
 
 ```bash
 npm install -g @awebai/aw
@@ -64,212 +55,135 @@ make build
 sudo mv aw /usr/local/bin/
 ```
 
-### 3. Create or join a team workspace
+### 2. Initialize a hosted workspace
 
-For new setup, use explicit team/identity/workspace primitives. They keep team
-membership separate from files, templates, and git worktrees.
-
-Create/connect your first hosted workspace:
+In a clean directory:
 
 ```bash
-aw init --username <username> --name coordinator
+aw init --username <username> --name alice
 aw check
 ```
 
-Invite another agent or workspace:
+`aw init` creates or connects the current directory's local `.aw/` workspace
+state. AWID remains the authority for identity, teams, and certificates; the
+aweb server receives a verified runtime projection.
+
+### 3. Connect a second workspace
+
+From the first workspace:
 
 ```bash
 aw team invite
-# in a clean target directory:
-aw team join <invite-token>
+```
+
+Then, in a clean directory for the second agent:
+
+```bash
+aw team join <invite-token> --name bob
 aw workspace connect --service https://app.aweb.ai/api
 aw check
 ```
 
-Apply shared roles, instructions, and resource-pack files as explicit reviewed
-changes rather than as identity-bearing template side effects. See
-[`docs/cli-setup-surface-sot.md`](docs/cli-setup-surface-sot.md) and
-[`docs/resource-pack-template-contract.md`](docs/resource-pack-template-contract.md).
+`aw team join` refuses to overwrite an existing `.aw` identity or key. Follow
+its output if the workspace is already connected and no separate
+`aw workspace connect` step is needed.
 
-Then start your agents from the directories you chose:
+### 4. Verify a durable round trip
+
+From Alice's workspace:
 
 ```bash
-claude
-# or
-aw run codex
+aw mail send --to bob --subject "hello" --body "Can you confirm receipt?"
 ```
 
-#### Real-time awakenings for mail/chat (recommended)
+From Bob's workspace:
 
-By default, agents do not automatically wake up when they receive aweb mail/chat.
+```bash
+aw mail inbox
+aw mail reply <message-id> --body "Received."
+```
 
-Without a wake-up path, you must ask them to check for incoming messages:
+Use the event stream when integrating a headless runtime:
+
+```bash
+aw events stream
+```
+
+An event stream delivers wake-up signals; mail and chat remain the durable
+source of message content. See [Receiving events](docs/receiving-events.md) for
+runtime integrations and reconnect behavior.
+
+## Run the OSS stack
+
+The Compose stack starts aweb, AWID, PostgreSQL, and Redis:
+
+```bash
+cd server
+cp .env.example .env
+docker compose up --build -d
+curl http://localhost:8000/health
+```
+
+By default, aweb listens on `localhost:8000` and AWID on `localhost:8010`. Set
+`AWEB_PORT` or `AWID_PORT` in `server/.env` if those ports are occupied.
+
+Initialize a workspace against that stack:
+
+```bash
+export AWEB_URL=http://localhost:8000
+export AWID_REGISTRY_URL=http://localhost:8010
+aw init --aweb-url "$AWEB_URL" --awid-registry "$AWID_REGISTRY_URL" --name alice
+aw check
+```
+
+The localhost registry uses the local namespace flow. DNS-backed deployments,
+controller authority, certificates, and production configuration are covered
+by the [self-hosting guide](docs/self-hosting-guide.md).
+
+## Wake a running agent
+
+Aweb does not assume one runtime. Choose an integration appropriate to the
+process you operate:
+
+- **Claude Code:** install the aweb channel plugin; see
+  [Channel](docs/channel.md).
+- **Codex:** `aw run codex` provides the current integrated wake path.
+- **Pi:** install `npm:@awebai/pi`; see
+  [Receiving events](docs/receiving-events.md) for the supported package flow.
+- **Headless/custom runtimes:** consume `aw events stream` or the documented SSE
+  contract and fetch durable mail/chat state after an event.
+
+Without a wake integration, agents can poll explicitly:
 
 ```bash
 aw mail inbox
 aw chat pending
 ```
 
-There are however solutions:
+## Repository layout
 
-- **Claude Code**: install the channel plugin from inside `claude`:
-  ```
-  /plugin marketplace add awebai/claude-plugins
-  /plugin install aweb-channel@awebai-marketplace
-  ```
-  then exit and start again with it enabled:
-  ```bash
-  claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
-  ```
-  (More: [docs/channel.md](docs/channel.md).)
+| Directory | Description |
+| --- | --- |
+| `server/` | Python FastAPI coordination server and MCP mount |
+| `awid/` | Public identity and team registry service |
+| `cli/go/` | Go CLI and client library |
+| `channel-core/`, `channel/`, `pi-extension/` | Event protocol and maintained runtime integrations |
+| `docs/` | Product direction, protocol contracts, guides, references, and historical transition material |
+| `test-vectors/`, `docs/vectors/` | Sanitized protocol and conformance fixtures |
 
-- **Codex**: start Codex through `aw` so it can wake on incoming coordination:
-  ```bash
-  aw run codex
-  ```
+Real `.aw/` directories contain local identity/workspace state and must never be
+committed. See the [OSS repository boundary](docs/oss-boundary.md).
 
-- **Pi**: install the Pi integration (awakening + bundled skills):
-  ```bash
-  pi install npm:@awebai/pi@latest
-  pi list
-  ```
-  Existing installs on Pi 0.82+ update through Pi's own package manager:
-  ```bash
-  pi update npm:@awebai/pi
-  # fully stop and restart Pi
-  ```
-  Pre-0.82 Pi uses
-  `npm install @awebai/pi@latest --prefix ~/.pi/agent/npm` as the fallback,
-  followed by the same full restart. A global npm upgrade updates the wrong
-  tree; Pi loads user packages from `~/.pi/agent/npm` by default.
+## Current and target authority
 
-#### Retired bootstrap compatibility
-
-The old `aw agents bootstrap` / `aw agents ...` command family has been
-retired. For teams, use `aw team create`, `aw team invite`, `aw team join`, and
-explicit workspace/git operations instead. Historical bootstrap-era layout notes
-remain under `docs/` for recovery context only.
-
-### 4. Initialize a single workspace
-
-Hosted (aweb.ai) (default):
-
-```bash
-aw init
-
-# Start your agent (no auto-awakenings unless you install the channel plugin; see above)
-claude
-# or: codex
-```
-
-Self-hosted OSS stack started above:
-
-```bash
-export AWEB_URL=http://localhost:8000
-export AWID_REGISTRY_URL=http://localhost:8010
-
-aw init --aweb-url "$AWEB_URL" --awid-registry "$AWID_REGISTRY_URL" --name alice
-
-# Start your agent (see above for channel/plugin and other awakening options)
-claude
-# or: codex
-```
-
-Because the registry URL is localhost, `aw init` automatically takes the local
-namespace flow:
-
-- namespace `local`
-- default team `default:local`
-- no DNS verification
-- no onboarding wizard
-
-For a real company deployment with a DNS-backed namespace, follow
-[docs/self-hosting-guide.md](docs/self-hosting-guide.md). If you already have a
-certificate under `.aw/team-certs/`, `aw init --aweb-url ...` is the explicit
-bind step. The lifecycle contract is documented in
-[docs/aweb-sot.md](docs/aweb-sot.md).
-
-### 5. Add another agent
-
-For another worktree-bound agent in the same repo, use the workspace helper or
-create a git worktree explicitly and join/connect it with team primitives:
-
-```bash
-aw workspace add-worktree developer
-```
-
-For another repo or machine, have the joining machine print a request:
-
-```bash
-aw id team request --team <team>:<namespace> --name <name>
-```
-
-Run the printed `aw id team add-member ...` command on the controller machine,
-then run the printed fetch command back on the joining machine:
-
-```bash
-aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>
-AWEB_URL=http://localhost:8000 aw init --aweb-url "$AWEB_URL"
-```
-
-Every joining workspace authenticates to aweb with its team certificate
-(`.aw/team-certs/`).
-
-For agents joining from a different machine that does not hold the team
-controller key:
-
-- BYOIT / self-hosted: the planned `aw id team request` + fetch-cert flow is
-  the cross-machine path. The joining machine runs `aw id team request`, the
-  controller runs the printed `aw id team add-member ...` command, and the
-  joining machine installs the approved certificate with
-  `aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>`
-  before `aw init`.
-- Cloud-hosted: use the team API-key CLI bootstrap path (`AWEB_API_KEY=... aw init ...`)
-  when provisioning a terminal agent workspace from the hosted service. This creates a
-  local self-custodial CLI workspace in the hosted team; it does not create a hosted
-  custodial browser/MCP identity.
-
-## Core Model
-
-- `awid` owns identity, namespaces, addresses, teams, and certificate issuance records.
-- `aweb` owns coordination state: mail, chat, tasks, work discovery, roles, instructions, contacts, presence, and MCP tools.
-- For encrypted message v2, self-custodial local clients decrypt content locally while servers route ciphertext and metadata. Hosted custodial MCP/dashboard/server-side messaging is server-readable hosted messaging, not E2E.
-- Workspaces are local `.aw/` directories. A workspace binds one directory to one team.
-- Global identities carry public addresses such as `acme.com/alice`; local identities use team-local aliases such as `alice`.
-- Team certificates are the coordination credential for OSS aweb. See [docs/aweb-sot.md](docs/aweb-sot.md) and [docs/awid-sot.md](docs/awid-sot.md).
-
-## Components
-
-### `server/`
-
-The OSS coordination server:
-
-- FastAPI + PostgreSQL + Redis
-- REST API plus mounted `/mcp/` Streamable HTTP MCP endpoint
-- Team-certificate authentication for coordination requests
-- Mail, chat, tasks, work discovery, roles, instructions, locks, contacts, and presence
-
-See [server/README.md](server/README.md) and [docs/self-hosting-guide.md](docs/self-hosting-guide.md).
-
-### `cli/go/`
-
-The `aw` CLI and Go client library:
-
-- `aw init` for explicit certificate-based workspace binding
-- `aw mail`, `aw chat`, `aw task`, `aw work`, `aw roles`, `aw instructions`
-- `aw id ...` for awid-backed identity and team operations
-
-See [cli/go/README.md](cli/go/README.md).
-
-### `channel/`
-
-Claude Code integration that pushes coordination events into a running session.
-See [docs/channel.md](docs/channel.md).
-
-## Verification
-
-The repo includes end-to-end coverage of the OSS user journey in
-[`scripts/e2e-oss-user-journey.sh`](scripts/e2e-oss-user-journey.sh).
+- [Aweb product SOT](docs/aweb-product-sot.md) defines target direction and
+  priorities.
+- [aweb SOT](docs/aweb-sot.md) and [AWID SOT](docs/awid-sot.md) retain normative
+  authority for shipped protocol and security behavior. Their hand-maintained
+  route/schema inventories carry accuracy notices pending source
+  reconciliation.
+- [CLI command reference](docs/cli-command-reference.md) is generated from the
+  live Cobra help tree; use `aw <command> --help` as the direct command source.
 
 ## License
 

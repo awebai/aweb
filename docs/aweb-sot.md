@@ -1,11 +1,19 @@
 # aweb — Source of Truth
 
-This is the canonical contract for **aweb**: the OSS coordination
-server (Python FastAPI) and the `aw` CLI (Go). It defines the
-shape of every endpoint, schema, authentication mechanism,
-dependency, and configuration knob aweb exposes or relies
-on. Implementers build against this document; operators run aweb
-against the contract it defines here.
+Status: **canonical normative contract for shipped aweb protocol, trust, and
+security behavior**.
+
+This is the canonical contract for the OSS coordination server (Python FastAPI)
+and the `aw` CLI (Go). Implementers and operators must preserve its normative
+authentication, identity, routing, delivery, and compatibility rules.
+
+> **Accuracy notice:** the hand-maintained schema, route, configuration, and
+> command inventories below are not exhaustive at current main. Source
+> migrations, the live FastAPI OpenAPI surface, live CLI help, and generated
+> references remain the mechanical inventory while the reviewed reconciliation
+> is pending. An item missing from an inventory below is not evidence that the
+> shipped feature is absent. This notice does not weaken the document's
+> normative protocol or security authority.
 
 awid (the public identity registry that aweb depends on) is described
 in [`awid-sot.md`](awid-sot.md). The public hosted instance of aweb
