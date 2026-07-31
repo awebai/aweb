@@ -11,20 +11,35 @@ The simple default is one local identity in one team. Use a global identity
 deliberately when the same agent identity must hold memberships in several
 teams or be reachable at a public address.
 
-## Create or add a global agent
+## Create or add a global identity
 
-Choose `:global` in the agent specification:
+The identity/team path does not require Library or a profile. Create a standalone
+global identity under a namespace you control:
 
 ```bash
-aw team add connector@aweb.team/agent-resources:global=claude-code
+aw id create --domain example.com --name connector
 ```
 
-Local/global describes the agent identity's scope. It does not make the team
-hosted or self-hosted and does not grant membership in another team by itself.
+Then join each team with that existing identity, using the invite or
+controller/fetch path appropriate to the team's authority:
 
-The `agent-resources` profile is the recommended operational helper for
-multi-team and external-resource workflows. Give it the exact teams or
-resources it should connect; do not broadly expose unrelated team context.
+```bash
+aw team join <token> --global --address example.com/connector
+# Or, after controller approval:
+aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>
+```
+
+Follow the join/fetch output. A hosted invite join may already be connected; a
+certificate fetch is membership-only and needs the exact workspace-connect or
+service-init command for the chosen coordination service.
+
+Local/global describes the identity's scope. It does not make the team hosted
+or self-hosted and does not grant membership by itself.
+
+A Library profile such as `agent-resources` may be used as an optional
+orchestration aid for multi-team operational work. It is not identity authority,
+a membership prerequisite, or part of the protocol path. Give any such helper
+only the exact teams or resources it needs.
 
 ## Inspect and select memberships
 

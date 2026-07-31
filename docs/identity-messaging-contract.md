@@ -1,7 +1,7 @@
 # Identity and Messaging Contract
 
-This document is the normative contract between awid, the `aw` client, and the
-aweb server for identity-scoped mail and chat. It follows the global/local model
+Status: **canonical current cross-component protocol** between AWID, `aw`, and
+the aweb server for identity-scoped mail and chat. It follows the global/local model
 in [`global-local-identity-routing.md`](global-local-identity-routing.md).
 
 ## Authority Boundaries

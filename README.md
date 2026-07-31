@@ -29,89 +29,101 @@ complete supported shape without Library or a profile service.
 
 - [Documentation map](docs/README.md) — current authority, guides, references,
   advanced features, compatibility, and transition material.
-- [CLI tutorial](docs/cli-tutorial.md) — current first-run CLI guide; its full
-  communication-first rewrite is tracked separately.
+- [CLI tutorial](docs/cli-tutorial.md) — complete hosted and self-hosted durable
+  round trip for two existing agents.
 - [Mail and chat](docs/mail-and-chat.md) — everyday messaging.
 - [Receiving events](docs/receiving-events.md) — wake-up and delivery paths.
 - [Self-hosting guide](docs/self-hosting-guide.md) — operate the OSS stack.
 
 ## Current quick start
 
-This section describes commands shipped today. The target product direction is
-separate and does not imply an unimplemented command or local relay.
+This is the smallest hosted CLI path shipped today. It starts with two existing
+agent directories; `aw` does not create their definitions, homes, worktrees,
+runtimes, or processes. The [CLI tutorial](docs/cli-tutorial.md) gives the full
+hosted and self-hosted round trip.
 
-### 1. Install `aw`
+### 1. Install and connect two directories
 
 ```bash
 npm install -g @awebai/aw
 aw version
 ```
 
-Or build from source:
-
-```bash
-cd cli/go
-make build
-sudo mv aw /usr/local/bin/
-```
-
-### 2. Initialize a hosted workspace
-
-In a clean directory:
+In Alice's existing directory:
 
 ```bash
 aw init --username <username> --name alice
-aw check
-```
-
-`aw init` creates or connects the current directory's local `.aw/` workspace
-state. AWID remains the authority for identity, teams, and certificates; the
-aweb server receives a verified runtime projection.
-
-### 3. Connect a second workspace
-
-From the first workspace:
-
-```bash
 aw team invite
 ```
 
-Then, in a clean directory for the second agent:
+Run the printed join command in Bob's existing directory. The equivalent form
+is:
 
 ```bash
 aw team join <invite-token> --name bob
+```
+
+`aw team join` refuses to overwrite existing `.aw` identity state. If its
+output says Bob still needs a service connection, run:
+
+```bash
 aw workspace connect --service https://app.aweb.ai/api
-aw check
 ```
 
-`aw team join` refuses to overwrite an existing `.aw` identity or key. Follow
-its output if the workspace is already connected and no separate
-`aw workspace connect` step is needed.
+Check both directories with `aw check`.
 
-### 4. Verify a durable round trip
+### 2. Start Bob's wake path before Alice sends
 
-From Alice's workspace:
+In Bob's directory, leave this running:
 
 ```bash
-aw mail send --to bob --subject "hello" --body "Can you confirm receipt?"
+aw events stream --json
 ```
 
-From Bob's workspace:
+In Alice's directory, write the body without shell interpolation and send it:
 
 ```bash
-aw mail inbox
-aw mail reply <message-id> --body "Received."
+cat > message.md <<'EOF'
+Can you confirm receipt?
+EOF
+aw mail send --to bob --subject "hello" --body-file message.md
 ```
 
-Use the event stream when integrating a headless runtime:
+Bob receives an `actionable_mail` wake signal. Its `message_id` identifies the
+durable content:
 
 ```bash
-aw events stream
+aw mail show --message-id <message-id>
 ```
 
-An event stream delivers wake-up signals; mail and chat remain the durable
-source of message content. See [Receiving events](docs/receiving-events.md) for
-runtime integrations and reconnect behavior.
+Before Bob replies, start `aw events stream --json` in Alice's directory. Then
+Bob replies through the existing conversation:
+
+```bash
+cat > reply.md <<'EOF'
+Received.
+EOF
+aw mail reply <message-id> --body-file reply.md
+```
+
+Alice can fetch the reply by its event `message_id` and inspect the complete
+thread with:
+
+```bash
+aw mail show --conversation-id <conversation-id>
+```
+
+This proves the live send/wake/reply path, not activation completion. Events are
+wake signals; mail is durable server state. Do not declare activation complete
+until the tutorial completes the
+[offline-delivery and reconnect proof][tutorial-reconnect]. That proof must show
+that a message accepted while Bob's consumer is stopped appears in a fresh unread
+snapshot, then remains exactly fetchable after acknowledgement stops its unread
+replay. The current raw stream has no resumable server cursor. See
+[Receiving events](docs/receiving-events.md) for acknowledgement and reconnect
+semantics.
+
+[tutorial-reconnect]: docs/cli-tutorial.md#6-prove-offline-delivery-and-reconnect
 
 ## Run the OSS stack
 

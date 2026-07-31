@@ -1,177 +1,206 @@
 # Fully Hosted and BYOT Onboarding Contract
 
-This document is the product and engineering contract for customer onboarding.
-The supported customer-facing choices are exactly:
+Status: **current advanced authority contract**. This page defines public
+identity/team authority boundaries; it does not define a private hosted
+application or require one to understand the OSS flow.
 
-1. **Fully Hosted**
-2. **Bring Your Own Team (BYOT)**
+The supported authority choices are:
 
-There is no supported middle tier where a customer brings a custom domain while
-aweb keeps that domain's namespace controller private key. Custom domains are
-part of BYOT: the customer controls the DNS-rooted namespace controller and the
-team controller.
+1. **Fully Hosted** — a hosted operator controls namespace/team authority for
+   resources under its own hosted domain.
+2. **Bring Your Own Team (BYOT)** — the customer controls a DNS-backed
+   namespace and the AWID team controllers.
+
+There is no supported middle tier in which a hosted operator quietly holds the
+controller private keys for a customer-controlled domain.
+
+## Authority is separate from custody and hosting
+
+Three questions must be answered independently:
+
+1. **Identity custody:** who holds the member's signing key?
+2. **Namespace/team authority:** who can assign addresses and certify members?
+3. **Coordination hosting:** which aweb server stores mail, chat, events, and
+   optional coordination state?
+
+A self-custodial identity can join a hosted-authority team. A custodial identity
+can join a BYOT team only after the customer-held team controller signs its
+certificate. Hosting coordination state never grants namespace or team
+authority.
 
 ## Fully Hosted
 
-Fully Hosted means aweb operates the namespace and team authority for resources
-under the hosted base domain, such as `*.aweb.ai`.
+Fully Hosted means the operator controls a namespace under its own hosted base
+domain, such as `*.aweb.ai`, and holds that hosted namespace's controller key.
+It may:
 
-In Fully Hosted:
+- create child namespaces under the hosted base domain;
+- create hosted teams and hold their controller keys;
+- assign addresses in hosted namespaces;
+- mint and revoke certificates for hosted teams;
+- offer either self-custodial terminal identities or custodial browser/service
+  identities.
 
-- aweb may create child namespaces under the hosted base domain.
-- aweb may hold encrypted namespace controller keys for hosted namespaces.
-- aweb may hold encrypted team controller keys for hosted teams.
-- aweb may create address bindings for hosted namespaces.
-- aweb may mint and revoke team certificates for hosted teams.
-- identities may be self-custodial or custodial.
+A terminal join remains self-custodial when `.aw/signing.key` stays on the
+member's machine. The hosted operator signs only the team certificate with the
+hosted team controller; it does not need the member private key.
 
-The hosted flow must remain the simple default path. It should not require the
-customer to understand namespace controllers, team controllers, DNS TXT records,
-or signed import payloads.
+The operator may custody an identity signing key only for an explicitly
+custodial flow. That does not make AWID custodial: AWID stores public registry
+facts and identity-signed assertions, never private keys.
 
 ## BYOT
 
-BYOT means the customer brings the DNS-backed namespace and the AWID team. BYOT
-includes what earlier docs called BYOD and BYOIDT.
+BYOT means the customer brings a DNS-backed namespace and an AWID team. The
+customer:
 
-In BYOT:
+- controls the namespace DNS zone;
+- holds the namespace controller private key;
+- holds the team controller private key;
+- creates or authorizes address bindings;
+- signs member certificates and certificate revocations.
 
-- the customer controls the DNS zone for the namespace.
-- the customer holds the namespace controller private key.
-- the customer holds the team controller private key.
-- the customer creates or authorizes AWID team certificates.
-- aweb imports and projects customer-signed AWID facts into runtime state.
-- aweb must not store or use the customer namespace controller private key.
-- aweb must not store or use the customer team controller private key.
+A coordination host may verify and project those public AWID facts into runtime
+rows. It must not upload, store, derive, or use the customer namespace or team
+controller private keys.
 
-The dashboard may guide the customer through BYOT setup, but the authority stays
-with the customer. Any dashboard action that imports a BYOT team must verify a
-customer-signed statement from the team controller and fail closed on mismatch.
-The CLI helper for this boundary is `aw id team import-request`: it signs the
-`byoidt_import` payload with the local team controller key and prints the body
-for AC import/sync without transmitting private controller material.
+### Standalone OSS path
 
-## Identity Custody Is Independent
+The public CLI primitives are sufficient; Library is not involved:
 
-Identity custody is a separate layer from namespace and team authority.
+```bash
+aw id namespace prepare-controller --domain example.com
+# Publish the exact _awid.example.com TXT value printed by the command.
+aw id namespace check-txt --domain example.com
+aw id team create \
+  --namespace example.com \
+  --name engineering \
+  --display-name "Engineering"
+```
 
-For Fully Hosted teams, aweb may offer:
+On the namespace-controller machine, prepare an initial addressed member in its
+own directory, then print the team-controller approval command:
 
-- self-custodial identities, where the agent keeps `.aw/signing.key`.
-- custodial identities, where aweb stores the encrypted identity signing key.
+```bash
+aw id create --domain example.com --name alice
+aw id team request --team engineering:example.com --name alice
+```
 
-For BYOT teams, aweb may also offer custodial identities, but only for the
-identity signing key. The customer still authorizes that identity into the BYOT
-team with a customer-signed team certificate, and authorizes any address binding
-with the customer namespace controller.
+`aw id create` needs the local controller key for the address namespace; a fresh
+machine without that authority cannot claim `example.com/alice`. For a
+cross-machine join, the joining directory must already hold a global signing
+identity/address under a namespace it controls before running
+`aw id team request`; local identities are not reused across teams.
 
-The correct BYOT custodial sequence is:
+The request prints the exact `aw id team add-member` command for the team
+controller machine. After approval, the member installs the public certificate,
+then explicitly connects to the chosen aweb service:
 
-1. aweb creates a pending custodial identity: `did:key`, `did:aw`, encrypted
-   identity signing key, and hosted runtime metadata.
-2. The customer signs a team certificate for that `did:key` with the BYOT team
-   controller.
-3. The customer signs or maintains any desired address binding with the BYOT
-   namespace controller.
-4. aweb imports/syncs AWID facts and binds the pending custodial identity only
-   if the imported `did:aw`, `did:key`, alias, and address intent match.
+```bash
+aw id team fetch-cert \
+  --namespace example.com \
+  --team engineering \
+  --cert-id <certificate-id>
+aw workspace connect \
+  --service https://coordination.example.com \
+  --team engineering:example.com
+```
 
-Before step 4, the pending custodial identity has no BYOT team authority.
+`fetch-cert` installs membership but does not connect a service.
+`aw service init --service ... --team ...` is the equivalent service-oriented
+connection primitive; use the exact command supplied by the chosen service.
+These steps create the runtime projection; they do not transfer controller keys
+or change who can administer the AWID team. Invite-token joins are different:
+follow their output, because a hosted join may already be connected and must not
+be unconditionally reinitialized.
 
-## Removed Middle Ground
+`aw team create NAME --byot --namespace DOMAIN` is the everyday wrapper when the
+first workspace should create and join the team in one guided flow.
 
-The removed middle ground was: "customer domain, aweb-held namespace/team
-controller keys." That shape is no longer a customer-facing product because it
-is hard to explain and creates two sources of truth for namespace ownership.
+### Optional hosted projection/import
 
-Retirement rules:
+A hosted coordination provider may expose an import/sync operation for an
+existing BYOT team. The operation must verify a fresh team-controller-signed
+request, compare it with live AWID team/certificate facts, and project only
+matching facts.
 
-- New customer flows must not create cloud-held controller private keys for
-  customer domains.
-- Existing external managed namespace rows may remain visible for cleanup, but
-  create/verify flows must direct customers to BYOT import.
-- Code must not choose BYOT behavior by flipping `managed_namespaces.is_default`.
+The current CLI compatibility helper is `aw id team import-request`. It creates
+a provider-specific, short-lived signed import body. It never prints or uploads
+controller private keys. That helper is not required for the standalone OSS
+`aw workspace connect` path and its private provider endpoint is not part of the
+aweb server protocol.
 
-## Authority Boundary Audit
+## Custodial identity in a BYOT team
 
-| Path | Authority Used | Fully Hosted Behavior | BYOT Behavior | Required Tests |
-| --- | --- | --- | --- | --- |
-| Hosted namespace creation | Hosted parent namespace controller | Allowed under hosted base domain | Not used | Hosted signup creates registered hosted namespace |
-| Hosted team creation | Hosted namespace controller and hosted team controller | Allowed | Not used | Hosted team can mint hosted certificates |
-| Address assignment | Namespace controller for address domain | Allowed for hosted namespaces | Must be customer-signed/imported fact | BYOT import never calls managed address assignment |
-| Hosted Add existing identity | Hosted team controller | Allowed for hosted teams | Refuse; use BYOT import/sync | Hosted add rejects externally controlled team |
-| Local `aw id team add-member` | Customer/local team controller | Only works if local key exists; hosted dashboard is the hosted path | Canonical BYOT membership path | Missing hosted key gives clear refusal |
-| `/byoidt/import` | Customer team-controller signature | Not used for hosted managed namespaces | Imports/syncs customer-signed team facts | Dry-run, apply, conflicts, cross-org |
-| BYOT custodial pending identity | aweb-held identity signing key only | Not used; hosted custodial path exists | Allowed only after imported BYOT team exists | pending, active, mismatch, reaped, revoked |
-| Lifecycle delete/reassign addresses | Namespace controller | Only touch hosted namespaces aweb controls | Skip BYOT/customer namespaces | Deletion never signs for BYOT namespace |
+A hosted operator may prepare a custodial member identity, but it has no BYOT
+team authority until customer-signed facts match. The safe sequence is:
 
-## Why `is_default` Is Not a BYOT Switch
+1. The operator prepares the custodial identity signing key and publishes its
+   `did:key`/`did:aw` and requested address intent.
+2. The customer team controller signs a certificate for that exact `did:key`.
+3. The customer namespace controller authorizes any desired address binding.
+4. The coordination host activates its projection only when the imported
+   `did:aw`, current `did:key`, member name, address intent, team, certificate
+   signature, and non-revocation state all match.
 
-`managed_namespaces.is_default` is an ordering and protection flag for managed
-namespace rows. It is not an authority model.
+Before step 4, the pending identity cannot act as a member of the BYOT team.
+The hosted operator holds only the explicitly custodial member key; it does not
+acquire customer controller authority.
 
-It currently affects:
+## Fail-closed requirements
 
-- deletion protection.
-- namespace ordering in dashboard lists.
-- default namespace display.
-- spawn invite namespace selection.
-- dashboard JWT namespace lookup.
-- lifecycle primary-address selection.
-- global address assignment.
+A BYOT projection/import must fail closed when:
 
-Changing `is_default` to make BYOT "win" would couple product authority to
-unrelated UI and lifecycle semantics. BYOT selection must instead be explicit:
-the local team is bound to an AWID team id and the BYOT import/sync path consumes
-customer-signed AWID facts.
+- the AWID team id is malformed or not found;
+- the team or namespace is hosted-authority rather than customer-controlled;
+- the signed timestamp is stale;
+- the signer is not the current AWID team controller;
+- the target projection is already bound to another AWID team;
+- the AWID team is already owned by an incompatible projection;
+- a pending custodial identity's `did:key`, `did:aw`, member name, team, or
+  address intent differs from the signed facts;
+- the certificate blob is unavailable, invalid, or revoked;
+- the pending identity expired before activation.
 
-## Fail-Closed Rules
+Retries for the same signed facts must be idempotent. A conflict must not be
+resolved by minting replacement facts with host-held authority.
 
-BYOT operations must fail closed when:
+## Lifecycle boundary
 
-- the AWID team id is malformed.
-- the AWID team is not found.
-- the importing user lacks access to the target organization or team.
-- the controller timestamp is stale.
-- the controller signature does not verify against the AWID team controller.
-- the target local team is already bound to another AWID team.
-- the AWID team is already imported by another organization.
-- a hosted-controller team is passed to BYOT import.
-- a managed hosted namespace is passed as BYOT.
-- a pending custodial identity's imported `did:key` differs from its stored key.
-- a pending custodial identity's imported address differs from its requested
-  address intent.
-- a pending custodial identity has expired before import.
-- AWID does not return the certificate blob needed for custodial activation.
+- Hosted authority may revoke certificates or change addresses only inside
+  namespaces/teams it controls.
+- BYOT membership changes require a customer team-controller signature.
+- BYOT address changes require a customer namespace-controller signature.
+- Removing an aweb runtime projection does not delete AWID identity history,
+  addresses, teams, or certificates.
+- Revoking a team certificate removes membership; it does not delete a global
+  identity.
+- Custodial key destruction is an operator custody action, not an AWID registry
+  operation.
 
-## Regression Matrix
+## Current and compatibility language
 
-Minimum release-gating coverage for this contract:
+Current public language is **Fully Hosted** and **BYOT**. Older command and wire
+surfaces may still say BYOD or BYOIDT. Treat those names as compatibility terms:
 
-- Fully Hosted signup creates hosted namespace, hosted team, and hosted
-  custodial identity without BYOT concepts in the customer flow.
-- Fully Hosted Add existing identity mints a hosted team certificate and returns
-  usable setup commands.
-- Hosted Add existing identity rejects externally controlled teams.
-- BYOT import dry-run lists creates/updates/deletes/conflicts without writes.
-- BYOT import apply creates a local team projection without storing customer
-  namespace or team controller keys.
-- BYOT import is idempotent.
-- BYOT import rejects stale or invalid controller signatures.
-- BYOT import rejects cross-org reuse of an already imported AWID team.
-- BYOT import rejects managed hosted namespaces.
-- CLI `aw id team import-request` signs the AC canonical payload with an
-  interop-tested raw base64 Ed25519 signature and refuses hosted namespaces.
-- BYOT self-custody projection remains custody `self`.
-- BYOT custodial pending creation does not call hosted namespace, address, or
-  team-certificate minting paths.
-- BYOT custodial bind succeeds only when imported facts match the pending
-  `did:aw`, `did:key`, alias, and address intent.
-- BYOT custodial mismatch cases fail closed.
-- BYOT custodial pending expiry reaps the pending identity and crypto-shreds key
-  material.
-- BYOT custodial certificate revocation retires the projection and crypto-shreds
-  key material.
-- Dashboard exposes only Fully Hosted or BYOT onboarding choices.
-- Dashboard BYOT flow uses import/sync and customer-controller commands, not
-  cloud-managed custom-domain verification.
+- BYOD referred to the customer-controlled DNS namespace;
+- BYOIDT referred to the customer-controlled AWID team/import path;
+- BYOT is the combined current authority model.
+
+Likewise, current certificate storage uses `identity_scope=local|global`; legacy
+`lifetime=ephemeral|persistent` is accepted only at compatibility boundaries.
+
+## Review checklist
+
+Before changing onboarding or membership flows, answer:
+
+1. Who holds the identity signing key?
+2. Who holds the namespace controller key?
+3. Who holds the team controller key?
+4. Where does coordination state live?
+5. Which authority signs the address and membership facts?
+6. Does a self-custodial terminal member keep its private key local?
+7. Does a custodial BYOT member remain inactive until customer-signed facts
+   match?
+8. Can the same one-repository OSS flow work without Library or a private hosted
+   application?

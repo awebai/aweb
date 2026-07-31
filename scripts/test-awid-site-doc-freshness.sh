@@ -15,8 +15,9 @@ FIXTURE_ROOT="$TMP/repo"
 # together and leave both green.
 EXPECTED_MIRROR_DIR="$FIXTURE_ROOT/awid/site/static"
 mkdir -p "$FIXTURE_ROOT/docs" "$EXPECTED_MIRROR_DIR" \
-  "$FIXTURE_ROOT/server" "$FIXTURE_ROOT/awid"
+  "$FIXTURE_ROOT/server" "$FIXTURE_ROOT/awid" "$FIXTURE_ROOT/scripts"
 touch "$FIXTURE_ROOT/server/pyproject.toml" "$FIXTURE_ROOT/awid/pyproject.toml"
+cp "$ROOT/scripts/check-awid-site-doc-links.py" "$FIXTURE_ROOT/scripts/check-awid-site-doc-links.py"
 
 make_for_fixture() {
   make --no-print-directory -C "$FIXTURE_ROOT" -f "$ROOT/Makefile" "$@"
@@ -60,4 +61,19 @@ for name in "${doc_names[@]}"; do
   fi
 done
 
-echo "self-test passed: clean AWID site document mirrors pass and every configured stale copy fails"
+# Equality must not certify dead links in the site's publication context. Add
+# the same broken link to source and mirror so byte freshness stays green while
+# the navigation check has to fail.
+broken_name="${doc_names[0]}"
+printf '\n[unpublished target](not-published.md)\n' >>"$FIXTURE_ROOT/docs/$broken_name"
+printf '\n[unpublished target](not-published.md)\n' >>"$EXPECTED_MIRROR_DIR/$broken_name"
+if output="$(make_for_fixture check-awid-site-docs 2>&1)"; then
+  printf 'FAIL: byte-identical AWID site mirrors passed with a dead relative link:\n%s\n' "$output" >&2
+  exit 1
+fi
+if ! grep -Fq "broken relative Markdown link in AWID site context: not-published.md" <<<"$output"; then
+  printf 'FAIL: dead relative-link fixture failed for the wrong reason:\n%s\n' "$output" >&2
+  exit 1
+fi
+
+echo "self-test passed: clean mirrors pass; stale copies and dead publication-context links fail"

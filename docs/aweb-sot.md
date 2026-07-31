@@ -7,13 +7,13 @@ This is the canonical contract for the OSS coordination server (Python FastAPI)
 and the `aw` CLI (Go). Implementers and operators must preserve its normative
 authentication, identity, routing, delivery, and compatibility rules.
 
-> **Accuracy notice:** the hand-maintained schema, route, configuration, and
-> command inventories below are not exhaustive at current main. Source
-> migrations, the live FastAPI OpenAPI surface, live CLI help, and generated
-> references remain the mechanical inventory while the reviewed reconciliation
-> is pending. An item missing from an inventory below is not evidence that the
-> shipped feature is absent. This notice does not weaken the document's
-> normative protocol or security authority.
+> **Mechanical inventory contract:** the current application-table and top-level
+> REST-router inventories below are checked against ordered migrations and the
+> FastAPI application mount source. Endpoint tables in this document describe
+> selected normative routes, not an exhaustive OpenAPI listing. The live
+> FastAPI `/docs` surface and live `aw <command> --help` remain the mechanical
+> endpoint and command inventories. This distinction does not weaken the
+> normative protocol or security rules in this contract.
 
 awid (the public identity registry that aweb depends on) is described
 in [`awid-sot.md`](awid-sot.md). The public hosted instance of aweb
@@ -49,20 +49,23 @@ For supporting reference material that does not redefine the contract:
 
 1. **awid owns identity and serves verification primitives for team
    membership** (team public keys and revocation list). Cert holders
-   carry their own certificates and present them to any verifier. aweb
-   never creates, stores, or manages identities. It never decides who
-   is in a team — it verifies presented certs against the team's public
-   key + revocation list.
+   carry their own certificates and present them to any verifier. The aweb
+   server never creates, stores, or manages identity private keys and never
+   decides who is in a team — it verifies presented certs against the team's
+   public key + revocation list. The `aw` CLI may orchestrate AWID identity and
+   membership operations, but that does not transfer identity authority or key
+   custody to the coordination server.
 2. **aweb owns coordination.** Mail, chat, tasks, roles, locks,
    workspaces, events. This is the only thing aweb does.
-3. **Team certificates are the single credential for coordination
-   endpoints.** Agents authenticate every coordination request (mail,
-   chat, tasks, roles, locks, instructions, workspace state) with a
-   DIDKey signature and a team certificate. aweb's MCP server uses the
-   same team certificate auth on its local CLI mount. Hosted operators
-   may layer additional auth modes (OAuth, opaque bearer tokens, etc.)
-   on top of their own MCP surface, but those are operator-specific
-   and outside the aweb OSS contract.
+3. **Team certificates are the credential for team-scoped coordination
+   endpoints.** Agents authenticate tasks, roles, locks, instructions,
+   workspace state, and other team-scoped requests with a DIDKey signature and
+   team certificate. Identity-scoped mail/chat uses identity-only auth instead;
+   a shared-team certificate is delivery authority only where the recipient's
+   policy requires it. aweb's MCP server uses team-certificate auth on its local
+   CLI mount. Hosted operators may layer additional auth modes (OAuth, opaque
+   bearer tokens, etc.) on top of their own MCP surface, but those are
+   operator-specific and outside the aweb OSS contract.
 4. **team_id is the coordination scope for non-messaging state.** Tasks,
    claims, locks, roles, instructions, and presence are scoped to a
    `team_id` (e.g., `backend:acme.com`). **Messaging is
@@ -98,19 +101,23 @@ A **workspace** is a local runtime container.
 
 - It is represented by a local `.aw/` directory.
 - It stores local runtime state and configuration.
-- It may also store secret key material for self-custodial global identities.
+- It may also store secret key material for a self-custodial global identity.
 - A workspace belongs to one local machine/path, but it may be moved by moving
   the `.aw/` directory.
-- A workspace has one active identity and one active team binding.
+- A workspace has one active identity. A global-identity workspace may retain
+  multiple team membership certificates and aweb workspace bindings, with one
+  `active_team` default. A local identity remains single-team.
 - Hosted OAuth MCP runtimes do **not** have a local workspace.
 
-A workspace is bound to exactly one team. An agent that needs to
-participate in multiple teams uses multiple workspaces (typically
-multiple git worktrees), each with its own `.aw/` directory and its own
-team certificate. The certificate format does not preclude an agent
-identity (`did:key`) from being a member of more than one team — multi-
-team agents are a future capability the cert format already accommodates
-— but the v1 CLI and server bind one workspace to one team.
+Multi-team membership for global identities is shipped behavior.
+`.aw/teams.yaml` stores the membership list and active selection;
+`.aw/workspace.yaml` stores the matching
+per-team coordination bindings. `aw id team list`, `switch`, and `leave` manage
+that state, `aw workspace status --all` reads across local memberships, and
+most coordination commands accept `--team` as a one-command override without
+changing `active_team`. Server-side coordination data remains team-scoped, so a
+request still presents the certificate for the selected team rather than
+combining authority across memberships.
 
 ### Identity
 
@@ -123,7 +130,8 @@ Two identity classes exist:
   Created by accepting a team invite or via spawn into the same team. Deleted
   when the workspace is removed. Does not carry public trust continuity.
 - **Global identity**: durable, trust-bearing. Has both `did:key` and
-  `did:aw`. Has one or more public addresses. Supports rotation, archival, and
+  `did:aw`. It may have zero, one, or many public addresses; DID registration is
+  independent of address assignment. Supports rotation, archival, and
   controlled replacement.
 
 Trust continuity is only promised for global identities.
@@ -144,18 +152,21 @@ Global identities have two custody modes:
 
 Customer onboarding has exactly two supported authority shapes:
 
-- **Fully Hosted**: aweb owns hosted namespace/team authority under its hosted
-  base domain, such as `*.aweb.ai`. aweb may create hosted namespaces, hosted
-  team certificates, hosted addresses, and custodial identities.
+- **Fully Hosted**: a hosted operator owns namespace/team authority under its
+  managed base domain, such as `*.aweb.ai`. That operator may create hosted
+  namespaces, team certificates, addresses, and custodial identities. The OSS
+  aweb server receives membership/runtime facts when a certified member calls
+  `POST /v1/connect`; any additional operator projection adapter is outside the
+  OSS server contract.
 - **BYOT**: the customer brings the DNS-backed namespace and AWID team. The
   customer holds the namespace controller private key and team controller
-  private key. aweb imports customer-signed AWID facts and stores runtime
-  projections, but must not hold or use the customer namespace/team controller
-  keys.
+  private key. A certified member projects into the OSS aweb server through
+  `POST /v1/connect`; neither that path nor aweb stores or uses the customer
+  namespace/team controller keys.
 
 Identity custody remains independent of namespace/team authority. A BYOT
-customer may use an aweb-custodial agent identity, but aweb then holds only the
-agent identity signing key. The customer must still authorize that identity into
+customer may use an operator-custodial agent identity, but the operator then
+holds only the agent identity signing key. The customer must still authorize that identity into
 the BYOT team and namespace with customer-held controllers.
 
 The full onboarding and authority contract lives in
@@ -167,60 +178,31 @@ AWID is the source of truth for identity, team, and certificate facts.
 Aweb stores operational projections of those facts so an identity can
 coordinate, receive messages, hold workspace state, and appear in dashboards.
 
-One AWID identity may be a member of multiple AWID teams. Aweb therefore keeps
-one `aweb.agents` row per team membership projection, not one global row per
-`did:key` or `did:aw`. The same identity in two teams is two operational
-memberships with independent aliases, policies, workspaces, API keys, message
-history, and lifecycle state.
+One AWID identity may be a member of multiple AWID teams. Aweb therefore
+keeps one `agents` row per team membership projection, not one global row per
+`did:key` or `did:aw`. The same identity in two teams has separate team-scoped
+aliases, policies, workspace projections, and lifecycle state. Identity-scoped
+mail/chat still routes by the authenticated identity and stored participant
+route; it must not guess one of those team rows.
 
-Projection paths:
+The shipped OSS projection path is `POST /v1/connect`:
 
-- **Hosted add existing identity**: for hosted teams where the operator holds
-  the team controller key, a target-team owner/admin uses the dashboard Add
-  existing identity action. The hosted operator signs and registers the AWID
-  team certificate, then projects the member into aweb runtime rows. Audit
-  operation: `hosted-add-existing-agent`.
-- **Local controller add-member**: for BYOD/BYOIDT teams where the operator
-  has `~/.awid/team-keys/<namespace>/<team>.key`, `aw id team add-member`
-  signs and registers the AWID certificate. It does not create cloud runtime
-  state by itself.
-- **Certificate-based lazy projection**: a member that presents a valid team
-  certificate through `aw init` / `/v1/connect` may be projected into aweb
-  runtime state even when no bulk import has run.
-- **BYOIDT import/sync**: a user may create an AWID team and memberships
-  independently, then connect that team to aweb without giving aweb the team
-  controller private key. Aweb imports AWID facts and stores projections.
-- **Spawn / invite**: aweb-orchestrated creation of new operational workspaces
-  or identities. Spawn is not the canonical path for importing an existing
-  AWID identity or an externally managed AWID team.
+1. Verify the request signature and presented AWID team certificate against the
+   current team public key and revocation view.
+2. Ensure the local `teams` projection for the certificate's `team_id`.
+3. Find or create the active `agents` projection by `(team_id, did_key)`,
+   requiring its alias to match the certificate.
+4. Find or create the corresponding team-scoped workspace projection and return
+   its binding.
 
-The common projection contract is:
-
-```python
-project_awid_member_into_team(
-    did_key,
-    team_id,
-    alias,
-    identity_scope,
-    inbound_mode,
-    human_name,
-    did_aw,
-    address,
-    certificate_blob,
-    actor,
-)
-```
-
-For hosted Add existing identity, audit records include target team, actor
-user/principal, `did_key`, optional `did_aw`, optional address, alias,
-identity scope, certificate id, and whether runtime state/API key creation
-occurred.
-The operation is idempotent for the same active `did_key` + alias in the target
-team. The same `did_key` with a different alias is a conflict. An alias already
-held by a different active `did_key` in the target team is a conflict. Retired
-rows are considered only inside the target team; a soft-deleted row for the
-same `did_key` in the target team requires an explicit restore operation that
-is not part of Add existing identity.
+The uniqueness and conflict checks are target-team scoped. The same identity
+can therefore connect to another team under that team's valid certificate, but
+a different alias for an already active `(team_id, did_key)` or an alias held by
+another active key in that team is a conflict. `aw id team add-member` changes
+AWID certificate state only; it does not create aweb runtime state until the
+member connects. Hosted or self-hosted operators may orchestrate the same
+public AWID and connect primitives, but the aweb server does not receive a
+namespace/team controller private key or gain certificate-signing authority.
 
 ### Alias vs Address
 
@@ -268,28 +250,44 @@ able to distinguish:
 
 ### Request format
 
-aweb has two authenticated request envelopes:
+aweb has two authentication classes:
 
 - **Team-certificate auth** for coordination and team-scoped routes:
-  `Authorization`, `X-AWEB-Timestamp`, and `X-AWID-Team-Certificate`
+  `Authorization`, `X-AWEB-Timestamp`, `X-AWID-Team-Certificate`, and,
+  for request-bound v2, `X-AWEB-Signed-Payload`.
 - **Identity-only auth** for identity-scoped messaging routes:
-  `Authorization` and `X-AWEB-Timestamp` only
+  `Authorization`, `X-AWEB-Timestamp`, and optional `X-AWEB-DID-AW`. A
+  global caller must send its `did:aw`; a local caller omits the header.
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
 X-AWEB-Timestamp: <RFC 3339 UTC timestamp, e.g. 2026-04-09T08:47:23Z>
-X-AWID-Team-Certificate: <base64-encoded certificate JSON>
+X-AWID-Team-Certificate: <base64-encoded certificate JSON; team auth only>
+X-AWEB-Signed-Payload: <optional base64url canonical JSON for team-auth v2>
+X-AWEB-DID-AW: <optional did:aw; global identity-only auth only>
 ```
 
-For team-certificate auth, the `Authorization` header is an Ed25519
-signature over the canonical JSON of `{team_id, timestamp,
-body_sha256}` where `body_sha256` is the SHA256 hex digest of the
-request body (or of empty string for GET requests with no body).
+Team-certificate routes accept two signed envelopes:
+
+- **Compact v1 compatibility:** canonical JSON of `{team_id, timestamp,
+  body_sha256}`.
+- **Request-bound v2:** canonical JSON containing `v: 2`, `aud`, `method`,
+  the raw request `path` including query, `team_id`, `body_sha256`, and
+  `timestamp`, carried byte-for-byte in `X-AWEB-Signed-Payload`.
+
+The server verifies v2's audience, method, path, team, timestamp, and body hash
+against the live request. Both versions use the signed timestamp's 300-second
+skew window and have no nonce store, so they are request-integrity envelopes,
+not replay-proof envelopes: an identical signed request can be replayed inside
+the accepted window.
 
 For identity-only auth, the signed canonical JSON is
-`{did_aw, timestamp, body_sha256}`. This is used by the messaging
-routes that are explicitly identity-scoped and do not require a team
-certificate.
+`{did_aw, timestamp, body_sha256}`. `did_aw` is exactly the trimmed
+`X-AWEB-DID-AW` value, or the empty string when the header is absent. A global
+caller sends the header; the server resolves that DID through AWID and requires
+its current `did:key` to match `Authorization`. A local caller omits it, signs
+the empty value, and remains bound by its `did:key` plus an unambiguous local
+runtime projection. These messaging routes do not require a team certificate.
 
 Identity-scoped messaging routes route by authenticated DID and address, not
 by local team membership. If a global `did:aw` has multiple active local
@@ -313,91 +311,85 @@ standard RFC 4648 alphabet with no `=` padding.
 
 The `X-AWID-Team-Certificate` header is a team membership certificate
 issued by the team controller at awid. A base64 team certificate is on
-the order of 500–1000 bytes and is included on every authenticated
-request. For long-lived SSE connections this is a one-handshake cost
+the order of 500–1000 bytes and is included on every request that uses
+team-certificate auth, not identity-only requests. For long-lived SSE
+connections this is a one-handshake cost
 and negligible. For high-frequency unary HTTP requests it adds
 sub-millisecond and bytes-of-overhead per call. v1 ships with
 cert-on-every-request; if measured workloads show the per-request cost
 is material, a session-token shortcut may be added later, but the cert
 remains the canonical credential.
 
-### Verification (mostly local crypto, one cached lookup)
+### Verification (local crypto plus registry reads)
 
-1. Parse `Authorization` header → extract did:key and signature.
-2. Compute SHA256 hex digest of the request body.
-3. If the route uses team-certificate auth, verify the Ed25519
-   signature over canonical JSON of `{team_id, timestamp,
-   body_sha256}`, then decode and verify the team certificate from
-   `X-AWID-Team-Certificate` per the
-   [certificate verification protocol](awid-sot.md#verification-by-a-service)
-   defined in the awid SoT (verify signature against the cached team
-   public key, verify certificate `member_did_key` matches the request
-   did:key, check `certificate_id` against the cached revocation list).
-4. If the route uses identity-only auth, verify the Ed25519 signature
-   over canonical JSON of `{did_aw, timestamp, body_sha256}`. No team
-   certificate is required for that path.
-5. Team-certificate routes extract `team` (the coordination `team_id`),
-   `alias`, and identity scope from the certificate. Identity-scoped
-   messaging routes instead bind the caller to the authenticated
-   global identity (`did:aw`) carried in the signed payload.
+1. Parse `Authorization` → extract did:key and signature, then enforce the
+   signed timestamp's ±300-second skew.
+2. Compute the request-body SHA256 digest.
+3. For team-certificate auth, select compact v1 when
+   `X-AWEB-Signed-Payload` is absent; otherwise decode canonical v2 and bind all
+   request fields listed above. Verify the Ed25519 signature over the selected
+   canonical bytes.
+4. Decode `X-AWID-Team-Certificate`; resolve the current team public key from
+   AWID; verify the controller signature; require
+   `certificate.member_did_key` to match the signing did:key; and reject a
+   certificate listed in AWID revocations.
+5. For identity-only auth, verify canonical JSON of `{did_aw, timestamp,
+   body_sha256}`. A non-empty `did_aw` must resolve to the signing key and binds
+   a global caller; an empty value binds a local caller by `did:key`, with local
+   projection lookup required to be unambiguous. No team certificate is
+   required for that path.
+6. Team-certificate routes extract coordination `team_id`, alias, identity
+   scope, and certificate id from the verified certificate. They then resolve
+   the matching active aweb runtime projection.
 
-Steps 1-4 are local crypto, no network. The revocation-list and team
-public key lookups for team-certificate auth are cache hits — see
-[Caching from awid](#caching-from-awid) below.
+Signature and certificate checks are local crypto. Team-key and revocation
+reads use AWID; they are Redis-backed cache reads only when aweb was started
+with Redis, as described below.
 
 ### Caching from awid
 
-aweb caches two things from awid per team:
+Current standalone and library application startup requires Redis and constructs
+AWID's `CachedRegistryClient`, sharing entries across every aweb instance using
+that backend. The internal client builder has an uncached fallback for direct
+library/testing use, but no standard server startup mode omits Redis; operators
+must plan around the cache policy below.
 
-**Team metadata** (for certificate signature verification AND public-team
-visibility bypass on dashboard reads):
-```
-GET https://api.awid.ai/v1/namespaces/{domain}/teams/{name}
-→ {
-    "team_did_key": "did:key:z6Mk...",
-    "visibility": "private" | "public",
-    ...
-  }
-```
-Cache TTL: 10 minutes. Stale-while-revalidate window: an additional
-10 minutes (so cached values can be served for up to 20 minutes total;
-after that, a hard miss triggers a synchronous refresh, and a failed
-synchronous refresh triggers the fail-closed behavior described in the
-"Dashboard auth" section below).
+The cached client applies the same policy to the two team-auth inputs:
 
-**Cache behavior on team key rotation.** Team key rotation
-(`POST /v1/namespaces/{domain}/teams/{name}/rotate-key` at awid) propagates
-to aweb on the next cache refresh — up to 20 minutes (one TTL cycle plus the
-stale window). During that propagation window, aweb continues to verify
-incoming certificates against the previously cached `team_did_key`, so
-certificates issued under the new team controller key fail verification at
-aweb until the cache catches up. This is fail-closed (no wrong access is
-granted). Operators planning a rotation should expect up to a 20-minute
-propagation delay before new certificates start verifying. Operators who
-need faster propagation can manually flush the team metadata cache via
-Redis (key prefix `awid:team:`); after the flush the next request triggers
-a synchronous refresh against awid and picks up the new key immediately.
+- **Team metadata** from
+  `GET /v1/namespaces/{domain}/teams/{name}` supplies the current
+  `team_did_key` and dashboard `visibility`.
+- **Revocations** from
+  `GET /v1/namespaces/{domain}/teams/{name}/revocations` supplies revoked
+  certificate ids.
 
-**Operational note:** the team metadata cache TTL is intentionally short
-because the `visibility` field gates anonymous dashboard reads — a long
-TTL would mean a team flipped from public to private would still serve
-anonymous reads for the duration of the TTL. The 10-minute TTL bounds
-that window. Aweb makes one resolution call per 10 minutes per active
-team **per aweb cluster**, where a cluster is the set of aweb instances
-sharing the same Redis cache backend. Operators sizing the awid API
-budget should account for this — note that the cache is shared across
-all aweb instances behind the same Redis, so the call rate scales with
-cluster count, not instance count.
+Both entries are fresh for **600 seconds (10 minutes)** and remain available
+for one additional **600-second stale-while-revalidate window**. A read during
+that second window returns the stale value and schedules a background refresh.
+After 1,200 seconds the Redis entry has expired; the request performs a
+synchronous AWID read, and a failed read follows the route's fail-closed/error
+behavior. These values come from `_TEAM_METADATA_CACHE_TTL_SECONDS`,
+`_TEAM_REVOCATIONS_CACHE_TTL_SECONDS`, and `_STALE_MULTIPLIER` in
+`awid/src/awid/registry.py`. The checked source facts are:
 
-**Revocation list** (for checking removed members):
-```
-GET https://api.awid.ai/v1/namespaces/{domain}/teams/{name}/revocations
-→ { "revocations": [{ "certificate_id": "...", "revoked_at": "..." }] }
-```
-Cache TTL: 10 minutes with a 10-minute stale-while-revalidate window
-(matching the team metadata cache, so both refresh on the same schedule).
-The maximum window of stale access after a member is removed is
-20 minutes; a manual Redis cache flush is the supported faster path.
+<!-- BEGIN SOURCE INVENTORY: aweb-awid-cache -->
+- `team_metadata_fresh_seconds=600`
+- `team_metadata_stale_seconds=600`
+- `team_revocations_fresh_seconds=600`
+- `team_revocations_stale_seconds=600`
+<!-- END SOURCE INVENTORY: aweb-awid-cache -->
+
+**Team-key rotation.** AWID rotates a team key at
+`POST /v1/namespaces/{domain}/teams/{name}/rotate`. With the Redis cache, aweb
+may continue reading the old key for up to 20 minutes. Old-key certificates may
+continue to verify during that stale interval, while certificates signed by the
+new key fail closed until refresh. Deleting that team's exact metadata and
+revocation cache entries is the operator's immediate invalidation mechanism;
+this contract does not promise a broad key-prefix flush command.
+
+**Revocation.** A newly revoked certificate may continue to verify for up to
+the same 20-minute maximum. This cache window is the only supported timing
+claim; no narrower refresh interval is promised.
 
 ---
 
@@ -434,327 +426,93 @@ forward migration**, never editing an existing one. Concrete cases:
 - **Table or column needs renaming**: file a new migration with
   the rename. Don't edit the original CREATE TABLE.
 
-The principle holds across every repo using pgdbm (aweb-server,
-aweb-cloud, awid-service). Once shipped, immutable.
+The principle holds across every deployment using pgdbm (the aweb server,
+AWID service, and any hosted operator schema). Once shipped, immutable.
 
-### Schema
+### Current table inventory
 
-```sql
--- Teams this server coordinates for.
--- Auto-created when the first agent from a team connects.
-CREATE TABLE teams (
-    team_id    TEXT PRIMARY KEY,
-    namespace       TEXT NOT NULL,
-    team_name       TEXT NOT NULL,
-    team_did_key    TEXT NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+The following list is exhaustive for current **aweb application tables declared
+by** the ordered component migration chain. It intentionally excludes pgdbm's
+manager-created `schema_migrations` metadata table.
+`scripts/check_sot_source_inventories.py` derives the list from
+`server/src/aweb/migrations/aweb/*.sql`, applies `CREATE`/`DROP` events,
+preserves first-creation order, and deduplicates guarded repeated creation
+(currently `chat_message_reads` in the orphan guard and its canonical
+migration). Column, constraint, and index
+authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 
--- Team visibility does not live in aweb. It is read from awid team
--- metadata and cached for dashboard auth decisions.
-
--- Agents. One row per agent per team. Created on first connection
--- with a valid certificate. No identity columns — the certificate
--- IS the identity proof. Soft-deleted rows release both alias and
--- did_key for reuse; only active rows remain unique within a team.
-CREATE TABLE agents (
-    agent_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL REFERENCES teams(team_id),
-    did_key         TEXT NOT NULL,
-    did_aw          TEXT,
-    address         TEXT,
-    alias           TEXT NOT NULL,
-    identity_scope  TEXT NOT NULL DEFAULT 'local'
-                    CHECK (identity_scope IN ('global', 'local')),
-    human_name      TEXT NOT NULL DEFAULT '',
-    agent_type      TEXT NOT NULL DEFAULT 'agent',
-    role            TEXT NOT NULL DEFAULT '',
-    inbound_mode    TEXT CHECK (inbound_mode IN ('open', 'team_and_contacts')),
-    status          TEXT NOT NULL DEFAULT 'active'
-                    CHECK (status IN ('active', 'retired', 'deleted')),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ
-);
-
-CREATE UNIQUE INDEX idx_agents_active_alias
-    ON agents (team_id, alias)
-    WHERE deleted_at IS NULL;
-
-CREATE UNIQUE INDEX idx_agents_active_did_key
-    ON agents (team_id, did_key)
-    WHERE deleted_at IS NULL;
-
-CREATE INDEX idx_agents_did_aw ON agents (did_aw) WHERE did_aw IS NOT NULL AND deleted_at IS NULL;
-
--- Mail (identity-scoped: sender and recipient are agent identities,
--- not necessarily in the same team)
-CREATE TABLE messages (
-    message_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    from_did        TEXT NOT NULL,
-    to_did          TEXT NOT NULL,
-    from_alias      TEXT NOT NULL DEFAULT '',
-    to_alias        TEXT NOT NULL DEFAULT '',
-    subject         TEXT NOT NULL DEFAULT '',
-    body            TEXT NOT NULL,
-    priority        TEXT NOT NULL DEFAULT 'normal',
-    team_id         TEXT REFERENCES teams(team_id),
-    from_agent_id   UUID REFERENCES agents(agent_id),
-    to_agent_id     UUID REFERENCES agents(agent_id),
-    signature       TEXT,
-    signed_payload  TEXT,
-    read_at         TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_messages_inbox ON messages (to_did, created_at)
-    WHERE read_at IS NULL;
-
--- Chat sessions (identity-scoped: participants are agent identities)
-CREATE TABLE chat_sessions (
-    session_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id         TEXT REFERENCES teams(team_id),
-    created_by      TEXT NOT NULL,
-    wait_seconds    INTEGER,
-    wait_started_at TIMESTAMPTZ,
-    wait_started_by UUID,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE chat_participants (
-    session_id      UUID NOT NULL REFERENCES chat_sessions(session_id),
-    did             TEXT NOT NULL,
-    alias           TEXT NOT NULL,
-    agent_id        UUID REFERENCES agents(agent_id),
-    joined_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (session_id, did)
-);
-
-CREATE TABLE chat_messages (
-    message_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id      UUID NOT NULL REFERENCES chat_sessions(session_id),
-    from_did        TEXT NOT NULL,
-    from_alias      TEXT NOT NULL,
-    body            TEXT NOT NULL,
-    reply_to        UUID,
-    sender_leaving  BOOLEAN NOT NULL DEFAULT false,
-    hang_on         BOOLEAN NOT NULL DEFAULT false,
-    from_agent_id   UUID REFERENCES agents(agent_id),
-    signature       TEXT,
-    signed_payload  TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_chat_messages_session ON chat_messages (session_id, created_at);
-
-CREATE TABLE chat_read_receipts (
-    session_id      UUID NOT NULL REFERENCES chat_sessions(session_id),
-    did             TEXT NOT NULL,
-    agent_id        UUID REFERENCES agents(agent_id),
-    last_read_message_id UUID REFERENCES chat_messages(message_id),
-    last_read_at    TIMESTAMPTZ,
-    PRIMARY KEY (session_id, did)
-);
-
--- Exact unread truth. chat_read_receipts is latest-receipt event metadata only.
-CREATE TABLE chat_message_reads (
-    session_id      UUID NOT NULL,
-    did             TEXT NOT NULL,
-    message_id      UUID NOT NULL,
-    agent_id        UUID REFERENCES agents(agent_id),
-    read_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (session_id, did, message_id)
-);
-
--- Contacts (per-agent address book for team_and_contacts delivery)
-CREATE TABLE contacts (
-    contact_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    owner_did       TEXT NOT NULL,
-    contact_address TEXT NOT NULL,
-    label           TEXT NOT NULL DEFAULT '',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    UNIQUE (owner_did, contact_address)
-);
-
--- Control signals
-CREATE TABLE control_signals (
-    signal_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL REFERENCES teams(team_id),
-    target_agent_id UUID NOT NULL REFERENCES agents(agent_id),
-    from_agent_id   UUID NOT NULL REFERENCES agents(agent_id),
-    signal_type     TEXT NOT NULL
-                    CHECK (signal_type IN ('pause', 'resume', 'interrupt')),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    consumed_at     TIMESTAMPTZ
-);
-
-CREATE INDEX idx_control_signals_pending
-    ON control_signals (team_id, target_agent_id, created_at)
-    WHERE consumed_at IS NULL;
-
--- Repos (git context)
-CREATE TABLE repos (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL,
-    origin_url      TEXT NOT NULL,
-    canonical_origin TEXT NOT NULL,
-    name            TEXT NOT NULL DEFAULT '',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-
-    UNIQUE (team_id, canonical_origin)
-);
-
--- Workspaces (agent presence in a repo context)
-CREATE TABLE workspaces (
-    workspace_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL,
-    agent_id        UUID NOT NULL,
-    repo_id         UUID REFERENCES repos(id),
-    alias           TEXT NOT NULL,
-    human_name      TEXT NOT NULL DEFAULT '',
-    role            TEXT,
-    hostname        TEXT,
-    workspace_path  TEXT,
-    workspace_type  TEXT NOT NULL DEFAULT 'manual',
-    focus_task_ref  TEXT,
-    focus_updated_at TIMESTAMPTZ,
-    last_seen_at    TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ,
-    deleted_at      TIMESTAMPTZ
-);
-
-CREATE UNIQUE INDEX idx_workspaces_active_alias
-    ON workspaces (team_id, alias)
-    WHERE deleted_at IS NULL;
-
--- Tasks
-CREATE TABLE tasks (
-    task_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL,
-    task_number     INTEGER NOT NULL,
-    root_task_seq   INTEGER,
-    task_ref_suffix TEXT NOT NULL,
-    title           TEXT NOT NULL,
-    description     TEXT NOT NULL DEFAULT '',
-    notes           TEXT NOT NULL DEFAULT '',
-    status          TEXT NOT NULL DEFAULT 'open'
-                    CHECK (status IN ('open', 'in_progress', 'closed')),
-    priority        INTEGER NOT NULL DEFAULT 2
-                    CHECK (priority BETWEEN 0 AND 4),
-    task_type       TEXT NOT NULL DEFAULT 'task'
-                    CHECK (task_type IN ('task', 'bug', 'feature', 'epic', 'chore')),
-    assignee_alias  TEXT,
-    created_by_alias TEXT,
-    closed_by_alias TEXT,
-    labels          TEXT[] NOT NULL DEFAULT '{}',
-    parent_task_id  UUID REFERENCES tasks(task_id),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ,
-    closed_at       TIMESTAMPTZ,
-    deleted_at      TIMESTAMPTZ,
-
-    UNIQUE (team_id, task_number),
-    UNIQUE (team_id, task_ref_suffix)
-);
-
-CREATE TABLE task_comments (
-    comment_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    task_id         UUID NOT NULL REFERENCES tasks(task_id),
-    team_id    TEXT NOT NULL,
-    author_alias    TEXT NOT NULL,
-    body            TEXT NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE task_dependencies (
-    task_id         UUID NOT NULL REFERENCES tasks(task_id),
-    depends_on_id   UUID NOT NULL REFERENCES tasks(task_id),
-    team_id    TEXT NOT NULL,
-    PRIMARY KEY (task_id, depends_on_id)
-);
-
-CREATE TABLE task_counters (
-    team_id    TEXT PRIMARY KEY,
-    next_number     INTEGER NOT NULL DEFAULT 1
-);
-
-CREATE TABLE task_root_counters (
-    team_id    TEXT PRIMARY KEY,
-    next_number     INTEGER NOT NULL DEFAULT 1
-);
-
--- Claims
-CREATE TABLE task_claims (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL,
-    workspace_id    UUID NOT NULL,
-    alias           TEXT NOT NULL,
-    human_name      TEXT NOT NULL DEFAULT '',
-    task_ref        TEXT NOT NULL,
-    apex_task_ref   TEXT,
-    claimed_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    UNIQUE (team_id, task_ref, workspace_id)
-);
-
--- Locks (resource reservations)
-CREATE TABLE reservations (
-    team_id    TEXT NOT NULL,
-    resource_key    TEXT NOT NULL,
-    holder_alias    TEXT NOT NULL,
-    holder_agent_id UUID NOT NULL,
-    acquired_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at      TIMESTAMPTZ,
-    metadata_json   JSONB,
-
-    PRIMARY KEY (team_id, resource_key)
-);
-
--- Roles (versioned per team)
-CREATE TABLE team_roles (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL,
-    version         INTEGER NOT NULL DEFAULT 1,
-    bundle_json     JSONB NOT NULL DEFAULT '[]',
-    is_active       BOOLEAN NOT NULL DEFAULT false,
-    created_by_alias TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ,
-
-    UNIQUE (team_id, version)
-);
-
--- Instructions (versioned per team)
-CREATE TABLE team_instructions (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL,
-    version         INTEGER NOT NULL DEFAULT 1,
-    document_json   JSONB NOT NULL DEFAULT '{}',
-    is_active       BOOLEAN NOT NULL DEFAULT false,
-    created_by_alias TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ,
-
-    UNIQUE (team_id, version)
-);
-
--- Audit log
-CREATE TABLE audit_log (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id    TEXT NOT NULL,
-    alias           TEXT,
-    event_type      TEXT NOT NULL,
-    resource        TEXT,
-    details         JSONB,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-```
+<!-- BEGIN SOURCE INVENTORY: aweb-tables -->
+- `teams`
+- `agents`
+- `conversations`
+- `conversation_participants`
+- `messages`
+- `chat_sessions`
+- `chat_participants`
+- `chat_messages`
+- `chat_read_receipts`
+- `contacts`
+- `control_signals`
+- `repos`
+- `workspaces`
+- `tasks`
+- `task_comments`
+- `task_dependencies`
+- `task_counters`
+- `task_root_counters`
+- `task_claims`
+- `reservations`
+- `team_roles`
+- `team_instructions`
+- `audit_log`
+- `federated_message_deliveries`
+- `agent_encryption_keys`
+- `app_registry_apps`
+- `app_registry_entries`
+- `team_app_installs`
+- `app_registry_event_types`
+- `app_registry_emit_keys`
+- `app_events`
+- `app_event_subscriptions`
+- `session_admission_leases`
+- `chat_message_reads`
+<!-- END SOURCE INVENTORY: aweb-tables -->
 
 ---
 
 ## API routes
+
+### Mounted REST router inventory
+
+The exhaustive top-level REST router inventory below is derived from
+`app.include_router(...)` calls in `server/src/aweb/api.py` and checked by
+`scripts/check_sot_source_inventories.py`. Names are module/family names, not a
+promise that the selected endpoint tables later in this document list every
+operation. `/mcp` is an ASGI mount and therefore is intentionally not a REST
+router entry.
+
+<!-- BEGIN SOURCE INVENTORY: aweb-routers -->
+- `agents`
+- `apps`
+- `connect`
+- `chat`
+- `dashboard`
+- `claims`
+- `contacts`
+- `conversations`
+- `events`
+- `federation`
+- `messages`
+- `reservations`
+- `session_leases`
+- `service_registration`
+- `status`
+- `instructions`
+- `roles`
+- `tasks`
+- `workspaces`
+- `repos`
+<!-- END SOURCE INVENTORY: aweb-routers -->
 
 ### Bootstrap and team metadata
 
@@ -799,7 +557,8 @@ stays unread, and the next reconnect re-fetches it (the inbox pulls unread only)
 process dies before the harness presents the message, the message is already
 read server-side, so an unread-only reconnect does NOT re-fetch it and it is
 absent from the unread inbox; its content is still on the server and reachable
-via `aw mail show <id>` or a read-inclusive view, but it is not auto-recovered.
+via `aw mail show --message-id <id>` or a read-inclusive view, but it is not
+auto-recovered.
 (Auto-surfacing that second sub-case on reconnect was considered and
 deliberately rejected: re-delivering already-read mail would reopen the
 replay/double-action hazard, and a crashed agent recovers procedurally on
@@ -820,11 +579,13 @@ pending contacts, handle contacts, and labels/display names do not authorize
 delivery.
 
 **Auth for messaging endpoints:** the sender authenticates with a
-DIDKey signature over `{body_sha256, did_aw, timestamp}`. A team
-certificate is NOT required for messaging — the sender's identity
-(`did:aw`) is sufficient. The server resolves the sender's identity
-via the awid registry and evaluates the recipient's `inbound_mode` against
-the verified sender address.
+DIDKey signature over `{body_sha256, did_aw, timestamp}`. A global sender puts
+its `did:aw` in `X-AWEB-DID-AW`; a local sender omits the header and signs an
+empty `did_aw`. A team certificate is not required for messaging. The server
+resolves a supplied global identity through AWID; local identity-only auth
+requires an unambiguous active local projection. Delivery then evaluates the
+recipient's `inbound_mode` against the verified sender identity/address and any
+verified shared-team authority.
 
 **Recipient resolution:** first-contact global mail/chat uses an address
 (`domain/name`) resolved via awid. A bare external `did:aw` is an identity
@@ -835,8 +596,10 @@ within a shared team remain backwards-compatible local shorthand.
 Global address resolution is governed by the cross-service
 [`identity-messaging-contract.md`](identity-messaging-contract.md). In short:
 awid is authoritative for `domain/name` address bindings, current keys, and
-address-route delivery metadata. Legacy reachability/visibility fields are
-compatibility/audit metadata, not live delivery authority. Aweb cached global
+address-route delivery metadata. Legacy reachability/visibility request fields
+are accepted and ignored at AWID compatibility boundaries; migration 003
+removed the corresponding stored columns, so they are not live delivery
+authority or current registry state. Aweb cached global
 identity rows are routing/cache state, not address authority. If a global
 direct-address send cannot be resolved through awid, aweb may use a local
 cached global row only when the client supplied a signed recipient binding that
@@ -908,8 +671,15 @@ unbind operation in this path. The CLI uses this path during heartbeat to
 repair stale or missing repo
 bindings. `aw heartbeat` reports `repo_status` (`repaired`, `current`,
 `unavailable`, or `repair_failed`) and the canonical binding when available so
-the repair is observable. Repo association remains workspace state:
-`POST /v1/connect` stays repo-independent and does not carry `repo_origin`.
+the repair is observable. Repo association remains workspace state.
+
+`POST /v1/connect` also retains a `repo_origin` compatibility field. When it is
+non-empty, the server canonicalizes it, ensures the team-scoped repo row, and
+binds that repo to the workspace; a newly created workspace is typed `agent`.
+An invalid origin returns HTTP 422. Omitting the field leaves an existing repo
+binding unchanged and creates a new workspace as `manual`. The current `aw
+init` client intentionally omits `repo_origin`; heartbeat's
+`PATCH /v1/agents/me` path performs the normal observable binding/repair.
 
 `POST /v1/agents/{alias}/replace-key` is deliberately controller-authorized.
 Its signed payload binds team, alias, expected old and proposed new `did:key`,
@@ -1170,11 +940,15 @@ own server URL for self-hosted aweb.)
 1. aw id team remove-member --team backend --namespace acme.com \
      --member acme.com/alice
    → team controller posts revocation to awid
-     (certificate_id added to revocation list)
-   → aweb's cached revocation list refreshes within 5-15 min
-   → aweb rejects alice's certificate on next request after refresh
-   → agent row stays (for message history) but status → 'deleted'
+     (certificate_id is marked revoked)
+   → aweb rejects the certificate after its revocation view refreshes
 ```
+
+With Redis, the documented cache policy permits up to 20 minutes of stale
+revocation state; without Redis the next verification reads AWID directly.
+Revocation does not itself mutate or delete the aweb runtime projection. That
+row remains available for history until an explicit aweb lifecycle operation
+changes it.
 
 ### Certificate reissuance
 
@@ -1218,7 +992,7 @@ relies on are:
 | `aw id team add-member --team X --namespace Y --member Z` | Add member directly by signing an AWID certificate with a local team controller key; no cloud runtime projection side effect |
 | `aw id team register --service URL --team X:Y` | Register or sync a customer-controlled AWID team with a service using the team controller signature; no private controller keys are uploaded |
 | `aw service init --service URL --team X:Y` | Connect the current certified worktree to a service projection for an existing AWID team; does not create identities or mutate AWID membership |
-| `aw id team import-request --team X --namespace Y --organization-id ORG` | Produce the customer team-controller-signed BYOT import/sync request body for aweb cloud; no private controller keys are uploaded |
+| `aw id team import-request --team X --namespace Y --organization-id ORG` | Compatibility generator for a customer team-controller-signed request to an optional external hosted import adapter; that adapter/endpoint is outside the OSS aweb server contract, and no private controller keys are uploaded |
 | `aw id team fetch-cert --team X --namespace Y --cert-id ID` | Fetch and install a blob-backed certificate after controller approval |
 | `aw id team remove-member --team X --namespace Y --member Z` | Remove member, post revocation |
 | `aw id cert show` | Show current certificate |
@@ -1312,7 +1086,8 @@ selection.
 
 ## awid API surface (what aweb depends on)
 
-aweb makes these calls to awid. All are cached.
+The standard server uses these AWID read families through the cached registry
+client. Startup also performs an uncached AWID health check before serving.
 
 ### Team resolution (on first agent connection or cache miss)
 
@@ -1334,7 +1109,7 @@ via `team_did_key` AND public-team anonymous-read bypass via `visibility`).
 See [Caching from awid](#caching-from-awid) above for cache TTL, stale window,
 operational implications, and rotation propagation behavior.
 
-### Address resolution (for message routing to external addresses)
+### Address resolution (for message routing and discovery)
 
 ```
 GET /v1/namespaces/{domain}/addresses/{name}
@@ -1344,7 +1119,14 @@ GET /v1/namespaces/{domain}/addresses/{name}
     "domain": "...",
     "name": "..."
   }
+
+GET /v1/namespaces/{domain}/addresses
+GET /v1/did/{did_aw}/addresses
 ```
+
+The list variants support namespace and identity address discovery. They do not
+turn a bare `did:aw` into a first-contact route; message delivery still resolves
+a concrete address or uses stored participant route state.
 
 ### DID resolution (for message signature verification)
 
@@ -1359,13 +1141,13 @@ GET /v1/did/{did_aw}/key
 ### Team revocation list (cached, for rejecting removed members)
 
 ```
-GET /v1/namespaces/{domain}/teams/{name}/revocations?since=<timestamp>
+GET /v1/namespaces/{domain}/teams/{name}/revocations
 → { "revocations": [{ "certificate_id": "uuid", "revoked_at": "..." }] }
 ```
 
-The `since` parameter enables incremental sync — only fetch new revocations
-since last check. Cache TTL is the same as team metadata; see
-[Caching from awid](#caching-from-awid) above.
+The current aweb registry client fetches the complete revocation set; it does
+not send the endpoint's optional `since` parameter. Cache TTL is the same as
+team metadata; see [Caching from awid](#caching-from-awid) above.
 
 Dashboard reads use cached awid visibility:
 
@@ -1373,9 +1155,9 @@ Dashboard reads use cached awid visibility:
 - `public` teams allow anonymous dashboard reads
 - write routes still require certificate auth regardless of visibility
 
-### That's it.
+### Authority boundary
 
-aweb does NOT call awid for:
+aweb does NOT call awid write endpoints for:
 - Team membership checks (certificate + revocation list handles this)
 - Identity creation (awid's concern)
 - Namespace management (awid's concern)
@@ -1393,18 +1175,26 @@ runtime (Claude Code, Claude Desktop, ChatGPT custom connectors,
 programmatic MCP clients, internal tooling) can call them via the MCP
 protocol.
 
-### Two integration patterns
+### Shipped MCP and channel surfaces
 
-aweb's MCP server is the local-CLI-embedded server: the `aw` CLI hosts
-the MCP server inside the local agent process, and `aw mcp-config`
-writes the connection config into the LLM client (Claude Code,
-programmatic MCP clients running in the same machine, etc.). This is
-the only MCP surface defined by aweb itself.
+The OSS coordination-tool MCP server is the Python FastMCP application mounted
+by the aweb FastAPI server at `/mcp`. MCP clients call that Streamable-HTTP
+surface directly and construct one of the authenticated request forms below.
+The Go `aw` CLI neither embeds nor hosts this Python server, and it does not emit
+an HTTP tool-server configuration.
 
-A hosted operator may layer its own `/mcp` endpoint on top of aweb
-(for example, to serve browser-based MCP clients via OAuth or to issue
-long-lived bearer tokens for local MCP clients). Such a hosted MCP
-surface is operator-specific and outside the aweb OSS contract.
+The Claude channel is a separate, one-way event-presentation integration:
+coordination events flow into Claude Code, while outbound actions use the `aw`
+CLI. The supported Claude path is the `@awebai/claude-channel` plugin (also set
+up by `aw init --setup-channel`). The compatibility command `aw mcp-config
+--channel` emits an `npx @awebai/claude-channel` stdio configuration; it does
+not configure or proxy the FastMCP coordination tools. Bare `aw mcp-config`
+refuses instead of emitting an unusable HTTP configuration.
+
+A hosted operator may expose its own MCP gateway in front of aweb (for example,
+to authenticate browser clients). That gateway is operator-specific; the OSS
+aweb MCP implementation remains the FastAPI-mounted `/mcp` application and the
+trusted-proxy branch documented below is its explicit internal boundary.
 
 ### Mount and transport
 
@@ -1426,88 +1216,104 @@ the advertised resource URL keep working.
 
 ### Authentication
 
-MCP requests authenticate with the **same team certificate** that
-coordination requests use — DIDKey signature plus team certificate
-header:
+`MCPAuthMiddleware` accepts three shipped authentication branches, in this
+order:
+
+1. **Trusted internal proxy context.** This branch is disabled unless the
+   operator sets `AWEB_TRUST_PROXY_HEADERS` and configures
+   `AWEB_INTERNAL_AUTH_SECRET`. The upstream sends an HMAC-protected
+   `X-AWEB-Auth` v2 context plus `X-Team-ID`, `X-AWEB-Actor-ID`, and a
+   principal id (`X-User-ID`, or `X-API-Key` when no user id is present). aweb
+   validates the HMAC and UUIDs,
+   then requires the actor id to identify an active agent in that exact team.
+   The resulting context has `trusted_proxy=True`. Raw proxy headers are never
+   trusted when the opt-in is off, and an enabled proxy without the shared
+   secret fails closed.
+2. **Identity-only DIDKey auth.** A DIDKey request without
+   `X-AWID-Team-Certificate` uses the same `{body_sha256, did_aw, timestamp}`
+   contract as identity-scoped REST messaging. A global caller supplies
+   `X-AWEB-DID-AW`; a local caller omits it. The middleware may enrich the
+   context from one matching active local agent row. No matching row leaves the
+   team/agent/workspace fields empty; more than one matching row is ambiguous
+   and returns HTTP 409 rather than choosing a team.
+3. **Team-certificate DIDKey auth.** A DIDKey request with
+   `X-AWID-Team-Certificate` uses compact v1 or request-bound v2 team auth,
+   verifies the certificate against current AWID team key/revocation state,
+   requires a connected active agent projection, and resolves its latest
+   team-scoped workspace when one exists.
+
+Identity-only request headers are:
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
-X-AWEB-Timestamp: <RFC 3339 UTC timestamp, e.g. 2026-04-09T08:47:23Z>
-X-AWID-Team-Certificate: <base64-encoded certificate JSON>
+X-AWEB-Timestamp: <RFC 3339 UTC timestamp>
+X-AWEB-DID-AW: <required for a global caller; omitted for local>
 ```
 
-External AWCO/BYOIDT-style services use the same membership proof when a
-local CLI agent needs to act outside aweb without a `did:aw` identity
-row. `aw id request --team-auth` sends:
+Team-certificate request headers are:
 
 ```
 Authorization: DIDKey <member did:key> <signature>
 X-AWEB-Timestamp: <RFC 3339 UTC timestamp>
-X-AWEB-Signed-Payload: <base64url canonical JSON>
+X-AWEB-Signed-Payload: <optional base64url canonical JSON for v2>
 X-AWID-Team-Certificate: <base64-encoded certificate JSON>
 ```
 
-The signed payload is the versioned team-auth request envelope described in
-[`team-auth-envelope-v2.md`](team-auth-envelope-v2.md). Version 2 binds `aud`,
-`method`, `path`, `team_id`, `body_sha256`, `timestamp`, and `v: 2`, plus
-operation-specific fields. The
-service verifier extracts the DIDKey public key, verifies the signature
-over `X-AWEB-Signed-Payload`, decodes and verifies
-`X-AWID-Team-Certificate` against AWID team authority/revocation state,
-requires `certificate.member_did_key == signed did:key`, checks the
-request target/body hash against the live HTTP request, and then applies
-service-local authorization. No AWID identity row is required for local
-agents; the team certificate is the team-membership credential.
+Version 2 is the envelope in
+[`team-auth-envelope-v2.md`](team-auth-envelope-v2.md): it binds `aud`,
+`method`, raw `path`, `team_id`, `body_sha256`, `timestamp`, and `v: 2`, plus
+operation-specific fields. It is request-bound but not replay-proof; an
+identical request can be replayed inside the timestamp skew window.
 
-Version 2 is request-bound but not replay-proof: a byte-identical request can
-be replayed inside the accepted timestamp skew window. Do not describe
-team-auth as replay-proof until the nonce follow-up lands.
-
-The external verifier's AWID lookup path is:
+For services verifying that same team-auth envelope outside aweb, the AWID
+lookup path is:
 
 1. Parse `team_id` as `{name}:{domain}`.
-2. `GET /v1/namespaces/{domain}/teams/{name}` to obtain the current
+2. Read `GET /v1/namespaces/{domain}/teams/{name}` for the current
    `team_did_key`.
-3. Verify the certificate signature against that team key and reject if
-   the certificate `team_id` or `member_did_key` does not match the
-   signed request.
-4. Check revocation with
-   `GET /v1/namespaces/{domain}/teams/{name}/revocations` (or an
-   equivalent cached revocation feed). Reject the certificate if its
-   `certificate_id` is listed.
+3. Verify the certificate signature and require its `team_id` and
+   `member_did_key` to match the signed request.
+4. Reject any certificate id returned by
+   `GET /v1/namespaces/{domain}/teams/{name}/revocations` (or an equivalent
+   cached revocation feed).
 
-The MCP middleware (`MCPAuthMiddleware` in
-`server/src/aweb/mcp/auth.py`) parses both headers, runs the same
-verification protocol as the REST API (parse signature, verify against
-the request envelope, decode and verify the team certificate against
-the cached team public key, check the revocation list), and resolves
-the calling identity.
+API keys, OAuth tokens, and opaque bearer tokens are **not direct credentials**
+on aweb's MCP path. A hosted operator may authenticate one of those credentials
+upstream and then use the explicitly enabled HMAC-protected internal proxy
+branch; the external credential itself is never accepted by
+`MCPAuthMiddleware`. `X-API-Key` in trusted proxy context is a protected
+principal identifier, not a raw API-key secret.
 
-API keys are NOT accepted on aweb's MCP path. The team certificate is
-the sole credential — consistent with the aweb principle that team
-certificates are the single credential for coordination endpoints. A
-hosted operator running its own MCP surface on top of aweb may accept
-other auth shapes (OAuth, opaque bearer tokens, etc.); those are
-operator-specific and not part of this contract.
+### Auth context and tool confinement
 
-### Auth context for tools
-
-After authentication, MCP tool handlers can read the calling identity
-via `aweb.mcp.auth.get_auth()`, which returns:
+After authentication, tool handlers read the per-request context from
+`aweb.mcp.auth.get_auth()`:
 
 ```python
 @dataclass
 class AuthContext:
-    team_id: str   # e.g., "backend:acme.com"
-    agent_id: str        # the aweb-side agent UUID
-    alias: str           # routing name within the team
-    did_key: str         # the calling agent's did:key
+    team_id: str | None
+    agent_id: str | None
+    alias: str | None
+    did_key: str
+    did_aw: str | None = None
+    address: str | None = None
+    workspace_id: str | None = None
+    trusted_proxy: bool = False
 ```
 
-The context is stored in a contextvar and is per-request. Tools that
-need to know who the caller is read from `get_auth()`; tools that
-operate on the team's coordination data scope by `team_id`. Tools
-do NOT receive the raw certificate or signing material.
+Identity-scoped mail, chat, contact, and identity operations use the
+authenticated DID fields and can run without team context where the operation
+does not require an alias/team selector. Alias routing and team-scoped task,
+work, role, instruction, presence, and workspace tools require a non-empty
+`team_id`; those handlers reject a context that cannot identify one. A team
+certificate or trusted proxy context supplies an explicit team. Identity-only
+auth supplies team context only when exactly one active local projection is
+found; ambiguity is rejected rather than guessed.
+
+Tools receive neither raw certificates nor signing material. Trusted-proxy
+status remains explicit because the hosted custodial signing, encryption, and
+decryption helpers are gated on that branch.
 
 ### Tool inventory
 
@@ -1532,8 +1338,8 @@ families are:
 Identity-creating operations (DID registration, team creation, address
 registration, certificate issuance) are deliberately NOT exposed as MCP
 tools — those operations belong to awid and the CLI / dashboard, not to
-agent runtime tool calls. Tools operate on team-scoped coordination
-state only.
+agent runtime tool calls. Identity-scoped tools operate on the authenticated
+DID; team-scoped tool families require the team context described above.
 
 All registered tools currently return human-readable strings. Callers
 should treat the result as tool output text rather than a stable JSON
@@ -1645,7 +1451,7 @@ AWEB_LOG_LEVEL=info
 AWEB_LOG_JSON=true
 AWEB_RELOAD=false
 
-# Redis (optional; defaults to redis://localhost:6379/0)
+# Redis URL (the service is required at startup; the URL has this default)
 AWEB_REDIS_URL=redis://localhost:6379/0
 
 # Presence / DB tuning
@@ -1665,12 +1471,14 @@ falls back to `DATABASE_USES_TRANSACTION_POOLER`, and
 
 | Concern | Owner |
 |---------|-------|
-| Identity creation and management | awid |
-| Team creation and management | awid |
-| Namespace management | awid |
+| Global `did:aw` registry binding, key continuity, and public log | AWID (identity holder authorizes its own key transitions) |
+| Local `did:key` creation and lifecycle | `aw` CLI and local workspace; never registered in AWID |
+| Address assignment | Namespace controller, recorded/resolved by AWID; independent of DID registration |
+| Team creation and management | AWID registry plus namespace/team controller authority |
+| Namespace management | AWID registry plus namespace controller authority |
 | Team certificate issuance | CLI (BYOD) or hosted operator (managed namespaces) |
 | Team membership verification | Certificate (local crypto) |
-| Agent bootstrap/runtime projection | Auto-provisioned from certificate on `POST /v1/connect`, hosted Add existing identity, or BYOIDT import/sync |
+| Agent bootstrap/runtime projection | OSS aweb auto-provisions from a verified certificate on `POST /v1/connect`; optional external operator adapters are outside this server contract |
 | Custody (signing on behalf) | Agent (self-custodial) or hosted operator (custodial) |
 | Billing | Out of scope for aweb (hosted operator concern) |
 | Dashboard | Out of scope for aweb (any external service that holds `AWEB_DASHBOARD_JWT_SECRET`) |

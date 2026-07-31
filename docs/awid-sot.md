@@ -6,11 +6,12 @@ and trust behavior**.
 This is the canonical contract for **awid**, the public identity registry for
 DIDs, namespaces, addresses, teams, and certificate issuance records.
 
-> **Accuracy notice:** the hand-maintained schema and endpoint inventories below
-> are not exhaustive at current main, and some inventory prose still describes
-> columns removed by later migrations. The ordered migration chain and live API
-> source remain the mechanical inventory while the reviewed reconciliation is
-> pending. This notice does not weaken the normative identity, certificate,
+> **Mechanical inventory contract:** the current application-table inventory
+> below is checked against the complete ordered component migration chain.
+> Endpoint blocks in this document are selected normative protocol surfaces,
+> not an exhaustive OpenAPI
+> listing; live route source/OpenAPI remains the mechanical endpoint inventory.
+> This distinction does not weaken the normative identity, certificate,
 > signature, revocation, or authority rules in this contract.
 
 aweb (the coordination server that depends on awid) is described in
@@ -41,11 +42,11 @@ SOT.
    stored public key + non-revocation — NOT from row existence in awid's
    `team_certificates` table.
 4. **Revocation is registry state.** Revoking a certificate sets
-   `revoked_at` on the certificate record. Services (including awid's
-   own private address-read path) check revocation as part of cert
-   verification. Active membership is not determined by an awid member
-   row; it is determined by a valid presented certificate that has not
-   been revoked.
+   `revoked_at` on the certificate record. Services check revocation as part of
+   certificate verification. Public address resolution does not use a team
+   certificate and does not infer delivery authorization from membership.
+   Active membership is not determined by an awid member row; it is determined
+   by a valid presented certificate that has not been revoked.
 5. **Identity and address are separate facts, separately authorized.**
    `register_did` binds `did_aw ↔ did_key` and is authorized by the
    identity holder alone. Delivery routing for first contact is not an
@@ -64,18 +65,21 @@ awid write operations are authenticated by an Ed25519 signature over a
 **canonical JSON envelope of explicit structured fields** rather than over
 the request body bytes. Each operation has its own envelope shape.
 
-The envelope always includes:
+Every signed write includes `operation` and `timestamp` plus the fields needed
+to bind that operation. Namespace/team/address controller operations include
+`domain`; DID registration and rotation instead sign the canonical identity-log
+entry keyed by `did_aw`. A controller operation's timestamp is ISO 8601 UTC and
+is enforced to ±300 seconds of server clock.
 
-- `domain` — the namespace the operation applies to
-- `operation` — a string that locks the signature to a specific operation,
-  preventing cross-operation replay (e.g. `set_team_visibility`,
-  `register_address`, `revoke_certificate`)
-- `timestamp` — ISO 8601 UTC, enforced to ±300 seconds of server clock
-- additional operation-specific fields (e.g. `team_name`, `visibility`,
-  `certificate_id`, `address_name`)
+The operation discriminator prevents a signature for one operation from being
+reused as another operation. The timestamp bounds replay exposure but does not
+make an envelope nonce-based or replay-proof: an identical request can be
+replayed within the accepted window. Idempotent/conflict behavior at each write
+path determines whether such a retry changes state.
 
-The signature is `Ed25519.sign(controller_private_key, canonical_json(envelope))`.
-The request also carries:
+The signing key is the operation's authority: a parent, namespace, or team
+controller for controller-scoped writes, and the identity's current signing key
+for identity-scoped writes. The request carries:
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
@@ -89,9 +93,9 @@ Three controller keys exist, each with its own scope:
   creation under a specific namespace; held by the namespace owner (BYOD)
   or by the hosted deployment (managed)
 - **Team controller key**: signs team-scoped operations including
-  certificate issuance, certificate revocation, team visibility toggle,
-  and team key rotation; held by the team controller (BYOD) or by
-  the hosted deployment (managed)
+  certificate issuance, certificate revocation, and team visibility toggle;
+  held by the team controller (BYOD) or by the hosted deployment (managed).
+  The namespace controller authorizes replacement of a team's public key.
 
 This is the **awid pattern**, distinct from the legacy aweb compact pattern
 (`{team_id, timestamp, body_sha256}`), the request-bound aweb team-auth
@@ -100,9 +104,10 @@ envelope (`docs/team-auth-envelope-v2.md`), and the hosted deployment pattern
 interchangeable; see the per-endpoint signed payload examples below for each
 operation's exact envelope shape.
 
-Read endpoints (`GET /v1/namespaces/{domain}`, `GET /v1/did/{did_aw}/key`,
-team metadata, revocations, etc.) are public and rate-limited. They do
-not carry signatures.
+Public read endpoints (`GET /v1/namespaces/{domain}`,
+`GET /v1/did/{did_aw}/key`, team metadata, revocations, etc.) are rate-limited
+and do not carry signatures. Identity-private reads and certificate-blob fetch
+have their separately documented authentication requirements.
 
 ---
 
@@ -127,8 +132,8 @@ Identity handles within namespaces. `acme.com/alice`.
 ```
 POST   /v1/namespaces/{domain}/addresses          Create (controller auth)
 GET    /v1/namespaces/{domain}/addresses           List (public, paginated)
-GET    /v1/namespaces/{domain}/addresses/{name}    Read global address handle (public resolver; legacy reachability is not a resolver gate)
-PUT    /v1/namespaces/{domain}/addresses/{name}    Update legacy reachability metadata during compatibility window
+GET    /v1/namespaces/{domain}/addresses/{name}    Read global address handle (public resolver)
+PUT    /v1/namespaces/{domain}/addresses/{name}    Compatibility no-op for legacy metadata fields (controller auth)
 DELETE /v1/namespaces/{domain}/addresses/{name}    Delete (controller auth)
 ```
 
@@ -166,35 +171,21 @@ by which a caller can safely retry after a failure whose outcome is
 ambiguous (e.g., cloud transaction commit failure after awid already
 accepted the address).
 
-**Legacy reachability metadata.** Existing rows may still carry
-`reachability` values (`public`, `nobody`, `org_only`,
-`team_members_only`) and `visible_to_team_id` during the compatibility
-window. These fields are no longer resolver authorization for global
-identities. During migration, public address reads fail closed for non-neutral
-rows (`reachability != public` or `visible_to_team_id IS NOT NULL`) with a
-migration-required diagnostic, and namespace address listings omit those rows.
-This prevents silent widening until the namespace/address controller explicitly
-normalizes an approved row to `reachability='public'` and
-`visible_to_team_id=NULL`. Neutral rows resolve to their `did:aw`, current
-`did:key`, and address-route delivery origin regardless of caller team
-certificate.
+**Removed reachability columns and request compatibility.** Ordered migration
+`003_drop_address_reachability.sql` refuses to run while an active address has
+non-neutral legacy state, then drops `public_addresses.reachability` and
+`visible_to_team_id`. Those columns are absent from the current schema and from
+address responses. The create/update request models still accept the two old
+field names so old clients do not fail parsing, but the service ignores them;
+the `PUT` path performs no metadata mutation and returns the current public
+address resolution.
 
-**Authenticated address read compatibility.** `GET /v1/namespaces/{domain}/addresses/{name}`
-may receive the old optional signed-request envelope from existing clients,
-but no longer requires it to elevate visibility:
-
-- `Authorization: DIDKey <did:key> <base64-signature>`
-- `X-AWEB-Timestamp: <RFC3339>`
-- Optional `X-AWID-Team-Certificate: <base64-certificate-json>`
-- Canonical signed payload: `{domain, name, operation: "get_address", timestamp}`
-- Skew window: 300 seconds
-- Signature scheme: Ed25519 over `canonical_json(payload)`
-
-The signed envelope is accepted for backward compatibility, but it is not
-used to authorize private resolver visibility. Team certificates do not grant
-special address-discovery authority. Address resolution is public for global
-identities; abuse controls belong at rate limiting, recipient-side delivery
-policy, and spam/blocklist layers after identity/route resolution.
+`GET /v1/namespaces/{domain}/addresses/{name}` is public. Legacy clients may
+still send old authorization/timestamp/team-certificate headers, but the read
+path does not inspect them or grant elevated visibility. Team certificates do
+not grant special address-discovery authority. Abuse controls belong at rate
+limiting, recipient-side delivery policy, and spam/blocklist layers after
+identity/route resolution.
 
 ## Identity operations
 
@@ -363,9 +354,11 @@ enforcement of Principle 5.
 
 A team is a named group within a namespace. It has a name, display name,
 public key, and visibility (`public` or `private`). The `team_certificates`
-log records every certificate issued for the team; active members are rows
-where `revoked_at IS NULL`. See [awid database schema](#awid-database-schema)
-for the full DDL.
+log records certificates published to AWID; `active_only=true` lists published
+rows where `revoked_at IS NULL`. Row existence is not the membership
+authorization oracle: a verifier uses the presented controller-signed
+certificate plus non-revocation. See the [ordered schema
+contract](#awid-database-schema) for storage authority.
 
 ### Endpoints
 
@@ -435,7 +428,8 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
                "member_did_aw": "did:aw:...",
                "member_address": "acme.com/alice",
                "alias": "alice",
-               "identity_scope": "global" }
+               "identity_scope": "global",
+               "certificate": "<optional base64 certificate JSON>" }
        The canonical product term for the per-team routing key is member name;
        the current wire/schema field is still "alias" until the scheduled
        compatibility rename. Compatibility clients may send "lifetime"
@@ -559,8 +553,9 @@ Canonical JSON: sorted keys, no whitespace, UTF-8.
   them at awid. awid never sees the private key.
 
 AWID records the certificate fact. It does not create or mutate aweb runtime
-rows. Hosted operators and self-hosted aweb deployments project active,
-non-revoked AWID certificates into their own local runtime state.
+rows. The shipped OSS aweb projection path is a certified member's
+`POST /v1/connect`; any operator-specific bulk import or dashboard adapter is
+external to both the AWID registry and OSS aweb server contracts.
 
 ### Issuance flow
 
@@ -580,19 +575,19 @@ Those keys must not move between machines.
 6. CLI verifies that the fetched certificate matches the local signing key
    and requested team, then stores it under `.aw/team-certs/`.
 
-For hosted managed teams, the same certificate record is signed by the hosted
-operator because the team controller key is cloud-held. The raw
-`aw id team add-member` command intentionally remains a local-controller
-command and cannot operate on a hosted team unless the operator exports the
-team key, which hosted aweb.ai does not do. Hosted aweb exposes Add existing
-identity as a separate dashboard/cloud operation so the cloud signing authority
-and the aweb runtime projection side effect are explicit.
+For a managed team, the same certificate record may be signed by an external
+hosted operator that holds the team controller key. The raw
+`aw id team add-member` command remains a local-controller command and cannot
+operate without that key. Any hosted dashboard operation that signs a
+certificate or bulk-projects members is the operator's adapter, not an AWID or
+OSS aweb endpoint.
 
-For BYOIDT, a team may be created and populated in AWID without aweb. Aweb
-import/sync consumes AWID team metadata and active certificate facts, verifies
-the import authority chosen by the hosted/self-hosted deployment, and creates
-runtime projections. It must not require or store the BYOIDT team controller
-private key.
+A BYOIDT team may be created and populated entirely in AWID before using aweb.
+To enter shipped OSS aweb runtime state, a member presents its valid
+certificate to `POST /v1/connect`; aweb verifies public AWID facts and does not
+require or store the team controller private key. An optional external
+import/sync adapter may orchestrate equivalent public facts, but it remains
+outside this canonical OSS server/registry contract.
 
 Registration is atomic from the registry contract's point of view: awid
 validates the signed blob against the team record and request metadata, then
@@ -634,12 +629,12 @@ The `certificate` field is base64 of the exact UTF-8 team certificate JSON
 document that the CLI stores and sends as `X-AWID-Team-Certificate`; it is not
 PEM and is not an inline JSON object.
 
-Compatibility note: current deployed certificate blobs and database rows may
-still expose a legacy `lifetime` field. That wire/storage cleanup is tracked by
-the identity config/schema compatibility work. The canonical contract for new
-docs, examples, and product language is `identity_scope=global|local`; services
-that accept the old field must normalize it at the boundary and must not teach
-it as product authority.
+Compatibility note: pre-migration certificate blobs and legacy registration
+requests may still carry `lifetime`. Migration 004 removed `lifetime` from the
+current database schema; the registration boundary normalizes legacy input to
+`identity_scope`. The canonical contract for new docs, examples, and product
+language is `identity_scope=global|local`; services that accept the old field
+must normalize it at the boundary and must not teach it as product authority.
 
 `aw id team fetch-cert` is refuse-overwrite by default. If a local
 certificate already exists for the target team with a different
@@ -718,126 +713,49 @@ current-key data.
 
 ## awid database schema
 
-The current migration chain starts with `001_registry.sql`, where active
-addresses, teams, and team-member names are unique. The canonical
-`identity_scope` column for team certificates is added later by
-`004_team_certificate_identity_scope.sql`; do not infer that it was part of the
-original consolidated `001` migration.
+AWID applies the files in `awid/src/awid_service/migrations/` in filename order
+to the `awid` schema by default, with pgdbm module name `awid-service` and
+migration table `schema_migrations`. Applied files are immutable because pgdbm
+records their checksums. Any schema change after an applied migration is a new
+forward migration; in particular, `001_registry.sql` is not edited to retrofit
+later state.
 
-```sql
-CREATE TABLE did_aw_mappings (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    did_aw          TEXT UNIQUE NOT NULL,
-    current_did_key TEXT NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+Current ordered effects are:
 
--- Identity rows carry no address, handle, or delivery route. Address
--- records live in public_addresses; the (did_aw → addresses) projection
--- is served by GET /v1/did/{did_aw}/addresses.
+1. `001_registry.sql` creates the base DID log, namespaces, addresses,
+   replacement announcements, teams, and certificate records.
+2. `002_namespace_delivery_origin.sql` adds namespace-level address-route
+   delivery origin.
+3. `003_drop_address_reachability.sql` guards and then drops the two legacy
+   address reachability columns.
+4. `004_team_certificate_identity_scope.sql` migrates `lifetime` to canonical
+   `identity_scope` and drops `lifetime` from storage.
+5. `005_identity_encryption_keys.sql` adds identity-signed **public** encryption
+   key assertions; it does not store private encryption keys.
+6. `006_identity_encryption_key_custody.sql` adds the assertion custody signal.
+7. `007_a2a_publications.sql` adds digest-bound A2A delegation/publication
+   records.
 
-CREATE TABLE did_aw_log (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    did_aw          TEXT NOT NULL,
-    seq             INTEGER NOT NULL,
-    operation       TEXT NOT NULL,
-    previous_did_key TEXT,
-    new_did_key     TEXT NOT NULL,
-    prev_entry_hash TEXT,
-    entry_hash      TEXT NOT NULL,
-    state_hash      TEXT NOT NULL,
-    authorized_by   TEXT NOT NULL,
-    signature       TEXT NOT NULL,
-    timestamp       TIMESTAMPTZ NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+The following inventory is exhaustive for current **AWID application tables
+declared by** that ordered component chain. It intentionally excludes pgdbm's
+manager-created `schema_migrations` metadata table.
+`scripts/check_sot_source_inventories.py` derives it from the SQL, applies
+`CREATE`/`DROP` events, preserves first-creation order, and fails when source
+and this list diverge. Current column, constraint, and index authority is the
+full ordered SQL, not a copied `001` snapshot.
 
-    UNIQUE (did_aw, seq)
-);
-
-CREATE TABLE dns_namespaces (
-    namespace_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    domain          TEXT UNIQUE NOT NULL,
-    controller_did  TEXT,
-    scope_id        UUID,
-    verification_status TEXT NOT NULL DEFAULT 'pending',
-    default_delivery_origin TEXT,
-    last_verified_at TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ
-);
-
-CREATE TABLE public_addresses (
-    address_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    domain          TEXT NOT NULL,
-    name            TEXT NOT NULL,
-    did_aw          TEXT NOT NULL REFERENCES did_aw_mappings(did_aw),
-    reachability    TEXT NOT NULL DEFAULT 'nobody'
-                    CHECK (reachability IN ('nobody', 'org_only', 'team_members_only', 'public')),
-    visible_to_team_id TEXT
-                    CHECK (
-                        (reachability = 'team_members_only' AND visible_to_team_id IS NOT NULL)
-                        OR (reachability != 'team_members_only' AND visible_to_team_id IS NULL)
-                    ),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-
-    UNIQUE (domain, name)
-);
-
--- public_addresses does not store current_did_key. Address lookups that
--- need the key JOIN on did_aw_mappings by did_aw; address-route origin is
--- route metadata, inherited from dns_namespaces.default_delivery_origin in
--- the current schema. The FK enforces the invariant that every address
--- points to a registered DID (Principle 5). reachability/visible_to_team_id
--- are legacy compatibility metadata and are not resolver auth for global
--- identities.
-
-CREATE TABLE teams (
-    team_uuid       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    domain          TEXT NOT NULL,
-    name            TEXT NOT NULL,
-    display_name    TEXT NOT NULL DEFAULT '',
-    team_did_key    TEXT NOT NULL,
-    visibility      TEXT NOT NULL DEFAULT 'private'
-                    CHECK (visibility IN ('public', 'private')),
-    created_by      TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    deleted_at      TIMESTAMPTZ,
-
-    UNIQUE (domain, name) WHERE deleted_at IS NULL
-);
-
--- Soft delete on teams allows name reuse after deletion.
--- The team_certificates log records every certificate issued for a team.
--- Active members = rows where revoked_at IS NULL.
--- Services cache the revoked rows to reject removed members.
-CREATE TABLE team_certificates (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_uuid       UUID NOT NULL REFERENCES teams(team_uuid),
-    certificate_id  TEXT NOT NULL,
-    member_did_key  TEXT NOT NULL,
-    member_did_aw   TEXT,
-    member_address  TEXT, -- address selected for this team membership
-    alias           TEXT NOT NULL,
-    identity_scope  TEXT NOT NULL DEFAULT 'global'
-                    CHECK (identity_scope IN ('global', 'local')),
-    issued_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    revoked_at      TIMESTAMPTZ,
-
-    UNIQUE (team_uuid, certificate_id)
-);
-
-CREATE INDEX idx_team_certificates_active
-    ON team_certificates (team_uuid, member_did_key)
-    WHERE revoked_at IS NULL;
-CREATE UNIQUE INDEX idx_team_certificates_alias_active
-    ON team_certificates (team_uuid, alias)
-    WHERE revoked_at IS NULL;
-CREATE INDEX idx_team_certificates_revoked
-    ON team_certificates (team_uuid, revoked_at) WHERE revoked_at IS NOT NULL;
-```
+<!-- BEGIN SOURCE INVENTORY: awid-tables -->
+- `did_aw_mappings`
+- `did_aw_log`
+- `dns_namespaces`
+- `public_addresses`
+- `replacement_announcements`
+- `teams`
+- `team_certificates`
+- `identity_encryption_keys`
+- `a2a_bridge_delegations`
+- `a2a_route_publications`
+<!-- END SOURCE INVENTORY: awid-tables -->
 
 ---
 

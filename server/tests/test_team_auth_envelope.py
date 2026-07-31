@@ -5,6 +5,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 from starlette.requests import Request
@@ -186,28 +187,32 @@ def test_team_auth_envelope_v2_rejects_noncanonical_payload() -> None:
 
 def test_team_auth_envelope_v2_conformance_vector() -> None:
     vector = _load_vector()
-    case = vector["cases"][0]
-    canonical = case["canonical_payload"].encode()
-    assert canonical_json_bytes(case["payload"]) == canonical
-    assert _b64url(canonical) == case["signed_payload_b64url"]
-    verify_did_key_signature(
-        did_key=case["did_key"],
-        payload=canonical,
-        signature_b64=case["signature_b64"],
-    )
-    envelope = team_auth_signature_payload(
-        _request(
-            path="/api/v1/a2a/gateway/routes",
-            query_string=b"dry_run=true",
-            signed_payload=canonical,
-        ),
-        team_id=case["payload"]["team_id"],
-        timestamp=case["payload"]["timestamp"],
-        body_sha256=hashlib.sha256(case["body"].encode()).hexdigest(),
-        allowed_audiences=["https://app.aweb.ai"],
-    )
-    assert envelope.version == vector["version"]
-    assert envelope.canonical_payload == canonical
+    assert "oss_task_create" in {case["name"] for case in vector["cases"]}
+
+    for case in vector["cases"]:
+        payload = case["payload"]
+        canonical = case["canonical_payload"].encode()
+        target = urlsplit(payload["path"])
+        assert canonical_json_bytes(payload) == canonical
+        assert _b64url(canonical) == case["signed_payload_b64url"]
+        verify_did_key_signature(
+            did_key=case["did_key"],
+            payload=canonical,
+            signature_b64=case["signature_b64"],
+        )
+        envelope = team_auth_signature_payload(
+            _request(
+                path=target.path,
+                query_string=target.query.encode(),
+                signed_payload=canonical,
+            ),
+            team_id=payload["team_id"],
+            timestamp=payload["timestamp"],
+            body_sha256=hashlib.sha256(case["body"].encode()).hexdigest(),
+            allowed_audiences=[payload["aud"]],
+        )
+        assert envelope.version == vector["version"]
+        assert envelope.canonical_payload == canonical
 
 
 def test_team_auth_envelope_v2_conformance_negative_cases() -> None:

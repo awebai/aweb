@@ -32,45 +32,54 @@ These fixtures govern shipped non-A2A protocol behavior.
 
 ### `message-signing-v1.json`
 
-Canonical message payloads and expected Ed25519 signatures, including stable-ID
-variants. Signatures use raw standard base64 without padding.
+Canonical UTF-8 message payloads and expected Ed25519 signatures, including
+variants with and without stable-ID fields. Signatures use raw standard base64
+without padding.
 
 ### `identity-log-v1.json`
 
-Canonical `register_did` and `rotate_key` payloads, state and entry hashes, and
-real expected signatures for identity continuity.
+Canonical identity-only `register_did` and `rotate_key` envelope payloads,
+state-hash inputs and hashes, entry hashes, and expected Ed25519 signatures.
 
 ### `identity-log-negative-v1.json`
 
-Positive and negative DID-log verifier outcomes consumed by Go and TypeScript.
-Cases cover full-chain and cached-head verification with explicit
-`OK_VERIFIED`, `OK_DEGRADED`, or `HARD_ERROR` expectations.
+Shared positive and negative DID-log verifier outcomes. Each `cases` entry feeds
+a `log_head` and optional cached head to the verifier; `log_cases` feed full
+logs to the genesis-anchored chain verifier. Go and TypeScript consume the bytes
+together and assert `OK_VERIFIED`, `OK_DEGRADED`, or `HARD_ERROR` so
+authorization, state-hash, and anchoring semantics cannot drift.
 
 ### `identity-log-raw-wire-v1.json`
 
-Complete wire JSON for decoder-level sequence-number cases. Go and TypeScript
-may reject at different layers, so the fixture records positive per-runtime
-expectations rather than treating a shared rejection label as sufficient.
+Complete wire JSON for decoder-level sequence-number cases. Both runtimes reject
+both cases, but the fixture records positive per-runtime expectations because
+they reject at different layers. Go rejects a fractional sequence during typed
+JSON decoding while TypeScript parses it and rejects it at the safe-integer
+guard. Above 2^53, 64-bit Go decodes and rejects at that guard while 32-bit Go
+cannot represent the value during decoding.
 
 ### `pin-store-raw-wire-v1.json`
 
-Raw YAML pin-store bytes and per-runtime outcomes/error substrings. It records a
-known compatibility divergence for non-string mapping keys instead of hiding it
-behind a common outcome.
+Raw YAML pin-store bytes and per-runtime outcomes plus error substrings. Each
+runtime feeds the same bytes through its own load-and-validate path (Go
+`LoadPinStore`, TypeScript `PinStore.fromYAML`). Three cases record the measured
+compatibility divergence for non-string mapping keys: Go rejects them while
+`js-yaml` coerces them to strings and TypeScript accepts. The divergence is not
+reachable through the normal `aw`-owned write path.
 
 ### `stable-id-v1.json`
 
-`did:key` to stable `did:aw` derivation.
+Canonical `did:key` to stable `did:aw` derivation.
 
 ### `rotation-announcements-v1.json`
 
-Canonical single-link and chained rotation announcements with real expected
-signatures.
+Canonical single-link and chained rotation-announcement payloads with expected
+Ed25519 signatures.
 
 ### `dns-txt-v1.json`
 
-Canonical `_awid.<domain>` TXT names and values, including default and explicit
-registry declarations.
+Canonical `_awid.<domain>` TXT record names and values, including the default
+public registry and explicit `registry=` declarations.
 
 ### `atomic-address-claim-v1.json`
 
@@ -88,9 +97,11 @@ keys that must never be reused outside tests.
 
 ### `team-auth-envelope-v2.json`
 
-Current request-bound team-auth canonical bytes, signatures, replay window, and
-negative binding cases. It is consumed by the aweb server, Go conformance suite,
-and public naapp verifiers. See
+Current request-bound team-auth canonical bytes and Ed25519 signatures. It
+includes a neutral OSS task request and a hosted-route interoperability case;
+negative cases cover cross-endpoint/origin replay, body tampering, and a missing
+protocol version. The aweb server, Go conformance suite, and public naapp
+verifiers consume it. See
 [`team-auth-envelope-v2.md`](../team-auth-envelope-v2.md).
 
 ## Experimental and compatibility A2A fixtures
@@ -159,26 +170,33 @@ materialization or array ordering; its governing contract wins.
 
 ## Validation
 
+The vectors are consumed from their canonical `docs/vectors/` paths by the
+relevant component suites. Go's conformance package embeds its release copy;
+its test first requires that copy to be byte-identical to the canonical corpus.
 Focused commands from the repository root:
 
 ```bash
 make test-a2a
 
 cd awid
-uv run pytest \
+uv run --frozen pytest -q \
   tests/test_conformance_vectors.py \
   tests/test_atomic_claim.py \
   tests/test_atomic_claim_route.py \
   tests/test_a2a_publication_route.py
 
 cd ../server
-uv run pytest \
+uv run --frozen pytest -q \
   tests/test_identity_conformance_vectors.py \
   tests/test_team_auth_envelope.py \
   tests/test_e2ee_crypto_helpers.py
 
 cd ../cli/go
-go test ./internal/conformance ./a2a ./a2agw ./awid
+go test ./internal/conformance ./a2a ./a2agw ./awid -count=1
+
+cd ../../../channel-core
+npm test -- \
+  test/registry.test.ts test/pin_store_raw_wire.test.ts test/log_rollback.test.ts
 ```
 
 TypeScript trust/pin-store consumers run through the normal channel-core test
