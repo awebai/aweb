@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
@@ -30,10 +31,32 @@ type pinForgetResult struct {
 	Path    string `json:"path"`
 	Address string `json:"address"`
 	Removed bool   `json:"removed"`
+	// DidYouMean names bindings stored under a qualified form of the address given.
+	// Pins are written under the CANONICAL address, so a bare alias never matches one
+	// and the operator is told nothing is pinned while the stale pin remains under the
+	// namespaced form. Reporting the near miss turns that back into a diagnostic.
+	DidYouMean []string `json:"did_you_mean,omitempty"`
 	// PinKey is the key that was being trusted, captured before removal. The store
 	// keeps no history, so if this is not reported here the operator has no record
 	// of what they stopped trusting.
 	PinKey string `json:"pin_key,omitempty"`
+}
+
+// qualifiedFormsOf returns pinned addresses that end in "/" + addr, which is what a
+// bare alias looks like once canonicalTrustAddress has namespaced it. Empty when addr
+// is already qualified or nothing resembles it.
+func qualifiedFormsOf(store *awid.PinStore, addr string) []string {
+	if strings.Contains(addr, "/") {
+		return nil
+	}
+	var matches []string
+	for address := range store.Addresses {
+		if strings.HasSuffix(address, "/"+addr) {
+			matches = append(matches, address)
+		}
+	}
+	sort.Strings(matches)
+	return matches
 }
 
 func newPinStoreForgetCmd() *cobra.Command {
@@ -92,6 +115,7 @@ func newPinStoreForgetCmd() *cobra.Command {
 			}
 
 			result := pinForgetResult{Path: path, Address: addr}
+			result.DidYouMean = qualifiedFormsOf(store, addr)
 			// Captured before the removal: afterwards the store cannot answer it.
 			result.PinKey = store.Addresses[addr]
 			result.Removed = store.RemoveAddress(addr)
@@ -116,6 +140,12 @@ func newPinStoreForgetCmd() *cobra.Command {
 
 			if !result.Removed {
 				fmt.Fprintf(cmd.OutOrStdout(), "no pinned binding for %s in %s; nothing was forgotten\n", addr, path)
+				if len(result.DidYouMean) > 0 {
+					// Suggest rather than act. Which binding the operator meant is
+					// their call, and this command stops trust - guessing it is not a
+					// convenience, it is a decision made on their behalf.
+					fmt.Fprintf(cmd.OutOrStdout(), "did you mean %s? pins are stored under the qualified address\n", strings.Join(result.DidYouMean, ", "))
+				}
 				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "forgot %s -> %s in %s\n", addr, result.PinKey, path)

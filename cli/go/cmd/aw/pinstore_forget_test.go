@@ -159,3 +159,32 @@ func TestPinStoreForgetRefusesAnUnreadableStore(t *testing.T) {
 		t.Fatalf("the refused command rewrote the store anyway:\nbefore: %q\nafter:  %q", corrupt, string(after))
 	}
 }
+
+// eve's finding on review. Pins are written under the CANONICAL address form:
+// canonicalTrustAddress namespaces a bare alias, so `ares` is stored as
+// juan.aweb.ai/ares. Forgetting the bare alias therefore looks up a key that was
+// never written and reports "no pinned binding" - honest, and misleading in exactly
+// the case this command exists for, because the stale pin is still sitting there
+// under the qualified form.
+//
+// "Removed nothing" is supposed to tell an operator the mismatch comes from
+// somewhere else. Here it would send them away while the thing they came to remove
+// remains.
+func TestPinStoreForgetPointsAtTheQualifiedFormOfABareAlias(t *testing.T) {
+	path := pinStoreFixture(t)
+
+	got := runPinStoreForget(t, "--path", path, "--address", "grace")
+
+	if !strings.Contains(got, "juan.aweb.ai/grace") {
+		t.Fatalf("forgetting the bare alias does not point at the qualified binding that exists, so the operator is told nothing is pinned while the stale pin remains:\n%s", got)
+	}
+	// It must still not have removed anything: guessing which binding the operator
+	// meant is not this command's decision to make.
+	store, err := awid.LoadPinStore(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, ok := store.Addresses["juan.aweb.ai/grace"]; !ok {
+		t.Fatal("forget removed the qualified binding from a bare-alias argument; it must suggest, not guess")
+	}
+}
