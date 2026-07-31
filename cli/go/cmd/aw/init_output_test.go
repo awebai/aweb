@@ -1,9 +1,33 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestCLITutorialRouteIsNotAliasedToTaskWorkflow(t *testing.T) {
+	docsDir := filepath.Join("..", "..", "..", "..", "docs")
+	tutorial, err := os.ReadFile(filepath.Join(docsDir, "cli-tutorial.md"))
+	if err != nil {
+		t.Fatalf("read canonical CLI tutorial: %v", err)
+	}
+	startWorking, err := os.ReadFile(filepath.Join(docsDir, "start-working.md"))
+	if err != nil {
+		t.Fatalf("read task-first guide: %v", err)
+	}
+
+	if !strings.Contains(string(tutorial), `title: "First durable agent round trip with aw"`) {
+		t.Fatal("CLI tutorial does not identify the durable round-trip audience")
+	}
+	if strings.Contains(string(startWorking), "/docs/cli-tutorial/") {
+		t.Fatal("task-first guide aliases the canonical CLI tutorial route")
+	}
+	if string(tutorial) == string(startWorking) {
+		t.Fatal("CLI tutorial and task-first guide must remain distinct audiences")
+	}
+}
 
 func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 	lines := initNextStepLines(&initResult{
