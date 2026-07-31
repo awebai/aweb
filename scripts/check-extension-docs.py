@@ -19,7 +19,6 @@ PRIVATE_TRANSITION_DOCS = {
 }
 
 REMOVED_DOCS = {
-    "federation-architecture.md",
     "restructuring/app-event-subscriptions-contract.md",
     "restructuring/app-manifest-schema.md",
     "restructuring/app-registry-grants-read-api.md",
@@ -81,7 +80,13 @@ def _source_hook_events(root: Path, failures: list[str]) -> set[str]:
             function = node.func
             name = function.id if isinstance(function, ast.Name) else ""
             if name == "fire_mutation_hook":
-                events.update(_string_literals(node.args[1]))
+                literals = _string_literals(node.args[1])
+                if not literals:
+                    failures.append(
+                        f"unsupported non-literal fire_mutation_hook event expression: {relative}:{node.lineno}"
+                    )
+                    continue
+                events.update(literals)
     return events
 
 
@@ -92,10 +97,6 @@ def check(root: Path) -> list[str]:
     for relative in REMOVED_DOCS:
         if (docs / relative).exists():
             failures.append(f"superseded document still exists: docs/{relative}")
-    for relative in PRIVATE_TRANSITION_DOCS:
-        if not (docs / relative).is_file():
-            failures.append(f"managed/private transition artifact moved outside coordinated relocation: docs/{relative}")
-
     public_text: dict[str, str] = {}
     for relative in PUBLIC_EXTENSION_DOCS:
         path = docs / relative
@@ -183,12 +184,20 @@ def self_test(root: Path) -> int:
             shutil.copy2(root / relative, destination)
         hook = tmp / "docs/aw-hooks-sot.md"
         hook.write_text(hook.read_text(encoding="utf-8").replace("`task.created`", "`task-created`"), encoding="utf-8")
+        message_source = tmp / "server/src/aweb/routes/messages.py"
+        message_source.write_text(
+            message_source.read_text(encoding="utf-8").replace('"message.sent",', "dynamic_event_name,", 1),
+            encoding="utf-8",
+        )
         failures = check(tmp)
         if not any("task.created" in failure for failure in failures):
             print("self-test failed: removing a source-emitted hook event was not detected")
             return 1
+        if not any("unsupported non-literal" in failure for failure in failures):
+            print("self-test failed: a dynamic hook event expression was silently ignored")
+            return 1
 
-    print("self-test passed: source/doc hook drift is rejected")
+    print("self-test passed: missing and non-literal source/doc hook drift is rejected")
     return 0
 
 

@@ -262,7 +262,11 @@ For the first product slice, generated aweb Agent Cards expose JSON-RPC v1.0 int
 
 Unauthenticated routes omit `securitySchemes` and `securityRequirements` rather than emitting empty objects/arrays in canonical digest vectors. `streaming: false` and `pushNotifications: false` are deliberate advertised capabilities for initial generated cards and are part of the digest bytes; `extendedAgentCard: false` is omitted unless we deliberately advertise extended-card support state.
 
-This digest is the byte contract used by AWID A2A publication assertions. A later change to the A2A source version, card field shape, digest bytes, or canonicalization rule must update the fixture and receive Athena review before implementation follows it.
+This digest is the byte contract used by AWID A2A publication assertions. A
+later change to the A2A source version, card field shape, digest bytes, or
+canonicalization rule must update the canonical fixture, pass the relevant
+conformance tests, and receive independent protocol/security review before
+implementation follows it.
 
 ### 5.3 Root Router Card
 

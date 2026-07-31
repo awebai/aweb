@@ -21,9 +21,9 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline now contains 96 tracked Markdown documents. This front door does
-not self-link, and four private-purpose Markdown artifacts are deliberately not
-exposed by public path or title. The remaining 91 public Markdown paths appear
+The baseline contains 99 tracked Markdown documents. This front door does not
+self-link, and four private-purpose Markdown artifacts are deliberately not
+exposed by public path or title. The remaining 94 public Markdown paths appear
 below exactly once. Those four artifacts and one private-purpose configuration
 example remain represented by neutral, unlinked transition descriptions until
 their later consumer-ordered relocation or removal.
@@ -52,6 +52,12 @@ security and protocol authority.
 
 - [Aweb product SOT](aweb-product-sot.md) — canonical communication-first target
   direction and ownership boundaries.
+- [Website and dashboard strategy](website-dashboard-strategy.md) — working
+  strategy for the public site, documentation journey, integration pages, and
+  hosted delivery dashboard.
+- [Orchestrator evidence review](orchestrator-evidence-review.md) — research
+  snapshot separating demonstrated orchestrator capabilities from unproven
+  agent-fleet productivity claims.
 - [Identity and team model](identity.md) — canonical vocabulary and identity/team
   invariants.
 - [aweb implementation SOT](aweb-sot.md) — normative aweb server/CLI contract;
@@ -250,6 +256,9 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   — remove after confirming incorporated text.
 - [Duplicate 1:1 conversation cleanup](duplicate-1to1-conversation-cleanup.md) —
   remove after consumer migration and reusable-authority extraction.
+- [Federated messaging architecture](federation-architecture.md) — durable rules
+  are consolidated in current routing authority; relocate this historical
+  snapshot during the reviewed archive/pruning lane.
 - [Launch readiness](launch-readiness-sot.md) — superseded product narrative;
   extract current facts and remove after index/consumer migration.
 - [naapp move preflight](naapp-move-preflight.md) — completed preflight; remove
