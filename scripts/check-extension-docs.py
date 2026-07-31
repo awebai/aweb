@@ -26,6 +26,13 @@ REMOVED_DOCS = {
     "restructuring/app-registry-grants-read-api.md",
 }
 
+NON_NORMATIVE_STRATEGY_DOCS = {
+    "company-agent-platform-thesis.md",
+    "market-entry-wedge-research.md",
+    "orchestrator-evidence-review.md",
+    "website-dashboard-strategy.md",
+}
+
 PUBLIC_EXTENSION_DOCS = (
     "README.md",
     "a2a.md",
@@ -131,6 +138,22 @@ def _source_hook_call_sites(root: Path, failures: list[str]) -> list[dict[str, s
     if not call_sites:
         failures.append("no fire_mutation_hook event calls found under server/src/aweb")
     return call_sites
+
+
+def _readme_h2_links(readme: str) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {}
+    current_section = ""
+    for line in readme.splitlines():
+        heading = re.match(r"^##\s+(.+?)\s*$", line)
+        if heading:
+            current_section = heading.group(1)
+            sections.setdefault(current_section, [])
+        sections.setdefault(current_section, []).extend(
+            target
+            for target in re.findall(r"\[[^\]]+\]\(([^)#]+)(?:#[^)]+)?\)", line)
+            if target.endswith(".md") and not target.startswith("../")
+        )
+    return sections
 
 
 def _tracked_docs_markdown(root: Path, failures: list[str]) -> set[str]:
@@ -254,6 +277,29 @@ def check(root: Path, tracked_markdown: set[str] | None = None) -> list[str]:
         if target.endswith(".md") and not target.startswith("../")
     ]
     counts = Counter(links)
+    section_links = _readme_h2_links(readme)
+    classified_strategy = set(
+        section_links.get("Non-normative strategy and research", [])
+    )
+    missing_strategy = sorted(NON_NORMATIVE_STRATEGY_DOCS - classified_strategy)
+    unexpected_strategy = sorted(classified_strategy - NON_NORMATIVE_STRATEGY_DOCS)
+    if missing_strategy:
+        failures.append(
+            "missing non-normative strategy/research classification: "
+            + ", ".join(missing_strategy)
+        )
+    if unexpected_strategy:
+        failures.append(
+            "non-normative strategy/research family has unexpected Markdown paths: "
+            + ", ".join(unexpected_strategy)
+        )
+    normalized_readme = " ".join(readme.split())
+    if (
+        "OAS is an external reference composition, never a required aweb runtime or lifecycle owner."
+        not in normalized_readme
+    ):
+        failures.append("non-normative strategy family does not preserve the external OAS boundary")
+
     missing = sorted(expected_public - set(counts))
     duplicate = sorted(target for target, count in counts.items() if count != 1)
     extra = sorted(set(counts) - expected_public)
@@ -334,6 +380,16 @@ def self_test(root: Path) -> int:
             ),
             encoding="utf-8",
         )
+
+        readme = tmp / "docs/README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "## Non-normative strategy and research",
+                "## Strategy and research",
+                1,
+            ),
+            encoding="utf-8",
+        )
         failures = check(tmp, tracked_markdown)
         required_failures = {
             "missing documented event": "task.created",
@@ -341,6 +397,7 @@ def self_test(root: Path) -> int:
             "removed repeated-event call site": "inventory retains absent call site",
             "dynamic event expression": "unsupported non-literal",
             "real workspace release mount": "mounts the real repository workspace",
+            "strategy lifecycle classification": "missing non-normative strategy/research classification",
         }
         for label, expected in required_failures.items():
             if not any(expected in failure for failure in failures):
@@ -348,8 +405,8 @@ def self_test(root: Path) -> int:
                 return 1
 
     print(
-        "self-test passed: tracked corpus, event/call-site multiplicity, dynamic-expression, "
-        "and real-workspace release-mount drift controls reject their mutations"
+        "self-test passed: tracked corpus, strategy lifecycle, event/call-site multiplicity, "
+        "dynamic-expression, and real-workspace release-mount controls reject their mutations"
     )
     return 0
 
