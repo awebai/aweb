@@ -480,7 +480,9 @@ type InboxMessage struct {
 }
 
 type InboxResponse struct {
-	Messages []InboxMessage `json:"messages"`
+	Messages   []InboxMessage `json:"messages"`
+	HasMore    bool           `json:"has_more"`
+	NextCursor string         `json:"next_cursor,omitempty"`
 }
 
 type ConversationItem struct {
@@ -546,6 +548,7 @@ func (c *Client) ListConversationsWithParams(ctx context.Context, params Convers
 type InboxParams struct {
 	UnreadOnly bool
 	Limit      int
+	Cursor     string
 	MessageID  string
 }
 
@@ -576,9 +579,12 @@ func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, erro
 		path += sep + "limit=" + itoa(p.Limit)
 		sep = "&"
 	}
+	if strings.TrimSpace(p.Cursor) != "" {
+		path += sep + "cursor=" + urlQueryEscape(strings.TrimSpace(p.Cursor))
+		sep = "&"
+	}
 	if strings.TrimSpace(p.MessageID) != "" {
 		path += sep + "message_id=" + urlQueryEscape(strings.TrimSpace(p.MessageID))
-		sep = "&"
 	}
 	var out InboxResponse
 	if err := c.Get(ctx, path, &out); err != nil {

@@ -109,6 +109,35 @@ func TestFormatMailInboxPrefersFromAddress(t *testing.T) {
 	}
 }
 
+func TestFormatMailInboxReportsAndContinuesAnIncompletePage(t *testing.T) {
+	previousTeam, previousIdentityHome, previousServer := teamFlag, identityHomeFlag, serverFlag
+	previousShowAll, previousLimit := mailInboxShowAll, mailInboxLimit
+	t.Cleanup(func() {
+		teamFlag, identityHomeFlag, serverFlag = previousTeam, previousIdentityHome, previousServer
+		mailInboxShowAll, mailInboxLimit = previousShowAll, previousLimit
+	})
+	teamFlag = "ops:acme.com"
+	identityHomeFlag = "/tmp/identity home's"
+	serverFlag = "edge.example"
+	mailInboxShowAll = true
+	mailInboxLimit = 17
+
+	resp := &awid.InboxResponse{
+		Messages:   []awid.InboxMessage{{FromAlias: "carol", Body: "newest page"}},
+		HasMore:    true,
+		NextCursor: "next-page",
+	}
+
+	out := formatMailInbox(resp)
+	if !strings.Contains(out, "More messages are not shown") {
+		t.Fatalf("mail inbox should not present a bounded page as complete:\n%s", out)
+	}
+	want := "aw mail inbox --team ops:acme.com --identity-home '/tmp/identity home'\\''s' --server-name edge.example --show-all --limit 17 --cursor next-page"
+	if !strings.Contains(out, want) {
+		t.Fatalf("mail inbox continuation did not preserve request selection and page flags; want %q:\n%s", want, out)
+	}
+}
+
 func TestFormatMailInboxFallsBackToStableID(t *testing.T) {
 	resp := &awid.InboxResponse{
 		Messages: []awid.InboxMessage{

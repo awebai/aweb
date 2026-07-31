@@ -429,6 +429,82 @@ async def test_send_message_to_local_alias_creates_conversation(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_inbox_pagination_returns_every_message_without_overlap(aweb_cloud_db):
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    created_at = datetime.now(timezone.utc).replace(microsecond=0)
+    message_ids = [
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000002",
+        "00000000-0000-4000-8000-000000000003",
+    ]
+    for message_id in message_ids:
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.messages}} (
+                message_id, from_did, to_did, from_alias, to_alias,
+                subject, body, priority, created_at
+            )
+            VALUES ($1, 'did:aw:alice', 'did:aw:bob', 'alice', 'bob',
+                    'page', $2, 'normal', $3)
+            """,
+            UUID(message_id),
+            message_id,
+            created_at,
+        )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+            team_id="backend:acme.com",
+            alias="bob",
+            agent_id=bob_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.get("/v1/messages/inbox?limit=2")
+        assert first.status_code == 200, first.text
+        first_body = first.json()
+        assert first_body["has_more"] is True
+        assert first_body["next_cursor"]
+
+        second = await client.get(
+            "/v1/messages/inbox",
+            params={"limit": 2, "cursor": first_body["next_cursor"]},
+        )
+        malformed = await client.get(
+            "/v1/messages/inbox",
+            params={"limit": 2, "cursor": "e30"},  # URL-safe base64 for an empty object.
+        )
+
+    assert second.status_code == 200, second.text
+    second_body = second.json()
+    assert second_body["has_more"] is False
+    assert second_body["next_cursor"] is None
+    first_ids = [item["message_id"] for item in first_body["messages"]]
+    second_ids = [item["message_id"] for item in second_body["messages"]]
+    assert len(first_ids) == 2
+    assert len(second_ids) == 1
+    assert set(first_ids).isdisjoint(second_ids)
+    assert set(first_ids + second_ids) == set(message_ids)
+    assert malformed.status_code == 422
+    assert malformed.json()["detail"] == "Invalid inbox cursor"
+
+
+@pytest.mark.asyncio
 async def test_send_encrypted_message_stores_opaque_envelope_only(aweb_cloud_db):
     alice_sk, alice_pk, alice_did_key = _make_keypair()
     _, bob_pk, bob_did_key = _make_keypair()

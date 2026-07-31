@@ -70,8 +70,9 @@ Cover these cases for mail and chat wherever the operation exists:
 3. Conversation history is oldest-first, defaults to 200, has a 500-message
    ceiling, and has no paging flag. A full-size window cannot prove completeness.
 4. Inbox is newest-first. The CLI defaults to 50 while the server accepts at most
-   200; returned unread rows are presented and acknowledged, and a bounded result
-   is not mailbox completeness evidence.
+   200 per page; returned unread rows are presented and acknowledged. A response
+   with `has_more` includes an opaque `next_cursor`, allowing the remaining
+   mailbox to be fetched without overlap.
 5. Mail reply resolves the source `conversation_id`; reply sends before its
    best-effort source acknowledgement. Failure of that acknowledgement does not
    unsend the reply.

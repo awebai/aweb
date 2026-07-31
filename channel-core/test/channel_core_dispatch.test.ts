@@ -15,6 +15,7 @@ import {
   type AgentEvent,
   type ChannelAwakening,
   SenderTrustManager,
+  startChannelLoop,
 } from "../src/index.js";
 import { canonicalJSON, signMessage, type MessageEnvelope } from "../src/identity/signing.js";
 
@@ -576,6 +577,74 @@ describe("channel-core dispatchAgentEvent", () => {
     // this, a log that recorded every message would satisfy the assertion above.
     expect(onAwakening).toHaveBeenCalledTimes(1);
     expect(entries.some((entry) => entry.message_id === "mail-presented")).toBe(false);
+  });
+
+  test("the real channel loop wires the durable undelivered record into dispatch", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "aweb-channel-wiring-"));
+    const controller = new AbortController();
+    const poisonMessage = {
+      message_id: "mail-wiring-poison",
+      from_agent_id: "agent-1",
+      from_alias: "alice",
+      from_address: "acme.com/alice",
+      to_alias: self.alias,
+      to_address: self.address,
+      subject: "poison",
+      body: "malformed transport record",
+      priority: "normal",
+      created_at: "2025-01-01T00:00:00Z",
+      get signed_payload(): string {
+        throw new Error("unexpected per-message verification failure");
+      },
+    };
+    const client = {
+      openSSE: vi.fn().mockResolvedValue(new Response(
+        'event: mail_message\ndata: {"message_id":"mail-wiring-poison"}\n\n',
+        { headers: { "content-type": "text/event-stream" } },
+      )),
+      get: vi.fn().mockResolvedValue({
+        messages: [poisonMessage, {
+          message_id: "mail-wiring-presented",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: self.alias,
+          subject: "good",
+          body: "still delivered",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:01Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const onAwakening = vi.fn(() => {
+      controller.abort();
+    });
+
+    await startChannelLoop({
+      client: client as never,
+      pinStore: new PinStore(),
+      trust,
+      self,
+      signal: controller.signal,
+      workdir,
+      onAwakening,
+    });
+
+    const entries = (await readFile(join(workdir, ".aw", "channel-undelivered.jsonl"), "utf-8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, string>);
+    expect(entries).toEqual([
+      expect.objectContaining({
+        message_id: "mail-wiring-poison",
+        reason: "verification_error",
+      }),
+    ]);
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "mail",
+      content: "still delivered",
+    }));
   });
 
   test("keeps presenting the batch when the undelivered record cannot be written", async () => {

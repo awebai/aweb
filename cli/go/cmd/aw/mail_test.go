@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -324,6 +325,99 @@ func TestE2EEAssertionIdentityUsesExternalIdentityHome(t *testing.T) {
 	})
 	if identity.DID != principalDID || identity.StableID != principalStableID {
 		t.Fatalf("identity=(%q,%q), want external (%q,%q)", identity.DID, identity.StableID, principalDID, principalStableID)
+	}
+}
+
+func TestAwMailInboxAcknowledgesUnreadPageBeforeCursorContinuation(t *testing.T) {
+	t.Parallel()
+
+	messageIDs := []string{
+		"00000000-0000-4000-8000-000000000001",
+		"00000000-0000-4000-8000-000000000002",
+		"00000000-0000-4000-8000-000000000003",
+	}
+	acked := map[string]bool{}
+	pageFetches := 0
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/messages/inbox":
+			pageFetches++
+			cursor := r.URL.Query().Get("cursor")
+			if pageFetches == 1 {
+				if cursor != "" {
+					t.Fatalf("first page cursor=%q", cursor)
+				}
+				_ = json.NewEncoder(w).Encode(awid.InboxResponse{
+					Messages: []awid.InboxMessage{
+						{MessageID: messageIDs[0], FromAlias: "alice", Body: "first-page-a", CreatedAt: "2026-07-31T12:00:02Z"},
+						{MessageID: messageIDs[1], FromAlias: "alice", Body: "first-page-b", CreatedAt: "2026-07-31T12:00:01Z"},
+					},
+					HasMore:    true,
+					NextCursor: "cursor-token",
+				})
+				return
+			}
+			if cursor != "cursor-token" {
+				t.Fatalf("continuation cursor=%q", cursor)
+			}
+			if !acked[messageIDs[0]] || !acked[messageIDs[1]] {
+				t.Fatalf("continuation fetched before visible page was acknowledged: %+v", acked)
+			}
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{
+				Messages: []awid.InboxMessage{{
+					MessageID: messageIDs[2],
+					FromAlias: "alice",
+					Body:      "second-page",
+					CreatedAt: "2026-07-31T12:00:00Z",
+				}},
+			})
+		case strings.HasPrefix(r.URL.Path, "/v1/messages/") && strings.HasSuffix(r.URL.Path, "/ack"):
+			messageID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/messages/"), "/ack")
+			if !slices.Contains(messageIDs, messageID) {
+				t.Fatalf("unexpected ack message id %q", messageID)
+			}
+			acked[messageID] = true
+			_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: messageID, AcknowledgedAt: "2026-07-31T12:01:00Z"})
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	runInbox := func(args ...string) string {
+		run := exec.CommandContext(ctx, bin, append([]string{"mail", "inbox"}, args...)...)
+		run.Env = testCommandEnv(tmp)
+		run.Dir = tmp
+		out, err := run.CombinedOutput()
+		if err != nil {
+			t.Fatalf("mail inbox %v failed: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+
+	firstOutput := runInbox("--limit", "2")
+	if !strings.Contains(firstOutput, "first-page-a") || !strings.Contains(firstOutput, "first-page-b") ||
+		strings.Contains(firstOutput, "second-page") || !strings.Contains(firstOutput, "--cursor cursor-token") {
+		t.Fatalf("first page output is incomplete or overlaps continuation:\n%s", firstOutput)
+	}
+	if !acked[messageIDs[0]] || !acked[messageIDs[1]] || acked[messageIDs[2]] {
+		t.Fatalf("first page read state=%+v", acked)
+	}
+
+	secondOutput := runInbox("--limit", "2", "--cursor", "cursor-token")
+	if strings.Contains(secondOutput, "first-page") || !strings.Contains(secondOutput, "second-page") {
+		t.Fatalf("second page overlapped or omitted content:\n%s", secondOutput)
+	}
+	if pageFetches != 2 || !acked[messageIDs[0]] || !acked[messageIDs[1]] || !acked[messageIDs[2]] {
+		t.Fatalf("final fetch/read state: fetches=%d acked=%+v", pageFetches, acked)
 	}
 }
 

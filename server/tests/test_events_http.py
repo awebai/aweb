@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -758,3 +758,25 @@ async def test_current_actionable_mail_keeps_newest_unread_in_diff_window(aweb_c
     assert newest_message_id in {item["message_id"] for item in changed}
     newest = next(item for item in current if item["message_id"] == newest_message_id)
     assert newest["conversation_id"] == newest_conversation_id
+
+    all_message_ids = {
+        *(f"00000000-0000-4000-8000-{i + 1:012d}" for i in range(50)),
+        newest_message_id,
+    }
+    presented_ids = {item["message_id"] for item in current}
+    omitted_ids = all_message_ids - presented_ids
+    assert len(omitted_ids) == 1
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.messages}}
+        SET read_at = NOW()
+        WHERE message_id = ANY($1::uuid[])
+        """,
+        [UUID(message_id) for message_id in presented_ids],
+    )
+
+    after_ack = await events_module._current_actionable_mail(
+        aweb_cloud_db.aweb_db,
+        inbox_dids=["did:aw:bob"],
+    )
+    assert {item["message_id"] for item in after_ack} == omitted_ids

@@ -146,6 +146,31 @@ func formatMailInbox(v any) string {
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
 		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, ""), subj, tags, msg.Body))
 	}
+	if resp.HasMore {
+		sb.WriteString("\nMore messages are not shown on this page.\n")
+		if cursor := strings.TrimSpace(resp.NextCursor); cursor != "" {
+			sb.WriteString("Continue with: aw mail inbox")
+			for _, selection := range []struct {
+				name  string
+				value string
+			}{
+				{name: "team", value: teamFlag},
+				{name: "identity-home", value: identityHomeFlag},
+				{name: "server-name", value: serverFlag},
+			} {
+				if value := strings.TrimSpace(selection.value); value != "" {
+					sb.WriteString(" --" + selection.name + " " + teamUpShellQuoteIfNeeded(value))
+				}
+			}
+			if mailInboxShowAll {
+				sb.WriteString(" --show-all")
+			}
+			if mailInboxLimit != 50 {
+				sb.WriteString(fmt.Sprintf(" --limit %d", mailInboxLimit))
+			}
+			sb.WriteString(" --cursor " + teamUpShellQuoteIfNeeded(cursor) + "\n")
+		}
+	}
 	return sb.String()
 }
 

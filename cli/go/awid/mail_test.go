@@ -1,6 +1,43 @@
 package awid
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestInboxSendsCursorAndPreservesPaginationMetadata(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages/inbox" {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("cursor"); got != "page-two" {
+			t.Fatalf("cursor=%q", got)
+		}
+		_ = json.NewEncoder(w).Encode(InboxResponse{
+			Messages:   []InboxMessage{{MessageID: "message-2"}},
+			HasMore:    true,
+			NextCursor: "page-three",
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := client.Inbox(context.Background(), InboxParams{Limit: 1, Cursor: "page-two"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !page.HasMore || page.NextCursor != "page-three" || len(page.Messages) != 1 {
+		t.Fatalf("page=%+v", page)
+	}
+}
 
 func TestMailConversationTargetPrefersAddressForE2EE(t *testing.T) {
 	t.Parallel()

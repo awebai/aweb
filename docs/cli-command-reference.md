@@ -1617,11 +1617,14 @@ Flags:
 
 ### `mail inbox`
 
-List inbox messages (unread only by default)
+List inbox messages, newest first and unread only by default. Messages shown by this command are acknowledged as read.
+
+The response is one bounded page. Text output reports when more messages exist and prints a continuation command; JSON output carries has_more and next_cursor. Pass the returned value to --cursor to continue without overlap.
 
 Flags:
+- `--cursor string Continue from next_cursor in a previous inbox response`
 - `-h, --help help for inbox`
-- `--limit int Max messages (default 50)`
+- `--limit int Max messages per page (default 50)`
 - `--show-all Show all messages including already-read`
 
 ## `mail reply`

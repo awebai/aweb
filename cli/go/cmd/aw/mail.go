@@ -854,11 +854,14 @@ func e2eeAssertionIdentityForSelection(sel *awconfig.Selection) *awconfig.Resolv
 var (
 	mailInboxShowAll bool
 	mailInboxLimit   int
+	mailInboxCursor  string
 )
 
 var mailInboxCmd = &cobra.Command{
 	Use:   "inbox",
 	Short: "List inbox messages (unread only by default)",
+	Long: "List inbox messages, newest first and unread only by default. Messages shown by this command are acknowledged as read.\n\n" +
+		"The response is one bounded page. Text output reports when more messages exist and prints a continuation command; JSON output carries has_more and next_cursor. Pass the returned value to --cursor to continue without overlap.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -873,6 +876,7 @@ var mailInboxCmd = &cobra.Command{
 		resp, err := c.Inbox(ctx, awid.InboxParams{
 			UnreadOnly: !mailInboxShowAll,
 			Limit:      mailInboxLimit,
+			Cursor:     mailInboxCursor,
 		})
 		if err != nil {
 			return err
@@ -1076,7 +1080,8 @@ func init() {
 	_ = mailSendCmd.Flags().MarkHidden("legacy-plaintext")
 
 	mailInboxCmd.Flags().BoolVar(&mailInboxShowAll, "show-all", false, "Show all messages including already-read")
-	mailInboxCmd.Flags().IntVar(&mailInboxLimit, "limit", 50, "Max messages")
+	mailInboxCmd.Flags().IntVar(&mailInboxLimit, "limit", 50, "Max messages per page")
+	mailInboxCmd.Flags().StringVar(&mailInboxCursor, "cursor", "", "Continue from next_cursor in a previous inbox response")
 	mailReplyCmd.Flags().StringVar(&mailReplySubject, "subject", "", "Subject")
 	mailReplyCmd.Flags().StringVar(&mailReplyBody, "body", "", shellExpandedInlineHelp("Body", "--body-file"))
 	mailReplyCmd.Flags().StringVar(&mailReplyBodyFile, "body-file", "", safeFileInputHelp("message body"))
