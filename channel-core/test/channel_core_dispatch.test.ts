@@ -1265,6 +1265,12 @@ describe("channel-core dispatchAgentEvent", () => {
     };
     const signature = await signMessage(b64ToBytes(vectors.seed), env);
     const rosterDID = vectors.did.slice(0, -1) + (vectors.did.endsWith("1") ? "2" : "1");
+    const wrongRecipientEnv: MessageEnvelope = {
+      ...env,
+      message_id: "mail-projected-local-wrong-recipient",
+      to_did: rosterDID,
+    };
+    const wrongRecipientSignature = await signMessage(b64ToBytes(vectors.seed), wrongRecipientEnv);
     const client = {
       hasTeamCertificateAuth: (teamID: string) => teamID === "backend:acme.com",
       get: vi.fn().mockResolvedValue({
@@ -1307,6 +1313,53 @@ describe("channel-core dispatchAgentEvent", () => {
 
     expect(client.getFresh).toHaveBeenCalledWith("/v1/agents");
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      meta: expect.objectContaining({ trust_status: "identity_mismatch", verified: "false" }),
+    }));
+
+    const wrongRecipientAwakening = vi.fn();
+    const wrongRecipientClient = {
+      hasTeamCertificateAuth: client.hasTeamCertificateAuth,
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: wrongRecipientEnv.message_id,
+          conversation_id: "legacy-conversation",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: self.alias,
+          subject: wrongRecipientEnv.subject,
+          body: wrongRecipientEnv.body,
+          priority: "normal",
+          created_at: wrongRecipientEnv.timestamp,
+          from_did: vectors.did,
+          to_did: wrongRecipientEnv.to_did,
+          signature: wrongRecipientSignature,
+          signing_key_id: vectors.did,
+          signed_payload: canonicalJSON(wrongRecipientEnv),
+        }],
+      }),
+      getFresh: vi.fn(),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const wrongRecipientTrust = new SenderTrustManager(
+      wrongRecipientClient as never,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      self.did,
+      self.stableID,
+    );
+    await dispatchAgentEvent(
+      {
+        client: wrongRecipientClient as never,
+        pinStore: new PinStore(),
+        trust: wrongRecipientTrust,
+        self,
+        onAwakening: wrongRecipientAwakening,
+      },
+      new Set(),
+      { type: "mail_message", message_id: wrongRecipientEnv.message_id } satisfies AgentEvent,
+    );
+    expect(wrongRecipientClient.getFresh).not.toHaveBeenCalled();
+    expect(wrongRecipientAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       meta: expect.objectContaining({ trust_status: "identity_mismatch", verified: "false" }),
     }));
   });

@@ -4982,24 +4982,39 @@ func TestInboxVerifiedLegacyProjectedLocalAddressUsesAuthenticatedFreshRosterEqu
 	if err != nil {
 		t.Fatal(err)
 	}
+	wrongRecipientEnv := *env
+	wrongRecipientEnv.MessageID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	wrongRecipientEnv.ToDID = rosterDID
+	wrongRecipientSignature, err := SignMessage(senderKey, &wrongRecipientEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inboxMessage := func(item *MessageEnvelope, itemSignature string) InboxMessage {
+		return InboxMessage{
+			MessageID:      item.MessageID,
+			ConversationID: "legacy-conversation",
+			FromAlias:      "alice",
+			FromAddress:    "acme.com/alice",
+			ToAlias:        "bob",
+			Body:           item.Body,
+			CreatedAt:      item.Timestamp,
+			FromDID:        senderDID,
+			ToDID:          item.ToDID,
+			Signature:      itemSignature,
+			SigningKeyID:   senderDID,
+			SignedPayload:  CanonicalJSON(item),
+		}
+	}
+	rosterReads := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/messages/inbox":
-			_ = json.NewEncoder(w).Encode(InboxResponse{Messages: []InboxMessage{{
-				MessageID:      env.MessageID,
-				ConversationID: "legacy-conversation",
-				FromAlias:      "alice",
-				FromAddress:    "acme.com/alice",
-				ToAlias:        "bob",
-				Body:           env.Body,
-				CreatedAt:      env.Timestamp,
-				FromDID:        senderDID,
-				ToDID:          selfDID,
-				Signature:      signature,
-				SigningKeyID:   senderDID,
-				SignedPayload:  CanonicalJSON(env),
-			}}})
+			_ = json.NewEncoder(w).Encode(InboxResponse{Messages: []InboxMessage{
+				inboxMessage(env, signature),
+				inboxMessage(&wrongRecipientEnv, wrongRecipientSignature),
+			}})
 		case "/v1/agents":
+			rosterReads++
 			if r.Header.Get("Cache-Control") != "no-cache" || r.Header.Get("X-AWID-Team-Certificate") == "" {
 				t.Fatal("projected local roster read was not fresh and certificate authenticated")
 			}
@@ -5026,6 +5041,12 @@ func TestInboxVerifiedLegacyProjectedLocalAddressUsesAuthenticatedFreshRosterEqu
 	}
 	if got := response.Messages[0].VerificationStatus; got != IdentityMismatch {
 		t.Fatalf("projected local status=%q, want %q", got, IdentityMismatch)
+	}
+	if got := response.Messages[1].VerificationStatus; got != IdentityMismatch {
+		t.Fatalf("legacy wrong-recipient status=%q, want %q", got, IdentityMismatch)
+	}
+	if rosterReads != 1 {
+		t.Fatalf("fresh roster reads=%d, want 1; recipient mismatch must not resolve", rosterReads)
 	}
 }
 
