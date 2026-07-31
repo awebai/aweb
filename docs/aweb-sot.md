@@ -21,8 +21,9 @@ runs at <https://app.aweb.ai>; anyone can self-host the same OSS server
 against any awid registry.
 
 For supporting reference material that does not redefine the contract:
-- [`cli-command-reference.md`](cli-command-reference.md) — full `aw`
-  CLI surface, generated from the live Cobra help tree
+- [`cli-command-reference.md`](cli-command-reference.md) — generated `aw` CLI
+  reference; live `aw <command> --help` is direct command authority when
+  generation lags
 - [`mcp-tools-reference.md`](mcp-tools-reference.md) — MCP tool
   inventory and parameters exposed by aweb's MCP server
 - [`self-hosting-guide.md`](self-hosting-guide.md) — operator runbook

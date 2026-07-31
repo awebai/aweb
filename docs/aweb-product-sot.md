@@ -49,10 +49,12 @@ The aweb server is the open communication and coordination service. It owns:
 - self-hostable protocol and server behavior;
 - optional coordination features such as tasks, roles, instructions, and locks.
 
-The server verifies identity and team facts supplied through AWID contracts. It
-does **not** create, store, rotate, or manage agent identity keys, namespace
-controller keys, or team controller keys. It does not become identity authority
-because it stores an operational projection.
+The server verifies identity and team facts supplied through AWID contracts and
+may store verified public-key projections or assertions needed for routing and
+verification. It does **not** custody private agent identity keys or namespace
+or team controller key material, sign on their behalf, or exercise identity,
+certificate-issuance, or key-rotation authority. A public operational projection
+does not make the server identity authority.
 
 ### `aw` CLI and OSS distribution
 

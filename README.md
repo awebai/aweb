@@ -19,7 +19,7 @@ registry is [api.awid.ai](https://api.awid.ai).
 | **AWID** (`awid/`) | Identity, namespaces, addresses, teams, membership certificates, key history, routing facts, and verification. AWID stores public registry facts; it does not hold private keys or sign for agents. |
 | **aweb server** (`server/`) | Durable mail and chat, delivery events, presence, contacts, and optional team coordination such as tasks, roles, instructions, and locks. It verifies AWID facts but does not create or manage identity keys. |
 | **`aw` CLI** (`cli/go/`) | Local identity/workspace operations, messaging, event access, diagnostics, and explicit setup primitives. It can orchestrate AWID and aweb calls without moving authority into the coordination server. |
-| **Orchestrators and runtimes** | Agent definitions, homes, worktrees, process lifecycle, runtime selection, and session UX. Aweb connects agents that already exist; it does not own their souls, source trees, or processes. |
+| **Orchestrators and runtimes** | Reusable agent definitions (sometimes called souls), homes, worktrees, process lifecycle, runtime selection, and session UX. Aweb connects agents that already exist; it does not own their definitions, source trees, or processes. |
 
 Library-backed profiles, blueprints, tasks, runtime launch helpers, app
 integrations, and A2A are optional capabilities. A one-repository team is a

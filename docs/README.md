@@ -22,9 +22,9 @@ Use this page to decide which document has authority after the stack is running.
   removal is complete.
 
 The baseline contains 97 tracked Markdown documents. This front door does not
-self-link, and three private-purpose Markdown artifacts are deliberately not
-exposed by public path or title. The remaining 93 public Markdown paths appear
-below exactly once. Those three artifacts and one private-purpose configuration
+self-link, and four private-purpose Markdown artifacts are deliberately not
+exposed by public path or title. The remaining 92 public Markdown paths appear
+below exactly once. Those four artifacts and one private-purpose configuration
 example remain represented by neutral, unlinked transition descriptions until
 their later consumer-ordered relocation or removal.
 
@@ -128,11 +128,10 @@ profiles and runtime materialization are optional.
 - [Roles, instructions, and locks](roles-instructions-locks.md) — advanced team
   operating context.
 - [Work across teams](work-across-teams.md) — multi-team identity and messaging.
-- [Custodial managed encryption](custodial-managed-encryption.md) — optional
-  hosted-custody encryption contract.
 - [MCP tutorial](mcp-tutorial.md) — optional MCP client journey scheduled for an
   OSS/hosted split.
-- [Add an AI tool to a team](add-ai-tool.md) — app/extension author workflow.
+- [Materialize and start one team member](add-ai-tool.md) — optional
+  member/home/worktree/runtime workflow.
 - [App manifest schema](restructuring/app-manifest-schema.md) — working extension
   contract awaiting relocation out of restructuring material.
 
@@ -190,8 +189,10 @@ notice where one exists.
 - [Current limitations](current-limitations.md) — known operational boundaries.
 - [Messaging contract matrix](messaging-contract-matrix.md) — conformance and
   release-case inventory pending maintainer consolidation.
-- [Protocol conformance vectors](vectors/README.md) — canonical index for all 15
-  tracked JSON fixtures and their intended consumers.
+- [Protocol conformance vectors](vectors/README.md) — canonical index currently
+  names 8 of 15 tracked JSON fixtures. The seven not yet named there are three
+  A2A fixtures, two atomic-address-claim fixtures, the E2E cross-language
+  fixture, and team-auth envelope v2; all remain public conformance artifacts.
 - [Self-hosted A2A gateway configuration](examples/a2a-gateway.yaml) — retained
   public YAML example for advanced self-hosted/BYOT gateway operation.
 
@@ -206,8 +207,9 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   application ownership and `.aw/` state policy.
 - [A2A gateway release runbook](a2a-release-runbook.md) — release and rollback
   controls pending standalone-hosting normalization.
-- [E2E messaging rollout runbook](e2e-release-rollout-runbook.md) — encrypted
-  messaging rollout sequencing.
+- [E2E messaging rollout runbook](e2e-release-rollout-runbook.md) — reusable
+  encrypted-messaging rollout sequencing awaiting an OSS/hosted operations
+  split.
 - [Combined Library/AWID/aweb e2e stack](e2e-library-stack.md) — optional
   cross-repository test harness documentation.
 - [Per-team agent tmux cutover](agent-tmux-cutover.md) — specialized reviewed
@@ -231,6 +233,10 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
 - **Managed A2A gateway configuration example** — private-purpose YAML,
   deliberately unlinked; relocate with the application contract after its
   public consumer is rewritten.
+- **Hosted custody implementation contract** — private-purpose Markdown,
+  deliberately unlinked; extract public custody/interoperability semantics into
+  canonical E2E contracts, then relocate the implementation detail to its
+  application owner.
 - [aapm.6 equivalence evidence](aapm6-equivalence-evidence.md) — relocate as
   dated, unrendered migration history.
 - [AWID registry-unavailable log](awid-registry-unavailable-log.md) — move useful
