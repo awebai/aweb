@@ -7,9 +7,17 @@ Public documentation should live under `https://aweb.ai/docs/`. Agent-facing
 Markdown is served as `https://aweb.ai/docs/<name>.md`, and the human-readable
 HTML rendering is served as `https://aweb.ai/docs/<name>/`.
 
-## Source of truth
+## Product direction
 
-These documents define the system:
+- [aweb-product-sot.md](aweb-product-sot.md): the canonical target product
+  contract. It governs product boundaries, priorities, public positioning, and
+  target onboarding across `aweb` and `ac`. It does not silently change shipped
+  protocol or implementation behavior.
+
+## Current shipped contracts
+
+These documents define current system behavior. They remain authoritative until
+reviewed implementation changes update them:
 
 - [identity.md](identity.md): the canonical identity/team model and vocabulary
   for namespaces, addresses, local/global identities, teams, member names, and
