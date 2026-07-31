@@ -1,6 +1,12 @@
 # aweb Restructuring SOT — Core Authority Substrate + Agent Apps
 
-Status: **ready for Juan's review.** Date: 2026-06-15.
+Status: **superseded and non-authoritative.** Date: 2026-06-15.
+
+> This old destination architecture conflicts with the communication-first
+> product SOT and must not generate new work. It remains temporarily while
+> still-current protocol facts and links are migrated, then it is removed. Git
+> and durable task history are sufficient; no duplicate archive is retained.
+
 Authors: coordinator, with aweb-consultant. Grounded in exact, file:line code
 inventories of `aweb`, `ac`, `atext`, and `folio`.
 aweb-consultant signed off 2026-06-16 (architecture lens): no architectural

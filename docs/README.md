@@ -1,136 +1,297 @@
-# aweb docs
+# aweb documentation
 
-This directory holds the canonical protocol, identity, and user material for
-the public `aweb` repo.
+This is the source map for the public aweb repository. It separates target
+product direction, shipped protocol authority, current guides, optional and
+experimental features, compatibility material, and documents waiting for their
+reviewed transition.
 
-Public documentation should live under `https://aweb.ai/docs/`. Agent-facing
-Markdown is served as `https://aweb.ai/docs/<name>.md`, and the human-readable
-HTML rendering is served as `https://aweb.ai/docs/<name>/`.
+The [repository README](../README.md) has install and server-start commands.
+Use this page to decide which document has authority after the stack is running.
 
-## Product direction
+## How authority works
 
-- [aweb-product-sot.md](aweb-product-sot.md): the canonical target product
-  contract. It governs product boundaries, priorities, public positioning, and
-  target onboarding across `aweb` and `ac`. It does not silently change shipped
-  protocol or implementation behavior.
+- **Target direction** answers what product is being built and which journey
+  comes first. It does not claim an API or command already ships.
+- **Current protocol authority** governs shipped identity, trust, routing,
+  encryption, authentication, and coordination behavior.
+- **Guides and references** explain those contracts; they do not override them.
+- **Advanced, optional, and experimental** does not mean unsupported or safe to
+  delete. These features remain available under their stated lifecycle.
+- **Compatibility and transition material** is not current product authority.
+  It remains visible until its reviewed consumer migration, consolidation, or
+  removal is complete.
 
-## Current shipped contracts
+The baseline contains 97 tracked Markdown documents. This front door does not
+self-link, and four private-purpose Markdown artifacts are deliberately not
+exposed by public path or title. The remaining 92 public Markdown paths appear
+below exactly once. Those four artifacts and one private-purpose configuration
+example remain represented by neutral, unlinked transition descriptions until
+their later consumer-ordered relocation or removal.
 
-These documents define current system behavior. They remain authoritative until
-reviewed implementation changes update them:
+## Start here
 
-- [identity.md](identity.md): the canonical identity/team model and vocabulary
-  for namespaces, addresses, local/global identities, teams, member names, and
-  the three setup verbs
-- [aweb-sot.md](aweb-sot.md): the implementation
-  spec for the `aweb` server and `aw` CLI under the awid teams architecture
-- [awid-sot.md](awid-sot.md): the awid
-  service spec for namespaces, addresses, the DID registry, teams, and
-  membership certificates
-- [identity-messaging-contract.md](identity-messaging-contract.md): the
-  cross-service contract for identity-scoped mail/chat, address-route first
-  contact, recipient binding, and local fallback rules
-- [e2e-messaging-contract.md](e2e-messaging-contract.md): the normative
-  encrypted message v2 envelope, cryptographic binding, no-downgrade, and
-  metadata-leakage contract
-- [e2e-operational-metadata.md](e2e-operational-metadata.md): metadata-only
-  usage, billing, abuse, retention, support, and admin tooling contract for v2
-  E2E messages
-- [e2e-legacy-plaintext-policy.md](e2e-legacy-plaintext-policy.md): legacy
-  plaintext, explicit plaintext escape hatch, no-downgrade, and mixed-version
-  compatibility policy for E2E rollout
-- [e2e-release-rollout-runbook.md](e2e-release-rollout-runbook.md): release
-  sequencing, mixed-version matrix, observability, and rollback checklist for
-  encrypted message v2 rollout
-- [global-local-identity-routing.md](global-local-identity-routing.md):
-  supporting SOT for the shipped route-level global/local messaging contract
-  and the legacy reachability/conversation-auth cleanup path
-- [product-authority-sot.md](product-authority-sot.md): supporting SOT for
-  identity custody, addressability, team authority, runtime hosting, app
-  portability, and the supported terminal/browser composition paths
-- [byot-onboarding-contract.md](byot-onboarding-contract.md): the product and
-  engineering contract for the two supported onboarding shapes: Fully Hosted
-  and BYOT
-- [cli-setup-surface-sot.md](cli-setup-surface-sot.md): supporting SOT for
-  the `aw` team/identity/setup command taxonomy: everyday intents, agent
-  primitives, protocol/admin primitives, and obsolete/legacy compatibility
-- [team-blueprints-sot.md](team-blueprints-sot.md): product SOT for creating
-  AI teams from blueprint repos/directories, profiles, runtime bindings,
-  team-owned app grants, subscriptions, and signed audit trails
-- [launch-readiness-sot.md](launch-readiness-sot.md): product SOT for the
-  launch/VC-readiness wedge: first-party engineering blueprint, native `aw`
-  setup path, workroom, hosted MCP, signed audit trail, and demo proof
-- [secrets-aw-do-sot.md](secrets-aw-do-sot.md): product SOT for
-  `secrets.aweb.ai`, `aw do`, custodial MCP secret use, and signed audit for
-  secret-mediated actions
-- [audit-logs-app-sot.md](audit-logs-app-sot.md): product SOT for the core
-  signed audit ledger, `logs.aweb.ai`, and self-hosted audit apps consuming a
-  hosted Aweb core
-- [resource-pack-template-contract.md](resource-pack-template-contract.md):
-  supporting SOT for new-design templates that package harness-neutral roles,
-  instructions, playbooks, skills, and adapters without identity/workspace state;
-  see `resource-packs/coord-workflows` and `resource-packs/company-surfaces`
-  for successor resource packs to the bootstrap-era templates
-- [setup-surface-release-gates.md](setup-surface-release-gates.md): release
-  checklist and regression gates for the primitive-first setup surface
-- [bootstrap-layout-contract.md](bootstrap-layout-contract.md): legacy/
-  compatibility contract for the in-repo `agents/` bootstrap convention and
-  generated agent-home layout. The current setup-surface product taxonomy is
-  [cli-setup-surface-sot.md](cli-setup-surface-sot.md).
-- [a2a.md](a2a.md): product contract for exposing aweb agents through A2A,
-  AWID publication assertions, gateway boundaries, and outbound `aw a2a`
-  behavior
-- [a2a-awid-publication-contract.md](a2a-awid-publication-contract.md):
-  normative AWID A2A publication and bridge-delegation assertion contract
-- [a2a-release-runbook.md](a2a-release-runbook.md): release sequencing, live
-  verification, site-copy gates, and rollback checklist for the A2A gateway
-  product slice
+The shortest current path is:
 
-## User guides
+1. [CLI tutorial](cli-tutorial.md) — initialize and inspect a workspace. Its
+   communication-first rewrite is tracked separately; use live CLI help for
+   syntax.
+2. [Mail and chat](mail-and-chat.md) — send durable mail, open chat, and reply.
+3. [Receiving events and waking agents](receiving-events.md) — connect delivery
+   events to a running agent.
+4. [Self-hosting guide](self-hosting-guide.md) — run the OSS services yourself.
 
-- [cli-tutorial.md](cli-tutorial.md): first-run tutorial for agents using the
-  `aw` CLI
-- [mcp-tutorial.md](mcp-tutorial.md): first-run tutorial for agents using the
-  aweb MCP tools
-- [agent-guide.md](agent-guide.md): canonical onboarding guide delivered to
-  agents by setup/docs injection
-- [running-agents.md](running-agents.md): materialized agent homes and the
-  `aw team up` local runtime launcher
-- [aw-run.md](aw-run.md): legacy/session-bound `aw run` wizard, providers,
-  session continuity, and safety mode
-- [coordination.md](coordination.md): status, work discovery, tasks, claims,
-  roles, and locks
-- [messaging.md](messaging.md): mail and chat workflows
-- [identity.md](identity.md): how identity, signing, namespaces, and trust
-  work in practice
-- [trust-model.md](trust-model.md): trust boundaries, key authority, custody,
-  and recovery semantics
-- [support-tools.md](support-tools.md): OSS `aw doctor`, registry read,
-  support bundle, lifecycle, E2E support boundary, and high-impact handoff
-  semantics
-- [configuration.md](configuration.md): `.aw/` files, global config, and docs
-  injection
-- [channel.md](channel.md): Claude Code channel — real-time push events,
-  setup, and event reference
+## Canonical product and protocol authority
 
-The top-level [README.md](../README.md) is the best place for install and
-server startup details. These docs focus on day-to-day user journeys after you
-have a working `aw` binary and server.
+These documents govern direction or current interoperable behavior. The product
+SOT governs priorities; implementation/protocol SOTs govern what ships today.
+Accuracy notices on hand-maintained inventories do not weaken their normative
+security and protocol authority.
 
-## Reference
+<details open>
+<summary>Product, identity, messaging, and trust contracts</summary>
 
-- [cli-command-reference.md](cli-command-reference.md): `aw` command and flag
-  reference (generated from the live Cobra help tree)
-- [mcp-tools-reference.md](mcp-tools-reference.md): MCP tool inventory and
-  parameters
+- [Aweb product SOT](aweb-product-sot.md) — canonical communication-first target
+  direction and ownership boundaries.
+- [Identity and team model](identity.md) — canonical vocabulary and identity/team
+  invariants.
+- [aweb implementation SOT](aweb-sot.md) — normative aweb server/CLI contract;
+  inventory reconciliation is pending.
+- [AWID implementation SOT](awid-sot.md) — normative registry contract;
+  inventory reconciliation is pending.
+- [Product authority SOT](product-authority-sot.md) — current supporting custody,
+  team-authority, addressability, and runtime axes pending consolidation.
+- [Fully Hosted and BYOT onboarding contract](byot-onboarding-contract.md) —
+  authority shapes for managed and customer-controlled teams.
+- [Identity and messaging contract](identity-messaging-contract.md) —
+  identity-scoped delivery and first-contact routing.
+- [Global/local identity routing SOT](global-local-identity-routing.md) — shipped
+  global/local route behavior and compatibility cleanup.
+- [Identity-key verification](identity-key-verification.md) — verifying current
+  AWID identity keys and log heads.
+- [E2E messaging contract](e2e-messaging-contract.md) — encrypted-message v2
+  envelope and cryptographic binding.
+- [E2E operational metadata](e2e-operational-metadata.md) — metadata-only
+  operations around encrypted messages.
+- [E2E legacy plaintext and no-downgrade policy](e2e-legacy-plaintext-policy.md)
+  — mixed-version compatibility rules.
+- [Trust model](trust-model.md) — key authority, custody, verification, and
+  recovery boundaries.
+- [Team-auth request envelope v2](team-auth-envelope-v2.md) — signed relying-party
+  request contract.
+- [AWID A2A publication contract](a2a-awid-publication-contract.md) — publication
+  and bridge-delegation assertions.
+- [Support contract v1](support-contract-v1.md) — public support and diagnostic
+  interoperability contract.
 
-The REST API surface is the canonical FastAPI app at
-[`server/src/aweb/api.py`](../server/src/aweb/api.py); use the `/docs`
-OpenAPI viewer at runtime for the live route inventory.
-- [identity-key-verification.md](identity-key-verification.md): normative
-  rules for verifying `GET /v1/did/{did_aw}/key` responses
-- [self-hosting-guide.md](self-hosting-guide.md): operator guide for the OSS
-  stack
-- [contributing.md](contributing.md): repo structure, test commands, and
-  extension workflow
-- [vectors/](vectors/): conformance vectors for signing and continuity
+</details>
+
+## Core guides
+
+- [Agent guide](agent-guide.md) — canonical setup-injected guide; its startup
+  ordering is scheduled for the communication-path rewrite.
+- [Teams](teams.md) — team membership, roster, and coordination concepts.
+- [Identity and teams guide](identity-guide.md) — practical identity, namespace,
+  team, and trust operations.
+- [Channel](channel.md) — maintained Claude Code event integration.
+- [OSS support tools](support-tools.md) — doctor, registry reads, bundles, and
+  safe support handoff.
+- [Troubleshoot a workspace](troubleshoot-workspace.md) — diagnose identity,
+  certificate, team, and service binding.
+
+## Advanced and optional
+
+These are working capabilities outside the first communication journey. They
+remain supported or are awaiting a focused rewrite/relocation; Library-backed
+profiles and runtime materialization are optional.
+
+<details>
+<summary>Profiles, runtime, coordination, integrations, and extension contracts</summary>
+
+- [Profiles and blueprints](profiles-and-blueprints.md) — optional profile and
+  blueprint concepts.
+- [Blueprint materialization contract](blueprint-materialization-contract.md) —
+  public payload, pin, and provenance contract.
+- [Resource-pack template contract](resource-pack-template-contract.md) —
+  harness-neutral operating assets.
+- [Create and run your first team](create-and-run-team.md) — optional
+  materialized-team workflow.
+- [Grow an existing team](grow-team.md) — optional team expansion workflow.
+- [Improve a profile](improve-profile.md) — reviewed profile learning loop.
+- [Running materialized agents](running-agents.md) — local runtime launch and
+  home isolation.
+- [Runtime support](runtime-support.md) — supported harness/runtime matrix.
+- [Agent home composition contract](restructuring/agent-home-composition-contract.md)
+  — current home-layout facts pending consolidation.
+- [Start working in your team](start-working.md) — task-first workflow scheduled
+  for repositioning.
+- [Tasks and work](tasks-and-work.md) — advanced shared work coordination.
+- [Roles, instructions, and locks](roles-instructions-locks.md) — advanced team
+  operating context.
+- [Work across teams](work-across-teams.md) — multi-team identity and messaging.
+- [MCP tutorial](mcp-tutorial.md) — optional MCP client journey scheduled for an
+  OSS/hosted split.
+- [Materialize and start one team member](add-ai-tool.md) — optional
+  member/home/worktree/runtime workflow.
+- [App manifest schema](restructuring/app-manifest-schema.md) — working extension
+  contract awaiting relocation out of restructuring material.
+
+</details>
+
+## Experimental
+
+Experimental means implemented or actively specified with a deliberately
+narrower stability promise. It does not mean planned commands should be
+presented as shipped.
+
+- [A2A interoperability](a2a.md) — experimental external agent protocol surface.
+- [Mutation hook seam](aw-hooks-sot.md) — must be rewritten to the public
+  `on_mutation` seam actually exposed by source.
+- [Hermes gateway integration memo](hermes-aweb-gateway-integration.md) —
+  prototype integration evidence.
+- [App-emitted events and subscriptions](restructuring/app-event-subscriptions-contract.md)
+  — experimental app event contract awaiting relocation.
+- [App registry and grants read API](restructuring/app-registry-grants-read-api.md)
+  — experimental extension seam awaiting relocation.
+- [Session admission leases](session-admission-leases.md) — shipped experimental
+  session primitive with explicit non-fencing limits.
+
+## Compatibility and consolidation
+
+These paths remain for current users or because durable facts have not yet been
+consolidated. Prefer the canonical/current guide named in each document's status
+notice where one exists.
+
+- [Retired agents layout and lifecycle](agents-layout-lifecycle-contract.md) —
+  bootstrap-era compatibility.
+- [`aw run`](aw-run.md) — compatibility/session launcher guide.
+- [Retired bootstrap layout contract](bootstrap-layout-contract.md) — historical
+  layout compatibility.
+- [Coordination](coordination.md) — overlapping guide pending consolidation.
+- [Messaging](messaging.md) — overlapping guide pending correction and
+  consolidation into the canonical messaging workflow.
+- [Team create and membership model](restructuring/team-create-and-membership-model.md)
+  — compatibility command facts pending consolidation.
+- [CLI setup surface release gates](setup-surface-release-gates.md) — compatibility
+  checks pending consolidation into maintainer guidance.
+- [Retired repo-local team bootstrap](team-bootstrap.md) — compatibility
+  tombstone.
+- [`aw team extend` command SOT](team-extend-sot.md) — compatibility semantics
+  pending consolidation into guides and generated reference.
+
+## Generated, reference, and conformance
+
+- [CLI command reference](cli-command-reference.md) — generated from Cobra help;
+  live `aw <command> --help` remains the direct source when generation is stale.
+- [MCP tools reference](mcp-tools-reference.md) — current tool inventory and
+  parameters.
+- [Configuration](configuration.md) — local `.aw/` files, environment, and docs
+  injection.
+- [Current limitations](current-limitations.md) — known operational boundaries.
+- [Messaging contract matrix](messaging-contract-matrix.md) — conformance and
+  release-case inventory pending maintainer consolidation.
+- [Protocol conformance vectors](vectors/README.md) — canonical index currently
+  names 8 of 15 tracked JSON fixtures. The seven not yet named there are three
+  A2A fixtures, two atomic-address-claim fixtures, the E2E cross-language
+  fixture, and team-auth envelope v2; all remain public conformance artifacts.
+- [Self-hosted A2A gateway configuration](examples/a2a-gateway.yaml) — retained
+  public YAML example for advanced self-hosted/BYOT gateway operation.
+
+The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
+`server/src/aweb/api.py`; do not recreate a hand-maintained route reference.
+
+## Maintainer material
+
+- [Contributing guide](contributing.md) — repository structure, tests, and
+  extension workflow.
+- [Open-source repository boundary](oss-boundary.md) — canonical framework versus
+  application ownership and `.aw/` state policy.
+- [A2A gateway release runbook](a2a-release-runbook.md) — release and rollback
+  controls pending standalone-hosting normalization.
+- [E2E messaging rollout runbook](e2e-release-rollout-runbook.md) — reusable
+  encrypted-messaging rollout sequencing awaiting an OSS/hosted operations
+  split.
+- [Combined Library/AWID/aweb e2e stack](e2e-library-stack.md) — optional
+  cross-repository test harness documentation.
+- [Per-team agent tmux cutover](agent-tmux-cutover.md) — specialized reviewed
+  runtime migration procedure.
+
+## Superseded and temporary transition material
+
+> **Non-authoritative transition inventory.** Nothing in this section sets
+> current product direction or creates new work. Files remain at their current
+> paths only until the reviewed extraction and consumer-migration conditions are
+> met. Git and durable task history are sufficient for removed material; no
+> duplicate archive is implied unless a reviewed row explicitly requires
+> archival treatment.
+
+<details>
+<summary>Show the transition inventory and reviewed next action</summary>
+
+- **Managed A2A gateway application contract** — private-purpose Markdown,
+  deliberately unlinked; relocate to its application owner after the public
+  release-runbook consumer is rewritten.
+- **Managed A2A gateway configuration example** — private-purpose YAML,
+  deliberately unlinked; relocate with the application contract after its
+  public consumer is rewritten.
+- **Hosted custody implementation contract** — private-purpose Markdown,
+  deliberately unlinked; extract public custody/interoperability semantics into
+  canonical E2E contracts, then relocate the implementation detail to its
+  application owner.
+- [aapm.6 equivalence evidence](aapm6-equivalence-evidence.md) — relocate as
+  dated, unrendered migration history.
+- [AWID registry-unavailable log](awid-registry-unavailable-log.md) — move useful
+  incident facts to current operational/task history and remove from rendered
+  docs.
+- [Bootstrapping operating-patterns worklog](bootstrapping-operating-patterns-worklog.md)
+  — remove after reusable facts and consumers are migrated.
+- [aw setup surface taxonomy](cli-setup-surface-sot.md) — superseded product SOT;
+  consolidate current command taxonomy, then retire it.
+- [Agent-guide running-agents draft](drafts/agent-guide-running-agents-update.md)
+  — remove after confirming incorporated text.
+- [Duplicate 1:1 conversation cleanup](duplicate-1to1-conversation-cleanup.md) —
+  remove after consumer migration and reusable-authority extraction.
+- [Federated messaging architecture](federation-architecture.md) — consolidate
+  durable rationale into current routing authority, then relocate the snapshot
+  to the reviewed historical archive location.
+- [Launch readiness](launch-readiness-sot.md) — superseded product narrative;
+  extract current facts and remove after index/consumer migration.
+- [naapp move preflight](naapp-move-preflight.md) — completed preflight; remove
+  after consumer checks.
+- [Pre-deploy conversation-close cleanup](pre-deploy-conversation-close-cleanup.md)
+  — completed one-time procedure; remove after reusable warnings are extracted.
+- [Restructuring SOT](restructuring-sot.md) — superseded destination architecture;
+  extract still-current protocol facts, migrate links, then remove with no
+  duplicate archive.
+- **Application cross-boundary FK inventory** — private-purpose Markdown,
+  deliberately unlinked; repoint its exact downstream consumers, then remove
+  the public copy.
+- [Agent instantiation runbook](restructuring/agent-instantiation-runbook.md) —
+  remove after its skill consumer and valid runtime facts migrate.
+- [Archived channel stack map](restructuring/archive/channel-stack-map.md) — the
+  one retained dated/SHA-bound historical archive; never current authority.
+- [aw command surface](restructuring/aw-command-surface.md) — remove after current
+  command facts are covered by live/generated reference.
+- [Go CLI restructuring map](restructuring/cli-go-map.md) — remove after its path
+  checker consumer and current facts migrate; no archive copy.
+- [Core-surface shrink scorecard](restructuring/core-surface-shrink-scorecard.md)
+  — remove after any reusable measurement becomes maintainer tooling.
+- [Restructuring decisions worksheet](restructuring/decisions.md) — remove;
+  durable decisions belong in current authority and task history.
+- [Layer mapping](restructuring/layer-mapping.md) — remove after current extension
+  contracts are extracted; no archive copy.
+- [Messaging-as-app seam](restructuring/messaging-as-app-seam.md) — remove after
+  current messaging invariants move to canonical contracts; no archive copy.
+- [OSS core inventory](restructuring/oss-core-inventory.md) — remove after reusable
+  inventory checks become current tooling; no archive copy.
+- [Scrapped team-certificate issuer seam](restructuring/team-cert-issuer-seam.md)
+  — remove after its historical memory consumer points to Git/task history.
+- **Production migration evidence runbook** — private-purpose Markdown,
+  deliberately unlinked; relocate to its production-operations owner after
+  consumer migration.
+- [Team blueprints and agent profiles](team-blueprints-sot.md) — superseded
+  product SOT; consolidate verified advanced materialization facts, then remove
+  the competing narrative.
+- [`aw team extend` implementation plan](team-extend-implementation-plan.md) —
+  completed plan; remove because Git/task history is sufficient.
+
+</details>
