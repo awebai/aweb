@@ -10,8 +10,10 @@ behavior.
 Owner: Juan (product direction), with one cross-repository coordinator for
 execution across the `aweb` and `ac` repositories.
 
-Repository scope: exactly two repositories, `aweb` and `ac`. OAS is the
-reference orchestrator within `aweb`, not a third repository.
+Core product scope: two repositories, `aweb` and `ac`. OAS is a separate third
+repository and the reference consumer of the orchestrator integration. Changes
+to OAS are coordinated with its owner; OAS is not part of the aweb product
+codebase.
 
 ## Direction being established
 
