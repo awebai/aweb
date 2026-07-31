@@ -14,6 +14,11 @@ class SourceInventoryTests(unittest.TestCase):
     def test_current_sot_inventories_match_source(self) -> None:
         self.assertEqual(inventories.check_repository(ROOT), [])
 
+    def test_mail_recovery_uses_the_shipped_flagged_command_shape(self) -> None:
+        text = (ROOT / "docs/aweb-sot.md").read_text()
+        self.assertIn("`aw mail show --message-id <id>`", text)
+        self.assertNotIn("`aw mail show <id>`", text)
+
     def test_sql_table_extraction_is_ordered_and_deduplicated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             migrations = Path(tmp)

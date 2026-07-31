@@ -130,7 +130,8 @@ Two identity classes exist:
   Created by accepting a team invite or via spawn into the same team. Deleted
   when the workspace is removed. Does not carry public trust continuity.
 - **Global identity**: durable, trust-bearing. Has both `did:key` and
-  `did:aw`. Has one or more public addresses. Supports rotation, archival, and
+  `did:aw`. It may have zero, one, or many public addresses; DID registration is
+  independent of address assignment. Supports rotation, archival, and
   controlled replacement.
 
 Trust continuity is only promised for global identities.
@@ -556,7 +557,8 @@ stays unread, and the next reconnect re-fetches it (the inbox pulls unread only)
 process dies before the harness presents the message, the message is already
 read server-side, so an unread-only reconnect does NOT re-fetch it and it is
 absent from the unread inbox; its content is still on the server and reachable
-via `aw mail show <id>` or a read-inclusive view, but it is not auto-recovered.
+via `aw mail show --message-id <id>` or a read-inclusive view, but it is not
+auto-recovered.
 (Auto-surfacing that second sub-case on reconnect was considered and
 deliberately rejected: re-delivering already-read mail would reopen the
 replay/double-action hazard, and a crashed agent recovers procedurally on
@@ -1173,18 +1175,26 @@ runtime (Claude Code, Claude Desktop, ChatGPT custom connectors,
 programmatic MCP clients, internal tooling) can call them via the MCP
 protocol.
 
-### Two integration patterns
+### Shipped MCP and channel surfaces
 
-aweb's MCP server is the local-CLI-embedded server: the `aw` CLI hosts
-the MCP server inside the local agent process, and `aw mcp-config`
-writes the connection config into the LLM client (Claude Code,
-programmatic MCP clients running in the same machine, etc.). This is
-the only MCP surface defined by aweb itself.
+The OSS coordination-tool MCP server is the Python FastMCP application mounted
+by the aweb FastAPI server at `/mcp`. MCP clients call that Streamable-HTTP
+surface directly and construct one of the authenticated request forms below.
+The Go `aw` CLI neither embeds nor hosts this Python server, and it does not emit
+an HTTP tool-server configuration.
 
-A hosted operator may layer its own `/mcp` endpoint on top of aweb
-(for example, to serve browser-based MCP clients via OAuth or to issue
-long-lived bearer tokens for local MCP clients). Such a hosted MCP
-surface is operator-specific and outside the aweb OSS contract.
+The Claude channel is a separate, one-way event-presentation integration:
+coordination events flow into Claude Code, while outbound actions use the `aw`
+CLI. The supported Claude path is the `@awebai/claude-channel` plugin (also set
+up by `aw init --setup-channel`). The compatibility command `aw mcp-config
+--channel` emits an `npx @awebai/claude-channel` stdio configuration; it does
+not configure or proxy the FastMCP coordination tools. Bare `aw mcp-config`
+refuses instead of emitting an unusable HTTP configuration.
+
+A hosted operator may expose its own MCP gateway in front of aweb (for example,
+to authenticate browser clients). That gateway is operator-specific; the OSS
+aweb MCP implementation remains the FastAPI-mounted `/mcp` application and the
+trusted-proxy branch documented below is its explicit internal boundary.
 
 ### Mount and transport
 
@@ -1461,9 +1471,11 @@ falls back to `DATABASE_USES_TRANSACTION_POOLER`, and
 
 | Concern | Owner |
 |---------|-------|
-| Identity creation and management | awid |
-| Team creation and management | awid |
-| Namespace management | awid |
+| Global `did:aw` registry binding, key continuity, and public log | AWID (identity holder authorizes its own key transitions) |
+| Local `did:key` creation and lifecycle | `aw` CLI and local workspace; never registered in AWID |
+| Address assignment | Namespace controller, recorded/resolved by AWID; independent of DID registration |
+| Team creation and management | AWID registry plus namespace/team controller authority |
+| Namespace management | AWID registry plus namespace controller authority |
 | Team certificate issuance | CLI (BYOD) or hosted operator (managed namespaces) |
 | Team membership verification | Certificate (local crypto) |
 | Agent bootstrap/runtime projection | OSS aweb auto-provisions from a verified certificate on `POST /v1/connect`; optional external operator adapters are outside this server contract |
