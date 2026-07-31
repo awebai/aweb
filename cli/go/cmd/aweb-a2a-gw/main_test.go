@@ -556,6 +556,109 @@ func TestManagedBridgeCapturedOldGenerationFailsClosedAfterRouteRevision(t *test
 	}
 }
 
+func TestManagedGatewayCapturedGenerationFailsClosedAcrossRefresh(t *testing.T) {
+	var mu sync.Mutex
+	var emittedRoutes []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: nil})
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		emittedRoutes = append(emittedRoutes, payload["route_id"].(string))
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent"})
+	}))
+	defer server.Close()
+
+	payloadFor := func(revision, routeID string) managedRuntimeConfigPayload {
+		return managedRuntimeConfigPayload{
+			GatewayID: "gw-test", GatewayIdentity: "did:aw:gateway", GatewayIdentityStatus: "active",
+			ConfigRevision: revision, ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339),
+			Routes: []managedRuntimeRoute{{
+				RouteID: routeID, Host: "gateway.example", Address: "gateway.example/agent", Mode: "mail", RootBehavior: "default_for_host",
+				Auth:   managedRuntimeAuth{Mode: "none"},
+				Limits: managedRuntimeLimits{TaskTTLSeconds: 3600, ResponseTimeoutSeconds: 1},
+				Card:   managedRuntimeCard{Name: "Agent", Description: "Agent", Provider: providerYAML{Organization: "Example", URL: "https://example.com"}, DefaultInputModes: []string{"text/plain"}, DefaultOutputModes: []string{"text/plain"}, Skills: []skillYAML{{ID: "agent", Name: "Agent", Description: "Agent"}}},
+			}},
+		}
+	}
+	base := fileConfig{Host: "gateway.example", ManagedConfig: managedConfigForTest(server.URL, "gw-test", "token")}
+	oldConfig := base
+	if err := mergeManagedRuntimeConfig(&oldConfig, payloadFor("old-revision", "old-route")); err != nil {
+		t.Fatal(err)
+	}
+	runtime, oldGateway, err := buildGatewayWithRuntime(oldConfig, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := &managedGateway{cfg: oldConfig, gateway: oldGateway, runtime: runtime}
+
+	call := func(gateway *a2agw.Gateway, path, body string, headers map[string]string) map[string]any {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-A2A-Caller-ID", "captured-caller")
+		for name, value := range headers {
+			req.Header.Set(name, value)
+		}
+		resp := httptest.NewRecorder()
+		gateway.ServeHTTP(resp, req)
+		var decoded map[string]any
+		if err := json.Unmarshal(resp.Body.Bytes(), &decoded); err != nil {
+			t.Fatalf("decode RPC response status=%d body=%s: %v", resp.Code, resp.Body.String(), err)
+		}
+		return decoded
+	}
+	sendBody := `{"jsonrpc":"2.0","id":"send-old","method":"SendMessage","params":{"message":{"messageId":"message-old","contextId":"context-old","role":"ROLE_USER","parts":[{"text":"hello","mediaType":"text/plain"}]},"configuration":{"returnImmediately":true}}}`
+	initial := call(oldGateway, "/a2a/agents/old-route/rpc", sendBody, nil)
+	result, ok := initial["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("initial send failed: %#v", initial)
+	}
+	task, _ := result["task"].(map[string]any)
+	taskID, _ := task["id"].(string)
+	metadata, _ := task["metadata"].(map[string]any)
+	token, _ := metadata["task_bearer_token"].(string)
+	if taskID == "" || token == "" {
+		t.Fatalf("initial task missing id/token: %#v", initial)
+	}
+
+	newConfig := base
+	if err := mergeManagedRuntimeConfig(&newConfig, payloadFor("new-revision", "new-route")); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.applyRefreshSnapshot(newConfig); err != nil {
+		t.Fatal(err)
+	}
+	if manager.gateway == oldGateway || manager.runtime != runtime {
+		t.Fatal("refresh must swap gateway generation while preserving shared runtime")
+	}
+
+	getBody := fmt.Sprintf(`{"jsonrpc":"2.0","id":"get-old","method":"GetTask","params":{"id":%q}}`, taskID)
+	preserved := call(oldGateway, "/a2a/agents/old-route/rpc", getBody, map[string]string{"X-A2A-Task-Token": token})
+	if preserved["result"] == nil {
+		t.Fatalf("old task state was not preserved: %#v", preserved)
+	}
+	postRefreshSend := call(oldGateway, "/a2a/agents/old-route/rpc", strings.Replace(sendBody, "message-old", "message-after-refresh", 1), nil)
+	if postRefreshSend["error"] == nil {
+		t.Fatalf("captured old-generation send did not fail closed: %#v", postRefreshSend)
+	}
+	cancelBody := fmt.Sprintf(`{"jsonrpc":"2.0","id":"cancel-old","method":"CancelTask","params":{"id":%q}}`, taskID)
+	postRefreshCancel := call(oldGateway, "/a2a/agents/old-route/rpc", cancelBody, map[string]string{"X-A2A-Task-Token": token})
+	if postRefreshCancel["result"] == nil {
+		t.Fatalf("captured old task state was not retained for cancel: %#v", postRefreshCancel)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(emittedRoutes) != 1 || emittedRoutes[0] != "old-route" {
+		t.Fatalf("provider emissions=%v; captured old generation must never emit as new-route", emittedRoutes)
+	}
+}
+
 func TestA2AGatewayRejectsUnknownNestedAndSecondDocumentYAML(t *testing.T) {
 	removedPrivateKey := "a" + "c_config"
 	tests := []struct {
