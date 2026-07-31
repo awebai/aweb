@@ -165,10 +165,7 @@ def _tracked_docs_markdown(root: Path, failures: list[str]) -> set[str]:
 
 def _is_managed_gateway_surface(relative: str) -> bool:
     return (
-        (
-            relative.startswith("cli/go/")
-            and any("a2a" in part.lower() for part in Path(relative).parts[2:])
-        )
+        any("a2a" in part.lower() for part in Path(relative).parts)
         or relative.startswith("cli/go/npm/")
         or relative.startswith("docs/a2a")
         or relative.startswith("docs/examples/a2a-")
@@ -392,6 +389,8 @@ def self_test(root: Path) -> int:
         neutrality_mutations = (
             ("cli/go/cmd/aweb-a2a-gw/audit.go", "a" + "c_config", False),
             ("cli/go/a2a/client.go", "a" + "c_config", False),
+            ("awid/src/awid/a2a_publication.py", "a" + "c_config", False),
+            ("cli/go/awid/a2a_publication.go", "a" + "c_config", False),
             ("cli/go/cmd/aw/a2a.go", "a" + "c_config", False),
             ("cli/go/tools/a2a-gateway-check-workspace/main.go", "a" + "c_config", False),
             ("docs/a2a-release-runbook.md", "a" + "c_config", False),
