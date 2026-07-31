@@ -13,6 +13,13 @@ HTML rendering is served as `https://aweb.ai/docs/<name>/`.
   contract. It governs product boundaries, priorities, public positioning, and
   target onboarding across `aweb` and `ac`. It does not silently change shipped
   protocol or implementation behavior.
+- [website-dashboard-strategy.md](website-dashboard-strategy.md): working
+  product strategy for turning the communication promise into the public
+  website, integration pages, documentation journey, and hosted delivery
+  dashboard.
+- [orchestrator-evidence-review.md](orchestrator-evidence-review.md): research
+  snapshot separating demonstrated Gas Town and Paperclip capabilities from
+  unproven claims about agent-fleet productivity, with implications for aweb.
 
 ## Current shipped contracts
 
