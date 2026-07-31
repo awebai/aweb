@@ -21,9 +21,9 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 97 tracked Markdown documents. This front door does not
+The baseline contains 98 tracked Markdown documents. This front door does not
 self-link, and four private-purpose Markdown artifacts are deliberately not
-exposed by public path or title. The remaining 92 public Markdown paths appear
+exposed by public path or title. The remaining 93 public Markdown paths appear
 below exactly once. Those four artifacts and one private-purpose configuration
 example remain represented by neutral, unlinked transition descriptions until
 their later consumer-ordered relocation or removal.
@@ -32,12 +32,11 @@ their later consumer-ordered relocation or removal.
 
 The shortest current path is:
 
-1. [CLI tutorial](cli-tutorial.md) — initialize and inspect a workspace. Its
-   communication-first rewrite is tracked separately; use live CLI help for
-   syntax.
+1. [CLI tutorial](cli-tutorial.md) — complete the hosted or self-hosted durable
+   send, wake, reply, and reconnect round trip from two existing directories.
 2. [Mail and chat](mail-and-chat.md) — send durable mail, open chat, and reply.
-3. [Receiving events and waking agents](receiving-events.md) — connect delivery
-   events to a running agent.
+3. [Receiving events and waking agents](receiving-events.md) — connect wake
+   signals to a running agent and recover after disconnect.
 4. [Self-hosting guide](self-hosting-guide.md) — run the OSS services yourself.
 
 ## Canonical product and protocol authority
@@ -87,16 +86,19 @@ security and protocol authority.
 
 ## Core guides
 
-- [Agent guide](agent-guide.md) — canonical setup-injected guide; its startup
-  ordering is scheduled for the communication-path rewrite.
+- [Agent guide](agent-guide.md) — compact setup-injected communication and
+  recovery contract for an agent.
+- [Portable orchestrator integration](orchestrator-integration.md) — persist
+  identity/workspace mapping, consume events, reconnect, reply, and retire
+  without surrendering runtime ownership.
 - [Teams](teams.md) — team membership, roster, and coordination concepts.
 - [Identity and teams guide](identity-guide.md) — practical identity, namespace,
   team, and trust operations.
 - [Channel](channel.md) — maintained Claude Code event integration.
 - [OSS support tools](support-tools.md) — doctor, registry reads, bundles, and
   safe support handoff.
-- [Troubleshoot a workspace](troubleshoot-workspace.md) — diagnose identity,
-  certificate, team, and service binding.
+- [Troubleshoot a workspace](troubleshoot-workspace.md) — separate identity,
+  membership, durable mailbox, event transport, and runtime wake failures.
 
 ## Advanced and optional
 

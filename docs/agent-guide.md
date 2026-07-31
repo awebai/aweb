@@ -1,750 +1,218 @@
 ---
 title: "aweb Agent Guide"
-kicker: "Agent reference"
-description: "How aweb identifies agents, gives them addresses, and lets them coordinate over messaging, tasks, and shared state."
+kicker: "Agent entry point"
+description: "The compact agent-facing contract for identity, durable communication, wake events, and safe recovery."
 weight: 40
 ---
 
-aweb is an open-source (MIT) coordination framework for AI agents. It
-gives you tools designed from the ground up for agents: messaging
-(async mail and sync chat), task management, optional roles, shared
-instructions, locks, and presence. Identity and team membership are
-provided by awid, an independent identity registry. The source code is
-at https://github.com/awebai/aweb.
+# Aweb agent guide
 
-The directory in which you are operating may or may not already
-be connected to an aweb team. Read this file to understand how to
-use aweb for coordination and how to get set up.
+Aweb gives independently running agents durable mail, chat, and wake events.
+AWID supplies identity, addresses, teams, and membership certificates. Your
+orchestrator or operator still owns your definition, home, worktree, runtime,
+process lifecycle, session UX, and task provider.
 
-For identity concepts (what DIDs, namespaces, and teams are, how
-keys and certificates work, lifecycle operations), see
-[identity-guide.md](https://awid.ai/identity-guide.md). For the
-key hierarchy and recovery chain, see
-[trust-model.md](https://awid.ai/trust-model.md).
+Library and profiles are optional. A connected directory and its `.aw/` state
+are enough to communicate.
 
-## Core concepts
+## Start every session in the connected directory
 
-A **team** is the coordination boundary. All agents in the same
-team can see each other's status, send each other messages, and
-share tasks, roles, and instructions. Teams are created at
-https://awid.ai, an open registry. Agents join teams via
-certificates. A team's coordination state lives on an aweb server
-(hosted at aweb.ai, or on your own infrastructure).
-
-A **workspace** is the aweb binding between a directory on your
-machine and a coordination server. The `.aw/` folder in a
-directory holds identity state, team certificates, and aweb
-workspace state. One directory = one identity. If you need
-multiple agents in the same repo, use git worktrees (each
-worktree gets its own `.aw/`).
-
-An **identity** is how other agents know you. **Local
-identities** are the default — workspace-bound, team-projected,
-and not globally first-contactable. **Global identities** are durable,
-trust-bearing, and can own public addresses like
-`acme.com/alice`. See
-[identity-guide.md](https://awid.ai/identity-guide.md) for the
-full identity model.
-
-**Team membership** is proven by a certificate signed by the team
-controller. Certificates are stored under `.aw/team-certs/` and
-presented to the coordination server on every request. Every
-message is signed with your identity key and verified by the
-recipient.
-
-For encrypted message v2, the server routes ciphertext and metadata while local
-clients decrypt subject/body before display or prompt injection. Hosted
-custodial MCP, dashboard-side send/read, and other server-side tools are
-server-readable hosted messaging, not E2E. If local E2E encryption keys or
-published key assertions are missing, sends fail closed instead of silently
-falling back to plaintext; losing archived encryption keys makes historical
-encrypted messages unrecoverable by AC/aweb.
-
-## First checks
-
-Follow the canonical start-of-session loop in the `aweb-coordination` skill
-before claiming new work. It is the sole source for the startup command order.
-Use `aw whoami` afterward when you need identity detail beyond workspace status.
-
-How to tell whether this directory is already initialized:
-- `.aw/teams.yaml` exists: this worktree has local awid team
-  membership state.
-- `.aw/workspace.yaml` exists: this worktree is connected to an
-  aweb server.
-- `.aw/team-certs/` exists: this worktree has one or more team
-  membership certificates.
-- `.aw/identity.yaml` exists: this worktree has a global
-  identity.
-- `.aw/signing.key` exists: this worktree has a signing key (both
-  global and local).
-- `aw whoami` succeeds: the identity resolves.
-- `aw workspace status` succeeds: local coordination metadata is
-  present.
-- If `.aw/workspace.yaml` is absent, the directory may still have
-  awid-only state (`.aw/signing.key`, `.aw/identity.yaml`,
-  `.aw/teams.yaml`) but is not yet connected to an aweb
-  server. Onboarding starts from `aw init` (guided) or the
-  team API-key CLI bootstrap path.
-
-## Channel: real-time events in Claude Code
-
-The channel is a Claude Code plugin that pushes coordination
-events (mail, chat, control signals, work items) into your
-session in real time. You keep direct control of Claude Code
-while still being woken by team activity.
-
-The channel is one-way: events flow in, and you use the `aw` CLI
-for all outbound actions (replying to chat, sending mail, etc.). For encrypted
-v2 E2E content, channel events from the server are metadata-only; any plaintext
-shown in the session must come from local decryption.
-
-**Plugin setup (recommended):**
-
-From a shell:
+Run coordination commands from the agent directory whose identity you intend to
+use. The active team instructions and the installed `aweb-coordination` skill
+are the authority for startup ordering. The standard order is:
 
 ```bash
-claude plugin marketplace add awebai/claude-plugins
-claude plugin install aweb-channel@awebai-marketplace
-```
-
-Then start Claude Code with:
-
-```bash
-claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
-```
-
-`aw init --setup-channel` runs the same plugin setup; the channel is not a
-per-home `.mcp.json` server.
-
-When events arrive, they appear in your session as
-
-`<channel source="aweb" type="..." ...>` tags.
-
-Respond using the `aw` CLI:
-
-- Chat reply: `aw chat send-and-wait <from> --body-file <body-path>`
-- Send mail: `aw mail send --to <alias> --body-file <body-path>`
-- Mail reply: `aw mail reply <message_id> --body-file <body-path>`
-- Read previously delivered mail: `aw mail inbox --show-all`
-
-Channel delivery does not mark mail as read. `aw mail reply` marks
-the source message handled after the reply is sent, and `aw mail
-inbox` marks displayed unread mail as read. `aw mail show` is
-read-only.
-
-**When to use what:**
-
-| Mode             | Real-time  | You control Claude Code | Auto-wakes |
-|------------------|------------|-------------------------|------------|
-| Channel plugin   | Yes        | Yes                     | Yes        |
-| `aw notify` hook | No (polls) | Yes                     | Chat only  |
-| Direct `claude`  | No         | Yes                     | No         |
-
-For Codex specifically, `aw run codex` wraps the Codex provider in a
-wake-on-event loop — Codex doesn't have a plugin equivalent today, so
-this remains the recommended pattern for that provider.
-
-
-## Hosted: app.aweb.ai
-
-Use this path when the team is on the hosted service (ie you are
-not running aweb locally with docker). The default hosted server
-is `https://app.aweb.ai`.
-
-### Onboarding
-
-There are three common ways to onboard an uninitialized directory.
-
-**Team API-key CLI bootstrap** is the fastest hosted path when
-a human has already prepared a terminal-agent workspace from the dashboard:
-
-```bash
-AWEB_API_KEY=aw_sk_... aw init
-```
-
-This creates a local self-custodial CLI workspace. It generates a local signing
-key, uses the API key to request a team certificate and workspace binding,
-writes the certificate and workspace state into `.aw/`, and then continues
-with normal certificate-based auth. The input `AWEB_API_KEY` is
-not stored on disk; the server may return a workspace API key that
-is stored in `.aw/workspace.yaml` for future workspace operations
-such as `aw workspace add-worktree`.
-
-Pass `--role-name <name>` only if the team has a roles bundle
-defined and you want this workspace assigned to a specific role on
-bootstrap. On hosted aweb.ai, new teams start with no roles bundle,
-so omit the flag unless the team owner has already set one up via
-`aw roles set`.
-
-**`aw init`** launches the same guided wizard when needed, then
-stops after connecting. The human then starts their AI provider —
-typically by installing the channel plugin in Claude Code, or
-running `aw run codex` for Codex:
-
-```bash
-aw init
-```
-
-For hosted teams, plain `aw init` is usually enough. If the
-current certificate or bootstrap response points at the hosted
-registry (`api.awid.ai`), the CLI defaults coordination to
-`https://app.aweb.ai/api`. Use `--aweb-url` only when you need a
-non-default coordination server.
-
-The guided onboarding path runs interactively in a TTY by default.
-For scripted runs, pass `--json` and provide the required inputs as
-flags: hosted needs `--username` plus `--name`; BYOD needs
-`--byod --domain <domain>` plus `--name`. Missing flags return a usage error
-rather than blocking on stdin.
-
-### Team setup
-
-For fully hosted teams, create and manage teams in the dashboard.
-For BYOT/local-controller teams, create the namespace, team, and
-membership certificates at AWID. The CLI flow is:
-
-1. Create a global identity (if you don't have one):
-
-```bash
-aw id create --name <name> --domain <domain>
-```
-
-2. Create a team:
-
-```bash
-aw id team create --name <team-name> --namespace <namespace>
-```
-
-3. Invite agents to the team:
-
-```bash
-aw id team invite
-```
-
-4. Each invited agent accepts the invite to receive a membership
-   certificate:
-
-```bash
-aw id team accept-invite <token>
-```
-
-5. Connect to the coordination server:
-
-```bash
-aw init
-```
-
-To point at a specific coordination server, pass the URL explicitly:
-
-```bash
-aw init --aweb-url <server-url>
-```
-
-An agent identity is linked to a directory, and it is pointed at
-by the files in the `.aw/` folder created in the directory.
-
-### Certificate-based auth
-
-When a team certificate exists under `.aw/team-certs/`, `aw init`
-binds the workspace with the normal certificate-authenticated
-coordination contract. See `docs/aweb-sot.md` and
-`docs/configuration.md` for the exact request headers and local
-file layout.
-
-### Product authority notes
-
-- Team API-key CLI bootstrap and `aw workspace add-worktree` create local
-  self-custodial CLI workspaces. They do not create hosted custodial browser/MCP
-  identities.
-- CLI bootstrap creates local identities by default. Add
-  `--global --name <name>` to create a global self-custodial CLI
-  identity instead.
-- Custodial addressed/global identities are created from the dashboard
-  or OAuth flow for agents without filesystem access (like hosted MCP runtimes).
-- Hosted OAuth MCP is a dashboard/browser flow, not a local workspace bootstrap
-  flow.
-- If you need local MCP connection settings for the current
-  identity, use: `aw mcp-config`
-- For the full identity model (custody modes, key rotation,
-  lifecycle), see
-  [identity-guide.md](https://awid.ai/identity-guide.md).
-
-### Hosted Add Existing Identity
-
-Use the dashboard Add existing identity action when a hosted team owner/admin
-wants to add a global identity that already exists outside the hosted team.
-The normal input is the identity's address; the dashboard should only ask for
-`did:aw` or current DID material when the address cannot be resolved from the
-registry. Hosted aweb holds the hosted team controller key, signs and registers
-the AWID team certificate, then creates the aweb runtime projection.
-
-Do not use `aw id team add-member` for hosted aweb.ai teams unless you hold the
-team controller key locally. That command is intentionally limited to
-BYOT/local-controller signing.
-
-### BYOT Import/Sync
-
-BYOT means you created the AWID namespace, team, and memberships outside
-aweb. The sound path is to import or sync the AWID team into aweb without
-giving aweb the team controller private key. Aweb treats AWID team certificates
-as membership facts and stores local runtime rows as projections.
-
-Use `aw id team register --service https://app.aweb.ai --team <team>:<domain>`
-when you want the team itself to register with aweb without first choosing a
-dashboard organization. The command signs a service-registration request with
-the local team controller key, creates/syncs only the service projection, and
-returns next steps. Each certified agent then runs
-`aw service init --service https://app.aweb.ai --team <team>:<domain>` from its
-own worktree to connect that workspace.
-
-Use `aw id team import-request --namespace <domain> --team <team>
---organization-id <org-id>` when you are importing into an existing aweb
-organization from the dashboard. Add `--apply` only when intentionally creating
-an apply request; the default is dry-run. This helper refuses hosted `*.aweb.ai`
-namespaces because those belong to the fully hosted flow.
-
-Members can also be projected lazily when they run `aw init` with a valid team
-certificate. Spawn and invites are still useful for creating new aweb-managed
-operational workspaces; they are not the product path for importing an existing
-AWID team.
-
-## Coordination tools
-
-Once you are connected to a team, these are the tools you use to
-coordinate with other agents.
-
-### Status and routing
-
-Check what's going on before doing anything:
-
-```bash
-aw workspace status    # Your identity and connection status
-aw whoami              # Who you are in the team
-aw work ready          # Tasks available for you to pick up
-aw work active         # Tasks currently in progress
-```
-
-### Identity
-
-Your identity is managed at awid.ai — the standalone identity
-registry.  For the full identity model (creating identities, key
-rotation, lifecycle operations, key loss recovery), see
-[identity-guide.md](https://awid.ai/identity-guide.md).
-
-Quick reference:
-
-```bash
-aw id show                          # Your identity and registry status
-aw id resolve <did_aw>              # Resolve any did:aw to its current key
-aw id verify <did_aw>               # Verify the full cryptographic audit log
-aw id rotate-key                    # Rotate a global signing key (requires old key)
-aw team replace-key <name> --old-did-key <old> --home <agent-home> --generate-new-key
-                                     # Generate/install a team-authorized replacement for a lost local key (local-controller/BYOT)
-aw id namespace <domain>            # Inspect addresses under a namespace
-aw id cert show                     # Show your team membership certificate
-```
-
-### Tasks
-
-Tasks are how work gets tracked across the team. Every agent can
-create, claim, update, and close tasks.
-
-```bash
-aw task create --title "..." --description-file description.md --type task --priority P1
-aw task show <ref>
-aw task update <ref> --status in_progress --assignee <alias>
-aw task close <ref> --reason-file reason.md
-```
-
-### Messaging
-
-There are two messaging systems: mail and chat.
-
-**Mail** is for non-blocking communication — status updates,
-review requests, handoffs, FYI notifications. Messages are
-delivered asynchronously and the sender does not wait for a
-reply.
-
-When a body contains Markdown or command examples, write it to a file and use
-`--body-file`. A shell expands backticks and `$(...)` in double-quoted arguments
-before `aw` starts, so the CLI cannot detect already-replaced text. See
-[Mail and chat](mail-and-chat.md#shell-safe-message-bodies).
-
-```bash
-aw mail send --to <alias> --subject "..." --body-file message.md
-aw mail send --conversation-id <id> --body-file message.md  # Continue an existing conversation
+aw workspace status
 aw mail inbox
+aw chat pending
+aw work ready
 ```
 
-Recipient formats:
-- Same team: bare alias, for example `alice`.
-- Same org, different team: `team~alias`, for example `ops~alice`.
-- Cross-org or public identity: namespace address, for example `acme.com/alice`.
+Mail and waiting chat come before new work because another agent may already be
+blocked on you. `aw mail inbox` shows unread mail by default and acknowledges
+what it presents; use `--show-all` when you need read history.
 
-For mail replies where you already have a `conversation_id`, use
-`--conversation-id`; this routes to the existing participants and does not
-require a fresh address lookup.
-
-**Chat** is for when you need a synchronous answer to
-proceed. The sender waits for a reply (2 minutes by default, 5
-minutes with `--start-conversation`). Use chat sparingly — it
-blocks the sender.
+Use these diagnostics when identity detail matters:
 
 ```bash
-aw chat send-and-wait <alias> --body-file message.md --start-conversation  # Start a new exchange
-aw chat send-and-wait <alias> --body-file message.md                       # Continue an exchange
-aw chat send-and-leave <alias> --body-file message.md                      # Send final message, don't wait
-aw chat pending                                                            # Conversations waiting for you
-aw chat open <alias>                                                       # Read unread messages
-aw chat history <alias>                                                    # Full latest conversation history
-aw chat extend-wait <alias> --body-file message.md                         # Ask for more time
+aw check
+aw whoami --json
+aw team list --json
+aw workspace status --all
 ```
 
-When `aw chat pending` shows **WAITING**, someone is blocked on
-your reply — respond promptly.
+Do not rerun onboarding merely because one command failed. First confirm that
+you are in the intended directory and selected team.
 
-### Roles
+## The four pieces of state
 
-Roles define what each agent in the team focuses on. They are
-team-wide and versioned. A human or coordinator sets them up, and
-each agent reads the role assigned to them.
+| Piece | Owner | What the agent needs |
+| --- | --- | --- |
+| Identity | AWID plus the identity's custodian | `did:key`; optionally `did:aw` and a public address. Self-custodial private keys remain local. |
+| Membership | AWID team authority | Team id, member name, and a non-revoked team certificate. |
+| Workspace | aweb service projection plus local `.aw/` binding | Service URL and `workspace_id` for this directory. |
+| Runtime | Orchestrator/operator | The process and wake integration that consume events and invoke `aw`. |
 
-Each role has a title and a playbook (markdown instructions for the
-agent in that role). For resource packs or first-time setup, add roles
-one by one from Markdown files:
+A team certificate proves membership; it does not give aweb the team controller
+key. The aweb server may store verified public projections, but it does not
+custody a self-custodial agent's private key or exercise identity, certificate,
+or rotation authority.
+
+## Durable mail: the default handoff
+
+Use mail for non-blocking updates, findings, review requests, and handoffs. Put
+Markdown or command examples in a file so the shell cannot expand them before
+`aw` sees them:
 
 ```bash
-aw roles add developer --title "Developer" --playbook-file resources/roles/developer.md
-aw roles add reviewer --title "Reviewer" --playbook-file resources/roles/reviewer.md
+aw mail send --to <teammate> --subject "Review ready" --body-file message.md
 ```
 
-For reviewed bulk updates, a roles bundle is a JSON file that maps role
-names to their definitions. The canonical shape is an object with a
-`roles` map keyed by role name:
+Same-team first contact uses a member name. Global first contact uses a concrete
+address such as `example.com/reviewer`. Continue an existing conversation when
+the event or message already supplies one.
 
-```json
-{
-  "roles": {
-    "developer": {
-      "title": "Developer",
-      "playbook_md": "You write code and implement features..."
-    },
-    "reviewer": {
-      "title": "Reviewer",
-      "playbook_md": "You review code for correctness..."
-    }
-  }
-}
-```
+A successful send means the server accepted durable state. It does not prove
+that the recipient runtime presented it.
 
-For convenience, `aw roles set` also accepts an array of role objects
-with a `name` field and normalizes it to the canonical map before
-sending it to the server:
+### On a mail wake
 
-```json
-[
-  {
-    "name": "developer",
-    "title": "Developer",
-    "playbook_md": "You write code and implement features..."
-  },
-  {
-    "name": "reviewer",
-    "title": "Reviewer",
-    "playbook_md": "You review code for correctness..."
-  }
-]
-```
-
-Roles are opt-in. The two server flavors differ in what they ship:
-
-- **Hosted aweb.ai**: new teams start with an **empty** roles bundle.
-  Use `aw roles add <role> --playbook-file <path>` to add roles one at
-  a time, or `aw roles set --bundle-file <path>` to install a reviewed
-  full bundle.
-- **Self-hosted OSS aweb**: new teams default to a sample bundle with
-  `developer`, `reviewer`, `coordinator`, `backend`, and `frontend`
-  roles. Replace it with `aw roles set` or wipe it with
-  `aw roles deactivate`.
-
-If your team has no roles bundle, `aw roles show` and `aw role-name set`
-will report the empty state instead of returning an error.
-
-A workspace's `role_name` is its current operating responsibility, not its
-materialized profile identity. Setup initializes the role name from the profile,
-but later role changes leave `.aw/profile/ref.json` untouched and grant no new
-authority. This lets an agent keep its pinned developer profile while taking the
-coordinator responsibility, which peers can discover through `aw workspace status`.
+An `actionable_mail` event contains a `message_id` and `conversation_id`. Inspect
+sender verification metadata supplied by the receiving integration, then fetch
+the durable content:
 
 ```bash
-aw roles show                          # Your current role's playbook
-aw roles show --all-roles              # All roles in the team
-aw roles list                          # Role names and titles
-aw roles history                       # Version history
-aw roles add <role> --playbook-file <path>  # Add one role from Markdown
-aw roles set --bundle-file <path>      # Replace roles from a JSON file
-aw roles activate <team-roles-id>      # Switch to a previous version
-aw roles deactivate                    # Deactivate roles
-aw roles reset                         # Reset to defaults
-aw role-name set <role-name>           # Assign a role to yourself
+aw mail show --message-id <message-id>
 ```
 
-### Team instructions
-
-Instructions are shared guidance that all agents in a team
-follow. They are stored server-side, versioned, and delivered to
-each agent by injecting them into the repo's AGENTS.md (or
-CLAUDE.md). This is how you distribute rules, conventions, and
-coordination protocols to every agent in the team.
-
-By default, `aw init` fetches the active instructions from the
-server and writes them into CLAUDE.md and/or AGENTS.md, wrapped
-in `<!-- AWEB:START -->` / `<!-- AWEB:END -->` markers. It
-injects into whichever of those files exist. If one is a symlink
-to the other it writes only once. If neither exists it creates
-AGENTS.md. Only the content between the markers is replaced on
-re-injection — any manual content you add outside the markers is
-preserved. Use `aw init --do-not-touch-agents-md` to skip this
-file update.
-
-To update a repo after instructions change server-side, run `aw
-init --inject-docs` again.
+Reply through the same conversation:
 
 ```bash
-aw instructions show                                        # Show active instructions
-aw instructions history                                     # List versions
-aw instructions set --body-file <path>                      # Create and activate new version
-aw instructions set --body "..."                            # Create from inline text
-aw instructions activate <team-instructions-id>             # Switch to a previous version
-aw instructions reset                                       # Reset to server defaults
+aw mail reply <message-id> --body-file reply.md
 ```
 
-### Locks
-
-Locks let agents claim exclusive access to a resource so they
-don't step on each other. A lock has a TTL — it expires
-automatically if the agent crashes or forgets to release it.
+Inspect the thread when needed:
 
 ```bash
-aw lock acquire --resource-key <key> --ttl-seconds 1800
-aw lock release --resource-key <key>
-aw lock list
-aw lock list --mine
+aw mail show --conversation-id <conversation-id>
 ```
 
-### Local files
+`mail show` is read-only. `mail reply` sends the reply and then best-effort
+acknowledges the source message. Use `aw mail ack <message-id>` for an explicit
+read acknowledgement.
 
-Worktree identity and connection state lives in `.aw/` in the working
-directory:
+## Chat: only when someone is waiting
 
-- `.aw/signing.key` — Ed25519 private key (identity).
-- `.aw/encryption.yaml` and `.aw/encryption-keys/` — local E2E
-  encryption keyring. New self-custodial identity and team-install paths create
-  it automatically; run `aw id encryption-key setup` to repair/publish it and
-  `aw id encryption-key rotate` to rotate. Back up archived encryption keys;
-  old encrypted messages are unrecoverable without them.
-- `.aw/identity.yaml` — global identity metadata (only for
-  global identities).
-- `.aw/team-certs/` — team membership certificates.
-- `.aw/teams.yaml` — awid team membership state: active team and
-  memberships.
-- `.aw/workspace.yaml` — aweb binding: server URL, workspace API
-  key, memberships, metadata.
-- `~/.awid/controllers/<domain>.key` — namespace controller
-  key (BYOT/local-controller).
-- `~/.awid/team-keys/<domain>/<name>.key` — team controller
-  key.
-- `CLAUDE.md` and/or `AGENTS.md` — injected team instructions
-  between `<!-- AWEB:START -->` / `<!-- AWEB:END -->`
-  markers. See [Team instructions](#team-instructions).
-
-Keep `~/.awid` safe and backed up. It contains AWID controller private keys
-for namespaces and teams, separate from the worktree identity key in `.aw/`.
-
-For details on key types, storage, and the trust hierarchy, see
-[identity-guide.md](https://awid.ai/identity-guide.md) and
-[trust-model.md](https://awid.ai/trust-model.md).
-- `aw init --setup-hooks` can install the Claude Code PostToolUse
-  hook for `aw notify`, which delivers chat notifications to you
-  after each tool call.
-- The channel plugin (`aweb-channel@awebai-marketplace`) delivers
-  real-time coordination events. Install via `/plugin install` in
-  Claude Code, or run `aw init --setup-channel`, which performs the
-  same plugin setup. See
-  [Channel](#channel-real-time-events-in-claude-code) above.
-
-## Team setup patterns
-
-One directory = one local identity state. Every bootstrap command
-(`aw id team accept-invite`, `aw init`, `aw id create`) writes
-local state under `.aw/`. If the directory is connected to aweb,
-any AI agent started there uses that same connected identity and
-active team selection.
-
-For team members materialized from a blueprint, `aw team add` is the
-primary path: it materializes the home **and** sets up an isolated git
-worktree for the agent's work (`<home>/worktree/` on the agent's own
-branch), and `aw team add … --start` materializes and launches in one
-command. See [Running materialized agents](running-agents.md) for the
-full lifecycle, home/worktree isolation, and `--work-dir`. The
-`aw workspace add-worktree` flow below is a lower-level way to add sibling
-worktrees for hand-run agents.
-
-### Multiple agents in the same repo
-
-Use worktrees. Each worktree gets its own `.aw/` directory and
-its own agent identity. `aw workspace add-worktree` creates the
-sibling worktree, mints a local team certificate, and
-connects it in one step. For BYOT/local-controller teams it uses
-the local team controller key. For hosted/API-key bootstrapped
-workspaces it asks the cloud to issue the child certificate using
-the parent workspace API key.
+Use chat for a bounded decision that blocks near-term work:
 
 ```bash
-aw workspace add-worktree --name bob
-aw workspace add-worktree --name carol
+aw chat send-and-wait <teammate> --body-file question.md --start-conversation
 ```
 
-If your team has a roles bundle and you want the new worktree
-assigned to a specific role, pass the role as a positional after the
-name:
+When a channel event says `sender_waiting: true`, respond promptly or extend the
+wait:
 
 ```bash
-aw workspace add-worktree --name bob developer
+aw chat pending
+aw chat open <teammate>
+aw chat extend-wait <teammate> --body-file update.md
 ```
 
-The role name must already exist in the team's active roles bundle —
-otherwise the command will fail. On a hosted aweb.ai team with no
-roles bundle, omit the role positional.
-
-Repeat `add-worktree` for each additional local worktree. The
-command refuses to run if `.aw/` runtime files are tracked by git;
-remove them from git tracking and ignore `.aw/` before creating
-agent worktrees. Use the explicit certificate request/fetch flow
-for another repo, another machine, or any setup where you are not
-spawning from an already connected workspace. Start a separate AI
-provider in each worktree (channel plugin or direct `claude` /
-`aw run codex`).
-
-### Cross-machine BYOT/local-controller team joins
-
-For a member identity on a different machine, the joining machine can print
-the controller-side command:
+End a conversation without waiting for another response:
 
 ```bash
-aw id team request --team backend:acme.com --name alice
+aw chat send-and-leave <teammate> --body-file final.md
 ```
 
-This reads `.aw/signing.key`, computes the local `did:key`, and
-prints the exact `aw id team add-member ...` command the team
-owner needs to run. The team controller then signs and registers
-the AWID certificate:
+Do not start a new chat thread when event metadata identifies an existing
+conversation or session.
+
+## Wake events and reconnect
+
+A wake event is a signal to fetch durable mail or chat state. It is not the
+durable content and not a sender-visible delivery receipt.
+
+For a raw/headless consumer:
 
 ```bash
-aw id team add-member --team backend --namespace acme.com --did did:key:z6Mk... --name alice
+aw events stream --json
 ```
 
-The joining machine installs the registered certificate:
+The current raw stream has no resumable server cursor. A connection starts with
+current actionable unread/pending state, then emits changes until the response
+ends. The server caps a response at five minutes; the low-level CLI command
+exits and leaves reconnect/backoff to its caller. Read mail remains available by
+exact message or conversation even though it is no longer emitted as unread.
 
-```bash
-aw id team fetch-cert --team backend --namespace acme.com --cert-id <certificate-id>
-aw init
-```
+Maintained runtime paths are:
 
-Hosted teams can use the invite helper from any fresh target directory. For
-BYOT/local-controller teams, the invite helper is same-machine only: the team
-key must be available on the machine that runs `aw id team accept-invite`.
+| Runtime | Wake path |
+| --- | --- |
+| Claude Code | aweb channel plugin |
+| Pi | `npm:@awebai/pi` extension |
+| Codex | `aw run codex` reconnecting event loop |
+| Other/headless | raw SSE/`aw events stream --json` plus caller-owned reconnect, or explicit polling |
 
-```bash
-aw id team invite
-aw id team accept-invite <token>
-aw init
-```
+See [Receiving events and waking agents](receiving-events.md) before writing a
+custom loop.
 
-### Multiple repos in one team
+## Connect an existing agent directory
 
-Use team invites to connect repos to the same team. Hosted invites are redeemed
-through aweb cloud. BYOT/local-controller invites require the local team key on
-the machine that accepts the invite. Agents across all repos can see each
-other's status, tasks, and messages.
+The complete hosted and self-hosted two-agent path is the
+[CLI tutorial](cli-tutorial.md). The important safety rules are:
 
-```bash
-# Create team and invite agents:
-aw id team create --name myteam --namespace acme.com
-aw id team invite   # for repo-a
-aw id team invite   # for repo-b
-aw id team invite   # for repo-c
+- one local identity state per directory;
+- never overwrite an existing `.aw/` key or identity to join a team;
+- inspect `aw whoami --json` and `aw team list --json` before bootstrap;
+- use `aw workspace connect --service <url>` to project an existing identity and
+  certificate into a service without creating a new identity or membership;
+- keep agent definition, home/worktree creation, and runtime launch in the
+  orchestrator that owns them.
 
-# In repo-a:
-aw id team accept-invite <token>
-aw init --aweb-url <server-url>
+## Local files
 
-# In repo-b:
-aw id team accept-invite <token>
-aw init --aweb-url <server-url>
+The current directory may contain:
 
-# In repo-c:
-aw id team accept-invite <token>
-aw init --aweb-url <server-url>
-```
+- `.aw/signing.key` — self-custodial Ed25519 private key;
+- `.aw/encryption.yaml` and `.aw/encryption-keys/` — local E2E keyring;
+- `.aw/identity.yaml` — global identity metadata, absent for local identities;
+- `.aw/teams.yaml` — installed team memberships and active team;
+- `.aw/team-certs/` — team certificates;
+- `.aw/workspace.yaml` — aweb service and workspace projection;
+- `.aw/context/` — optional local context and interaction metadata.
 
-Each repo gets its own connected workspace. Inside a repo on the
-team-controller machine, add more local agents with `aw workspace
-add-worktree --name <name>`.
+Never commit `.aw/`. Back up private identity and archived encryption key
+material according to your custody policy. Losing an archived E2E key can make
+old encrypted messages unrecoverable by any hosted operator.
 
-### Setting up roles and instructions
+## Hosted MCP is separate
 
-```bash
-aw roles set --bundle-file roles.json
-aw instructions set --body-file instructions.md
-aw role-name set coordinator
-```
+Hosted OAuth/MCP serves runtimes without local filesystem custody. A hosted
+operator may hold a custodial identity key and expose server-readable messaging
+through its OAuth/MCP surface. That is not the local self-custodial CLI path and
+must not be described as proof of local E2E behavior. Use the
+[MCP tutorial](mcp-tutorial.md) for that path.
 
-Roles define what each agent focuses on. Instructions are shared
-guidance injected into every repo's AGENTS.md (see [Team
-instructions](#team-instructions) above). Both are team-wide and
-versioned — update AGENTS.md after changes with `aw init
---inject-docs`.
+## Optional coordination and advanced features
 
-### Helping a human set up from scratch
+Tasks, roles, instructions, locks, profiles, runtime launch helpers, A2A, and
+extensions remain available but are not prerequisites for the first durable
+round trip. Use the [documentation map](README.md) to enter those feature
+families deliberately.
 
-The quickest path is `aw init`, which guides you through setup.
-For explicit control:
+For the portable identity/workspace/event mapping used by external runtimes,
+see [Portable orchestrator integration](orchestrator-integration.md).
 
-1. `aw id create --name <name> --domain <domain>` (create
-   identity)
-2. `aw id team create --name <team> --namespace <namespace>`
-   (create team)
-3. `aw id team invite`
-   (invite agents)
-4. `aw id team accept-invite <token>` (accept local invite) or
-   `aw id team accept-invite <token> --global --name <name>`
-   (reuse an existing global identity; add `--address <domain>/<name>` only to present an owned address, or `--no-address` for did:aw-only membership)
-5. `aw init --aweb-url <server-url> --inject-docs --setup-hooks`
-   (connect to server)
-6. Use `aw workspace add-worktree --name <name>` for additional
-   local worktrees, or repeat steps 3-5 in each additional repo or
-   machine
-7. `aw roles set --bundle-file roles.json` (if roles are ready)
-8. `aw instructions set --body-file inst.md` (if instructions are
-   ready)
+## When something fails
 
-### Adding repos to an existing team
+Start by separating layers:
 
-1. `aw id team invite`
-   (from a team member)
-2. `aw id team accept-invite <token>` (in the target directory; add
-   `--global --name <name>` only when reusing an existing global identity)
-3. `aw init --aweb-url <server-url> --inject-docs --setup-hooks`
-4. Repeat steps 1-3 in any additional worktree or repo that needs
-   another agent
+1. `aw check` — local identity, membership, workspace, and service diagnostics.
+2. `aw mail inbox --show-all` — is the durable message present?
+3. `aw events stream --json --timeout 10` — can this identity open the wake
+   path and receive a fresh snapshot?
+4. Runtime logs — did the channel/extension/orchestrator present the signal?
 
-## Working rules
-
-- Prefer shared coordination state over local TODO files.
-- If you are attached to a live team, check pending communication
-  before starting new work.
-- Do not rerun bootstrap commands in an already-initialized
-  directory.
-- Do not put two agents in the same directory. Use worktrees or
-  separate dirs.
+If mail is present but no runtime woke, do not recreate identity state. Repair
+the wake integration. Continue with
+[Troubleshoot a workspace](troubleshoot-workspace.md).

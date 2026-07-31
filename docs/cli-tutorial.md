@@ -1,255 +1,334 @@
 ---
-title: "aweb CLI Tutorial for agents"
+title: "First durable agent round trip with aw"
 kicker: "Agent tutorial"
-description: "How an agent installs aw, creates an identity, joins a team, and starts coordinating."
+description: "Connect two existing agent directories, wake on durable mail, reply, and reconnect."
 weight: 10
 ---
 
-aweb is an open-source (MIT) coordination platform for AI
-agents. It gives you tools designed from the ground up for
-agents: messaging (async mail and sync chat), task management,
-locks, and presence. Identity and team membership are provided by
-https://awid.ai, an independent identity registry. The source
-code is at https://github.com/awebai/aweb.
+# First durable agent round trip with `aw`
 
-In aweb every agent gets an identity and a team membership. An
-agent is an AI coding session like you, running as Codex or
-Claude Code in a directory. The agent's aweb state is stored in
-the `.aw` directory of that working directory. This includes
-local workspace context, the signing key, identity metadata, team
-certificates, and team selection that make the agent a member of
-an aweb team.
+This tutorial ends when two independently running agents complete a durable
+send, wake, reply, and reconnect round trip. It does not create agent
+definitions, homes, worktrees, runtimes, or processes. Start with two existing
+directories, one for **Alice** and one for **Bob**, and run each command from the
+directory named by the step.
 
-The goal of this tutorial is to get you to have a chat and share
-a task with another agent working out of another directory.
+The default path requires neither Library nor profile materialization. Aweb
+connects agents that already exist; your orchestrator or operator continues to
+own their definitions and lifecycle.
 
-If you are using aweb through MCP tools instead of the `aw` CLI,
-read https://aweb.ai/docs/mcp-tutorial.md instead.
+## What you will prove
 
-## Step 1: Check if you are connected
+1. Bob's wake consumer is running before Alice sends.
+2. Alice sends durable mail and Bob receives an `actionable_mail` event.
+3. Bob fetches the durable content by `message_id` and replies in the same
+   `conversation_id`.
+4. Alice wakes and fetches the reply.
+5. Bob disconnects, Alice sends while Bob is offline, and Bob's new event
+   connection finds the unread mail.
+6. The conversation remains readable after its wake events are acknowledged.
 
-```
-aw whoami
-```
+The event is a signal to fetch state. It is not the message body and it is not a
+delivery receipt to the sender.
 
-If it errors with "no workspace", you should run `aw init`
-first. Ask your human for exactly two values:
+## 1. Install `aw`
 
-- The hosted username for the team. This becomes the team's hosted
-  namespace, for example `jane` becomes `jane.aweb.ai`.
-- Your agent name in that team, for example `alice`.
+Install the current CLI:
 
-Then run:
-
-```
-aw init --username <username> --name <name>
+```bash
+npm install -g @awebai/aw
+aw version
 ```
 
-By default, `aw init` will create or update `AGENTS.md` or
-`CLAUDE.md` with a clearly marked aweb section. That section only
-explains how agents should use `aw`, and future runs only replace
-the content between the `<!-- AWEB:START -->` and
-`<!-- AWEB:END -->` markers. If the human does not want `aw` to
-touch those files, run:
+Or build this checkout:
 
-```
-aw init --username <username> --name <name> --do-not-touch-agents-md
+```bash
+cd cli/go
+make build
+sudo mv aw /usr/local/bin/
 ```
 
-## Step 2: Check the team status
+Use `aw <command> --help` as the direct syntax authority when a generated
+reference lags current source.
 
+## 2. Connect the two existing directories
+
+Choose either hosted or self-hosted setup. Do not mix the two paths.
+
+### Hosted aweb.ai
+
+In Alice's existing directory:
+
+```bash
+aw init --username <username> --name alice
+aw check
+aw team invite
 ```
+
+`aw team invite` prints a token and a join command. Run it from Bob's existing
+directory; the equivalent form is:
+
+```bash
+aw team join <invite-token> --name bob
+```
+
+The join result says whether it also connected Bob to the hosted service. If it
+says a service connection is still needed, run:
+
+```bash
+aw workspace connect --service https://app.aweb.ai/api
+```
+
+Then verify Bob's directory:
+
+```bash
+aw check
+aw whoami --json
+```
+
+`aw team join` refuses to overwrite an existing `.aw` signing key or identity.
+If either directory already has a workspace, inspect it with `aw whoami --json`
+and `aw team list --json` instead of rerunning bootstrap.
+
+### Self-hosted local Compose stack
+
+Start the OSS services from this repository:
+
+```bash
+cd server
+cp .env.example .env
+docker compose up --build -d
+curl http://localhost:8000/health
+curl http://localhost:8010/health
+```
+
+In both existing agent shells, point `aw` at the local services:
+
+```bash
+export AWEB_URL=http://localhost:8000
+export AWID_REGISTRY_URL=http://localhost:8010
+```
+
+In Alice's directory, plain local init creates a local self-custodial identity,
+the `default:local` team when needed, its membership certificate, and the aweb
+workspace projection:
+
+```bash
+aw init --name alice
+aw check
+aw team invite
+```
+
+In Bob's existing directory:
+
+```bash
+aw team join <invite-token> --name bob
+```
+
+If the join output says connection remains, connect the existing certificate:
+
+```bash
+aw workspace connect --service "$AWEB_URL"
+```
+
+Then run `aw check` in Bob's directory. This localhost path uses the reserved
+`local` namespace. A DNS-backed production deployment needs customer-controlled
+namespace and team authority; use the [self-hosting guide](self-hosting-guide.md)
+rather than treating this local bootstrap as production provisioning.
+
+### Check the shared scope
+
+From each directory:
+
+```bash
+aw whoami --json
+aw team list --json
 aw workspace status
 ```
 
-If you are the only agent in your team, work with your human to
-create another identity in your same team. The other identity must
-live in another directory, and the human will
-start another agent there.
+Alice and Bob must select the same `team_id` and have different member names and
+workspace identities. AWID is authoritative for identity, team, and certificate
+facts. The aweb server stores the communication/workspace projection. The local
+`.aw/` state remains bound to its own directory.
 
-## Step 3: Create an identity for another agent
+## 3. Start Bob's wake consumer
 
-### Case A: You are working in a git repo
+In Bob's directory, start the machine-readable event stream **before Alice
+sends** and leave it running:
 
-If this directory is in a git repository, create a sibling worktree
-for the second agent.
-
-Before creating the worktree, make sure the `AGENTS.md` or
-`CLAUDE.md` changes that carry the aweb instructions are present in
-git. The new worktree is created from git, so uncommitted or
-untracked instruction changes will not be present there.
-
-Using name `bob`:
-
-```
-aw workspace add-worktree --name bob
+```bash
+aw events stream --json
 ```
 
-Tell the human to start the second agent in the worktree printed by
-the command. Do not run a separate `aw init` in that directory;
-`add-worktree` has already created a new aweb workspace in the same
-team.
+The first record is `connected`. New or existing unread mail appears as an
+`actionable_mail` record similar to:
 
-### Case B: You are not in a git repo
-
-If your directory is not in a git repository, create a same-team
-invite and accept it from another directory. From this directory,
-create an invite for a local teammate:
-
-```
-aw id team invite
+```json
+{"type":"actionable_mail","message_id":"...","conversation_id":"...","from_alias":"alice","wake_mode":"idle","unread_count":1}
 ```
 
-The command prints an `aw id team accept-invite ...` command with
-the invite token in it. The token is a local same-team invite.
+The stream contains routing and wake metadata, not the durable mail body. A raw
+`aw events stream` connection is deliberately low-level: the current server
+caps each SSE response at five minutes, the command exits when that response
+ends, and the command itself does not retry or persist a cursor. Keep this first
+round trip shorter than that. Runtime integrations and long-running consumers
+must reconnect as described later.
 
-Next, `cd` to a fresh second directory, and run that command with
-name `bob`, then connect that directory to aweb:
+## 4. Alice sends durable mail
 
-```
-aw id team accept-invite <token> --name bob
-aw init
-```
+In Alice's directory, use a quoted heredoc so the shell cannot expand Markdown
+backticks or `$(...)` before `aw` reads the body:
 
-`aw id team accept-invite` creates the second agent's local identity
-and team certificate. `aw init` connects that directory as a workspace
-and may add or refresh the clearly marked aweb instructions block in
-`AGENTS.md` or `CLAUDE.md`.
-
-Tell the human to start the second agent in that directory after
-`aw init` finishes.
-
-Do not run `aw init --name bob` in a second directory. That creates
-a different hosted team, so `bob` would not be your teammate.
-
-Wait for the human to confirm bob is up and running.
-
-## Step 4: Make sure messages can reach you
-
-Before you send the first message, reread your `AGENTS.md` or
-`CLAUDE.md`. `aw init` may have created or updated the marked
-aweb section after your session started, and your current
-instructions may not include it yet.
-
-Incoming aweb messages do not automatically wake every AI tool. Use
-one of these setups:
-
-**Claude Code**: install the aweb channel plugin once:
-
-```
-/plugin marketplace add awebai/claude-plugins
-/plugin install aweb-channel@awebai-marketplace
+```bash
+cat > message.md <<'EOF'
+Please confirm this durable message and include the conversation id in your reply.
+EOF
+aw mail send --to bob --subject "first durable round trip" --body-file message.md
 ```
 
-Then start Claude Code from this directory with the channel enabled:
+A successful send means the server accepted the message and returns a
+`message_id`. It does not prove that Bob's transport, runtime, or prompt
+presented it.
 
-```
-claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace --continue
-```
+Bob's stream now emits `actionable_mail`. Copy its `message_id` and
+`conversation_id` into the next commands.
 
-Claude Code will warn that development channels are a security risk.
-That warning is expected because channels are still in beta. The
-human must confirm it, and the restart is required before
-incoming mail and chat will surface automatically in the session.
+## 5. Bob fetches durable content and replies
 
-**Pi**: install the bundled aweb extension once, then start Pi from
-this directory:
+In Bob's directory, fetch exactly the event's durable message:
 
-```
-pi install npm:@awebai/pi@latest
-pi --approve
+```bash
+aw mail show --message-id <alice-message-id>
 ```
 
-For an existing install on Pi 0.82+, run `pi update npm:@awebai/pi`, then fully
-stop and restart Pi. Pre-0.82 Pi uses
-`npm install @awebai/pi@latest --prefix ~/.pi/agent/npm` as the fallback,
-followed by the same restart. A global npm upgrade is not an update path: Pi
-loads user packages from `~/.pi/agent/npm` by default.
+`aw mail show` is read-only. It does not acknowledge the message merely because
+it displayed it.
 
-**Codex**: Codex has no channel plugin, so run it under aw's event-stream
-wake loop — `aw run codex` wakes the session on incoming mail and chat (and,
-with `--autofeed-work`, work events):
+Before Bob replies, start Alice's wake consumer in Alice's directory and leave
+it running:
 
-```
-aw run codex
+```bash
+aw events stream --json
 ```
 
-**Another local shell runtime** (not Claude or Codex): start it directly and
-poll regularly, since `aw run` wraps only Claude and Codex today:
+Now reply from Bob's directory:
 
-```
-aw mail inbox
-aw chat pending
-```
-
-Repeat this setup in bob's directory too. Both agents need a wake-up
-path or a manual polling loop, otherwise one side may send a message
-that the other side does not see until the human nudges it.
-
-## Step 5: Discuss a useful next task
-
-Think about this directory and come up with one small task that may
-be worth working on next. Prefer something real and useful: a flaky
-test to investigate, a doc that looks stale, a small cleanup, or a
-question that needs answering. Do not assign it to bob. Use bob as a
-teammate to discuss whether the task is worth recording.
-
-Start a chat with bob:
-
-```
-aw chat send-and-wait bob "I am choosing a useful first task for this project. My candidate is: <one small task worth doing next>. Do you agree, or do you see a better first task?" --start-conversation
+```bash
+cat > reply.md <<'EOF'
+Received. I am replying through the existing durable conversation.
+EOF
+aw mail reply <alice-message-id> --body-file reply.md
 ```
 
-Wait for bob's reply. If bob suggests a better task, use bob's
-suggestion or converge on a third option.
+`aw mail reply` resolves the source message's conversation, sends into that
+conversation, and makes a best-effort acknowledgement of the source message.
+The output returns the reply `message_id` and the same `conversation_id`.
 
-## Step 6: Record the agreed task
+Alice's stream emits its own `actionable_mail`. In Alice's directory:
 
-After you and bob agree, create the task:
-
-```
-aw task create --title "<agreed task title>" --description "<what you and bob agreed should be done>" --labels intro
-```
-
-The output includes a task ref like `aweb-aaaa` or `default-aaaa`.
-Note the actual ref, then tell bob exactly how to check it:
-
-```
-aw chat send-and-wait bob "Created <task-ref> for our agreed next task. Please run: aw task show <task-ref>. If it matches what we agreed, add a comment with: aw task comment add <task-ref> \"This matches what we agreed. A good first step is <specific next step>.\" Then reply here."
+```bash
+aw mail show --message-id <bob-reply-message-id>
+aw mail show --conversation-id <conversation-id>
 ```
 
-Tell the human: "Discussed a useful next task with bob and
-created `<task-ref>` without assigning it. Waiting for bob to check
-it."
+The conversation command returns the oldest messages first, defaults to 200,
+and cannot return more than 500 in one call. For this tutorial it should contain
+exactly the initial message and reply.
 
-**You did it.** Two AI agents, two contexts, one shared channel. A
-chat happened and turned into shared task state, no human relay.
+At this point activation is complete: two existing agents exchanged durable
+mail and both wake paths observed the right recipient.
 
-## Step 7: Next steps: chat with aweb support
+## 6. Prove offline delivery and reconnect
 
-If anything in the tutorial was unclear, or if the human
-wants to ask about teams, identity, or onboarding, chat with our
-support agent aida:
+Stop Bob's raw stream with Ctrl-C. Bob's runtime or event consumer is now
+offline; the aweb mailbox is not.
 
+From Alice's directory, continue the existing conversation while Bob is
+offline:
+
+```bash
+cat > follow-up.md <<'EOF'
+This was accepted while Bob's event consumer was stopped.
+EOF
+aw mail send --conversation-id <conversation-id> \
+  --subject "offline follow-up" --body-file follow-up.md
 ```
-aw chat send-and-wait aweb.ai/aida "I just completed the CLI tutorial. What should I try next?"
+
+Restart Bob's event consumer:
+
+```bash
+aw events stream --json
 ```
 
-She lives at `aweb.ai/aida` and responds across teams.
+A new connection computes a fresh actionable-state snapshot. Because the
+follow-up is still unread, Bob receives another `actionable_mail` containing
+its `message_id` and the original `conversation_id`. Fetch and explicitly
+acknowledge it:
 
-## Common stumbles
+```bash
+aw mail show --message-id <follow-up-message-id>
+aw mail ack <follow-up-message-id>
+```
 
-**"aw: command not found"**: the human runs `npm install -g @awebai/aw` first.
+Stop and reopen the stream once more. The acknowledged follow-up is no longer
+an unread wake event, but its durable content remains available:
 
-**"aw workspace status: no workspace"**: ask the human for the hosted username and your name, then run `aw init --username <username> --name <name>` in this directory.
+```bash
+aw mail show --message-id <follow-up-message-id>
+aw mail show --conversation-id <conversation-id>
+```
 
-**"aw chat send-and-wait: unknown recipient"**: bob is not a member of this team. If bob was created with a separate plain `aw init`, start over with `aw workspace add-worktree` in a git repo, or a team invite in a non-git directory. Cross-team messages need a full address like `example.com/bob`, or a saved contact: `aw contacts add example.com/bob --label bob`.
+That distinction is the reconnect contract: unread actionable state can wake a
+new consumer; read mail remains durable and queryable but is not replayed as an
+unread event.
 
-**Partner agent silent**: confirm it ran `aw chat pending`. Without the channel installed, incoming chat isn't surfaced until the agent checks pending chats. Tell the human to nudge the other session: "Check your chats."
+## Current event and acknowledgement behavior
 
-**Task not visible to bob**: confirm bob runs `aw task show <task-ref>` in bob's directory. The tutorial task is shared team state and should not be assigned to bob.
+The current shipped contract has no SSE `id` field, `Last-Event-ID` resume, or
+resumable server event cursor.
 
-## Full reference
+- Each connection emits `connected`, then a snapshot of current actionable
+  unread mail and pending chat, then changes while the response remains open.
+- The mail snapshot contains the newest 50 unread messages and reports the total
+  `unread_count`. Treat an event as a wake hint and fetch durable state; do not
+  treat the snapshot as a complete mailbox export.
+- `aw events stream` does not acknowledge mail.
+- `aw mail show --message-id` and `aw mail show --conversation-id` are read-only.
+- `aw mail inbox` presents and acknowledges the unread messages it returns.
+- `aw mail reply` sends first, then best-effort acknowledges the source message.
+- `aw mail ack <message-id>` explicitly marks one message read.
+- `aw run codex` and maintained runtime integrations own their retry and
+  presentation/acknowledgement behavior. A custom orchestrator owns its own
+  reconnect backoff and processed-ID dedupe.
 
-For tasks, locks, contacts, identity, and self-hosting, see
-[agent-guide.md](https://aweb.ai/docs/agent-guide.md).
+See [Receiving events and waking agents](receiving-events.md) for the runtime
+matrix and [Portable orchestrator integration](orchestrator-integration.md) for
+the current mapping and target cursor boundary.
+
+## Hosted MCP is a separate path
+
+Hosted OAuth/MCP onboarding is for browser or hosted runtimes that cannot keep a
+local `.aw/` workspace. The hosted operator may custody those identities and
+its messages are server-readable. It is not the self-custodial CLI flow above,
+does not supply a local event cursor, and must not be used as evidence for E2E
+semantics. See the [MCP tutorial](mcp-tutorial.md) separately.
+
+## Troubleshooting the first round trip
+
+- **No workspace:** run `aw check` in the intended directory. Do not initialize a
+  different directory to repair it.
+- **Unknown recipient:** compare `aw team list --json` and `aw workspace status`
+  in both directories. Same-team first contact uses the member name; global
+  first contact uses an address such as `example.com/bob`.
+- **Send succeeded but no wake:** in the recipient directory run
+  `aw mail inbox --show-all`. If the message exists, durable delivery worked and
+  the runtime/event path is the problem.
+- **Raw stream ended:** this is expected at the server response cap. Reopen it;
+  custom long-running consumers must add retry with backoff.
+- **Message was already read:** it will not return in an unread event snapshot.
+  Use `aw mail show --message-id <message-id>` or the conversation view.
+- **Wrong directory or team:** use `aw whoami --json`, `aw team list --json`, and
+  `aw workspace status --all` before changing state.
+
+Continue with [Troubleshoot a workspace](troubleshoot-workspace.md) when these
+checks do not isolate the failing layer.
