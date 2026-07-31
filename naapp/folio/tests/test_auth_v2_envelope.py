@@ -355,12 +355,17 @@ def test_aweb_team_auth_envelope_v2_conformance_vector() -> None:
                 ],
             }
         )
+        allowed_audience = payload["aud"]
+        if case["name"] == "a2a_route_create":
+            # Preserve the configured-origin normalization regression while the
+            # other case proves a second audience is consumed from the corpus.
+            allowed_audience = payload["aud"].upper().replace("HTTPS://", "https://") + "/"
         aweb_envelope = aweb_module.team_auth_signature_payload(
             request,
             team_id=payload["team_id"],
             timestamp=payload["timestamp"],
             body_sha256=hashlib.sha256(case["body"].encode()).hexdigest(),
-            allowed_audiences=[payload["aud"]],
+            allowed_audiences=[allowed_audience],
         )
         assert aweb_envelope.canonical_payload == canonical
         verified_cases.add(case["name"])
