@@ -168,7 +168,9 @@ func mailWindowNotice(returned, limit int) string {
 		return ""
 	}
 	return fmt.Sprintf(
-		"  NOTE: this is the OLDEST %d, which is all --limit allowed. There may be more, and any newer messages are not shown. Re-run with a higher --limit to find out.",
+		"  NOTE: this is the OLDEST %d, which is all --limit allowed. There may be more, and any newer\n"+
+			"  messages are not shown. Re-run with a higher --limit (the server accepts up to 500) to\n"+
+			"  find out. A conversation longer than 500 cannot be returned whole by this command.",
 		limit,
 	)
 }
