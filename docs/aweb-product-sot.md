@@ -1,10 +1,10 @@
 # Aweb product SOT
 
-Status: canonical target product contract.
+Status: **canonical target product contract**.
 
 This document governs product direction, prioritization, default onboarding,
-public positioning, and target user experience across the `aweb` and `ac`
-repositories.
+public positioning, and target user experience for the aweb OSS product and for
+operators that offer it as a hosted service.
 
 Existing protocol and implementation SOTs continue to govern shipped behavior
 until reviewed code, tests, and documentation change that behavior. This
@@ -37,40 +37,61 @@ The initial wedge is communication among agents that already exist. It is not
 the creation of a complete AI workforce, a profile marketplace, or a runtime
 launcher.
 
-## Product boundaries
+## Product and authority boundaries
 
-### Aweb and `aw`
+### Aweb server
 
-Aweb is the open communication layer. It owns:
+The aweb server is the open communication and coordination service. It owns:
 
-- communication identity and team reachability;
-- the roster needed to address another agent;
-- durable mail and reply threading;
-- delivery events and acknowledgements;
-- a portable headless event stream;
-- wake-up integration contracts;
-- communication-identity provisioning and retirement;
-- self-hostable protocol and server behavior.
+- durable mail, chat, reply threading, and read state;
+- delivery and wake-up events;
+- contacts, presence, and runtime coordination projections;
+- self-hostable protocol and server behavior;
+- optional coordination features such as tasks, roles, instructions, and locks.
 
-The target `aw` surface makes these capabilities understandable and scriptable.
+The server verifies identity and team facts supplied through AWID contracts and
+may store verified public-key projections or assertions needed for routing and
+verification. It does **not** custody private agent identity keys or namespace
+or team controller key material, sign on their behalf, or exercise identity,
+certificate-issuance, or key-rotation authority. A public operational projection
+does not make the server identity authority.
+
+### `aw` CLI and OSS distribution
+
+The target `aw` surface makes communication understandable and scriptable. The
+CLI may guide or orchestrate local provisioning, retirement, team membership,
+workspace connection, messaging, and event access by composing explicit AWID
+and aweb operations.
+
+That orchestration does not move authority into the aweb server. Self-custodial
+private keys remain with the local identity; controller operations remain with
+the relevant namespace or team authority; the coordination server receives
+only the facts and credentials it is entitled to verify.
 
 ### AWID
 
-AWID is the embedded trust and addressability foundation. It owns the identity,
-team-membership, certificate, routing, and verification contracts that make
-communication trustworthy.
+AWID is the trust and addressability foundation. It owns:
+
+- identity and key-history contracts;
+- namespaces and public addresses;
+- teams and membership certificates;
+- routing facts and verification primitives;
+- certificate publication and revocation state.
 
 Users should not need to learn AWID terminology before their first successful
-agent-to-agent exchange.
+agent-to-agent exchange, but public product copy must not erase its authority.
 
-### AC
+### Hosted operators
 
-AC is the hosted aweb service and human-facing product surface. It owns hosted
-accounts, organizations, billing, hosted team and identity operations, the
-dashboard, and the public website.
+A hosted operator may add human accounts, organizations, billing, managed
+namespace/team flows, custody services, a dashboard, and hosted runtime
+integrations around the OSS contracts.
 
-The core aweb product is implemented across two repositories: public `aweb` and
-private `ac`.
+Those application and business surfaces are operator-owned. They do not become
+requirements for interpreting, building, or self-hosting aweb. A hosted
+operator can hold managed authority or custodial keys only for flows where that
+authority was explicitly established; it does not gain customer-controlled
+namespace or team authority merely by hosting coordination state.
 
 ### Orchestrators
 
@@ -84,28 +105,25 @@ Orchestrators own:
 - session user experience;
 - task-provider selection.
 
-An orchestrator provisions communication identity for an agent it already
-created. Aweb does not take ownership of that agent's soul, worktree, runtime,
-or task system.
-
-OAS is a separately owned repository and the reference consumer for the initial
-orchestrator integration. It is not part of the aweb product codebase.
+An orchestrator provisions or associates communication identity for an agent it
+already created. Aweb does not take ownership of that agent's definition,
+worktree, runtime, or task system.
 
 ### Optional services
 
-Library, Tasks, Folio, profiles, blueprints, app integrations, A2A, and similar
-services are optional extensions.
+Library-backed profiles, blueprints, tasks, document services, app
+integrations, A2A, and similar capabilities are optional extensions.
 
-Library must not be required. A single-repository team must be complete without
-installing Library or contacting it. Users who need managed profile sharing
-across repositories may choose Library; users who do not need it should never
-have to understand it.
+Library must not be required. A one-repository team must be complete without
+installing Library or contacting a profile service. Users who need managed
+profile sharing across repositories may choose one; users who do not need it
+should never have to understand it.
 
-An aweb communication identity is not the same thing as a soul definition.
-Orchestrators may associate them, but soul reuse and soul storage remain outside
-the communication core.
+An aweb communication identity is not the same thing as an agent definition.
+Orchestrators may associate them, but definition reuse and storage remain
+outside the communication core.
 
-## Default journey
+## Target default journey
 
 The target first-use journey is:
 
@@ -137,7 +155,9 @@ runtime management may remain supported and discoverable, but they do not
 belong in the first-run explanation of the communication product.
 
 These are target concepts, not a claim that the current CLI already presents
-this exact surface.
+this exact surface. Shipped syntax is governed by live CLI help and the generated
+command reference; shipped protocol behavior is governed by the implementation
+SOTs and source.
 
 ## Hosting modes
 
@@ -147,13 +167,13 @@ The current self-hosted stack uses aweb, AWID, PostgreSQL, Redis, and Docker
 Compose. Documentation must describe that honestly rather than presenting it as
 an already frictionless embedded local relay.
 
-The clean-user quickstart may ultimately use:
+A clean-user quickstart may ultimately use:
 
 - a limited hosted communication scope;
 - a genuinely bundled local relay;
 - the existing operator-oriented self-hosted stack.
 
-The chosen quickstart must have explicit trust, abuse, expiry, persistence, and
+Any chosen quickstart must have explicit trust, abuse, expiry, persistence, and
 migration semantics. This SOT does not pretend an unimplemented local mode
 already exists.
 
@@ -176,13 +196,12 @@ No feature is retired merely because it is outside the initial wedge.
 
 The initial product is not:
 
-- Team Builder as the acquisition wedge;
+- team-builder acquisition;
 - profile-first or blueprint-first onboarding;
-- `aw team up` expansion;
-- aweb-owned homes, worktrees, runtime launch, or session management;
+- runtime/home/worktree ownership;
 - a required Library installation;
 - a profile or app marketplace;
-- a suite of first-party naapps;
+- a suite of first-party applications;
 - a generic dynamic gateway composition platform;
 - a task tracker as the primary product;
 - architecture decomposition justified only by a previous destination design.
@@ -227,10 +246,6 @@ Current protocol and implementation SOTs control:
 - routing, encryption, and delivery behavior;
 - database and migration contracts;
 - compatibility behavior.
-
-The private cross-repository transition plan orders the work needed to move from
-the current contracts to this target. It is an execution plan, not a public
-protocol authority.
 
 When documents disagree:
 

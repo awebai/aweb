@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,14 @@ import (
 
 func resetTeamHumanCreateGlobals(t *testing.T) {
 	t.Helper()
+	// The roster path materializes an agent home, which sets up the Claude Code
+	// channel plugin. Both halves of that are host dependencies: the runner
+	// execs claude and installs at user scope, and LookPath decides the outcome
+	// from whatever is on PATH. Supply both here rather than in each caller -
+	// the callers are testing team creation, not plugin setup, and one of them
+	// forgetting is a write to the plugin cache the host's live agents read.
+	withFakeClaudeOnPath(t)
+	withFakeClaudePluginRunner(t, nil)
 	oldRunImplicit := initRunImplicitLocalFlow
 	oldWizard := guidedOnboardingWizard
 	oldPrintReady := initPrintGuidedOnboardingReady
@@ -166,6 +175,34 @@ func resetTeamHumanCreateGlobals(t *testing.T) {
 	teamHumanExtendAPIKey = ""
 	teamHumanExtendTeamID = ""
 	teamHumanRemoveAPIKey = ""
+}
+
+// The roster path reaches EnsureClaudeChannelPlugin through
+// configureMaterializedAgentHome -> SetupChannelMCP, so every test that resets
+// these globals inherits it. Unstubbed it shells out to claude and installs the
+// aweb-channel plugin at USER scope on whatever host runs the suite - the same
+// cache the live agents on that host read - and it reports a different outcome
+// depending on whether claude is on PATH and the marketplace is reachable.
+//
+// PATH is emptied here before the helper runs, so this fails on a host that has
+// claude installed as well as on one that does not: the assertion is that the
+// helper supplies the dependency rather than borrowing the host's.
+func TestResetTeamHumanCreateGlobalsNeutralizesChannelPluginSetup(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	resetTeamHumanCreateGlobals(t)
+
+	if reflect.ValueOf(runClaudeChannelPluginCommand).Pointer() ==
+		reflect.ValueOf(runClaudeChannelPluginCommandExec).Pointer() {
+		t.Fatal("resetTeamHumanCreateGlobals left the real executor installed: every test using this helper writes the host's user-scope plugin cache")
+	}
+
+	result := EnsureClaudeChannelPlugin(channelPluginOptions{RequireClaude: true})
+	if result.Error != nil {
+		t.Fatalf("channel plugin setup still depends on the host PATH: %v", result.Error)
+	}
+	if !result.Created || result.Skipped {
+		t.Fatalf("expected a deterministic install result, got %+v", result)
+	}
 }
 
 func TestFormatTeamHumanCreatePrintsAgentHome(t *testing.T) {

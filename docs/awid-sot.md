@@ -1,8 +1,17 @@
 # awid — Source of Truth
 
-This is the canonical contract for **awid**: the public identity registry
-that holds DIDs, namespaces, addresses, teams, and certificate issuance
-records. It is the implementation spec for the awid.ai service.
+Status: **canonical normative contract for shipped AWID identity, certificate,
+and trust behavior**.
+
+This is the canonical contract for **awid**, the public identity registry for
+DIDs, namespaces, addresses, teams, and certificate issuance records.
+
+> **Accuracy notice:** the hand-maintained schema and endpoint inventories below
+> are not exhaustive at current main, and some inventory prose still describes
+> columns removed by later migrations. The ordered migration chain and live API
+> source remain the mechanical inventory while the reviewed reconciliation is
+> pending. This notice does not weaken the normative identity, certificate,
+> signature, revocation, or authority rules in this contract.
 
 aweb (the coordination server that depends on awid) is described in
 [`aweb-sot.md`](aweb-sot.md). The canonical product vocabulary and invariants

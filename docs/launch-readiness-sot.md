@@ -7,7 +7,14 @@ weight: 27
 
 # Launch readiness
 
-This is the source of truth for the launch epic:
+> **SUPERSEDED — NON-AUTHORITATIVE.** This past launch programme conflicts with
+> the communication-first direction in `aweb-product-sot.md` and must not
+> generate new work. It remains temporarily only while still-current shipped
+> facts and consumers are migrated; its reviewed disposition is removal. Git
+> and durable task history are sufficient, so no replacement archive is
+> required.
+
+This was the source of truth for the launch epic:
 
 > `default-aaas`: Launch readiness: AI team control plane wedge.
 
@@ -246,7 +253,8 @@ Acceptance criteria:
 
 Outcome: Aweb has a visible governance differentiator.
 
-Design source: [`audit-logs-app-sot.md`](audit-logs-app-sot.md).
+Historical design source: an application-specific audit/logs proposal that is
+not part of public aweb authority.
 
 Launch audit is scoped to Aweb-mediated actions. It should sign and render the
 authority and outcome of actions that cross Aweb surfaces. It should not claim
@@ -304,7 +312,8 @@ Acceptance criteria:
 Outcome: agents can use approved secrets without seeing them, and humans get a
 signed record of the mediated action.
 
-Design source: [`secrets-aw-do-sot.md`](secrets-aw-do-sot.md).
+Historical design source: an application-specific secrets/action proposal that
+is not part of public aweb authority.
 
 Required:
 

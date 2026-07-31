@@ -716,6 +716,12 @@ func TestExecuteBYODPathProvisionsLocalTeamWithoutIdentityRegistrationAgainstSer
 }
 
 func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
+	// This test was the one path outside resetTeamHumanCreateGlobals. Prove it
+	// takes the install branch because the package harness supplied Claude, not
+	// because this particular host happened to have Claude on its ambient PATH.
+	assertHermeticClaudeOnPath(t)
+	claudeCalls := withFakeClaudePluginRunner(t, nil)
+
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -986,6 +992,19 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	output := out.String()
 	if !strings.Contains(output, "Run aw claim-human now?") {
 		t.Fatalf("expected claim-human prompt in hosted output: %q", output)
+	}
+
+	wantClaudeCalls := []string{
+		"plugin marketplace add " + claudeChannelMarketplace,
+		"plugin install " + claudeChannelPlugin,
+	}
+	if len(*claudeCalls) != len(wantClaudeCalls) {
+		t.Fatalf("Claude setup calls=%d, want %d; the formerly escaping path took a host-dependent branch: %v", len(*claudeCalls), len(wantClaudeCalls), *claudeCalls)
+	}
+	for i, want := range wantClaudeCalls {
+		if got := strings.Join((*claudeCalls)[i], " "); got != want {
+			t.Fatalf("Claude setup call %d=%q, want %q", i, got, want)
+		}
 	}
 }
 

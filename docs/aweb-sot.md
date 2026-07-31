@@ -1,11 +1,19 @@
 # aweb — Source of Truth
 
-This is the canonical contract for **aweb**: the OSS coordination
-server (Python FastAPI) and the `aw` CLI (Go). It defines the
-shape of every endpoint, schema, authentication mechanism,
-dependency, and configuration knob aweb exposes or relies
-on. Implementers build against this document; operators run aweb
-against the contract it defines here.
+Status: **canonical normative contract for shipped aweb protocol, trust, and
+security behavior**.
+
+This is the canonical contract for the OSS coordination server (Python FastAPI)
+and the `aw` CLI (Go). Implementers and operators must preserve its normative
+authentication, identity, routing, delivery, and compatibility rules.
+
+> **Accuracy notice:** the hand-maintained schema, route, configuration, and
+> command inventories below are not exhaustive at current main. Source
+> migrations, the live FastAPI OpenAPI surface, live CLI help, and generated
+> references remain the mechanical inventory while the reviewed reconciliation
+> is pending. An item missing from an inventory below is not evidence that the
+> shipped feature is absent. This notice does not weaken the document's
+> normative protocol or security authority.
 
 awid (the public identity registry that aweb depends on) is described
 in [`awid-sot.md`](awid-sot.md). The public hosted instance of aweb
@@ -13,8 +21,9 @@ runs at <https://app.aweb.ai>; anyone can self-host the same OSS server
 against any awid registry.
 
 For supporting reference material that does not redefine the contract:
-- [`cli-command-reference.md`](cli-command-reference.md) — full `aw`
-  CLI surface, generated from the live Cobra help tree
+- [`cli-command-reference.md`](cli-command-reference.md) — generated `aw` CLI
+  reference; live `aw <command> --help` is direct command authority when
+  generation lags
 - [`mcp-tools-reference.md`](mcp-tools-reference.md) — MCP tool
   inventory and parameters exposed by aweb's MCP server
 - [`self-hosting-guide.md`](self-hosting-guide.md) — operator runbook

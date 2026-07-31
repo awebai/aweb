@@ -7,8 +7,15 @@ weight: 26
 
 # Team blueprints and agent profiles
 
-This is the source of truth for the product surface that lets a company start
-using aweb quickly:
+> **SUPERSEDED — NON-AUTHORITATIVE.** This profile/team-builder product
+> narrative does not set current direction and must not generate new work.
+> Verified current materialization and runtime facts will be consolidated into
+> focused advanced contracts and guides; this competing SOT is then removed.
+> Until that consumer migration completes, treat every product-direction claim
+> below as historical.
+
+This was the source of truth for a product surface intended to let a company
+start using aweb quickly:
 
 > A human points aweb at a blueprint repo or directory. Aweb inspects it, shows
 > the proposed AI team, copies blueprints into the customer's team/repo,
@@ -239,10 +246,11 @@ crosses an Aweb authority surface.
 Use "signed audit trail" in customer-facing language. Use "traceability" only
 for technical/debugging audiences.
 
-Core owns the signed audit facts. `logs.aweb.ai` or a self-hosted logs app owns
-views, search, retention, export, and compliance workflows. Customers should
-eventually be able to self-host audit/logs while using hosted Aweb core, through
-a scoped audit export/feed. See [`audit-logs-app-sot.md`](audit-logs-app-sot.md).
+Core owns the signed audit facts. A hosted or self-hosted logs app owns views,
+search, retention, export, and compliance workflows. Customers should
+eventually be able to self-host audit/logs while using a hosted aweb service,
+through a scoped audit export/feed. The former application-specific audit/logs
+proposal is not part of public aweb authority.
 
 ### Secret-mediated execution
 
@@ -255,7 +263,8 @@ redacts output, and writes a signed audit event. Custodial MCP agents use
 app-native actions or runner-mediated secret use; they receive secret handles,
 not values.
 
-See [`secrets-aw-do-sot.md`](secrets-aw-do-sot.md).
+The former application-specific secrets/action proposal is not part of public
+aweb authority.
 
 ## 3. Authority model
 
