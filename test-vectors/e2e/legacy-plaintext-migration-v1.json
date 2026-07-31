@@ -1,12 +1,13 @@
 {
   "version": "legacy-plaintext-migration-v1",
-  "content_modes": [
+  "stored_content_modes": [
     "legacy_plaintext_v1",
-    "encrypted_v2",
-    "server_readable_hosted"
+    "encrypted_v2"
   ],
+  "hosted_boundary_label": "server_readable_hosted",
   "legacy_display_label": "Legacy plaintext: this message was stored server-readable before E2E encryption.",
-  "explicit_legacy_escape_hatch": "--legacy-plaintext",
+  "explicit_plaintext_escape_hatch": "--plaintext",
+  "deprecated_plaintext_alias": "--legacy-plaintext",
   "downgrade_cases": [
     {
       "name": "missing_recipient_key",
@@ -33,7 +34,7 @@
       "name": "explicit_legacy_plaintext",
       "intended_mode": "legacy_plaintext_v1",
       "result": "send_legacy_plaintext",
-      "requires_flag": "--legacy-plaintext",
+      "requires_flag": "--plaintext",
       "warning": "Sending as legacy plaintext. Subject/body may be stored and visible to the service."
     },
     {

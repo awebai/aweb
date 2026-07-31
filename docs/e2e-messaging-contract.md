@@ -1,48 +1,50 @@
 # E2E Messaging Contract
 
-This document is the normative contract for encrypted message version 2. It is
-the authority for all implementation tasks under `aweb-aapv`. Downstream code
-must cite this document when implementing canonical payload bytes, associated
-data, nonce policy, key wrapping, message schemas, downgrade handling, and
-server-readable exceptions.
+Status: **canonical shipped advanced protocol** for encrypted message version 2.
+It defines canonical payload bytes, associated data, nonce policy, key wrapping,
+message schemas, downgrade handling, and server-readable exceptions.
 
-The first implementation target is self-custodial one-to-one mail. The contract
-also defines the group-chat key-wrap model so the v2 envelope does not need a
-second incompatible design later.
+E2E is optional advanced messaging, not a prerequisite for the basic mail/chat
+round trip. Current `aw` sends server-readable plaintext by default; `--e2ee`
+explicitly selects encrypted v2 and then fails closed rather than falling back.
+The shipped protocol covers self-custodial mail/chat, sender archive copies,
+small groups, local/team identities, federation transport, and generic hosted
+custody boundaries.
 
 ## Goals
 
-- E2E message plaintext, including subject and body, never crosses AC/aweb
-  servers for encrypted v2 messages.
+- E2E message plaintext, including subject and body, never crosses the routing
+  service for self-custodial encrypted v2 messages.
 - The server routes, stores, indexes, bills, and audits only metadata and
   ciphertext.
 - The sender signs the encrypted envelope. The server can verify routing and
   delivery integrity without decrypting.
 - Recipients decrypt locally before showing content, notifying with content, or
   injecting content into a prompt.
-- Missing, stale, unsupported, mismatched, or downgraded encryption state fails
-  closed. There is no silent plaintext fallback.
+- After E2E intent is selected, missing, stale, unsupported, mismatched, or
+  downgraded encryption state fails closed. There is no silent plaintext
+  fallback for that send.
 
 ## Non-Goals
 
-- Hosted custodial MCP, dashboard-side send/read, or any server-side tool that
-  receives plaintext is not E2E. It may be supported as server-readable hosted
-  messaging, but it must not be described as E2E.
+- Hosted custodial tools or any server-side surface that receives plaintext are
+  not E2E. They may use the encrypted-v2 wire format as server-readable hosted
+  managed encryption, but must not be described as E2E.
 - The server cannot recover lost encryption keys and cannot decrypt historical
   encrypted messages for support.
 - This contract does not introduce a Signal or MLS-style ratchet. Group chat is
   per-message content encryption with per-recipient key wraps.
-- Federated group chat is out of scope for the first implementation. Federation
-  v2 chat starts as one-to-one remote delivery; mixed local/remote encrypted
-  groups must fail closed until a reviewed federation group model exists.
-- Attachments are out of scope for the first implementation. They must use this
+- Federated group chat is not enabled in the current implementation. Federation
+  v2 chat supports one-to-one remote delivery; mixed local/remote encrypted
+  groups fail closed until a reviewed federation group model exists.
+- Encrypted attachments are not implemented. They must use this
   same envelope and metadata model when added.
 
 ## Threat Model
 
 ### Assumptions
 
-- AC/aweb servers are honest-but-curious for E2E content: they may faithfully
+- Routing services are honest-but-curious for E2E content: they may faithfully
   route and store messages while attempting to inspect anything visible to them.
 - A relay or compromised server may attempt key substitution, downgrade,
   replay, metadata tampering, recipient substitution, or ciphertext mutation.
@@ -59,8 +61,8 @@ second incompatible design later.
   messages.
 - A relay cannot replace a recipient encryption key without invalidating the
   identity-authorized key assertion or sender signature.
-- A relay cannot downgrade a v2-capable sender/recipient pair to plaintext
-  unless the user explicitly chooses `--plaintext`.
+- A relay cannot convert an intended v2 send to plaintext; plaintext is a
+  separate user-selected mode.
 - A relay cannot replay a fresh delivery outside the server/federation ingestion
   window. Already-accepted stored mail remains readable later.
 - A ciphertext or key-wrap mutation is rejected by the AEAD tag, signed
@@ -92,7 +94,7 @@ identity signing key.
 
 ## Cryptographic Suite
 
-The initial suite id is:
+The current suite id is:
 
 `aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519`
 
@@ -119,9 +121,13 @@ The suite has these exact primitives:
 - Binary field encoding: RFC 4648 raw standard base64, no padding.
 
 The content nonce must never be reused with the same `cek`. Because each message
-uses a fresh random `cek`, a fresh random nonce is sufficient. Implementations
-must still reject all-zero nonces and must not expose a caller-provided nonce
-for normal sends.
+uses a fresh random `cek`, a fresh random nonce is sufficient. Send APIs must not
+expose a caller-provided nonce for normal sends. The protocol requires an
+all-zero nonce to be rejected. Current Python and Go senders generate the nonce
+internally and reject the all-zero result; current server ingestion validates the
+12-byte shape but does not yet independently reject a correctly signed all-zero
+nonce. Treat receiver-side all-zero rejection as a known verifier-hardening gap,
+not as shipped enforcement.
 
 ## Canonical JSON
 
@@ -168,18 +174,18 @@ Canonical assertion payload:
 
 `previous_encryption_key_id` is omitted for the first key. The assertion is
 signed by the current identity Ed25519 signing key. A namespace controller, team
-controller, hosted service, relay, or AC server may distribute this assertion
-but must not alter it or replace the key.
+controller, hosted service, or relay may distribute this assertion but must not
+alter it or replace the key.
 
 `custody` is the sender-visible trust-model signal for the decrypting identity.
 Allowed values are `self` and `hosted_custodial`. New assertions MUST include
 `custody`. Assertions created before this field existed may omit it; upgraded
 senders MAY treat an omitted value as `self` only for existing self-custodial
 assertions that otherwise verify. Hosted custodial assertions MUST include
-`custody: "hosted_custodial"`; omission is invalid for hosted custodial managed
-encryption. Sender clients use this signed field to surface when AC can decrypt
-for a hosted custodial recipient. Registry, service, team, or namespace metadata
-may repeat custody for UI filtering, but it must not contradict the signed
+`custody: "hosted_custodial"`; omission is invalid. The signed field gives
+clients an authoritative signal for disclosing that the custody operator can
+decrypt for that recipient. Registry, service, team, or namespace metadata may
+repeat custody for UI filtering, but it must not contradict the signed
 assertion.
 
 Publication invariant: the client must generate and durably store the
@@ -192,6 +198,59 @@ device.
 `sha256:` plus raw-standard-base64-no-padding SHA-256 over:
 
 `aweb-e2ee-v2 encryption-key\n` + raw 32-byte X25519 public key.
+
+### Discovery, trust, pinning, and rotation
+
+Signing-key continuity and encryption-key selection are separate checks:
+
+1. verify the identity/signing key through the normal AWID and TOFU/DID-log
+   trust path;
+2. verify that the current Ed25519 identity key signed the X25519 assertion;
+3. verify identity/stable-id binding, `custody`, algorithm, derived key id, and
+   validity window;
+4. use the asserted X25519 key only for wrapping/decrypting message content.
+
+There is no separate TOFU pin for an X25519 encryption key. Global addressed
+identities publish assertions through AWID. Local/team identities publish them
+through the service-local team roster. Addressless reply continuity may use the
+signed sender assertion embedded in a previously verified envelope, but never
+as bare `did:aw` first-contact authority.
+
+Rotation publishes a new assertion with `previous_encryption_key_id`; it does
+not change the identity signing key. New sends use the newest valid discovered
+assertion. Clients keep old private encryption keys in their local archive and
+select them by the key id in the wrap. Losing an archived private key makes only
+history wrapped to that key unrecoverable.
+
+### Hosted-custody interoperability
+
+A hosted custody operator may hold an identity's Ed25519 signing key and X25519
+private-key archive. It may produce the same identity-signed assertion and the
+same encrypted-v2 envelope as a self-custodial client. This is wire-compatible
+**hosted managed encryption**, not E2E: the operator can decrypt through the
+recipient's wrap and sees plaintext at hosted compose/read boundaries.
+
+Public interoperability requirements are:
+
+- the private key is stored durably before its public assertion is published;
+- the identity key, not a service/team/namespace key, signs the assertion;
+- `custody: "hosted_custodial"` is present, signed, and preserved for policy and
+  disclosure surfaces;
+- global keys use AWID discovery; local/team-only keys use service-local
+  discovery with no AWID fallback;
+- active keys are used for new sends while archived keys remain available for
+  historical wraps;
+- decrypt authority is scoped to the authenticated custodial identity, not
+  granted implicitly to workspace admins or support tooling;
+- a mixed-custody group has the confidentiality floor of its least-private
+  participant: a hosted recipient wrap lets that operator decrypt that message.
+
+Storage schema, key-encryption-key configuration, backfill jobs, dashboard
+procedure, and production rollout are operator implementation details, not part
+of the public wire contract. Current public validators preserve and verify the
+custody value, but the CLI does not yet emit a dedicated send-time hosted-custody
+or mixed-group confidentiality-floor warning; do not claim that disclosure UX is
+shipped.
 
 ## Outer Encrypted Envelope
 
@@ -282,7 +341,7 @@ Rules:
 - `kind` is `mail` or `chat`.
 - `subject`, `body`, and chat plaintext are absent from the outer envelope.
 - `reply_to_message_id` is omitted when absent.
-- `expires_at` is required for first implementation and must be no more than
+- `expires_at` is required and must be no more than
   five minutes after `created_at`.
 - `signature` is omitted from the signed payload and present on the transmitted
   envelope.
@@ -482,6 +541,19 @@ omitted, so the signature also commits to the exact ciphertext bytes.
 
 ## Capability And No-Downgrade
 
+Current `aw` behavior is explicit opt-in. Without `--e2ee`, mail/chat remains
+server-readable plaintext; `--plaintext` makes that choice explicit and
+`--legacy-plaintext` is a deprecated compatibility alias. Once `--e2ee` is
+selected, missing or invalid key state fails closed with no automatic plaintext
+retry.
+
+The shipped sender verifies recipient key authority before encryption and relies
+on the target service accepting or rejecting encrypted v2. A complete separate
+route-capability preflight is not yet shipped for every route. The capability
+list below is the interoperability condition a sender must establish before
+E2E-required policy or broader automatic enablement can treat the route as
+ready.
+
 Before sending v2 E2E, the sender must know the recipient supports:
 
 - a valid identity-authorized encryption key assertion,
@@ -501,15 +573,18 @@ If capability or key discovery is missing, stale, contradictory, or unsigned,
 the send fails closed with a diagnostic naming the missing capability. The
 client must not retry as plaintext automatically.
 
-The only allowed plaintext escape hatch is an explicit user command or flag
-named `--plaintext`. That mode must be visually and textually distinct from E2E
-and must not be enabled by policy fallback, old-client fallback, or server hint.
+For an **intended E2E send**, the only plaintext alternative is a separate,
+explicit user choice such as `--plaintext`; an error path must never select it.
+That mode must be visually and textually distinct from E2E and must not be
+enabled by policy fallback, old-client fallback, or server hint. This rule does
+not change the current default mode: users who never select `--e2ee` are using
+ordinary server-readable messaging.
 
-Mixed-version behavior:
+Mixed-version behavior after E2E intent:
 
-- v2 sender to v2 recipient: send encrypted v2.
-- v2 sender to unknown or old recipient: fail closed unless the user explicitly
-  selects legacy plaintext.
+- E2E sender to v2 recipient/service: send encrypted v2.
+- E2E sender to unknown or old recipient: fail closed; a later plaintext send is
+  a separate explicit action.
 - old sender to v2 recipient: the recipient may receive legacy plaintext only
   if the user or team policy still allows legacy plaintext. Otherwise reject.
 - v2 server receiving v1 plaintext on an E2E-only route: reject.
@@ -526,7 +601,7 @@ plaintext, or silently downgrade the envelope version.
 
 ## Replay And Idempotency
 
-`created_at` must be RFC3339 or RFC3339Nano UTC. First implementation accepts a
+`created_at` must be RFC3339 or RFC3339Nano UTC. Current ingestion accepts a
 five-minute skew window for server/federation ingestion. `expires_at` must be
 inside that ingestion window.
 
@@ -553,9 +628,8 @@ Group chat uses the same envelope:
 - one mandatory sender self-copy wrap.
 
 Adding a participant affects future messages only. Historical re-share is a
-separate explicit operation and is out of scope for the first group-chat
-implementation. Removing a participant means future sends omit that
-participant's key wrap; it cannot make already-delivered ciphertext unreadable
+separate explicit operation and is not currently implemented. Removing a participant means future sends omit that participant's key wrap; it
+cannot make already-delivered ciphertext unreadable
 to a participant who kept the old `cek` or plaintext.
 
 Participant removal is durable membership state, not chat turn-completion.
@@ -565,8 +639,8 @@ participant-removal operation recorded on the session participant state, such as
 `chat_participants.left_at`; future send validation and continuation target
 discovery must use that active participant set.
 
-Federated group chat is not enabled in the first implementation. A v2 chat
-envelope that would require delivery to more than one remote federation target,
+Federated group chat is not currently enabled. A v2 chat envelope that would
+require delivery to more than one remote federation target,
 or to a mixed local/remote group, must be rejected before delivery. One-to-one
 federated chat still uses the same `kind="chat"` envelope and per-message
 sender-copy model.
@@ -596,11 +670,12 @@ plaintext support dumps for v2 E2E messages.
 Server-side content search over E2E subject/body is forbidden. Search must be
 metadata-only or local-client-side after decryption.
 
-## Dashboard, Notifications, Channel, Pi, And `aw run`
+## Hosted Surfaces, Notifications, Channel, Pi, And `aw run`
 
-AC dashboard and server-side support surfaces must remove, hide, or downgrade
-plaintext mail/chat views for v2 E2E content. They may show metadata-only
-conversation lists, unread counts, delivery status, participants, and key health.
+Hosted dashboards and server-side support surfaces must remove, hide, or
+downgrade plaintext mail/chat views for self-custodial v2 E2E content. They may
+show metadata-only conversation lists, unread counts, delivery status,
+participants, and key health.
 
 Server notifications and SSE events may say that an encrypted message arrived,
 who it is from, which conversation it belongs to, and whether action is needed.
@@ -608,7 +683,7 @@ They must not include plaintext subject/body previews.
 
 Local clients such as the channel, Pi, and `aw run` may decrypt locally before
 showing plaintext or injecting it into a prompt. The decryption boundary must be
-local to the user's workspace or client process, not AC/aweb server-side.
+local to the user's workspace or client process, not the routing service.
 
 ## Key Loss And Rotation
 
@@ -636,15 +711,25 @@ metadata-only signals unless the customer explicitly exports decrypted content
 from a local client and supplies it to support. The operational allowance is
 specified in [`e2e-operational-metadata.md`](e2e-operational-metadata.md).
 
-Any support endpoint that returns v2 content must return ciphertext and metadata
-only, or be removed/blocked. Support tooling must not ask AC/aweb to decrypt.
+Any support endpoint that returns self-custodial v2 content must return
+ciphertext and metadata only, or be removed/blocked. Support tooling must not ask
+the routing service to decrypt.
 
-## Implementation Gates
+## Implementation And Conformance Gates
 
-No `.2+` implementation slice may proceed until Athena signs off this contract.
+Current public implementations are anchored in:
 
-Every implementation slice must include tests or review evidence for the parts
-of this contract it touches. Minimum release-blocking tests include:
+- `awid/src/awid/e2ee_keys.py` and `awid/src/awid_service/routes/did.py` for
+  identity-signed assertion validation and global discovery;
+- `server/src/aweb/e2ee_messages.py` and the encrypted-message migrations for
+  envelope verification, opaque storage, replay/idempotency, and crypto helpers;
+- `cli/go/awid/e2ee_keys.go`, `cli/go/awid/e2ee_messages.go`, and
+  `cli/go/cmd/aw/id_encryption_key.go` for self-custodial key lifecycle and
+  local encryption/decryption;
+- `docs/vectors/e2ee-v2-cross-language.json` for Python↔Go interoperability.
+
+Every implementation change must include tests or review evidence for the parts
+of this contract it touches. Minimum conformance and release controls include:
 
 - known plaintext strings do not appear in server DB rows, logs, SSE events, or
   dashboard/API responses for v2 E2E messages,
@@ -661,4 +746,4 @@ of this contract it touches. Minimum release-blocking tests include:
   breaks signature/AAD verification,
 - a valid embedded sender assertion enables local-only stored-route replies,
   while a missing or invalid assertion on such a reply target fails closed,
-- legacy plaintext is never selected without explicit user intent.
+- after E2E intent is selected, legacy plaintext is never chosen as fallback.
