@@ -21,9 +21,9 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 99 tracked Markdown documents. This front door does not
+The baseline contains 100 tracked Markdown documents. This front door does not
 self-link, and four private-purpose Markdown artifacts are deliberately not
-exposed by public path or title. The remaining 94 public Markdown paths appear
+exposed by public path or title. The remaining 95 public Markdown paths appear
 below exactly once. Those four artifacts and one private-purpose configuration
 example remain represented by neutral, unlinked transition descriptions until
 their later consumer-ordered relocation or removal.
@@ -58,6 +58,9 @@ security and protocol authority.
 - [Orchestrator evidence review](orchestrator-evidence-review.md) — research
   snapshot separating demonstrated orchestrator capabilities from unproven
   agent-fleet productivity claims.
+- [Company-agent platform thesis](company-agent-platform-thesis.md) — working
+  strategy for trusted, specialized, learning company agents, beginning with
+  two agents on one real workflow.
 - [Identity and team model](identity.md) — canonical vocabulary and identity/team
   invariants.
 - [aweb implementation SOT](aweb-sot.md) — normative aweb server/CLI contract;
