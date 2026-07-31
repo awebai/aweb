@@ -1,157 +1,107 @@
 # E2E Legacy Plaintext and No-Downgrade Policy
 
-This document defines how existing plaintext mail/chat and explicit
-server-readable modes coexist with encrypted message v2. It is subordinate to
-[`e2e-messaging-contract.md`](e2e-messaging-contract.md) and
-[`e2e-operational-metadata.md`](e2e-operational-metadata.md). If this document
-appears to change crypto, envelope, key-authority, or metadata-leakage rules,
-stop and route the change back through `aweb-aapv.1` review.
+Status: **public compatibility policy** subordinate to the
+[E2E messaging contract](e2e-messaging-contract.md) and
+[E2E operational metadata contract](e2e-operational-metadata.md).
 
-## Content Modes
+E2E is an optional advanced mode. Current `aw` sends ordinary mail/chat as
+server-readable plaintext by default. `--e2ee` explicitly selects encrypted v2;
+once selected, failures must not silently downgrade that send to plaintext.
 
-Every mail/chat item must be classified with an explicit content mode:
+## Stored modes and trust boundaries
 
-| Mode | Meaning | Plaintext visible to AC/aweb server? |
+The current server stores two message content modes:
+
+| Stored `content_mode` | Meaning | Plaintext visible to routing service? |
 | --- | --- | --- |
-| `legacy_plaintext_v1` | Historical or explicitly requested plaintext messaging using the v1 subject/body shape. | Yes. |
-| `encrypted_v2` | E2E encrypted message v2 from the E2E contract. | No, except customer-provided support exports. |
-| `server_readable_hosted` | Hosted custodial MCP, dashboard compose/read, or any other server-side mode where plaintext enters AC/aweb. | Yes, by design. |
+| `legacy_plaintext_v1` | Historical or current server-readable subject/body shape. | Yes. |
+| `encrypted_v2` | Version-2 ciphertext envelope; subject/body columns are empty. | No for self-custodial E2E. A hosted custody operator may decrypt through a hosted recipient wrap. |
 
-The mode is not cosmetic. It determines storage, API response shape, dashboard
-rendering, support workflow, retention, and send failure behavior.
+`server_readable_hosted` is a product/trust-boundary label, not a third current
+database `content_mode`. Hosted managed encryption can use an `encrypted_v2`
+wire row while remaining server-readable at its custody/compose/read boundary.
+Its signed assertion must say `custody: "hosted_custodial"`; it must not be
+called E2E.
 
-## Existing Plaintext History
+## Existing plaintext history
 
-Existing v1 plaintext history cannot become E2E retroactively. A migration may
-keep it readable, export it, redact it after a window, or let customers purge it,
-but product copy and APIs must not relabel it as encrypted.
+Existing plaintext cannot become E2E retroactively. It may remain readable, be
+exported, or be purged/redacted under policy, but must stay labeled as legacy or
+server-readable.
 
-Required display label for retained legacy content:
+Recommended label:
 
 `Legacy plaintext: this message was stored server-readable before E2E encryption.`
 
-The exact UI wording may be shorter, but it must preserve these facts:
+Server-side search and previews may operate on retained plaintext rows. They
+must not derive plaintext search/previews from self-custodial `encrypted_v2`.
 
-- the message is legacy/plaintext,
-- it was or is server-readable,
-- it is not E2E encrypted.
+## No silent downgrade after E2E intent
 
-Legacy plaintext search and previews may continue only over
-`legacy_plaintext_v1` rows while that mode remains retained. Search/previews over
-`encrypted_v2` subject/body are forbidden server-side.
+A send with explicit E2E intent fails closed when required state is absent:
 
-## No-Downgrade Rule
+- recipient identity-signed encryption-key assertion missing, stale, expired,
+  unsigned, mismatched, or unsupported;
+- recipient identity/route cannot complete encrypted v2;
+- server rejects `message_version=2` or the suite;
+- old client/server cannot process the protected envelope;
+- sender/recipient policy requires E2E and a legacy retry is suggested.
 
-An intended E2E send must fail closed when any required E2E condition is absent:
+The client must not retry that message as plaintext. A service/federation peer
+must not translate v2 into v1 or ask the sender to expose plaintext as recovery.
 
-- missing recipient identity-authorized encryption key assertion,
-- stale, expired, unsigned, mismatched, or unsupported encryption-key assertion,
-- recipient identity or route lacks E2E capability,
-- server route does not accept `message_version = 2`,
-- suite/version mismatch,
-- old client or old server cannot prove it understands v2,
-- sender/recipient policy requires E2E and any legacy fallback is suggested.
+This is distinct from the current initial choice: a user who never selects
+`--e2ee` is using the ordinary server-readable path, not experiencing a
+cryptographic downgrade.
 
-The client must not automatically retry as plaintext after an E2E failure. The
-server must not hint "retry as plaintext" for an E2E route. Federation peers must
-not translate v2 to v1.
+## Plaintext command compatibility
 
-## Explicit Legacy Plaintext Escape Hatch
+Current CLI surfaces:
 
-If legacy plaintext send remains supported, it must require an explicit,
-separately named user action. The approved placeholder CLI flag is:
+- `--e2ee`: request encrypted v2; fail closed if it cannot complete;
+- `--plaintext`: explicitly mark server-readable plaintext intent (plaintext is
+  currently also the default);
+- `--legacy-plaintext`: deprecated compatibility alias for `--plaintext`.
 
-`--plaintext`
+`--e2ee` and either plaintext flag are mutually exclusive. Product copy should
+prefer `--plaintext` and warn that subject/body may be stored and visible to the
+service. Error handling must never add that flag automatically.
 
-The flag must stay visibly distinct from E2E. It must not be implied by:
+## Current and rollout compatibility matrix
 
-- missing keys,
-- old clients,
-- old servers,
-- service discovery failure,
-- route-policy fallback,
-- server-side retry,
-- environment variables set by a harness without a human-visible command.
+| Sender/route | Current or required behavior |
+| --- | --- |
+| `--e2ee`, valid recipient key, accepting v2 service | Send `encrypted_v2`. |
+| `--e2ee`, missing/stale/mismatched recipient key | Fail before storage; no plaintext retry. |
+| `--e2ee`, target rejects v2 | Fail clearly; no plaintext retry. Complete route-capability preflight is not shipped for every route. |
+| ordinary current send without `--e2ee` | Send `legacy_plaintext_v1`, subject to normal delivery policy. |
+| old sender to a recipient whose future policy requires E2E | A future E2E-required route must reject plaintext; this policy is a rollout requirement, not a claim that every current route enforces it. |
+| hosted compose/read with operator-held decrypt key | Hosted managed/server-readable boundary, even if stored as `encrypted_v2`. |
+| federation peer without v2 support | Intended E2E fails; no downgrade translation. |
 
-Before sending with the escape hatch, the CLI/tool should show or log wording
-equivalent to:
+## Retention and support
 
-`Sending as legacy plaintext. Subject/body may be stored and visible to the service.`
+- `encrypted_v2`: retain ciphertext, wraps, hashes, and approved metadata;
+  deletion/redaction does not require decryption.
+- `legacy_plaintext_v1`: retain under plaintext policy and always label it
+  server-readable.
+- Hosted managed encryption: retain under hosted-custody policy and disclose
+  operator decryptability.
+- User-provided decrypted support exports are separate support attachments, not
+  message storage.
 
-Non-interactive callers must provide the explicit flag. They must not be prompted
-into plaintext by default.
+Support/admin tooling branches by stored mode and custody boundary. For
+self-custodial encrypted v2 it returns metadata/ciphertext or a blocked response;
+for plaintext it may return content under plaintext policy; for hosted custody
+it follows the disclosed hosted boundary.
 
-## Mixed-Version Matrix
+## Conformance fixtures
 
-| Sender | Recipient/route | Expected behavior |
-| --- | --- | --- |
-| v2-capable sender | v2-capable recipient + v2 route | Send `encrypted_v2`. |
-| v2-capable sender | missing/stale recipient key | Fail closed after creating/publishing the sender key if needed; do not send plaintext unless explicit legacy flag is present and policy allows it. |
-| v2-capable sender | old server or route without v2 support | Fail closed; no automatic plaintext retry. |
-| old sender | v2-capable recipient | May send `legacy_plaintext_v1` only if team/service policy still allows legacy plaintext. Recipient must label it as legacy. |
-| v2 server | receives v1 on E2E-required route | Reject. |
-| v1 server | receives v2 envelope | Reject or return unsupported-version; must not strip ciphertext and ask for plaintext. |
-| hosted server-readable MCP/dashboard | any recipient | Mode is `server_readable_hosted`, not E2E. |
-| federation peer version skew | peer lacks v2 support | Fail closed for E2E route; no downgrade translation. |
-
-## Retention and Deletion
-
-Retention is per mode:
-
-- `encrypted_v2`: retain ciphertext, key wraps, envelope metadata, audit rows,
-  and aggregate counters per policy. Delete/redact ciphertext and wraps on
-  message deletion or retention expiry. Retained audit rows must be content-free.
-- `legacy_plaintext_v1`: retain under the existing legacy policy until a
-  product migration says otherwise. Legacy rows must stay labeled as plaintext
-  and may be purged/exported/redacted separately.
-- `server_readable_hosted`: retain under hosted-account policy and label
-  separately from local-client E2E.
-- Customer-provided decrypted support exports are support attachments, not
-  message storage. They follow support attachment retention.
-
-Deleting or purging a legacy plaintext row may remove subject/body while leaving
-content-free audit metadata. Deleting v2 ciphertext cannot require server
-decryption and must not ask for private encryption keys.
-
-## Support, Admin, Billing, and Abuse
-
-Support/admin tooling must branch by content mode:
-
-- For `encrypted_v2`, return metadata/ciphertext only, or a blocked response
-  explaining that E2E plaintext is unavailable server-side.
-- For `legacy_plaintext_v1`, content access is allowed only under the legacy
-  support policy and must be labeled as server-readable.
-- For `server_readable_hosted`, content access follows hosted support policy and
-  must not be described as E2E.
-
-Billing and abuse controls for `encrypted_v2` use metadata-only counters defined
-in `e2e-operational-metadata.md`. Content moderation claims must not be made for
-v2 E2E server-side because AC/aweb cannot inspect plaintext.
-
-## Implementation Gates
-
-Before E2E is broadly enabled, tests must cover:
-
-- intended E2E send with missing recipient key fails closed with no v1 send,
-- intended E2E send with stale or mismatched key assertion fails closed,
-- old client/server paths reject or report unsupported version instead of
-  downgrading,
-- explicit legacy plaintext send requires the named escape hatch,
-- legacy plaintext inbox/history rendering is labeled as legacy/server-readable,
-- v2 inbox/history rendering returns encrypted metadata and ciphertext only,
-- server-side search/previews operate only on legacy/server-readable content,
-- support bundles and API responses do not include v2 plaintext,
-- federation version skew refuses downgrade translation,
-- rollback disables new E2E sends without transforming stored v2 into plaintext.
-
-The fixture at
 [`../test-vectors/e2e/legacy-plaintext-migration-v1.json`](../test-vectors/e2e/legacy-plaintext-migration-v1.json)
-locks the expected mode vocabulary, display label, and no-downgrade cases for
-future implementation tests.
+pins the two stored modes, hosted boundary label, current/deprecated CLI flags,
+read shapes, and no-downgrade cases.
 
-## Review Bar
-
-Mia should review wording and implementation readiness. Athena should be routed
-any amendment that changes no-downgrade semantics, legacy escape-hatch authority,
-or the content-mode taxonomy. Hestia should review rollout mechanics in
-`aweb-aapv.13` before release tags.
+[`../test-vectors/e2e/mixed-version-rollout-v1.json`](../test-vectors/e2e/mixed-version-rollout-v1.json)
+is explicitly a **rollout requirements matrix**, not a current capability
+inventory. Its consumer verifies completeness, no-fallback posture, flag naming,
+and links to the retained contracts.

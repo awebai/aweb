@@ -1,5 +1,6 @@
 {
   "schema": "aweb.e2ee.mixed_version_rollout.v1",
+  "status": "rollout_requirements_not_current_capability_inventory",
   "contract_docs": [
     "docs/e2e-messaging-contract.md",
     "docs/e2e-operational-metadata.md",
@@ -169,7 +170,8 @@
   ],
   "legacy_plaintext_naming": {
     "current_label": "legacy_plaintext",
-    "current_cli_flag_placeholder": "--legacy-plaintext",
-    "update_rule": "If the product renames the legacy plaintext flag or UX label, update this fixture and docs/e2e-release-rollout-runbook.md in the same change."
+    "current_cli_flag": "--plaintext",
+    "deprecated_cli_alias": "--legacy-plaintext",
+    "update_rule": "If the product renames the plaintext flag or UX label, update this fixture and docs/e2e-release-rollout-runbook.md in the same change."
   }
 }
