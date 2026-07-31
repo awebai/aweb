@@ -1654,29 +1654,22 @@ func TestAwMailShowLegacyConversationHintAndMessageIDFetch(t *testing.T) {
 	did := awid.ComputeDIDKey(pub)
 	stableID := stableIDFromDidForTest(t, did)
 	messageID := "88888888-8888-4888-8888-888888888888"
-	var sawMessageIDQuery bool
+	var sawExactMessageRead bool
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/messages/conversations/" + messageID:
 			http.Error(w, `{"detail":"This is a legacy mail without a conversation; use --message-id"}`, http.StatusNotFound)
-		case "/v1/messages/inbox":
-			if r.URL.Query().Get("message_id") != messageID {
-				t.Fatalf("message_id query=%q, want %q", r.URL.Query().Get("message_id"), messageID)
-			}
-			sawMessageIDQuery = true
-			_ = json.NewEncoder(w).Encode(awid.InboxResponse{
-				Messages: []awid.InboxMessage{
-					{
-						MessageID: messageID,
-						FromAlias: "athena",
-						ToAlias:   "grace",
-						Subject:   "legacy",
-						Body:      "old mail",
-						Priority:  awid.PriorityNormal,
-						CreatedAt: "2026-05-02T00:00:00Z",
-					},
-				},
+		case "/v1/messages/" + messageID:
+			sawExactMessageRead = true
+			_ = json.NewEncoder(w).Encode(awid.InboxMessage{
+				MessageID: messageID,
+				FromAlias: "athena",
+				ToAlias:   "grace",
+				Subject:   "legacy",
+				Body:      "old mail",
+				Priority:  awid.PriorityNormal,
+				CreatedAt: "2026-05-02T00:00:00Z",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -1720,8 +1713,8 @@ func TestAwMailShowLegacyConversationHintAndMessageIDFetch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("message-id show failed: %v\n%s", err, string(out))
 	}
-	if !sawMessageIDQuery {
-		t.Fatal("mail show --message-id did not query inbox by message_id")
+	if !sawExactMessageRead {
+		t.Fatal("mail show --message-id did not use the participant-visible exact route")
 	}
 	if !strings.Contains(string(out), "old mail") {
 		t.Fatalf("message-id output missing mail body:\n%s", string(out))

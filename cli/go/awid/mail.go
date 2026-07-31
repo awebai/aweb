@@ -568,6 +568,27 @@ func (c *Client) MailConversation(ctx context.Context, conversationID string, li
 	return c.normalizeInboxResponse(ctx, &out)
 }
 
+// Message returns one exact message when the authenticated identity is either
+// its sender or recipient. The inbox fallback keeps compatibility with servers
+// predating sender-visible exact reads; those servers can expose only recipient rows.
+func (c *Client) Message(ctx context.Context, messageID string) (*InboxResponse, error) {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return nil, errors.New("aweb: message_id is required")
+	}
+	var message InboxMessage
+	if err := c.Get(ctx, "/v1/messages/"+urlPathEscape(messageID), &message); err == nil {
+		return c.normalizeInboxResponse(ctx, &InboxResponse{Messages: []InboxMessage{message}})
+	} else {
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound ||
+			strings.TrimSpace(apiErr.Body) != `{"detail":"Not Found"}` {
+			return nil, err
+		}
+	}
+	return c.Inbox(ctx, InboxParams{Limit: 1, MessageID: messageID})
+}
+
 func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, error) {
 	path := "/v1/messages/inbox"
 	sep := "?"

@@ -668,6 +668,7 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 		DIDKey:   &awid.DIDKeyResolver{},
 		Registry: registry,
 		Pin:      &awid.PinResolver{Store: ps},
+		Team:     &awid.TeamRosterResolver{Client: c.Client, TeamID: sel.TeamID},
 	})
 
 	configureBaseURLFallback(c, sel, baseURL)

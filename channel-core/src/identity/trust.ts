@@ -37,11 +37,17 @@ interface ResolvedIdentity {
 }
 
 interface LocalAgentResolution {
+  alias?: string;
   did_key?: string;
   did_aw?: string;
   address?: string;
   identity_scope?: string;
   lifetime?: string;
+}
+
+interface LocalAgentsResponse {
+  team_id?: string;
+  agents?: LocalAgentResolution[];
 }
 
 interface AgentMeta {
@@ -103,6 +109,24 @@ export class SenderTrustManager {
     }
 
     const trustAddress = this.canonicalTrustAddress(rawAddress);
+    if (
+      status !== "verified"
+      && status !== "verified_legacy"
+      && status !== "verified_custodial"
+      && isLocalAliasReference(rawAddress.trim())
+      && !fromStableID
+    ) {
+      return { status, stored: false };
+    }
+    if (
+      status === "verified"
+      && !recipientBindingMismatch
+      && isLocalAliasReference(rawAddress.trim())
+      && fromDID
+      && !fromStableID
+    ) {
+      return this.verifyLocalSenderAgainstCurrentRoster(store, rawAddress.trim(), trustAddress, fromDID);
+    }
     const meta = await this.resolveAgentMeta(rawAddress);
     const registryCheck = await this.checkStableIdentityRegistry(
       store,
@@ -139,7 +163,7 @@ export class SenderTrustManager {
       && isLocalAliasReference(rawAddress.trim())
       && !fromStableID?.startsWith("did:aw:")
     ) {
-      return this.reconcileLocalMismatch(store, rawAddress.trim(), trustAddress, fromDID);
+      return this.verifyLocalSenderAgainstCurrentRoster(store, rawAddress.trim(), trustAddress, fromDID);
     }
     return checkpointAdvanced ? { ...pinResult, stored: true } : pinResult;
   }
@@ -458,7 +482,7 @@ export class SenderTrustManager {
     return this.teamID ? `${this.teamID}/${trimmed}` : trimmed;
   }
 
-  private async reconcileLocalMismatch(
+  private async verifyLocalSenderAgainstCurrentRoster(
     store: PinStore,
     rawAddress: string,
     trustAddress: string,
@@ -484,7 +508,7 @@ export class SenderTrustManager {
       trustAddress,
       rawAddress !== trustAddress ? rawAddress : "",
     ]);
-    return { status: "verification_stale", stored: removed };
+    return { status: "verified", stored: removed };
   }
 
   private async resolveAgentMeta(address: string, forceRefresh: boolean = false): Promise<AgentMeta> {
@@ -529,13 +553,29 @@ export class SenderTrustManager {
     if (trimmed.includes("~") || !this.teamID) {
       throw new Error(`unsupported local address ${trimmed}`);
     }
+    if (!this.client.hasTeamCertificateAuth(this.teamID)) {
+      throw new Error("team roster resolution requires team-certificate authentication");
+    }
 
-    const path = `/v1/teams/${encodeURIComponent(this.teamID)}/agents/${encodeURIComponent(trimmed)}`;
-    const response = forceRefresh
-      ? await this.client.getFresh<LocalAgentResolution>(path)
-      : await this.client.get<LocalAgentResolution>(path);
+    const path = "/v1/agents";
+    const roster = forceRefresh
+      ? await this.client.getFresh<LocalAgentsResponse>(path)
+      : await this.client.get<LocalAgentsResponse>(path);
+    if ((roster.team_id || "").trim() !== this.teamID) {
+      throw new Error("team roster response does not match the authenticated team");
+    }
+    const response = (roster.agents || []).find((agent) => (agent.alias || "").trim() === trimmed);
+    if (!response) {
+      throw Object.assign(new Error(`local alias ${trimmed} is absent from the authenticated team roster`), {
+        statusCode: 404,
+      });
+    }
+    const did = (response.did_key || "").trim();
+    if (did) {
+      extractPublicKey(did);
+    }
     return {
-      did: response.did_key || "",
+      did,
       stableID: response.did_aw,
       address: response.address || `${this.teamID}/${trimmed}`,
       custody: "self",

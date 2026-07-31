@@ -1766,6 +1766,39 @@ async def get_inbox(
     )
 
 
+@router.get("/{message_id}", response_model=InboxMessage)
+async def get_message(
+    message_id: str,
+    db=Depends(get_db),
+    auth: MessagingAuth = Depends(get_messaging_auth),
+) -> InboxMessage:
+    try:
+        msg_uuid = UUID(message_id.strip())
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid message_id format")
+
+    actor_dids = auth_dids(auth)
+    if not actor_dids:
+        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
+    row = await db.get_manager("aweb").fetch_one(
+        """
+        SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
+               m.subject, m.body, m.priority, m.read_at, m.created_at,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.content_mode, m.message_version, m.encrypted_envelope
+        FROM {{tables.messages}} m
+        WHERE m.message_id = $1
+          AND (m.from_did = ANY($2::text[]) OR m.to_did = ANY($2::text[]))
+        """,
+        msg_uuid,
+        actor_dids,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Message not found")
+    response = await _inbox_response_from_rows(db, [row])
+    return response.messages[0]
+
+
 @router.post("/{message_id}/ack", response_model=AckResponse)
 async def ack_message(
     request: Request, message_id: str, db=Depends(get_db),

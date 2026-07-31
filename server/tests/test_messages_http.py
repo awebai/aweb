@@ -20,6 +20,7 @@ from aweb.e2ee_messages import (
     E2EE_SUITE,
     E2EEEnvelopeError,
     _envelope_map,
+    encrypted_message_storage_metadata,
     _hash_canonical,
     _key_wrap_map,
     validate_e2ee_mail_envelope,
@@ -6578,6 +6579,150 @@ async def test_messages_inbox_and_ack_accept_persistent_cert_auth(aweb_cloud_db)
         "SELECT read_at FROM {{tables.messages}} WHERE message_id = '33333333-3333-3333-3333-333333333333'"
     )
     assert row["read_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_exact_message_read_is_participant_visible_side_effect_free_and_cert_authenticated(aweb_cloud_db):
+    team_sk, _, team_did_key = _make_keypair()
+    alice_sk, _, alice_did_key = _make_keypair()
+    bob_sk, _, bob_did_key = _make_keypair()
+    carol_sk, _, carol_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', $1)
+        """,
+        team_did_key,
+    )
+    for alias, did_key in (("alice", alice_did_key), ("bob", bob_did_key), ("carol", carol_did_key)):
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.agents}}
+                (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+            VALUES ('backend:acme.com', $1, $2, $3, $4, 'global', 'developer', 'open')
+            """,
+            did_key,
+            f"did:aw:{alias}",
+            f"acme.com/{alias}",
+            alias,
+        )
+
+    encrypted_id = "66666666-6666-4666-8666-666666666666"
+    encrypted_conversation_id = "77777777-7777-4777-8777-777777777777"
+    encrypted = _encrypted_mail_envelope(
+        sender_sk=alice_sk,
+        sender_did=alice_did_key,
+        sender_stable_id="did:aw:alice",
+        recipient_did=bob_did_key,
+        recipient_stable_id="did:aw:bob",
+        message_id=encrypted_id,
+        conversation_id=encrypted_conversation_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, from_did, to_did, from_alias, to_alias,
+            subject, body, priority, content_mode, message_version, encrypted_envelope
+        ) VALUES
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:alice', 'did:aw:bob',
+             'alice', 'bob', 'global plaintext', 'hello', 'normal', 'legacy_plaintext_v1', 1, NULL),
+            ('88888888-8888-4888-8888-888888888888', $1, $2,
+             'alice', 'bob', 'legacy local plaintext', 'hello', 'normal', 'legacy_plaintext_v1', 1, NULL)
+        """,
+        alice_did_key,
+        bob_did_key,
+    )
+    encrypted_storage = encrypted_message_storage_metadata(encrypted)
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, from_did, to_did, from_alias, to_alias,
+            subject, body, priority, content_mode, message_version, encrypted_envelope,
+            encrypted_ciphertext, encrypted_key_wraps, encrypted_ciphertext_hash,
+            encrypted_ciphertext_size, encrypted_key_wraps_hash, encrypted_inner_header_hash,
+            encrypted_suite, encrypted_signing_key_id, signed_envelope_hash
+        ) VALUES (
+            $1, $2, $3, 'alice', 'bob', '', '', 'normal', 'encrypted_v2', 2, $4::jsonb,
+            $5, $6::jsonb, $7, $8, $9, $10, $11, $12, $13
+        )
+        """,
+        UUID(encrypted_id),
+        alice_did_key,
+        bob_did_key,
+        json.dumps(encrypted),
+        encrypted_storage["encrypted_ciphertext"],
+        json.dumps(encrypted_storage["encrypted_key_wraps"]),
+        encrypted_storage["encrypted_ciphertext_hash"],
+        encrypted_storage["encrypted_ciphertext_size"],
+        encrypted_storage["encrypted_key_wraps_hash"],
+        encrypted_storage["encrypted_inner_header_hash"],
+        encrypted_storage["encrypted_suite"],
+        encrypted_storage["encrypted_signing_key_id"],
+        encrypted_storage["signed_envelope_hash"],
+    )
+
+    def cert_headers(alias, signing_key, did_key):
+        cert = _make_certificate(
+            team_sk,
+            team_did_key,
+            did_key,
+            alias=alias,
+            member_did_aw=f"did:aw:{alias}",
+            member_address=f"acme.com/{alias}",
+        )
+        return _signed_team_headers(
+            signing_key,
+            did_key,
+            "backend:acme.com",
+            _encode_certificate(cert),
+        )
+
+    registry = AsyncMock()
+    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
+    registry.get_team_revocations = AsyncMock(return_value=set())
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    alice_headers = cert_headers("alice", alice_sk, alice_did_key)
+    bob_headers = cert_headers("bob", bob_sk, bob_did_key)
+    carol_headers = cert_headers("carol", carol_sk, carol_did_key)
+    absent_id = "99999999-9999-4999-8999-999999999999"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        sender_global = await client.get(
+            "/v1/messages/55555555-5555-4555-8555-555555555555", headers=alice_headers
+        )
+        recipient_local = await client.get(
+            "/v1/messages/88888888-8888-4888-8888-888888888888", headers=bob_headers
+        )
+        sender_encrypted = await client.get(f"/v1/messages/{encrypted_id}", headers=alice_headers)
+        unrelated = await client.get(
+            "/v1/messages/55555555-5555-4555-8555-555555555555", headers=carol_headers
+        )
+        absent = await client.get(f"/v1/messages/{absent_id}", headers=carol_headers)
+        sender_ack = await client.post(
+            "/v1/messages/55555555-5555-4555-8555-555555555555/ack", headers=alice_headers
+        )
+        recipient_ack = await client.post(
+            "/v1/messages/55555555-5555-4555-8555-555555555555/ack", headers=bob_headers
+        )
+
+    assert sender_global.status_code == 200, sender_global.text
+    assert sender_global.json()["subject"] == "global plaintext"
+    assert recipient_local.status_code == 200, recipient_local.text
+    assert recipient_local.json()["subject"] == "legacy local plaintext"
+    assert sender_encrypted.status_code == 200, sender_encrypted.text
+    assert sender_encrypted.json()["content_mode"] == "encrypted_v2"
+    assert sender_encrypted.json()["encrypted_envelope"] == encrypted
+    assert unrelated.status_code == absent.status_code == 404
+    assert unrelated.json() == absent.json() == {"detail": "Message not found"}
+    assert sender_ack.status_code == 404
+    assert recipient_ack.status_code == 200
+    rows = await aweb_cloud_db.aweb_db.fetch_all(
+        "SELECT message_id, read_at FROM {{tables.messages}} ORDER BY message_id"
+    )
+    read_at_by_id = {str(row["message_id"]): row["read_at"] for row in rows}
+    assert read_at_by_id["55555555-5555-4555-8555-555555555555"] is not None
+    assert read_at_by_id["88888888-8888-4888-8888-888888888888"] is None
+    assert read_at_by_id[encrypted_id] is None
 
 
 @pytest.mark.asyncio

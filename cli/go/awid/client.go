@@ -593,6 +593,15 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 		return status, isContact
 	}
 	trustAddress := c.canonicalTrustAddress(rawAddress)
+	_, _, localTeamReference := splitTeamMemberReference(trustAddress)
+	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial &&
+		localTeamReference && strings.TrimSpace(fromStableID) == "" {
+		return status, isContact
+	}
+	if status == Verified && !recipientBindingMismatch && localTeamReference &&
+		strings.TrimSpace(fromDID) != "" && strings.TrimSpace(fromStableID) == "" {
+		return c.verifyLocalSenderAgainstCurrentRoster(ctx, strings.TrimSpace(rawAddress), trustAddress, fromDID), nil
+	}
 	meta := c.resolveAgentMeta(ctx, rawAddress)
 	if strings.TrimSpace(fromStableID) == "" || (meta.Resolved && meta.Lifetime == LifetimeEphemeral) {
 		isContact = nil
@@ -614,14 +623,13 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 			status = VerificationStale
 		}
 	}
-	_, _, localTeamReference := splitTeamMemberReference(trustAddress)
 	if status == IdentityMismatch && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" && !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
-		status = c.reconcileLocalSenderMismatch(ctx, strings.TrimSpace(rawAddress), trustAddress, fromDID)
+		status = c.verifyLocalSenderAgainstCurrentRoster(ctx, strings.TrimSpace(rawAddress), trustAddress, fromDID)
 	}
 	return status, isContact
 }
 
-func (c *Client) reconcileLocalSenderMismatch(ctx context.Context, rawAddress, trustAddress, fromDID string) VerificationStatus {
+func (c *Client) verifyLocalSenderAgainstCurrentRoster(ctx context.Context, rawAddress, trustAddress, fromDID string) VerificationStatus {
 	fresh := c.resolveAgentMetaFresh(ctx, rawAddress, true)
 	if fresh == nil || !fresh.Resolved {
 		if fresh != nil && fresh.ResolutionError == "not_found" {
@@ -651,7 +659,7 @@ func (c *Client) reconcileLocalSenderMismatch(ctx context.Context, rawAddress, t
 			_ = c.savePinStore()
 		}
 	}
-	return VerificationStale
+	return Verified
 }
 
 // NormalizeRecipientBinding applies the local recipient-binding check after

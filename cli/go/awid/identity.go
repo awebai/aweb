@@ -127,9 +127,13 @@ type ChainResolver struct {
 	DIDKey   *DIDKeyResolver
 	Registry *RegistryResolver
 	Pin      *PinResolver
+	Team     *TeamRosterResolver
 }
 
 func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	if _, _, ok := splitTeamMemberReference(identifier); ok && r.Team != nil {
+		return r.Team.Resolve(ctx, identifier)
+	}
 	if strings.HasPrefix(identifier, didKeyPrefix) {
 		identity, err := r.DIDKey.Resolve(ctx, identifier)
 		if err != nil {
@@ -180,6 +184,13 @@ func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*Resolv
 		identity.PublicKey = pub
 	}
 	return identity, nil
+}
+
+func (r *ChainResolver) ResolveFresh(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	if _, _, ok := splitTeamMemberReference(identifier); ok && r.Team != nil {
+		return r.Team.ResolveFresh(ctx, identifier)
+	}
+	return r.Resolve(ctx, identifier)
 }
 
 func registryMissAllowsPinFallback(err error) bool {

@@ -1047,11 +1047,7 @@ var mailShowCmd = &cobra.Command{
 		}
 		var resp *awid.InboxResponse
 		if messageID != "" {
-			resp, err = c.Inbox(ctx, awid.InboxParams{
-				UnreadOnly: false,
-				Limit:      mailShowLimit,
-				MessageID:  messageID,
-			})
+			resp, err = c.Message(ctx, messageID)
 		} else {
 			resp, err = c.MailConversation(ctx, conversationID, mailShowLimit)
 		}

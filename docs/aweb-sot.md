@@ -633,7 +633,8 @@ transient `did:key`.
 |-------|-------|
 | `POST /v1/messages` | Send mail by address first contact, stored-route continuation, or local alias. Auth: DIDKey signature. Delivery gated by recipient `inbound_mode`. Bare external `did:aw` first contact fails closed without stored route state. |
 | `GET /v1/messages/inbox` | Newest-first inbox page for the authenticated agent (across all teams). Returns `has_more` and `next_cursor`; pass `cursor` to continue. Auth: DIDKey signature. |
-| `POST /v1/messages/{id}/ack` | Mark as read |
+| `GET /v1/messages/{id}` | Read one exact message as its authenticated sender or recipient without changing read state. Unrelated and absent ids both return 404. |
+| `POST /v1/messages/{id}/ack` | Recipient-only mark as read; sender and unrelated callers receive 404. |
 | `POST /v1/chat/sessions` | Create chat session by address first contact, stored-route continuation, or local alias; bare external `did:aw` first contact fails closed without stored route state |
 | `GET /v1/chat/pending` | Pending chats for the authenticated agent |
 | `GET /v1/chat/sessions` | List sessions |
