@@ -1,4 +1,4 @@
-"""Probe: does POST /v1/agents/heartbeat make the workspace roster show 'active'?"""
+"""HTTP coverage for workspace-keyed heartbeat presence."""
 
 from __future__ import annotations
 
@@ -129,7 +129,7 @@ class _FakeRedis:
 
 
 @pytest.mark.asyncio
-async def test_probe_presence_key(aweb_cloud_db):
+async def test_heartbeat_makes_distinct_workspace_active_in_rosters(aweb_cloud_db):
     aweb_db = aweb_cloud_db.aweb_db
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
@@ -218,8 +218,12 @@ async def test_probe_presence_key(aweb_cloud_db):
         )
         assert agents_list.status_code == 200, agents_list.text
 
-    print("AGENT_ID       ", agent_id)
-    print("WORKSPACE_ID   ", workspace_id)
-    print("PRESENCE KEYS  ", sorted(redis.hashes))
-    print("ROSTER STATUS  ", [(w["alias"], w["status"]) for w in roster.json()["workspaces"]])
-    print("AGENTS STATUS  ", [(a["alias"], a["status"], a["online"]) for a in agents_list.json()["agents"]])
+    assert f"presence:{workspace_id}" in redis.hashes
+    assert f"presence:{agent_id}" not in redis.hashes
+    roster_workspace = roster.json()["workspaces"][0]
+    assert roster_workspace["workspace_id"] == str(workspace_id)
+    assert roster_workspace["agent_id"] == str(agent_id)
+    assert (roster_workspace["alias"], roster_workspace["status"]) == ("probe", "active")
+    assert [
+        (a["alias"], a["status"], a["online"]) for a in agents_list.json()["agents"]
+    ] == [("probe", "active", True)]

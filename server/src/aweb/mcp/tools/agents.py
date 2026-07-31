@@ -7,7 +7,7 @@ import json
 from aweb.mcp.tools._common import require_team_context
 from aweb.presence import (
     DEFAULT_PRESENCE_TTL_SECONDS,
-    list_agent_presences_by_ids,
+    list_agent_presences_by_workspace_ids,
     update_agent_presence,
 )
 
@@ -21,17 +21,22 @@ async def list_agents(db_infra, redis) -> str:
 
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, alias, human_name, agent_type,
-               identity_scope, status
-        FROM {{tables.agents}}
-        WHERE team_id = $1 AND deleted_at IS NULL AND agent_type != 'human'
-        ORDER BY alias
+        SELECT a.agent_id, w.workspace_id, a.alias, a.human_name, a.agent_type,
+               a.identity_scope, a.status
+        FROM {{tables.agents}} a
+        LEFT JOIN {{tables.workspaces}} w
+          ON w.team_id = a.team_id
+         AND w.agent_id = a.agent_id
+         AND w.alias = a.alias
+         AND w.deleted_at IS NULL
+        WHERE a.team_id = $1 AND a.deleted_at IS NULL AND a.agent_type != 'human'
+        ORDER BY a.alias
         """,
         auth.team_id,
     )
 
-    agent_ids = [str(r["agent_id"]) for r in rows]
-    presences = await list_agent_presences_by_ids(redis, agent_ids)
+    workspace_ids = [str(r["workspace_id"]) for r in rows if r.get("workspace_id")]
+    presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
     presence_map = {}
     for presence in presences:
         presence_id = (presence.get("workspace_id") or presence.get("agent_id") or "").strip()
@@ -41,7 +46,8 @@ async def list_agents(db_infra, redis) -> str:
     agents = []
     for r in rows:
         aid = str(r["agent_id"])
-        p = presence_map.get(aid)
+        workspace_id = str(r["workspace_id"]) if r.get("workspace_id") else ""
+        p = presence_map.get(workspace_id)
         agents.append(
             {
                 "agent_id": aid,
@@ -66,9 +72,14 @@ async def heartbeat(db_infra, redis) -> str:
 
     row = await aweb_db.fetch_one(
         """
-        SELECT alias
-        FROM {{tables.agents}}
-        WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
+        SELECT a.alias, w.workspace_id
+        FROM {{tables.agents}} a
+        JOIN {{tables.workspaces}} w
+          ON w.team_id = a.team_id
+         AND w.agent_id = a.agent_id
+         AND w.alias = a.alias
+         AND w.deleted_at IS NULL
+        WHERE a.agent_id = $1 AND a.team_id = $2 AND a.deleted_at IS NULL
         """,
         auth.agent_id,
         auth.team_id,
@@ -79,7 +90,7 @@ async def heartbeat(db_infra, redis) -> str:
     ttl = DEFAULT_PRESENCE_TTL_SECONDS
     last_seen = await update_agent_presence(
         redis,
-        agent_id=auth.agent_id,
+        workspace_id=str(row["workspace_id"]),
         alias=row["alias"],
         team_id=auth.team_id,
         ttl_seconds=ttl,
