@@ -71,6 +71,14 @@ class SourceInventoryTests(unittest.TestCase):
             errors = inventories.check_repository(root)
             self.assertTrue(any("aweb-tables" in error and "beta" in error for error in errors), errors)
 
+    def test_negative_control_rejects_router_addition_without_doc_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._fixture_root(Path(tmp))
+            source = root / "server/src/aweb/api.py"
+            source.write_text(source.read_text() + "app.include_router(beta_router)\n")
+            errors = inventories.check_repository(root)
+            self.assertTrue(any("aweb-routers" in error and "beta" in error for error in errors), errors)
+
     def test_negative_control_rejects_stale_documented_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self._fixture_root(Path(tmp))

@@ -378,7 +378,7 @@ this contract does not promise a broad key-prefix flush command.
 
 **Revocation.** A newly revoked certificate may continue to verify for up to
 the same 20-minute maximum. This cache window is the only supported timing
-claim; no 5–15 minute refresh promise exists.
+claim; no narrower refresh interval is promised.
 
 ---
 
