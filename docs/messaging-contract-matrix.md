@@ -20,9 +20,10 @@ user, event, identity-routing, or E2E authorities listed in
   routing or participant authority by itself.
 - Self-custodial clients own private keys and local plaintext presentation.
   Hosted custodial tools are server-readable hosted messaging.
-- A verified local-alias sender requires a valid message signature and recipient
-  binding plus a no-cache, team-certificate-authenticated current-roster row
-  whose exact alias has a non-empty local DID equal to the signed `from_did`.
+- A verified or legacy-verified local-alias sender requires a valid message
+  signature and recipient binding plus a no-cache, team-certificate-authenticated
+  current-roster row whose exact alias has a non-empty local DID equal to the
+  signed `from_did`.
   Cache, public/dashboard lookup, registry continuity, and TOFU are not proof.
 
 ## Identity, routing, and continuation cases

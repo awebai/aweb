@@ -207,12 +207,14 @@ describe("SenderTrustManager", () => {
     );
 
     expect((await trust.normalizeTrust(store, "verified", "acme.com/alice", currentIdentity.did, undefined, undefined)).status).toBe("verified");
+    expect((await trust.normalizeTrust(store, "verified_legacy", "alice", currentIdentity.did, undefined, undefined)).status).toBe("verified_legacy");
     expect((await trust.normalizeTrust(store, "verified", "acme.com/grace", globalIdentity.did, "did:aw:grace", undefined)).status).toBe("verified");
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(3);
     expect(requests[0].authorization).toMatch(/^DIDKey /);
     expect(requests[0].certificate).toBe("certificate-header");
     expect(requests[0].cacheControl).toBe("no-cache");
     expect(requests[1].cacheControl).toBe("no-cache");
+    expect(requests[2].cacheControl).toBe("no-cache");
     expect(store.pins.size).toBe(1);
   });
 
@@ -222,6 +224,7 @@ describe("SenderTrustManager", () => {
     ["malformed", "verification_stale"],
     ["non-local", "identity_mismatch"],
     ["different-key-with-forged-stable-id", "identity_mismatch"],
+    ["verified-legacy-bare-alias", "identity_mismatch"],
     ["unavailable", "verification_stale"],
   ] as const)("rejects %s authenticated roster refreshes", async (variant, expected) => {
     const self = await didFromSeed(44);
@@ -239,7 +242,7 @@ describe("SenderTrustManager", () => {
       }
       const agents = variant === "absent" ? [] : [{
         alias: "alice",
-        did_key: variant === "empty" ? "" : variant === "malformed" ? "did:key:not-valid" : variant === "different-key-with-forged-stable-id" ? differentIdentity.did : currentIdentity.did,
+        did_key: variant === "empty" ? "" : variant === "malformed" ? "did:key:not-valid" : variant === "different-key-with-forged-stable-id" || variant === "verified-legacy-bare-alias" ? differentIdentity.did : currentIdentity.did,
         identity_scope: variant === "non-local" ? "global" : "local",
       }];
       return new Response(JSON.stringify({ team_id: "backend:acme.com", agents }), { status: 200 });
@@ -261,7 +264,8 @@ describe("SenderTrustManager", () => {
     const projected = variant === "different-key-with-forged-stable-id";
     const stableID = projected ? "did:aw:forged" : undefined;
     const sender = projected ? "acme.com/alice" : "alice";
-    expect((await trust.normalizeTrust(store, "verified", sender, currentIdentity.did, stableID, undefined)).status).toBe(expected);
+    const status = variant === "verified-legacy-bare-alias" ? "verified_legacy" : "verified";
+    expect((await trust.normalizeTrust(store, status, sender, currentIdentity.did, stableID, undefined)).status).toBe(expected);
   });
 
   test("preserves local mismatch when the authoritative roster row has a different key", async () => {

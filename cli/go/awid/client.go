@@ -611,7 +611,8 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 		return status, isContact
 	}
 	var meta *agentMeta
-	if status == Verified && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" {
+	acceptedSignature := status == Verified || status == VerifiedLegacy || status == VerifiedCustodial
+	if acceptedSignature && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" {
 		fresh := c.resolveAgentMetaFresh(ctx, rawAddress, true)
 		if fresh == nil || !fresh.Resolved {
 			if fresh != nil && fresh.ResolutionError == "not_found" {
@@ -620,7 +621,7 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 			return VerificationStale, nil
 		}
 		if fresh.Lifetime == LifetimeEphemeral {
-			return c.verifyResolvedLocalSender(fresh, strings.TrimSpace(rawAddress), trustAddress, fromDID), nil
+			return c.verifyResolvedLocalSender(fresh, strings.TrimSpace(rawAddress), trustAddress, fromDID, status), nil
 		}
 		if strings.TrimSpace(fromStableID) == "" {
 			return IdentityMismatch, nil
@@ -667,10 +668,10 @@ func (c *Client) verifyLocalSenderAgainstCurrentRoster(ctx context.Context, rawA
 	if fresh.Lifetime != LifetimeEphemeral {
 		return IdentityMismatch
 	}
-	return c.verifyResolvedLocalSender(fresh, rawAddress, trustAddress, fromDID)
+	return c.verifyResolvedLocalSender(fresh, rawAddress, trustAddress, fromDID, Verified)
 }
 
-func (c *Client) verifyResolvedLocalSender(fresh *agentMeta, rawAddress, trustAddress, fromDID string) VerificationStatus {
+func (c *Client) verifyResolvedLocalSender(fresh *agentMeta, rawAddress, trustAddress, fromDID string, acceptedStatus VerificationStatus) VerificationStatus {
 	if strings.TrimSpace(fresh.DID) == "" {
 		return VerificationStale
 	}
@@ -690,7 +691,7 @@ func (c *Client) verifyResolvedLocalSender(fresh *agentMeta, rawAddress, trustAd
 			_ = c.savePinStore()
 		}
 	}
-	return Verified
+	return acceptedStatus
 }
 
 // NormalizeRecipientBinding applies the local recipient-binding check after

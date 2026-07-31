@@ -1250,7 +1250,7 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-stable-envelope/ack");
   });
 
-  test("live projected local address uses authenticated fresh-roster equality", async () => {
+  test("live verified-legacy projected local address uses authenticated fresh-roster equality", async () => {
     const onAwakening = vi.fn();
     const env: MessageEnvelope = {
       from: "alice",
@@ -1270,6 +1270,7 @@ describe("channel-core dispatchAgentEvent", () => {
       get: vi.fn().mockResolvedValue({
         messages: [{
           message_id: env.message_id,
+          conversation_id: "legacy-conversation",
           from_alias: "alice",
           from_address: "acme.com/alice",
           to_alias: self.alias,

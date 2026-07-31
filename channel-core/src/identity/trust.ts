@@ -119,8 +119,9 @@ export class SenderTrustManager {
       return { status, stored: false };
     }
     let meta: AgentMeta | undefined;
+    const acceptedSignature = status === "verified" || status === "verified_legacy" || status === "verified_custodial";
     if (
-      status === "verified"
+      acceptedSignature
       && !recipientBindingMismatch
       && this.teamRosterAliasReference(rawAddress.trim()) !== undefined
       && fromDID
@@ -133,7 +134,7 @@ export class SenderTrustManager {
         };
       }
       if (fresh.identityScope === "local") {
-        return this.verifyResolvedLocalSender(store, rawAddress.trim(), trustAddress, fromDID, fresh);
+        return this.verifyResolvedLocalSender(store, rawAddress.trim(), trustAddress, fromDID, fresh, status);
       }
       if (!fromStableID) {
         return { status: "identity_mismatch", stored: false };
@@ -511,7 +512,7 @@ export class SenderTrustManager {
     if (fresh.identityScope !== "local") {
       return { status: "identity_mismatch", stored: false };
     }
-    return this.verifyResolvedLocalSender(store, rawAddress, trustAddress, fromDID, fresh);
+    return this.verifyResolvedLocalSender(store, rawAddress, trustAddress, fromDID, fresh, "verified");
   }
 
   private verifyResolvedLocalSender(
@@ -520,6 +521,7 @@ export class SenderTrustManager {
     trustAddress: string,
     fromDID: string,
     fresh: AgentMeta,
+    acceptedStatus: VerificationStatus,
   ): TrustResult {
     if (!fresh.did) {
       return { status: "verification_stale", stored: false };
@@ -531,7 +533,7 @@ export class SenderTrustManager {
       trustAddress,
       rawAddress !== trustAddress ? rawAddress : "",
     ]);
-    return { status: "verified", stored: removed };
+    return { status: acceptedStatus, stored: removed };
   }
 
   private async resolveAgentMeta(address: string, forceRefresh: boolean = false): Promise<AgentMeta> {

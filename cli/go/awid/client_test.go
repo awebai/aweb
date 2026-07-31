@@ -4950,7 +4950,7 @@ func TestInboxSenderViewVerifiesOutgoingMessageWithoutRecipientSelfCheck(t *test
 	}
 }
 
-func TestInboxProjectedLocalAddressUsesAuthenticatedFreshRosterEquality(t *testing.T) {
+func TestInboxVerifiedLegacyProjectedLocalAddressUsesAuthenticatedFreshRosterEquality(t *testing.T) {
 	t.Parallel()
 
 	_, senderKey, err := ed25519.GenerateKey(nil)
@@ -4986,17 +4986,18 @@ func TestInboxProjectedLocalAddressUsesAuthenticatedFreshRosterEquality(t *testi
 		switch r.URL.Path {
 		case "/v1/messages/inbox":
 			_ = json.NewEncoder(w).Encode(InboxResponse{Messages: []InboxMessage{{
-				MessageID:     env.MessageID,
-				FromAlias:     "alice",
-				FromAddress:   "acme.com/alice",
-				ToAlias:       "bob",
-				Body:          env.Body,
-				CreatedAt:     env.Timestamp,
-				FromDID:       senderDID,
-				ToDID:         selfDID,
-				Signature:     signature,
-				SigningKeyID:  senderDID,
-				SignedPayload: CanonicalJSON(env),
+				MessageID:      env.MessageID,
+				ConversationID: "legacy-conversation",
+				FromAlias:      "alice",
+				FromAddress:    "acme.com/alice",
+				ToAlias:        "bob",
+				Body:           env.Body,
+				CreatedAt:      env.Timestamp,
+				FromDID:        senderDID,
+				ToDID:          selfDID,
+				Signature:      signature,
+				SigningKeyID:   senderDID,
+				SignedPayload:  CanonicalJSON(env),
 			}}})
 		case "/v1/agents":
 			if r.Header.Get("Cache-Control") != "no-cache" || r.Header.Get("X-AWID-Team-Certificate") == "" {
