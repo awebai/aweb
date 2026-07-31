@@ -68,17 +68,23 @@ def _string_literals(node: ast.AST) -> set[str]:
 
 def _source_hook_events(root: Path, failures: list[str]) -> set[str]:
     events: set[str] = set()
-    for relative in HOOK_SOURCES:
-        path = root / relative
-        if not path.is_file():
-            failures.append(f"missing hook source: {relative}")
-            continue
+    source_root = root / "server/src/aweb"
+    if not source_root.is_dir():
+        failures.append("missing hook source root: server/src/aweb")
+        return events
+    for path in sorted(source_root.rglob("*.py")):
+        relative = str(path.relative_to(root))
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or len(node.args) < 2:
                 continue
             function = node.func
-            name = function.id if isinstance(function, ast.Name) else ""
+            if isinstance(function, ast.Name):
+                name = function.id
+            elif isinstance(function, ast.Attribute):
+                name = function.attr
+            else:
+                name = ""
             if name == "fire_mutation_hook":
                 literals = _string_literals(node.args[1])
                 if not literals:
@@ -87,6 +93,8 @@ def _source_hook_events(root: Path, failures: list[str]) -> set[str]:
                     )
                     continue
                 events.update(literals)
+    if not events:
+        failures.append("no fire_mutation_hook event calls found under server/src/aweb")
     return events
 
 
