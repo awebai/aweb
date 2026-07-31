@@ -272,3 +272,93 @@ func TestConnectedPreambleAloneDoesNotHoldTheBackoffAtItsFloor(t *testing.T) {
 		t.Fatalf("only %d open(s); the client stopped reconnecting entirely", got)
 	}
 }
+
+// aweb-aamn, grace's finding. The predicate charlie proposed and I implemented reads
+// CONTENT, but the two cases it must separate differ in DURATION:
+//
+//	preamble-and-cut server   milliseconds, nothing substantive  -> must escalate
+//	healthy idle subscription 300s, nothing substantive          -> must NOT escalate
+//
+// A healthy idle stream emits `connected` (which does not count as delivery) and then
+// only `: keepalive` COMMENTS, which awid/sse.go:70 skips so they never become events
+// at all. It then closes at MAX_STREAM_DURATION. So delivered is false for a perfectly
+// healthy stream, and the content predicate cannot tell it from a server that is
+// hanging up instantly.
+//
+// The cost was a latency regression aimed at exactly the wrong agent: an idle one is
+// the one waiting to be woken. Eight consecutive quiet cycles reach the 30s cap, so
+// after ~40 minutes of silence an agent spends ~9% of its time disconnected and takes
+// up to 30s to be woken instead of 250ms.
+//
+// This arm pins the direction that regressed. Every other test here asserts the
+// backoff DOES escalate, which is why the regression was invisible: the escalation
+// arms read as complete coverage because escalation is the direction everyone was
+// looking at.
+func TestALongLivedStreamDeliveringNothingStaysNearTheFloor(t *testing.T) {
+	t.Parallel()
+
+	// The real threshold is the server's heartbeat interval. Compressed here so the
+	// test does not have to hold a stream open for 30 seconds.
+	const (
+		threshold  = 300 * time.Millisecond
+		holdOpen   = 500 * time.Millisecond
+		windowSecs = 6
+	)
+
+	var opens atomic.Int64
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/v1/events/stream"):
+			requireCertificateAuthForTest(t, r)
+			opens.Add(1)
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				t.Fatal("no flusher")
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			// Exactly what a healthy idle subscription looks like: the preamble,
+			// then keepalive COMMENTS, then a close at the lifetime cap. Nothing
+			// substantive, because nothing happened.
+			fmt.Fprint(w, "event: connected\ndata: {\"agent_id\":\"a-1\",\"team_id\":\"backend:acme.com\"}\n\n")
+			flusher.Flush()
+			deadline := time.Now().Add(holdOpen)
+			for time.Now().Before(deadline) {
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(holdOpen / 4):
+				}
+				fmt.Fprint(w, ": keepalive\n\n")
+				flusher.Flush()
+			}
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := buildAwForTest(t, ctx, tmp)
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	run := exec.CommandContext(ctx, bin, "events", "stream", "--json", "--timeout", fmt.Sprint(windowSecs))
+	run.Env = append(testCommandEnv(tmp), fmt.Sprintf("AW_EVENTS_HEALTHY_STREAM_MS=%d", threshold.Milliseconds()))
+	run.Dir = tmp
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("run exited non-zero (%v):\n%s", err, string(out))
+	}
+
+	// Each healthy cycle costs holdOpen plus the floor delay, so a client that keeps
+	// resetting fits roughly windowSecs/(holdOpen+floor) opens in. One that escalates
+	// spends most of the window asleep and fits far fewer.
+	const minOpens = 7
+	if got := opens.Load(); got < minOpens {
+		t.Fatalf("only %d opens in %ds for a stream that stayed open past the health threshold each time; a healthy idle subscription is backing off as though the server were failing, so an idle agent waits to be woken",
+			got, windowSecs)
+	}
+}

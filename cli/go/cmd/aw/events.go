@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,7 +71,9 @@ var eventsStreamCmd = &cobra.Command{
 				continue
 			}
 
+			streamStartedAt := time.Now()
 			delivered, outputErr := drainEventStream(ctx, stream, enc)
+			streamLasted := time.Since(streamStartedAt)
 			closeStream()
 
 			if outputErr != nil {
@@ -83,17 +86,30 @@ var eventsStreamCmd = &cobra.Command{
 			// connection - is a reconnect, not a result. Only the context ends the
 			// subscription.
 			//
-			// A stream that delivered events was working, so the next failure is a
-			// fresh one and starts from the shortest delay. Without this, a
-			// long-lived subscription reconnecting every few minutes would ratchet
-			// its backoff to the maximum and stay there.
-			if delivered {
+			// A stream that was working starts the next failure from the shortest
+			// delay. Without this, a long-lived subscription reconnecting at the
+			// server's lifetime cap would ratchet its backoff to the maximum and
+			// stay there.
+			//
+			// "Working" cannot be judged on content alone. A healthy but IDLE
+			// subscription delivers nothing substantive for its whole life: the
+			// preamble does not count, and the idle keepalive is an SSE comment that
+			// awid/sse.go skips before it could become an event. So it produces the
+			// same signal as a server that accepts and hangs up instantly, and the
+			// two differ only in how long the stream lasted.
+			//
+			// Hence either signal resets: something substantive arrived, OR the
+			// stream survived long enough to have been served. Getting this wrong in
+			// the idle direction is aimed at exactly the wrong agent, because an idle
+			// one is the one waiting to be woken.
+			healthy := delivered || streamLasted >= healthyStreamDuration()
+			if healthy {
 				backoff = eventsReconnectInitialBackoff
 			}
 			if !sleepUntil(ctx, backoff) {
 				return nil
 			}
-			if !delivered {
+			if !healthy {
 				backoff = nextEventsBackoff(backoff)
 			}
 		}
@@ -108,6 +124,26 @@ const (
 	eventsReconnectInitialBackoff = 250 * time.Millisecond
 	eventsReconnectMaxBackoff     = 30 * time.Second
 )
+
+// healthyStreamDuration is how long a stream must last to count as having been
+// served even though it carried nothing substantive.
+//
+// The server's idle heartbeat interval is the meaningful threshold: a stream that
+// survived a keepalive round trip was being served. It is deliberately NOT keyed to
+// the server's 300s stream cap - the client should not encode the server's policy,
+// and a stream cut early by an intermediary is still evidence of a working server.
+const defaultHealthyStreamDuration = 30 * time.Second
+
+// Overridable so tests need not hold a stream open for the real interval. Not a
+// user-facing setting.
+func healthyStreamDuration() time.Duration {
+	if raw := os.Getenv("AW_EVENTS_HEALTHY_STREAM_MS"); raw != "" {
+		if ms, err := strconv.Atoi(raw); err == nil && ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return defaultHealthyStreamDuration
+}
 
 func nextEventsBackoff(current time.Duration) time.Duration {
 	next := current * 2
