@@ -1,7 +1,10 @@
 # `aw team extend` — command SOT
 
-Status: design (task default-aaeq.26). Implementation lands after
-default-aaeq.23 (non-TTY `aw team create`/`aw init` inputs), which it reuses.
+> **Status: shipped compatibility command contract.** The everyday workflow is
+> [Grow an existing team](grow-team.md); this document preserves the durable
+> authority discovery, ambiguity, rollback, and batch semantics used by the
+> implemented command and its tests. It does not make profiles, homes,
+> worktrees, or runtime launch mandatory.
 
 `aw team extend` adds members to an EXISTING team. It is the sibling of
 `aw team create`: same agent specs, same roster-population machinery, minus

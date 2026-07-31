@@ -1,15 +1,21 @@
 ---
 title: "Runtime support"
 kicker: "Reference"
-description: "Which AI tools aweb can materialize, launch, and wake today."
+description: "Which opt-in CLI helpers and maintained wake integrations support AI tools today."
 weight: 75
 ---
 
 # Runtime support
 
-Runtime support has three separate layers: materializing an agent home,
-launching the AI tool, and waking a running session when team activity arrives.
-Do not treat support in one layer as support in all three.
+> **Status: current integrations plus advanced optional runtime helpers.**
+> Operators and orchestrators retain ownership of homes, worktrees, runtime
+> selection, processes, and session UX. The helper matrix below is not an aweb
+> lifecycle guarantee or a prerequisite for communication.
+
+Runtime support has three separate layers: using the CLI to materialize an
+agent home, using it to launch an AI tool, and waking an independently owned
+session when team activity arrives. Do not treat support in one layer as
+support in all three.
 
 | Runtime | Materialize | `aw team up` / `--start` | Recommended wake-up path |
 | --- | --- | --- | --- |

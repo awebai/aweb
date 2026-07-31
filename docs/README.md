@@ -51,18 +51,6 @@ security and protocol authority.
 
 - [Aweb product SOT](aweb-product-sot.md) — canonical communication-first target
   direction and ownership boundaries.
-- [Website and dashboard strategy](website-dashboard-strategy.md) — working
-  strategy for the public site, documentation journey, integration pages, and
-  hosted delivery dashboard.
-- [Orchestrator evidence review](orchestrator-evidence-review.md) — research
-  snapshot separating demonstrated orchestrator capabilities from unproven
-  agent-fleet productivity claims.
-- [Company-agent platform thesis](company-agent-platform-thesis.md) — working
-  strategy for trusted, specialized, learning company agents, beginning with
-  two agents on one real workflow.
-- [Market-entry wedge research](market-entry-wedge-research.md) — subordinate
-  discovery hypothesis for paid production rescues of a narrow class of
-  existing fragile agent workflows.
 - [Identity and team model](identity.md) — canonical vocabulary and identity/team
   invariants.
 - [aweb implementation SOT](aweb-sot.md) — normative aweb server/CLI contract;
@@ -96,6 +84,28 @@ security and protocol authority.
 
 </details>
 
+## Non-normative strategy and research
+
+These retained working notes and evidence snapshots do not set product
+priority, protocol, or implementation authority. The canonical product SOT
+governs when they disagree. References to an external orchestrator describe one
+observed composition, not an aweb dependency.
+
+<details>
+<summary>Show non-normative strategy and research</summary>
+
+- [Website and dashboard strategy](website-dashboard-strategy.md) — working
+  website and hosted-delivery ideas, subordinate to current product direction.
+- [Orchestrator evidence review](orchestrator-evidence-review.md) — dated
+  research snapshot; OAS is an external reference composition, never a required
+  aweb runtime or lifecycle owner.
+- [Company-agent platform thesis](company-agent-platform-thesis.md) — retained
+  strategy exploration, not the communication-first product contract.
+- [Market-entry wedge research](market-entry-wedge-research.md) — subordinate
+  discovery hypothesis, not a shipped-feature or roadmap commitment.
+
+</details>
+
 ## Core guides
 
 - [Agent guide](agent-guide.md) — compact setup-injected communication and
@@ -114,33 +124,39 @@ security and protocol authority.
 
 ## Advanced and optional
 
-These are working capabilities outside the first communication journey. They
-remain supported or are awaiting a focused rewrite/relocation; Library-backed
-profiles and runtime materialization are optional.
+These are working capabilities outside the first communication journey.
+Current optional and advanced helpers remain supported under their documented
+contracts; Library/profile services and runtime materialization are opt-in. An
+empty-profile, one-repository team is complete, and external orchestrators keep
+ownership of definitions, homes, worktrees, runtimes, processes, and session UX.
 
 <details>
 <summary>Profiles, runtime, coordination, integrations, and extension contracts</summary>
 
-- [Profiles and blueprints](profiles-and-blueprints.md) — optional profile and
-  blueprint concepts.
+- [Profiles and blueprints](profiles-and-blueprints.md) — advanced optional
+  Library-backed profile helper; empty-profile teams need no profile service.
 - [Blueprint materialization contract](blueprint-materialization-contract.md) —
-  public payload, pin, and provenance contract.
+  current advanced optional payload, pin, and provenance contract.
 - [Resource-pack template contract](resource-pack-template-contract.md) —
-  harness-neutral operating assets.
-- [Create and run your first team](create-and-run-team.md) — optional
-  materialized-team workflow.
-- [Grow an existing team](grow-team.md) — optional team expansion workflow.
-- [Improve a profile](improve-profile.md) — reviewed profile learning loop.
-- [Running materialized agents](running-agents.md) — local runtime launch and
-  home isolation.
-- [Runtime support](runtime-support.md) — supported harness/runtime matrix.
+  current advanced optional harness-neutral operating assets.
+- [Create and run your first team](create-and-run-team.md) — current optional
+  materialized-team helper workflow.
+- [Grow an existing team](grow-team.md) — current optional membership-growth
+  helper with operator-owned materialization and launch choices.
+- [Improve a profile](improve-profile.md) — optional Library-backed reviewed
+  profile-learning loop.
+- [Running materialized agents](running-agents.md) — advanced optional local
+  home/worktree and launch helpers, not an aweb-owned lifecycle.
+- [Runtime support](runtime-support.md) — current maintained wake integrations
+  and advanced optional materialize/launch helpers.
 - [Agent home composition contract](restructuring/agent-home-composition-contract.md)
   — current home-layout facts pending consolidation.
-- [Start working in your team](start-working.md) — task-first workflow scheduled
-  for repositioning.
-- [Tasks and work](tasks-and-work.md) — advanced shared work coordination.
-- [Roles, instructions, and locks](roles-instructions-locks.md) — advanced team
-  operating context.
+- [Start working in your team](start-working.md) — optional task-first workflow
+  scheduled for repositioning.
+- [Tasks and work](tasks-and-work.md) — current optional shared work
+  coordination; external task providers remain valid.
+- [Roles, instructions, and locks](roles-instructions-locks.md) — current
+  optional team operating context and resource reservation.
 - [Work across teams](work-across-teams.md) — multi-team identity and messaging.
 - [MCP tutorial](mcp-tutorial.md) — optional MCP client journey scheduled for an
   OSS/hosted split.
@@ -177,7 +193,8 @@ notice where one exists.
 
 - [Retired agents layout and lifecycle](agents-layout-lifecycle-contract.md) —
   bootstrap-era compatibility.
-- [`aw run`](aw-run.md) — compatibility/session launcher guide.
+- [`aw run`](aw-run.md) — current compatibility launcher; opt-in, provider-
+  specific, and not an aweb runtime-lifecycle guarantee.
 - [Retired bootstrap layout contract](bootstrap-layout-contract.md) — historical
   layout compatibility.
 - [Coordination](coordination.md) — overlapping guide pending consolidation.
@@ -189,8 +206,10 @@ notice where one exists.
   checks pending consolidation into maintainer guidance.
 - [Retired repo-local team bootstrap](team-bootstrap.md) — compatibility
   tombstone.
-- [`aw team extend` command SOT](team-extend-sot.md) — compatibility semantics
-  pending consolidation into guides and generated reference.
+- [`aw team extend` command SOT](team-extend-sot.md) — shipped compatibility
+  contract preserving authority discovery, ambiguity, rollback, and batch
+  semantics; use the current growth guide and generated reference for everyday
+  operation.
 
 ## Generated, reference, and conformance
 
@@ -303,8 +322,10 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   deliberately unlinked; relocate to its production-operations owner after
   consumer migration.
 - [Team blueprints and agent profiles](team-blueprints-sot.md) — superseded
-  product SOT; consolidate verified advanced materialization facts, then remove
-  the competing narrative.
+  product SOT; current optional profile, payload/pin, resource-pack, growth, and
+  runtime-helper facts are extracted in the advanced guides above. Keep this
+  narrative non-authoritative until its exact remaining consumers are migrated,
+  then remove it rather than restoring its product claims.
 - [`aw team extend` implementation plan](team-extend-implementation-plan.md) —
   completed plan; remove because Git/task history is sufficient.
 

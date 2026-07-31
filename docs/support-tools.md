@@ -1,5 +1,9 @@
 # OSS Support Tools
 
+> **Status: current public support surface.** These diagnostics observe or
+> conservatively repair aweb/AWID state; they do not assume ownership of an
+> external orchestrator or runtime.
+
 This page documents the OSS `aw` support surface: lifecycle semantics,
 `aw doctor`, registry reads, and redacted support bundles. Hosted dashboard
 actions are intentionally described only as boundaries here. Cloud support
@@ -202,7 +206,8 @@ If content debugging is required, the customer or agent must export decrypted
 content from a local client and provide it intentionally as a support attachment.
 Do not request private encryption keys or archived encryption keys. Losing
 archived local encryption keys makes historical encrypted messages
-unrecoverable; AC/aweb cannot recover them.
+unrecoverable; neither the coordination service nor a support operator can
+recover them.
 
 Hosted custodial MCP, dashboard-side compose/read, and other server-side tools
 are server-readable hosted messaging, not E2E. Keep support runbooks and user

@@ -1,11 +1,17 @@
 ---
 title: "Running materialized agents"
 kicker: "Agent runtime guide"
-description: "How aw team add materializes agent homes and how aw team up starts local agent runtimes."
+description: "How optional aw team add and aw team up helpers materialize homes and start local runtimes without owning their lifecycle."
 weight: 27
 ---
 
 # Running materialized agents
+
+> **Status: advanced, optional runtime helper.** These commands can create a
+> particular local layout and launch supported tools, but aweb does not own
+> agent definitions, homes, worktrees, runtime choice, process lifecycle, or
+> session UX. Existing agent directories can use communication without this
+> workflow.
 
 Use this guide after a workspace is already connected to a team. If you want
 the shortest human path, start with [Create and run your first team](/docs/create-and-run-team/)

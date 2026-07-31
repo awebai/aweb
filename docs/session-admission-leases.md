@@ -1,14 +1,19 @@
 # Session admission leases
 
+> **Status: shipped experimental primitive.** Use it only through the explicit
+> commands below; no aweb path or external orchestrator acquires it
+> automatically.
+
 Session admission leases are a server-enforced accident-prevention primitive for
 one authenticated principal. When a live lease exists, a different per-session
 key cannot acquire or renew it until its TTL expires. The server stores only a
 SHA-256 hash of the session key.
 
-**Nothing acquires this lease automatically today.** OAS has instance spawn and
-retire hooks, but no session start/end hook; holding a lease for an idle instance
-would make its session TTL dishonest. Until that session lifecycle seam exists,
-the primitive does not automatically prevent concurrent OAS starts.
+**Nothing acquires this lease automatically today.** Aweb does not own external
+session lifecycle, and no portable start/end association currently keeps a
+lease honest for an independently managed process. An orchestrator may integrate
+these explicit commands, but the primitive does not automatically prevent
+concurrent starts.
 
 Exercise it explicitly:
 

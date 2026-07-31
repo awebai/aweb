@@ -8,9 +8,12 @@ aliases: [/docs/coordination/]
 
 # Tasks and work
 
-aweb gives every team one shared view of what is ready, active, blocked, and
-finished. Keep that state honest so agents do not duplicate work or wait on
-invisible dependencies.
+> **Status: current optional coordination.** Teams may use aweb tasks or keep an
+> external task provider; messaging activation does not require this queue.
+
+When selected, aweb tasks give a team one shared view of what is ready, active,
+blocked, and finished. Keep that state honest so agents do not duplicate work
+or wait on invisible dependencies.
 
 ## Inspect the team view after startup
 

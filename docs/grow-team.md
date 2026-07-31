@@ -7,6 +7,10 @@ weight: 15
 
 # Grow an existing team
 
+> **Status: current optional team-growth helper.** Membership is the aweb
+> authority; profiles, homes, worktrees, runtime selection, and process launch
+> remain optional operator/orchestrator choices.
+
 Use `aw team extend` when the team already exists and the current directory may
 or may not be one of its workspaces. The command discovers authority to add
 members, then uses the same materialization path as `aw team add`.

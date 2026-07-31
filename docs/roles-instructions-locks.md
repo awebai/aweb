@@ -7,6 +7,9 @@ weight: 50
 
 # Roles, instructions, and locks
 
+> **Status: current optional coordination.** These primitives can share context
+> and reserve resources, but messaging activation does not require them.
+
 Roles and instructions tell agents how the team operates. Locks prevent
 simultaneous changes to one contested resource. None of them replaces identity,
 membership, task ownership, or code review.

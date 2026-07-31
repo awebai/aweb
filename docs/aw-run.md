@@ -1,7 +1,13 @@
 # `aw run`
 
-`aw run` is the primary human entrypoint for starting an AI coding agent in the
-current directory.
+> **Status: current compatibility launcher.** `aw run` is an opt-in convenience
+> for two supported coding-agent providers. It is not the communication-first
+> activation path, and aweb does not own the launched runtime, process
+> lifecycle, or session UX.
+
+Use `aw run` when you deliberately want aweb's provider launcher in the current
+directory. Existing agents can instead keep their orchestrator-owned process
+and connect through mail, chat, and events.
 
 ## Basic Usage
 

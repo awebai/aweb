@@ -1,15 +1,20 @@
 ---
 title: "Profiles and blueprints"
 kicker: "Human + agent guide"
-description: "Understand the team shape aweb materializes and what remains under your control."
+description: "Understand optional profile and blueprint helpers and the home/runtime boundaries that remain under operator control."
 weight: 30
 ---
 
 # Profiles and blueprints
 
-A blueprint describes a useful team shape. A profile describes one kind of
-agent within that team. aweb materializes profiles into runnable agent homes and
-you choose which AI runtime staffs each home.
+> **Status: advanced, optional helper.** A complete aweb team may use only
+> identity, membership, and communication. It does not need Library, a profile
+> service, a blueprint, or a materialized runtime home.
+
+A blueprint can describe a useful team shape. A profile can describe one kind
+of agent within that team. The `aw` CLI offers opt-in profile materialization,
+but the operator or orchestrator owns agent definitions, homes, worktrees,
+runtime selection, process lifecycle, and session UX.
 
 ## The four nouns
 
@@ -20,9 +25,10 @@ instructions, locks, mail, chat, and presence.
 
 ### Agent
 
-An agent is a named member of a team. It has an identity, a materialized home,
-and normally one installed profile. The same team can contain several agents
-with the same profile.
+An agent is a named member of a team. Membership requires an identity, not a
+profile or a materialized home. When an operator chooses profile
+materialization, the same team can contain several agents using the same
+profile.
 
 ### Profile
 
@@ -33,11 +39,11 @@ vendor.
 
 ### Runtime
 
-A runtime is the AI tool selected when an agent is materialized—for example,
-Claude Code, Pi, Codex, or `local-shell`. Runtime is a staffing-time choice, not
-a property of the profile.
+A runtime is the AI tool an operator or orchestrator selects—for example,
+Claude Code, Pi, Codex, or `local-shell`. Runtime is an external staffing
+choice, not a property of the profile or an aweb-owned lifecycle.
 
-## Start from the public Library
+## Optional public Library seed
 
 [`aweb.team`](https://library.aweb.ai/blueprints/aweb.team) is a maintained
 starter blueprint in the open [aweb Library](https://library.aweb.ai). It
@@ -45,19 +51,20 @@ contains profiles such as
 [`developer`](https://library.aweb.ai/blueprints/aweb.team/profiles/developer)
 and [`reviewer`](https://library.aweb.ai/blueprints/aweb.team/profiles/reviewer).
 
-When you use a specification such as:
+When you opt into a Library-backed specification such as:
 
 ```text
 alice@aweb.team/developer=claude-code
 ```
 
-aweb reads that public profile from the catalog and materializes a pinned local
-snapshot. You do not need to install the private Library plugin to create or
-run the team.
+the CLI reads that public profile from the catalog and materializes a pinned
+local snapshot. This path requires catalog access, but the team itself does
+not. An empty-profile member such as `alice:local` requires no Library service
+or plugin.
 
-## What materialization creates
+## What the optional materialization helper creates
 
-A materialized home contains:
+When selected, the helper creates a home containing:
 
 - the agent's aweb identity and team context;
 - profile resources under `.aw/profile/`;
@@ -90,8 +97,9 @@ the team-authority axis; local/global is the agent-identity axis.
 
 ## Public seed versus private evolution
 
-Creating a team reads the public catalog. Improving a profile for one team is a
-separate, opt-in loop using the team's private Library shelf:
+Creating or adding a member with a Library-backed profile reads the public
+catalog. Improving that profile for one team is a separate, opt-in loop using
+the team's private Library shelf:
 
 1. adopt the public pin onto the team shelf;
 2. let agents propose improvements as they work;

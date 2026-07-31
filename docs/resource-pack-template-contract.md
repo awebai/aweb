@@ -1,11 +1,16 @@
 ---
 title: "aweb resource-pack template contract"
-kicker: "Product SOT"
+kicker: "Advanced contract"
 description: "Contract for new-design templates that package roles, instructions, playbooks, skills, and harness adapters without owning identity or workspace state."
 weight: 24
 ---
 
 # aweb resource-pack template contract
+
+> **Status: current advanced optional contract.** Resource packs package
+> inspectable operating resources. They are not required for identity,
+> membership, messaging, or coordination, and they do not transfer ownership of
+> agent definitions or runtime lifecycle to aweb.
 
 This document defines the replacement model for the bootstrap-era template
 repos such as `aweb-team-coord-worktrees` and `aweb-team-company-surfaces`.
@@ -14,10 +19,11 @@ A new-design template is a **resource pack**. It packages reusable team
 operating resources that a human or agent can inspect and adapt. It is not an
 identity, team, workspace, filesystem, or git-worktree mutation plan.
 
-A repo that packages a resource pack together with the skills and
-architecture knowledge an agent needs to create a team from it is a **team
-blueprint** ([team-blueprints-sot.md](team-blueprints-sot.md)). This document
-defines the manifest layer that blueprints build on.
+A repo may package a resource pack together with skills and external
+orchestrator knowledge. Historical material called that larger composition a
+**team blueprint**. Aweb defines only this optional resource manifest and the
+explicit coordination primitives used to apply selected resources; it does not
+define or launch the resulting agents.
 
 ## Design goals
 
@@ -131,7 +137,7 @@ Allowed top-level fields:
 | `summary` | no | Human-readable description. |
 | `resources.instructions` | no | Path to harness-neutral shared instructions Markdown. |
 | `resources.roles` | no | Map of role name to harness-neutral role Markdown. |
-| `resources.souls` | no | Map of soul name to a soul directory (`soul.yaml`, `AGENTS.md`, seed `docs/`/`decisions/`/`memory/`). Souls are identity-free canonical agent bodies. |
+| `resources.souls` | no | Compatibility map of name to an optional, identity-free definition directory (`soul.yaml`, `AGENTS.md`, seed `docs/`/`decisions/`/`memory/`). Aweb treats these as opaque orchestrator-owned resources; it does not define their semantics or lifecycle. |
 | `resources.playbooks` | no | Map of playbook key to Markdown. |
 | `resources.docs` | no | Map of doc key to shared team docs Markdown (e.g. a team architecture doc copied into the target). |
 | `resources.fragments` | no | Map of fragment key to Markdown snippets. |
