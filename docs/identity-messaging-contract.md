@@ -34,9 +34,11 @@ envelope rules:
 
 ## Global And Local Identities
 
-- **Global identity**: durable `did:aw`, AWID-registered current `did:key`,
-  and one or more address aliases. Delivery routes belong to addresses, not to
-  the identity row.
+- **Global identity**: durable `did:aw` and AWID-registered current `did:key`.
+  It may have zero, one, or many address aliases. Delivery routes belong to
+  addresses, not to the identity row. An addressless global identity remains
+  global but has no address-based first-contact route. Address-based first
+  contact requires a concrete assigned address; identity registration does not.
 - **Local identity**: `did:key` only, no AWID row, no `did:aw`, no stable/global
   ID, and no global first-contact address.
 

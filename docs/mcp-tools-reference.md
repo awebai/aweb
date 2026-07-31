@@ -24,7 +24,10 @@ MCP section of [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
 - The canonical auth contract lives in the MCP and Authentication sections of
   [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md); this reference does not
   restate request headers or the signature envelope.
-- Tools run in the caller's authenticated team scope.
+- All tools require authenticated identity context.
+- Identity, mail, chat, and contact operations can run without team context
+  where their operation permits it.
+- Team-scoped coordination families require resolved team context.
 - Every currently registered tool returns a string. Treat results as
   human-readable output rather than a stable JSON contract.
 - If a connected client cached an older tool list, refresh its tools. If

@@ -45,6 +45,23 @@ class MCPReferenceGeneratorTests(unittest.TestCase):
         self.assertNotIn("aweb_welcome_guide", rendered)
         self.assertNotIn("create_invite_link", rendered)
 
+    def test_auth_text_distinguishes_identity_from_team_context(self) -> None:
+        rendered = generator.render_reference(self.tools)
+
+        self.assertIn("All tools require authenticated identity context", rendered)
+        self.assertIn(
+            "Identity, mail, chat, and contact operations can run without team context",
+            rendered,
+        )
+        self.assertIn(
+            "Team-scoped coordination families require resolved team context",
+            rendered,
+        )
+        self.assertNotIn(
+            "Tools run in the caller's authenticated team scope",
+            rendered,
+        )
+
     def test_new_registered_tool_fails_closed_until_classified(self) -> None:
         tools = dict(self.tools)
         tools["unclassified_tool"] = SimpleNamespace(name="unclassified_tool")
