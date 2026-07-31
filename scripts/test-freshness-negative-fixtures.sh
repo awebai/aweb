@@ -28,7 +28,7 @@ run_self_test "generated CLI reference" \
   "self-test passed: a clean CLI reference passes and a duplicate fails" \
   bash scripts/regenerate-cli-reference.sh --self-test
 run_self_test "AWID public site document mirrors" \
-  "self-test passed: clean AWID site document mirrors pass and every configured stale copy fails" \
+  "self-test passed: clean mirrors pass; stale copies and dead publication-context links fail" \
   bash scripts/test-awid-site-doc-freshness.sh
 run_self_test "TypeScript dist" \
   "self-test passed: clean TypeScript builds pass and source-level security reverts fail" \
