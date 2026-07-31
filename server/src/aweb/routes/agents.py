@@ -421,6 +421,7 @@ async def list_agents(
     context_rows = await aweb_db.fetch_all(
         """
         SELECT w.agent_id,
+               w.workspace_id,
                w.workspace_type,
                w.hostname,
                w.workspace_path,
@@ -434,16 +435,20 @@ async def list_agents(
     )
     context_by_agent = {str(r["agent_id"]): r for r in context_rows}
 
-    # Presence from Redis
-    agent_ids = [str(r["agent_id"]) for r in rows]
-    presences = await list_agent_presences_by_workspace_ids(redis, agent_ids) if redis and agent_ids else []
+    # Presence is keyed by workspace_id, not agent_id.
+    workspace_ids = [str(r["workspace_id"]) for r in context_rows]
+    presences = (
+        await list_agent_presences_by_workspace_ids(redis, workspace_ids)
+        if redis and workspace_ids
+        else []
+    )
     presence_by_id = {str(p.get("workspace_id")): p for p in presences if p.get("workspace_id")}
 
     agents: list[AgentView] = []
     for r in rows:
         agent_id = str(r["agent_id"])
         ctx = context_by_agent.get(agent_id)
-        presence = presence_by_id.get(agent_id)
+        presence = presence_by_id.get(str(ctx["workspace_id"])) if ctx else None
 
         status = "offline"
         last_seen = None
@@ -513,24 +518,32 @@ async def heartbeat(
     """Update workspace last_seen_at and Redis presence."""
     aweb_db = db.get_manager("aweb")
 
-    # Update last_seen_at on the workspace scoped by team_id
-    await aweb_db.execute(
+    # Update and return the workspace identifier used by the presence store.
+    workspace = await aweb_db.fetch_one(
         """
-        UPDATE {{tables.workspaces}}
+        UPDATE {{tables.workspaces}} w
         SET last_seen_at = NOW(), updated_at = NOW()
-        WHERE team_id = $1 AND agent_id = (
-            SELECT agent_id FROM {{tables.agents}}
-            WHERE agent_id = $2::UUID AND team_id = $1 AND deleted_at IS NULL
-        ) AND deleted_at IS NULL
+        FROM {{tables.agents}} a
+        WHERE w.team_id = $1
+          AND w.agent_id = $2::UUID
+          AND w.alias = $3
+          AND w.deleted_at IS NULL
+          AND a.team_id = w.team_id
+          AND a.agent_id = w.agent_id
+          AND a.deleted_at IS NULL
+        RETURNING w.workspace_id
         """,
         identity.team_id,
         identity.agent_id,
+        identity.alias,
     )
+    if workspace is None:
+        raise HTTPException(status_code=409, detail="Agent has no active workspace")
 
     ttl_seconds = 1800
     last_seen = await update_agent_presence(
         redis,
-        agent_id=identity.agent_id,
+        workspace_id=str(workspace["workspace_id"]),
         alias=identity.alias,
         team_id=identity.team_id,
         ttl_seconds=ttl_seconds,

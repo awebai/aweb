@@ -188,13 +188,29 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	workspaceIDsByAgentID := map[string][]string{}
+	for _, workspace := range teamResp.Workspaces {
+		agentID := strings.TrimSpace(workspace.AgentID)
+		workspaceID := strings.TrimSpace(workspace.WorkspaceID)
+		if agentID != "" && workspaceID != "" {
+			workspaceIDsByAgentID[agentID] = append(workspaceIDsByAgentID[agentID], workspaceID)
+		}
+	}
+
 	locksByWorkspace := map[string][]aweb.ReservationView{}
 	for _, reservation := range locksResp.Reservations {
 		holder := strings.TrimSpace(reservation.HolderAgentID)
 		if holder == "" {
 			continue
 		}
-		locksByWorkspace[holder] = append(locksByWorkspace[holder], reservation)
+		targets := workspaceIDsByAgentID[holder]
+		if len(targets) == 0 {
+			// Older servers did not expose agent_id and commonly used equal IDs.
+			targets = []string{holder}
+		}
+		for _, target := range targets {
+			locksByWorkspace[target] = append(locksByWorkspace[target], reservation)
+		}
 	}
 	for holder := range locksByWorkspace {
 		sort.Slice(locksByWorkspace[holder], func(i, j int) bool {

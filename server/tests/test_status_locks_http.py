@@ -1,4 +1,4 @@
-"""Probe: does GET /v1/status report reservations held by the workspace's agent?"""
+"""HTTP coverage for agent-held reservations in workspace status."""
 
 from __future__ import annotations
 
@@ -57,6 +57,14 @@ def _signed_headers(agent_sk, agent_did_key, team_id):
     }
 
 
+class _FakePipeline:
+    def hgetall(self, key):
+        return self
+
+    async def execute(self):
+        return []
+
+
 class _FakeRedis:
     async def smembers(self, key):
         return set()
@@ -65,17 +73,11 @@ class _FakeRedis:
         return {}
 
     def pipeline(self, transaction=True):
-        return self
-
-    def hgetall_pipe(self, key):
-        return self
-
-    async def execute(self):
-        return []
+        return _FakePipeline()
 
 
 @pytest.mark.asyncio
-async def test_probe_status_locks(aweb_cloud_db):
+async def test_status_reports_reservation_held_by_workspace_agent(aweb_cloud_db):
     aweb_db = aweb_cloud_db.aweb_db
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
@@ -151,13 +153,9 @@ async def test_probe_status_locks(aweb_cloud_db):
         resp = await client.get("/v1/status", headers=headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    print("AGENT_ID     ", agent_id)
-    print("WORKSPACE_ID ", workspace_id)
-    print("LOCKS        ", json.dumps(body["locks"]))
-    print("AGENT LOCKS  ", json.dumps([a["reservations"] for a in body["agents"]]))
-    reservations_rows = await aweb_db.fetch_all(
-        "SELECT resource_key, holder_agent_id FROM {{tables.reservations}} WHERE team_id = $1",
-        team_id,
-    )
-    print("DB ROWS      ", [dict(r) for r in reservations_rows])
-    assert body["locks"], "status reported no locks while a live reservation exists"
+    assert [lock["resource_key"] for lock in body["locks"]] == [
+        "server/src/aweb/routes/status.py"
+    ]
+    assert [lock["resource_key"] for lock in body["agents"][0]["reservations"]] == [
+        "server/src/aweb/routes/status.py"
+    ]
