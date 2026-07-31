@@ -193,9 +193,10 @@ There is also a concrete repository-hygiene warning. The upstream
 currently contains a section that declares the repository to be a particular
 contributor's fork and records that fork's local branch, port, and cleanup
 instructions. This appears to have entered upstream as part of a much larger
-adapter contribution. It is not proof that Paperclip caused the mistake, but it
-is an observable example of velocity outpacing review at the exact instruction
-surface used by future agents.
+[adapter contribution](https://github.com/paperclipai/paperclip/pull/8543). It
+is not proof that Paperclip caused the mistake, but it is an observable example
+of velocity outpacing review at the exact instruction surface used by future
+agents.
 
 These issues can be fixed, and rapid issue discovery is itself a sign of real
 usage. Their relevance is that reliable process lifecycle, context delivery,
