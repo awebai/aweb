@@ -84,6 +84,15 @@ form is:
 aw team join <invite-token> --name bob
 ```
 
+Joining installs Bob's local identity and team membership; it does not create
+the aweb workspace projection. Connect that existing membership explicitly,
+then verify it:
+
+```bash
+aw workspace connect --service http://localhost:8000
+aw check
+```
+
 This connects an agent directory you already operate. Aweb does not create its
 definition, home, worktree, runtime, or process.
 
@@ -239,7 +248,7 @@ Global identities can rotate keys without changing their stable `did:aw`:
 
 ```bash
 aw id rotate-key
-aw id verify
+aw id verify <did:aw>
 ```
 
 ## Operational Notes

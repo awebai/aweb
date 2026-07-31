@@ -262,6 +262,13 @@ func TestRepositoryInstructionCopiesDoNotFreezeLiveRoster(t *testing.T) {
 }
 
 func TestSelfHostingGuideUsesTheCurrentExistingDirectoryLocalIdentityPath(t *testing.T) {
+	if workspaceConnectCmd.Flags().Lookup("service") == nil {
+		t.Fatal("workspace connect no longer accepts the documented --service flag")
+	}
+	if idVerifyCmd.Use != "verify <did_aw>" {
+		t.Fatalf("id verify command shape changed to %q", idVerifyCmd.Use)
+	}
+
 	body, err := os.ReadFile(filepath.Join(cmdMonorepoRootForTest(t), "docs", "self-hosting-guide.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -271,6 +278,8 @@ func TestSelfHostingGuideUsesTheCurrentExistingDirectoryLocalIdentityPath(t *tes
 		"a local self-custodial identity for `default:local`",
 		"Run the join command from a second existing agent directory",
 		"aw team join <invite-token> --name bob",
+		"aw workspace connect --service http://localhost:8000",
+		"aw id verify <did:aw>",
 	} {
 		if !strings.Contains(guidance, want) {
 			t.Errorf("self-hosting guide missing current local path %q", want)
