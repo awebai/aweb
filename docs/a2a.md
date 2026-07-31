@@ -48,7 +48,7 @@ In scope:
 - A2A card verification tiers in `aw a2a card`.
 - Security, custody, plaintext boundary, and product terminology.
 
-Out of scope for the first product slice:
+Out of scope for the current experimental surface:
 
 - `SendStreamingMessage`, `SubscribeToTask`, and A2A push-notification methods.
 - gRPC binding.
@@ -70,7 +70,7 @@ https://{host}/.well-known/agent-card.json
 
 An Agent Card declares skills, supported interfaces, protocol binding, protocol version, capabilities, input/output media types, and auth requirements. A2A v1.0 supports multiple protocol bindings; this contract targets **JSON-RPC** first.
 
-The gateway ingress contract is strict A2A v1.0. It does not silently accept pre-1.0 method aliases such as `message/send` or lowercase task-state values. Any compatibility mode for older event harnesses or SDKs must be explicit, separately tested, and not mixed into the product-trusted v1.0 contract.
+The gateway ingress contract is strict A2A v1.0. It does not silently accept pre-1.0 method aliases such as `message/send` or lowercase task-state values. Any compatibility mode for older event harnesses or SDKs must be explicit, separately tested, and not mixed into the strict v1.0 contract.
 
 The JSON-RPC method names in this contract use the A2A v1.0 names:
 
@@ -258,7 +258,7 @@ The fixture source was cross-checked against the upstream A2A repository's `scri
 
 Hex is intentional for A2A card digests because the digest is a public content-addressing value for a served document. This differs deliberately from some AWID signed-proof hashes that use raw-standard-base64-no-padding for compact signed payload fields. Do not unify these encodings without a contract amendment and fixture update.
 
-For the first product slice, generated aweb Agent Cards expose JSON-RPC v1.0 interfaces only. Every generated `supportedInterfaces[]` entry must therefore use `protocolBinding: "JSONRPC"` and `protocolVersion: "1.0"`. A later gRPC/HTTP/native binding requires a contract update and new fixtures before generated cards can include mixed bindings.
+Current generated aweb Agent Cards expose JSON-RPC v1.0 interfaces only. Every generated `supportedInterfaces[]` entry must therefore use `protocolBinding: "JSONRPC"` and `protocolVersion: "1.0"`. A later gRPC/HTTP/native binding requires a contract update and new fixtures before generated cards can include mixed bindings.
 
 Unauthenticated routes omit `securitySchemes` and `securityRequirements` rather than emitting empty objects/arrays in canonical digest vectors. `streaming: false` and `pushNotifications: false` are deliberate advertised capabilities for initial generated cards and are part of the digest bytes; `extendedAgentCard: false` is omitted unless we deliberately advertise extended-card support state.
 
@@ -446,7 +446,7 @@ For operator-configured internal/event routes before AWID delegation enforcement
 - docs/cards MUST label this as locally configured/unverified delegation, not AWID-verified delegation.
 - customer-facing UI, CLI, cards, and docs MUST NOT call the route "verified", "AWID-backed", or "authorized for address X" until AWID publication and delegation checks are enforced. Operator-configured routes are only "configured by gateway operator."
 
-For product-trusted external routes:
+For AWID-verified external routes:
 
 - AWID publication assertion is active;
 - AWID bridge delegation is active;
@@ -502,9 +502,11 @@ On new A2A message:
 5. Transition task to `TASK_STATE_WORKING`.
 6. Return task immediately, optionally waiting up to a short configured window for a reply.
 
-The gateway MUST NOT require synchronous agent liveness for `SendMessage` to succeed unless the route is explicitly configured as sync-only.
+The gateway does not require synchronous agent liveness for `SendMessage` to
+succeed when `configuration.returnImmediately: true`.
 
-For the product async path, A2A clients SHOULD send `configuration.returnImmediately: true`. In that case the gateway returns after creating/updating the task and sending the durable aweb bridge message.
+For the current async path, A2A clients SHOULD send
+`configuration.returnImmediately: true`. In that case the gateway returns after creating/updating the task and sending the durable aweb bridge message.
 
 If `configuration.returnImmediately` is absent or false, the gateway follows A2A semantics by waiting until the task reaches a terminal or interrupted state. If the route response wait timeout expires before an agent reply, the gateway returns the current non-terminal task state, usually `TASK_STATE_WORKING`, and leaves the task pollable until task TTL expiry. The route response timeout is only an HTTP wait bound; it is not a terminal task failure.
 
@@ -707,7 +709,9 @@ Anyone can serve a card claiming a name. Tier-2 AWID verification is what binds 
 
 ### 13.2 Gateway Impersonation
 
-The gateway must not silently impersonate self-custodial agents. Messages sent by the gateway should be visibly from the gateway identity and include on-behalf-of metadata until a stronger product-specific sender model is designed.
+The gateway must not silently impersonate self-custodial agents. Messages sent by the gateway should be visibly from the gateway identity and
+include on-behalf-of metadata unless a separate reviewed sender model replaces
+it.
 
 ### 13.3 Replay and Stale Cards
 
@@ -844,4 +848,5 @@ Directory:
 
 A future `https://aweb.ai/a2a/binding/v1` could map A2A operations onto signed and optionally E2EE aweb messages between AWID identities. That would provide A2A task semantics with aweb identity, offline-verifiable authorship, and E2EE.
 
-This is not part of the gateway product slice. It becomes worth specifying only if external A2A SDKs or clients want to implement it.
+This is not part of the current gateway surface. It should be specified only if
+external A2A SDKs or clients need it.
