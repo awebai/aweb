@@ -424,6 +424,7 @@ def self_test(root: Path) -> int:
 
         path_mutations = (
             "docs/examples/A2A-GW-" + "AC.yaml",
+            "reviewer/AC_" + "CONFIG.go",
             "reviewer/a2a/AC_" + "CONFIG.go",
             "docs/examples/a2a-ac-" + "managed-gateway-contract-copy.yaml",
         )
