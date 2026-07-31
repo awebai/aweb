@@ -22,11 +22,10 @@ Use this page to decide which document has authority after the stack is running.
   removal is complete.
 
 The baseline contains 101 tracked Markdown documents. This front door does not
-self-link, and three private-purpose Markdown artifacts are deliberately not
-exposed by public path or title. The remaining 97 public Markdown paths appear
-below exactly once. Those three artifacts and one private-purpose configuration
-example remain represented by neutral, unlinked transition descriptions until
-their later consumer-ordered relocation or removal.
+self-link. Private-purpose artifacts are deliberately not exposed by public path
+or title. The remaining 97 public Markdown paths appear below exactly once.
+Private transition artifacts remain represented by neutral, unlinked transition
+descriptions until their later consumer-ordered relocation or removal.
 
 ## Start here
 
