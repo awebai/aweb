@@ -21,6 +21,7 @@ to refresh it.
 | Messaging & Network | `a2a`, `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
 | Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
+| Additional Commands | `blueprint`, `session` |
 
 ## Global Flags
 
@@ -2586,3 +2587,132 @@ Print version information
 
 Flags:
 - `-h, --help help for version`
+
+## `blueprint`
+
+### `blueprint`
+
+Inspect and manage Library blueprints
+
+Subcommands:
+- `inspect` Inspect a blueprint without importing or materializing it
+- `materialize` Materialize one local blueprint profile into a local agent home
+- `publish-profile` Publish one local blueprint profile to the team's private Library shelf
+
+Flags:
+- `-h, --help help for blueprint`
+
+## `blueprint inspect`
+
+### `blueprint inspect`
+
+Inspect a blueprint without importing or materializing it
+
+Flags:
+- `-h, --help help for inspect`
+- `--json Print machine-readable JSON`
+
+## `blueprint materialize`
+
+### `blueprint materialize`
+
+Materialize one local blueprint profile into a local agent home
+
+Flags:
+- `--force Overwrite existing materialized files`
+- `-h, --help help for materialize`
+- `--json Print machine-readable JSON`
+- `--profile string Profile id to materialize`
+- `--target string Target local agent home directory`
+
+## `blueprint publish-profile`
+
+### `blueprint publish-profile`
+
+Pack a profile from a local blueprint source and publish it to the team's private
+Library shelf (create-shelf-profile). --profile is optional when the source has exactly
+one profile and required when it has more than one. The request is signed with the
+active team certificate (library:write).
+
+Flags:
+- `-h, --help help for publish-profile`
+- `--json Print machine-readable JSON`
+- `--profile string Profile id to publish (optional when the source has exactly one)`
+- `--tag strings Tag to attach to the shelf profile (repeatable)`
+
+## `session`
+
+### `session`
+
+Session-scoped coordination
+
+Subcommands:
+- `lease` Manage the principal's session admission lease
+
+Flags:
+- `-h, --help help for session`
+
+## `session lease`
+
+### `session lease`
+
+Manage the principal's session admission lease
+
+Subcommands:
+- `acquire`
+- `release`
+- `renew`
+- `status`
+- `takeover` Explicit audited early takeover
+
+Flags:
+- `-h, --help help for lease`
+
+## `session lease acquire`
+
+### `session lease acquire`
+
+Flags:
+- `-h, --help help for acquire`
+- `--session-id string Per-session identifier`
+- `--session-key string Per-session secret (at least 32 characters; avoid shell history)`
+- `--ttl-seconds int Lease TTL in seconds (default 300)`
+
+## `session lease release`
+
+### `session lease release`
+
+Flags:
+- `-h, --help help for release`
+- `--session-id string Per-session identifier`
+- `--session-key string Per-session secret (at least 32 characters; avoid shell history)`
+
+## `session lease renew`
+
+### `session lease renew`
+
+Flags:
+- `-h, --help help for renew`
+- `--session-id string Per-session identifier`
+- `--session-key string Per-session secret (at least 32 characters; avoid shell history)`
+- `--ttl-seconds int Lease TTL in seconds (default 300)`
+
+## `session lease status`
+
+### `session lease status`
+
+Flags:
+- `-h, --help help for status`
+
+## `session lease takeover`
+
+### `session lease takeover`
+
+Explicit audited early takeover
+
+Flags:
+- `-h, --help help for takeover`
+- `--reason string Required audited reason`
+- `--session-id string Per-session identifier`
+- `--session-key string Per-session secret (at least 32 characters; avoid shell history)`
+- `--ttl-seconds int Lease TTL in seconds (default 300)`

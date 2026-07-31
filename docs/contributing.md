@@ -84,7 +84,10 @@ GOCACHE=/tmp/go-build-aweb go test ./...
 3. Add unit tests next to the command implementation.
 4. Verify help output stays clear, because the docs are generated from the live
    command surface.
-5. Update [`docs/cli-command-reference.md`](./cli-command-reference.md).
+5. Run `make regenerate-cli-reference`, then `make test-cli-reference`. Do not
+   edit [`docs/cli-command-reference.md`](./cli-command-reference.md) by hand.
+   The test compares the rendered root families with Cobra's independent
+   completion inventory and fails for newly visible, removed, or stale commands.
 
 ## Migrations
 
@@ -126,7 +129,8 @@ cd cli/go && GOCACHE=/tmp/go-build-aweb go test ./...
 
 Some tracked files are generated from source and must not drift from it: the
 `uv.lock` files (`awid/`, `server/`), the CLI command reference
-(`docs/cli-command-reference.md`), the reserved-app-ids artifacts, resource
+(`docs/cli-command-reference.md`, regenerated and tested with the Make targets
+above), the reserved-app-ids artifacts, resource
 packs, the public AWID site mirrors of `docs/identity-guide.md` and
 `docs/trust-model.md`, and the built claude-channel and pi-extension bundles
 (both rebuilt from `channel-core` source at build time).
