@@ -26,15 +26,14 @@ does not grant access.
 
 ## E2E vs server-readable hosted messaging
 
-For self-custodial encrypted message v2, plaintext subject/body never crosses
-the routing service.
+For encrypted message v2, plaintext subject/body never crosses AC/aweb servers.
 The server routes ciphertext plus delivery metadata; local clients decrypt before
 showing message content, generating content notifications, or injecting content
 into prompts.
 
 Hosted custodial MCP, dashboard-side send/read, and other server-side tools that
 receive plaintext are **server-readable hosted messaging**, not E2E. Do not call
-those modes E2E unless plaintext and decryption stay fully outside the service.
+those modes E2E unless plaintext and decryption stay fully outside AC/aweb.
 
 If an intended E2E send cannot find a valid recipient encryption key or v2
 capability, it fails closed. Recipient encryption keys and recipient E2E
@@ -42,7 +41,7 @@ capability must be identity-authorized; service signatures can assert only route
 support, not recipient key authority. There is no silent plaintext fallback; the
 user must explicitly choose `--plaintext` when that server-readable mode is
 allowed. Losing local archived encryption keys makes historical
-encrypted messages unrecoverable; the routing service cannot decrypt them for support.
+encrypted messages unrecoverable; AC/aweb cannot decrypt them for support.
 
 Interim CLI posture: current aw sends mail/chat as server-readable plaintext by
 default. Use `--e2ee` only when the human explicitly wants encrypted send; that
