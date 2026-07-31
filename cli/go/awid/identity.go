@@ -187,8 +187,20 @@ func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*Resolv
 }
 
 func (r *ChainResolver) ResolveFresh(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
-	if _, _, ok := splitTeamMemberReference(identifier); ok && r.Team != nil {
-		return r.Team.ResolveFresh(ctx, identifier)
+	if r.Team != nil {
+		if _, _, ok := r.Team.reference(identifier); ok {
+			identity, err := r.Team.ResolveFresh(ctx, identifier)
+			if err == nil {
+				return identity, nil
+			}
+			_, _, qualifiedTeamMember := splitTeamMemberReference(identifier)
+			_, _, projectedAddress := splitRegistryAddress(identifier)
+			statusCode, hasStatus := HTTPStatusCode(err)
+			if !qualifiedTeamMember && projectedAddress && hasStatus && statusCode == http.StatusNotFound && r.Registry != nil {
+				return r.Registry.ResolveFresh(ctx, identifier)
+			}
+			return nil, err
+		}
 	}
 	return r.Resolve(ctx, identifier)
 }

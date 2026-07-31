@@ -159,9 +159,22 @@ func (r *TeamRosterResolver) ResolveFresh(ctx context.Context, identifier string
 	return r.resolve(ctx, identifier, true)
 }
 
+func (r *TeamRosterResolver) reference(identifier string) (teamID, alias string, ok bool) {
+	configuredTeamID := strings.TrimSpace(r.TeamID)
+	if teamID, alias, ok = splitTeamMemberReference(identifier); ok {
+		return teamID, alias, teamID == configuredTeamID
+	}
+	domain, alias, ok := splitRegistryAddress(identifier)
+	teamDomain, _, err := ParseTeamID(configuredTeamID)
+	if !ok || err != nil || domain != teamDomain {
+		return "", "", false
+	}
+	return configuredTeamID, alias, true
+}
+
 func (r *TeamRosterResolver) resolve(ctx context.Context, identifier string, forceRefresh bool) (*ResolvedIdentity, error) {
-	teamID, alias, ok := splitTeamMemberReference(identifier)
-	if !ok || teamID != strings.TrimSpace(r.TeamID) || r.Client == nil {
+	teamID, alias, ok := r.reference(identifier)
+	if !ok || r.Client == nil {
 		return nil, fmt.Errorf("TeamRosterResolver: unsupported team member reference %q", identifier)
 	}
 	if strings.TrimSpace(r.Client.teamID) != teamID || strings.TrimSpace(r.Client.teamCertHeader) == "" || len(r.Client.signingKey) == 0 {

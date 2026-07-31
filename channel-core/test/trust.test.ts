@@ -173,6 +173,7 @@ describe("SenderTrustManager", () => {
   test("uses a no-cache certificate-authenticated roster read before verifying a local sender", async () => {
     const self = await didFromSeed(41);
     const currentIdentity = await didFromSeed(43);
+    const globalIdentity = await didFromSeed(50);
     const requests: Array<{ authorization: string; certificate: string; cacheControl: string }> = [];
     vi.stubGlobal("fetch", vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
@@ -181,10 +182,13 @@ describe("SenderTrustManager", () => {
         certificate: headers.get("X-AWID-Team-Certificate") || "",
         cacheControl: headers.get("Cache-Control") || "",
       });
-      return new Response(JSON.stringify(localRoster({
-        did_key: currentIdentity.did,
-        identity_scope: "local",
-      })), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({
+        team_id: "backend:acme.com",
+        agents: [
+          { alias: "alice", did_key: currentIdentity.did, identity_scope: "local" },
+          { alias: "grace", did_key: globalIdentity.did, did_aw: "did:aw:grace", identity_scope: "global" },
+        ],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
     }));
 
     const client = new APIClient("https://aweb.example", {
@@ -202,12 +206,14 @@ describe("SenderTrustManager", () => {
       "",
     );
 
-    expect((await trust.normalizeTrust(store, "verified", "alice", currentIdentity.did, undefined, undefined)).status).toBe("verified");
-    expect(requests).toHaveLength(1);
+    expect((await trust.normalizeTrust(store, "verified", "acme.com/alice", currentIdentity.did, undefined, undefined)).status).toBe("verified");
+    expect((await trust.normalizeTrust(store, "verified", "acme.com/grace", globalIdentity.did, "did:aw:grace", undefined)).status).toBe("verified");
+    expect(requests).toHaveLength(2);
     expect(requests[0].authorization).toMatch(/^DIDKey /);
     expect(requests[0].certificate).toBe("certificate-header");
     expect(requests[0].cacheControl).toBe("no-cache");
-    expect(store.pins.size).toBe(0);
+    expect(requests[1].cacheControl).toBe("no-cache");
+    expect(store.pins.size).toBe(1);
   });
 
   test.each([
@@ -252,8 +258,10 @@ describe("SenderTrustManager", () => {
       "backend:acme.com",
       "",
     );
-    const stableID = variant === "different-key-with-forged-stable-id" ? "did:aw:forged" : undefined;
-    expect((await trust.normalizeTrust(store, "verified", "alice", currentIdentity.did, stableID, undefined)).status).toBe(expected);
+    const projected = variant === "different-key-with-forged-stable-id";
+    const stableID = projected ? "did:aw:forged" : undefined;
+    const sender = projected ? "acme.com/alice" : "alice";
+    expect((await trust.normalizeTrust(store, "verified", sender, currentIdentity.did, stableID, undefined)).status).toBe(expected);
   });
 
   test("preserves local mismatch when the authoritative roster row has a different key", async () => {

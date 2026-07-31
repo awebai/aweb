@@ -1250,6 +1250,66 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-stable-envelope/ack");
   });
 
+  test("live projected local address uses authenticated fresh-roster equality", async () => {
+    const onAwakening = vi.fn();
+    const env: MessageEnvelope = {
+      from: "alice",
+      from_did: vectors.did,
+      to: self.alias,
+      to_did: self.did,
+      type: "mail",
+      subject: "projected local sender",
+      body: "must use current roster",
+      timestamp: "2025-01-01T00:00:00Z",
+      message_id: "mail-projected-local",
+    };
+    const signature = await signMessage(b64ToBytes(vectors.seed), env);
+    const rosterDID = vectors.did.slice(0, -1) + (vectors.did.endsWith("1") ? "2" : "1");
+    const client = {
+      hasTeamCertificateAuth: (teamID: string) => teamID === "backend:acme.com",
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: env.message_id,
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: self.alias,
+          subject: env.subject,
+          body: env.body,
+          priority: "normal",
+          created_at: env.timestamp,
+          from_did: vectors.did,
+          to_did: self.did,
+          signature,
+          signing_key_id: vectors.did,
+          signed_payload: canonicalJSON(env),
+        }],
+      }),
+      getFresh: vi.fn().mockResolvedValue({
+        team_id: "backend:acme.com",
+        agents: [{ alias: "alice", did_key: rosterDID, identity_scope: "local" }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = new SenderTrustManager(
+      client as never,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      self.did,
+      self.stableID,
+    );
+
+    await dispatchAgentEvent(
+      { client: client as never, pinStore: new PinStore(), trust, self, onAwakening },
+      new Set(),
+      { type: "mail_message", message_id: env.message_id } satisfies AgentEvent,
+    );
+
+    expect(client.getFresh).toHaveBeenCalledWith("/v1/agents");
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      meta: expect.objectContaining({ trust_status: "identity_mismatch", verified: "false" }),
+    }));
+  });
+
   test("live mail reports stale verifier cache without claiming identity mismatch", async () => {
     const onAwakening = vi.fn();
     const client = {

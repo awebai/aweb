@@ -113,7 +113,7 @@ export class SenderTrustManager {
       status !== "verified"
       && status !== "verified_legacy"
       && status !== "verified_custodial"
-      && isLocalAliasReference(rawAddress.trim())
+      && this.teamRosterAliasReference(rawAddress.trim()) !== undefined
       && !fromStableID
     ) {
       return { status, stored: false };
@@ -122,7 +122,7 @@ export class SenderTrustManager {
     if (
       status === "verified"
       && !recipientBindingMismatch
-      && isLocalAliasReference(rawAddress.trim())
+      && this.teamRosterAliasReference(rawAddress.trim()) !== undefined
       && fromDID
     ) {
       const fresh = await this.resolveAgentMeta(rawAddress, true);
@@ -173,7 +173,7 @@ export class SenderTrustManager {
       pinResult.status === "identity_mismatch"
       && !recipientBindingMismatch
       && fromDID
-      && isLocalAliasReference(rawAddress.trim())
+      && this.teamRosterAliasReference(rawAddress.trim()) !== undefined
       && !fromStableID?.startsWith("did:aw:")
     ) {
       return this.verifyLocalSenderAgainstCurrentRoster(store, rawAddress.trim(), trustAddress, fromDID);
@@ -565,15 +565,25 @@ export class SenderTrustManager {
     }
   }
 
+  private teamRosterAliasReference(address: string): string | undefined {
+    const client = this.client as APIClient & { hasTeamCertificateAuth?: (teamID: string) => boolean };
+    return teamRosterAliasReference(
+      address,
+      this.teamID,
+      typeof client.hasTeamCertificateAuth === "function",
+    );
+  }
+
   private async resolveIdentity(address: string, forceRefresh: boolean = false): Promise<ResolvedIdentity> {
     const trimmed = address.trim();
     if (!trimmed) {
       throw new Error("missing address");
     }
-    if (trimmed.includes("/")) {
-      return this.registry.resolveIdentity(trimmed);
-    }
-    if (trimmed.includes("~") || !this.teamID) {
+    const localAlias = this.teamRosterAliasReference(trimmed);
+    if (localAlias === undefined) {
+      if (trimmed.includes("/")) {
+        return this.registry.resolveIdentity(trimmed);
+      }
       throw new Error(`unsupported local address ${trimmed}`);
     }
     if (!this.client.hasTeamCertificateAuth(this.teamID)) {
@@ -587,9 +597,13 @@ export class SenderTrustManager {
     if ((roster.team_id || "").trim() !== this.teamID) {
       throw new Error("team roster response does not match the authenticated team");
     }
-    const response = (roster.agents || []).find((agent) => (agent.alias || "").trim() === trimmed);
+    const response = (roster.agents || []).find((agent) => (agent.alias || "").trim() === localAlias);
     if (!response) {
-      throw Object.assign(new Error(`local alias ${trimmed} is absent from the authenticated team roster`), {
+      const qualifiedTeamPrefix = `${this.teamID.toLowerCase()}/`;
+      if (trimmed.includes("/") && !trimmed.toLowerCase().startsWith(qualifiedTeamPrefix)) {
+        return this.registry.resolveIdentity(trimmed);
+      }
+      throw Object.assign(new Error(`local alias ${localAlias} is absent from the authenticated team roster`), {
         statusCode: 404,
       });
     }
@@ -600,15 +614,26 @@ export class SenderTrustManager {
     return {
       did,
       stableID: response.did_aw,
-      address: response.address || `${this.teamID}/${trimmed}`,
+      address: response.address || `${this.teamID}/${localAlias}`,
       custody: "self",
       identityScope: normalizeIdentityScope(response.identity_scope, response.lifetime, "local"),
     };
   }
 }
 
-function isLocalAliasReference(value: string): boolean {
-  return value !== "" && !value.includes("/") && !value.includes("~") && !value.startsWith("did:");
+function teamRosterAliasReference(value: string, teamID: string, includeProjectedAddress: boolean): string | undefined {
+  const trimmed = value.trim();
+  const configuredTeamID = teamID.trim();
+  if (!trimmed || !configuredTeamID || trimmed.includes("~") || trimmed.startsWith("did:")) return undefined;
+  if (!trimmed.includes("/")) return trimmed;
+  const separator = trimmed.indexOf("/");
+  if (separator <= 0 || trimmed.indexOf("/", separator + 1) !== -1) return undefined;
+  const qualifier = trimmed.slice(0, separator).trim().toLowerCase();
+  const alias = trimmed.slice(separator + 1).trim();
+  if (!alias) return undefined;
+  const namespace = configuredTeamID.split(":", 2)[1]?.trim().toLowerCase();
+  if (qualifier !== configuredTeamID.toLowerCase() && (!includeProjectedAddress || qualifier !== namespace)) return undefined;
+  return alias;
 }
 
 function isTimestampFresh(value: string): boolean {

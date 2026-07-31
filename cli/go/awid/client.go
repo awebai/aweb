@@ -514,6 +514,18 @@ func (c *Client) canonicalTrustAddress(address string) string {
 	return address
 }
 
+func (c *Client) isCurrentTeamRosterReference(address string) bool {
+	if _, _, ok := splitTeamMemberReference(address); ok {
+		return true
+	}
+	chain, ok := c.resolver.(*ChainResolver)
+	if !ok || chain.Team == nil {
+		return false
+	}
+	_, _, ok = chain.Team.reference(address)
+	return ok
+}
+
 // resolveAgentMeta returns cached lifetime/custody metadata for a sender address.
 // On first contact, resolves via the client's IdentityResolver and caches the result.
 // Returns an unresolved marker if no resolver is set or resolution fails.
@@ -593,7 +605,7 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 		return status, isContact
 	}
 	trustAddress := c.canonicalTrustAddress(rawAddress)
-	_, _, localTeamReference := splitTeamMemberReference(trustAddress)
+	localTeamReference := c.isCurrentTeamRosterReference(trustAddress)
 	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial &&
 		localTeamReference && strings.TrimSpace(fromStableID) == "" {
 		return status, isContact

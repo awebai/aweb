@@ -69,10 +69,13 @@ func TestNormalizeSenderTrustUsesAuthenticatedNoCacheTeamRosterRefresh(t *testin
 		t.Fatal(err)
 	}
 	currentSeed := make([]byte, ed25519.SeedSize)
+	globalSeed := make([]byte, ed25519.SeedSize)
 	for i := range currentSeed {
 		currentSeed[i] = 71
+		globalSeed[i] = 72
 	}
 	currentDID := ComputeDIDKey(ed25519.NewKeyFromSeed(currentSeed).Public().(ed25519.PublicKey))
+	globalDID := ComputeDIDKey(ed25519.NewKeyFromSeed(globalSeed).Public().(ed25519.PublicKey))
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -90,7 +93,10 @@ func TestNormalizeSenderTrustUsesAuthenticatedNoCacheTeamRosterRefresh(t *testin
 		}
 		_ = json.NewEncoder(w).Encode(ListAgentsResponse{
 			TeamID: "backend:acme.com",
-			Agents: []AgentView{{Alias: "alice", DIDKey: currentDID, IdentityScope: IdentityModeLocal}},
+			Agents: []AgentView{
+				{Alias: "alice", DIDKey: currentDID, IdentityScope: IdentityModeLocal},
+				{Alias: "grace", DIDKey: globalDID, DIDAW: "did:aw:grace", IdentityScope: IdentityModeGlobal},
+			},
 		})
 	}))
 	t.Cleanup(server.Close)
@@ -107,14 +113,17 @@ func TestNormalizeSenderTrustUsesAuthenticatedNoCacheTeamRosterRefresh(t *testin
 	if got, _ := client.NormalizeSenderTrust(context.Background(), Failed, "alice", currentDID, "", nil, nil, nil); got != Failed || requests != 0 {
 		t.Fatalf("signature-failed status=%q requests=%d, want failed/0", got, requests)
 	}
-	if got, _ := client.NormalizeSenderTrust(context.Background(), Verified, "alice", currentDID, "", nil, nil, nil); got != Verified {
+	if got, _ := client.NormalizeSenderTrust(context.Background(), Verified, "acme.com/alice", currentDID, "", nil, nil, nil); got != Verified {
 		t.Fatalf("status=%q, want %q", got, Verified)
 	}
-	if requests != 1 {
-		t.Fatalf("requests=%d, want 1", requests)
+	if requests != 1 || len(store.Pins) != 0 {
+		t.Fatalf("local result requests=%d pins=%d, want 1/0", requests, len(store.Pins))
 	}
-	if len(store.Pins) != 0 {
-		t.Fatalf("local sender left %d pins, want 0", len(store.Pins))
+	if got, _ := client.NormalizeSenderTrust(context.Background(), Verified, "acme.com/grace", globalDID, "did:aw:grace", nil, nil, nil); got != Verified {
+		t.Fatalf("same-namespace global status=%q, want %q", got, Verified)
+	}
+	if requests != 2 || len(store.Pins) != 1 {
+		t.Fatalf("global result requests=%d pins=%d, want 2/1", requests, len(store.Pins))
 	}
 }
 
@@ -182,7 +191,7 @@ func TestNormalizeSenderTrustRejectsUnauthoritativeRosterRefreshes(t *testing.T)
 			client.SetAddress("backend:acme.com/bob")
 			client.SetPinStore(NewPinStore(), "")
 			client.SetResolver(&ChainResolver{Team: &TeamRosterResolver{Client: client, TeamID: "backend:acme.com"}})
-			if got, _ := client.NormalizeSenderTrust(context.Background(), Verified, "alice", currentDID, tc.fromStableID, nil, nil, nil); got != tc.want {
+			if got, _ := client.NormalizeSenderTrust(context.Background(), Verified, "acme.com/alice", currentDID, tc.fromStableID, nil, nil, nil); got != tc.want {
 				t.Fatalf("refresh status=%q, want %q", got, tc.want)
 			}
 		})

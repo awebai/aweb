@@ -71,8 +71,10 @@ Cover these cases for mail and chat wherever the operation exists:
    wake, presentation, read state, or a recipient trust verdict.
 2. Exact mail reads are participant-visible and do not change read state:
    authenticated senders and recipients may use `show --message-id`, while an
-   unrelated or absent id returns the same 404. Conversation `show` is also
-   read-only.
+   unrelated or absent id returns the same 404. A rotated global sender's exact
+   read uses the server-authorized stored sender routing DID plus the valid
+   historical signature for authorship; a claimed stable field alone is not
+   authority. Conversation `show` is also read-only.
 3. Conversation history is oldest-first, defaults to 200, has a 500-message
    ceiling, and has no paging flag. A full-size window cannot prove completeness.
 4. Inbox is newest-first. The CLI defaults to 50 while the server accepts at most
