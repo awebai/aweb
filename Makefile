@@ -188,6 +188,7 @@ check-awid-site-docs:
 			echo "FAIL: public AWID site document mirror stale: $$mirror differs from $$source"; status=1; \
 		fi; \
 	done; \
+	if ! python3 scripts/check-awid-site-doc-links.py $(AWID_SITE_DOC_MIRRORS); then status=1; fi; \
 	if [ "$$status" -eq 0 ]; then echo "AWID site document mirrors are up to date"; fi; \
 	exit "$$status"
 

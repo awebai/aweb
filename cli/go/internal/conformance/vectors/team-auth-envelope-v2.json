@@ -20,6 +20,25 @@
       "canonical_payload": "{\"aud\":\"https://app.aweb.ai\",\"body_sha256\":\"98dc597b7fdd7801c863c72c43ee51faccf89e683050e44e31d93ed806abfcdb\",\"method\":\"POST\",\"operation\":\"a2a_route_create\",\"path\":\"/api/v1/a2a/gateway/routes?dry_run=true\",\"team_id\":\"default:aweb.ai\",\"timestamp\":\"2026-06-12T10:00:00Z\",\"v\":2}",
       "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2FwcC5hd2ViLmFpIiwiYm9keV9zaGEyNTYiOiI5OGRjNTk3YjdmZGQ3ODAxYzg2M2M3MmM0M2VlNTFmYWNjZjg5ZTY4MzA1MGU0NGUzMWQ5M2VkODA2YWJmY2RiIiwibWV0aG9kIjoiUE9TVCIsIm9wZXJhdGlvbiI6ImEyYV9yb3V0ZV9jcmVhdGUiLCJwYXRoIjoiL2FwaS92MS9hMmEvZ2F0ZXdheS9yb3V0ZXM_ZHJ5X3J1bj10cnVlIiwidGVhbV9pZCI6ImRlZmF1bHQ6YXdlYi5haSIsInRpbWVzdGFtcCI6IjIwMjYtMDYtMTJUMTA6MDA6MDBaIiwidiI6Mn0",
       "signature_b64": "o3MxU+e7wduCS3Ss5/03knJlqzfj51NRfSX9LD7jTeIrlQIs50QlICpFKxPQSGXy52WWC204mTP5vVWabckABA"
+    },
+    {
+      "name": "oss_task_create",
+      "seed_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+      "body": "{\"title\":\"prepare review\"}",
+      "payload": {
+        "aud": "https://coordination.example.com",
+        "body_sha256": "6968ffb71df7a14c4ec20c9bb266013dc0d5ff280ab6740239fd2628d3eaab63",
+        "method": "POST",
+        "operation": "task.create",
+        "path": "/v1/tasks",
+        "team_id": "engineering:example.com",
+        "timestamp": "2026-06-12T10:00:00Z",
+        "v": 2
+      },
+      "canonical_payload": "{\"aud\":\"https://coordination.example.com\",\"body_sha256\":\"6968ffb71df7a14c4ec20c9bb266013dc0d5ff280ab6740239fd2628d3eaab63\",\"method\":\"POST\",\"operation\":\"task.create\",\"path\":\"/v1/tasks\",\"team_id\":\"engineering:example.com\",\"timestamp\":\"2026-06-12T10:00:00Z\",\"v\":2}",
+      "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2Nvb3JkaW5hdGlvbi5leGFtcGxlLmNvbSIsImJvZHlfc2hhMjU2IjoiNjk2OGZmYjcxZGY3YTE0YzRlYzIwYzliYjI2NjAxM2RjMGQ1ZmYyODBhYjY3NDAyMzlmZDI2MjhkM2VhYWI2MyIsIm1ldGhvZCI6IlBPU1QiLCJvcGVyYXRpb24iOiJ0YXNrLmNyZWF0ZSIsInBhdGgiOiIvdjEvdGFza3MiLCJ0ZWFtX2lkIjoiZW5naW5lZXJpbmc6ZXhhbXBsZS5jb20iLCJ0aW1lc3RhbXAiOiIyMDI2LTA2LTEyVDEwOjAwOjAwWiIsInYiOjJ9",
+      "signature_b64": "CaiKuSSzM8hRjbLAJ4cTTYQJwzsFQ5EXfYxvHpwitnXi3/u+4CZ8KpFLUqHP14qz77vP4GcoK3LZHJnT+6VVCQ"
     }
   ],
   "negative_cases": [

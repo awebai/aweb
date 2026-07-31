@@ -9,6 +9,7 @@ import sys
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 from aweb_layout import aweb_path
@@ -324,35 +325,52 @@ async def test_authenticate_v2_fails_closed_when_awid_facts_unavailable() -> Non
 def test_aweb_team_auth_envelope_v2_conformance_vector() -> None:
     vector_path = aweb_path("docs", "vectors", "team-auth-envelope-v2.json")
     vector = json.loads(vector_path.read_text())
-    case = vector["cases"][0]
-    canonical = case["canonical_payload"].encode("utf-8")
+    expected_cases = {case["name"] for case in vector["cases"]}
+    assert "oss_task_create" in expected_cases
 
-    assert canonical_json_bytes(case["payload"]) == canonical
-    assert _b64url(canonical) == case["signed_payload_b64url"]
-    verify_did_key_signature(did_key=case["did_key"], payload=canonical, signature_b64=case["signature_b64"])
-
-    request = Request(
-        {
-            "type": "http",
-            "method": case["payload"]["method"],
-            "scheme": "https",
-            "path": "/api/v1/a2a/gateway/routes",
-            "raw_path": b"/api/v1/a2a/gateway/routes",
-            "root_path": "",
-            "query_string": b"dry_run=true",
-            "headers": [(b"x-aweb-signed-payload", case["signed_payload_b64url"].encode("ascii"))],
-        }
-    )
-    body_sha256 = hashlib.sha256(case["body"].encode()).hexdigest()
+    verified_cases: set[str] = set()
     aweb_module = _aweb_team_auth_envelope()
-    aweb_envelope = aweb_module.team_auth_signature_payload(
-        request,
-        team_id=case["payload"]["team_id"],
-        timestamp=case["payload"]["timestamp"],
-        body_sha256=body_sha256,
-        allowed_audiences=[case["payload"]["aud"].upper().replace("HTTPS://", "https://") + "/"],
-    )
-    assert aweb_envelope.canonical_payload == canonical
+    for case in vector["cases"]:
+        payload = case["payload"]
+        canonical = case["canonical_payload"].encode("utf-8")
+        target = urlsplit(payload["path"])
+
+        assert canonical_json_bytes(payload) == canonical
+        assert _b64url(canonical) == case["signed_payload_b64url"]
+        verify_did_key_signature(
+            did_key=case["did_key"], payload=canonical, signature_b64=case["signature_b64"]
+        )
+
+        request = Request(
+            {
+                "type": "http",
+                "method": payload["method"],
+                "scheme": "https",
+                "path": target.path,
+                "raw_path": target.path.encode("ascii"),
+                "root_path": "",
+                "query_string": target.query.encode("ascii"),
+                "headers": [
+                    (b"x-aweb-signed-payload", case["signed_payload_b64url"].encode("ascii"))
+                ],
+            }
+        )
+        allowed_audience = payload["aud"]
+        if case["name"] == "a2a_route_create":
+            # Preserve the configured-origin normalization regression while the
+            # other case proves a second audience is consumed from the corpus.
+            allowed_audience = payload["aud"].upper().replace("HTTPS://", "https://") + "/"
+        aweb_envelope = aweb_module.team_auth_signature_payload(
+            request,
+            team_id=payload["team_id"],
+            timestamp=payload["timestamp"],
+            body_sha256=hashlib.sha256(case["body"].encode()).hexdigest(),
+            allowed_audiences=[allowed_audience],
+        )
+        assert aweb_envelope.canonical_payload == canonical
+        verified_cases.add(case["name"])
+
+    assert verified_cases == expected_cases
 
 
 def test_crypto_signature_vector_still_verifies_presented_bytes() -> None:

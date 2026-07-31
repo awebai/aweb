@@ -74,6 +74,12 @@ These vectors exist to prevent subtle cross-language drift (Python ↔ Go) in:
   - Canonical `_awid.<domain>` TXT record name/value pairs
   - Covers default public-registry records and explicit `registry=` declarations
 
+- `team-auth-envelope-v2.json`
+  - Current request-bound team-auth v2 payloads and Ed25519 signatures
+  - Includes a neutral OSS task request and a hosted-route interoperability case
+  - Negative cases cover cross-endpoint/origin replay, body tampering, and a
+    missing protocol version
+
 ## Encoding notes
 
 - **Canonical JSON:** lexicographic key sort, compact separators, literal UTF-8 (no `\uXXXX` escapes).
@@ -97,9 +103,16 @@ that rule.
 
 ## Validation
 
-The backend test suite validates these vectors:
+The vectors are consumed from their canonical `docs/vectors/` paths by the
+relevant component suites. Go's conformance package embeds its release copy;
+its test first requires that copy to be byte-identical to the canonical corpus.
+Focused examples:
 
 ```bash
-cd backend
-uv run pytest
+cd awid && uv run --frozen pytest -q tests/test_conformance_vectors.py
+cd server && uv run --frozen pytest -q \
+  tests/test_identity_conformance_vectors.py tests/test_team_auth_envelope.py
+cd cli/go && go test ./internal/conformance ./awid -count=1
+cd channel-core && npm test -- \
+  test/registry.test.ts test/pin_store_raw_wire.test.ts test/log_rollback.test.ts
 ```

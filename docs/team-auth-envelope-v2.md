@@ -1,7 +1,9 @@
 # Team-Auth Request Envelope v2
 
-Team-auth requests prove that a member identity holding a team certificate
-authorized one concrete HTTP request.
+Status: **canonical current relying-party protocol**. Team-auth proves that a
+member identity holding a valid team certificate authorized one concrete HTTP
+request. AWID supplies team public-key and revocation authority; the relying
+service verifies the envelope and applies its own authorization policy.
 
 ## Headers
 
@@ -19,11 +21,12 @@ extra whitespace. Version 2 requires these fields:
 
 ```json
 {
-  "aud": "https://app.aweb.ai",
+  "aud": "https://coordination.example.com",
   "body_sha256": "<hex sha256 of request body bytes>",
   "method": "POST",
-  "path": "/api/v1/tasks?dry_run=true",
-  "team_id": "default:aweb.ai",
+  "operation": "task.create",
+  "path": "/v1/tasks",
+  "team_id": "engineering:example.com",
   "timestamp": "2026-06-12T10:00:00Z",
   "v": 2
 }
@@ -58,10 +61,11 @@ The verifier must not trust request headers such as `Host` or
 `X-Forwarded-Host` for `aud`. Public origins are configuration, not caller
 input.
 
-## Legacy v1
+## Compatibility: compact v1
 
-When `X-AWEB-Signed-Payload` is absent, servers may accept the legacy compact
-payload during migration:
+Version 2 above is the current protocol for new clients. When
+`X-AWEB-Signed-Payload` is absent, current aweb verifiers retain a bounded
+compatibility path for the legacy compact payload:
 
 ```json
 {
@@ -72,7 +76,8 @@ payload during migration:
 ```
 
 This v1 shape does not bind method, path, or audience and must not be used for
-new relying-party clients.
+new relying-party clients. Accepting it is compatibility behavior, not evidence
+that v1 and v2 provide equivalent security.
 
 ## Replay
 
@@ -81,6 +86,15 @@ be replayed inside the accepted timestamp skew window if an attacker can capture
 the signed request. Product copy and protocol docs must not claim replay
 protection.
 
-Nonce-based replay protection is tracked separately in `aweb-aaqo`; it requires
-a shared deduplication store and an explicit fail-open versus fail-closed
-availability decision.
+A future nonce-bearing protocol revision must define nonce scope and lifetime,
+use a shared deduplication store, and specify fail-closed behavior when that
+store is unavailable. Until clients and relying services implement that complete
+contract, the timestamp window above is the replay limit.
+
+## Conformance vectors
+
+[`vectors/team-auth-envelope-v2.json`](vectors/team-auth-envelope-v2.json)
+contains deterministic Ed25519 cases for both a neutral OSS task request and a
+hosted-route interoperability example, plus cross-endpoint, cross-origin,
+tampered-body, and missing-version negatives. Consumers must verify every
+current positive case rather than treating the first array entry as the corpus.

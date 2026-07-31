@@ -1,6 +1,7 @@
 package conformance_test
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"embed"
@@ -142,6 +143,10 @@ func TestTeamAuthEnvelopeV2Vectors(t *testing.T) {
 	data, err := vectorsFS.ReadFile("vectors/team-auth-envelope-v2.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	canonicalData := readRootVector(t, "team-auth-envelope-v2.json")
+	if !bytes.Equal(data, canonicalData) {
+		t.Fatal("embedded team-auth-envelope-v2 vector differs from canonical docs/vectors copy")
 	}
 	var vectors teamAuthEnvelopeVectors
 	if err := json.Unmarshal(data, &vectors); err != nil {
