@@ -13,9 +13,11 @@ weight: 27
 > session UX. Existing agent directories can use communication without this
 > workflow.
 
-Use this guide after a workspace is already connected to a team. If you want
-the shortest human path, start with [Create and run your first team](/docs/create-and-run-team/)
-or [Add an AI tool to a team](/docs/add-ai-tool/).
+Use this guide after a workspace is already connected to a team. For the
+communication-first path with two existing agent directories, start with the
+[CLI tutorial](/docs/cli-tutorial/). For this optional materialization workflow,
+see [Create and run your first team](/docs/create-and-run-team/) or
+[Add an AI tool to a team](/docs/add-ai-tool/).
 
 ## 1. Materialize a member, not just a directory
 

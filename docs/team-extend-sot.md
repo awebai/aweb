@@ -36,8 +36,8 @@ members.
 
 `aw team create`'s contract is that it ALWAYS creates a new team. It must
 not refuse just because cwd already has an active team membership: an agent
-standing in its own home always has one, and agent-run `create` is a design
-goal (default-aaeq.23), so a hard block there would contradict it. Instead,
+standing in its own home always has one, and the shipped non-TTY create path
+supports agent-run `create`, so a hard block there would contradict it. Instead,
 when cwd has an active membership and there is no `--byot`, `create` emits a
 non-blocking one-line notice — you are already a member of team X;
 `aw team extend` adds members to THAT team — and proceeds to create the new
@@ -204,8 +204,8 @@ the key names the team, and `extend` builds the layout from scratch —
 
 ## Non-TTY behavior
 
-Agents run `extend`; it must never block on a prompt. Policy (same as
-default-aaeq.23, stricter because `extend` has no wizard):
+Agents run `extend`; it must never block on a prompt. Its policy is stricter
+than the create/init wizard path because `extend` has no wizard:
 
 - Every required input is an argument or flag. `extend` never prompts,
   TTY or not.
@@ -251,28 +251,3 @@ per-agent outcome fields are omitted on that path.
 - `aw team extend` in a workspace that has an active team but cannot mint
   (no team key, no hosted URL, no API key): says what authority is missing
   for that team, rather than the generic tier-4 text.
-
-## Implementation notes
-
-- Reuse `runTeamHumanCreateRosterAdd` → `runTeamHumanAdd`. The one
-  structural change: the invite anchor and the agents root are currently
-  both derived from cwd inside `runTeamHumanAdd`
-  (`createAndAcceptTeamInviteForEmptyAgent(wd, ...)`,
-  `resolveRepoRoot(wd)`); they become explicit parameters so `extend` can
-  pass the discovered anchor and the resolved agents root while `add` and
-  `create` keep passing cwd-derived values.
-- Depends on default-aaeq.23: the non-TTY required-input policy and any
-  flag plumbing it adds to this file land first; `extend` builds on top to
-  avoid churn on `team_human.go`.
-- The `--api-key` flag is new surface (today the key is env-only); it feeds
-  the same `resolveInitAPIKey`-consuming bootstrap path, with the flag
-  taking precedence over the env var and bypassing only the ambient key's
-  workspace-derived assertion. Explicit `--team-id` remains independent and
-  is always enforced when supplied.
-- Dogfooding: a throwaway team only; exercise all three call sites (team
-  root, agent home, clean dir + API key), plus the ambiguity error and the
-  tier-4 error. A tmux experiment (`--start`) must be a committed, reviewed
-  harness that prepends `scripts/guard-bin` and sets `AWEB_TMUX_TMPDIR` for
-  the launcher plus `TMUX_TMPDIR` for every raw tmux command. Raw tmux ignores
-  `AWEB_TMUX_TMPDIR`. Tear down only the named throwaway session, never a
-  server.
