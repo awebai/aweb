@@ -144,7 +144,12 @@ aw id team members --team-id <team:namespace> --json
 aw workspace status --team <team:namespace> --json
 ```
 
-- AWID certificate rows are membership facts.
+- AWID certificate rows are publication, revocation, and recovery records useful
+  for roster discovery; row existence is not membership proof.
+- Active membership authority is the presented controller-signed certificate:
+  verify its signature against the current team key, its holder binding, and
+  non-revocation. A correctly signed, non-revoked certificate remains the proof
+  even when no certificate blob was published as a registry row.
 - Aweb workspace/presence rows are runtime projections and may be offline or
   bounded by a result limit.
 - A same-team member name is local delivery shorthand.
@@ -224,19 +229,44 @@ wrap model/tool side effects in a transaction.
 ## Retirement
 
 Stop the runtime first, but keep the identity home available until communication
-cleanup finishes. Choose the command that matches authority and intended scope.
+cleanup finishes. Choose the command that matches identity scope, authority, and
+intended lifecycle; a missing runtime or path is not itself retirement evidence.
 
-### Local workspace teardown
+### Stale local-identity workspace cleanup
 
-From the self-custodial identity home:
+`aw workspace delete` is only the stale local-identity cleanup path. It is not a
+general self-custodial-home retirement command. Inspect identity scope and
+workspace state first:
+
+```bash
+aw whoami --json
+aw workspace status --json
+```
+
+The current server refuses cleanup rather than guessing:
+
+- `global_identity_not_cleanup_eligible` means the workspace is bound to a
+  global identity. Do not retry deletion or discard its home. Global identities
+  outlive workspace paths and require an explicit archive/replace flow under the
+  applicable identity and namespace authorities. The current self-custodial CLI
+  has no archive/replace command, so preserve the mapping and credentials and
+  hand the lifecycle decision to the authorized owner.
+- `local_workspace_still_active` means the local workspace was seen within the
+  current 1,800-second presence TTL. Stop its runtime, retain the identity home,
+  wait until that recorded presence is stale, and then retry. An immediate retry
+  must not be treated as cleanup progress.
+
+Only for a gone workspace bound to a local identity, run from that identity home:
 
 ```bash
 aw workspace delete <workspace-id-or-name> --json
 ```
 
-This is the local workspace/identity teardown path. Check the structured result,
-including whether identity cleanup was established; do not delete the home
-first and then assume remote cleanup happened.
+A successful result soft-deletes the workspace and its bound local identity row
+and releases its task claims. Inspect the structured result, including whether
+identity cleanup was established. On either refusal, persist an explicit partial
+retirement state and retain the identity home; never turn refusal into permission
+to delete local credentials.
 
 ### Team-authorized retirement
 
@@ -285,7 +315,8 @@ grant either.
 
 Persist `retired` only after every required authority reports or independently
 confirms the intended state. Otherwise persist an explicit partial state such as
-`workspace-cleared-certificate-unknown` and retain the identity home for
+`local-workspace-presence-active`, `global-identity-needs-authorized-lifecycle`,
+or `workspace-cleared-certificate-unknown`, and retain the identity home for
 recovery. Never reuse old key/certificate metadata for a new instance with the
 same display name.
 
@@ -298,7 +329,7 @@ same display name.
 | Service projection | `aw workspace connect` / `POST /v1/connect` | Same explicit authority boundary, easier orchestration API. |
 | Wake | Snapshot/diff SSE and maintained runtime adapters | Durable server cursor/resume only after a reviewed protocol exists. |
 | Fetch/reply | Exact mail, conversation, and chat commands/APIs | Stable SDK operations preserving ids and verification metadata. |
-| Retirement | Workspace delete and authority-dependent team removal; `agent-status` exists on current source but is pending an installable release | One reconciled lifecycle operation without taking runtime ownership. |
+| Retirement | Stale local-identity workspace cleanup plus authority-dependent team removal; global archive/replace is a separate owner-authorized flow; `agent-status` is current-source pending an installable release | One reconciled lifecycle operation without taking runtime ownership. |
 
 Do not write code against the target column as though it already ships.
 
