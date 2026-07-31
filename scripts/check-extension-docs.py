@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import re
 import shutil
 import tempfile
@@ -38,6 +39,8 @@ PUBLIC_EXTENSION_DOCS = (
     "vectors/README.md",
 )
 
+HOOK_INVENTORY = "vectors/mutation-hook-call-sites-v1.json"
+
 HOOK_SOURCES = (
     "server/src/aweb/routes/messages.py",
     "server/src/aweb/routes/chat.py",
@@ -66,41 +69,67 @@ def _string_literals(node: ast.AST) -> set[str]:
     return set()
 
 
-def _source_hook_events(root: Path, failures: list[str]) -> set[str]:
-    events: set[str] = set()
-    source_root = root / "server/src/aweb"
-    if not source_root.is_dir():
-        failures.append("missing hook source root: server/src/aweb")
-        return events
-    for path in sorted(source_root.rglob("*.py")):
-        relative = str(path.relative_to(root))
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            function = node.func
-            if isinstance(function, ast.Name):
-                name = function.id
-            elif isinstance(function, ast.Attribute):
-                name = function.attr
-            else:
-                name = ""
-            if name != "fire_mutation_hook":
-                continue
+class _HookCallVisitor(ast.NodeVisitor):
+    def __init__(self, relative: str, failures: list[str]) -> None:
+        self.relative = relative
+        self.failures = failures
+        self.function_stack: list[str] = []
+        self.call_sites: list[dict[str, str]] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function(node)
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.function_stack.append(node.name)
+        self.generic_visit(node)
+        self.function_stack.pop()
+
+    def visit_Call(self, node: ast.Call) -> None:
+        function = node.func
+        if isinstance(function, ast.Name):
+            name = function.id
+        elif isinstance(function, ast.Attribute):
+            name = function.attr
+        else:
+            name = ""
+        if name == "fire_mutation_hook":
             event_expression = node.args[1] if len(node.args) >= 2 else next(
                 (keyword.value for keyword in node.keywords if keyword.arg == "event_type"),
                 None,
             )
             literals = _string_literals(event_expression) if event_expression is not None else set()
             if not literals:
-                failures.append(
-                    f"unsupported non-literal fire_mutation_hook event expression: {relative}:{node.lineno}"
+                self.failures.append(
+                    f"unsupported non-literal fire_mutation_hook event expression: {self.relative}:{node.lineno}"
                 )
-                continue
-            events.update(literals)
-    if not events:
+            else:
+                enclosing_function = ".".join(self.function_stack) or "<module>"
+                for event in sorted(literals):
+                    self.call_sites.append(
+                        {"source": self.relative, "function": enclosing_function, "event": event}
+                    )
+        self.generic_visit(node)
+
+
+def _source_hook_call_sites(root: Path, failures: list[str]) -> list[dict[str, str]]:
+    call_sites: list[dict[str, str]] = []
+    source_root = root / "server/src/aweb"
+    if not source_root.is_dir():
+        failures.append("missing hook source root: server/src/aweb")
+        return call_sites
+    for path in sorted(source_root.rglob("*.py")):
+        relative = str(path.relative_to(root))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+        visitor = _HookCallVisitor(relative, failures)
+        visitor.visit(tree)
+        call_sites.extend(visitor.call_sites)
+    call_sites.sort(key=lambda item: (item["source"], item["function"], item["event"]))
+    if not call_sites:
         failures.append("no fire_mutation_hook event calls found under server/src/aweb")
-    return events
+    return call_sites
 
 
 def check(root: Path) -> list[str]:
@@ -124,11 +153,52 @@ def check(root: Path) -> list[str]:
                 failures.append(f"docs/{relative} retains private/superseded reference {forbidden!r}")
 
     hook_text = public_text.get("aw-hooks-sot.md", "")
-    for event in sorted(_source_hook_events(root, failures)):
+    source_call_sites = _source_hook_call_sites(root, failures)
+    for event in sorted({item["event"] for item in source_call_sites}):
         if f"`{event}`" not in hook_text:
             failures.append(f"aw-hooks-sot.md omits source-emitted event {event!r}")
     if "app.state.on_mutation" not in hook_text:
         failures.append("aw-hooks-sot.md omits the shipped app.state.on_mutation seam")
+
+    inventory_path = docs / HOOK_INVENTORY
+    if not inventory_path.is_file():
+        failures.append(f"missing mutation hook call-site inventory: docs/{HOOK_INVENTORY}")
+    else:
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        inventory_call_sites = inventory.get("call_sites") if isinstance(inventory, dict) else None
+        if (
+            not isinstance(inventory, dict)
+            or inventory.get("schema") != "aweb.mutation-hook-call-sites.v1"
+            or not isinstance(inventory_call_sites, list)
+            or not all(
+                isinstance(item, dict)
+                and set(item) == {"source", "function", "event"}
+                and all(isinstance(value, str) and value for value in item.values())
+                for item in inventory_call_sites
+            )
+        ):
+            failures.append(f"invalid mutation hook call-site inventory: docs/{HOOK_INVENTORY}")
+        else:
+            source_counts = Counter(
+                (item["source"], item["function"], item["event"]) for item in source_call_sites
+            )
+            inventory_counts = Counter(
+                (item["source"], item["function"], item["event"]) for item in inventory_call_sites
+            )
+            for call_site, count in sorted((source_counts - inventory_counts).items()):
+                failures.append(f"mutation hook inventory omits source call site {call_site!r} x{count}")
+            for call_site, count in sorted((inventory_counts - source_counts).items()):
+                failures.append(f"mutation hook inventory retains absent call site {call_site!r} x{count}")
+
+    runbook = public_text.get("a2a-release-runbook.md", "")
+    makefile = (root / "Makefile").read_text(encoding="utf-8") if (root / "Makefile").is_file() else ""
+    generator = "go run ./tools/a2a-gateway-check-workspace -output"
+    if generator not in runbook or generator not in makefile:
+        failures.append("A2A release image check does not generate a synthetic gateway workspace")
+    if '$(CURDIR):/workspace:ro' in makefile:
+        failures.append("A2A release image check mounts the real repository workspace")
+    if '-v "$$workspace:/workspace:ro"' not in makefile:
+        failures.append("A2A release image check does not mount its throwaway workspace")
 
     vectors = sorted(path.name for path in (docs / "vectors").glob("*.json"))
     vector_index = public_text.get("vectors/README.md", "")
@@ -191,26 +261,50 @@ def self_test(root: Path) -> int:
     with tempfile.TemporaryDirectory() as raw_tmp:
         tmp = Path(raw_tmp)
         shutil.copytree(root / "docs", tmp / "docs")
+        shutil.copy2(root / "Makefile", tmp / "Makefile")
         for relative in HOOK_SOURCES:
             destination = tmp / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(root / relative, destination)
         hook = tmp / "docs/aw-hooks-sot.md"
         hook.write_text(hook.read_text(encoding="utf-8").replace("`task.created`", "`task-created`"), encoding="utf-8")
+
         message_source = tmp / "server/src/aweb/routes/messages.py"
-        message_source.write_text(
-            message_source.read_text(encoding="utf-8").replace('"message.sent",', "dynamic_event_name,", 1),
+        message_text = message_source.read_text(encoding="utf-8")
+        message_text = message_text.replace("await fire_mutation_hook(", "await omitted_mutation_hook(", 1)
+        message_text += '\n\nasync def negative_new_hook_call_site():\n    await fire_mutation_hook(None, "message.sent", {})\n'
+        message_source.write_text(message_text, encoding="utf-8")
+
+        chat_source = tmp / "server/src/aweb/routes/chat.py"
+        chat_source.write_text(
+            chat_source.read_text(encoding="utf-8").replace('"chat.message_sent",', "dynamic_event_name,", 1),
+            encoding="utf-8",
+        )
+
+        makefile = tmp / "Makefile"
+        makefile.write_text(
+            makefile.read_text(encoding="utf-8").replace(
+                '-v "$$workspace:/workspace:ro"', '-v "$(CURDIR):/workspace:ro"', 1
+            ),
             encoding="utf-8",
         )
         failures = check(tmp)
-        if not any("task.created" in failure for failure in failures):
-            print("self-test failed: removing a source-emitted hook event was not detected")
-            return 1
-        if not any("unsupported non-literal" in failure for failure in failures):
-            print("self-test failed: a dynamic hook event expression was silently ignored")
-            return 1
+        required_failures = {
+            "missing documented event": "task.created",
+            "new repeated-event call site": "inventory omits source call site",
+            "removed repeated-event call site": "inventory retains absent call site",
+            "dynamic event expression": "unsupported non-literal",
+            "real workspace release mount": "mounts the real repository workspace",
+        }
+        for label, expected in required_failures.items():
+            if not any(expected in failure for failure in failures):
+                print(f"self-test failed: {label} was not detected")
+                return 1
 
-    print("self-test passed: missing and non-literal source/doc hook drift is rejected")
+    print(
+        "self-test passed: event, call-site multiplicity, dynamic-expression, "
+        "and real-workspace release-mount drift is rejected"
+    )
     return 0
 
 

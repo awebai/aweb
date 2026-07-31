@@ -1,0 +1,105 @@
+{
+  "schema": "aweb.mutation-hook-call-sites.v1",
+  "call_sites": [
+    {
+      "source": "server/src/aweb/coordination/routes/tasks.py",
+      "function": "add_comment_route",
+      "event": "task.comment_added"
+    },
+    {
+      "source": "server/src/aweb/coordination/routes/tasks.py",
+      "function": "add_dependency_route",
+      "event": "task.dependency_added"
+    },
+    {
+      "source": "server/src/aweb/coordination/routes/tasks.py",
+      "function": "create_task_route",
+      "event": "task.created"
+    },
+    {
+      "source": "server/src/aweb/coordination/routes/tasks.py",
+      "function": "delete_task_route",
+      "event": "task.deleted"
+    },
+    {
+      "source": "server/src/aweb/coordination/routes/tasks.py",
+      "function": "remove_dependency_route",
+      "event": "task.dependency_removed"
+    },
+    {
+      "source": "server/src/aweb/coordination/routes/tasks.py",
+      "function": "update_task_route",
+      "event": "task.status_changed"
+    },
+    {
+      "source": "server/src/aweb/coordination/routes/tasks.py",
+      "function": "update_task_route",
+      "event": "task.updated"
+    },
+    {
+      "source": "server/src/aweb/routes/chat.py",
+      "function": "create_or_send",
+      "event": "chat.message_sent"
+    },
+    {
+      "source": "server/src/aweb/routes/chat.py",
+      "function": "create_or_send",
+      "event": "chat.message_sent"
+    },
+    {
+      "source": "server/src/aweb/routes/chat.py",
+      "function": "send_message",
+      "event": "chat.message_sent"
+    },
+    {
+      "source": "server/src/aweb/routes/chat.py",
+      "function": "send_message",
+      "event": "chat.message_sent"
+    },
+    {
+      "source": "server/src/aweb/routes/federation.py",
+      "function": "receive_federated_message",
+      "event": "chat.message_sent"
+    },
+    {
+      "source": "server/src/aweb/routes/federation.py",
+      "function": "receive_federated_message",
+      "event": "message.sent"
+    },
+    {
+      "source": "server/src/aweb/routes/messages.py",
+      "function": "_deliver_remote_mail_and_project_locally",
+      "event": "message.sent"
+    },
+    {
+      "source": "server/src/aweb/routes/messages.py",
+      "function": "_send_mail_conversation_continuation",
+      "event": "message.sent"
+    },
+    {
+      "source": "server/src/aweb/routes/messages.py",
+      "function": "ack_message",
+      "event": "message.acknowledged"
+    },
+    {
+      "source": "server/src/aweb/routes/messages.py",
+      "function": "send_message",
+      "event": "message.sent"
+    },
+    {
+      "source": "server/src/aweb/routes/reservations.py",
+      "function": "acquire_reservation",
+      "event": "reservation.acquired"
+    },
+    {
+      "source": "server/src/aweb/routes/reservations.py",
+      "function": "release_reservation",
+      "event": "reservation.released"
+    },
+    {
+      "source": "server/src/aweb/routes/reservations.py",
+      "function": "renew_reservation",
+      "event": "reservation.renewed"
+    }
+  ]
+}

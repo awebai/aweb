@@ -204,7 +204,7 @@ notice where one exists.
 - [Current limitations](current-limitations.md) — known operational boundaries.
 - [Messaging contract matrix](messaging-contract-matrix.md) — conformance and
   release-case inventory pending maintainer consolidation.
-- [Protocol conformance vectors](vectors/README.md) — canonical index for all 15
+- [Protocol conformance vectors](vectors/README.md) — canonical index for all 16
   root JSON fixtures, with current, experimental, compatibility, and digest-only
   authority distinguished.
 - [Self-hosted A2A gateway configuration](examples/a2a-gateway.yaml) — retained

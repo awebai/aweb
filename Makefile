@@ -268,7 +268,7 @@ test-tmux-guard:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-migrate-agent-tmux.sh
 
 test-a2a:
-	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./a2a ./a2agw ./awid -count=1
+	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./a2a ./a2agw ./awid ./tools/a2a-gateway-check-workspace -count=1
 	cd cli/go && GOCACHE=/tmp/go-build go test ./cmd/aw ./cmd/aweb-a2a-gw -run A2A -count=1
 	cd awid && uv run pytest tests/test_a2a_publication_route.py -q
 	./scripts/check-a2a-copy-guardrails.sh
@@ -458,19 +458,21 @@ release-awid-pypi-push:
 
 release-a2a-gateway-check:
 	./scripts/check-a2a-copy-guardrails.sh
-	cd cli/go && GOCACHE=/tmp/go-build go test ./a2a ./a2agw ./awid ./cmd/aweb-a2a-gw -count=1
+	cd cli/go && GOCACHE=/tmp/go-build go test ./a2a ./a2agw ./awid ./cmd/aweb-a2a-gw ./tools/a2a-gateway-check-workspace -count=1
 	docker build -f cli/go/Dockerfile.a2a-gw \
 		--build-arg VERSION=$(A2A_GATEWAY_VERSION) \
 		--build-arg RELEASE_TAG=a2a-gw-v$(A2A_GATEWAY_VERSION) \
 		--build-arg COMMIT=$$(git rev-parse HEAD) \
 		--build-arg DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
 		-t a2a-gateway:release-test cli/go
-	docker run --rm \
-		--user "$$(id -u):$$(id -g)" \
-		-v "$(CURDIR)/docs/examples/a2a-gateway.yaml:/config/gateway.yaml:ro" \
-		-v "$(CURDIR):/workspace:ro" \
-		a2a-gateway:release-test \
-		sh -c 'aweb-a2a-gw -config /config/gateway.yaml -workspace-dir /workspace -check'
+	@set -eu; workspace="$$(mktemp -d)"; trap 'rm -rf "$$workspace"' EXIT; \
+		(cd cli/go && go run ./tools/a2a-gateway-check-workspace -output "$$workspace"); \
+		docker run --rm \
+			--user "$$(id -u):$$(id -g)" \
+			-v "$(CURDIR)/docs/examples/a2a-gateway.yaml:/config/gateway.yaml:ro" \
+			-v "$$workspace:/workspace:ro" \
+			a2a-gateway:release-test \
+			aweb-a2a-gw -config /config/gateway.yaml -workspace-dir /workspace -check
 	./scripts/e2e-a2a-gateway-docker.sh
 
 release-a2a-gateway-tag:

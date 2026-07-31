@@ -64,7 +64,11 @@ the combined behavior.
 
 ## Current route call sites
 
-This is the complete source-backed route inventory at current main.
+[`vectors/mutation-hook-call-sites-v1.json`](vectors/mutation-hook-call-sites-v1.json)
+is the machine-readable source path + enclosing function + literal event
+inventory. Repeated rows preserve multiplicity when one function has multiple
+calls for the same event. The table below groups those exact call sites by their
+public HTTP behavior.
 
 | HTTP route | Event | When called |
 |---|---|---|

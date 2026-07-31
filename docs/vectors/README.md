@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and copies
 
-- `docs/vectors/*.json` is the public root authority for the 15 fixtures indexed
+- `docs/vectors/*.json` is the public root authority for the 16 fixtures indexed
   here.
 - `server/docs/vectors/` contains compatibility/package copies used by older
   server consumers. Those files are not a second authority and their presence
@@ -141,6 +141,16 @@ Real cryptographic route tests generate Ed25519 keypairs/signatures at runtime
 in `awid/tests/test_a2a_publication_route.py`. The digest-only fixture proves
 byte/digest parity; those tests prove verification and authority enforcement.
 Both are required.
+
+## Experimental extension fixtures
+
+### `mutation-hook-call-sites-v1.json`
+
+Machine-readable source path, enclosing function, and literal event for every
+current `fire_mutation_hook` call. Duplicate rows are significant: they preserve
+call-site multiplicity when one function emits the same event from multiple
+branches. The source-derived checker rejects added, removed, dynamic, or
+otherwise unsupported call shapes. See [`aw-hooks-sot.md`](../aw-hooks-sot.md).
 
 ## Consumer-local extension fixtures
 

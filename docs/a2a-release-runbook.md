@@ -99,18 +99,29 @@ change is a new ordered AWID migration.
 The release image must pass its own configuration check:
 
 ```bash
-mkdir -p /tmp/aweb-a2a-gateway-check-workspace
+workspace="$(mktemp -d)"
+trap 'rm -rf "$workspace"' EXIT
+(
+  cd cli/go
+  go run ./tools/a2a-gateway-check-workspace -output "$workspace"
+)
 docker run --rm \
+  --user "$(id -u):$(id -g)" \
   -v "$PWD/docs/examples/a2a-gateway.yaml:/config/gateway.yaml:ro" \
-  -v "/tmp/aweb-a2a-gateway-check-workspace:/workspace" \
+  -v "$workspace:/workspace:ro" \
   aweb-a2a-gateway:<candidate> \
   aweb-a2a-gw -config /config/gateway.yaml -workspace-dir /workspace -check
 ```
 
-Use an empty or synthetic throwaway workspace for a build gate. Never mount a
-real production workspace into an unreviewed image or CI log. The `-check` result
-proves parsing and gateway construction only; the Docker e2e proves live bridge
-behavior.
+The generator refuses a non-empty output directory. It creates a new random
+throwaway member signing key and a matching synthetic controller-signed team
+certificate for
+`a2a-check.invalid`; it never reads an existing workspace. The recorded server
+URL points at a local refusing port and `-check` does not contact it.
+
+Never mount a real production workspace into an unreviewed image or CI log. The
+`-check` result proves parsing and gateway construction only; the Docker e2e
+proves live bridge behavior.
 
 Public/static config contains no signing key, team/namespace controller key,
 API key, or bearer token. Secrets come from the dedicated workspace or named
