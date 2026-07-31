@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
@@ -418,6 +420,127 @@ func TestAwMailInboxAcknowledgesUnreadPageBeforeCursorContinuation(t *testing.T)
 	}
 	if pageFetches != 2 || !acked[messageIDs[0]] || !acked[messageIDs[1]] || !acked[messageIDs[2]] {
 		t.Fatalf("final fetch/read state: fetches=%d acked=%+v", pageFetches, acked)
+	}
+}
+
+type mailPresentationErrorWriter struct{}
+
+func (mailPresentationErrorWriter) Write([]byte) (int, error) {
+	return 0, errors.New("closed presentation writer")
+}
+
+func TestPresentAndAcknowledgeMailInboxDoesNotAcknowledgeFailedOutput(t *testing.T) {
+	previousJSON := jsonFlag
+	t.Cleanup(func() { jsonFlag = previousJSON })
+
+	messageID := "00000000-0000-4000-8000-000000000004"
+	acked := false
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages/"+messageID+"/ack" {
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+		acked = true
+		_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: messageID})
+	}))
+	client, err := aweb.New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := &awid.InboxResponse{Messages: []awid.InboxMessage{{
+		MessageID: messageID,
+		FromAlias: "alice",
+		Body:      "must remain unread",
+	}}}
+
+	for _, tc := range []struct {
+		name string
+		json bool
+	}{
+		{name: "text"},
+		{name: "json", json: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jsonFlag = tc.json
+			acked = false
+			err := presentAndAcknowledgeMailInbox(
+				context.Background(),
+				mailPresentationErrorWriter{},
+				client,
+				resp,
+			)
+			if err == nil || !strings.Contains(err.Error(), "closed presentation writer") {
+				t.Fatalf("presentation error=%v", err)
+			}
+			if acked {
+				t.Fatal("mail was acknowledged after its presentation writer failed")
+			}
+		})
+	}
+}
+
+func TestAwMailInboxDoesNotAcknowledgeWhenPresentationFails(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "text"},
+		{name: "json", args: []string{"--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			messageID := "00000000-0000-4000-8000-000000000004"
+			acked := false
+			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/v1/messages/inbox":
+					_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{{
+						MessageID: messageID,
+						FromAlias: "alice",
+						Body:      "must remain unread",
+						CreatedAt: "2026-07-31T12:00:00Z",
+					}}})
+				case r.URL.Path == "/v1/messages/"+messageID+"/ack":
+					acked = true
+					_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: messageID, AcknowledgedAt: "2026-07-31T12:01:00Z"})
+				case r.URL.Path == "/v1/agents/heartbeat":
+					w.WriteHeader(http.StatusOK)
+				default:
+					t.Fatalf("unexpected path=%s", r.URL.Path)
+				}
+			}))
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			tmp := t.TempDir()
+			bin := filepath.Join(tmp, "aw")
+			buildAwBinary(t, ctx, bin)
+			writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+			readEnd, writeEnd, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := readEnd.Close(); err != nil {
+				t.Fatal(err)
+			}
+			runArgs := append([]string{"mail", "inbox"}, tc.args...)
+			run := exec.CommandContext(ctx, bin, runArgs...)
+			run.Env = testCommandEnv(tmp)
+			run.Dir = tmp
+			run.Stdout = writeEnd
+			var stderr strings.Builder
+			run.Stderr = &stderr
+			runErr := run.Run()
+			_ = writeEnd.Close()
+
+			if runErr == nil {
+				t.Fatalf("mail inbox reported success after its presentation write failed; stderr=%s", stderr.String())
+			}
+			if acked {
+				t.Fatal("mail was acknowledged before the failed presentation write")
+			}
+		})
 	}
 }
 

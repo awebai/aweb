@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -857,6 +858,24 @@ var (
 	mailInboxCursor  string
 )
 
+func presentAndAcknowledgeMailInbox(
+	ctx context.Context,
+	writer io.Writer,
+	client *aweb.Client,
+	resp *awid.InboxResponse,
+) error {
+	if err := writeOutput(writer, resp, formatMailInbox); err != nil {
+		return fmt.Errorf("present mail inbox: %w", err)
+	}
+	// Acknowledgements remain best effort, but cannot precede presentation.
+	for _, msg := range resp.Messages {
+		if msg.ReadAt == nil && msg.MessageID != "" {
+			_, _ = client.AckMessage(ctx, msg.MessageID)
+		}
+	}
+	return nil
+}
+
 var mailInboxCmd = &cobra.Command{
 	Use:   "inbox",
 	Short: "List inbox messages (unread only by default)",
@@ -881,11 +900,8 @@ var mailInboxCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		// Mark all unread messages as read — seeing them means they're read.
-		for _, msg := range resp.Messages {
-			if msg.ReadAt == nil && msg.MessageID != "" {
-				_, _ = c.AckMessage(ctx, msg.MessageID)
-			}
+		if err := presentAndAcknowledgeMailInbox(ctx, cmd.OutOrStdout(), c, resp); err != nil {
+			return err
 		}
 		logsDir := defaultLogsDir()
 		for _, msg := range resp.Messages {
@@ -936,7 +952,6 @@ var mailInboxCmd = &cobra.Command{
 				Text:           msg.Body,
 			})
 		}
-		printOutput(resp, formatMailInbox)
 		return nil
 	},
 }

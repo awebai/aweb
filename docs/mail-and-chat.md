@@ -115,8 +115,10 @@ Read unread mail:
 aw mail inbox
 ```
 
-The command presents and acknowledges the unread messages it returns. Its
-default page size is 50. When another page exists, text output prints a
+The command presents and then acknowledges the unread messages it returns. If
+writing the text or JSON presentation fails, it exits nonzero before
+acknowledgment so those messages remain unread and replayable. Its default page
+size is 50. When another page exists, text output prints a
 continuation command and JSON output includes `has_more` plus `next_cursor`.
 Continue without overlap by passing that cursor:
 
