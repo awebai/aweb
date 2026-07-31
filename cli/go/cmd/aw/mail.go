@@ -982,6 +982,18 @@ var mailAckCmd = &cobra.Command{
 var mailShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show a mail conversation",
+	// Which end the window takes belongs in the help rather than only in the
+	// output, because a reader deciding whether this command can answer "did I
+	// miss something recent" needs it BEFORE they run it and believe the result.
+	Long: "Show a mail conversation.\n\n" +
+		"--limit caps how many messages are returned and defaults to 200. The messages " +
+		"returned are the OLDEST ones, so on a conversation longer than the limit the " +
+		"newest messages are the ones missing - which is the opposite of what someone " +
+		"checking for recent mail expects.\n\n" +
+		"aw mail inbox windows from the other end and enforces a server cap that this " +
+		"command does not. Do not carry an expectation from one to the other.\n\n" +
+		"To read a whole conversation, pass --limit above its length and check the " +
+		"returned count: if it equals the limit you were truncated, so raise it and re-run.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		conversationID := strings.TrimSpace(mailShowConversationID)
 		messageID := strings.TrimSpace(mailShowMessageID)
@@ -1025,6 +1037,16 @@ var mailShowCmd = &cobra.Command{
 			}
 			return networkError(err, messageID)
 		}
+		// The text formatter carries this notice inline. JSON output must stay a
+		// clean parseable document, so it goes to stderr - where a human still sees
+		// it and a consumer reading stdout is unaffected. Without this, the
+		// machine-readable path is the one surface that reports a partial read as a
+		// whole one with nothing anywhere to say otherwise.
+		if jsonFlag {
+			if notice := mailWindowNotice(len(resp.Messages), mailShowLimit); notice != "" {
+				fmt.Fprintln(os.Stderr, strings.TrimSpace(notice))
+			}
+		}
 		printOutput(resp, formatMailConversation)
 		return nil
 	},
@@ -1056,7 +1078,7 @@ func init() {
 	_ = mailReplyCmd.Flags().MarkHidden("legacy-plaintext")
 	mailShowCmd.Flags().StringVar(&mailShowConversationID, "conversation-id", "", "Mail conversation to inspect")
 	mailShowCmd.Flags().StringVar(&mailShowMessageID, "message-id", "", "Legacy mail message to inspect")
-	mailShowCmd.Flags().IntVar(&mailShowLimit, "limit", 200, "Max messages")
+	mailShowCmd.Flags().IntVar(&mailShowLimit, "limit", 200, "Max messages, taken from the OLDEST end; if the count returned equals this, there may be more")
 
 	mailCmd.AddCommand(mailSendCmd, mailReplyCmd, mailInboxCmd, mailShowCmd, mailAckCmd)
 	rootCmd.AddCommand(mailCmd)
