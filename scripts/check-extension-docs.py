@@ -13,10 +13,42 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-PRIVATE_TRANSITION_DOCS = {
-    "restructuring/ac-cross-boundary-fk-inventory.md",
-    "support/aasn-migration-evidence-runbook.md",
-}
+PRIVATE_TRANSITION_PATHS = (
+    "docs/restructuring/" + "ac-cross-boundary-" + "fk-inventory.md",
+    "docs/support/" + "aasn-migration-" + "evidence-runbook.md",
+)
+
+PRIVATE_TRANSITION_PATH_NAMES = (
+    "ac-cross-boundary-" + "fk-inventory",
+    "aasn-migration-" + "evidence-runbook",
+)
+
+PRIVATE_TRANSITION_CONTENT_RULES = (
+    (
+        "private database inventory",
+        ("cross-boundary " + "foreign keys", "aweb_" + "cloud", "aweb_" + "overlay"),
+    ),
+    (
+        "private production runbook",
+        ("migration " + "evidence runbook", "production " + "stop conditions"),
+    ),
+    (
+        "AC-only path/name",
+        ("ac/backend/src/" + "aweb_cloud/migrations",),
+    ),
+    (
+        "credentialed operator procedure",
+        ("database_url=" + "service=", "pg_dump --" + "data-only"),
+    ),
+    (
+        "private version/image baseline",
+        ("production baseline: " + "ac", "server-v1."),
+    ),
+    (
+        "private personnel approval flow",
+        ("credentialed " + "human operator", "reviews this plan before execution"),
+    ),
+)
 
 REMOVED_DOCS = {
     "restructuring/app-event-subscriptions-contract.md",
@@ -228,6 +260,31 @@ def check(
         for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
             if token.casefold() in normalized_relative:
                 failures.append(f"tracked path {relative} retains private managed-gateway name {token!r}")
+        for name in PRIVATE_TRANSITION_PATH_NAMES:
+            if name.casefold() in normalized_relative:
+                failures.append(f"tracked path {relative} retains private transition document name")
+
+        path = root / relative
+        if path.is_file():
+            normalized_text = path.read_text(encoding="utf-8", errors="replace").casefold()
+            for name in PRIVATE_TRANSITION_PATH_NAMES:
+                if name.casefold() in normalized_text:
+                    failures.append(f"tracked file {relative} references private transition document name")
+
+    for relative in sorted(tracked_files):
+        if not relative.startswith("docs/") or not relative.endswith(".md"):
+            continue
+        path = root / relative
+        if not path.is_file():
+            continue
+        normalized_text = path.read_text(encoding="utf-8", errors="replace").casefold()
+        for label, terms in PRIVATE_TRANSITION_CONTENT_RULES:
+            if all(term.casefold() in normalized_text for term in terms):
+                failures.append(f"{relative} retains {label}")
+
+    for relative in PRIVATE_TRANSITION_PATHS:
+        if (root / relative).exists():
+            failures.append(f"removed private transition path returned: {relative}")
 
     neutrality_relatives = [relative for relative in sorted(tracked_files) if _is_managed_gateway_surface(relative)]
     for relative in neutrality_relatives:
@@ -340,7 +397,7 @@ def check(
     for relative in sorted(all_markdown):
         if not (docs / relative).is_file():
             failures.append(f"tracked Markdown is missing from the working tree: docs/{relative}")
-    expected_public = all_markdown - {"README.md"} - PRIVATE_TRANSITION_DOCS
+    expected_public = all_markdown - {"README.md"}
     readme = (docs / "README.md").read_text(encoding="utf-8")
     links = [
         target
@@ -439,6 +496,84 @@ def self_test(root: Path) -> int:
             print("self-test failed: missing tracked Markdown was not detected")
             return 1
 
+        private_transition_mutations = (
+            (
+                "private database inventory",
+                "Cross-boundary " + "foreign keys\naweb_" + "cloud rows\naweb_" + "overlay changes\n",
+            ),
+            (
+                "private production runbook",
+                "Migration " + "evidence runbook\nProduction " + "stop conditions\n",
+            ),
+            (
+                "AC-only path/name",
+                "ac/backend/src/" + "aweb_cloud/migrations/001.sql\n",
+            ),
+            (
+                "credentialed operator procedure",
+                "DATABASE_URL=" + "service=production\npg_dump --" + "data-only\n",
+            ),
+            (
+                "private version/image baseline",
+                "Production baseline: " + "AC v9.9.9\nserver-v1.2.3\n",
+            ),
+            (
+                "private personnel approval flow",
+                "Credentialed " + "human operator\nReviewer reviews this plan before execution\n",
+            ),
+        )
+        for index, (label, content) in enumerate(private_transition_mutations):
+            relative = f"docs/private-transition-negative-{index}.md"
+            path = tmp / relative
+            path.write_text(content, encoding="utf-8")
+            mutation_failures = check(
+                tmp,
+                tracked_markdown | {relative.removeprefix("docs/")},
+                tracked_files | {relative},
+            )
+            expected = f"{relative} retains {label}"
+            if expected not in mutation_failures:
+                print(f"self-test failed: {label} fixture was not detected")
+                return 1
+            path.unlink()
+
+        for transition_path in PRIVATE_TRANSITION_PATHS:
+            transition_file = tmp / transition_path
+            transition_file.parent.mkdir(parents=True, exist_ok=True)
+            transition_file.write_text("generic: true\n", encoding="utf-8")
+            transition_failures = check(tmp, tracked_markdown, tracked_files)
+            expected = f"removed private transition path returned: {transition_path}"
+            if expected not in transition_failures:
+                print(f"self-test failed: private transition path returned: {transition_path}")
+                return 1
+            transition_file.unlink()
+
+        for index, transition_name in enumerate(PRIVATE_TRANSITION_PATH_NAMES):
+            relative = f"reviewer/{transition_name}-{index}.md"
+            transition_file = tmp / relative
+            transition_file.parent.mkdir(parents=True, exist_ok=True)
+            transition_file.write_text("generic: true\n", encoding="utf-8")
+            transition_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            expected = f"tracked path {relative} retains private transition document name"
+            if expected not in transition_failures:
+                print(f"self-test failed: private transition name returned: {transition_name}")
+                return 1
+            transition_file.unlink()
+
+            consumer_relative = f"reviewer/private-transition-consumer-{index}.txt"
+            consumer_file = tmp / consumer_relative
+            consumer_file.write_text(f"docs/archive/{transition_name}.md\n", encoding="utf-8")
+            transition_failures = check(
+                tmp,
+                tracked_markdown,
+                tracked_files | {consumer_relative},
+            )
+            expected = f"tracked file {consumer_relative} references private transition document name"
+            if expected not in transition_failures:
+                print(f"self-test failed: private transition consumer returned: {transition_name}")
+                return 1
+            consumer_file.unlink()
+
         neutrality_mutations = (
             ("cli/go/cmd/aweb-a2a-gw/audit.go", "a" + "c_config", False),
             ("cli/go/a2a/client.go", "a" + "c_config", False),
@@ -532,9 +667,9 @@ def self_test(root: Path) -> int:
                 return 1
 
     print(
-        "self-test passed: tracked corpus, strategy lifecycle, managed-gateway neutrality, "
-        "event/call-site multiplicity, dynamic-expression, and real-workspace release-mount "
-        "controls reject their mutations"
+        "self-test passed: tracked corpus, strategy lifecycle, private-transition removal, "
+        "managed-gateway neutrality, event/call-site multiplicity, dynamic-expression, and "
+        "real-workspace release-mount controls reject their mutations"
     )
     return 0
 

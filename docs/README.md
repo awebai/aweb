@@ -21,11 +21,8 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 100 tracked Markdown documents. This front door does not
-self-link. Private-purpose artifacts are deliberately not exposed by public path
-or title. The remaining 97 public Markdown paths appear below exactly once.
-Private transition artifacts remain represented by neutral, unlinked transition
-descriptions until their later consumer-ordered relocation or removal.
+The baseline contains 98 tracked Markdown documents. This front door does not
+self-link. The remaining 97 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -284,9 +281,6 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
 - [Restructuring SOT](restructuring-sot.md) — superseded destination architecture;
   extract still-current protocol facts, migrate links, then remove with no
   duplicate archive.
-- **Application cross-boundary FK inventory** — private-purpose Markdown,
-  deliberately unlinked; repoint its exact downstream consumers, then remove
-  the public copy.
 - [Agent instantiation runbook](restructuring/agent-instantiation-runbook.md) —
   remove after its skill consumer and valid runtime facts migrate.
 - [Archived channel stack map](restructuring/archive/channel-stack-map.md) — the
@@ -307,9 +301,6 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   inventory checks become current tooling; no archive copy.
 - [Scrapped team-certificate issuer seam](restructuring/team-cert-issuer-seam.md)
   — remove after its historical memory consumer points to Git/task history.
-- **Production migration evidence runbook** — private-purpose Markdown,
-  deliberately unlinked; relocate to its production-operations owner after
-  consumer migration.
 - [Team blueprints and agent profiles](team-blueprints-sot.md) — superseded
   product SOT; current optional profile, payload/pin, resource-pack, growth, and
   runtime-helper facts are extracted in the advanced guides above. Keep this

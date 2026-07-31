@@ -479,77 +479,18 @@ vocabulary. Structured 401/402/quota responses. **Conformance vectors first**
 **only after** the contract stabilizes across ≥2 real apps (`atext` + `folio`).
 Non-negotiable: conformance + versioning, not packaging on day one.
 
-## 8. `ac` decomposition — stop embedding everything (the smaller-containers win)
+## 8. Hosted-service decomposition
 
-**Current coupling (what makes the container big):**
+The historical target was to run the public authority services independently
+and reach them over stable network contracts rather than embedding their
+implementations in a larger control plane. Detailed deployment, database, and
+cutover inventories are operator-owned evidence, not public protocol authority.
 
-- `from aweb.api import create_app` + `app.mount("/api", aweb_app)`
-  (`main.py:33,432-483`) and the hosted MCP mount at `/mcp` — the OSS server runs
-  **in-process**.
-- One Postgres pool spans **three runtime schemas** (`aweb_cloud`, `server`,
-  `aweb`). **`awid` is the external HTTP registry** (`api.awid.ai`), *not* a
-  same-pool schema in production — a same-pool `awid` manager appears only in
-  tests (ac-team survey, 2026-06-17; corroborated: no FK references `awid`). So
-  m8's awid decoupling is **packaging** (stop compiling `awid` into
-  `Dockerfile.release`), not FK/schema cleanup.
-- **30 cross-boundary foreign keys** lock the schemas into one deployable
-  (representative: `aweb_cloud.* → server.teams`, `aweb_cloud.* → aweb.workspaces`,
-  `aweb_cloud.* → aweb.agents`, `a2a_gateway_routes → server.teams`,
-  `cloud_custodial_encryption_keys → aweb.workspaces`; plus overlay FKs
-  `aweb.* → server.teams`/`aweb.agents`). Full inventory in the appendix
-  (§8.1).
-- **The `aweb_overlay` migration mutates the core `aweb` schema**: 11 cloud
-  columns on `aweb.agents` (`server_team_id`, `did`, `public_key`, `stable_id`,
-  `custody`, `signing_key_enc`, `team_cert_blob`, …), `signing_key_id` on
-  `aweb.messages` + `aweb.chat_messages`, and **alters `aweb.tasks.parent_task_id`
-  to DEFERRABLE** (for cloud restore/cutover). It also creates 7 tables *inside*
-  the `aweb` schema (`did_aw_mappings`, `did_aw_log`, `dns_namespaces`,
-  `public_addresses`, `api_keys`, `spawn_invite_tokens`,
-  `replacement_announcements`).
-- `Dockerfile.release` compiles sibling `aweb` + `awid` into the image
-  (`:48-56`).
-
-**Target:** core `aweb` + `awid` run as their own small services (own images),
-reached over HTTP; `aweb.ai` (control plane + gateway) carries **no embedded
-OSS**; apps are separate small services.
-
-**Decoupling work:**
-
-1. **Dismantle `aweb_overlay` — in two stages (it is not self-contained).** The
-   overlay touches identity tables (`aweb.agents`, 11 cols), namespace/identity
-   tables, **and** messaging tables (`signing_key_id` on `messages`/
-   `chat_messages`), and alters `aweb.tasks.parent_task_id`. The messaging
-   columns cannot be removed while messages/chat are still in core. So:
-   **8a** dismantles the identity/namespace/non-messaging overlay now; **8b** the
-   messaging columns ride with the messaging split (§12.10). Cloud columns/tables
-   move into control-plane-owned tables or projections.
-2. **Remove or convert the 30 cross-boundary FKs** to logical references
-   (`aweb_team_id` becomes an API/identity reference, not a DB FK). Staged: logical
-   refs + backfill + verification before dropping FKs. **FKs touching the
-   split-last messaging tables and the split `workspaces` table are 8b** (gated by
-   their splits); the rest are 8a. The FK appendix tags each entry
-   **doable-at-8a** vs **gated-by-later-split**. **Preserve the
-   `aweb.tasks.parent_task_id` DEFERRABLE behavior** wherever the tasks schema
-   lands (§12.7).
-3. **Separate DB pools / databases** per service.
-4. **Replace the `/api` + `/mcp` mounts** with network calls / reverse proxy to
-   the standalone core + the gateway.
-5. **Retire the thin-proxy/overlay routers** (`oss_admin`, `oss_public`,
-   `oss_workspaces`, `dashboard`/`chat`/`messages` wrappers) — once core is
-   external and cert/gateway-authed directly.
-
-**`ac` shrink goals (success criteria):** fewer cross-boundary imports; **no
-overlaid/copied core migrations** (`aweb_overlay` gone); smaller images;
-independently deployable services; one preserved local-dev story.
-
-### 8.1 Appendix — cross-boundary FK inventory
-
-The 30 FKs and every `aweb_overlay` alteration are enumerated (file:line) in
-[`restructuring/ac-cross-boundary-fk-inventory.md`](restructuring/ac-cross-boundary-fk-inventory.md).
-The OSS-core inventory backing §4–§5 is in
-[`restructuring/oss-core-inventory.md`](restructuring/oss-core-inventory.md).
-This is the **highest-risk mechanical step** in the plan; the SOT does not
-understate it.
+Public aweb retains only the generic boundary: independently deployable services,
+explicit HTTP contracts, and no requirement that a hosted implementation share
+its database or process with the OSS runtime. Current public deployment and
+migration guidance lives in [Self-hosting](self-hosting.md) and the component
+release runbooks.
 
 ## 9. Billing and quota — bundled mutation model
 
@@ -672,19 +613,8 @@ default comms app** during the whole transition (code stays in core a while).
    `aweb.tasks.parent_task_id`; decide where the task-schema + that FK transform
    lands **before** promising overlay retirement — keep a temporary core-owned
    task compat patch until tasks moves.
-8. **`ac` decomposition:** stop embedding OSS; separate services/images.
-   ← the smaller-containers payoff. **This step is NOT self-contained** — the
-   overlay/FK removal is partially gated by later splits, so it stages in two:
-   - **8a (now):** dismantle the non-messaging overlay (identity/namespace cols on
-     `aweb.agents`, the overlay's identity/namespace tables) and remove/convert
-     the FKs *not* touching the split-last messaging tables or the split
-     `workspaces` table.
-   - **8b (rides with m10):** the overlay's messaging columns
-     (`signing_key_id` on `messages`/`chat_messages`) and FKs touching messaging
-     can only be undone once messaging moves. The FK appendix tags each
-     FK/overlay-column **doable-at-8a** vs **gated-by-later-split**.
-
-   (Preserve `aweb.tasks.parent_task_id` DEFERRABLE wherever tasks lands — §12.7.)
+8. **Hosted-service decomposition:** stop embedding OSS implementations; use
+   stable network contracts and independently deployable service images.
 9. **`dev.aweb.ai`** (consumes tasks; dashboard/visibility; locks rebuilt only if
    real).
 10. **LAST / deepest cut:** split `messages`/`chat` **semantics** from the
@@ -701,9 +631,9 @@ default comms app** during the whole transition (code stays in core a while).
     (ii) optionally **purify the envelope format** (§3.1); (iii) **generalize E2EE
     decrypt** into a messages/chat app hydrator (today shells `aw mail show`/`aw
     chat history`); the **events stream stays core** (it just gains app
-    id/type/resource refs — same work as m3); (iv) move the **8b overlay
-    messaging columns**; (v) **decide global-identity ↔ team-scoped app
-    mutations** — app mutations likely require an active team/app grant while core
+    id/type/resource refs — same work as m3); (iv) **decide global-identity ↔
+    team-scoped app mutations** — app mutations likely require an active
+    team/app grant while core
     addressability still resolves recipients (the one real design call here).
 
 `secrets`/`kpi` follow as focused apps. This coordinator/developer/reviewer team
@@ -737,9 +667,8 @@ keeps running throughout; we migrate our own usage last.
 
 ## 14. Risks
 
-- **Cross-schema FK removal (30) + `aweb_overlay` dismantling** = the
-  highest-risk mechanical step. Stage it: logical refs + backfill + verify before
-  dropping FKs; preserve the `tasks.parent_task_id` DEFERRABLE behavior.
+- **Service decomposition** can destabilize authority and persistence boundaries;
+  preserve public contracts and validate migrations before separating runtimes.
 - **Messaging-as-app destabilization** if attempted early (federation/events/E2EE
   are fused) → sequence last.
 - **Gateway monolith risk** → keep it a gateway (compose/auth/sign/forward/meter

@@ -40,11 +40,6 @@ is_allowed() {
     # A path in the UPSTREAM A2A repository, not this one. docs/a2a.md cites it
     # to record how the golden fixtures were cross-checked against upstream.
     scripts/proto_to_json_schema.sh) return 0 ;;
-    # Paths in the AC repository, not this one. The aasn migration evidence
-    # runbook runs AC's dump/restore tooling and pins each file by SHA-256, so
-    # the digests in that document — not this existence check — are what detect
-    # the tooling changing underneath the procedure.
-    scripts/prod_db_reset.py|scripts/verify_db_reset_roundtrip.py) return 0 ;;
   esac
   return 1
 }
