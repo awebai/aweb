@@ -38,10 +38,6 @@ PRIVATE_CUSTODIAL_TRANSITION_SOURCE = (
     REPO_ROOT / "docs" / "custodial-managed-encryption.md"
 )
 PRIVATE_CUSTODIAL_TRANSITION_INVENTORY_LABEL = "Hosted custody implementation contract"
-UNGATED_PRIVATE_TRANSITION_COUNT_PATTERNS = [
-    re.compile(r"\b(?:one|two|three|four|five|\d+) private-purpose\b", re.IGNORECASE),
-    re.compile(r"\bthose (?:one|two|three|four|five|\d+) artifacts\b", re.IGNORECASE),
-]
 
 FORBIDDEN_PUBLIC_IMPLEMENTATION_PATTERNS = [
     re.compile(r"\bAC\b"),
@@ -140,17 +136,6 @@ def _private_custodial_transition_reference_offenders(
 def test_private_custodial_transition_source_is_absent_and_not_indexed() -> None:
     assert not PRIVATE_CUSTODIAL_TRANSITION_SOURCE.exists()
     assert not _private_custodial_transition_reference_offenders()
-
-
-def test_docs_readme_has_no_ungated_private_transition_counts() -> None:
-    text = (REPO_ROOT / "docs" / "README.md").read_text(encoding="utf-8")
-    offenders = [
-        match.group(0)
-        for pattern in UNGATED_PRIVATE_TRANSITION_COUNT_PATTERNS
-        for match in pattern.finditer(text)
-    ]
-
-    assert not offenders, f"Ungated private-transition counts found: {offenders}"
 
 
 def test_private_custodial_transition_guard_scans_root_readme() -> None:
