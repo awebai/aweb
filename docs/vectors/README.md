@@ -80,6 +80,15 @@ These vectors exist to prevent subtle cross-language drift (Python ↔ Go) in:
   - Negative cases cover cross-endpoint/origin replay, body tampering, and a
     missing protocol version
 
+- `e2ee-v2-cross-language.json`
+  - Deterministic identities, X25519 private material, identity-signed key
+    assertions, and encrypted mail envelopes for Python↔Go interoperability
+  - Python decrypts the Go envelope and Go decrypts the Python envelope; both
+    consumers assert plaintext is absent from the outer envelope
+  - Policy fixtures under `test-vectors/e2e/` separately pin stored content
+    modes, metadata-only fields, current/deprecated plaintext flags, and rollout
+    requirements; server tests consume all three fixtures
+
 ## Encoding notes
 
 - **Canonical JSON:** lexicographic key sort, compact separators, literal UTF-8 (no `\uXXXX` escapes).

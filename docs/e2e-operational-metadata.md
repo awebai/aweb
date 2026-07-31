@@ -1,223 +1,155 @@
 # E2E Operational Metadata Contract
 
-This document defines the metadata-only operational model for encrypted message
-v2. It is subordinate to the normative protocol contract in
-[`e2e-messaging-contract.md`](e2e-messaging-contract.md): if any crypto,
-envelope, key-authority, no-downgrade, or metadata-leakage wording appears to
-conflict with that contract, stop and route the change back through
-`aweb-aapv.1` review instead of improvising here.
+Status: **public supporting contract** for encrypted-v2 operations. It is
+subordinate to the normative
+[E2E messaging contract](e2e-messaging-contract.md). If crypto, envelope,
+key-authority, no-downgrade, or metadata-leakage wording conflicts, the canonical
+protocol wins.
 
-Scope: usage, billing, abuse/rate-limit, retention, support, and admin tooling
-for v2 E2E mail/chat where AC/aweb routes ciphertext and local clients decrypt
-plaintext.
+E2E is an optional advanced mode. This contract applies only to
+self-custodial `encrypted_v2` mail/chat. Ordinary server-readable messaging and
+hosted managed encryption have different plaintext boundaries and must be
+labeled separately.
 
 ## Hard boundary
 
-For v2 E2E messages, AC/aweb support, billing, abuse, and admin systems may use
-metadata and ciphertext only. They must not inspect, store, search, preview,
-summarize, embed, classify, or support-debug plaintext subject/body/chat text.
+For self-custodial encrypted v2, routing, support, billing, abuse, and admin
+systems may use metadata and ciphertext only. They must not inspect, store,
+search, preview, summarize, embed, classify, or support-debug plaintext
+subject/body/chat text.
 
-Hosted custodial MCP, dashboard-side compose/read, and other server-side tools
-that receive plaintext are **server-readable hosted messaging**, not E2E. Those
-modes may have separate hosted-account support workflows, but they must not be
-used to describe or recover locally decrypted encrypted history.
+A hosted custody operator may decrypt for an identity whose signed assertion
+says `custody: "hosted_custodial"`. That is server-readable hosted managed
+encryption, not E2E. It does not grant the operator access to self-custodial
+private keys or plaintext.
 
-When content debugging is required for an E2E message, the customer or agent may
-export decrypted content from a local client and provide that export explicitly.
-Support must treat the export as customer-supplied evidence, not as server-held
-message content.
+When content debugging is required for E2E, a customer or agent may export
+plaintext from a local client and provide it intentionally. The export is a
+support attachment, not server-held message content.
 
 ## Allowed retained metadata
 
-Servers may retain and aggregate these fields for v2 E2E operations:
-
 ### Message and conversation identity
 
-- `message_version` and `content_mode` / encrypted-vs-legacy classification.
+- `message_version=2` and `content_mode=encrypted_v2`.
 - Message, conversation, session, thread, and reply/continuation ids.
-- Message kind (`mail` or `chat`).
-- Created, ingested, delivered, read, acked, failed, deleted, and retained-until
-timestamps.
-- Idempotency hash / signed envelope hash.
+- Kind (`mail` or `chat`).
+- Created, ingested, delivered, read, acknowledged, failed, deleted, and
+  retained-until timestamps.
+- Signed-envelope/idempotency hash.
 
 ### Sender, recipient, and routing metadata
 
 - Sender and recipient `did:key` values.
-- Stable ids (`did:aw`) only when present for global identities.
-- Address fields only when the route is address-based; local/team routes omit
-absent address and stable-id fields rather than storing empty strings.
-- Team id, workspace id, agent id, alias, delivery origin, federation peer, and
-route kind when they are part of routing context.
-- Recipient set and participant set.
-- Delivery policy inputs as observed metadata, not as authority. The server must
-recompute authorization from trusted server/auth/database/AWID/team/contact state;
-sender-declared routing or policy fields must never widen delivery.
+- `did:aw` only when present for global identities.
+- Addresses only for address-based routes; absent local fields stay omitted.
+- Team, workspace, agent, member-name, route-kind, delivery-origin, and
+  federation-peer identifiers when used for routing.
+- Recipient and active participant sets.
+- Sender-observed policy fields as signed diagnostics, never delivery authority.
+  The service recomputes authorization from trusted identity, team, contact, and
+  recipient-policy state.
 
-### Cryptographic and capability metadata
+### Cryptographic metadata
 
-- Algorithm suite, encryption version, recipient encryption key ids, sender key
-id, key-wrap ids, wrap purpose (`delivery` or `sender_copy`), key-wrap count,
-ciphertext hash, key-wraps hash, inner-header hash, ciphertext byte size, and
-envelope byte size.
-- Capability result categories: supported, missing key assertion, stale key,
-unsigned assertion, route lacks v2 support, old client/server, downgrade refused.
-- Verification/decryption error categories. Error categories must not include or
-quote decrypted plaintext.
+- Suite and envelope version.
+- Sender/recipient encryption key ids.
+- Wrap ids, purpose (`delivery` or `sender_copy`), and count.
+- Ciphertext, key-wraps, and inner-header hashes.
+- Ciphertext and envelope byte sizes.
+- Capability/failure categories such as missing, stale, unsigned, mismatched,
+  unsupported route, downgrade refused, or malformed envelope.
 
-### Delivery and processing state
+### Delivery and client-reported state
 
-- Delivery outcome and failure reason code.
-- Retry count, last attempt time, queue latency, route latency, federation
-latency, and recipient read/ack state.
-- Local client-reported decrypt status categories, when the client chooses to
-report them: success, missing local private key, missing archived key, malformed
-ciphertext, bad key wrap, not a recipient, inner-header mismatch, replay/mutation,
-unsupported suite.
+- Delivery outcome, safe failure code, retry count, queue/route/federation
+  latency, and read/ack state.
+- Optional content-free decrypt result: success, missing local/archived key,
+  malformed ciphertext, bad wrap, not a recipient, inner-header mismatch,
+  replay/mutation, or unsupported suite.
 
 ## Forbidden retained content
 
-For v2 E2E messages, support/admin/billing/abuse systems must not retain or
-derive:
+For self-custodial encrypted v2, services must not retain or derive:
 
-- Plaintext subject, body, or chat text.
-- Plaintext previews, snippets, conversation summaries, search vectors,
-embeddings, content classifications, or content moderation labels.
-- Server-generated message-content notifications.
-- Support dumps that include decrypted message content.
-- Attachments or attachment-derived plaintext until a future attachment contract
-applies the same E2E boundary.
+- plaintext subject, body, or chat text;
+- previews, snippets, summaries, embeddings, search vectors, content
+  classifications, or moderation labels;
+- content-bearing server notifications;
+- decrypted support dumps;
+- private signing/encryption keys, archived encryption keys, CEKs, or HPKE
+  secrets;
+- attachment-derived plaintext until a future attachment contract applies the
+  same boundary.
 
-Ciphertext bytes and key wraps may be retained according to the retention policy
-below, but support tooling must label them as opaque encrypted content.
+Ciphertext and wraps may be retained according to policy but must be labeled
+opaque encrypted content.
 
-## Usage and billing counters
+## Usage, billing, and abuse
 
-Usage and billing counters for v2 E2E may be computed from metadata only:
+Content-free counters may include:
 
-- Message count by team, organization, identity, route, kind, and time window.
-- Ciphertext bytes and envelope bytes by team, organization, identity, route,
-kind, and time window.
-- Key-wrap count and recipient fanout.
-- Federation egress/ingress bytes and delivery attempts.
-- Delivery success/failure counts and latency histograms.
-- Storage bytes for ciphertext, key wraps, metadata, and audit rows.
+- message/envelope/ciphertext bytes and counts by team, identity, route, kind,
+  and time window;
+- wrap count, recipient fanout, storage bytes, federation egress/ingress, and
+  delivery attempts;
+- success/failure counts and latency histograms;
+- send bursts, retries, new-recipient rate, failed first contact, recipient
+  graph anomalies, block/contact outcomes, invalid signatures, malformed
+  envelopes/wraps, stale timestamps, replay conflicts, and downgrade attempts.
 
-Billing reports must not include plaintext body/subject, plaintext previews, or
-content-derived categories. If a hosted server-readable product has separate
-billing, label it separately from local-client encrypted messaging.
+Do not claim server-side content moderation for E2E. Metadata may justify
+throttle, block, quarantine, or investigation, but not a conclusion about
+plaintext content.
 
-## Abuse and rate-limit signals
+## Support workflow
 
-E2E abuse controls may use metadata-only signals:
+Support may inspect:
 
-- Send volume, burst rate, and retry rate by sender identity, team, route,
-organization, and delivery origin.
-- Recipient fanout, unique-recipient count, new-recipient rate, and failed-first
-contact rate.
-- Invalid signatures, malformed envelopes, malformed key wraps, unsupported
-suites, stale timestamps at ingestion, replay/idempotency conflicts, and
-algorithm-downgrade attempts.
-- Missing/unsigned/stale recipient key assertion failures and route-capability
-mismatches.
-- Sender/recipient graph anomalies and block/contact/inbound-mode outcomes.
-- Ciphertext byte volume and unusually large encrypted payloads.
+1. request/support ids, target, authority mode, and redactions;
+2. allowed metadata above;
+3. verification, delivery, and client-reported decrypt categories;
+4. an explicitly customer-provided decrypted export.
 
-Do not claim content moderation for v2 E2E messages. Operators can throttle,
-block, quarantine, or investigate based on metadata and verification failures,
-but they cannot inspect encrypted content unless the customer supplies a local
-decrypted export.
+Support must not ask the service to decrypt self-custodial content, request
+private or archived keys, or treat hosted account recovery as recovery of
+self-custodial history. A useful first response distinguishes
+`legacy_plaintext_v1`, self-custodial `encrypted_v2`, and hosted managed
+messaging, then checks ids, key ids, route, delivery state, and safe error code.
 
-## Support and debug workflow
+## Retention and deletion
 
-Support can inspect:
+| Data class | Retention rule |
+| --- | --- |
+| v2 ciphertext and wraps | Retain per message policy; delete/redact together on deletion or expiry. |
+| routing/delivery metadata | Retain per operational/audit policy; ids may be tombstoned while aggregate counters remain. |
+| verification/decrypt categories | Retain as metadata without plaintext details. |
+| customer-provided decrypted export | Separate explicit support attachment with its own retention. |
+| `legacy_plaintext_v1` | Existing legacy policy; always labeled server-readable. |
+| aggregate counters | Content-free and non-reversible to plaintext. |
 
-1. The support-contract envelope, request id, target, authority mode, and
-redactions.
-2. Message metadata listed in this document.
-3. Verification and delivery error categories.
-4. Client-reported decrypt error categories when explicitly reported by the
-client.
-5. Customer-provided decrypted exports.
+Deleting an encrypted message does not require decryption. A content-free audit
+row may remain when policy permits.
 
-Support must not ask AC/aweb to decrypt E2E content, request private encryption
-keys, request archived encryption keys, or treat hosted account recovery as a way
-to recover self-custodial encrypted history. Losing archived local encryption
-keys makes historical encrypted messages unrecoverable.
+## Tooling requirements
 
-Recommended first-line support steps:
+An endpoint, CLI, dashboard, support bundle, log capture, or export touching
+self-custodial encrypted v2 must do one of the following:
 
-- Confirm whether the affected message is legacy plaintext, v2 E2E, or
-server-readable hosted messaging.
-- For v2 E2E, inspect message id, conversation id, sender/recipient ids, key ids,
-route, delivery state, and error category.
-- Ask the customer to run the relevant local diagnostics (`aw doctor` or the
-approved key/decrypt diagnostic once implemented) from the affected client.
-- If content must be inspected, ask the customer to export decrypted content from
-a local client and attach it intentionally.
+- return metadata and ciphertext only;
+- return aggregate content-free counters;
+- return a clear blocked response explaining plaintext is unavailable;
+- accept a user-provided decrypted export as a separate artifact.
 
-## Retention and deletion semantics
+Support bundles may include ids, key ids, hashes/sizes, delivery state, safe
+error categories, and redaction paths. They must not include private keys, auth
+headers, API keys, plaintext, or a decrypted export unless the user attaches it
+separately.
 
-Retention is per data class:
+## Conformance fixture
 
-| Data class | May retain? | Deletion semantics |
-| --- | --- | --- |
-| v2 ciphertext | Yes, per message retention policy | Delete/redact on message deletion or retention expiry. |
-| v2 key wraps | Yes, with ciphertext | Delete/redact with the message; do not retain wraps alone as support artifacts unless needed for audit. |
-| v2 routing/delivery metadata | Yes | Retain according to operational/audit policy; deletion may tombstone ids while preserving aggregate counters. |
-| v2 verification/decrypt error categories | Yes | Retain as metadata; no plaintext details. |
-| v2 customer-provided decrypted export | Only as explicit support attachment | Govern by support attachment retention; never merge back into server message storage. |
-| legacy plaintext v1 | Existing legacy policy | Must be labeled legacy/plaintext; cannot be retroactively claimed as E2E. |
-| aggregate counters | Yes | Must be content-free and non-reversible to plaintext. |
-
-Deleting a v2 E2E message can remove ciphertext and key wraps from normal
-retrieval while retaining content-free audit rows and aggregate counters if the
-product/legal retention policy permits. Retained audit rows must not contain
-plaintext or support-provided decrypted exports unless the export retention path
-explicitly says so.
-
-## Support/admin tooling requirements
-
-Any endpoint, CLI, dashboard, support bundle, log capture, or export that touches
-v2 E2E messages must choose one of these behaviors:
-
-- Return metadata and ciphertext only.
-- Return aggregate metadata-only counters.
-- Return a clear blocked/unavailable response explaining that E2E plaintext is
-not available server-side.
-- Accept a customer-provided decrypted export as a separate support artifact.
-
-It must not return plaintext subject/body from server storage, generate previews,
-run server-side content search, or silently fall back to hosted/server-readable
-message access.
-
-Support bundles may include message ids, conversation ids, key ids, ciphertext
-hashes/sizes, delivery state, error categories, and redaction paths. They must
-not include private keys, archived encryption keys, API keys, auth headers,
-plaintext message content, or decrypted exports unless the user explicitly adds
-that export as a separate attachment.
-
-## Fixture and release-gate expectations
-
-The fixture at
 [`../test-vectors/e2e/metadata-only-usage-v1.json`](../test-vectors/e2e/metadata-only-usage-v1.json)
-shows the intended metadata-only shape for usage, billing, abuse, and support
-records. It intentionally contains counters, ids, hashes, key ids, sizes, and
-error categories, but no `subject`, `body`, `preview`, `summary`, or decrypted
-content fields.
-
-Implementation tasks should add tests proving:
-
-- usage/billing counters can be computed from the fixture-shaped metadata,
-- support/admin endpoints for v2 return metadata/ciphertext only or a blocked
-response,
-- known plaintext strings do not appear in server DB rows, logs, SSE payloads,
-dashboard/API responses, support bundles, DB dumps, or release artifacts,
-- customer-provided decrypted exports are stored, labeled, and retained as
-support attachments rather than message storage.
-
-## Review bar
-
-Mia should review implementation readiness and support/admin wording for this
-operational contract. Athena must review the metadata allowance before broad E2E
-enablement to confirm the allowed metadata does not undercut the E2E product
-claim.
+pins the current `encrypted_v2` metadata shape. Its consumer rejects forbidden
+plaintext field names recursively and verifies the stored content-mode value.
+Implementation/release tests must additionally prove known plaintext does not
+appear in server rows, logs, events, API responses, support bundles, or dumps.

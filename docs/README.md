@@ -77,8 +77,8 @@ security and protocol authority.
   global/local route behavior and compatibility cleanup.
 - [Identity-key verification](identity-key-verification.md) — verifying current
   AWID identity keys and log heads.
-- [E2E messaging contract](e2e-messaging-contract.md) — encrypted-message v2
-  envelope and cryptographic binding.
+- [E2E messaging contract](e2e-messaging-contract.md) — optional advanced
+  encrypted-message v2 envelope and cryptographic binding.
 - [E2E operational metadata](e2e-operational-metadata.md) — metadata-only
   operations around encrypted messages.
 - [E2E legacy plaintext and no-downgrade policy](e2e-legacy-plaintext-policy.md)
@@ -219,8 +219,8 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
 - [E2E messaging rollout runbook](e2e-release-rollout-runbook.md) — reusable
   encrypted-messaging rollout sequencing awaiting an OSS/hosted operations
   split.
-- [Combined Library/AWID/aweb e2e stack](e2e-library-stack.md) — optional
-  cross-repository test harness documentation.
+- [Optional Library integration test stack](e2e-library-stack.md) — advanced
+  cross-repository maintainer harness; unrelated to encrypted messaging.
 - [Per-team agent tmux cutover](agent-tmux-cutover.md) — specialized reviewed
   runtime migration procedure.
 
