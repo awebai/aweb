@@ -2,7 +2,7 @@
   "schema": "aweb.e2ee.operational_metadata.v1",
   "message": {
     "message_version": 2,
-    "content_mode": "encrypted",
+    "content_mode": "encrypted_v2",
     "kind": "mail",
     "message_id": "00000000-0000-4000-8000-000000000001",
     "conversation_id": "00000000-0000-4000-8000-000000000002",
