@@ -256,7 +256,8 @@ The current server refuses cleanup rather than guessing:
   wait until that recorded presence is stale, and then retry. An immediate retry
   must not be treated as cleanup progress.
 
-Only for a gone workspace bound to a local identity, run from that identity home:
+Only for a stopped local-identity workspace whose recorded presence is stale,
+run from that retained identity home:
 
 ```bash
 aw workspace delete <workspace-id-or-name> --json
@@ -264,9 +265,9 @@ aw workspace delete <workspace-id-or-name> --json
 
 A successful result soft-deletes the workspace and its bound local identity row
 and releases its task claims. Inspect the structured result, including whether
-identity cleanup was established. On either refusal, persist an explicit partial
-retirement state and retain the identity home; never turn refusal into permission
-to delete local credentials.
+identity cleanup was established. On any refusal, error, or indeterminate result,
+persist an explicit partial retirement state and retain the identity home; never
+turn an incomplete result into permission to delete local credentials.
 
 ### Team-authorized retirement
 
