@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import regenerate_mcp_reference as generator
 
@@ -62,13 +66,25 @@ class MCPReferenceGeneratorTests(unittest.TestCase):
             generator.validate_coverage(tools)
 
     def test_check_rejects_stale_output_without_rewriting_it(self) -> None:
-        expected = generator.render_reference(self.tools)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "mcp-tools-reference.md"
-            output.write_text("stale\n", encoding="utf-8")
+            original = b"stale\n"
+            output.write_bytes(original)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
 
-            self.assertFalse(generator.reference_is_current(output, expected))
-            self.assertEqual(output.read_text(encoding="utf-8"), "stale\n")
+            with (
+                mock.patch.object(generator, "OUTPUT", output),
+                mock.patch.object(sys, "argv", ["regenerate_mcp_reference.py", "--check"]),
+                redirect_stdout(stdout),
+                redirect_stderr(stderr),
+            ):
+                exit_code = generator.main()
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertIn("MCP tools reference is stale", stderr.getvalue())
+            self.assertEqual(output.read_bytes(), original)
 
 
 if __name__ == "__main__":
