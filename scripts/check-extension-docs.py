@@ -14,8 +14,6 @@ from collections import Counter
 from pathlib import Path
 
 PRIVATE_TRANSITION_DOCS = {
-    "a2a-ac-managed-gateway-contract.md",
-    "custodial-managed-encryption.md",
     "restructuring/ac-cross-boundary-fk-inventory.md",
     "support/aasn-migration-evidence-runbook.md",
 }
@@ -49,6 +47,20 @@ PUBLIC_EXTENSION_DOCS = (
 
 HOOK_INVENTORY = "vectors/mutation-hook-call-sites-v1.json"
 
+MANAGED_GATEWAY_PRIVATE_TOKENS = (
+    "a" + "c_config",
+    "a" + "c_base_url",
+    "AWEB_A2A_GW_AC_" + "BASE_URL",
+    "a2a-ac-" + "managed-gateway-contract",
+    "a2a-gateway-ac-" + "managed",
+    "a2a-gw-" + "ac",
+    "a" + "c_config_expired",
+    "/api/v1/a2a/gateway/" + "config",
+    "AC-" + "managed",
+    "AC runtime " + "config",
+    "AC " + "bridge",
+)
+
 HOOK_SOURCES = (
     "server/src/aweb/routes/messages.py",
     "server/src/aweb/routes/chat.py",
@@ -61,8 +73,6 @@ FORBIDDEN_PUBLIC_REFERENCES = (
     "../ac",
     "ac/docs/",
     "awebai/naapp-specs",
-    "a2a-ac-managed-gateway-contract",
-    "a2a-gateway-ac-managed",
     "restructuring/app-event-subscriptions-contract.md",
     "restructuring/app-manifest-schema.md",
     "restructuring/app-registry-grants-read-api.md",
@@ -156,24 +166,85 @@ def _readme_h2_links(readme: str) -> dict[str, list[str]]:
     return sections
 
 
-def _tracked_docs_markdown(root: Path, failures: list[str]) -> set[str]:
+def _tracked_files(root: Path, failures: list[str]) -> set[str]:
     result = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z", "--", "docs"],
+        ["git", "-C", str(root), "ls-files", "-z"],
         check=False,
         capture_output=True,
     )
     if result.returncode != 0:
-        failures.append("cannot derive tracked Markdown corpus with git ls-files")
+        failures.append("cannot derive tracked repository corpus with git ls-files")
         return set()
+    return {path for path in result.stdout.decode("utf-8").split("\0") if path}
+
+
+def _tracked_docs_markdown(root: Path, failures: list[str]) -> set[str]:
     return {
         path.removeprefix("docs/")
-        for path in result.stdout.decode("utf-8").split("\0")
+        for path in _tracked_files(root, failures)
         if path.startswith("docs/") and path.endswith(".md")
     }
 
 
-def check(root: Path, tracked_markdown: set[str] | None = None) -> list[str]:
+def _is_managed_gateway_surface(relative: str) -> bool:
+    return (
+        any("a2a" in part.lower() for part in Path(relative).parts)
+        or relative.startswith("cli/go/npm/")
+        or relative.startswith("docs/a2a")
+        or relative.startswith("docs/examples/a2a-")
+        or relative.startswith("docs/vectors/a2a-")
+        or relative.startswith("cli/go/internal/conformance/vectors/a2a-")
+        or relative in {
+            "docs/README.md",
+            "docs/vectors/README.md",
+            "cli/go/.goreleaser.yaml",
+            "Makefile",
+            "scripts/check-extension-docs.py",
+        }
+        or (
+            relative.startswith(".github/workflows/")
+            and "a2a" in Path(relative).name.lower()
+        )
+        or (
+            relative.startswith("cli/go/")
+            and relative.count("/") == 2
+            and "a2a" in Path(relative).name.lower()
+        )
+        or (relative.startswith("scripts/") and "a2a" in Path(relative).name.lower())
+    )
+
+
+def check(
+    root: Path,
+    tracked_markdown: set[str] | None = None,
+    tracked_files: set[str] | None = None,
+) -> list[str]:
     failures: list[str] = []
+
+    if tracked_files is None:
+        tracked_files = _tracked_files(root, failures)
+    for relative in sorted(tracked_files):
+        normalized_relative = relative.casefold()
+        for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
+            if token.casefold() in normalized_relative:
+                failures.append(f"tracked path {relative} retains private managed-gateway name {token!r}")
+
+    neutrality_relatives = [relative for relative in sorted(tracked_files) if _is_managed_gateway_surface(relative)]
+    for relative in neutrality_relatives:
+        path = root / relative
+        if not path.is_file():
+            continue
+        normalized_text = path.read_text(encoding="utf-8", errors="replace").casefold()
+        for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
+            if token.casefold() in normalized_text:
+                failures.append(f"{relative} retains private managed-gateway token {token!r}")
+    removed_private_paths = (
+        root / "docs" / ("a2a-ac-" + "managed-gateway-contract.md"),
+        root / "docs/examples" / ("a2a-gateway-ac-" + "managed.yaml"),
+    )
+    for path in removed_private_paths:
+        if path.exists():
+            failures.append(f"removed private managed-gateway path returned: {path.relative_to(root)}")
     docs = root / "docs"
 
     for relative in REMOVED_DOCS:
@@ -325,7 +396,12 @@ def self_test(root: Path) -> int:
         return 1
 
     tracked_failures: list[str] = []
-    tracked_markdown = _tracked_docs_markdown(root, tracked_failures)
+    tracked_files = _tracked_files(root, tracked_failures)
+    tracked_markdown = {
+        path.removeprefix("docs/")
+        for path in tracked_files
+        if path.startswith("docs/") and path.endswith(".md")
+    }
     if tracked_failures:
         print(f"self-test setup failed: {tracked_failures[0]}")
         return 1
@@ -333,7 +409,12 @@ def self_test(root: Path) -> int:
     with tempfile.TemporaryDirectory() as raw_tmp:
         tmp = Path(raw_tmp)
         shutil.copytree(root / "docs", tmp / "docs")
-        shutil.copy2(root / "Makefile", tmp / "Makefile")
+        for relative in sorted(tracked_files):
+            if not _is_managed_gateway_surface(relative) or relative.startswith("docs/"):
+                continue
+            destination = tmp / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(root / relative, destination)
         for relative in HOOK_SOURCES:
             destination = tmp / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -341,11 +422,11 @@ def self_test(root: Path) -> int:
 
         untracked_note = tmp / "docs/untracked-self-test-note.md"
         untracked_note.write_text("not part of the tracked corpus\n", encoding="utf-8")
-        if failures := check(tmp, tracked_markdown):
+        if failures := check(tmp, tracked_markdown, tracked_files):
             print(f"self-test failed: untracked Markdown changed the tracked corpus: {failures[0]}")
             return 1
         newly_tracked = tracked_markdown | {"untracked-self-test-note.md"}
-        failures = check(tmp, newly_tracked)
+        failures = check(tmp, newly_tracked, tracked_files)
         if not any(
             "omits public Markdown paths: untracked-self-test-note.md" in failure
             for failure in failures
@@ -353,10 +434,56 @@ def self_test(root: Path) -> int:
             print("self-test failed: existing newly tracked public Markdown was not rejected")
             return 1
         untracked_note.unlink()
-        failures = check(tmp, tracked_markdown | {"missing-tracked-self-test-note.md"})
+        failures = check(tmp, tracked_markdown | {"missing-tracked-self-test-note.md"}, tracked_files)
         if not any("tracked Markdown is missing" in failure for failure in failures):
             print("self-test failed: missing tracked Markdown was not detected")
             return 1
+
+        neutrality_mutations = (
+            ("cli/go/cmd/aweb-a2a-gw/audit.go", "a" + "c_config", False),
+            ("cli/go/a2a/client.go", "a" + "c_config", False),
+            ("awid/src/awid/a2a_publication.py", "a" + "c_config", False),
+            ("cli/go/awid/a2a_publication.go", "a" + "c_config", False),
+            ("cli/go/cmd/aw/a2a.go", "a" + "c_config", False),
+            ("cli/go/tools/a2a-gateway-check-workspace/main.go", "a" + "c_config", False),
+            ("docs/a2a-release-runbook.md", "a" + "c_config", False),
+            ("cli/go/cmd/aweb-a2a-gw/new_surface.go", "a" + "c_config", True),
+            ("cli/go/a2a/new_surface.go", "a" + "c_config", True),
+            (".github/workflows/a2a-gateway-secondary.yml", "a" + "c_config", True),
+            ("docs/a2a.md", "a2a-gw-" + "ac.yaml", False),
+        )
+        for relative, token, newly_tracked_surface in neutrality_mutations:
+            path = tmp / relative
+            original = path.read_text(encoding="utf-8") if path.exists() else None
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text((original or "") + f"\n{token}\n", encoding="utf-8")
+            mutation_files = tracked_files | ({relative} if newly_tracked_surface else set())
+            mutation_failures = check(tmp, tracked_markdown, mutation_files)
+            expected = f"{relative} retains private managed-gateway token"
+            if not any(expected in failure for failure in mutation_failures):
+                print(f"self-test failed: managed-gateway neutrality mutation was not detected in {relative}")
+                return 1
+            if original is None:
+                path.unlink()
+            else:
+                path.write_text(original, encoding="utf-8")
+
+        path_mutations = (
+            "docs/examples/A2A-GW-" + "AC.yaml",
+            "reviewer/AC_" + "CONFIG.go",
+            "reviewer/a2a/AC_" + "CONFIG.go",
+            "docs/examples/a2a-ac-" + "managed-gateway-contract-copy.yaml",
+        )
+        for relative in path_mutations:
+            path = tmp / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("generic: true\n", encoding="utf-8")
+            mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            expected = f"tracked path {relative} retains private managed-gateway name"
+            if not any(expected in failure for failure in mutation_failures):
+                print(f"self-test failed: private managed-gateway path was not detected: {relative}")
+                return 1
+            path.unlink()
 
         hook = tmp / "docs/aw-hooks-sot.md"
         hook.write_text(hook.read_text(encoding="utf-8").replace("`task.created`", "`task-created`"), encoding="utf-8")
@@ -390,7 +517,7 @@ def self_test(root: Path) -> int:
             ),
             encoding="utf-8",
         )
-        failures = check(tmp, tracked_markdown)
+        failures = check(tmp, tracked_markdown, tracked_files)
         required_failures = {
             "missing documented event": "task.created",
             "new repeated-event call site": "inventory omits source call site",
@@ -405,8 +532,9 @@ def self_test(root: Path) -> int:
                 return 1
 
     print(
-        "self-test passed: tracked corpus, strategy lifecycle, event/call-site multiplicity, "
-        "dynamic-expression, and real-workspace release-mount controls reject their mutations"
+        "self-test passed: tracked corpus, strategy lifecycle, managed-gateway neutrality, "
+        "event/call-site multiplicity, dynamic-expression, and real-workspace release-mount "
+        "controls reject their mutations"
     )
     return 0
 

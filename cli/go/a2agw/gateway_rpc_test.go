@@ -72,8 +72,8 @@ func TestGatewayRPCRejectsNewTasksAfterConfigExpiry(t *testing.T) {
 	resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-expired", "SendMessage", map[string]any{
 		"message": testUserMessage("msg-1", "ctx-1", "hello"),
 	}), map[string]string{"X-A2A-Caller-ID": "alice"}, http.StatusOK)
-	if got := rpcErrorCode(resp); got != "ac_config_expired" {
-		t.Fatalf("rpc error code=%q, want ac_config_expired; resp=%#v", got, resp)
+	if got := rpcErrorCode(resp); got != "managed_config_expired" {
+		t.Fatalf("rpc error code=%q, want managed_config_expired; resp=%#v", got, resp)
 	}
 	if len(bridge.sent) != 0 {
 		t.Fatalf("expired config must not send bridge tasks: %#v", bridge.sent)

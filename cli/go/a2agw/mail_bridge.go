@@ -22,6 +22,10 @@ type RouteScopedMailTransport interface {
 	MailConversationForRoute(context.Context, string, string, string, int) (*awid.InboxResponse, error)
 }
 
+type RouteBoundMailTransport interface {
+	SendMessageForRoute(context.Context, string, string, bool, *awid.SendMessageRequest) (*awid.SendMessageResponse, error)
+}
+
 type ReplyApplier interface {
 	ApplyBridgeReply(BridgeReply) (Task, bool, error)
 }
@@ -154,7 +158,7 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 		ContentMode: awid.ContentModeLegacyPlaintextV1,
 		Priority:    awid.PriorityNormal,
 	}
-	resp, err := b.send(ctx, req)
+	resp, err := b.sendForRoute(ctx, task.RouteID, task.Address, req)
 	if err != nil {
 		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "error", Code: "send_failed", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		return err
@@ -203,7 +207,7 @@ func (b *MailBridge) CancelTask(ctx context.Context, cancel BridgeCancel) error 
 	if thread != nil && thread.ConversationID != "" {
 		req.ConversationID = thread.ConversationID
 	}
-	_, err := b.send(ctx, req)
+	_, err := b.sendForRoute(ctx, cancel.RouteID, cancel.Address, req)
 	outcome := "ok"
 	code := ""
 	if err != nil {
@@ -280,6 +284,13 @@ func (b *MailBridge) send(ctx context.Context, req *awid.SendMessageRequest) (*a
 		return b.client.SendMessageByIdentity(ctx, req)
 	}
 	return b.client.SendMessage(ctx, req)
+}
+
+func (b *MailBridge) sendForRoute(ctx context.Context, routeID, address string, req *awid.SendMessageRequest) (*awid.SendMessageResponse, error) {
+	if transport, ok := b.client.(RouteBoundMailTransport); ok {
+		return transport.SendMessageForRoute(ctx, routeID, address, b.useIdentityAuth, req)
+	}
+	return b.send(ctx, req)
 }
 
 func bridgeVisibleCallerScope(scope string) string {

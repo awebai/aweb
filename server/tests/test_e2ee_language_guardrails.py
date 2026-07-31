@@ -1,5 +1,5 @@
-import hashlib
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -8,6 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 FILES_TO_SCAN = [
     # Extend this list when adding new customer-visible string sources.
+    REPO_ROOT / "README.md",
     *REPO_ROOT.glob("docs/**/*.md"),
     *REPO_ROOT.glob("skills/**/*.md"),
     *REPO_ROOT.glob("packages/codex-plugin/skills/**/*.md"),
@@ -36,10 +37,7 @@ PUBLIC_E2E_DOCS = [
 PRIVATE_CUSTODIAL_TRANSITION_SOURCE = (
     REPO_ROOT / "docs" / "custodial-managed-encryption.md"
 )
-PRIVATE_CUSTODIAL_GIT_BLOB_SHA1 = "d671c532f80a8bc299d1e97be4b53c8a00f310e5"
-PRIVATE_CUSTODIAL_SHA256 = (
-    "f9b414301af3b28cd0d1ea0ac8dca3b568c73f68ce88dbb587044a85f9b65531"
-)
+PRIVATE_CUSTODIAL_TRANSITION_INVENTORY_LABEL = "Hosted custody implementation contract"
 
 FORBIDDEN_PUBLIC_IMPLEMENTATION_PATTERNS = [
     re.compile(r"\bAC\b"),
@@ -102,18 +100,61 @@ def test_public_e2ee_task_reference_guard_rejects_current_task_id() -> None:
     assert offenders == [f"{path.relative_to(REPO_ROOT)}:{line}: 'aweb-aazc'"]
 
 
-def test_private_custodial_transition_source_is_verbatim_and_unlinked() -> None:
-    data = PRIVATE_CUSTODIAL_TRANSITION_SOURCE.read_bytes()
-    git_blob = b"blob " + str(len(data)).encode("ascii") + b"\0" + data
-
-    assert (
-        hashlib.sha1(git_blob, usedforsecurity=False).hexdigest()
-        == PRIVATE_CUSTODIAL_GIT_BLOB_SHA1
+def _tracked_markdown_files() -> list[Path]:
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "--", "*.md"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
     )
-    assert hashlib.sha256(data).hexdigest() == PRIVATE_CUSTODIAL_SHA256
-    for path in REPO_ROOT.glob("docs/**/*.md"):
-        if path == PRIVATE_CUSTODIAL_TRANSITION_SOURCE:
+    return sorted(
+        REPO_ROOT / relative_path
+        for relative_path in result.stdout.split("\0")
+        if relative_path
+    )
+
+
+def _private_custodial_transition_reference_offenders(
+    overrides: dict[Path, str] | None = None,
+) -> list[str]:
+    offenders: list[str] = []
+    overrides = overrides or {}
+    for path in _tracked_markdown_files():
+        if not path.is_file():
             continue
-        assert "custodial-managed-encryption.md" not in path.read_text(
-            encoding="utf-8"
-        ), path
+        text = overrides.get(path, path.read_text(encoding="utf-8"))
+        for forbidden in [
+            PRIVATE_CUSTODIAL_TRANSITION_SOURCE.name,
+            PRIVATE_CUSTODIAL_TRANSITION_INVENTORY_LABEL,
+        ]:
+            if forbidden in text:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {forbidden!r}")
+    return offenders
+
+
+def test_private_custodial_transition_source_is_absent_and_not_indexed() -> None:
+    assert not PRIVATE_CUSTODIAL_TRANSITION_SOURCE.exists()
+    assert not _private_custodial_transition_reference_offenders()
+
+
+def test_private_custodial_transition_guard_scans_root_readme() -> None:
+    path = REPO_ROOT / "README.md"
+    text = path.read_text(encoding="utf-8") + (
+        "\n[Removed managed custody source](docs/custodial-managed-encryption.md)\n"
+    )
+
+    offenders = _private_custodial_transition_reference_offenders({path: text})
+
+    assert offenders == ["README.md: 'custodial-managed-encryption.md'"]
+
+
+def test_private_custodial_transition_guard_scans_all_tracked_markdown() -> None:
+    path = REPO_ROOT / "CONTRIBUTING.md"
+    text = path.read_text(encoding="utf-8") + (
+        "\nRemoved transition inventory: Hosted custody implementation contract\n"
+    )
+
+    offenders = _private_custodial_transition_reference_offenders({path: text})
+
+    assert offenders == ["CONTRIBUTING.md: 'Hosted custody implementation contract'"]
