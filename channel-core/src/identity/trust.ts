@@ -118,16 +118,29 @@ export class SenderTrustManager {
     ) {
       return { status, stored: false };
     }
+    let meta: AgentMeta | undefined;
     if (
       status === "verified"
       && !recipientBindingMismatch
       && isLocalAliasReference(rawAddress.trim())
       && fromDID
-      && !fromStableID
     ) {
-      return this.verifyLocalSenderAgainstCurrentRoster(store, rawAddress.trim(), trustAddress, fromDID);
+      const fresh = await this.resolveAgentMeta(rawAddress, true);
+      if (!fresh.resolved) {
+        return {
+          status: fresh.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
+          stored: false,
+        };
+      }
+      if (fresh.identityScope === "local") {
+        return this.verifyResolvedLocalSender(store, rawAddress.trim(), trustAddress, fromDID, fresh);
+      }
+      if (!fromStableID) {
+        return { status: "identity_mismatch", stored: false };
+      }
+      meta = fresh;
     }
-    const meta = await this.resolveAgentMeta(rawAddress);
+    meta ??= await this.resolveAgentMeta(rawAddress);
     const registryCheck = await this.checkStableIdentityRegistry(
       store,
       status,
@@ -498,6 +511,16 @@ export class SenderTrustManager {
     if (fresh.identityScope !== "local") {
       return { status: "identity_mismatch", stored: false };
     }
+    return this.verifyResolvedLocalSender(store, rawAddress, trustAddress, fromDID, fresh);
+  }
+
+  private verifyResolvedLocalSender(
+    store: PinStore,
+    rawAddress: string,
+    trustAddress: string,
+    fromDID: string,
+    fresh: AgentMeta,
+  ): TrustResult {
     if (!fresh.did) {
       return { status: "verification_stale", stored: false };
     }

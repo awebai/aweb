@@ -598,11 +598,26 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 		localTeamReference && strings.TrimSpace(fromStableID) == "" {
 		return status, isContact
 	}
-	if status == Verified && !recipientBindingMismatch && localTeamReference &&
-		strings.TrimSpace(fromDID) != "" && strings.TrimSpace(fromStableID) == "" {
-		return c.verifyLocalSenderAgainstCurrentRoster(ctx, strings.TrimSpace(rawAddress), trustAddress, fromDID), nil
+	var meta *agentMeta
+	if status == Verified && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" {
+		fresh := c.resolveAgentMetaFresh(ctx, rawAddress, true)
+		if fresh == nil || !fresh.Resolved {
+			if fresh != nil && fresh.ResolutionError == "not_found" {
+				return IdentityMismatch, nil
+			}
+			return VerificationStale, nil
+		}
+		if fresh.Lifetime == LifetimeEphemeral {
+			return c.verifyResolvedLocalSender(fresh, strings.TrimSpace(rawAddress), trustAddress, fromDID), nil
+		}
+		if strings.TrimSpace(fromStableID) == "" {
+			return IdentityMismatch, nil
+		}
+		meta = fresh
 	}
-	meta := c.resolveAgentMeta(ctx, rawAddress)
+	if meta == nil {
+		meta = c.resolveAgentMeta(ctx, rawAddress)
+	}
 	if strings.TrimSpace(fromStableID) == "" || (meta.Resolved && meta.Lifetime == LifetimeEphemeral) {
 		isContact = nil
 	}
@@ -640,6 +655,10 @@ func (c *Client) verifyLocalSenderAgainstCurrentRoster(ctx context.Context, rawA
 	if fresh.Lifetime != LifetimeEphemeral {
 		return IdentityMismatch
 	}
+	return c.verifyResolvedLocalSender(fresh, rawAddress, trustAddress, fromDID)
+}
+
+func (c *Client) verifyResolvedLocalSender(fresh *agentMeta, rawAddress, trustAddress, fromDID string) VerificationStatus {
 	if strings.TrimSpace(fresh.DID) == "" {
 		return VerificationStale
 	}

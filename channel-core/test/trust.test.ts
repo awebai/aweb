@@ -215,7 +215,7 @@ describe("SenderTrustManager", () => {
     ["empty", "verification_stale"],
     ["malformed", "verification_stale"],
     ["non-local", "identity_mismatch"],
-    ["different-key", "identity_mismatch"],
+    ["different-key-with-forged-stable-id", "identity_mismatch"],
     ["unavailable", "verification_stale"],
   ] as const)("rejects %s authenticated roster refreshes", async (variant, expected) => {
     const self = await didFromSeed(44);
@@ -233,7 +233,7 @@ describe("SenderTrustManager", () => {
       }
       const agents = variant === "absent" ? [] : [{
         alias: "alice",
-        did_key: variant === "empty" ? "" : variant === "malformed" ? "did:key:not-valid" : variant === "different-key" ? differentIdentity.did : currentIdentity.did,
+        did_key: variant === "empty" ? "" : variant === "malformed" ? "did:key:not-valid" : variant === "different-key-with-forged-stable-id" ? differentIdentity.did : currentIdentity.did,
         identity_scope: variant === "non-local" ? "global" : "local",
       }];
       return new Response(JSON.stringify({ team_id: "backend:acme.com", agents }), { status: 200 });
@@ -252,7 +252,8 @@ describe("SenderTrustManager", () => {
       "backend:acme.com",
       "",
     );
-    expect((await trust.normalizeTrust(store, "verified", "alice", currentIdentity.did, undefined, undefined)).status).toBe(expected);
+    const stableID = variant === "different-key-with-forged-stable-id" ? "did:aw:forged" : undefined;
+    expect((await trust.normalizeTrust(store, "verified", "alice", currentIdentity.did, stableID, undefined)).status).toBe(expected);
   });
 
   test("preserves local mismatch when the authoritative roster row has a different key", async () => {
@@ -551,7 +552,7 @@ describe("SenderTrustManager", () => {
     const store = new PinStore();
     const client = {
       hasTeamCertificateAuth: (teamID: string) => teamID === "backend:acme.com",
-      get: vi.fn(async (path: string) => {
+      getFresh: vi.fn(async (path: string) => {
         expect(path).toBe("/v1/agents");
         return localRoster({
           did_key: did,

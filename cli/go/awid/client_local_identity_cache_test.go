@@ -140,16 +140,17 @@ func TestNormalizeSenderTrustRejectsUnauthoritativeRosterRefreshes(t *testing.T)
 	currentDID := makeDID(73)
 	differentDID := makeDID(74)
 	cases := []struct {
-		name       string
-		statusCode int
-		agents     []AgentView
-		want       VerificationStatus
+		name         string
+		statusCode   int
+		agents       []AgentView
+		fromStableID string
+		want         VerificationStatus
 	}{
 		{name: "absent", agents: nil, want: IdentityMismatch},
 		{name: "empty", agents: []AgentView{{Alias: "alice", IdentityScope: IdentityModeLocal}}, want: VerificationStale},
 		{name: "malformed", agents: []AgentView{{Alias: "alice", DIDKey: "did:key:not-valid", IdentityScope: IdentityModeLocal}}, want: VerificationStale},
 		{name: "non-local", agents: []AgentView{{Alias: "alice", DIDKey: currentDID, IdentityScope: IdentityModeGlobal}}, want: IdentityMismatch},
-		{name: "different-key", agents: []AgentView{{Alias: "alice", DIDKey: differentDID, IdentityScope: IdentityModeLocal}}, want: IdentityMismatch},
+		{name: "different-key-with-forged-stable-id", agents: []AgentView{{Alias: "alice", DIDKey: differentDID, IdentityScope: IdentityModeLocal}}, fromStableID: "did:aw:forged", want: IdentityMismatch},
 		{name: "unavailable", statusCode: http.StatusServiceUnavailable, want: VerificationStale},
 	}
 	for _, tc := range cases {
@@ -181,7 +182,7 @@ func TestNormalizeSenderTrustRejectsUnauthoritativeRosterRefreshes(t *testing.T)
 			client.SetAddress("backend:acme.com/bob")
 			client.SetPinStore(NewPinStore(), "")
 			client.SetResolver(&ChainResolver{Team: &TeamRosterResolver{Client: client, TeamID: "backend:acme.com"}})
-			if got, _ := client.NormalizeSenderTrust(context.Background(), Verified, "alice", currentDID, "", nil, nil, nil); got != tc.want {
+			if got, _ := client.NormalizeSenderTrust(context.Background(), Verified, "alice", currentDID, tc.fromStableID, nil, nil, nil); got != tc.want {
 				t.Fatalf("refresh status=%q, want %q", got, tc.want)
 			}
 		})
