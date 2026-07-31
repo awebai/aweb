@@ -200,13 +200,15 @@ def check(
 
     if tracked_files is None:
         tracked_files = _tracked_files(root, failures)
-    neutrality_relatives = [relative for relative in sorted(tracked_files) if _is_managed_gateway_surface(relative)]
-    for relative in neutrality_relatives:
-        path = root / relative
+    for relative in sorted(tracked_files):
         normalized_relative = relative.casefold()
         for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
             if token.casefold() in normalized_relative:
-                failures.append(f"tracked A2A path {relative} retains private managed-gateway name {token!r}")
+                failures.append(f"tracked path {relative} retains private managed-gateway name {token!r}")
+
+    neutrality_relatives = [relative for relative in sorted(tracked_files) if _is_managed_gateway_surface(relative)]
+    for relative in neutrality_relatives:
+        path = root / relative
         if not path.is_file():
             continue
         normalized_text = path.read_text(encoding="utf-8", errors="replace").casefold()
@@ -430,7 +432,7 @@ def self_test(root: Path) -> int:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("generic: true\n", encoding="utf-8")
             mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
-            expected = f"tracked A2A path {relative} retains private managed-gateway name"
+            expected = f"tracked path {relative} retains private managed-gateway name"
             if not any(expected in failure for failure in mutation_failures):
                 print(f"self-test failed: private managed-gateway path was not detected: {relative}")
                 return 1
