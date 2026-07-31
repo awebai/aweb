@@ -993,7 +993,9 @@ var mailShowCmd = &cobra.Command{
 		"aw mail inbox windows from the other end and enforces a server cap that this " +
 		"command does not. Do not carry an expectation from one to the other.\n\n" +
 		"To read a whole conversation, pass --limit above its length and check the " +
-		"returned count: if it equals the limit you were truncated, so raise it and re-run.",
+		"returned count: if it equals the limit you were truncated, so raise it and re-run. " +
+		"The server accepts --limit up to 500 and rejects more, so a conversation longer than " +
+		"500 messages cannot be returned whole by this command and there is no paging flag.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		conversationID := strings.TrimSpace(mailShowConversationID)
 		messageID := strings.TrimSpace(mailShowMessageID)

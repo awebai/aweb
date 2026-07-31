@@ -93,6 +93,23 @@ func TestMailConversationWindowNoticeNamesTheRemedy(t *testing.T) {
 	}
 }
 
+// The remedy has a ceiling, and a notice that omits it sends the reader into an
+// HTTP 422 they will read as the command being broken. Measured directly against a
+// live server: --limit 500 is accepted, --limit 501 returns
+// "Input should be less than or equal to 500". So a conversation longer than 500
+// cannot be returned whole by this command, and there is no paging flag.
+func TestMailConversationWindowNoticeNamesTheCeiling(t *testing.T) {
+	restore := mailShowLimit
+	t.Cleanup(func() { mailShowLimit = restore })
+	mailShowLimit = 200
+
+	got := formatMailConversation(conversationOfSize(200))
+
+	if !strings.Contains(got, "500") {
+		t.Fatalf("the notice tells the reader to raise --limit without naming the 500 ceiling, so following it on a long thread produces an HTTP 422:\n%s", got)
+	}
+}
+
 // The JSON path is where getting this wrong is worst: a notice written to stdout
 // would corrupt the document every machine consumer parses. It goes to stderr, so
 // stdout stays a clean JSON body and a human still sees the warning.
