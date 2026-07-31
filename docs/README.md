@@ -57,6 +57,9 @@ security and protocol authority.
 - [Orchestrator evidence review](orchestrator-evidence-review.md) — research
   snapshot separating demonstrated orchestrator capabilities from unproven
   agent-fleet productivity claims.
+- [Company-agent platform thesis](company-agent-platform-thesis.md) — working
+  strategy for trusted, specialized, learning company agents, beginning with
+  two agents on one real workflow.
 - [Identity and team model](identity.md) — canonical vocabulary and identity/team
   invariants.
 - [aweb implementation SOT](aweb-sot.md) — normative aweb server/CLI contract;
