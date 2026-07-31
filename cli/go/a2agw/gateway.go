@@ -28,6 +28,7 @@ type Config struct {
 	Bridge              Bridge
 	Audit               AuditSink
 	AcceptNewTasksUntil time.Time
+	ConfigExpiredCode   string
 }
 
 type Route struct {

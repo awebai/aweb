@@ -472,9 +472,54 @@ same gateway without starting HTTP service. It does not prove the target agent
 will answer.
 
 When a route requires an AWID publication, configured address and digest
-expectations must match registry truth; conflicts fail closed. A hosted operator
-may supply routes through a private control plane, but that application's schema,
-credentials, and deployment runbook are not part of this public contract.
+expectations must match registry truth; conflicts fail closed.
+
+A managed provider can supply the same route configuration through this generic
+operator block. Every value is explicit; the gateway does not infer provider
+paths or supply endpoint, identity, or token defaults:
+
+```yaml
+managed_config:
+  config_url: "https://control.example/gateways/gw-1/config"
+  bridge_url: "https://bridge.example/a2a"
+  gateway_id: "gw-1"
+  bearer_token_env: "GATEWAY_PROVIDER_TOKEN"
+```
+
+`config_url`, `bridge_url`, and `gateway_id` are required. Exactly one of
+`bearer_token` and `bearer_token_env` supplies the Bearer token. For config-file-
+free startup, all six generic environment variables must be set explicitly:
+`AWEB_A2A_GW_HOST`, `AWEB_A2A_GW_REGISTRY_URL`,
+`AWEB_A2A_GW_MANAGED_CONFIG_URL`, `AWEB_A2A_GW_MANAGED_BRIDGE_URL`,
+`AWEB_A2A_GW_MANAGED_GATEWAY_ID`, and
+`AWEB_A2A_GW_MANAGED_BEARER_TOKEN`.
+
+The authenticated `GET config_url` response requires `gateway_id`,
+`gateway_identity`, `gateway_identity_status`, `config_revision`, `expires_at`,
+and `routes`. Each route requires `route_id`, `host`, `address`, `mode`,
+`disabled`, `root_behavior`, `verification_tier`, `card_digest`, `auth`, `limits`,
+and `card`. Unknown additive provider fields at the response or route level are
+tolerated but are not thereby part of this contract. Invalid identity, revision,
+expiry, route, or auth data fails closed.
+
+The bridge uses the same Bearer token. Sending posts to
+`{bridge_url}/{gateway_id}/messages` with `route_id`, `to_address`,
+`conversation_id`, `subject`, `body`, `content_mode`, `priority`, and `message_id`
+and returns the standard aweb send response. Polling gets
+`{bridge_url}/{gateway_id}/conversations/{conversation_id}` with optional
+`route_id`, `to_address`, and `limit`, returning the standard inbox response.
+Route/address and conversation bindings are checked; they are not caller hints.
+
+`/health` reports `managed_config` with `enabled`, `gateway_id`,
+`config_revision`, `expires_at`, `expired`, `routes`, `status`, and `error`.
+Initial missing-token and HTTP 401/403 failures are fatal. A transient initial
+fetch starts degraded with no managed routes; a refresh failure keeps the
+last-known-good snapshot and reports stale health. A changed revision rebuilds
+routes while preserving the gateway task store; the same revision updates
+expiry without discarding tasks. Once the last-known-good snapshot expires the
+gateway stops accepting new tasks and returns `managed_config_expired`, while
+existing task state remains readable. A hosted provider's concrete endpoints,
+credentials, defaults, and deployment runbook are outside this public contract.
 
 ## 9. Gateway Task Mapping
 
