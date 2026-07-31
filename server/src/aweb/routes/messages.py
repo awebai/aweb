@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
+from awid.pagination import encode_cursor, validate_pagination_params
 from aweb.awid_error_handling import awid_registry_not_configured_exception
 from aweb.deps import get_db
 from aweb.config import get_settings
@@ -236,6 +237,8 @@ class InboxMessage(BaseModel):
 
 class InboxResponse(BaseModel):
     messages: list[InboxMessage]
+    has_more: bool = False
+    next_cursor: Optional[str] = None
 
 
 class AckResponse(BaseModel):
@@ -243,7 +246,13 @@ class AckResponse(BaseModel):
     acknowledged_at: str
 
 
-async def _inbox_response_from_rows(db, rows) -> InboxResponse:
+async def _inbox_response_from_rows(
+    db,
+    rows,
+    *,
+    has_more: bool = False,
+    next_cursor: str | None = None,
+) -> InboxResponse:
     identity_map = await lookup_identity_metadata_by_did(
         db,
         [
@@ -289,7 +298,7 @@ async def _inbox_response_from_rows(db, rows) -> InboxResponse:
             )
         )
 
-    return InboxResponse(messages=messages)
+    return InboxResponse(messages=messages, has_more=has_more, next_cursor=next_cursor)
 
 
 @router.get("/conversations/{conversation_id}", response_model=InboxResponse)
@@ -1675,27 +1684,54 @@ async def get_inbox(
     request: Request,
     db=Depends(get_db),
     limit: int = Query(default=50, ge=1, le=200),
+    cursor: str | None = Query(default=None),
     unread_only: bool = Query(default=False),
     message_id: str | None = Query(default=None),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> InboxResponse:
+    del request
     aweb_db = db.get_manager("aweb")
     inbox_dids = auth_dids(auth)
     if not inbox_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
-    where_clause = "WHERE m.to_did = ANY($1::text[])"
-    params: list = [inbox_dids]
-
+    exact_message_id: UUID | None = None
     if message_id is not None and message_id.strip():
+        if cursor:
+            raise HTTPException(status_code=422, detail="cursor cannot be combined with message_id")
         try:
-            params.append(UUID(message_id.strip()))
+            exact_message_id = UUID(message_id.strip())
         except Exception:
             raise HTTPException(status_code=422, detail="Invalid message_id format")
-        where_clause += f" AND m.message_id = ${len(params)}"
-    elif unread_only:
-        where_clause += " AND m.read_at IS NULL"
 
+    try:
+        page_limit, cursor_data = validate_pagination_params(limit, cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    where_clause = "WHERE m.to_did = ANY($1::text[])"
+    params: list = [inbox_dids]
+    if exact_message_id is not None:
+        params.append(exact_message_id)
+        where_clause += f" AND m.message_id = ${len(params)}"
+    else:
+        if unread_only:
+            where_clause += " AND m.read_at IS NULL"
+        if cursor_data is not None:
+            try:
+                cursor_created_at = datetime.fromisoformat(str(cursor_data["created_at"]))
+                cursor_message_id = UUID(str(cursor_data["message_id"]))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Invalid inbox cursor") from exc
+            if cursor_created_at.tzinfo is None:
+                cursor_created_at = cursor_created_at.replace(tzinfo=timezone.utc)
+            params.extend([cursor_created_at, cursor_message_id])
+            where_clause += (
+                f" AND (m.created_at, m.message_id) < "
+                f"(${len(params) - 1}, ${len(params)})"
+            )
+
+    query_limit = 1 if exact_message_id is not None else page_limit + 1
     rows = await aweb_db.fetch_all(
         f"""
         SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
@@ -1704,14 +1740,63 @@ async def get_inbox(
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{{{tables.messages}}}} m
         {where_clause}
-        ORDER BY m.created_at DESC
+        ORDER BY m.created_at DESC, m.message_id DESC
         LIMIT ${len(params) + 1}
         """,
         *params,
-        limit,
+        query_limit,
     )
 
-    return await _inbox_response_from_rows(db, rows)
+    has_more = exact_message_id is None and len(rows) > page_limit
+    rows = rows[:page_limit]
+    next_cursor = None
+    if has_more and rows:
+        last = rows[-1]
+        next_cursor = encode_cursor(
+            {
+                "created_at": last["created_at"].isoformat(),
+                "message_id": str(last["message_id"]),
+            }
+        )
+    return await _inbox_response_from_rows(
+        db,
+        rows,
+        has_more=has_more,
+        next_cursor=next_cursor,
+    )
+
+
+@router.get("/{message_id}", response_model=InboxMessage)
+async def get_message(
+    message_id: str,
+    db=Depends(get_db),
+    auth: MessagingAuth = Depends(get_messaging_auth),
+) -> InboxMessage:
+    try:
+        msg_uuid = UUID(message_id.strip())
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid message_id format")
+
+    actor_dids = auth_dids(auth)
+    if not actor_dids:
+        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
+    row = await db.get_manager("aweb").fetch_one(
+        """
+        SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
+               m.subject, m.body, m.priority, m.read_at, m.created_at,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.content_mode, m.message_version, m.encrypted_envelope
+        FROM {{tables.messages}} m
+        WHERE m.message_id = $1
+          AND (m.from_did = ANY($2::text[]) OR m.to_did = ANY($2::text[]))
+        """,
+        msg_uuid,
+        actor_dids,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Message not found")
+    response = await _inbox_response_from_rows(db, [row])
+    return response.messages[0]
 
 
 @router.post("/{message_id}/ack", response_model=AckResponse)

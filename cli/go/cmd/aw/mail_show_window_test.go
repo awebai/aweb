@@ -138,9 +138,7 @@ func TestMailConversationAtCeilingDoesNotRecommendAnImpossibleRerun(t *testing.T
 	}
 }
 
-// The exact-message path shares the response type and --limit flag with conversation
-// reads, but message_id is unique and the inbox route filters by it before LIMIT. An
-// exact-limit response here is one complete message, never an oldest-end window.
+// An exact-message read is one complete message, never an oldest-end window.
 func TestMailShowExactMessageDoesNotReportAConversationWindow(t *testing.T) {
 	t.Parallel()
 
@@ -153,21 +151,15 @@ func TestMailShowExactMessageDoesNotReportAConversationWindow(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/messages/inbox":
-			if got := r.URL.Query().Get("message_id"); got != messageID {
-				t.Fatalf("message_id=%q, want %q", got, messageID)
-			}
-			if got := r.URL.Query().Get("limit"); got != "1" {
-				t.Fatalf("limit=%q, want exact-limit control 1", got)
-			}
-			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{{
+		case "/v1/messages/" + messageID:
+			_ = json.NewEncoder(w).Encode(awid.InboxMessage{
 				MessageID: messageID,
 				FromAlias: "alice",
 				Subject:   "exact",
 				Body:      "one message",
 				Priority:  awid.PriorityNormal,
 				CreatedAt: "2026-05-02T00:00:00Z",
-			}}})
+			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:

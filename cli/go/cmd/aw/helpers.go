@@ -668,6 +668,7 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 		DIDKey:   &awid.DIDKeyResolver{},
 		Registry: registry,
 		Pin:      &awid.PinResolver{Store: ps},
+		Team:     &awid.TeamRosterResolver{Client: c.Client, TeamID: sel.TeamID},
 	})
 
 	configureBaseURLFallback(c, sel, baseURL)
@@ -1324,7 +1325,7 @@ func ensureWorktreeContextAtIdentityHome(identityHome string) error {
 	return awconfig.SaveWorktreeContextTo(ctxPath, &awconfig.WorktreeContext{})
 }
 
-func printJSON(v any) {
+func formatJSONOutput(v any) string {
 	data, _ := json.Marshal(v)
 	var compat any
 	if err := json.Unmarshal(data, &compat); err == nil {
@@ -1333,7 +1334,11 @@ func printJSON(v any) {
 	} else {
 		data, _ = json.MarshalIndent(v, "", "  ")
 	}
-	fmt.Println(string(data))
+	return string(data)
+}
+
+func printJSON(v any) {
+	fmt.Println(formatJSONOutput(v))
 }
 
 func addJSONNameScopeCompat(v any) any {
@@ -1363,12 +1368,17 @@ func addJSONNameScopeCompat(v any) any {
 	}
 }
 
-func printOutput(v any, formatter func(v any) string) {
+func writeOutput(w io.Writer, v any, formatter func(v any) string) error {
 	if jsonFlag {
-		printJSON(v)
-		return
+		_, err := fmt.Fprintln(w, formatJSONOutput(v))
+		return err
 	}
-	fmt.Print(formatter(v))
+	_, err := fmt.Fprint(w, formatter(v))
+	return err
+}
+
+func printOutput(v any, formatter func(v any) string) {
+	_ = writeOutput(os.Stdout, v, formatter)
 }
 
 func parseTimeBestEffort(value string) (time.Time, bool) {

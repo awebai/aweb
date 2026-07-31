@@ -4950,6 +4950,179 @@ func TestInboxSenderViewVerifiesOutgoingMessageWithoutRecipientSelfCheck(t *test
 	}
 }
 
+func TestInboxVerifiedLegacyProjectedLocalAddressUsesAuthenticatedFreshRosterEquality(t *testing.T) {
+	t.Parallel()
+
+	_, senderKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderDID := ComputeDIDKey(senderKey.Public().(ed25519.PublicKey))
+	_, rosterKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rosterDID := ComputeDIDKey(rosterKey.Public().(ed25519.PublicKey))
+	_, selfKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selfDID := ComputeDIDKey(selfKey.Public().(ed25519.PublicKey))
+	env := &MessageEnvelope{
+		From:      "alice",
+		FromDID:   senderDID,
+		To:        "bob",
+		ToDID:     selfDID,
+		Type:      "mail",
+		Body:      "projected local sender",
+		Timestamp: "2026-07-29T00:00:00Z",
+		MessageID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+	}
+	signature, err := SignMessage(senderKey, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongRecipientEnv := *env
+	wrongRecipientEnv.MessageID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	wrongRecipientEnv.ToDID = rosterDID
+	wrongRecipientSignature, err := SignMessage(senderKey, &wrongRecipientEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inboxMessage := func(item *MessageEnvelope, itemSignature string) InboxMessage {
+		return InboxMessage{
+			MessageID:      item.MessageID,
+			ConversationID: "legacy-conversation",
+			FromAlias:      "alice",
+			FromAddress:    "acme.com/alice",
+			ToAlias:        "bob",
+			Body:           item.Body,
+			CreatedAt:      item.Timestamp,
+			FromDID:        senderDID,
+			ToDID:          item.ToDID,
+			Signature:      itemSignature,
+			SigningKeyID:   senderDID,
+			SignedPayload:  CanonicalJSON(item),
+		}
+	}
+	rosterReads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages/inbox":
+			_ = json.NewEncoder(w).Encode(InboxResponse{Messages: []InboxMessage{
+				inboxMessage(env, signature),
+				inboxMessage(&wrongRecipientEnv, wrongRecipientSignature),
+			}})
+		case "/v1/agents":
+			rosterReads++
+			if r.Header.Get("Cache-Control") != "no-cache" || r.Header.Get("X-AWID-Team-Certificate") == "" {
+				t.Fatal("projected local roster read was not fresh and certificate authenticated")
+			}
+			_ = json.NewEncoder(w).Encode(ListAgentsResponse{
+				TeamID: "backend:acme.com",
+				Agents: []AgentView{{Alias: "alice", DIDKey: rosterDID, IdentityScope: IdentityModeLocal}},
+			})
+		default:
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewWithCertificate(server.URL, selfKey, testTeamCertificate(t, selfKey, "bob"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetAddress("backend:acme.com/bob")
+	client.SetPinStore(NewPinStore(), "")
+	client.SetResolver(&ChainResolver{Team: &TeamRosterResolver{Client: client, TeamID: "backend:acme.com"}})
+	response, err := client.Inbox(context.Background(), InboxParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := response.Messages[0].VerificationStatus; got != IdentityMismatch {
+		t.Fatalf("projected local status=%q, want %q", got, IdentityMismatch)
+	}
+	if got := response.Messages[1].VerificationStatus; got != IdentityMismatch {
+		t.Fatalf("legacy wrong-recipient status=%q, want %q", got, IdentityMismatch)
+	}
+	if rosterReads != 1 {
+		t.Fatalf("fresh roster reads=%d, want 1; recipient mismatch must not resolve", rosterReads)
+	}
+}
+
+func TestExactMessageRotatedStableSenderSkipsRecipientSelfBinding(t *testing.T) {
+	t.Parallel()
+
+	_, oldSenderKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSenderDID := ComputeDIDKey(oldSenderKey.Public().(ed25519.PublicKey))
+	_, currentSenderKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentSenderDID := ComputeDIDKey(currentSenderKey.Public().(ed25519.PublicKey))
+	recipientPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientDID := ComputeDIDKey(recipientPub)
+	stableID := "did:aw:stable-sender"
+	messageID := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	env := &MessageEnvelope{
+		From:         "other.example/sender",
+		FromDID:      oldSenderDID,
+		FromStableID: stableID,
+		To:           "other.example/recipient",
+		ToDID:        recipientDID,
+		Type:         "mail",
+		Body:         "historical outgoing message",
+		Timestamp:    "2026-07-29T00:00:00Z",
+		MessageID:    messageID,
+	}
+	signature, err := SignMessage(oldSenderKey, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages/"+messageID {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(InboxMessage{
+			MessageID:     messageID,
+			FromAlias:     "sender",
+			FromAddress:   env.From,
+			ToAlias:       "recipient",
+			Body:          env.Body,
+			CreatedAt:     env.Timestamp,
+			FromDID:       stableID, // Stored route DID authorized the exact sender read.
+			ToDID:         recipientDID,
+			FromStableID:  stableID,
+			Signature:     signature,
+			SigningKeyID:  oldSenderDID,
+			SignedPayload: CanonicalJSON(env),
+		})
+	}))
+	defer server.Close()
+
+	client, err := NewWithIdentity(server.URL, currentSenderKey, currentSenderDID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetStableID(stableID)
+	response, err := client.Message(context.Background(), messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := response.Messages[0].VerificationStatus; got != Verified {
+		t.Fatalf("rotated sender exact-read status=%q, want %q", got, Verified)
+	}
+	if got := response.Messages[0].FromDID; got != oldSenderDID {
+		t.Fatalf("signed historical from_did=%q, want %q", got, oldSenderDID)
+	}
+}
+
 func TestInboxClaimedViewerStableIDDoesNotExemptWrongRecipientBinding(t *testing.T) {
 	t.Parallel()
 

@@ -514,6 +514,18 @@ func (c *Client) canonicalTrustAddress(address string) string {
 	return address
 }
 
+func (c *Client) isCurrentTeamRosterReference(address string) bool {
+	if _, _, ok := splitTeamMemberReference(address); ok {
+		return true
+	}
+	chain, ok := c.resolver.(*ChainResolver)
+	if !ok || chain.Team == nil {
+		return false
+	}
+	_, _, ok = chain.Team.reference(address)
+	return ok
+}
+
 // resolveAgentMeta returns cached lifetime/custody metadata for a sender address.
 // On first contact, resolves via the client's IdentityResolver and caches the result.
 // Returns an unresolved marker if no resolver is set or resolution fails.
@@ -593,7 +605,32 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 		return status, isContact
 	}
 	trustAddress := c.canonicalTrustAddress(rawAddress)
-	meta := c.resolveAgentMeta(ctx, rawAddress)
+	localTeamReference := c.isCurrentTeamRosterReference(trustAddress)
+	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial &&
+		localTeamReference && strings.TrimSpace(fromStableID) == "" {
+		return status, isContact
+	}
+	var meta *agentMeta
+	acceptedSignature := status == Verified || status == VerifiedLegacy || status == VerifiedCustodial
+	if acceptedSignature && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" {
+		fresh := c.resolveAgentMetaFresh(ctx, rawAddress, true)
+		if fresh == nil || !fresh.Resolved {
+			if fresh != nil && fresh.ResolutionError == "not_found" {
+				return IdentityMismatch, nil
+			}
+			return VerificationStale, nil
+		}
+		if fresh.Lifetime == LifetimeEphemeral {
+			return c.verifyResolvedLocalSender(fresh, strings.TrimSpace(rawAddress), trustAddress, fromDID, status), nil
+		}
+		if strings.TrimSpace(fromStableID) == "" {
+			return IdentityMismatch, nil
+		}
+		meta = fresh
+	}
+	if meta == nil {
+		meta = c.resolveAgentMeta(ctx, rawAddress)
+	}
 	if strings.TrimSpace(fromStableID) == "" || (meta.Resolved && meta.Lifetime == LifetimeEphemeral) {
 		isContact = nil
 	}
@@ -614,14 +651,13 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 			status = VerificationStale
 		}
 	}
-	_, _, localTeamReference := splitTeamMemberReference(trustAddress)
 	if status == IdentityMismatch && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" && !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
-		status = c.reconcileLocalSenderMismatch(ctx, strings.TrimSpace(rawAddress), trustAddress, fromDID)
+		status = c.verifyLocalSenderAgainstCurrentRoster(ctx, strings.TrimSpace(rawAddress), trustAddress, fromDID)
 	}
 	return status, isContact
 }
 
-func (c *Client) reconcileLocalSenderMismatch(ctx context.Context, rawAddress, trustAddress, fromDID string) VerificationStatus {
+func (c *Client) verifyLocalSenderAgainstCurrentRoster(ctx context.Context, rawAddress, trustAddress, fromDID string) VerificationStatus {
 	fresh := c.resolveAgentMetaFresh(ctx, rawAddress, true)
 	if fresh == nil || !fresh.Resolved {
 		if fresh != nil && fresh.ResolutionError == "not_found" {
@@ -632,6 +668,10 @@ func (c *Client) reconcileLocalSenderMismatch(ctx context.Context, rawAddress, t
 	if fresh.Lifetime != LifetimeEphemeral {
 		return IdentityMismatch
 	}
+	return c.verifyResolvedLocalSender(fresh, rawAddress, trustAddress, fromDID, Verified)
+}
+
+func (c *Client) verifyResolvedLocalSender(fresh *agentMeta, rawAddress, trustAddress, fromDID string, acceptedStatus VerificationStatus) VerificationStatus {
 	if strings.TrimSpace(fresh.DID) == "" {
 		return VerificationStale
 	}
@@ -651,7 +691,7 @@ func (c *Client) reconcileLocalSenderMismatch(ctx context.Context, rawAddress, t
 			_ = c.savePinStore()
 		}
 	}
-	return VerificationStale
+	return acceptedStatus
 }
 
 // NormalizeRecipientBinding applies the local recipient-binding check after
@@ -987,7 +1027,7 @@ func (c *Client) commitRefresh(status VerificationStatus) VerificationStatus {
 // A matching stable binding is sufficient across local key rotation; otherwise
 // we fall back to the current did:key binding.
 func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, toStableID string) VerificationStatus {
-	if status != Verified {
+	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
 		return status
 	}
 	if stableID := strings.TrimSpace(c.stableID); stableID != "" && strings.TrimSpace(toStableID) != "" {

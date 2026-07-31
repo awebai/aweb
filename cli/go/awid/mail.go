@@ -450,37 +450,40 @@ func (c *Client) mailInboxAliasTarget(msg InboxMessage) string {
 }
 
 type InboxMessage struct {
-	MessageID               string                   `json:"message_id"`
-	ConversationID          string                   `json:"conversation_id,omitempty"`
-	FromAgentID             string                   `json:"from_agent_id"`
-	FromAlias               string                   `json:"from_alias"`
-	ToAlias                 string                   `json:"to_alias,omitempty"`
-	FromAddress             string                   `json:"from_address,omitempty"`
-	ToAddress               string                   `json:"to_address,omitempty"`
-	Subject                 string                   `json:"subject"`
-	Body                    string                   `json:"body"`
-	ContentMode             string                   `json:"content_mode,omitempty"`
-	MessageVersion          int                      `json:"message_version,omitempty"`
-	Encrypted               *E2EEMessageEnvelope     `json:"encrypted_envelope,omitempty"`
-	Priority                MessagePriority          `json:"priority"`
-	ThreadID                *string                  `json:"thread_id"`
-	ReadAt                  *string                  `json:"read_at"`
-	CreatedAt               string                   `json:"created_at"`
-	FromDID                 string                   `json:"from_did,omitempty"`
-	ToDID                   string                   `json:"to_did,omitempty"`
-	FromStableID            string                   `json:"from_stable_id,omitempty"`
-	ToStableID              string                   `json:"to_stable_id,omitempty"`
-	Signature               string                   `json:"signature,omitempty"`
-	SigningKeyID            string                   `json:"signing_key_id,omitempty"`
-	SignedPayload           string                   `json:"signed_payload,omitempty"`
-	RotationAnnouncement    *RotationAnnouncement    `json:"rotation_announcement,omitempty"`
-	ReplacementAnnouncement *ReplacementAnnouncement `json:"replacement_announcement,omitempty"`
-	VerificationStatus      VerificationStatus       `json:"verification_status,omitempty"`
-	IsContact               *bool                    `json:"is_contact,omitempty"`
+	MessageID                string                   `json:"message_id"`
+	ConversationID           string                   `json:"conversation_id,omitempty"`
+	FromAgentID              string                   `json:"from_agent_id"`
+	FromAlias                string                   `json:"from_alias"`
+	ToAlias                  string                   `json:"to_alias,omitempty"`
+	FromAddress              string                   `json:"from_address,omitempty"`
+	ToAddress                string                   `json:"to_address,omitempty"`
+	Subject                  string                   `json:"subject"`
+	Body                     string                   `json:"body"`
+	ContentMode              string                   `json:"content_mode,omitempty"`
+	MessageVersion           int                      `json:"message_version,omitempty"`
+	Encrypted                *E2EEMessageEnvelope     `json:"encrypted_envelope,omitempty"`
+	Priority                 MessagePriority          `json:"priority"`
+	ThreadID                 *string                  `json:"thread_id"`
+	ReadAt                   *string                  `json:"read_at"`
+	CreatedAt                string                   `json:"created_at"`
+	FromDID                  string                   `json:"from_did,omitempty"`
+	ToDID                    string                   `json:"to_did,omitempty"`
+	FromStableID             string                   `json:"from_stable_id,omitempty"`
+	ToStableID               string                   `json:"to_stable_id,omitempty"`
+	Signature                string                   `json:"signature,omitempty"`
+	SigningKeyID             string                   `json:"signing_key_id,omitempty"`
+	SignedPayload            string                   `json:"signed_payload,omitempty"`
+	RotationAnnouncement     *RotationAnnouncement    `json:"rotation_announcement,omitempty"`
+	ReplacementAnnouncement  *ReplacementAnnouncement `json:"replacement_announcement,omitempty"`
+	VerificationStatus       VerificationStatus       `json:"verification_status,omitempty"`
+	IsContact                *bool                    `json:"is_contact,omitempty"`
+	authenticatedExactSender bool
 }
 
 type InboxResponse struct {
-	Messages []InboxMessage `json:"messages"`
+	Messages   []InboxMessage `json:"messages"`
+	HasMore    bool           `json:"has_more"`
+	NextCursor string         `json:"next_cursor,omitempty"`
 }
 
 type ConversationItem struct {
@@ -546,6 +549,7 @@ func (c *Client) ListConversationsWithParams(ctx context.Context, params Convers
 type InboxParams struct {
 	UnreadOnly bool
 	Limit      int
+	Cursor     string
 	MessageID  string
 }
 
@@ -565,6 +569,28 @@ func (c *Client) MailConversation(ctx context.Context, conversationID string, li
 	return c.normalizeInboxResponse(ctx, &out)
 }
 
+// Message returns one exact message when the authenticated identity is either
+// its sender or recipient. The inbox fallback keeps compatibility with servers
+// predating sender-visible exact reads; those servers can expose only recipient rows.
+func (c *Client) Message(ctx context.Context, messageID string) (*InboxResponse, error) {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return nil, errors.New("aweb: message_id is required")
+	}
+	var message InboxMessage
+	if err := c.Get(ctx, "/v1/messages/"+urlPathEscape(messageID), &message); err == nil {
+		message.authenticatedExactSender = c.messageAuthoredByClientRoutingDID(message.FromDID)
+		return c.normalizeInboxResponse(ctx, &InboxResponse{Messages: []InboxMessage{message}})
+	} else {
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound ||
+			strings.TrimSpace(apiErr.Body) != `{"detail":"Not Found"}` {
+			return nil, err
+		}
+	}
+	return c.Inbox(ctx, InboxParams{Limit: 1, MessageID: messageID})
+}
+
 func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, error) {
 	path := "/v1/messages/inbox"
 	sep := "?"
@@ -576,9 +602,12 @@ func (c *Client) Inbox(ctx context.Context, p InboxParams) (*InboxResponse, erro
 		path += sep + "limit=" + itoa(p.Limit)
 		sep = "&"
 	}
+	if strings.TrimSpace(p.Cursor) != "" {
+		path += sep + "cursor=" + urlQueryEscape(strings.TrimSpace(p.Cursor))
+		sep = "&"
+	}
 	if strings.TrimSpace(p.MessageID) != "" {
 		path += sep + "message_id=" + urlQueryEscape(strings.TrimSpace(p.MessageID))
-		sep = "&"
 	}
 	var out InboxResponse
 	if err := c.Get(ctx, path, &out); err != nil {
@@ -667,9 +696,12 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 				}
 			}
 		}
-		// Recipient binding is a receiver-side check. Compare the author only to
-		// this client's authenticated did:key so a claimed stable ID cannot exempt a record.
-		if !c.messageAuthoredByClientDID(m.FromDID) {
+		// Recipient binding is a receiver-side check. Exact reads may establish
+		// sender authorship from the server-authorized stored routing DID before
+		// signed metadata restores a historical signing key after rotation.
+		exactSender := m.authenticatedExactSender &&
+			(m.VerificationStatus == Verified || m.VerificationStatus == VerifiedLegacy)
+		if !exactSender && !c.messageAuthoredByClientDID(m.FromDID) {
 			m.VerificationStatus = c.checkRecipientBinding(m.VerificationStatus, m.ToDID, m.ToStableID)
 		}
 		m.VerificationStatus, m.IsContact = c.NormalizeSenderTrust(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
@@ -680,6 +712,15 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 func (c *Client) messageAuthoredByClientDID(fromDID string) bool {
 	clientDID := strings.TrimSpace(c.did)
 	return clientDID != "" && strings.TrimSpace(fromDID) == clientDID
+}
+
+func (c *Client) messageAuthoredByClientRoutingDID(fromDID string) bool {
+	fromDID = strings.TrimSpace(fromDID)
+	if fromDID == "" {
+		return false
+	}
+	return fromDID == strings.TrimSpace(c.did) ||
+		(strings.TrimSpace(c.stableID) != "" && fromDID == strings.TrimSpace(c.stableID))
 }
 
 // signedMailPriority normalizes "" and "normal" to the same empty signed value.

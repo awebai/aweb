@@ -20,6 +20,11 @@ user, event, identity-routing, or E2E authorities listed in
   routing or participant authority by itself.
 - Self-custodial clients own private keys and local plaintext presentation.
   Hosted custodial tools are server-readable hosted messaging.
+- A verified or legacy-verified local-alias sender requires a valid message
+  signature and recipient binding plus a no-cache, team-certificate-authenticated
+  current-roster row whose exact alias has a non-empty local DID equal to the
+  signed `from_did`.
+  Cache, public/dashboard lookup, registry continuity, and TOFU are not proof.
 
 ## Identity, routing, and continuation cases
 
@@ -65,19 +70,25 @@ Cover these cases for mail and chat wherever the operation exists:
 
 1. Send acceptance returns `message_id` and `conversation_id` but does not claim
    wake, presentation, read state, or a recipient trust verdict.
-2. Exact mail reads do not change read state: both `show --message-id` and
-   conversation `show` are read-only.
+2. Exact mail reads are participant-visible and do not change read state:
+   authenticated senders and recipients may use `show --message-id`, while an
+   unrelated or absent id returns the same 404. A rotated global sender's exact
+   read uses the server-authorized stored sender routing DID plus the valid
+   historical signature for authorship; a claimed stable field alone is not
+   authority. Conversation `show` is also read-only.
 3. Conversation history is oldest-first, defaults to 200, has a 500-message
    ceiling, and has no paging flag. A full-size window cannot prove completeness.
 4. Inbox is newest-first. The CLI defaults to 50 while the server accepts at most
-   200; returned unread rows are presented and acknowledged, and a bounded result
-   is not mailbox completeness evidence.
+   200 per page; returned unread rows are presented and acknowledged. A response
+   with `has_more` includes an opaque `next_cursor`, allowing the remaining
+   mailbox to be fetched without overlap.
 5. Mail reply resolves the source `conversation_id`; reply sends before its
    best-effort source acknowledgement. Failure of that acknowledgement does not
    unsend the reply.
 6. `aw mail ack` is the authenticated recipient-side read transition. It
    idempotently sets `read_at` for unread recipient mail and emits the mutation
-   event only on a state change.
+   event only on a state change. A sender may read its exact sent message but
+   cannot acknowledge it; sender acknowledgement returns 404.
 7. Read mail leaves unread inbox/actionable reconnect delivery but remains
    durable and exactly fetchable.
 8. Hosted MCP `check_mail` marks returned unread rows read before the tool

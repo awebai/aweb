@@ -15,6 +15,7 @@ import {
   type AgentEvent,
   type ChannelAwakening,
   SenderTrustManager,
+  startChannelLoop,
 } from "../src/index.js";
 import { canonicalJSON, signMessage, type MessageEnvelope } from "../src/identity/signing.js";
 
@@ -576,6 +577,74 @@ describe("channel-core dispatchAgentEvent", () => {
     // this, a log that recorded every message would satisfy the assertion above.
     expect(onAwakening).toHaveBeenCalledTimes(1);
     expect(entries.some((entry) => entry.message_id === "mail-presented")).toBe(false);
+  });
+
+  test("the real channel loop wires the durable undelivered record into dispatch", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "aweb-channel-wiring-"));
+    const controller = new AbortController();
+    const poisonMessage = {
+      message_id: "mail-wiring-poison",
+      from_agent_id: "agent-1",
+      from_alias: "alice",
+      from_address: "acme.com/alice",
+      to_alias: self.alias,
+      to_address: self.address,
+      subject: "poison",
+      body: "malformed transport record",
+      priority: "normal",
+      created_at: "2025-01-01T00:00:00Z",
+      get signed_payload(): string {
+        throw new Error("unexpected per-message verification failure");
+      },
+    };
+    const client = {
+      openSSE: vi.fn().mockResolvedValue(new Response(
+        'event: mail_message\ndata: {"message_id":"mail-wiring-poison"}\n\n',
+        { headers: { "content-type": "text/event-stream" } },
+      )),
+      get: vi.fn().mockResolvedValue({
+        messages: [poisonMessage, {
+          message_id: "mail-wiring-presented",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: self.alias,
+          subject: "good",
+          body: "still delivered",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:01Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const onAwakening = vi.fn(() => {
+      controller.abort();
+    });
+
+    await startChannelLoop({
+      client: client as never,
+      pinStore: new PinStore(),
+      trust,
+      self,
+      signal: controller.signal,
+      workdir,
+      onAwakening,
+    });
+
+    const entries = (await readFile(join(workdir, ".aw", "channel-undelivered.jsonl"), "utf-8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, string>);
+    expect(entries).toEqual([
+      expect.objectContaining({
+        message_id: "mail-wiring-poison",
+        reason: "verification_error",
+      }),
+    ]);
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "mail",
+      content: "still delivered",
+    }));
   });
 
   test("keeps presenting the batch when the undelivered record cannot be written", async () => {
@@ -1179,6 +1248,120 @@ describe("channel-core dispatchAgentEvent", () => {
       }),
     }));
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-stable-envelope/ack");
+  });
+
+  test("live verified-legacy projected local address uses authenticated fresh-roster equality", async () => {
+    const onAwakening = vi.fn();
+    const env: MessageEnvelope = {
+      from: "alice",
+      from_did: vectors.did,
+      to: self.alias,
+      to_did: self.did,
+      type: "mail",
+      subject: "projected local sender",
+      body: "must use current roster",
+      timestamp: "2025-01-01T00:00:00Z",
+      message_id: "mail-projected-local",
+    };
+    const signature = await signMessage(b64ToBytes(vectors.seed), env);
+    const rosterDID = vectors.did.slice(0, -1) + (vectors.did.endsWith("1") ? "2" : "1");
+    const wrongRecipientEnv: MessageEnvelope = {
+      ...env,
+      message_id: "mail-projected-local-wrong-recipient",
+      to_did: rosterDID,
+    };
+    const wrongRecipientSignature = await signMessage(b64ToBytes(vectors.seed), wrongRecipientEnv);
+    const client = {
+      hasTeamCertificateAuth: (teamID: string) => teamID === "backend:acme.com",
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: env.message_id,
+          conversation_id: "legacy-conversation",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: self.alias,
+          subject: env.subject,
+          body: env.body,
+          priority: "normal",
+          created_at: env.timestamp,
+          from_did: vectors.did,
+          to_did: self.did,
+          signature,
+          signing_key_id: vectors.did,
+          signed_payload: canonicalJSON(env),
+        }],
+      }),
+      getFresh: vi.fn().mockResolvedValue({
+        team_id: "backend:acme.com",
+        agents: [{ alias: "alice", did_key: rosterDID, identity_scope: "local" }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = new SenderTrustManager(
+      client as never,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      self.did,
+      self.stableID,
+    );
+
+    await dispatchAgentEvent(
+      { client: client as never, pinStore: new PinStore(), trust, self, onAwakening },
+      new Set(),
+      { type: "mail_message", message_id: env.message_id } satisfies AgentEvent,
+    );
+
+    expect(client.getFresh).toHaveBeenCalledWith("/v1/agents");
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      meta: expect.objectContaining({ trust_status: "identity_mismatch", verified: "false" }),
+    }));
+
+    const wrongRecipientAwakening = vi.fn();
+    const wrongRecipientClient = {
+      hasTeamCertificateAuth: client.hasTeamCertificateAuth,
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: wrongRecipientEnv.message_id,
+          conversation_id: "legacy-conversation",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: self.alias,
+          subject: wrongRecipientEnv.subject,
+          body: wrongRecipientEnv.body,
+          priority: "normal",
+          created_at: wrongRecipientEnv.timestamp,
+          from_did: vectors.did,
+          to_did: wrongRecipientEnv.to_did,
+          signature: wrongRecipientSignature,
+          signing_key_id: vectors.did,
+          signed_payload: canonicalJSON(wrongRecipientEnv),
+        }],
+      }),
+      getFresh: vi.fn(),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const wrongRecipientTrust = new SenderTrustManager(
+      wrongRecipientClient as never,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      self.did,
+      self.stableID,
+    );
+    await dispatchAgentEvent(
+      {
+        client: wrongRecipientClient as never,
+        pinStore: new PinStore(),
+        trust: wrongRecipientTrust,
+        self,
+        onAwakening: wrongRecipientAwakening,
+      },
+      new Set(),
+      { type: "mail_message", message_id: wrongRecipientEnv.message_id } satisfies AgentEvent,
+    );
+    expect(wrongRecipientClient.getFresh).not.toHaveBeenCalled();
+    expect(wrongRecipientAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      meta: expect.objectContaining({ trust_status: "identity_mismatch", verified: "false" }),
+    }));
   });
 
   test("live mail reports stale verifier cache without claiming identity mismatch", async () => {

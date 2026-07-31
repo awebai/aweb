@@ -115,9 +115,22 @@ Read unread mail:
 aw mail inbox
 ```
 
-The command presents and acknowledges the unread messages it returns. Its
-default limit is 50. Use `--show-all` to include read messages, but do not treat
-a bounded result as proof that a larger mailbox has no additional history.
+The command presents and then acknowledges the unread messages it returns. If
+writing the text or JSON presentation fails, it exits nonzero before
+acknowledgment so those messages remain unread and replayable. Its default page
+size is 50. When another page exists, text output prints a
+continuation command and JSON output includes `has_more` plus `next_cursor`.
+Continue without overlap by passing that cursor:
+
+```bash
+aw mail inbox --cursor <next-cursor>
+```
+
+Keep `--show-all`, any non-default `--limit`, and explicit `--team`,
+`--identity-home`, or `--server-name` selection on continuation commands when
+you used them on the first page. Text output preserves those flags in its
+printed continuation. A page is bounded, but the cursor makes the remaining
+mailbox retrievable instead of silently truncating it.
 
 Exact reads are different:
 

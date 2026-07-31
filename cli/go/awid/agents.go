@@ -2,6 +2,8 @@ package awid
 
 import (
 	"context"
+	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -140,6 +142,81 @@ func (c *Client) learnedE2EERecipientFromEnvelope(envelope *E2EEMessageEnvelope)
 type ListAgentsResponse struct {
 	TeamID string      `json:"team_id"`
 	Agents []AgentView `json:"agents"`
+}
+
+// TeamRosterResolver resolves team-local identities only through the
+// certificate-authenticated current roster on the connected aweb service.
+type TeamRosterResolver struct {
+	Client *Client
+	TeamID string
+}
+
+func (r *TeamRosterResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	return r.resolve(ctx, identifier, false)
+}
+
+func (r *TeamRosterResolver) ResolveFresh(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	return r.resolve(ctx, identifier, true)
+}
+
+func (r *TeamRosterResolver) reference(identifier string) (teamID, alias string, ok bool) {
+	configuredTeamID := strings.TrimSpace(r.TeamID)
+	if teamID, alias, ok = splitTeamMemberReference(identifier); ok {
+		return teamID, alias, teamID == configuredTeamID
+	}
+	domain, alias, ok := splitRegistryAddress(identifier)
+	teamDomain, _, err := ParseTeamID(configuredTeamID)
+	if !ok || err != nil || domain != teamDomain {
+		return "", "", false
+	}
+	return configuredTeamID, alias, true
+}
+
+func (r *TeamRosterResolver) resolve(ctx context.Context, identifier string, forceRefresh bool) (*ResolvedIdentity, error) {
+	teamID, alias, ok := r.reference(identifier)
+	if !ok || r.Client == nil {
+		return nil, fmt.Errorf("TeamRosterResolver: unsupported team member reference %q", identifier)
+	}
+	if strings.TrimSpace(r.Client.teamID) != teamID || strings.TrimSpace(r.Client.teamCertHeader) == "" || len(r.Client.signingKey) == 0 {
+		return nil, errors.New("TeamRosterResolver: team-certificate authentication is required")
+	}
+	var out ListAgentsResponse
+	headers := map[string]string(nil)
+	if forceRefresh {
+		headers = map[string]string{"Cache-Control": "no-cache"}
+	}
+	if err := r.Client.DoWithHeaders(ctx, "GET", "/v1/agents", nil, &out, headers); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out.TeamID) != teamID {
+		return nil, errors.New("TeamRosterResolver: roster response does not match the authenticated team")
+	}
+	for _, agent := range out.Agents {
+		if strings.TrimSpace(agent.Alias) != alias {
+			continue
+		}
+		did := strings.TrimSpace(agent.DIDKey)
+		var publicKey ed25519.PublicKey
+		if did != "" {
+			raw, err := ExtractPublicKey(did)
+			if err != nil {
+				return nil, fmt.Errorf("TeamRosterResolver: invalid roster did:key: %w", err)
+			}
+			publicKey = ed25519.PublicKey(raw)
+		}
+		return &ResolvedIdentity{
+			DID:         did,
+			StableID:    strings.TrimSpace(agent.DIDAW),
+			Address:     firstNonEmpty(strings.TrimSpace(agent.Address), identifier),
+			Handle:      alias,
+			PublicKey:   publicKey,
+			Custody:     CustodySelf,
+			Lifetime:    LegacyLifetimeForIdentityScope(firstNonEmpty(agent.IdentityScope, agent.Lifetime)),
+			ResolvedAt:  time.Now().UTC(),
+			ResolvedVia: "team_roster",
+		}, nil
+	}
+	return nil, &APIError{StatusCode: 404, Body: "local alias not found in authenticated team roster"}
 }
 
 type AgentInboundModeResponse struct {
