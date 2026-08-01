@@ -10,8 +10,8 @@ from awid.signing import canonical_json_bytes, canonical_payload, sign_message
 from awid.dns_verify import awid_txt_name, awid_txt_value
 
 
-_SERVER_ROOT = Path(__file__).resolve().parents[1]
-_VECTORS_DIR = _SERVER_ROOT / "docs" / "vectors"
+_ROOT = Path(__file__).resolve().parents[2]
+_VECTORS_DIR = _ROOT / "docs" / "vectors"
 
 
 def _load_json(name: str):

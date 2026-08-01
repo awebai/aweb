@@ -11,22 +11,30 @@ address claims, and optional A2A interoperability. Identity and continuity
 semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 [identity-key verification](../identity-key-verification.md).
 
-## Authority and copies
+## Authority and repository inventory
 
-- `docs/vectors/*.json` is the public root authority for the 16 fixtures indexed
-  here.
-- `server/docs/vectors/` contains compatibility/package copies used by older
-  server consumers. Those files are not a second authority and their presence
-  does not mean every root fixture is mirrored there.
-- `cli/go/internal/conformance/vectors/` contains consumer-local fixtures and
-  compatibility copies needed by the Go package. Public protocol changes start
-  from the root authority when one exists.
-- `test-vectors/app-manifests/` contains digest-pinned experimental app-manifest
-  snapshots. They are documented by [`app-manifest.md`](../app-manifest.md), not
-  silently promoted into the identity/trust vector family.
+`docs/vectors/*.json` is the only public protocol-vector authority for the 16
+fixtures indexed here. Python, Go, TypeScript, package references, and generated
+references consume these root bytes directly or through the one classified
+package copy below. An unclassified hand-maintained copy is forbidden even when
+its bytes happen to match; `make test-vector-provenance` rejects a returning
+mirror or unclassified consumer-local link.
 
-A duplicate path must either be checked against its authority or clearly remain
-a compatibility copy. File-name equality alone is not proof that bytes match.
+The other tracked vector directories have disjoint, explicit purposes:
+
+| Directory | Classification |
+|---|---|
+| `cli/go/internal/conformance/vectors/` | Consumer-local Go fixtures plus the byte-enforced `team-auth-envelope-v2.json` package copy linked by the currently pinned naapp reference generator. |
+| `naapp/folio/tests/vectors/` | App test snapshots; `app-emit-credential-v1.json` is byte-checked against its Go consumer authority. |
+| `naapp/library/tests/vectors/` | App snapshots plus Library blueprint input/output goldens; the app-emit snapshot is byte-checked. |
+| `test-vectors/` | Repository-level policy, blueprint, app-manifest, and packaging fixtures governed by their own indexes. |
+
+There is deliberately no server-local public-vector package copy. Server wheels
+do not need public test vectors at runtime, while server source tests load the
+repository-root authority. `test-vectors/app-manifests/` contains
+digest-pinned experimental app-manifest snapshots documented by
+[`app-manifest.md`](../app-manifest.md); they are not silently promoted into the
+identity/trust vector family.
 
 ## Current protocol fixtures
 
@@ -42,6 +50,13 @@ without padding.
 
 Canonical identity-only `register_did` and `rotate_key` envelope payloads,
 state-hash inputs and hashes, entry hashes, and expected Ed25519 signatures.
+The removed server-only corpus encoded the superseded address-bearing
+`operation=create` state (`server`, `address`, and `handle`) and a rotation that
+continued that state. Those two entries were examined individually and are not
+valid current identity-only cases, so merging them would weaken the canonical
+contract rather than preserve coverage. Legacy `create` parsing remains an
+explicit verifier compatibility test; it is not emitted or represented as a
+current positive vector.
 
 ### `identity-log-negative-v1.json`
 
@@ -189,11 +204,15 @@ materialization or array ordering; its governing contract wins.
 ## Validation
 
 The vectors are consumed from their canonical `docs/vectors/` paths by the
-relevant component suites. Go's conformance package embeds its release copy;
-its test first requires that copy to be byte-identical to the canonical corpus.
-Focused commands from the repository root:
+relevant component suites. Go reads public protocol fixtures from the repository
+root except for the classified team-auth package copy, whose bytes are compared
+to root before any case executes. The provenance gate inventories every tracked
+vector directory, rejects unclassified public mirrors, verifies managed package
+and app snapshots, checks consumer/reference paths, and proves those checks with
+mutations. Focused commands from the repository root:
 
 ```bash
+make test-vector-provenance
 make test-a2a
 
 cd awid

@@ -37,7 +37,7 @@ def test_defaults_migrations_and_reserved_app_ids_are_packaged():
     assert packaged_reserved.read_text() == source_reserved.read_text()
 
 
-def test_reserved_app_ids_artifact_ships_in_built_wheel(tmp_path):
+def test_server_wheel_ships_reserved_app_ids_without_vector_copies(tmp_path):
     uv = shutil.which("uv")
     if uv is None:
         pytest.skip("uv is required to build the wheel for package-data inspection")
@@ -54,7 +54,9 @@ def test_reserved_app_ids_artifact_ships_in_built_wheel(tmp_path):
     wheels = list(tmp_path.glob("aweb-*.whl"))
     assert wheels
     with zipfile.ZipFile(wheels[0]) as wheel:
-        assert "aweb/data/reserved-app-ids-v1.json" in wheel.namelist()
+        names = wheel.namelist()
+        assert "aweb/data/reserved-app-ids-v1.json" in names
+        assert not any("/docs/vectors/" in name or name.startswith("docs/vectors/") for name in names)
 
 
 def test_awid_service_floor_covers_encryption_key_api():
