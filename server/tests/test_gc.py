@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from aweb.gc import gc_inactive_scopes
+from aweb.gc import gc_delivered_lifecycle_side_effects, gc_inactive_scopes
 
 
 def _db_infra(aweb_db):
@@ -15,6 +15,48 @@ def _db_infra(aweb_db):
             return aweb_db
 
     return _DbInfra()
+
+
+@pytest.mark.asyncio
+async def test_gc_delivered_lifecycle_side_effects_keeps_pending_and_recent_rows(
+    aweb_cloud_db,
+):
+    aweb_db = aweb_cloud_db.aweb_db
+    old_operation_id = uuid4()
+    recent_operation_id = uuid4()
+    pending_operation_id = uuid4()
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.lifecycle_side_effect_outbox}} (
+            operation_id, effect_order, team_id, effect_kind, payload_json,
+            delivered_at
+        )
+        VALUES
+            ($1, 0, 'backend:acme.com', 'presence_clear', '{}'::jsonb, NOW() - INTERVAL '31 days'),
+            ($2, 0, 'backend:acme.com', 'presence_clear', '{}'::jsonb, NOW()),
+            ($3, 0, 'backend:acme.com', 'presence_clear', '{}'::jsonb, NULL)
+        """,
+        old_operation_id,
+        recent_operation_id,
+        pending_operation_id,
+    )
+
+    result = await gc_delivered_lifecycle_side_effects(
+        _db_infra(aweb_db), ttl_days=30
+    )
+
+    assert result == {"lifecycle_side_effects_deleted": 1}
+    remaining = await aweb_db.fetch_all(
+        """
+        SELECT operation_id
+        FROM {{tables.lifecycle_side_effect_outbox}}
+        ORDER BY operation_id
+        """
+    )
+    assert {row["operation_id"] for row in remaining} == {
+        recent_operation_id,
+        pending_operation_id,
+    }
 
 
 @pytest.mark.asyncio
@@ -172,6 +214,16 @@ async def test_gc_inactive_scopes_hard_deletes_populated_team(aweb_cloud_db):
     )
     await aweb_db.execute(
         """
+        INSERT INTO {{tables.lifecycle_side_effect_outbox}} (
+            operation_id, effect_order, team_id, effect_kind, payload_json
+        )
+        VALUES ($1, 0, $2, 'presence_clear', '{"workspace_ids": []}'::jsonb)
+        """,
+        uuid4(),
+        team_id,
+    )
+    await aweb_db.execute(
+        """
         INSERT INTO {{tables.tasks}} (
             task_id, team_id, task_number, task_ref_suffix, title, created_at
         )
@@ -305,6 +357,7 @@ async def test_gc_inactive_scopes_hard_deletes_populated_team(aweb_cloud_db):
         """, ("did:key:inactive",)),
         "contacts": ("SELECT COUNT(*) AS count FROM aweb.contacts WHERE owner_did = $1", ("did:key:inactive",)),
         "control_signals": ("SELECT COUNT(*) AS count FROM aweb.control_signals WHERE team_id = $1", (team_id,)),
+        "lifecycle_side_effect_outbox": ("SELECT COUNT(*) AS count FROM aweb.lifecycle_side_effect_outbox WHERE team_id = $1", (team_id,)),
         "repos": ("SELECT COUNT(*) AS count FROM aweb.repos WHERE team_id = $1", (team_id,)),
         "workspaces": ("SELECT COUNT(*) AS count FROM aweb.workspaces WHERE team_id = $1", (team_id,)),
         "tasks": ("SELECT COUNT(*) AS count FROM aweb.tasks WHERE team_id = $1", (team_id,)),

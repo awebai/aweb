@@ -476,6 +476,7 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `app_event_subscriptions`
 - `session_admission_leases`
 - `chat_message_reads`
+- `lifecycle_side_effect_outbox`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 ---
@@ -744,6 +745,27 @@ the workspace. It returns `409` if the bound agent is global
 within the 30-minute presence TTL and the workspace is not yet
 considered gone. The caller must present a team certificate for the same
 `team_id` as the target workspace.
+
+Lifecycle Redis effects are driven by `lifecycle_side_effect_outbox`, not by
+reconstructing deleted claim rows. Claim release captures workspace/team
+unclaim events, chat-waiting cleanup, and presence cleanup in the same
+PostgreSQL transaction as the lifecycle mutation. A nested cascade therefore
+makes no Redis effect visible when its savepoint is released: rows become
+replayable only after the caller's outer transaction commits, and outer
+rollback leaves no durable intent to publish. Plain database-handle cascades
+commit and attempt replay before returning. A transaction-handle cascade
+returns its `LifecycleCascadeResult.outbox_operation_id`; an outer caller that
+requires synchronous post-commit effects invokes the canonical
+`replay_lifecycle_side_effects(..., operation_id=...)` only after its own
+transaction exits.
+
+Replay locks pending rows and records each delivered effect so an ordinary
+retry does not publish it twice. Delivery is at-least-once across a process
+crash: a crash after Redis accepted an effect but before `delivered_at` commits
+may replay it. Lifecycle events remain wake/state-change hints; consumers read
+PostgreSQL state as truth. Failed rows stay durable for a later request/startup
+replay, and startup/embedded request paths trigger canonical replay without a
+host-specific outbox protocol.
 
 ### Dashboard routes
 
@@ -1360,13 +1382,14 @@ callers planning around it.
 
 ### Garbage collection
 
-aweb provides two GC functions in `aweb.gc` that operators run on a
-schedule (cron, Kubernetes Job, or equivalent). Both default to a
+aweb provides three GC functions in `aweb.gc` that operators run on a
+schedule (cron, Kubernetes Job, or equivalent). All default to a
 30-day TTL and are configurable per-call:
 
 | Function | Default TTL | What it deletes |
 |---|---|---|
 | `gc_expired_messages(db_infra, ttl_days=30)` | 30 days | Mail messages and chat messages older than `ttl_days` (raw `created_at < now - ttl_days`). |
+| `gc_delivered_lifecycle_side_effects(db_infra, ttl_days=30)` | 30 days | Delivered lifecycle outbox rows older than `ttl_days`; pending rows are never removed. |
 | `gc_inactive_scopes(db_infra, ttl_days=30)` | 30 days | Teams with no message activity (mail or chat) for `ttl_days`, hard-deleted with all dependent rows (chat sessions, agents, workspaces, tasks, locks, etc.). |
 
 The GC functions are deletion-only — they do NOT cascade up to awid.
@@ -1422,7 +1445,10 @@ aweb starts up in this order:
    embedded awid mode — aweb always talks to a real awid instance over
    HTTP.
 6. Mount the FastAPI app and the `/mcp` MCP server.
-7. Begin serving.
+7. Schedule replay of committed lifecycle side-effect outbox rows; embedded
+   mounts also trigger bounded replay from their request path because mounted
+   sub-applications do not receive lifespan events.
+8. Begin serving.
 
 Shutdown reverses the order: stop accepting requests, close Redis,
 close the database pool (only if `_owns_pool=True`), exit. The

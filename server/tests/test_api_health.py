@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import pytest
@@ -21,8 +22,11 @@ class _FailingDB:
 class _DbInfra:
     is_initialized = True
 
+    def __init__(self):
+        self.db = _FailingDB()
+
     def get_manager(self, name: str = "aweb"):
-        return _FailingDB()
+        return self.db
 
 
 @pytest.mark.asyncio
@@ -53,6 +57,28 @@ async def test_health_hides_internal_exception_details(monkeypatch, caplog):
     assert "postgres://secret@db.internal/aweb refused" not in response.text
     assert "Health check failed for Redis" in caplog.text
     assert "Health check failed for database" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_mounted_request_triggers_lifecycle_outbox_replay(monkeypatch):
+    replayed = asyncio.Event()
+    redis = _FailingRedis()
+    db_infra = _DbInfra()
+
+    async def _capture_replay(db, captured_redis):
+        assert db is db_infra.get_manager("aweb")
+        assert captured_redis is redis
+        replayed.set()
+
+    monkeypatch.setattr("aweb.api.replay_lifecycle_side_effects", _capture_replay)
+    app = create_app(db_infra=db_infra, redis=redis)
+    app.state.db = db_infra
+    app.state.redis = redis
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.get("/health")
+
+    await asyncio.wait_for(replayed.wait(), timeout=1)
 
 
 @pytest.mark.asyncio

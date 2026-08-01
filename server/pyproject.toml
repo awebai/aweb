@@ -1,6 +1,6 @@
 [project]
 name = "aweb"
-version = "1.26.32"
+version = "1.26.33"
 description = "Agent Web: self-hostable coordination server for AI agents (identity, presence, mail, chat, tasks, locks)"
 readme = "README.md"
 license = "MIT"

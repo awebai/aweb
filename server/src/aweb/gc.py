@@ -1,4 +1,4 @@
-"""Garbage collection for inactive scopes and expired messages."""
+"""Garbage collection for inactive scopes, messages, and lifecycle effects."""
 
 from __future__ import annotations
 
@@ -34,6 +34,28 @@ async def gc_expired_messages(db_infra, *, ttl_days: int = 30) -> dict:
     total = chat_deleted + mail_deleted
     logger.info("gc_expired_messages: deleted %d messages (cutoff=%s)", total, cutoff.isoformat())
     return {"messages_deleted": total, "chat_deleted": chat_deleted, "mail_deleted": mail_deleted}
+
+
+async def gc_delivered_lifecycle_side_effects(
+    db_infra, *, ttl_days: int = 30
+) -> dict:
+    aweb_db = db_infra.get_manager("aweb")
+    cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
+    status = await aweb_db.execute(
+        """
+        DELETE FROM {{tables.lifecycle_side_effect_outbox}}
+        WHERE delivered_at IS NOT NULL
+          AND delivered_at < $1
+        """,
+        cutoff,
+    )
+    deleted = _rows_affected(status)
+    logger.info(
+        "gc_delivered_lifecycle_side_effects: deleted %d rows (cutoff=%s)",
+        deleted,
+        cutoff.isoformat(),
+    )
+    return {"lifecycle_side_effects_deleted": deleted}
 
 
 async def gc_inactive_scopes(db_infra, *, ttl_days: int = 30) -> dict:
@@ -149,6 +171,10 @@ async def _hard_delete_scope(aweb_db, *, team_id) -> None:
         )
         await tx.execute(
             "DELETE FROM {{tables.control_signals}} WHERE team_id = $1",
+            team_id,
+        )
+        await tx.execute(
+            "DELETE FROM {{tables.lifecycle_side_effect_outbox}} WHERE team_id = $1",
             team_id,
         )
         await tx.execute(

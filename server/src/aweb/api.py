@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -14,6 +15,7 @@ from .config import get_settings
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
 from awid.log_config import configure_logging
+from .lifecycle import replay_lifecycle_side_effects
 from .mutation_hooks import create_mutation_handler
 from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
@@ -95,6 +97,47 @@ async def _shutdown_mcp_app(app: FastAPI) -> None:
     app.state.mcp_app = None
 
 
+def _schedule_lifecycle_outbox_replay(app: FastAPI) -> None:
+    """Schedule a bounded replay without delaying the current request.
+
+    Mounted FastAPI sub-applications do not receive lifespan events, so this
+    request-path trigger is also the restart recovery hook for embedded hosts.
+    """
+    db_infra = getattr(app.state, "db", None)
+    redis = getattr(app.state, "redis", None)
+    if db_infra is None or redis is None:
+        return
+
+    loop = asyncio.get_running_loop()
+    next_at = float(getattr(app.state, "lifecycle_outbox_replay_next_at", 0.0))
+    task = getattr(app.state, "lifecycle_outbox_replay_task", None)
+    if (task is not None and not task.done()) or loop.time() < next_at:
+        return
+    app.state.lifecycle_outbox_replay_next_at = loop.time() + 1.0
+
+    async def _replay() -> None:
+        try:
+            await replay_lifecycle_side_effects(
+                db_infra.get_manager("aweb"),
+                redis,
+            )
+        except Exception:
+            logger.warning("Lifecycle outbox replay failed", exc_info=True)
+
+    app.state.lifecycle_outbox_replay_task = asyncio.create_task(_replay())
+
+
+async def _shutdown_lifecycle_outbox_replay(app: FastAPI) -> None:
+    task = getattr(app.state, "lifecycle_outbox_replay_task", None)
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
 async def _shutdown_awid_registry_client(app: FastAPI) -> None:
     registry_client = getattr(app.state, "awid_registry_client", None)
     if registry_client is None:
@@ -155,6 +198,7 @@ def _make_standalone_lifespan():
             app.state.awid_registry_client = _build_awid_registry_client(app, redis)
             await _validate_awid_registry_client(app.state.awid_registry_client)
             await _mount_mcp_app(app, default_db_infra, redis, app.state.awid_registry_client)
+            _schedule_lifecycle_outbox_replay(app)
 
         except Exception:
             # Log which phase failed
@@ -175,6 +219,7 @@ def _make_standalone_lifespan():
         finally:
             logger.info("Shutting down aweb coordination server")
             await _shutdown_mcp_app(app)
+            await _shutdown_lifecycle_outbox_replay(app)
             await _shutdown_awid_registry_client(app)
             await redis.aclose()
             await default_db_infra.close()
@@ -200,12 +245,14 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
         app.state.awid_registry_client = _build_awid_registry_client(app, redis)
         await _validate_awid_registry_client(app.state.awid_registry_client)
         await _mount_mcp_app(app, db_infra, redis, app.state.awid_registry_client)
+        _schedule_lifecycle_outbox_replay(app)
 
         try:
             yield
         finally:
             # Don't close connections in library mode - caller manages them
             await _shutdown_mcp_app(app)
+            await _shutdown_lifecycle_outbox_replay(app)
             await _shutdown_awid_registry_client(app)
             logger.info("Aweb coordination server stopping (library mode)")
 
@@ -274,6 +321,11 @@ def create_app(
 
     app = FastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
+
+    @app.middleware("http")
+    async def lifecycle_outbox_replay_middleware(request: Request, call_next):
+        _schedule_lifecycle_outbox_replay(request.app)
+        return await call_next(request)
 
     @app.middleware("http")
     async def cache_body_middleware(request: Request, call_next):

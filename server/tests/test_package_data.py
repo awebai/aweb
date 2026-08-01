@@ -100,6 +100,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "010a_chat_message_reads_orphan_guard.sql",
         "011_chat_message_reads.sql",
         "012_chat_message_reads_orphan_backfill.sql",
+        "013_lifecycle_side_effect_outbox.sql",
     ]
 
 
