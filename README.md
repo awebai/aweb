@@ -182,16 +182,14 @@ aw chat pending
 | `awid/` | Public identity and team registry service |
 | `cli/go/` | Go CLI and client library |
 | `channel-core/`, `channel/`, `pi-extension/` | Event protocol and maintained runtime integrations |
-| `docs/` | Product direction, protocol contracts, guides, references, and historical transition material |
+| `docs/` | Public protocol contracts, guides, references, and transition material |
 | `test-vectors/`, `docs/vectors/` | Sanitized protocol and conformance fixtures |
 
 Real `.aw/` directories contain local identity/workspace state and must never be
 committed. See the [OSS repository boundary](docs/oss-boundary.md).
 
-## Current and target authority
+## Current authority
 
-- [Aweb product SOT](docs/aweb-product-sot.md) defines target direction and
-  priorities.
 - [aweb SOT](docs/aweb-sot.md) and [AWID SOT](docs/awid-sot.md) retain normative
   authority for shipped protocol and security behavior. Their hand-maintained
   route/schema inventories carry accuracy notices pending source
