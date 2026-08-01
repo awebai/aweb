@@ -7,6 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from aweb.api import _cached_body_receive, create_app
+from aweb.lifecycle import LifecycleOutboxReplayResult
 
 
 class _FailingRedis:
@@ -60,15 +61,22 @@ async def test_health_hides_internal_exception_details(monkeypatch, caplog):
 
 
 @pytest.mark.asyncio
-async def test_mounted_request_triggers_lifecycle_outbox_replay(monkeypatch):
+async def test_mounted_request_triggers_bounded_lifecycle_outbox_replay(monkeypatch):
     replayed = asyncio.Event()
     redis = _FailingRedis()
     db_infra = _DbInfra()
+    replay_count = 0
 
-    async def _capture_replay(db, captured_redis):
+    async def _capture_replay(db, captured_redis, *, limit):
+        nonlocal replay_count
         assert db is db_infra.get_manager("aweb")
         assert captured_redis is redis
+        assert limit == 100
+        replay_count += 1
+        if replay_count == 1:
+            return LifecycleOutboxReplayResult(attempted_count=100)
         replayed.set()
+        return LifecycleOutboxReplayResult(attempted_count=1)
 
     monkeypatch.setattr("aweb.api.replay_lifecycle_side_effects", _capture_replay)
     app = create_app(db_infra=db_infra, redis=redis)
@@ -79,6 +87,7 @@ async def test_mounted_request_triggers_lifecycle_outbox_replay(monkeypatch):
         await client.get("/health")
 
     await asyncio.wait_for(replayed.wait(), timeout=1)
+    assert replay_count == 2
 
 
 @pytest.mark.asyncio

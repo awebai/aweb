@@ -27,7 +27,7 @@ from .events import (
     publish_team_event,
 )
 from .identity_scope import normalize_identity_scope
-from .messaging.waiting import unregister_waiting
+from .messaging.waiting import unregister_waiting_strict
 from .presence import clear_workspace_presence
 
 logger = logging.getLogger(__name__)
@@ -674,7 +674,7 @@ async def _clear_chat_waiting(
     cleared_count = 0
     try:
         for session_id, did in participants:
-            await unregister_waiting(redis, session_id, did)
+            await unregister_waiting_strict(redis, session_id, did)
             cleared_count += 1
         return "cleared", cleared_count
     except Exception:
@@ -1014,8 +1014,9 @@ async def replay_lifecycle_side_effects(
             SELECT outbox_id, effect_kind, payload_json
             FROM {{{{tables.lifecycle_side_effect_outbox}}}}
             WHERE delivered_at IS NULL
+              AND ($1::uuid IS NOT NULL OR next_attempt_at <= NOW())
               AND ($1::uuid IS NULL OR operation_id = $1)
-            ORDER BY created_at, operation_id, effect_order
+            ORDER BY next_attempt_at, created_at, operation_id, effect_order
             {lock_clause}
             LIMIT $2
             """,
@@ -1047,6 +1048,12 @@ async def replay_lifecycle_side_effects(
                     """
                     UPDATE {{tables.lifecycle_side_effect_outbox}}
                     SET attempt_count = attempt_count + 1,
+                        next_attempt_at = NOW() + (
+                            LEAST(
+                                300,
+                                5 * POWER(2, LEAST(attempt_count, 6))::INTEGER
+                            ) * INTERVAL '1 second'
+                        ),
                         last_error = $2
                     WHERE outbox_id = $1
                       AND delivered_at IS NULL

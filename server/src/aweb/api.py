@@ -44,6 +44,9 @@ from .coordination.routes.workspaces import router as workspaces_router
 
 logger = logging.getLogger(__name__)
 
+_LIFECYCLE_OUTBOX_REPLAY_BATCH_SIZE = 100
+_LIFECYCLE_OUTBOX_MAX_BATCHES_PER_TRIGGER = 10
+
 
 def _cached_body_receive(body: bytes):
     """Return an ASGI receive callable that replays a cached request body.
@@ -117,10 +120,15 @@ def _schedule_lifecycle_outbox_replay(app: FastAPI) -> None:
 
     async def _replay() -> None:
         try:
-            await replay_lifecycle_side_effects(
-                db_infra.get_manager("aweb"),
-                redis,
-            )
+            for _ in range(_LIFECYCLE_OUTBOX_MAX_BATCHES_PER_TRIGGER):
+                result = await replay_lifecycle_side_effects(
+                    db_infra.get_manager("aweb"),
+                    redis,
+                    limit=_LIFECYCLE_OUTBOX_REPLAY_BATCH_SIZE,
+                )
+                if result.attempted_count < _LIFECYCLE_OUTBOX_REPLAY_BATCH_SIZE:
+                    break
+                await asyncio.sleep(0)
         except Exception:
             logger.warning("Lifecycle outbox replay failed", exc_info=True)
 

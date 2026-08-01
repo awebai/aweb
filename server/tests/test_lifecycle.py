@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -60,11 +60,14 @@ async def _seed_workspace_with_claim(aweb_db, *, identity_scope: str = "local"):
 
 
 class _FakeRedis:
-    def __init__(self):
+    def __init__(self, *, fail_zrem: bool = False):
+        self.fail_zrem = fail_zrem
         self.zrem_calls: list[tuple[str, str]] = []
 
     async def zrem(self, key: str, member: str):
         self.zrem_calls.append((key, member))
+        if self.fail_zrem:
+            raise ConnectionError("redis unavailable")
         return 1
 
 
@@ -182,7 +185,7 @@ async def test_lifecycle_outer_transaction_defers_side_effects_until_commit(
     monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
     monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
     monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
-    monkeypatch.setattr(lifecycle, "unregister_waiting", _capture_waiting)
+    monkeypatch.setattr(lifecycle, "unregister_waiting_strict", _capture_waiting)
 
     async with db.transaction() as outer:
         result = await apply_lifecycle_cascade(
@@ -235,7 +238,7 @@ async def test_lifecycle_outer_transaction_rollback_emits_no_side_effects(
     monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
     monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
     monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
-    monkeypatch.setattr(lifecycle, "unregister_waiting", _capture_waiting)
+    monkeypatch.setattr(lifecycle, "unregister_waiting_strict", _capture_waiting)
 
     class _Rollback(Exception):
         pass
@@ -300,7 +303,7 @@ async def test_lifecycle_plain_handle_still_publishes_side_effects(
     monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
     monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
     monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
-    monkeypatch.setattr(lifecycle, "unregister_waiting", _capture_waiting)
+    monkeypatch.setattr(lifecycle, "unregister_waiting_strict", _capture_waiting)
 
     result = await apply_lifecycle_cascade(
         db,
@@ -349,7 +352,7 @@ async def test_lifecycle_committed_outbox_replays_after_process_death(
     monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
     monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
     monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
-    monkeypatch.setattr(lifecycle, "unregister_waiting", _capture_waiting)
+    monkeypatch.setattr(lifecycle, "unregister_waiting_strict", _capture_waiting)
 
     async with db.transaction() as outer:
         result = await apply_lifecycle_cascade(
@@ -488,6 +491,128 @@ async def test_lifecycle_duplicate_replay_does_not_redeliver_completed_rows(
 
 
 @pytest.mark.asyncio
+async def test_chat_waiting_failure_stays_pending_then_replays(
+    aweb_cloud_db, monkeypatch
+):
+    db = aweb_cloud_db.aweb_db
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
+    await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
+    redis = _FakeRedis(fail_zrem=True)
+
+    async def _capture_event(_redis, _event):
+        return 1
+
+    async def _capture_presence(_redis, workspace_ids):
+        return len(workspace_ids)
+
+    monkeypatch.setattr(lifecycle, "publish_event", _capture_event)
+    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_event)
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
+
+    result = await apply_lifecycle_cascade(
+        db,
+        redis,
+        _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+    )
+
+    assert result.post_commit_status == "failed"
+    assert result.chat_waiting_cleanup_status == "failed"
+    assert await db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.lifecycle_side_effect_outbox}}
+        WHERE operation_id = $1
+          AND effect_kind = 'chat_waiting_clear'
+          AND delivered_at IS NULL
+        """,
+        UUID(result.outbox_operation_id),
+    ) == 1
+
+    redis.fail_zrem = False
+    replay = await lifecycle.replay_lifecycle_side_effects(
+        db,
+        redis,
+        operation_id=result.outbox_operation_id,
+    )
+
+    assert replay.delivered_count == 1
+    assert replay.pending_count == 0
+    assert len(redis.zrem_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_global_replay_advances_past_a_full_failed_batch(
+    aweb_cloud_db, monkeypatch
+):
+    db = aweb_cloud_db.aweb_db
+    await db.execute(
+        """
+        INSERT INTO {{tables.lifecycle_side_effect_outbox}} (
+            operation_id, effect_order, team_id, effect_kind, payload_json,
+            created_at
+        )
+        SELECT
+            gen_random_uuid(),
+            0,
+            'backend:acme.com',
+            'workspace_task_unclaimed',
+            jsonb_build_object(
+                'workspace_id', gen_random_uuid()::text,
+                'team_id', 'backend:acme.com',
+                'task_ref', 'poison-' || series,
+                'alias', 'alice',
+                'timestamp', NOW()::text
+            ),
+            NOW() - INTERVAL '1 hour'
+        FROM generate_series(1, 100) AS series
+        """
+    )
+    await db.execute(
+        """
+        INSERT INTO {{tables.lifecycle_side_effect_outbox}} (
+            operation_id, effect_order, team_id, effect_kind, payload_json,
+            created_at
+        )
+        VALUES (
+            gen_random_uuid(), 0, 'backend:acme.com', 'presence_clear',
+            '{"workspace_ids": ["healthy-workspace"]}'::jsonb, NOW()
+        )
+        """
+    )
+    presence_clears: list[tuple[str, ...]] = []
+
+    async def _fail_event(_redis, _event):
+        raise RuntimeError("poison event")
+
+    async def _capture_presence(_redis, workspace_ids):
+        presence_clears.append(tuple(workspace_ids))
+        return len(workspace_ids)
+
+    monkeypatch.setattr(lifecycle, "publish_event", _fail_event)
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
+
+    first = await lifecycle.replay_lifecycle_side_effects(db, object())
+    scheduled_failure_count = await db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.lifecycle_side_effect_outbox}}
+        WHERE effect_kind = 'workspace_task_unclaimed'
+          AND attempt_count = 1
+          AND next_attempt_at > created_at
+        """
+    )
+    second = await lifecycle.replay_lifecycle_side_effects(db, object())
+
+    assert first.attempted_count == 100
+    assert scheduled_failure_count == 100
+    assert first.delivered_count == 0
+    assert second.attempted_count == 1
+    assert second.delivered_count == 1
+    assert second.pending_count == 100
+    assert presence_clears == [("healthy-workspace",)]
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db, monkeypatch):
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(
         aweb_cloud_db.aweb_db
@@ -550,10 +675,14 @@ async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db,
 
     monkeypatch.setattr(lifecycle, "publish_event", _retry_workspace_event)
     replay = await lifecycle.replay_lifecycle_side_effects(
-        aweb_cloud_db.aweb_db, object()
+        aweb_cloud_db.aweb_db,
+        object(),
+        operation_id=result.outbox_operation_id,
     )
     duplicate = await lifecycle.replay_lifecycle_side_effects(
-        aweb_cloud_db.aweb_db, object()
+        aweb_cloud_db.aweb_db,
+        object(),
+        operation_id=result.outbox_operation_id,
     )
 
     assert replay.workspace_event_count == 1

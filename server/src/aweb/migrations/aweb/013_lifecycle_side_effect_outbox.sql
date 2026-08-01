@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS {{tables.lifecycle_side_effect_outbox}} (
     ),
     payload_json    JSONB NOT NULL,
     attempt_count   INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_error      TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     delivered_at    TIMESTAMPTZ,
@@ -24,7 +25,9 @@ CREATE TABLE IF NOT EXISTS {{tables.lifecycle_side_effect_outbox}} (
 );
 
 CREATE INDEX IF NOT EXISTS idx_lifecycle_side_effect_outbox_pending
-    ON {{tables.lifecycle_side_effect_outbox}} (created_at, operation_id, effect_order)
+    ON {{tables.lifecycle_side_effect_outbox}} (
+        next_attempt_at, created_at, operation_id, effect_order
+    )
     WHERE delivered_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_lifecycle_side_effect_outbox_delivered

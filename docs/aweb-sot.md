@@ -760,12 +760,17 @@ requires synchronous post-commit effects invokes the canonical
 transaction exits.
 
 Replay locks pending rows and records each delivered effect so an ordinary
-retry does not publish it twice. Delivery is at-least-once across a process
-crash: a crash after Redis accepted an effect but before `delivered_at` commits
-may replay it. Lifecycle events remain wake/state-change hints; consumers read
-PostgreSQL state as truth. Failed rows stay durable for a later request/startup
-replay, and startup/embedded request paths trigger canonical replay without a
-host-specific outbox protocol.
+retry does not publish it twice. Chat-waiting delivery uses a strict Redis path;
+failures remain pending rather than inheriting the best-effort SSE-disconnect
+semantics. Failed global rows receive a persisted, bounded exponential retry
+schedule, and recovery selects only due rows in bounded batches so a full
+failed batch cannot starve later healthy work. Operation-specific replay may
+retry its own rows immediately after an outer commit. Delivery is at-least-once
+across a process crash: a crash after Redis accepted an effect but before
+`delivered_at` commits may replay it. Lifecycle events remain wake/state-change
+hints; consumers read PostgreSQL state as truth. Failed rows stay durable for a
+later request/startup replay, and startup/embedded request paths trigger
+canonical replay without a host-specific outbox protocol.
 
 ### Dashboard routes
 
