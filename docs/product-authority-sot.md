@@ -1,11 +1,10 @@
 # Product authority SOT
 
-Status: **current supporting authority, pending consolidation**. This document
-explains how identity custody, addressability, team authority, and runtime
-hosting compose. Its durable authority axes remain current, but it does not
-compete with `aweb-product-sot.md` for product direction and will be consolidated
-into canonical product/protocol documents to reduce overlapping SOTs. If it
-conflicts with the lower-level protocol contracts in
+Status: **current supporting technical authority, pending consolidation**. This
+document explains how identity custody, addressability, team authority, and
+runtime hosting compose. Its durable authority axes remain current and will be
+consolidated into canonical protocol documents to reduce overlapping SOTs. If
+it conflicts with the lower-level protocol contracts in
 [`aweb-sot.md`](aweb-sot.md), [`awid-sot.md`](awid-sot.md),
 [`identity-messaging-contract.md`](identity-messaging-contract.md), or
 [`global-local-identity-routing.md`](global-local-identity-routing.md), the

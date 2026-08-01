@@ -19,16 +19,24 @@ PRIVATE_TRANSITION_DOCS = {
 }
 
 REMOVED_DOCS = {
+    "aweb-product-sot.md",
+    "bootstrapping-operating-patterns-worklog.md",
+    "cli-setup-surface-sot.md",
+    "company-agent-platform-thesis.md",
+    "launch-readiness-sot.md",
+    "market-entry-wedge-research.md",
+    "orchestrator-evidence-review.md",
     "restructuring/app-event-subscriptions-contract.md",
     "restructuring/app-manifest-schema.md",
     "restructuring/app-registry-grants-read-api.md",
+    "team-blueprints-sot.md",
+    "website-dashboard-strategy.md",
 }
 
-NON_NORMATIVE_STRATEGY_DOCS = {
-    "company-agent-platform-thesis.md",
-    "market-entry-wedge-research.md",
-    "orchestrator-evidence-review.md",
-    "website-dashboard-strategy.md",
+REMOVED_REPO_PATHS = {
+    "agents/souls/consultant/decisions/aweb-control-plane-and-apps.md",
+    "agents/souls/consultant/docs/customer-centered-aweb-positioning.md",
+    "agents/souls/consultant/memory/aweb-anapp-product-constraints.md",
 }
 
 PUBLIC_EXTENSION_DOCS = (
@@ -229,6 +237,10 @@ def check(
             if token.casefold() in normalized_relative:
                 failures.append(f"tracked path {relative} retains private managed-gateway name {token!r}")
 
+    for relative in sorted(REMOVED_REPO_PATHS):
+        if (root / relative).exists():
+            failures.append(f"removed company-strategy path returned: {relative}")
+
     for relative in sorted(tracked_files):
         path = root / relative
         if not path.is_file():
@@ -351,28 +363,8 @@ def check(
     ]
     counts = Counter(links)
     section_links = _readme_h2_links(readme)
-    classified_strategy = set(
-        section_links.get("Non-normative strategy and research", [])
-    )
-    missing_strategy = sorted(NON_NORMATIVE_STRATEGY_DOCS - classified_strategy)
-    unexpected_strategy = sorted(classified_strategy - NON_NORMATIVE_STRATEGY_DOCS)
-    if missing_strategy:
-        failures.append(
-            "missing non-normative strategy/research classification: "
-            + ", ".join(missing_strategy)
-        )
-    if unexpected_strategy:
-        failures.append(
-            "non-normative strategy/research family has unexpected Markdown paths: "
-            + ", ".join(unexpected_strategy)
-        )
-    normalized_readme = " ".join(readme.split())
-    if (
-        "OAS is an external reference composition, never a required aweb runtime or lifecycle owner."
-        not in normalized_readme
-    ):
-        failures.append("non-normative strategy family does not preserve the external OAS boundary")
-
+    if section_links.get("Non-normative strategy and research"):
+        failures.append("public docs index still publishes a strategy/research section")
     missing = sorted(expected_public - set(counts))
     duplicate = sorted(target for target, count in counts.items() if count != 1)
     extra = sorted(set(counts) - expected_public)
@@ -488,6 +480,17 @@ def self_test(root: Path) -> int:
                 return 1
             path.unlink()
 
+        for relative in sorted(REMOVED_REPO_PATHS):
+            path = tmp / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("retired company strategy\n", encoding="utf-8")
+            mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            expected = f"removed company-strategy path returned: {relative}"
+            if not any(expected in failure for failure in mutation_failures):
+                print(f"self-test failed: removed strategy path was not detected: {relative}")
+                return 1
+            path.unlink()
+
         hook = tmp / "docs/aw-hooks-sot.md"
         hook.write_text(hook.read_text(encoding="utf-8").replace("`task.created`", "`task-created`"), encoding="utf-8")
 
@@ -513,11 +516,9 @@ def self_test(root: Path) -> int:
 
         readme = tmp / "docs/README.md"
         readme.write_text(
-            readme.read_text(encoding="utf-8").replace(
-                "## Non-normative strategy and research",
-                "## Strategy and research",
-                1,
-            ),
+            readme.read_text(encoding="utf-8")
+            + "\n## Non-normative strategy and research\n\n"
+            + "- [Company strategy](identity.md)\n",
             encoding="utf-8",
         )
         failures = check(tmp, tracked_markdown, tracked_files)
@@ -527,7 +528,7 @@ def self_test(root: Path) -> int:
             "removed repeated-event call site": "inventory retains absent call site",
             "dynamic event expression": "unsupported non-literal",
             "real workspace release mount": "mounts the real repository workspace",
-            "strategy lifecycle classification": "missing non-normative strategy/research classification",
+            "public strategy section": "public docs index still publishes a strategy/research section",
         }
         for label, expected in required_failures.items():
             if not any(expected in failure for failure in failures):
@@ -535,7 +536,8 @@ def self_test(root: Path) -> int:
                 return 1
 
     print(
-        "self-test passed: tracked corpus, strategy lifecycle, managed-gateway neutrality, "
+        "self-test passed: tracked corpus, public-strategy exclusion, removed-strategy paths, "
+        "managed-gateway neutrality, "
         "event/call-site multiplicity, dynamic-expression, and real-workspace release-mount "
         "controls reject their mutations"
     )

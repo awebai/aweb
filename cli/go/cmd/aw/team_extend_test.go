@@ -81,31 +81,6 @@ func TestTeamAddAmbientAPIKeyKeepsActiveTeamAuthority(t *testing.T) {
 	}
 }
 
-func TestTeamBlueprintsSOTDescribesAmbientAPIKeyAssertion(t *testing.T) {
-	path := filepath.Join(cmdMonorepoRootForTest(t), "docs", "team-blueprints-sot.md")
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(body)
-	for _, want := range []string{
-		"selects API-key authority and uses the active team as an assertion",
-		"pass an explicit `--api-key`, which bypasses the workspace assertion",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("%s missing post-aary.1 guidance %q", path, want)
-		}
-	}
-	for _, stale := range []string{
-		"Unset the variable to extend the active team",
-		"ambient `AWEB_API_KEY` does not silently override it",
-	} {
-		if strings.Contains(text, stale) {
-			t.Errorf("%s still contains stale ambient-key refusal %q", path, stale)
-		}
-	}
-}
-
 func TestTeamExtendAmbientAPIKeyUsesActiveTeamAssertion(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
