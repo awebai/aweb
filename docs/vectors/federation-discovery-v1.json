@@ -1,0 +1,264 @@
+{
+  "schema": "aweb.federation-discovery.v1",
+  "contract": "aweb-aazd.2.1",
+  "constants": {
+    "authority_statement_version": "aweb.federation-authority.dns.v1",
+    "public_registry_origin": "https://api.awid.ai"
+  },
+  "canonical_address_cases": [
+    {"name": "lowercase_domain_preserve_name", "input": " Alpha.Example.COM./Alice ", "expected": {"valid": true, "canonical": "alpha.example.com/Alice"}},
+    {"name": "name_case_is_significant", "input": "alpha.example.com/aLiCe", "expected": {"valid": true, "canonical": "alpha.example.com/aLiCe"}},
+    {"name": "hyphenated_dns_and_name", "input": "team-a.example.com/alice-1", "expected": {"valid": true, "canonical": "team-a.example.com/alice-1"}},
+    {"name": "empty_domain", "input": "/alice", "expected": {"valid": false, "canonical": null}},
+    {"name": "empty_name", "input": "alpha.example.com/", "expected": {"valid": false, "canonical": null}},
+    {"name": "missing_slash", "input": "alpha.example.com", "expected": {"valid": false, "canonical": null}},
+    {"name": "extra_slash", "input": "alpha.example.com/team/alice", "expected": {"valid": false, "canonical": null}},
+    {"name": "backslash", "input": "alpha.example.com\\alice", "expected": {"valid": false, "canonical": null}},
+    {"name": "space_in_name", "input": "alpha.example.com/al ice", "expected": {"valid": false, "canonical": null}},
+    {"name": "control_in_name", "input": "alpha.example.com/al\nice", "expected": {"valid": false, "canonical": null}},
+    {"name": "invalid_dns_label_leading_hyphen", "input": "-alpha.example.com/alice", "expected": {"valid": false, "canonical": null}},
+    {"name": "invalid_dns_label_trailing_hyphen", "input": "alpha-.example.com/alice", "expected": {"valid": false, "canonical": null}},
+    {"name": "empty_dns_label", "input": "alpha..example.com/alice", "expected": {"valid": false, "canonical": null}},
+    {"name": "literal_ipv4_domain", "input": "192.0.2.1/alice", "expected": {"valid": false, "canonical": null}},
+    {"name": "literal_ipv6_domain", "input": "[2001:db8::1]/alice", "expected": {"valid": false, "canonical": null}},
+    {"name": "nonascii_domain", "input": "éxample.com/alice", "expected": {"valid": false, "canonical": null}},
+    {"name": "second_trailing_dot_remains_invalid", "input": "alpha.example.com../alice", "expected": {"valid": false, "canonical": null}}
+  ],
+  "dns_cases": [
+    {
+      "name": "exact_dns_record_with_explicit_registry",
+      "sender_domain": "alpha.example.com",
+      "registered_domain": "example.com",
+      "queries": [
+        {
+          "name": "_awid.alpha.example.com",
+          "outcome": "record",
+          "records": ["awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd; registry=https://registry-a.example;"]
+        }
+      ],
+      "expected": {"selection": "dns", "authority_name": "_awid.alpha.example.com", "inherited": false, "registry_explicit": true, "registry_origin": "https://registry-a.example", "reason": null}
+    },
+    {
+      "name": "exact_dns_record_without_registry_uses_public_origin",
+      "sender_domain": "beta.example.com",
+      "registered_domain": "example.com",
+      "queries": [
+        {
+          "name": "_awid.beta.example.com",
+          "outcome": "record",
+          "records": ["awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd;"]
+        }
+      ],
+      "expected": {"selection": "dns", "authority_name": "_awid.beta.example.com", "inherited": false, "registry_explicit": false, "registry_origin": "https://api.awid.ai", "reason": null}
+    },
+    {
+      "name": "nodata_walks_to_registered_domain_record",
+      "sender_domain": "child.example.com",
+      "registered_domain": "example.com",
+      "queries": [
+        {"name": "_awid.child.example.com", "outcome": "nodata", "records": []},
+        {
+          "name": "_awid.example.com",
+          "outcome": "record",
+          "records": ["awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd; registry=https://registry-b.example;"]
+        }
+      ],
+      "expected": {"selection": "dns", "authority_name": "_awid.example.com", "inherited": true, "registry_explicit": true, "registry_origin": "https://registry-b.example", "reason": null}
+    },
+    {
+      "name": "unrelated_txt_walks_to_parent",
+      "sender_domain": "service.example.com",
+      "registered_domain": "example.com",
+      "queries": [
+        {"name": "_awid.service.example.com", "outcome": "no_awid_record", "records": ["v=spf1 -all"]},
+        {
+          "name": "_awid.example.com",
+          "outcome": "record",
+          "records": ["awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd; registry=https://registry-b.example;"]
+        }
+      ],
+      "expected": {"selection": "dns", "authority_name": "_awid.example.com", "inherited": true, "registry_explicit": true, "registry_origin": "https://registry-b.example", "reason": null}
+    },
+    {
+      "name": "no_awid_record_selects_public_default",
+      "sender_domain": "absent.example.com",
+      "registered_domain": "example.com",
+      "queries": [
+        {"name": "_awid.absent.example.com", "outcome": "nxdomain", "records": []},
+        {"name": "_awid.example.com", "outcome": "no_awid_record", "records": ["site-verification=fixture"]}
+      ],
+      "expected": {"selection": "public_default", "authority_name": "", "inherited": false, "registry_explicit": false, "registry_origin": "https://api.awid.ai", "reason": null}
+    },
+    {
+      "name": "timeout_never_falls_back",
+      "sender_domain": "timeout.example.com",
+      "registered_domain": "example.com",
+      "queries": [{"name": "_awid.timeout.example.com", "outcome": "timeout", "records": []}],
+      "expected": {"selection": null, "authority_name": null, "inherited": false, "registry_explicit": false, "registry_origin": null, "reason": "sender_registry_discovery_failed"}
+    },
+    {
+      "name": "servfail_never_falls_back",
+      "sender_domain": "servfail.example.com",
+      "registered_domain": "example.com",
+      "queries": [{"name": "_awid.servfail.example.com", "outcome": "servfail", "records": []}],
+      "expected": {"selection": null, "authority_name": null, "inherited": false, "registry_explicit": false, "registry_origin": null, "reason": "sender_registry_discovery_failed"}
+    },
+    {
+      "name": "malformed_awid_never_falls_back",
+      "sender_domain": "malformed.example.com",
+      "registered_domain": "example.com",
+      "queries": [{"name": "_awid.malformed.example.com", "outcome": "malformed", "records": ["awid=v1 controller=missing-separators"]}],
+      "expected": {"selection": null, "authority_name": null, "inherited": false, "registry_explicit": false, "registry_origin": null, "reason": "sender_registry_discovery_failed"}
+    },
+    {
+      "name": "duplicate_field_never_falls_back",
+      "sender_domain": "duplicate.example.com",
+      "registered_domain": "example.com",
+      "queries": [{"name": "_awid.duplicate.example.com", "outcome": "duplicate_field", "records": ["awid=v1; awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd;"]}],
+      "expected": {"selection": null, "authority_name": null, "inherited": false, "registry_explicit": false, "registry_origin": null, "reason": "sender_registry_discovery_failed"}
+    },
+    {
+      "name": "unsupported_version_never_falls_back",
+      "sender_domain": "version.example.com",
+      "registered_domain": "example.com",
+      "queries": [{"name": "_awid.version.example.com", "outcome": "unsupported_version", "records": ["awid=v2; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd;"]}],
+      "expected": {"selection": null, "authority_name": null, "inherited": false, "registry_explicit": false, "registry_origin": null, "reason": "sender_registry_discovery_failed"}
+    },
+    {
+      "name": "invalid_controller_never_falls_back",
+      "sender_domain": "controller.example.com",
+      "registered_domain": "example.com",
+      "queries": [{"name": "_awid.controller.example.com", "outcome": "invalid_controller", "records": ["awid=v1; controller=did:aw:not-a-controller;"]}],
+      "expected": {"selection": null, "authority_name": null, "inherited": false, "registry_explicit": false, "registry_origin": null, "reason": "sender_registry_discovery_failed"}
+    },
+    {
+      "name": "multiple_awid_records_never_fall_back",
+      "sender_domain": "multiple.example.com",
+      "registered_domain": "example.com",
+      "queries": [{"name": "_awid.multiple.example.com", "outcome": "multiple_awid_records", "records": ["awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd;", "awid=v1; controller=did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG;"]}],
+      "expected": {"selection": null, "authority_name": null, "inherited": false, "registry_explicit": false, "registry_origin": null, "reason": "sender_registry_discovery_failed"}
+    }
+  ],
+  "authority_statement_cases": [
+    {
+      "name": "dns_explicit_registry",
+      "payload": {"authority_name": "_awid.alpha.example.com", "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "inherited": false, "registry_explicit": true, "registry_origin": "https://registry-a.example", "selection": "dns", "version": "awid-v1"},
+      "canonical_payload": "{\"authority_name\":\"_awid.alpha.example.com\",\"controller_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"inherited\":false,\"registry_explicit\":true,\"registry_origin\":\"https://registry-a.example\",\"selection\":\"dns\",\"version\":\"awid-v1\"}",
+      "authority_statement_version": "aweb.federation-authority.dns.v1",
+      "authority_statement_digest": "sha256:aed78a1811755537b8a5b31d7368d1ed9d887cf1c521e5484355a1dec214f1b4"
+    },
+    {
+      "name": "dns_public_registry_origin",
+      "payload": {"authority_name": "_awid.beta.example.com", "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "inherited": false, "registry_explicit": false, "registry_origin": "https://api.awid.ai", "selection": "dns", "version": "awid-v1"},
+      "canonical_payload": "{\"authority_name\":\"_awid.beta.example.com\",\"controller_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"inherited\":false,\"registry_explicit\":false,\"registry_origin\":\"https://api.awid.ai\",\"selection\":\"dns\",\"version\":\"awid-v1\"}",
+      "authority_statement_version": "aweb.federation-authority.dns.v1",
+      "authority_statement_digest": "sha256:243c8fc5ecb13b973ebb278a18d802e40132c4709848b001a3ed2195820a1362"
+    },
+    {
+      "name": "inherited_dns_authority",
+      "payload": {"authority_name": "_awid.example.com", "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "inherited": true, "registry_explicit": true, "registry_origin": "https://registry-b.example", "selection": "dns", "version": "awid-v1"},
+      "canonical_payload": "{\"authority_name\":\"_awid.example.com\",\"controller_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"inherited\":true,\"registry_explicit\":true,\"registry_origin\":\"https://registry-b.example\",\"selection\":\"dns\",\"version\":\"awid-v1\"}",
+      "authority_statement_version": "aweb.federation-authority.dns.v1",
+      "authority_statement_digest": "sha256:ec27641fe1d8ddb197978275584d7ed38eb63f558cd84d72bae5b3fd66151767"
+    },
+    {
+      "name": "public_default_namespace_controller",
+      "payload": {"authority_name": "", "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "inherited": false, "registry_explicit": false, "registry_origin": "https://api.awid.ai", "selection": "public_default", "version": "awid-v1"},
+      "canonical_payload": "{\"authority_name\":\"\",\"controller_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"inherited\":false,\"registry_explicit\":false,\"registry_origin\":\"https://api.awid.ai\",\"selection\":\"public_default\",\"version\":\"awid-v1\"}",
+      "authority_statement_version": "aweb.federation-authority.dns.v1",
+      "authority_statement_digest": "sha256:2c51acd50d6e1fb4862e1477146f5a4d43732f98182a221a11367a50b0d3bfbf"
+    }
+  ],
+  "authority_lookup_cases": [
+    {
+      "name": "dns_namespace_and_address_exact_match",
+      "selection": "dns",
+      "registry_origin": "https://registry-a.example",
+      "namespace": {"domain": "alpha.example.com", "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"},
+      "address": {"domain": "alpha.example.com", "name": "Alice", "address_id": "addr-alpha-alice", "did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "delivery_origin": "https://aweb-alpha.example"},
+      "key": {"did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "status": "OK_VERIFIED"},
+      "expected": {"accepted": true, "reason": null, "fallback_contacted": false}
+    },
+    {
+      "name": "public_default_controller_comes_from_exact_namespace_row",
+      "selection": "public_default",
+      "registry_origin": "https://api.awid.ai",
+      "namespace": {"domain": "absent.example.com", "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"},
+      "address": {"domain": "absent.example.com", "name": "Alice", "address_id": null, "did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "delivery_origin": "https://aweb-absent.example"},
+      "key": {"did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "status": "OK_VERIFIED"},
+      "expected": {"accepted": true, "reason": null, "fallback_contacted": false}
+    },
+    {
+      "name": "dns_controller_mismatch",
+      "selection": "dns",
+      "registry_origin": "https://registry-a.example",
+      "namespace": {"domain": "alpha.example.com", "controller_did": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG"},
+      "address": null,
+      "key": null,
+      "expected": {"accepted": false, "reason": "sender_address_did_mismatch", "fallback_contacted": false}
+    },
+    {
+      "name": "authoritative_namespace_not_found",
+      "selection": "dns",
+      "registry_origin": "https://registry-a.example",
+      "namespace": null,
+      "address": null,
+      "key": null,
+      "expected": {"accepted": false, "reason": "sender_identity_not_found", "fallback_contacted": false}
+    },
+    {
+      "name": "authoritative_address_not_found",
+      "selection": "dns",
+      "registry_origin": "https://registry-a.example",
+      "namespace": {"domain": "alpha.example.com", "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"},
+      "address": null,
+      "key": null,
+      "expected": {"accepted": false, "reason": "sender_identity_not_found", "fallback_contacted": false}
+    },
+    {
+      "name": "verified_key_did_mismatch",
+      "selection": "dns",
+      "registry_origin": "https://registry-a.example",
+      "namespace": {"domain": "alpha.example.com", "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"},
+      "address": {"domain": "alpha.example.com", "name": "Alice", "address_id": "addr-alpha-alice", "did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "delivery_origin": "https://aweb-alpha.example"},
+      "key": {"did_aw": "did:aw:different", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "status": "OK_VERIFIED"},
+      "expected": {"accepted": false, "reason": "sender_address_did_mismatch", "fallback_contacted": false}
+    },
+    {
+      "name": "verified_current_key_mismatch",
+      "selection": "dns",
+      "registry_origin": "https://registry-a.example",
+      "namespace": {"domain": "alpha.example.com", "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"},
+      "address": {"domain": "alpha.example.com", "name": "Alice", "address_id": "addr-alpha-alice", "did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "delivery_origin": "https://aweb-alpha.example"},
+      "key": {"did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "current_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "status": "OK_VERIFIED"},
+      "expected": {"accepted": false, "reason": "sender_current_key_mismatch", "fallback_contacted": false}
+    },
+    {
+      "name": "degraded_key_never_authorizes",
+      "selection": "dns",
+      "registry_origin": "https://registry-a.example",
+      "namespace": {"domain": "alpha.example.com", "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"},
+      "address": {"domain": "alpha.example.com", "name": "Alice", "address_id": "addr-alpha-alice", "did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "delivery_origin": "https://aweb-alpha.example"},
+      "key": {"did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "status": "OK_DEGRADED"},
+      "expected": {"accepted": false, "reason": "sender_identity_unverifiable", "fallback_contacted": false, "full_log_required": true}
+    },
+    {
+      "name": "selected_registry_transport_failure_never_falls_back",
+      "selection": "dns",
+      "registry_origin": "https://registry-a.example",
+      "namespace": "transport_failure",
+      "address": null,
+      "key": null,
+      "expected": {"accepted": false, "reason": "sender_registry_unavailable", "fallback_contacted": false}
+    },
+    {
+      "name": "copied_log_does_not_authorize_registry_migration",
+      "selection": "dns",
+      "registry_origin": "https://registry-b.example",
+      "namespace": {"domain": "alpha.example.com", "controller_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd"},
+      "address": {"domain": "alpha.example.com", "name": "Alice", "address_id": "copied", "did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "delivery_origin": "https://aweb-attacker.example"},
+      "key": {"did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "status": "OK_VERIFIED", "extends_checkpoint": false},
+      "expected": {"accepted": false, "reason": "sender_did_log_split_view", "fallback_contacted": false}
+    }
+  ]
+}

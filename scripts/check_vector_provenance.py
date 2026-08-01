@@ -71,6 +71,17 @@ ROOT_CONSUMERS = {
         "identity-log-v1.json",
         '_IDENTITY_VECTOR = _ROOT / "docs" / "vectors" / "identity-log-v1.json"',
     ),
+    PurePosixPath("awid/tests/test_federation_authority_vectors.py"): _consumer(
+        {
+            "federation-authority-state-v1.json",
+            "federation-discovery-v1.json",
+            "federation-origin-ip-v1.json",
+            "identity-log-negative-v1.json",
+            "identity-log-raw-wire-v1.json",
+            "identity-log-v1.json",
+        },
+        '_VECTORS = _ROOT / "docs" / "vectors"',
+    ),
     PurePosixPath("server/tests/test_e2ee_crypto_helpers.py"): _consumer(
         "e2ee-v2-cross-language.json",
         '_CROSS_LANGUAGE_VECTOR = _ROOT / "docs" / "vectors" / "e2ee-v2-cross-language.json"',
@@ -136,6 +147,19 @@ ROOT_CONSUMERS = {
             "team-auth-envelope-v2.json",
         },
         'filepath.Join(root, "docs", "vectors", name)',
+    ),
+    PurePosixPath(
+        "cli/go/internal/conformance/federation_authority_vectors_test.go"
+    ): _consumer(
+        {
+            "federation-authority-state-v1.json",
+            "federation-discovery-v1.json",
+            "federation-origin-ip-v1.json",
+            "identity-log-negative-v1.json",
+            "identity-log-raw-wire-v1.json",
+            "identity-log-v1.json",
+        },
+        "data := readRootVector(t, name)",
     ),
     PurePosixPath(
         "cli/go/internal/conformance/identity_log_negative_test.go"

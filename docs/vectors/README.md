@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 16
+`docs/vectors/*.json` is the only public protocol-vector authority for the 19
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -127,6 +127,36 @@ protocol version. The aweb server, Go conformance suite, and public naapp
 verifiers consume it. See
 [`team-auth-envelope-v2.md`](../team-auth-envelope-v2.md).
 
+### `federation-origin-ip-v1.json`
+
+Immutable pre-activation strict-registry origin, IP-class, all-answer,
+direct-peer/trusted-proxy source selection, and pinned-dial cases from the ACKed `aweb-aazd.2.1` contract. Production origins
+are HTTPS origin-only and reject literal IPs and every non-global answer; the
+HTTP/private exception requires all three isolated-development conditions. The
+transport cases pin hostname TLS/SNI with an approved connect IP and prohibit a
+second resolution, redirects, ambient proxy state, cookies, and credentials.
+These bytes authorize no production resolver behavior by themselves.
+
+### `federation-discovery-v1.json`
+
+Immutable canonical-address, typed DNS walk, public-default selection,
+authority-statement canonical JSON/digest, and selected-registry lookup cases.
+NXDOMAIN/NODATA/no-AWID answers walk or select the public default, while DNS
+failures and malformed/ambiguous AWID records never fall back. The public
+default's controller comes from its exact namespace row. These bytes authorize
+no production discovery behavior by themselves.
+
+### `federation-authority-state-v1.json`
+
+Immutable selected-policy, bound, checkpoint/CAS, complete cohort tuple,
+PostgreSQL lease/fence, claim-independent evidence reuse, exhaustive stable
+error, and mandatory-mutation cases from `aweb-aazd.2.1`. It references the
+three canonical root identity-log fixtures by path, byte count, and SHA-256;
+no log body is copied. The selected 60-second value is a receiver reuse ceiling,
+not an external freshness SLA, and contacts are identity-bound with no automatic
+transfer. These bytes authorize no storage, ingress, migration, or activation
+behavior by themselves.
+
 ## Experimental and compatibility A2A fixtures
 
 A2A is shipped but experimental and optional. These fixtures are release gates
@@ -206,7 +236,10 @@ materialization or array ordering; its governing contract wins.
 The vectors are consumed from their canonical `docs/vectors/` paths by the
 following complete source inventory. Go reads public protocol fixtures from the
 repository root except for the classified team-auth package copy, whose bytes are
-compared to root before any case executes.
+compared to root before any case executes. The Python and Go federation readers
+independently pin each reviewed federation file's exact byte count and SHA-256
+before schema checks; deletion, semantic reversal, unknown row fields, and
+reference duplication are mutation-tested failures.
 
 | Public fixture | Actual source consumers |
 |---|---|
@@ -226,6 +259,9 @@ compared to root before any case executes.
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; folio `test_auth_v2_envelope.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
+| `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py`; Go shared `federation_authority_vectors_test.go` |
+| `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py`; Go shared `federation_authority_vectors_test.go` |
+| `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Go shared `federation_authority_vectors_test.go` |
 
 Package and reference enforcement is also explicit: the root `Makefile` runs the
 provenance baseline and mutations from `make test`; the aweb package-data test
@@ -248,6 +284,7 @@ make test-a2a
 cd awid
 uv run --frozen pytest -q \
   tests/test_conformance_vectors.py \
+  tests/test_federation_authority_vectors.py \
   tests/test_atomic_claim.py \
   tests/test_atomic_claim_route.py \
   tests/test_a2a_publication_route.py
