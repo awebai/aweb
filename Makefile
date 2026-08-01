@@ -116,7 +116,13 @@ build:
 # check-cli-go-tidy is here rather than behind test-cli by a deliberate reversal: it was placed
 # after it to inherit a warm module cache, and moving it forward reattributes that fetch rather
 # than adding one - about a second for 85MB when cold.
-test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-sot-source-inventories test-vector-provenance test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-authority-mutations test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
+
+# Editable AWID metadata is repeated in both committed Python locks. Check both
+# without repair, then prove a missing dependent-lock dependency is rejected.
+test-python-locks:
+	bash scripts/check-python-locks.sh
+	bash scripts/check-python-locks.sh --self-test
 
 # Canonical implementation SOT inventories are derived from ordered migrations
 # and FastAPI mounts. The unit suite includes source-addition and stale-doc
@@ -131,6 +137,11 @@ test-sot-source-inventories:
 test-vector-provenance:
 	python3 scripts/check_vector_provenance.py
 	python3 scripts/check_vector_provenance.py --self-test
+
+# The strict authority vector readers must kill the two concrete security
+# weakenings found during the independent core review.
+test-federation-authority-mutations:
+	python3 scripts/test_federation_authority_mutations.py
 
 # The public CLI inventory comes from live Cobra help. Root completion is an
 # independent exact-set control so grouped and Additional Commands cannot vanish

@@ -145,6 +145,7 @@ dependencies = [
     { name = "base58" },
     { name = "dnspython" },
     { name = "fastapi" },
+    { name = "httpcore" },
     { name = "httpx" },
     { name = "pgdbm" },
     { name = "publicsuffix2" },
@@ -161,6 +162,7 @@ requires-dist = [
     { name = "base58", specifier = ">=2.1.1" },
     { name = "dnspython", specifier = ">=2.8.0" },
     { name = "fastapi", specifier = ">=0.116.1" },
+    { name = "httpcore", specifier = ">=1.0.9" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pgdbm", specifier = ">=0.4.1" },
     { name = "publicsuffix2", specifier = ">=2.20191221" },
@@ -176,6 +178,7 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
+    { name = "trustme", specifier = ">=1.2.1" },
 ]
 
 [[package]]

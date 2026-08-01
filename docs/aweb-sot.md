@@ -477,6 +477,13 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `session_admission_leases`
 - `chat_message_reads`
 - `lifecycle_side_effect_outbox`
+- `federation_did_checkpoints`
+- `federation_address_authority_cohorts`
+- `federation_authority_fences`
+- `federation_authority_leases`
+- `federation_authority_results`
+- `federation_authority_permits`
+- `federation_authority_token_buckets`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 ---

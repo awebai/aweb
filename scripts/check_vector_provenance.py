@@ -82,6 +82,25 @@ ROOT_CONSUMERS = {
         },
         '_VECTORS = _ROOT / "docs" / "vectors"',
     ),
+    PurePosixPath("awid/tests/test_external_authority.py"): _consumer(
+        {
+            "federation-discovery-v1.json",
+            "federation-origin-ip-v1.json",
+        },
+        '_VECTORS = _ROOT / "docs" / "vectors"',
+    ),
+    PurePosixPath("awid/tests/test_external_registry.py"): _consumer(
+        "identity-log-v1.json",
+        '_VECTORS = _ROOT / "docs" / "vectors"',
+    ),
+    PurePosixPath("awid/tests/test_identity_log_verify.py"): _consumer(
+        {
+            "identity-log-negative-v1.json",
+            "identity-log-raw-wire-v1.json",
+            "identity-log-v1.json",
+        },
+        '_VECTORS = _ROOT / "docs" / "vectors"',
+    ),
     PurePosixPath("server/tests/test_e2ee_crypto_helpers.py"): _consumer(
         "e2ee-v2-cross-language.json",
         '_CROSS_LANGUAGE_VECTOR = _ROOT / "docs" / "vectors" / "e2ee-v2-cross-language.json"',
@@ -96,6 +115,14 @@ ROOT_CONSUMERS = {
         },
         "_ROOT = Path(__file__).resolve().parents[2]",
         '_VECTORS_DIR = _ROOT / "docs" / "vectors"',
+    ),
+    PurePosixPath("server/tests/test_federation_authority_core.py"): _consumer(
+        "federation-authority-state-v1.json",
+        '_ROOT / "docs" / "vectors" / "federation-authority-state-v1.json"',
+    ),
+    PurePosixPath("server/tests/test_federation_authority_schema.py"): _consumer(
+        "federation-authority-state-v1.json",
+        '_ROOT / "docs" / "vectors" / "federation-authority-state-v1.json"',
     ),
     PurePosixPath("server/tests/test_team_auth_envelope.py"): _consumer(
         "team-auth-envelope-v2.json",
@@ -135,6 +162,19 @@ ROOT_CONSUMERS = {
     PurePosixPath("cli/go/awid/registry_register_test.go"): _consumer(
         "identity-log-v1.json",
         'filepath.Join(root, "docs", "vectors", "identity-log-v1.json")',
+    ),
+    PurePosixPath("cli/go/awid/federation_authority_test.go"): _consumer(
+        {
+            "federation-authority-state-v1.json",
+            "federation-discovery-v1.json",
+            "federation-origin-ip-v1.json",
+            "identity-log-v1.json",
+        },
+        'filepath.Join("..", "..", "..", "docs", "vectors", name)',
+    ),
+    PurePosixPath("cli/go/awid/federation_external_registry_test.go"): _consumer(
+        "identity-log-v1.json",
+        'loadFederationVector(t, "identity-log-v1.json"',
     ),
     GO_CONSUMER: _consumer(
         {

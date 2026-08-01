@@ -64,7 +64,39 @@ PY
     return 1
   fi
 
-  echo "self-test passed: clean locks pass and a stale AWID version fails"
+  python3 - "$tmp/server/uv.lock" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+row = '    { name = "trustme", specifier = ">=1.2.1" },\n'
+if text.count(row) != 1:
+    raise SystemExit("expected one AWID trustme dev-dependency lock row")
+path.write_text(text.replace(row, ""), encoding="utf-8")
+PY
+
+  set +e
+  out="$(check_locks "$tmp" 2>&1)"
+  status=$?
+  set -e
+
+  if [ "$status" -eq 0 ]; then
+    echo "SELF-TEST FAIL: server lock accepted a missing AWID dev dependency" >&2
+    return 1
+  fi
+  if ! grep -Fq "needs to be updated" <<<"$out"; then
+    printf 'SELF-TEST INCONCLUSIVE: missing AWID dependency failed for the wrong reason:\n%s\n' "$out" >&2
+    return 1
+  fi
+
+  (cd "$tmp/server" && uv lock >/dev/null)
+  if ! check_locks "$tmp" >/dev/null; then
+    echo "SELF-TEST FAIL: the dependency-regenerated lock did not pass" >&2
+    return 1
+  fi
+
+  echo "self-test passed: clean locks pass; stale AWID version and missing dependent-lock dependency fail"
 )
 
 case "${1:-}" in
