@@ -204,12 +204,42 @@ materialization or array ordering; its governing contract wins.
 ## Validation
 
 The vectors are consumed from their canonical `docs/vectors/` paths by the
-relevant component suites. Go reads public protocol fixtures from the repository
-root except for the classified team-auth package copy, whose bytes are compared
-to root before any case executes. The provenance gate inventories every tracked
-vector directory, rejects unclassified public mirrors, verifies managed package
-and app snapshots, checks consumer/reference paths, and proves those checks with
-mutations. Focused commands from the repository root:
+following complete source inventory. Go reads public protocol fixtures from the
+repository root except for the classified team-auth package copy, whose bytes are
+compared to root before any case executes.
+
+| Public fixture | Actual source consumers |
+|---|---|
+| `a2a-awid-publication-v1.json` | Python AWID `test_a2a_publication_route.py`; Go AWID `a2a_publication_test.go`; Go shared `conformance_test.go` |
+| `a2a-bridge-envelope-v0.json` | Go gateway `envelope_vector_test.go` |
+| `a2a-v1.json` | Go A2A `card_test.go`; Go gateway `gateway_rpc_test.go`; Go shared `conformance_test.go` |
+| `atomic-address-claim-conflict-codes-v1.json` | Python AWID `test_atomic_claim_route.py`; Go AWID `atomic_address_claim_test.go` |
+| `atomic-address-claim-v1.json` | Python AWID `test_atomic_claim.py`; Go AWID `atomic_address_claim_test.go` |
+| `dns-txt-v1.json` | Python AWID `test_conformance_vectors.py`; Python aweb `test_identity_conformance_vectors.py`; TypeScript channel-core `registry.test.ts` |
+| `e2ee-v2-cross-language.json` | Python aweb `test_e2ee_crypto_helpers.py`; Go AWID `e2ee_cross_language_test.go` |
+| `identity-log-negative-v1.json` | Go shared `identity_log_negative_test.go`; TypeScript channel-core `registry.test.ts` |
+| `identity-log-raw-wire-v1.json` | Go shared `identity_log_raw_wire_test.go`; TypeScript channel-core `registry.test.ts` |
+| `identity-log-v1.json` | Python AWID `test_conformance_vectors.py` and `test_did.py`; Python aweb `test_identity_conformance_vectors.py`; Go AWID `registry_register_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts` and `log_rollback.test.ts` |
+| `message-signing-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
+| `mutation-hook-call-sites-v1.json` | Build guard `scripts/check-extension-docs.py` |
+| `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
+| `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
+| `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
+| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; folio `test_auth_v2_envelope.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
+
+Package and reference enforcement is also explicit: the root `Makefile` runs the
+provenance baseline and mutations from `make test`; the aweb package-data test
+builds and inspects both wheel and sdist; folio's `aweb_layout.py` binds its
+cross-repository reader to an identified aweb root; and the pinned naapp
+reference generator and golden point at the managed, root-checked team-auth
+copy.
+
+The provenance gate inventories every tracked vector directory; rejects
+same-name or JSON-equal public mirrors regardless of their directory spelling;
+verifies managed package and app snapshots; checks the exact vector-name set and
+root path markers for every source consumer; rejects unclassified code
+consumers; and proves those checks with ten mutations. Focused commands from the
+repository root:
 
 ```bash
 make test-vector-provenance
