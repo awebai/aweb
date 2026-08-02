@@ -192,6 +192,22 @@ class AuthorityWorkRepository:
                 "federation_authority_coordination_unavailable"
             ) from exc
 
+    async def release_lease(self, lease: AuthorityLease) -> None:
+        try:
+            await self.db.execute(
+                """
+                DELETE FROM {{tables.federation_authority_leases}}
+                WHERE scope_key = $1 AND owner_id = $2 AND fence = $3
+                """,
+                lease.scope_key,
+                lease.owner_id,
+                lease.fence,
+            )
+        except Exception as exc:
+            raise FederationAuthorityError(
+                "federation_authority_coordination_unavailable"
+            ) from exc
+
     async def publish_result(
         self,
         lease: AuthorityLease,

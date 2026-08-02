@@ -7,11 +7,13 @@ import ssl
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import aweb
+import httpx
 import pytest
 import pytest_asyncio
+from aweb.federation.activation import FederationAuthorityActivation
 from aweb.federation.authority import AuthorityClaim, FederationAuthorityCore
 from aweb.federation.authority_state import (
     AddressAuthorityCandidate,
@@ -19,11 +21,24 @@ from aweb.federation.authority_state import (
     CheckpointCandidate,
 )
 from aweb.federation.authority_work import AuthorityWorkRepository
+from aweb.deps import get_db
 from aweb.federation.envelope import FederatedDeliveryRequest
+from aweb.mcp.auth import AuthContext
+from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
+from aweb.mcp.tools import chat as mcp_chat_tools
+from aweb.mcp.tools import contacts as mcp_contacts_tools
+from aweb.mcp.tools import mail as mcp_mail_tools
+from aweb.routes.federation import router as federation_router
+from awid.did import did_from_public_key
 from awid.external_authority import DNSLookup, OriginContext, compare_claim_to_evidence
 from awid.external_registry import StrictExternalRegistry
 from awid.federation_errors import FederationAuthorityError
+from awid.registry import RegistryClient
+from awid.signing import canonical_json_bytes, sign_message
 from cryptography import x509
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+from nacl.signing import SigningKey
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
@@ -783,6 +798,454 @@ def _identity_registry_responses(domain: str, name: str, delivery_origin: str):
         },
         f"/v1/did/{escaped_did}/log": entries,
     }
+
+
+@pytest.mark.asyncio
+async def test_http_ingress_uses_production_dns_authority_not_receiver_home_registry(
+    two_receiver_databases,
+) -> None:
+    _, receiver_db = two_receiver_databases
+    sender_domain = "alpha.test"
+    sender_name = "Alice"
+    sender_delivery = "https://aweb-alpha.test"
+    mapping, sender_responses = _identity_registry_responses(
+        sender_domain, sender_name, sender_delivery
+    )
+    target_key = SigningKey.generate()
+    target_did_key = did_from_public_key(bytes(target_key.verify_key))
+    target_did_aw = "did:aw:receiver"
+    target_origin = "https://receiver.test"
+    target_path = "/v1/namespaces/beta.test/addresses/Bob"
+    home_responses = {
+        target_path: {
+            "address_id": str(uuid4()),
+            "domain": "beta.test",
+            "name": "Bob",
+            "did_aw": target_did_aw,
+            "current_did_key": target_did_key,
+            "reachability": "public",
+            "created_at": datetime.now(UTC).isoformat(),
+            "delivery": {"origin": target_origin},
+        }
+    }
+    await receiver_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('receiver:beta.test', 'beta.test', 'Receiver', 'did:key:z6Mkteam')
+        """
+    )
+    await receiver_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, inbound_mode, identity_scope
+        ) VALUES (
+            'receiver:beta.test', $1, $2, 'beta.test/Bob', 'Bob', 'open', 'global'
+        )
+        """,
+        target_did_key,
+        target_did_aw,
+    )
+
+    async with (
+        _TLSRegistry("registry-a.test", sender_responses) as sender_registry,
+        _TLSRegistry("localhost", home_responses) as home_registry,
+    ):
+        sender_dns = _RecordedDNS(
+            sender_domain, mapping["initial_did_key"], sender_registry.origin
+        )
+        strict_resolver = StrictExternalRegistry(
+            txt_resolver=sender_dns,
+            host_resolver=_LoopbackHosts(),
+            origin_context=OriginContext(
+                app_env="development",
+                federation_test_enabled=True,
+                listener_origin=target_origin,
+            ),
+            ssl_context=sender_registry.client_context,
+        )
+        activation = FederationAuthorityActivation(
+            core=FederationAuthorityCore(AuthorityRepository(receiver_db)),
+            work=AuthorityWorkRepository(receiver_db),
+            resolver=strict_resolver,
+            txt_resolver=sender_dns,
+        )
+        home_registry_client = RegistryClient(
+            registry_url=home_registry.origin,
+            transport=httpx.AsyncHTTPTransport(verify=home_registry.client_context),
+        )
+
+        class Database:
+            def get_manager(self, name="aweb"):
+                assert name == "aweb"
+                return receiver_db
+
+        app = FastAPI()
+        app.include_router(federation_router)
+        app.state.awid_registry_client = home_registry_client
+        app.state.federation_authority = activation
+        app.state.public_origin = target_origin
+        app.state.on_mutation = None
+
+        async def database_dependency():
+            return Database()
+
+        app.dependency_overrides[get_db] = database_dependency
+        sender_key = SigningKey(bytes.fromhex(json.loads(
+            (_ROOT / "docs" / "vectors" / "identity-log-v1.json").read_text()
+        )["key_seeds"]["rotated_seed_hex"]))
+        message_id = str(uuid4())
+        conversation_id = str(uuid4())
+        timestamp = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
+            "+00:00", "Z"
+        )
+        signed_payload = canonical_json_bytes(
+            {
+                "body": "strict production ingress",
+                "conversation_id": conversation_id,
+                "from": f"{sender_domain}/{sender_name}",
+                "from_did": mapping["rotated_did_key"],
+                "from_stable_id": mapping["did_aw"],
+                "message_id": message_id,
+                "priority": "normal",
+                "subject": "strict path",
+                "timestamp": timestamp,
+                "to": "beta.test/Bob",
+                "to_did": target_did_key,
+                "to_stable_id": target_did_aw,
+                "type": "mail",
+            }
+        ).decode()
+        payload = {
+            "envelope": {
+                "version": 1,
+                "type": "mail",
+                "sender_did_aw": mapping["did_aw"],
+                "sender_current_did_key": mapping["rotated_did_key"],
+                "sender_address": f"{sender_domain}/{sender_name}",
+                "sender_delivery_origin": sender_delivery,
+                "target_address": "beta.test/Bob",
+                "target_did_aw": target_did_aw,
+                "target_current_did_key": target_did_key,
+                "target_delivery_origin": target_origin,
+                "body": "strict production ingress",
+                "message_id": message_id,
+                "timestamp": timestamp,
+                "signed_payload": signed_payload,
+                "conversation_id": conversation_id,
+                "subject": "strict path",
+                "priority": "normal",
+            },
+            "signature": sign_message(bytes(sender_key), signed_payload.encode()),
+        }
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://receiver.test"
+            ) as client:
+                response = await client.post("/v1/federation/messages", json=payload)
+        finally:
+            await activation.aclose()
+            await home_registry_client.aclose()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["message_id"] == message_id
+    assert sender_dns.queries == ["_awid.alpha.test"]
+    assert len(sender_registry.requests) == 4
+    assert [request.split(b" ", 2)[1].decode() for request in home_registry.requests] == [
+        target_path
+    ]
+    assert await receiver_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
+        UUID(message_id),
+    ) == 1
+    assert await receiver_db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.federation_did_checkpoints}} WHERE did_aw = $1",
+        mapping["did_aw"],
+    ) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["mail", "chat"])
+async def test_mcp_cross_registry_uses_production_strict_authority_not_home_registry(
+    two_receiver_databases,
+    monkeypatch,
+    channel: str,
+) -> None:
+    _, receiver_db = two_receiver_databases
+    domain = "alpha.test"
+    name = "Alice"
+    delivery_origin = "https://remote-aweb.test"
+    mapping, strict_responses = _identity_registry_responses(
+        domain, name, delivery_origin
+    )
+    sender_key = SigningKey.generate()
+    sender_did_key = did_from_public_key(bytes(sender_key.verify_key))
+    sender_agent_id = uuid4()
+    await receiver_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('mcp:beta.test', 'beta.test', 'MCP', 'did:key:z6MkMcpTeam')
+        """
+    )
+    await receiver_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            agent_id, team_id, did_key, did_aw, address, alias,
+            inbound_mode, identity_scope
+        ) VALUES (
+            $1, 'mcp:beta.test', $2, 'did:aw:mcp-sender',
+            'beta.test/Sender', 'Sender', 'open', 'global'
+        )
+        """,
+        sender_agent_id,
+        sender_did_key,
+    )
+
+    async with (
+        _TLSRegistry("registry-a.test", strict_responses) as strict_registry,
+        _TLSRegistry("localhost", {}) as home_registry,
+    ):
+        dns = _RecordedDNS(domain, mapping["initial_did_key"], strict_registry.origin)
+        resolver = StrictExternalRegistry(
+            txt_resolver=dns,
+            host_resolver=_LoopbackHosts(),
+            origin_context=OriginContext(
+                app_env="development",
+                federation_test_enabled=True,
+                listener_origin="https://receiver.test",
+            ),
+            ssl_context=strict_registry.client_context,
+        )
+        activation = FederationAuthorityActivation(
+            core=FederationAuthorityCore(AuthorityRepository(receiver_db)),
+            work=AuthorityWorkRepository(receiver_db),
+            resolver=resolver,
+            txt_resolver=dns,
+        )
+        home_client = RegistryClient(
+            registry_url=home_registry.origin,
+            transport=httpx.AsyncHTTPTransport(verify=home_registry.client_context),
+        )
+        auth = AuthContext(
+            team_id="mcp:beta.test",
+            agent_id=str(sender_agent_id),
+            workspace_id=str(uuid4()),
+            alias="Sender",
+            did_key=sender_did_key,
+            did_aw="did:aw:mcp-sender",
+            address="beta.test/Sender",
+            trusted_proxy=True,
+        )
+        monkeypatch.setattr(mcp_mail_tools, "get_auth", lambda: auth)
+        monkeypatch.setattr(mcp_chat_tools, "get_auth", lambda: auth)
+        monkeypatch.setattr(mcp_contacts_tools, "get_auth", lambda: auth)
+
+        async def signer(**kwargs) -> HostedMessageSigningResult:
+            signed_payload = canonical_signed_payload(kwargs["payload"])
+            return HostedMessageSigningResult(
+                from_did=sender_did_key,
+                signature=sign_message(bytes(sender_key), signed_payload.encode()),
+                signed_payload=signed_payload,
+                signing_key_id=sender_did_key,
+            )
+
+        def remote_response(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            envelope = body["envelope"]
+            result = {
+                "message_id": envelope["message_id"],
+                "conversation_id": envelope["conversation_id"],
+                "status": "delivered",
+                "delivered_at": envelope["timestamp"],
+            }
+            if envelope["type"] == "chat":
+                result["session_id"] = envelope["conversation_id"]
+            return httpx.Response(200, json=result)
+
+        transport = httpx.MockTransport(remote_response)
+        contact_id = await receiver_db.fetch_value(
+            """
+            INSERT INTO {{tables.contacts}} (
+                owner_did, contact_address, contact_did_aw,
+                binding_controller_did, binding_accepted_at, label
+            ) VALUES (
+                'did:aw:mcp-sender', $1, 'did:aw:previous-owner',
+                'did:key:z6MkPreviousController', clock_timestamp(), 'Previous owner'
+            ) RETURNING contact_id
+            """,
+            f"{domain}/{name}",
+        )
+        try:
+            reassigned = json.loads(
+                await mcp_contacts_tools.send_message_to_contact(
+                    type("DB", (), {"get_manager": lambda _self, _name="aweb": receiver_db})(),
+                    registry_client=home_client,
+                    federation_authority=activation,
+                    hosted_signer=signer,
+                    contact_id=str(contact_id),
+                    message="must not transfer",
+                    channel=channel,
+                )
+            )
+            assert reassigned == {"error": "contact_identity_binding_required"}
+            if channel == "mail":
+                result = json.loads(
+                    await mcp_mail_tools.send_mail(
+                        type("DB", (), {"get_manager": lambda _self, _name="aweb": receiver_db})(),
+                        registry_client=home_client,
+                        federation_authority=activation,
+                        hosted_signer=signer,
+                        to=f"{domain}/{name}",
+                        subject="strict MCP",
+                        body="cross registry",
+                        plaintext=True,
+                        federation_transport=transport,
+                        public_origin="https://receiver.test",
+                    )
+                )
+            else:
+                result = json.loads(
+                    await mcp_chat_tools.chat_send(
+                        type("DB", (), {"get_manager": lambda _self, _name="aweb": receiver_db})(),
+                        None,
+                        registry_client=home_client,
+                        federation_authority=activation,
+                        hosted_signer=signer,
+                        to_address=f"{domain}/{name}",
+                        message="cross registry",
+                        plaintext=True,
+                        federation_transport=transport,
+                        public_origin="https://receiver.test",
+                    )
+                )
+        finally:
+            await activation.aclose()
+            await home_client.aclose()
+
+    assert "error" not in result, result
+    assert dns.queries == ["_awid.alpha.test"]
+    assert len(strict_registry.requests) == 4
+    assert home_registry.requests == []
+
+
+@pytest.mark.asyncio
+async def test_production_activation_executes_one_strict_authoritative_chain(
+    two_receiver_databases,
+) -> None:
+    db, _ = two_receiver_databases
+    domain = "alpha.test"
+    name = "Alice"
+    delivery = "https://aweb-alpha.test"
+    mapping, responses = _identity_registry_responses(domain, name, delivery)
+
+    async with _TLSRegistry("registry-a.test", responses) as registry:
+        dns = _RecordedDNS(domain, mapping["initial_did_key"], registry.origin)
+        resolver = StrictExternalRegistry(
+            txt_resolver=dns,
+            host_resolver=_LoopbackHosts(),
+            origin_context=OriginContext(
+                app_env="development",
+                federation_test_enabled=True,
+                listener_origin="http://receiver.test",
+            ),
+            ssl_context=registry.client_context,
+        )
+        activation = FederationAuthorityActivation(
+            core=FederationAuthorityCore(AuthorityRepository(db)),
+            work=AuthorityWorkRepository(db),
+            resolver=resolver,
+            txt_resolver=dns,
+        )
+        try:
+            authorized = await activation.authorize(
+                AuthorityClaim(
+                    canonical_address=f"{domain}/{name}",
+                    did_aw=mapping["did_aw"],
+                    current_did_key=mapping["rotated_did_key"],
+                    delivery_origin="",
+                ),
+                source_ip="203.0.113.9",
+            )
+        finally:
+            await activation.aclose()
+
+    assert authorized.canonical_address == f"{domain}/{name}"
+    assert authorized.delivery_origin == delivery
+    assert dns.queries == ["_awid." + domain]
+    assert len(registry.requests) == 4
+
+
+@pytest.mark.asyncio
+async def test_production_activation_wrong_claim_cannot_poison_singleflight(
+    two_receiver_databases,
+) -> None:
+    db, _ = two_receiver_databases
+    domain = "alpha.test"
+    name = "Alice"
+    delivery = "https://aweb-alpha.test"
+    mapping, responses = _identity_registry_responses(domain, name, delivery)
+
+    async with _TLSRegistry("registry-a.test", responses) as registry:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        class BlockingDNS(_RecordedDNS):
+            async def lookup_txt(self, query: str) -> DNSLookup:
+                entered.set()
+                await release.wait()
+                return await super().lookup_txt(query)
+
+        dns = BlockingDNS(domain, mapping["initial_did_key"], registry.origin)
+        resolver = StrictExternalRegistry(
+            txt_resolver=dns,
+            host_resolver=_LoopbackHosts(),
+            origin_context=OriginContext(
+                app_env="development",
+                federation_test_enabled=True,
+                listener_origin="http://receiver.test",
+            ),
+            ssl_context=registry.client_context,
+        )
+        activation = FederationAuthorityActivation(
+            core=FederationAuthorityCore(AuthorityRepository(db)),
+            work=AuthorityWorkRepository(db),
+            resolver=resolver,
+            txt_resolver=dns,
+        )
+        wrong = asyncio.create_task(
+            activation.authorize(
+                AuthorityClaim(
+                    canonical_address=f"{domain}/{name}",
+                    did_aw="did:aw:wrong",
+                    current_did_key=mapping["rotated_did_key"],
+                    delivery_origin=delivery,
+                ),
+                source_ip="203.0.113.10",
+            )
+        )
+        await entered.wait()
+        correct = asyncio.create_task(
+            activation.authorize(
+                AuthorityClaim(
+                    canonical_address=f"{domain}/{name}",
+                    did_aw=mapping["did_aw"],
+                    current_did_key=mapping["rotated_did_key"],
+                    delivery_origin=delivery,
+                ),
+                source_ip="203.0.113.11",
+            )
+        )
+        release.set()
+        try:
+            with pytest.raises(FederationAuthorityError) as wrong_error:
+                await wrong
+            authorized = await correct
+        finally:
+            await activation.aclose()
+
+    assert wrong_error.value.reason == "sender_address_did_mismatch"
+    assert authorized.token.did_aw == mapping["did_aw"]
+    assert dns.queries == ["_awid." + domain]
+    assert len(registry.requests) == 4
 
 
 @pytest.mark.asyncio

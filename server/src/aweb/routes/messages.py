@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
+from awid.federation_errors import FederationAuthorityError
 from awid.pagination import encode_cursor, validate_pagination_params
 from aweb.awid_error_handling import awid_registry_not_configured_exception
 from aweb.deps import get_db
@@ -47,7 +48,10 @@ from aweb.messaging.conversations import (
     get_conversation,
     touch_conversation_activity,
 )
-from aweb.messaging.contacts import upsert_successful_identity_contact
+from aweb.messaging.contacts import (
+    resolve_local_namespace_controller_did,
+    upsert_successful_identity_contact,
+)
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.mail_routing import (
     MailContinuationContext,
@@ -511,6 +515,11 @@ def _validate_signed_mail_payload(
 def _external_recipient_from_address(address: str, resolution) -> dict:
     _, name = address.split("/", 1)
     delivery = getattr(resolution, "delivery", None)
+    delivery_origin = (
+        getattr(resolution, "delivery_origin", None)
+        or getattr(delivery, "origin", "")
+        or ""
+    )
     return {
         "agent_id": None,
         "team_id": None,
@@ -518,7 +527,10 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
         "address": address,
         "did_aw": resolution.did_aw.strip(),
         "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
-        "delivery_origin": (getattr(delivery, "origin", "") or "").strip(),
+        "delivery_origin": str(delivery_origin).strip(),
+        "authority_controller_did": str(
+            getattr(resolution, "controller_did", "") or ""
+        ).strip(),
         "external": True,
     }
 
@@ -707,6 +719,7 @@ async def record_successful_contact_side_effect(
     owner_did: str,
     sender_team_id: str | None,
     recipient: dict | None,
+    registry_client=None,
 ) -> bool:
     recipient_address = _concrete_contact_address(recipient)
     if not recipient_address:
@@ -715,10 +728,29 @@ async def record_successful_contact_side_effect(
     sender_team = str(sender_team_id or "").strip()
     if sender_team and recipient_team_id and sender_team == recipient_team_id:
         return False
+    controller_did = str(
+        (recipient or {}).get("authority_controller_did") or ""
+    ).strip()
+    if not controller_did and (recipient or {}).get(
+        "requires_local_address_authority"
+    ):
+        controller_did = (
+            await resolve_local_namespace_controller_did(
+                registry_client,
+                contact_address=recipient_address,
+                contact_did_aw=str((recipient or {}).get("did_aw") or ""),
+                contact_current_did_key=str(
+                    (recipient or {}).get("did_key") or ""
+                ),
+            )
+            or ""
+        )
     return await upsert_successful_identity_contact(
         db,
         owner_did=owner_did,
         contact_address=recipient_address,
+        contact_did_aw=str((recipient or {}).get("did_aw") or "").strip() or None,
+        binding_controller_did=controller_did or None,
         label=str((recipient or {}).get("alias") or recipient_address),
     )
 
@@ -924,6 +956,7 @@ async def _deliver_remote_mail_and_project_locally(
         owner_did=sender_routing_did,
         sender_team_id=auth.team_id,
         recipient=recipient,
+        registry_client=registry_client,
     )
 
     await fire_mutation_hook(
@@ -1443,7 +1476,53 @@ async def send_message(
         if "/" not in address:
             raise HTTPException(status_code=422, detail="to_address must be domain/name")
         domain, name = address.split("/", 1)
-        if registry_client is not None:
+        local_candidate = await _local_recipient_from_address(db, domain=domain, name=name)
+        if local_candidate is not None:
+            signed_binding = _signed_payload_matches_address_binding(
+                verified_signed_payload_json(
+                    signed_payload=payload.signed_payload,
+                    signature=payload.signature,
+                    did_key=auth.did_key,
+                ),
+                address=address,
+                recipient=local_candidate,
+            )
+            if local_recipient_visible_to_auth(local_candidate, auth) or signed_binding:
+                recipient_did = str(
+                    local_candidate.get("did_aw") or local_candidate.get("did_key") or ""
+                ).strip()
+                canonical_recipient = (
+                    await resolve_agent_by_did(db, recipient_did)
+                    if recipient_did
+                    else None
+                )
+                recipient = _with_requested_address(
+                    canonical_recipient or local_candidate,
+                    address,
+                )
+                recipient["requires_local_address_authority"] = True
+
+        strict_authority = getattr(request.app.state, "federation_authority", None)
+        if recipient is None and strict_authority is not None:
+            try:
+                resolved = await strict_authority.resolve_contact(
+                    address,
+                    source_ip=str(request.client.host if request.client else "unknown"),
+                )
+            except FederationAuthorityError as exc:
+                if exc.reason != "sender_identity_not_found":
+                    raise
+                resolved = None
+            if resolved is not None and resolved.did_aw:
+                recipient_did = resolved.did_aw
+                recipient = await resolve_agent_by_did(db, recipient_did)
+                if recipient is None:
+                    recipient = _external_recipient_from_address(address, resolved)
+                else:
+                    recipient["authority_controller_did"] = str(
+                        getattr(resolved, "controller_did", "") or ""
+                    ).strip()
+        elif recipient is None and registry_client is not None:
             resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
@@ -1650,6 +1729,7 @@ async def send_message(
         owner_did=(auth.did_aw or sender_did).strip(),
         sender_team_id=auth.team_id,
         recipient=recipient,
+        registry_client=registry_client,
     )
 
     await fire_mutation_hook(

@@ -1,8 +1,4 @@
-"""Inactive strict federation authority orchestration.
-
-Production ingress intentionally does not construct or call this core yet. The
-activation slice supplies signed-address extraction and Phase-B policy.
-"""
+"""Strict federation authority orchestration shared by production ingress."""
 
 from __future__ import annotations
 

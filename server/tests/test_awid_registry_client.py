@@ -24,6 +24,7 @@ from awid.did import (
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 import awid.registry as registry_module
 from awid.log import identity_state_hash, log_entry_payload
+from aweb.messaging.contacts import resolve_local_namespace_controller_did
 
 
 def _authorization_parts(header: str) -> tuple[str, str]:
@@ -1133,6 +1134,142 @@ async def test_cached_registry_client_resolve_key_fresh_bypasses_stale_cache():
     assert fresh.current_did_key == "did:key:new"
     assert cached_fresh.current_did_key == "did:key:new"
     assert request_count["value"] == 2
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_fresh_address_and_namespace_bypass_stale_cache():
+    state = {
+        "did_aw": "did:aw:old",
+        "did_key": "did:key:old",
+        "controller": "did:key:z6MkOldController",
+    }
+    request_counts = {"address": 0, "namespace": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/namespaces/acme.com/addresses/bob":
+            request_counts["address"] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "address_id": "addr-1",
+                    "domain": "acme.com",
+                    "name": "bob",
+                    "did_aw": state["did_aw"],
+                    "current_did_key": state["did_key"],
+                    "reachability": "public",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        if request.url.path == "/v1/namespaces/acme.com":
+            request_counts["namespace"] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "namespace_id": "ns-1",
+                    "domain": "acme.com",
+                    "controller_did": state["controller"],
+                    "verification_status": "verified",
+                    "last_verified_at": "2026-04-03T00:00:00Z",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+    cached_address = await client.resolve_address("acme.com", "bob")
+    cached_namespace = await client.get_namespace("acme.com")
+    assert cached_address is not None
+    assert cached_namespace is not None
+
+    state.update(
+        did_aw="did:aw:replacement",
+        did_key="did:key:replacement",
+        controller="did:key:z6MkNewController",
+    )
+    stale_address = await client.resolve_address("acme.com", "bob")
+    stale_namespace = await client.get_namespace("acme.com")
+    fresh_address = await client.resolve_address_fresh("acme.com", "bob")
+    fresh_namespace = await client.get_namespace_fresh("acme.com")
+
+    assert stale_address is not None
+    assert stale_address.did_aw == "did:aw:old"
+    assert stale_namespace is not None
+    assert stale_namespace.controller_did == "did:key:z6MkOldController"
+    assert fresh_address is not None
+    assert fresh_address.did_aw == "did:aw:replacement"
+    assert fresh_namespace is not None
+    assert fresh_namespace.controller_did == "did:key:z6MkNewController"
+    assert request_counts == {"address": 2, "namespace": 2}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["address_reassigned", "controller_rotated"])
+async def test_local_address_authority_ignores_cached_old_binding(mutation: str):
+    state = {
+        "did_aw": "did:aw:old",
+        "did_key": "did:key:old",
+        "controller": "did:key:z6MkOldController",
+    }
+    request_counts = {"address": 0, "namespace": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/namespaces/acme.com/addresses/bob":
+            request_counts["address"] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "address_id": "addr-1",
+                    "domain": "acme.com",
+                    "name": "bob",
+                    "did_aw": state["did_aw"],
+                    "current_did_key": state["did_key"],
+                    "reachability": "public",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        if request.url.path == "/v1/namespaces/acme.com":
+            request_counts["namespace"] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "namespace_id": "ns-1",
+                    "domain": "acme.com",
+                    "controller_did": state["controller"],
+                    "verification_status": "verified",
+                    "last_verified_at": "2026-04-03T00:00:00Z",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+    await client.resolve_address("acme.com", "bob")
+    await client.get_namespace("acme.com")
+    if mutation == "address_reassigned":
+        state.update(did_aw="did:aw:replacement", did_key="did:key:replacement")
+        expected_controller = None
+    else:
+        state["controller"] = "did:key:z6MkNewController"
+        expected_controller = "did:key:z6MkNewController"
+
+    controller = await resolve_local_namespace_controller_did(
+        client,
+        contact_address="acme.com/bob",
+        contact_did_aw="did:aw:old",
+        contact_current_did_key="did:key:old",
+    )
+
+    assert controller == expected_controller
+    assert controller != "did:key:z6MkOldController"
+    assert request_counts == {"address": 2, "namespace": 2}
 
 
 @pytest.mark.asyncio

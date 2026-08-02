@@ -40,4 +40,8 @@ def mcp_federation_request(
 
 def registry_delivery_origin(resolution) -> str:
     delivery = getattr(resolution, "delivery", None)
-    return str(getattr(delivery, "origin", "") or "").strip()
+    return str(
+        getattr(resolution, "delivery_origin", None)
+        or getattr(delivery, "origin", "")
+        or ""
+    ).strip()

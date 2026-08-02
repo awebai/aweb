@@ -45,6 +45,28 @@ async def test_lease_takeover_increments_persistent_fence_and_stale_owner_cannot
 
 
 @pytest.mark.asyncio
+async def test_lease_release_requires_the_current_owner_and_fence(aweb_cloud_db) -> None:
+    repository = AuthorityWorkRepository(aweb_cloud_db.aweb_db)
+    scope = "evidence:release"
+    owner1 = uuid4()
+    owner2 = uuid4()
+    first = await repository.acquire_lease(scope, owner_id=owner1, ttl_seconds=10)
+
+    await repository.release_lease(
+        type(first)(first.scope_key, first.owner_id, first.fence + 1, first.expires_at)
+    )
+    blocked = await repository.acquire_lease(scope, owner_id=owner2, ttl_seconds=10)
+    assert blocked.acquired is False
+
+    await repository.release_lease(first)
+    replacement = await repository.acquire_lease(
+        scope, owner_id=owner2, ttl_seconds=10
+    )
+    assert replacement.acquired is True
+    assert replacement.fence == first.fence + 1
+
+
+@pytest.mark.asyncio
 async def test_permits_are_deployment_wide_and_ignore_expired_rows(aweb_cloud_db) -> None:
     repository = AuthorityWorkRepository(aweb_cloud_db.aweb_db)
     first = await repository.acquire_permits(

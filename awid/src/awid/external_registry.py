@@ -1,4 +1,4 @@
-"""Verified-only external registry adapter for inactive federation authority."""
+"""Verified-only external registry adapter for strict federation authority."""
 
 from __future__ import annotations
 
@@ -153,6 +153,7 @@ class StrictExternalRegistry:
         authority_generation: int,
         checkpoint: IdentityCheckpoint | None = None,
         bypass_cache: bool = False,
+        discovered_authority: RegistryAuthority | None = None,
     ) -> ExternalAuthorityEvidence:
         try:
             async with asyncio.timeout(self.deadline_seconds):
@@ -161,6 +162,7 @@ class StrictExternalRegistry:
                     authority_generation=authority_generation,
                     checkpoint=checkpoint,
                     bypass_cache=bypass_cache,
+                    discovered_authority=discovered_authority,
                 )
         except FederationAuthorityError:
             raise
@@ -174,16 +176,19 @@ class StrictExternalRegistry:
         authority_generation: int,
         checkpoint: IdentityCheckpoint | None,
         bypass_cache: bool,
+        discovered_authority: RegistryAuthority | None,
     ) -> ExternalAuthorityEvidence:
         canonical_address = canonical_protocol_address(address)
         domain, name = canonical_address.split("/", 1)
         if authority_generation < 1:
             raise ValueError("authority_generation must be positive")
-        authority = await discover_registry_authority(
-            domain,
-            self.txt_resolver,
-            origin_context=self.origin_context,
-        )
+        authority = discovered_authority
+        if authority is None:
+            authority = await discover_registry_authority(
+                domain,
+                self.txt_resolver,
+                origin_context=self.origin_context,
+            )
         client, approved_ips = await self._client(authority, authority_generation)
         namespace = await self._object(
             client,

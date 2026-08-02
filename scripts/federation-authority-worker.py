@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Disposable direct consumer of the inactive federation authority core.
+"""Disposable topology-harness consumer of the strict federation authority core.
 
 This is copied into test-only aweb containers by the federation conformance
 harness. It never exposes an ingress route and never contains key material.

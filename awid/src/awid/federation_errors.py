@@ -1,4 +1,4 @@
-"""Stable typed failures shared by inactive federation authority primitives."""
+"""Stable typed failures shared by strict federation authority primitives."""
 
 from __future__ import annotations
 

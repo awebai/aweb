@@ -154,11 +154,11 @@ def verify_federation_envelope(
     )
     _enforce_expected_fields(model, expected or {})
     if _is_encrypted_v2(model):
-        _enforce_encrypted_payload_binding(model, signature, now=now)
-        return model
+        signed_sender_address = _enforce_encrypted_payload_binding(model, signature, now=now)
+        return model.model_copy(update={"sender_address": signed_sender_address})
     if not model.signed_payload:
         raise FederationEnvelopeError("Federation signed_payload is required")
-    _enforce_signed_payload_binding(model)
+    signed_sender_address = _enforce_signed_payload_binding(model)
     try:
         validate_ed25519_message_signature(signature)
     except MessageSignatureShapeError as exc:
@@ -171,7 +171,7 @@ def verify_federation_envelope(
         )
     except Exception as exc:
         raise FederationEnvelopeError("Invalid federation message signature") from exc
-    return model
+    return model.model_copy(update={"sender_address": signed_sender_address})
 
 
 def _is_encrypted_v2(model: FederationEnvelope) -> bool:
@@ -236,7 +236,7 @@ def _expect_signed_value_in(payload: Mapping[str, Any], field: str, allowed: tup
         raise FederationEnvelopeError(f"Federation signed_payload {field} does not match")
 
 
-def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
+def _enforce_signed_payload_binding(model: FederationEnvelope) -> str | None:
     payload = _signed_payload_json(model)
     _expect_signed_value(payload, "type", model.type)
     _expect_signed_value(payload, "body", model.body)
@@ -274,8 +274,14 @@ def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
         _expect_signed_value(payload, "from_stable_id", model.sender_did_aw)
     elif payload.get("from_stable_id") not in (None, "", model.sender_did_aw):
         raise FederationEnvelopeError("Federation signed_payload from_stable_id does not match")
-    if model.sender_address is not None:
-        _expect_signed_value(payload, "from", model.sender_address)
+    signed_sender = str(payload.get("from") or "").strip() or None
+    if model.sender_address is not None and signed_sender != model.sender_address:
+        raise FederationEnvelopeError("Federation signed_payload from does not match")
+    signed_sender_address = (
+        signed_sender
+        if signed_sender is not None and "/" in signed_sender
+        else None
+    )
     if model.conversation_id is not None:
         _expect_signed_value(payload, "conversation_id", model.conversation_id)
     elif payload.get("conversation_id"):
@@ -294,6 +300,7 @@ def _enforce_signed_payload_binding(model: FederationEnvelope) -> None:
             raise FederationEnvelopeError("Federation signed_payload sender_leaving does not match")
         if bool(payload.get("hang_on")) != model.hang_on:
             raise FederationEnvelopeError("Federation signed_payload hang_on does not match")
+    return signed_sender_address
 
 
 def _enforce_encrypted_payload_binding(
@@ -301,7 +308,7 @@ def _enforce_encrypted_payload_binding(
     signature: str,
     *,
     now: datetime | None,
-) -> None:
+) -> str | None:
     if model.content_mode != "encrypted_v2":
         raise FederationEnvelopeError("Federation encrypted content_mode must be encrypted_v2")
     if model.message_version != 2:
@@ -337,3 +344,12 @@ def _enforce_encrypted_payload_binding(
         )
     except E2EEEnvelopeError as exc:
         raise FederationEnvelopeError(str(exc)) from exc
+    sender = model.encrypted_envelope.get("from")
+    signed_sender_address = (
+        str(sender.get("address") or "").strip() or None
+        if isinstance(sender, dict)
+        else None
+    )
+    if model.sender_address is not None and signed_sender_address != model.sender_address:
+        raise FederationEnvelopeError("Federation encrypted sender address does not match")
+    return signed_sender_address

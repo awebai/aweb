@@ -553,6 +553,10 @@ class RegistryClient:
         )
         return None if data is None else _namespace_from_json(data)
 
+    async def get_namespace_fresh(self, domain: str) -> Namespace | None:
+        """Read current namespace authority without a stale cache result."""
+        return await self.get_namespace(domain)
+
     async def update_namespace_delivery_origin(
         self,
         domain: str,
@@ -686,6 +690,22 @@ class RegistryClient:
             registry_url=await self._registry_url_for_domain(domain),
         )
         return None if data is None else _address_from_json(data)
+
+    async def resolve_address_fresh(
+        self,
+        domain: str,
+        name: str,
+        *,
+        signing_key: bytes | None = None,
+        did_key: str | None = None,
+    ) -> Address | None:
+        """Read current address authority without a stale cache result."""
+        return await self.resolve_address(
+            domain,
+            name,
+            signing_key=signing_key,
+            did_key=did_key,
+        )
 
     async def list_addresses(
         self,
@@ -1084,6 +1104,21 @@ class CachedRegistryClient(RegistryClient):
             decode=lambda payload: None if payload is None else _namespace_from_json(payload),
         )
 
+    async def get_namespace_fresh(self, domain: str) -> Namespace | None:
+        registry_url = await self._registry_url_for_domain(domain)
+        cache_key = self._namespace_cache_key(domain, registry_url=registry_url)
+        await self._invalidate_keys(cache_key)
+        value = await super().get_namespace(domain)
+        await self._write_cache_entry(
+            cache_key,
+            value=value,
+            ttl_seconds=_NAMESPACE_CACHE_TTL_SECONDS,
+            encode=lambda payload: (
+                None if payload is None else _namespace_to_json(payload)
+            ),
+        )
+        return value
+
     async def list_addresses(
         self,
         domain: str,
@@ -1127,6 +1162,38 @@ class CachedRegistryClient(RegistryClient):
             encode=lambda value: None if value is None else _address_to_json(value),
             decode=lambda payload: None if payload is None else _address_from_json(payload),
         )
+
+    async def resolve_address_fresh(
+        self,
+        domain: str,
+        name: str,
+        *,
+        signing_key: bytes | None = None,
+        did_key: str | None = None,
+    ) -> Address | None:
+        registry_url = await self._registry_url_for_domain(domain)
+        cache_key = self._address_cache_key(
+            domain,
+            name,
+            registry_url=registry_url,
+            caller_did_key=None,
+        )
+        await self._invalidate_keys(cache_key)
+        value = await super().resolve_address(
+            domain,
+            name,
+            signing_key=signing_key,
+            did_key=None,
+        )
+        await self._write_cache_entry(
+            cache_key,
+            value=value,
+            ttl_seconds=_ADDRESS_CACHE_TTL_SECONDS,
+            encode=lambda payload: (
+                None if payload is None else _address_to_json(payload)
+            ),
+        )
+        return value
 
     async def list_did_addresses(self, did_aw: str) -> list[Address]:
         return await self._cached_read(

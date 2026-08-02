@@ -7,6 +7,7 @@ import uuid as uuid_mod
 from datetime import datetime, timezone
 from typing import cast
 
+from awid.federation_errors import FederationAuthorityError
 from aweb.awid_error_handling import awid_registry_not_configured_detail
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.mcp.signing import (
@@ -33,7 +34,8 @@ from aweb.messaging.alias_targets import (
     get_agent_by_namespace_alias,
     namespace_exists,
 )
-from aweb.messaging.address_auth import local_recipient_visible_to_auth, requires_registry_address_binding
+from aweb.messaging.address_auth import local_recipient_visible_to_auth
+from aweb.messaging.contacts import resolve_local_namespace_controller_did
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import (
     MessagePriority,
@@ -151,6 +153,7 @@ async def send_mail(
     db_infra,
     *,
     registry_client,
+    federation_authority=None,
     hosted_signer: HostedMessageSigner | None = None,
     hosted_encryptor: HostedMessageEncryptor | None = None,
     to: str = "",
@@ -172,6 +175,7 @@ async def send_mail(
     if not body.strip():
         return json.dumps({"error": "body is required"})
 
+    hosted_handle = to.strip().startswith("@")
     recipient_ref = normalize_hosted_handle_reference(to, require_agent=True)
     conversation_ref = (conversation_id or "").strip()
     if conversation_ref and recipient_ref:
@@ -336,6 +340,7 @@ async def send_mail(
                 encrypted_metadata=encrypted_metadata,
                 message_id=message_id,
                 conversation_id=conversation_ref,
+                sender_verified_dids=auth_dids(auth),
                 stored_route_continuation=True,
             )
             await touch_conversation_activity(db_infra, conversation_id=conversation_ref)
@@ -361,40 +366,63 @@ async def send_mail(
         recipient = await resolve_agent_by_did(db_infra, recipient_did)
     elif "/" in recipient_ref:
         domain, name = recipient_ref.split("/", 1)
-        if registry_client is not None:
-            resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
+        try:
+            recipient = await _local_recipient_from_address(
+                db_infra, domain=domain, name=name
+            )
+        except ServiceError as exc:
+            return json.dumps({"error": exc.detail})
+        if recipient is not None:
+            if not hosted_handle and not local_recipient_visible_to_auth(recipient, auth):
+                controller_did = await resolve_local_namespace_controller_did(
+                    registry_client,
+                    contact_address=recipient_ref,
+                    contact_did_aw=str(recipient.get("did_aw") or ""),
+                    contact_current_did_key=str(recipient.get("did_key") or ""),
+                )
+                if controller_did is None:
+                    return json.dumps({"error": f"Address '{recipient_ref}' not found"})
+                recipient["authority_controller_did"] = controller_did
+            recipient = _with_requested_address(recipient, recipient_ref)
+            recipient_did = (
+                recipient.get("did_aw") or recipient.get("did_key") or ""
+            ).strip()
+        else:
+            resolved = None
+            if federation_authority is not None:
+                try:
+                    resolved = await federation_authority.resolve_contact(
+                        recipient_ref,
+                        source_ip="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
+                    )
+                except FederationAuthorityError as exc:
+                    if exc.reason != "sender_identity_not_found":
+                        return json.dumps({"error": exc.reason})
+            elif registry_client is not None:
+                resolved = await registry_client.resolve_address(
+                    domain, name, did_key=auth.did_key
+                )
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
                 recipient = await resolve_agent_by_did(db_infra, recipient_did)
                 if recipient is None:
-                    recipient = _external_recipient_from_address(recipient_ref, resolved)
-        if recipient is None:
-            try:
-                recipient = await _local_recipient_from_address(db_infra, domain=domain, name=name)
-            except ServiceError as exc:
-                return json.dumps({"error": exc.detail})
-            if recipient is None:
-                if await namespace_exists(db_infra, domain):
-                    return json.dumps({"error": f"Agent '{recipient_ref}' not found"})
-                if registry_client is None:
-                    return json.dumps(
-                        {
-                            "error": awid_registry_not_configured_detail(
-                                operation="AWID MCP mail recipient address lookup",
-                            ),
-                        }
+                    recipient = _external_recipient_from_address(
+                        recipient_ref, resolved
                     )
-                return json.dumps({"error": f"Address '{recipient_ref}' not found"})
-            if (
-                registry_client is not None
-                and requires_registry_address_binding(recipient)
-                and not local_recipient_visible_to_auth(recipient, auth)
-            ):
-                return json.dumps({"error": f"Address '{recipient_ref}' not found"})
-            recipient = _with_requested_address(recipient, recipient_ref)
-            recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
-            if not recipient_did:
+        if recipient is None:
+            if await namespace_exists(db_infra, domain):
                 return json.dumps({"error": f"Agent '{recipient_ref}' not found"})
+            if federation_authority is None and registry_client is None:
+                return json.dumps(
+                    {
+                        "error": awid_registry_not_configured_detail(
+                            operation="AWID MCP mail recipient address lookup",
+                        ),
+                    }
+                )
+            return json.dumps({"error": f"Address '{recipient_ref}' not found"})
+        if not recipient_did:
+            return json.dumps({"error": f"Agent '{recipient_ref}' not found"})
     else:
         if not auth.team_id:
             return json.dumps({"error": "Alias delivery requires team context"})
@@ -483,6 +511,7 @@ async def send_mail(
                 sender_did=sender_did,
                 sender_address=sender_address,
                 sender_team_id=auth.team_id,
+                sender_verified_dids=auth_dids(auth),
             )
         if (recipient or {}).get("external"):
             if not (recipient or {}).get("delivery_origin"):

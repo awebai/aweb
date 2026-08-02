@@ -146,11 +146,14 @@ async def test_deliver_message_cross_identity_to_contact(aweb_cloud_db):
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
-        VALUES ($1, $2, 'Alice')
+        INSERT INTO {{tables.contacts}} (
+            owner_did, contact_address, contact_did_aw,
+            binding_controller_did, binding_accepted_at, label
+        ) VALUES ($1, $2, $3, 'did:key:z6Mkcontroller', clock_timestamp(), 'Alice')
         """,
         bob_did_aw,
         "acme.com/alice",
+        alice_did_aw,
     )
 
     msg_id, created_at = await deliver_message(
@@ -222,13 +225,15 @@ async def test_exact_active_identity_contact_helper_is_narrow(aweb_cloud_db):
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.contacts}} (
-            owner_did, contact_address, label, reference_type, status, handle_namespace, target_agent_name
+            owner_did, contact_address, contact_did_aw,
+            binding_controller_did, binding_accepted_at,
+            label, reference_type, status, handle_namespace, target_agent_name
         )
         VALUES
-          ('did:aw:bob', 'acme.com/alice', 'Alice', 'identity', 'active', NULL, NULL),
-          ('did:aw:bob', 'example.com', 'Domain', 'identity', 'active', NULL, NULL),
-          ('did:aw:bob', 'acme.com/pending', 'Pending', 'identity', 'pending', NULL, NULL),
-          ('did:aw:bob', NULL, 'Handle', 'handle', 'active', 'acme.com', 'handle')
+          ('did:aw:bob', 'acme.com/alice', 'did:aw:alice', 'did:key:z6Mkcontroller', clock_timestamp(), 'Alice', 'identity', 'active', NULL, NULL),
+          ('did:aw:bob', 'example.com', 'did:aw:domain', 'did:key:z6Mkcontroller', clock_timestamp(), 'Domain', 'identity', 'active', NULL, NULL),
+          ('did:aw:bob', 'acme.com/pending', 'did:aw:pending', 'did:key:z6Mkcontroller', clock_timestamp(), 'Pending', 'identity', 'pending', NULL, NULL),
+          ('did:aw:bob', NULL, NULL, NULL, NULL, 'Handle', 'handle', 'active', 'acme.com', 'handle')
         """
     )
 
@@ -236,21 +241,25 @@ async def test_exact_active_identity_contact_helper_is_narrow(aweb_cloud_db):
         _DbShim(aweb_cloud_db.aweb_db),
         owner_did="did:aw:bob",
         contact_address="acme.com/alice",
+        contact_did_aw="did:aw:alice",
     )
     assert not await has_exact_active_identity_contact(
         _DbShim(aweb_cloud_db.aweb_db),
         owner_did="did:aw:bob",
         contact_address="example.com/alice",
+        contact_did_aw="did:aw:alice",
     )
     assert not await has_exact_active_identity_contact(
         _DbShim(aweb_cloud_db.aweb_db),
         owner_did="did:aw:bob",
         contact_address="acme.com/pending",
+        contact_did_aw="did:aw:pending",
     )
     assert not await has_exact_active_identity_contact(
         _DbShim(aweb_cloud_db.aweb_db),
         owner_did="did:aw:bob",
         contact_address="acme.com/handle",
+        contact_did_aw="did:aw:handle",
     )
 
 
@@ -305,8 +314,13 @@ async def test_deliver_message_team_and_contacts_allows_exact_active_contact(awe
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
-        VALUES ($1, 'acme.com/alice', 'Alice')
+        INSERT INTO {{tables.contacts}} (
+            owner_did, contact_address, contact_did_aw,
+            binding_controller_did, binding_accepted_at, label
+        ) VALUES (
+            $1, 'acme.com/alice', 'did:aw:alice-team-contact',
+            'did:key:z6Mkcontroller', clock_timestamp(), 'Alice'
+        )
         """,
         bob_did_aw,
     )

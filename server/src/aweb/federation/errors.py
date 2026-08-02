@@ -1,4 +1,4 @@
-"""Stable serialization helpers for inactive authority-core failures."""
+"""Stable serialization helpers for strict authority-core failures."""
 
 from __future__ import annotations
 

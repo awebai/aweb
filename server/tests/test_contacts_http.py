@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,10 +12,12 @@ from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
-from awid.registry import KeyResolution
+from awid.federation_errors import FederationAuthorityError
+from awid.registry import Address, AddressDelivery, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER
 from aweb.routes.contacts import router as contacts_router
+from federation_activation_support import TestFederationAuthority
 
 
 def _make_keypair():
@@ -82,6 +85,7 @@ def _build_test_app(aweb_db, registry):
     app.state.redis = None
     app.state.rate_limiter = None
     app.state.awid_registry_client = registry
+    app.state.federation_authority = TestFederationAuthority(aweb_db, registry)
     return app
 
 
@@ -125,6 +129,18 @@ async def test_contacts_route_normalizes_hosted_handle_address(aweb_cloud_db):
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
     registry.list_did_addresses = AsyncMock(return_value=[])
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="contact-address",
+            domain="jane.aweb.ai",
+            name="c3po",
+            did_aw="did:aw:c3po",
+            current_did_key="did:key:z6Mkc3po",
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin="https://aweb.jane.example"),
+        )
+    )
     app = _build_test_app(aweb_cloud_db.aweb_db, registry)
 
     payload = {"contact_address": "@jane/c3po", "label": "C-3PO"}
@@ -142,3 +158,87 @@ async def test_contacts_route_normalizes_hosted_handle_address(aweb_cloud_db):
         "SELECT contact_address FROM {{tables.contacts}} WHERE owner_did = 'did:aw:alice'"
     )
     assert stored == "jane.aweb.ai/c3po"
+
+
+@pytest.mark.asyncio
+async def test_contact_reassignment_requires_signed_explicit_acceptance(aweb_cloud_db):
+    bob_sk, _, bob_did_key = _make_keypair()
+    controller_sk, _, controller_did = _make_keypair()
+    registry = AsyncMock()
+    registry.resolve_key = AsyncMock(
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key)
+    )
+    registry.list_did_addresses = AsyncMock(return_value=[])
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    class _Authority:
+        async def resolve_contact(self, address: str, *, source_ip: str):
+            del source_ip
+            return SimpleNamespace(
+                canonical_address=address,
+                did_aw="did:aw:alice-reassigned",
+                current_did_key="did:key:z6Mkalicecurrent",
+                controller_did=controller_did,
+                delivery_origin="https://aweb.alpha.example",
+            )
+
+    app.state.federation_authority = _Authority()
+    contact_id = await aweb_cloud_db.aweb_db.fetch_val(
+        """
+        INSERT INTO {{tables.contacts}} (
+            owner_did, contact_address, contact_did_aw,
+            binding_controller_did, binding_accepted_at, label
+        ) VALUES (
+            'did:aw:bob', 'alpha.example/alice', 'did:aw:alice-old',
+            $1, clock_timestamp(), 'Alice'
+        ) RETURNING contact_id
+        """,
+        controller_did,
+    )
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    announcement = canonical_json_bytes(
+        {
+            "address": "alpha.example/alice",
+            "controller_did": controller_did,
+            "new_did": "did:aw:alice-reassigned",
+            "old_did": "did:aw:alice-old",
+            "timestamp": timestamp,
+        }
+    )
+    payload = {
+        "expected_old_did_aw": "did:aw:alice-old",
+        "address": "alpha.example/alice",
+        "new_did_aw": "did:aw:alice-reassigned",
+        "controller_did": controller_did,
+        "timestamp": timestamp,
+        "signature": sign_message(controller_sk, announcement),
+        "accept_reassignment": True,
+    }
+    body = json.dumps(payload).encode()
+    headers = {
+        **_signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob", body),
+        "Content-Type": "application/json",
+    }
+
+    rejected_payload = payload | {"accept_reassignment": False}
+    rejected_body = json.dumps(rejected_payload).encode()
+    rejected_headers = {
+        **_signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob", rejected_body),
+        "Content-Type": "application/json",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        with pytest.raises(FederationAuthorityError) as rejected:
+            await client.post(
+                f"/v1/contacts/{contact_id}/bind",
+                content=rejected_body,
+                headers=rejected_headers,
+            )
+        response = await client.post(
+            f"/v1/contacts/{contact_id}/bind",
+            content=body,
+            headers=headers,
+        )
+
+    assert rejected.value.reason == "contact_identity_binding_required"
+    assert response.status_code == 200, response.text
+    assert response.json()["contact_did_aw"] == "did:aw:alice-reassigned"

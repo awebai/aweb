@@ -357,6 +357,18 @@ def test_verify_federation_envelope_rejects_sender_address_mismatch():
         verify_federation_envelope(envelope, signature)
 
 
+def test_verify_federation_envelope_uses_signed_address_when_wrapper_is_absent():
+    signing_key, public_key = generate_keypair()
+    sender_did_key = did_from_public_key(public_key)
+    envelope = _envelope(sender_did_key)
+    envelope.pop("sender_address")
+    signature = _sign(envelope, signing_key)
+
+    verified = verify_federation_envelope(envelope, signature)
+
+    assert verified.sender_address == "alpha.example/alice"
+
+
 def test_verify_federation_envelope_rejects_invalid_signature():
     signing_key, public_key = generate_keypair()
     sender_did_key = did_from_public_key(public_key)

@@ -1,42 +1,32 @@
 from __future__ import annotations
 
+import json
 import logging
-from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 
+from awid.federation_errors import FederationAuthorityError
 from awid.log import canonical_server_origin
 
-from aweb.awid_error_handling import (
-    AWID_DEPENDENCY_ERRORS,
-    awid_dependency_http_exception,
-    awid_registry_not_configured_exception,
-)
+from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.config import get_settings
 from aweb.deps import get_db
-from aweb.e2ee_messages import encrypted_message_storage_metadata
+from aweb.federation.authority import AuthorityClaim
+from aweb.federation.delivery import (
+    deliver_federated_phase_b,
+    federation_envelope_hash,
+    replay_federation_mutation_outbox,
+)
 from aweb.federation.envelope import (
     FederatedDeliveryRequest,
     FederationEnvelope,
     FederationEnvelopeError,
     verify_federation_envelope,
 )
-from aweb.hooks import fire_mutation_hook
-from aweb.messaging.conversations import (
-    create_conversation,
-    get_conversation,
-    list_conversation_participants,
-    touch_conversation_activity,
-)
-from aweb.messaging.chat import ensure_session, send_in_session
-from aweb.messaging.messages import (
-    deliver_message,
-    authorize_message_delivery,
-    resolve_agent_by_did,
-    utc_iso,
-)
-from aweb.service_errors import ForbiddenError, NotFoundError, ValidationError
+from aweb.federation.errors import authority_error_body
+from aweb.messaging.messages import resolve_agent_by_did
 
 logger = logging.getLogger(__name__)
 
@@ -57,489 +47,231 @@ def _public_origins(request: Request) -> set[str]:
     return origins
 
 
-def _parse_timestamp(value: str) -> datetime:
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail="Invalid federation timestamp") from exc
-
-
 def _split_address(address: str) -> tuple[str, str]:
-    if "/" not in address:
-        raise HTTPException(status_code=422, detail="Federation target_address must be domain/name")
+    if address.count("/") != 1:
+        raise FederationAuthorityError("federation_envelope_invalid")
     domain, name = address.split("/", 1)
     if not domain.strip() or not name.strip():
-        raise HTTPException(status_code=422, detail="Federation target_address must be domain/name")
+        raise FederationAuthorityError("federation_envelope_invalid")
     return domain.strip(), name.strip()
-
-
-def _participant_alias_from_address(address: str | None, fallback: str) -> str:
-    if address and "/" in address:
-        _, name = address.split("/", 1)
-        if name.strip():
-            return name.strip()
-    return fallback
-
-
-def _federated_transport_hint(origin: str | None) -> str:
-    if not origin:
-        return "federation"
-    return f"federation:{canonical_server_origin(origin)}"
 
 
 def _is_local_did_key(value: str | None) -> bool:
     return str(value or "").strip().startswith("did:key:")
 
 
-async def _backfill_federated_sender_current_key(db, envelope: FederationEnvelope, *, chat_session: bool = False) -> None:
-    sender_did_aw = str(envelope.sender_did_aw or "").strip()
-    current_did_key = str(envelope.sender_current_did_key or "").strip()
-    if not sender_did_aw.startswith("did:aw:") or not current_did_key.startswith("did:key:"):
+def _validate_stored_current_key(
+    *,
+    did_aw: str,
+    current_did_key: str,
+    participant: dict | None,
+    mismatch_reason: str,
+) -> None:
+    stable_did = str(did_aw or "").strip()
+    expected_key = str(current_did_key or "").strip()
+    if _is_local_did_key(stable_did):
+        if expected_key != stable_did:
+            raise FederationAuthorityError(mismatch_reason)
         return
-    if not envelope.conversation_id:
-        return
-    conversation_id = UUID(envelope.conversation_id)
-    aweb_db = db.get_manager("aweb")
-    await aweb_db.execute(
-        """
-        UPDATE {{tables.conversation_participants}}
-        SET current_did_key = $3
-        WHERE conversation_id = $1 AND did = $2
-        """,
-        conversation_id,
-        sender_did_aw,
-        current_did_key,
+    stored_key = str((participant or {}).get("current_did_key") or "").strip()
+    if not stored_key or stored_key != expected_key:
+        raise FederationAuthorityError(mismatch_reason)
+
+
+def _validate_stored_current_keys(
+    envelope: FederationEnvelope, participants: dict[str, dict]
+) -> None:
+    _validate_stored_current_key(
+        did_aw=envelope.sender_did_aw,
+        current_did_key=envelope.sender_current_did_key,
+        participant=participants.get(envelope.sender_did_aw),
+        mismatch_reason="sender_current_key_mismatch",
     )
-    if chat_session:
-        await aweb_db.execute(
+    _validate_stored_current_key(
+        did_aw=envelope.target_did_aw,
+        current_did_key=envelope.target_current_did_key,
+        participant=participants.get(envelope.target_did_aw),
+        mismatch_reason="recipient_current_key_mismatch",
+    )
+
+
+async def _stored_route_participants(
+    db, envelope: FederationEnvelope
+) -> dict[str, dict] | None:
+    if not envelope.conversation_id:
+        return None
+    manager = db.get_manager("aweb")
+    conversation = await manager.fetch_one(
+        """
+        SELECT conversation_type, status
+        FROM {{tables.conversations}}
+        WHERE conversation_id = $1
+        """,
+        UUID(envelope.conversation_id),
+    )
+    if conversation is None:
+        return None
+    if (
+        conversation["conversation_type"] != envelope.type
+        or conversation["status"] != "active"
+    ):
+        raise FederationAuthorityError("federation_conversation_invalid")
+    rows = await manager.fetch_all(
+        """
+        SELECT did, address, delivery_origin, current_did_key, transport_hint
+        FROM {{tables.conversation_participants}}
+        WHERE conversation_id = $1
+          AND did = ANY($2::text[])
+        """,
+        UUID(envelope.conversation_id),
+        [envelope.sender_did_aw, envelope.target_did_aw],
+    )
+    by_did = {row["did"]: dict(row) for row in rows}
+    if set(by_did) != {envelope.sender_did_aw, envelope.target_did_aw}:
+        raise FederationAuthorityError("federation_conversation_invalid")
+    _validate_stored_current_keys(envelope, by_did)
+    if envelope.type == "chat":
+        session = await manager.fetch_one(
+            "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1",
+            UUID(envelope.conversation_id),
+        )
+        if session is None:
+            raise FederationAuthorityError("federation_conversation_invalid")
+        chat_rows = await manager.fetch_all(
             """
-            UPDATE {{tables.chat_participants}}
-            SET current_did_key = $3
-            WHERE session_id = $1 AND did = $2
+            SELECT did, address, delivery_origin, current_did_key
+            FROM {{tables.chat_participants}}
+            WHERE session_id = $1 AND did = ANY($2::text[])
             """,
-            conversation_id,
-            sender_did_aw,
-            current_did_key,
+            UUID(envelope.conversation_id),
+            [envelope.sender_did_aw, envelope.target_did_aw],
         )
-
-
-
-
-async def _verify_sender_current_key(registry_client, envelope: FederationEnvelope) -> None:
-    if envelope.sender_did_aw.startswith("did:key:"):
-        if envelope.sender_current_did_key != envelope.sender_did_aw:
-            raise HTTPException(status_code=422, detail="Federation sender local key mismatch")
-        return
-    try:
-        resolution = await registry_client.resolve_key(envelope.sender_did_aw)
-        if (
-            resolution
-            and resolution.current_did_key != envelope.sender_current_did_key
-            and hasattr(registry_client, "resolve_key_fresh")
-        ):
-            resolution = await registry_client.resolve_key_fresh(envelope.sender_did_aw)
-    except AWID_DEPENDENCY_ERRORS as exc:
-        logger.warning(
-            "AWID registry dependency failed for federation sender key verification",
-            exc_info=True,
-        )
-        raise awid_dependency_http_exception(exc, operation="AWID federation sender key verification") from exc
-    except Exception as exc:
-        logger.exception(
-            "Unexpected AWID registry dependency error for federation sender key verification"
-        )
-        raise awid_dependency_http_exception(exc, operation="AWID federation sender key verification") from exc
-    if not resolution or resolution.current_did_key != envelope.sender_current_did_key:
-        raise HTTPException(status_code=422, detail="Federation sender current key mismatch")
+        chat_by_did = {row["did"]: dict(row) for row in chat_rows}
+        if set(chat_by_did) != {envelope.sender_did_aw, envelope.target_did_aw}:
+            raise FederationAuthorityError("federation_conversation_invalid")
+        _validate_stored_current_keys(envelope, chat_by_did)
+    else:
+        chat_by_did = None
+    return {"conversation": by_did, "chat": chat_by_did}
 
 
 async def _resolve_target_identity(
     registry_client,
     envelope: FederationEnvelope,
     *,
-    stored_route_continuation: bool = False,
-):
+    stored_route_continuation: bool,
+) -> None:
     if stored_route_continuation:
-        return None
-    if "/" not in envelope.target_address:
-        raise HTTPException(status_code=422, detail="Federation first-contact target_address must be domain/name")
+        return
+    domain, name = _split_address(envelope.target_address)
     try:
-        domain, name = _split_address(envelope.target_address)
         resolved = await registry_client.resolve_address(domain, name)
-    except HTTPException:
-        raise
     except AWID_DEPENDENCY_ERRORS as exc:
         logger.warning(
             "AWID registry dependency failed for federation target identity resolution",
             exc_info=True,
         )
-        raise awid_dependency_http_exception(exc, operation="AWID federation target identity resolution") from exc
+        raise FederationAuthorityError(
+            "federation_authority_coordination_unavailable"
+        ) from exc
     except Exception as exc:
         logger.exception(
             "Unexpected AWID registry dependency error for federation target identity resolution"
         )
-        raise awid_dependency_http_exception(exc, operation="AWID federation target identity resolution") from exc
+        raise FederationAuthorityError(
+            "federation_authority_coordination_unavailable"
+        ) from exc
     if resolved is None:
-        raise HTTPException(status_code=404, detail="Federation target identity not found")
+        raise FederationAuthorityError("recipient_identity_not_found")
     if resolved.did_aw != envelope.target_did_aw:
-        raise HTTPException(status_code=422, detail="Federation target did:aw mismatch")
+        raise FederationAuthorityError("recipient_address_did_mismatch")
     if resolved.current_did_key != envelope.target_current_did_key:
-        raise HTTPException(status_code=422, detail="Federation target current key mismatch")
+        raise FederationAuthorityError("recipient_current_key_mismatch")
     delivery = getattr(resolved, "delivery", None)
     try:
-        resolved_origin = canonical_server_origin(
-            str(getattr(delivery, "origin", "") or "").strip()
+        origin = canonical_server_origin(str(getattr(delivery, "origin", "") or ""))
+    except Exception as exc:
+        raise FederationAuthorityError("recipient_route_missing") from exc
+    if origin != envelope.target_delivery_origin:
+        raise FederationAuthorityError("recipient_route_mismatch")
+
+
+async def _established_replay_receipt(
+    db,
+    *,
+    envelope: FederationEnvelope,
+    envelope_hash: str,
+) -> dict | None:
+    try:
+        row = await db.get_manager("aweb").fetch_one(
+            """
+            SELECT envelope_hash, canonical_metadata, storage_kind,
+                   legacy_unreplayable, established_result
+            FROM {{tables.message_ingress_receipts}}
+            WHERE message_id = $1
+            """,
+            UUID(envelope.message_id),
         )
     except Exception as exc:
-        raise HTTPException(status_code=424, detail="Federation target address has no delivery origin") from exc
-    if resolved_origin != envelope.target_delivery_origin:
-        raise HTTPException(status_code=422, detail="Federation target delivery origin mismatch")
-    return resolved
-
-
-
-
-def _require_target_origin_here(request: Request, envelope: FederationEnvelope) -> None:
-    if envelope.target_delivery_origin not in _public_origins(request):
-        raise HTTPException(status_code=421, detail="Federation message is addressed to a different delivery origin")
-
-
-def _delivery_response(envelope: FederationEnvelope, *, message_id: str, conversation_id: str, created_at: datetime) -> dict:
-    response = {
-        "message_id": message_id,
-        "conversation_id": conversation_id,
-        "status": "delivered",
-        "delivered_at": utc_iso(created_at),
-    }
-    if envelope.type == "chat":
-        response["session_id"] = conversation_id
-    return response
-
-
-def _envelope_is_encrypted_v2(envelope: FederationEnvelope) -> bool:
-    return (
-        envelope.content_mode == "encrypted_v2"
-        or envelope.message_version == 2
-        or envelope.encrypted_envelope is not None
-    )
-
-
-async def _idempotent_existing_message(db, envelope: FederationEnvelope) -> tuple[str, datetime] | None:
-    aweb_db = db.get_manager("aweb")
-    if _envelope_is_encrypted_v2(envelope):
-        row = await aweb_db.fetch_one(
-            """
-            SELECT message_id, conversation_id, from_did, to_did, from_address, content_mode,
-                   signed_envelope_hash, created_at
-            FROM {{tables.messages}}
-            WHERE message_id = $1
-            """,
-            UUID(envelope.message_id),
-        )
-    else:
-        row = await aweb_db.fetch_one(
-            """
-            SELECT message_id, conversation_id, from_did, to_did, from_address, subject,
-                   body, priority, created_at
-            FROM {{tables.messages}}
-            WHERE message_id = $1
-            """,
-            UUID(envelope.message_id),
-        )
+        raise FederationAuthorityError(
+            "federation_authority_coordination_unavailable"
+        ) from exc
     if row is None:
         return None
-    if _envelope_is_encrypted_v2(envelope):
-        expected = encrypted_message_storage_metadata(envelope.encrypted_envelope or {}).get("signed_envelope_hash")
-        if (
-            str(row["conversation_id"]) != str(envelope.conversation_id)
-            or row["from_did"] != envelope.sender_did_aw
-            or row["to_did"] != envelope.target_did_aw
-            or (row.get("from_address") or "") != (envelope.sender_address or "")
-            or row["content_mode"] != "encrypted_v2"
-            or row["signed_envelope_hash"] != expected
-        ):
-            raise HTTPException(status_code=409, detail="Federation message_id already exists with different encrypted envelope")
-        return str(row["conversation_id"]), row["created_at"]
     if (
-        str(row["conversation_id"]) != str(envelope.conversation_id)
-        or row["from_did"] != envelope.sender_did_aw
-        or row["to_did"] != envelope.target_did_aw
-        or (row.get("from_address") or "") != (envelope.sender_address or "")
-        or row["subject"] != (envelope.subject or "")
-        or row["body"] != envelope.body
-        or row["priority"] != (envelope.priority or "normal")
+        row["legacy_unreplayable"]
+        or row["envelope_hash"] != envelope_hash
+        or row["storage_kind"] != envelope.type
+        or row["established_result"] is None
     ):
-        raise HTTPException(status_code=409, detail="Federation message_id already exists with different content")
-    return str(row["conversation_id"]), row["created_at"]
+        raise FederationAuthorityError("federation_message_replay_conflict")
+    metadata = row["canonical_metadata"]
+    result = row["established_result"]
+    try:
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+        if isinstance(result, str):
+            result = json.loads(result)
+    except (TypeError, ValueError) as exc:
+        raise FederationAuthorityError(
+            "federation_message_replay_conflict"
+        ) from exc
+    if not isinstance(metadata, dict) or not isinstance(result, dict):
+        raise FederationAuthorityError("federation_message_replay_conflict")
+    return {"metadata": metadata, "result": result}
 
 
-async def _idempotent_existing_chat_message(db, envelope: FederationEnvelope) -> tuple[str, datetime] | None:
-    aweb_db = db.get_manager("aweb")
-    if _envelope_is_encrypted_v2(envelope):
-        row = await aweb_db.fetch_one(
-            """
-            SELECT message_id, session_id, from_did, from_address, content_mode,
-                   signed_envelope_hash, sender_leaving, hang_on, reply_to, created_at
-            FROM {{tables.chat_messages}}
-            WHERE message_id = $1
-            """,
-            UUID(envelope.message_id),
+def _stable_envelope_error(exc: FederationEnvelopeError) -> FederationAuthorityError:
+    detail = str(exc).lower()
+    if any(
+        marker in detail
+        for marker in (
+            "timestamp",
+            "skew",
+            "expired",
+            "expiration",
+            "created_at",
+            "too far in the future",
         )
-    else:
-        row = await aweb_db.fetch_one(
-            """
-            SELECT message_id, session_id, from_did, from_address, body, sender_leaving,
-                   hang_on, reply_to, created_at
-            FROM {{tables.chat_messages}}
-            WHERE message_id = $1
-            """,
-            UUID(envelope.message_id),
-        )
-    if row is None:
-        return None
-    if _envelope_is_encrypted_v2(envelope):
-        expected = encrypted_message_storage_metadata(envelope.encrypted_envelope or {}).get("signed_envelope_hash")
-        if (
-            str(row["session_id"]) != str(envelope.conversation_id)
-            or row["from_did"] != envelope.sender_did_aw
-            or (row.get("from_address") or "") != (envelope.sender_address or "")
-            or row["content_mode"] != "encrypted_v2"
-            or row["signed_envelope_hash"] != expected
-            or bool(row["sender_leaving"]) != envelope.sender_leaving
-            or bool(row["hang_on"]) != envelope.hang_on
-            or (str(row["reply_to"]) if row.get("reply_to") else None) != envelope.reply_to
-        ):
-            raise HTTPException(status_code=409, detail="Federation message_id already exists with different encrypted envelope")
-        return str(row["session_id"]), row["created_at"]
-    if (
-        str(row["session_id"]) != str(envelope.conversation_id)
-        or row["from_did"] != envelope.sender_did_aw
-        or (row.get("from_address") or "") != (envelope.sender_address or "")
-        or row["body"] != envelope.body
-        or bool(row["sender_leaving"]) != envelope.sender_leaving
-        or bool(row["hang_on"]) != envelope.hang_on
-        or (str(row["reply_to"]) if row.get("reply_to") else None) != envelope.reply_to
     ):
-        raise HTTPException(status_code=409, detail="Federation message_id already exists with different content")
-    return str(row["session_id"]), row["created_at"]
+        return FederationAuthorityError("federation_timestamp_invalid")
+    if "signature" in detail:
+        return FederationAuthorityError("federation_signature_invalid")
+    if "sender address" in detail or "signed_payload from does not match" in detail:
+        return FederationAuthorityError("sender_address_wrapper_mismatch")
+    return FederationAuthorityError("federation_envelope_invalid")
 
 
-async def _claim_federated_delivery(db, envelope: FederationEnvelope) -> bool:
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        INSERT INTO {{tables.federated_message_deliveries}} (
-            message_type, sender_did_aw, target_did_aw, message_id, conversation_id
-        )
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (message_type, sender_did_aw, target_did_aw, message_id) DO NOTHING
-        RETURNING message_id
-        """,
-        envelope.type,
-        envelope.sender_did_aw,
-        envelope.target_did_aw,
-        UUID(envelope.message_id),
-        UUID(envelope.conversation_id) if envelope.conversation_id else None,
+def _stable_error_response(
+    request: Request, error: FederationAuthorityError
+) -> JSONResponse:
+    correlation_id = request.headers.get("X-Correlation-ID") or str(uuid4())
+    headers = {"Retry-After": "1"} if error.retry_after_required else None
+    return JSONResponse(
+        status_code=error.http_status,
+        content=authority_error_body(error, correlation_id=correlation_id),
+        headers=headers,
     )
-    return row is not None
-
-
-async def _release_federated_delivery_claim(db, envelope: FederationEnvelope) -> None:
-    aweb_db = db.get_manager("aweb")
-    await aweb_db.execute(
-        """
-        DELETE FROM {{tables.federated_message_deliveries}}
-        WHERE message_type = $1
-          AND sender_did_aw = $2
-          AND target_did_aw = $3
-          AND message_id = $4
-        """,
-        envelope.type,
-        envelope.sender_did_aw,
-        envelope.target_did_aw,
-        UUID(envelope.message_id),
-    )
-
-
-async def _ensure_federated_mail_conversation(db, envelope: FederationEnvelope, recipient: dict) -> str:
-    if not envelope.conversation_id:
-        raise HTTPException(status_code=422, detail="Federated mail requires conversation_id")
-
-    conversation = await get_conversation(db, conversation_id=envelope.conversation_id)
-    if conversation is not None:
-        if conversation["conversation_type"] != "mail":
-            raise HTTPException(status_code=422, detail="Federation conversation is not mail")
-        if conversation["status"] != "active":
-            raise HTTPException(status_code=403, detail="Federation conversation is not active")
-        participants = await list_conversation_participants(db, conversation_id=envelope.conversation_id)
-        dids = {item["did"] for item in participants}
-        if envelope.sender_did_aw not in dids or envelope.target_did_aw not in dids:
-            raise HTTPException(status_code=403, detail="Federation conversation participants mismatch")
-        await _backfill_federated_sender_current_key(db, envelope)
-        return envelope.conversation_id
-
-    if _is_local_did_key(envelope.target_did_aw):
-        raise HTTPException(status_code=404, detail="Local did:key target requires an existing conversation")
-
-    conversation = await create_conversation(
-        db,
-        conversation_type="mail",
-        conversation_id=envelope.conversation_id,
-        created_by_did=envelope.sender_did_aw,
-        initiator={
-            "did": envelope.sender_did_aw,
-            "agent_id": None,
-            "alias": _participant_alias_from_address(
-                envelope.sender_address,
-                envelope.sender_did_aw,
-            ),
-            "address": envelope.sender_address,
-            "delivery_origin": envelope.sender_delivery_origin,
-            "current_did_key": envelope.sender_current_did_key,
-            "transport_hint": _federated_transport_hint(envelope.sender_delivery_origin),
-        },
-        recipients=[
-            {
-                "did": envelope.target_did_aw,
-                "agent_id": recipient.get("agent_id"),
-                "alias": recipient.get("alias") or _participant_alias_from_address(
-                    envelope.target_address,
-                    envelope.target_did_aw,
-                ),
-                "address": envelope.target_address,
-                "current_did_key": envelope.target_current_did_key,
-                "transport_hint": "local",
-            }
-        ],
-        team_id=recipient.get("team_id"),
-    )
-    return conversation["conversation_id"]
-
-
-def _validate_stored_target_current_key(*, envelope: FederationEnvelope, participant: dict | None) -> None:
-    target_did = str(envelope.target_did_aw or "").strip()
-    target_key = str(envelope.target_current_did_key or "").strip()
-    if _is_local_did_key(target_did):
-        if target_key != target_did:
-            raise HTTPException(status_code=422, detail="Federation target current key mismatch")
-        return
-    stored_key = str((participant or {}).get("current_did_key") or "").strip()
-    if stored_key and stored_key != target_key:
-        raise HTTPException(status_code=422, detail="Federation target current key mismatch")
-
-
-async def _federated_stored_route_continuation_exists(db, envelope: FederationEnvelope) -> bool:
-    if not envelope.conversation_id:
-        return False
-    conversation = await get_conversation(db, conversation_id=envelope.conversation_id)
-    if conversation is None or conversation.get("status") != "active":
-        return False
-    if conversation.get("conversation_type") != envelope.type:
-        return False
-    participants = await list_conversation_participants(db, conversation_id=envelope.conversation_id)
-    by_did = {item["did"]: item for item in participants}
-    if envelope.sender_did_aw not in by_did or envelope.target_did_aw not in by_did:
-        return False
-    _validate_stored_target_current_key(envelope=envelope, participant=by_did.get(envelope.target_did_aw))
-
-    if envelope.type == "chat":
-        aweb_db = db.get_manager("aweb")
-        existing_session = await aweb_db.fetch_one(
-            "SELECT session_id FROM {{tables.chat_sessions}} WHERE session_id = $1",
-            UUID(envelope.conversation_id),
-        )
-        if existing_session is None:
-            return False
-        session_participants = await aweb_db.fetch_all(
-            """
-            SELECT did, current_did_key
-            FROM {{tables.chat_participants}}
-            WHERE session_id = $1
-              AND did = ANY($2::text[])
-            """,
-            UUID(envelope.conversation_id),
-            [envelope.sender_did_aw, envelope.target_did_aw],
-        )
-        session_by_did = {item["did"]: item for item in session_participants}
-        if envelope.sender_did_aw not in session_by_did or envelope.target_did_aw not in session_by_did:
-            raise HTTPException(status_code=403, detail="Federation chat session participants mismatch")
-        _validate_stored_target_current_key(envelope=envelope, participant=session_by_did.get(envelope.target_did_aw))
-
-    return True
-
-
-async def _ensure_federated_chat_session(db, envelope: FederationEnvelope, recipient: dict) -> str:
-    if not envelope.conversation_id:
-        raise HTTPException(status_code=422, detail="Federated chat requires conversation_id")
-
-    conversation = await get_conversation(db, conversation_id=envelope.conversation_id)
-    if conversation is not None:
-        if conversation["conversation_type"] != "chat":
-            raise HTTPException(status_code=422, detail="Federation conversation is not chat")
-        if conversation["status"] != "active":
-            raise HTTPException(status_code=403, detail="Federation conversation is not active")
-        participants = await list_conversation_participants(db, conversation_id=envelope.conversation_id)
-        dids = {item["did"] for item in participants}
-        if envelope.sender_did_aw not in dids or envelope.target_did_aw not in dids:
-            raise HTTPException(status_code=403, detail="Federation conversation participants mismatch")
-        if _is_local_did_key(envelope.target_did_aw):
-            aweb_db = db.get_manager("aweb")
-            existing_session = await aweb_db.fetch_one(
-                "SELECT session_id FROM {{tables.chat_sessions}} WHERE session_id = $1",
-                UUID(envelope.conversation_id),
-            )
-            if existing_session is None:
-                raise HTTPException(status_code=404, detail="Local did:key target requires an existing session")
-            session_participants = await aweb_db.fetch_all(
-                """
-                SELECT did
-                FROM {{tables.chat_participants}}
-                WHERE session_id = $1
-                  AND did = ANY($2::text[])
-                """,
-                UUID(envelope.conversation_id),
-                [envelope.sender_did_aw, envelope.target_did_aw],
-            )
-            session_dids = {item["did"] for item in session_participants}
-            if {envelope.sender_did_aw, envelope.target_did_aw} - session_dids:
-                raise HTTPException(status_code=403, detail="Federation chat session participants mismatch")
-            await _backfill_federated_sender_current_key(db, envelope, chat_session=True)
-            return envelope.conversation_id
-
-    if _is_local_did_key(envelope.target_did_aw):
-        raise HTTPException(status_code=404, detail="Local did:key target requires an existing session")
-
-    session_id = await ensure_session(
-        db,
-        team_id=recipient.get("team_id"),
-        participant_rows=[
-            {
-                "did": envelope.sender_did_aw,
-                "agent_id": None,
-                "alias": _participant_alias_from_address(
-                    envelope.sender_address,
-                    envelope.sender_did_aw,
-                ),
-                "address": envelope.sender_address,
-                "delivery_origin": envelope.sender_delivery_origin,
-                "current_did_key": envelope.sender_current_did_key,
-            },
-            {
-                "did": envelope.target_did_aw,
-                "agent_id": recipient.get("agent_id"),
-                "alias": recipient.get("alias") or _participant_alias_from_address(
-                    envelope.target_address,
-                    envelope.target_did_aw,
-                ),
-                "address": envelope.target_address,
-                "delivery_origin": None,
-                "current_did_key": envelope.target_current_did_key,
-            },
-        ],
-        created_by=envelope.sender_did_aw,
-        session_id=UUID(envelope.conversation_id),
-    )
-    return str(session_id)
 
 
 @router.post("/messages")
@@ -548,177 +280,198 @@ async def receive_federated_message(
     payload: FederatedDeliveryRequest,
     db=Depends(get_db),
 ):
-    if payload.envelope.type not in {"mail", "chat"}:
-        raise HTTPException(status_code=422, detail="Federation endpoint accepts mail or chat")
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is None:
-        raise awid_registry_not_configured_exception(operation="AWID federation receive registry lookup")
-
     try:
-        envelope = verify_federation_envelope(
-            payload.envelope,
-            payload.signature,
-            expected={
-                "type": payload.envelope.type,
-                "target_address": payload.envelope.target_address,
-                "target_did_aw": payload.envelope.target_did_aw,
-                "target_current_did_key": payload.envelope.target_current_did_key,
-                "target_delivery_origin": payload.envelope.target_delivery_origin,
-                "message_id": payload.envelope.message_id,
-                "conversation_id": payload.envelope.conversation_id,
-            },
+        registry_client = getattr(request.app.state, "awid_registry_client", None)
+        if registry_client is None:
+            raise FederationAuthorityError(
+                "federation_authority_coordination_unavailable"
+            )
+        try:
+            envelope = verify_federation_envelope(
+                payload.envelope,
+                payload.signature,
+                expected={
+                    "type": payload.envelope.type,
+                    "target_address": payload.envelope.target_address,
+                    "target_did_aw": payload.envelope.target_did_aw,
+                    "target_current_did_key": payload.envelope.target_current_did_key,
+                    "target_delivery_origin": payload.envelope.target_delivery_origin,
+                    "message_id": payload.envelope.message_id,
+                    "conversation_id": payload.envelope.conversation_id,
+                },
+            )
+        except FederationEnvelopeError as exc:
+            raise _stable_envelope_error(exc) from exc
+        if envelope.target_delivery_origin not in _public_origins(request):
+            raise FederationAuthorityError("target_route_mismatch")
+
+        ingress_envelope_hash = federation_envelope_hash(
+            envelope, payload.signature
         )
-    except FederationEnvelopeError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    _require_target_origin_here(request, envelope)
-    await _verify_sender_current_key(registry_client, envelope)
-    stored_route_continuation = await _federated_stored_route_continuation_exists(db, envelope)
-    await _resolve_target_identity(
-        registry_client,
-        envelope,
-        stored_route_continuation=stored_route_continuation,
-    )
-
-    recipient = await resolve_agent_by_did(db, envelope.target_did_aw)
-    if recipient is None:
-        recipient = await resolve_agent_by_did(db, envelope.target_current_did_key)
-    if recipient is None:
-        raise HTTPException(status_code=404, detail="Federation recipient agent not found")
-    recipient_did_key = str(recipient.get("did_key") or "").strip()
-    if recipient_did_key and recipient_did_key != envelope.target_current_did_key:
-        raise HTTPException(status_code=422, detail="Federation target current key mismatch")
-
-    if _is_local_did_key(envelope.target_did_aw) and not stored_route_continuation:
-        detail = "Local did:key target requires an existing session" if envelope.type == "chat" else "Local did:key target requires an existing conversation"
-        raise HTTPException(status_code=404, detail=detail)
-    try:
-        await authorize_message_delivery(
+        established_replay = await _established_replay_receipt(
             db,
-            recipient_agent=recipient,
-            sender_did=envelope.sender_did_aw,
-            sender_address=envelope.sender_address,
-            stored_route_continuation=stored_route_continuation,
+            envelope=envelope,
+            envelope_hash=ingress_envelope_hash,
         )
-    except ForbiddenError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-
-    existing = (
-        await _idempotent_existing_message(db, envelope)
-        if envelope.type == "mail"
-        else await _idempotent_existing_chat_message(db, envelope)
-    )
-    if existing is not None:
-        conversation_id, created_at = existing
-        return _delivery_response(
-            envelope,
-            message_id=envelope.message_id,
-            conversation_id=conversation_id,
-            created_at=created_at,
-        )
-    if not await _claim_federated_delivery(db, envelope):
-        raise HTTPException(status_code=409, detail="Federated message delivery is already in progress")
-
-    try:
-        if envelope.type == "mail":
-            conversation_id = await _ensure_federated_mail_conversation(db, envelope, recipient)
-            encrypted_metadata = (
-                encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
-                if _envelope_is_encrypted_v2(envelope)
-                else None
+        if established_replay is not None:
+            metadata = established_replay["metadata"]
+            envelope = envelope.model_copy(
+                update={
+                    "sender_address": metadata.get("sender_address"),
+                    "sender_delivery_origin": metadata.get(
+                        "sender_delivery_origin"
+                    ),
+                    "target_address": metadata.get("target_address")
+                    or envelope.target_address,
+                }
             )
-            message_id, created_at = await deliver_message(
-                db,
-                registry_client=registry_client,
-                recipient_agent=recipient,
-                from_did=envelope.sender_did_aw,
-                to_did=envelope.target_did_aw,
-                from_alias=_participant_alias_from_address(
-                    envelope.sender_address,
-                    envelope.sender_did_aw,
-                ),
-                to_alias=recipient.get("alias") or _participant_alias_from_address(
-                    envelope.target_address,
-                    envelope.target_did_aw,
-                ),
-                subject="" if encrypted_metadata is not None else (envelope.subject or ""),
-                body="" if encrypted_metadata is not None else envelope.body,
-                priority=envelope.priority or "normal",
-                sender_address=envelope.sender_address,
-                team_id=recipient.get("team_id"),
-                from_agent_id=None,
-                to_agent_id=recipient.get("agent_id"),
-                signature=None if encrypted_metadata is not None else payload.signature,
-                signed_payload=None if encrypted_metadata is not None else envelope.signed_payload,
-                content_mode=envelope.content_mode or "legacy_plaintext_v1",
-                message_version=envelope.message_version or 1,
-                encrypted_envelope=envelope.encrypted_envelope,
-                encrypted_metadata=encrypted_metadata,
-                message_id=UUID(envelope.message_id),
-                conversation_id=conversation_id,
-                skip_policy_check=True,
-            )
-            await touch_conversation_activity(db, conversation_id=conversation_id)
+            stored_participants = None
         else:
-            conversation_id = await _ensure_federated_chat_session(db, envelope, recipient)
-            encrypted_metadata = (
-                encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
-                if _envelope_is_encrypted_v2(envelope)
-                else None
+            stored_route_snapshot = await _stored_route_participants(db, envelope)
+        if established_replay is not None:
+            stored_route_snapshot = None
+        stored_participants = (
+            stored_route_snapshot["conversation"]
+            if stored_route_snapshot is not None
+            else None
+        )
+        stored_route = stored_route_snapshot is not None
+        sender_participant = (
+            stored_participants.get(envelope.sender_did_aw)
+            if stored_participants is not None
+            else None
+        )
+        if stored_participants is not None:
+            target_participant = stored_participants[envelope.target_did_aw]
+            stored_target_address = str(
+                target_participant.get("address") or ""
+            ).strip()
+            if not stored_target_address:
+                raise FederationAuthorityError("recipient_route_missing")
+            if envelope.target_address not in {
+                stored_target_address,
+                envelope.target_did_aw,
+            }:
+                raise FederationAuthorityError("recipient_route_mismatch")
+            envelope = envelope.model_copy(
+                update={"target_address": stored_target_address}
             )
-            msg_row = await send_in_session(
+        authority_token = None
+        if envelope.sender_did_aw.startswith("did:aw:"):
+            sender_address = envelope.sender_address or str(
+                (sender_participant or {}).get("address") or ""
+            ).strip()
+            if not sender_address:
+                raise FederationAuthorityError("sender_address_required")
+            sender_origin = envelope.sender_delivery_origin
+            if sender_origin is None and sender_participant is not None:
+                sender_origin = str(
+                    sender_participant.get("delivery_origin") or ""
+                ).strip() or None
+            authority = getattr(request.app.state, "federation_authority", None)
+            if authority is None:
+                raise FederationAuthorityError(
+                    "federation_authority_coordination_unavailable"
+                )
+            authorized = await authority.authorize(
+                AuthorityClaim(
+                    canonical_address=sender_address,
+                    did_aw=envelope.sender_did_aw,
+                    current_did_key=envelope.sender_current_did_key,
+                    delivery_origin=sender_origin or "",
+                ),
+                source_ip=str(request.client.host if request.client else "unknown"),
+            )
+            authority_token = getattr(authorized, "token", authorized)
+            envelope = envelope.model_copy(
+                update={
+                    "sender_address": getattr(
+                        authorized, "canonical_address", sender_address
+                    ),
+                    "sender_delivery_origin": getattr(
+                        authorized, "delivery_origin", sender_origin
+                    ),
+                }
+            )
+        else:
+            if envelope.sender_current_did_key != envelope.sender_did_aw:
+                raise FederationAuthorityError("local_sender_route_mismatch")
+            if established_replay is None:
+                if not stored_route or sender_participant is None:
+                    raise FederationAuthorityError("local_sender_route_mismatch")
+                for actual, stored in (
+                    (envelope.sender_address, sender_participant.get("address")),
+                    (
+                        envelope.sender_delivery_origin,
+                        sender_participant.get("delivery_origin"),
+                    ),
+                ):
+                    if actual is not None and str(actual) != str(stored or ""):
+                        raise FederationAuthorityError("local_sender_route_mismatch")
+                envelope = envelope.model_copy(
+                    update={
+                        "sender_address": str(
+                            sender_participant.get("address") or ""
+                        ).strip()
+                        or None,
+                        "sender_delivery_origin": str(
+                            sender_participant.get("delivery_origin") or ""
+                        ).strip()
+                        or None,
+                    }
+                )
+
+        if established_replay is not None:
+            result = await deliver_federated_phase_b(
                 db,
-                session_id=UUID(conversation_id),
-                sender_did=envelope.sender_did_aw,
-                sender_agent_id=None,
-                sender_address=envelope.sender_address,
-                body="" if encrypted_metadata is not None else envelope.body,
-                reply_to=UUID(envelope.reply_to) if envelope.reply_to else None,
-                leaving=envelope.sender_leaving,
-                hang_on=envelope.hang_on,
-                signature=None if encrypted_metadata is not None else payload.signature,
-                signed_payload=None if encrypted_metadata is not None else envelope.signed_payload,
-                content_mode=envelope.content_mode or "legacy_plaintext_v1",
-                message_version=envelope.message_version or 1,
-                encrypted_envelope=envelope.encrypted_envelope,
-                encrypted_metadata=encrypted_metadata,
-                message_id=UUID(envelope.message_id),
+                envelope=envelope,
+                signature=payload.signature,
+                recipient={},
+                authority_token=authority_token,
+                envelope_hash_override=ingress_envelope_hash,
             )
-            if msg_row is None:
-                raise HTTPException(status_code=500, detail="Failed to store federated chat message")
-            message_id = msg_row["message_id"]
-            created_at = msg_row["created_at"]
-    except (ValidationError, NotFoundError, ForbiddenError) as exc:
-        await _release_federated_delivery_claim(db, envelope)
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    except Exception:
-        await _release_federated_delivery_claim(db, envelope)
-        raise
+            return result
 
-    await fire_mutation_hook(
-        request,
-        "message.sent" if envelope.type == "mail" else "chat.message_sent",
-        {
-            "team_id": recipient.get("team_id"),
-            "from_agent_id": None,
-            "from_did": envelope.sender_current_did_key,
-            "from_did_aw": envelope.sender_did_aw,
-            "to_agent_id": recipient.get("agent_id"),
-            "from_alias": _participant_alias_from_address(envelope.sender_address, envelope.sender_did_aw),
-            "message_id": str(message_id),
-            "conversation_id": conversation_id,
-            "session_id": conversation_id if envelope.type == "chat" else None,
-            "to_alias": recipient.get("alias"),
-            "subject": envelope.subject or "",
-            "priority": envelope.priority or "normal",
-            "content_mode": envelope.content_mode or "legacy_plaintext_v1",
-            "federated": True,
-        },
-    )
-
-    return _delivery_response(
-        envelope,
-        message_id=str(message_id),
-        conversation_id=conversation_id,
-        created_at=created_at,
-    )
+        await _resolve_target_identity(
+            registry_client,
+            envelope,
+            stored_route_continuation=stored_route,
+        )
+        recipient = await resolve_agent_by_did(db, envelope.target_did_aw)
+        if recipient is None:
+            recipient = await resolve_agent_by_did(
+                db, envelope.target_current_did_key
+            )
+        if recipient is None:
+            raise FederationAuthorityError("recipient_identity_not_found")
+        if (
+            str(recipient.get("did_key") or "").strip()
+            and str(recipient.get("did_key")).strip()
+            != envelope.target_current_did_key
+        ):
+            raise FederationAuthorityError("recipient_current_key_mismatch")
+        if _is_local_did_key(envelope.target_did_aw) and not stored_route:
+            raise FederationAuthorityError("local_recipient_route_missing")
+        result = await deliver_federated_phase_b(
+            db,
+            envelope=envelope,
+            signature=payload.signature,
+            recipient=recipient,
+            authority_token=authority_token,
+            stored_route_continuation=stored_route,
+            stored_route_snapshot=stored_route_snapshot,
+            envelope_hash_override=ingress_envelope_hash,
+        )
+        try:
+            await replay_federation_mutation_outbox(
+                request.app,
+                db.get_manager("aweb"),
+                limit=100,
+            )
+        except Exception:
+            logger.exception(
+                "Federation delivery committed but immediate mutation outbox replay failed"
+            )
+        return result
+    except FederationAuthorityError as exc:
+        return _stable_error_response(request, exc)

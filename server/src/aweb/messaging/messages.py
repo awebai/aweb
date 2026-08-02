@@ -168,6 +168,7 @@ async def _recipient_has_exact_sender_contact(
     *,
     recipient_agent: dict,
     sender_address: str | None,
+    sender_did: str,
 ) -> bool:
     owner_dids = normalize_owner_dids(
         owner_dids=[
@@ -181,6 +182,7 @@ async def _recipient_has_exact_sender_contact(
         db,
         owner_dids=owner_dids,
         contact_address=sender_address,
+        contact_did_aw=sender_did,
     )
 
 
@@ -195,7 +197,14 @@ async def authorize_message_delivery(
     sender_verified_dids: list[str] | tuple[str, ...] | None = None,
     stored_route_continuation: bool = False,
 ) -> None:
-    del sender_did  # sender identity binding is verified by the caller/signature path.
+    sender_stable_did = next(
+        (
+            str(value).strip()
+            for value in (sender_verified_dids or ())
+            if str(value).strip().startswith("did:aw:")
+        ),
+        str(sender_did or "").strip(),
+    )
 
     if _is_global_recipient(recipient_agent):
         mode = _effective_inbound_mode(recipient_agent)
@@ -212,6 +221,7 @@ async def authorize_message_delivery(
             db,
             recipient_agent=recipient_agent,
             sender_address=sender_address,
+            sender_did=sender_stable_did,
         ):
             return
         raise ForbiddenError("Recipient only accepts messages from verified team members or exact active contacts")
@@ -228,6 +238,7 @@ async def authorize_message_delivery(
         db,
         recipient_agent=recipient_agent,
         sender_address=sender_address,
+        sender_did=sender_stable_did,
     ):
         return
 

@@ -9,6 +9,7 @@ import uuid as uuid_mod
 from datetime import datetime, timezone
 from uuid import UUID
 
+from awid.federation_errors import FederationAuthorityError
 from aweb.awid_error_handling import awid_dependency_error_detail
 from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
@@ -27,7 +28,8 @@ from aweb.messaging.alias_targets import (
     get_agent_by_namespace_alias,
     namespace_exists,
 )
-from aweb.messaging.address_auth import local_recipient_visible_to_auth, requires_registry_address_binding
+from aweb.messaging.address_auth import local_recipient_visible_to_auth
+from aweb.messaging.contacts import resolve_local_namespace_controller_did
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import authorize_message_delivery
 from aweb.messaging.verification import message_verification_status, require_conversation_not_legacy_bound
@@ -358,6 +360,7 @@ async def chat_send(
     redis,
     *,
     registry_client,
+    federation_authority=None,
     hosted_signer: HostedMessageSigner | None = None,
     hosted_encryptor: HostedMessageEncryptor | None = None,
     hosted_decryptor: HostedMessageDecryptor | None = None,
@@ -382,8 +385,9 @@ async def chat_send(
     actor_alias = _actor_alias(actor_agent)
     sender_address = _sender_address(auth)
     aweb_db = db_infra.get_manager("aweb")
+    hosted_handle_address = to_alias.strip().startswith("@")
     normalized_alias = normalize_hosted_handle_reference(to_alias, require_agent=True)
-    if to_alias.strip().startswith("@") and normalized_alias != to_alias.strip() and "/" in normalized_alias:
+    if hosted_handle_address and normalized_alias != to_alias.strip() and "/" in normalized_alias:
         to_address = normalized_alias
         to_alias = ""
     else:
@@ -413,42 +417,76 @@ async def chat_send(
             if "/" not in to_address:
                 return json.dumps({"error": "to_address must be domain/name"})
             domain, name = to_address.split("/", 1)
-            resolved = None
-            if registry_client is not None:
-                resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-            if resolved is not None and resolved.did_aw:
-                target = await resolve_agent_by_did(db_infra, resolved.did_aw)
-                if not target:
-                    target = {
-                        "agent_id": None,
-                        "team_id": None,
-                        "alias": name,
-                        "address": to_address.strip(),
-                        "did_aw": resolved.did_aw.strip(),
-                        "did_key": (getattr(resolved, "current_did_key", "") or "").strip(),
-                        "delivery_origin": registry_delivery_origin(resolved),
-                        "external": True,
-                    }
-            else:
-                try:
-                    target = await _local_agent_by_address(db_infra, domain=domain, name=name)
-                except ServiceError as exc:
-                    return json.dumps({"error": exc.detail})
-                if not target:
-                    if await namespace_exists(db_infra, domain):
-                        return json.dumps({"error": f"Recipient '{to_address}' not connected"})
-                    if registry_client is None:
-                        return json.dumps({"error": "AWID MCP chat address lookup registry client not configured"})
-                    return json.dumps({"error": f"Recipient address '{to_address}' not found"})
-                if (
-                    registry_client is not None
-                    and requires_registry_address_binding(target)
-                    and not local_recipient_visible_to_auth(target, auth)
-                ):
-                    return json.dumps({"error": f"Recipient address '{to_address}' not found"})
+            try:
+                target = await _local_agent_by_address(
+                    db_infra, domain=domain, name=name
+                )
+            except ServiceError as exc:
+                return json.dumps({"error": exc.detail})
+            if target is not None:
+                if not hosted_handle_address and not local_recipient_visible_to_auth(target, auth):
+                    controller_did = await resolve_local_namespace_controller_did(
+                        registry_client,
+                        contact_address=to_address,
+                        contact_did_aw=str(target.get("did_aw") or ""),
+                        contact_current_did_key=str(target.get("did_key") or ""),
+                    )
+                    if controller_did is None:
+                        return json.dumps(
+                            {"error": f"Recipient address '{to_address}' not found"}
+                        )
+                    target["authority_controller_did"] = controller_did
                 target = _with_requested_address(target, to_address.strip())
-                if not _target_did(target):
-                    return json.dumps({"error": f"Recipient '{to_address}' not connected"})
+            else:
+                resolved = None
+                if federation_authority is not None:
+                    try:
+                        resolved = await federation_authority.resolve_contact(
+                            to_address,
+                            source_ip="mcp:"
+                            + str(auth.did_key or auth.did_aw or "unknown"),
+                        )
+                    except FederationAuthorityError as exc:
+                        if exc.reason != "sender_identity_not_found":
+                            return json.dumps({"error": exc.reason})
+                elif registry_client is not None:
+                    resolved = await registry_client.resolve_address(
+                        domain, name, did_key=auth.did_key
+                    )
+                if resolved is not None and resolved.did_aw:
+                    target = await resolve_agent_by_did(db_infra, resolved.did_aw)
+                    if not target:
+                        target = {
+                            "agent_id": None,
+                            "team_id": None,
+                            "alias": name,
+                            "address": to_address.strip(),
+                            "did_aw": resolved.did_aw.strip(),
+                            "did_key": (
+                                getattr(resolved, "current_did_key", "") or ""
+                            ).strip(),
+                            "delivery_origin": registry_delivery_origin(resolved),
+                            "authority_controller_did": str(
+                                getattr(resolved, "controller_did", "") or ""
+                            ).strip(),
+                            "external": True,
+                        }
+            if not target:
+                if await namespace_exists(db_infra, domain):
+                    return json.dumps(
+                        {"error": f"Recipient '{to_address}' not connected"}
+                    )
+                if federation_authority is None and registry_client is None:
+                    return json.dumps(
+                        {
+                            "error": "AWID MCP chat address lookup registry client not configured"
+                        }
+                    )
+                return json.dumps(
+                    {"error": f"Recipient address '{to_address}' not found"}
+                )
+            if not _target_did(target):
+                return json.dumps({"error": f"Recipient '{to_address}' not connected"})
 
         target_did = _target_did(target)
         if not target_did:
@@ -463,6 +501,7 @@ async def chat_send(
                     sender_did=actor_did,
                     sender_address=sender_address,
                     sender_team_id=auth.team_id,
+                    sender_verified_dids=actor_dids,
                 )
             except ServiceError as exc:
                 return json.dumps({"error": exc.detail})
