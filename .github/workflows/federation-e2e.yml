@@ -13,6 +13,10 @@ on:
       - "server/**"
       - "awid/**"
       - "scripts/e2e-oss-federation.sh"
+      - "scripts/e2e-federation-authority.sh"
+      - "scripts/federation-authority-worker.py"
+      - "scripts/check_federation_harness.py"
+      - "test-vectors/federation/**"
       - ".github/workflows/federation-e2e.yml"
 
 permissions:
@@ -48,6 +52,10 @@ jobs:
               'server/**' \
               'awid/**' \
               'scripts/e2e-oss-federation.sh' \
+              'scripts/e2e-federation-authority.sh' \
+              'scripts/federation-authority-worker.py' \
+              'scripts/check_federation_harness.py' \
+              'test-vectors/federation/**' \
               '.github/workflows/federation-e2e.yml'; then
               relevant=false
             fi
@@ -83,6 +91,9 @@ jobs:
           sudo mkdir -p /etc/docker
           echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
+
+      - name: Run inactive strict-authority topology
+        run: PATH="$PWD/scripts/guard-bin:$PATH" ./scripts/e2e-federation-authority.sh
 
       - name: Run OSS federation e2e
         run: ./scripts/e2e-oss-federation.sh

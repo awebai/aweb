@@ -124,6 +124,28 @@ ROOT_CONSUMERS = {
         "federation-authority-state-v1.json",
         '_ROOT / "docs" / "vectors" / "federation-authority-state-v1.json"',
     ),
+    PurePosixPath("server/tests/test_federation_preactivation_harness.py"): _consumer(
+        {
+            "e2ee-v2-cross-language.json",
+            "federation-authority-state-v1.json",
+            "federation-discovery-v1.json",
+            "federation-origin-ip-v1.json",
+            "identity-log-v1.json",
+            "message-signing-v1.json",
+        },
+        '_ROOT / item["path"]',
+    ),
+    PurePosixPath("scripts/check_federation_harness.py"): _consumer(
+        {
+            "e2ee-v2-cross-language.json",
+            "federation-authority-state-v1.json",
+            "federation-discovery-v1.json",
+            "federation-origin-ip-v1.json",
+            "identity-log-v1.json",
+            "message-signing-v1.json",
+        },
+        "body = _read(root, path, overrides)",
+    ),
     PurePosixPath("server/tests/test_team_auth_envelope.py"): _consumer(
         "team-auth-envelope-v2.json",
         'root / "docs" / "vectors" / "team-auth-envelope-v2.json"',

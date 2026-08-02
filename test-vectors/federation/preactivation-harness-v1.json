@@ -1,0 +1,767 @@
+{
+  "schema": "aweb.federation-preactivation-harness.v1",
+  "contract": "aweb-aazd.2.1",
+  "topology": {
+    "awid_registries": [
+      "awid-a",
+      "awid-b"
+    ],
+    "receiver_services": [
+      "aweb-a",
+      "aweb-b"
+    ],
+    "receiver_processes": [
+      "aweb-a-1",
+      "aweb-a-2",
+      "aweb-b-1",
+      "aweb-b-2"
+    ],
+    "postgresql_authority_stores": [
+      "postgres-a",
+      "postgres-b"
+    ],
+    "runtime_generated_tls": true,
+    "strict_ingress_calls": false
+  },
+  "canonical_inputs": [
+    {
+      "path": "docs/vectors/federation-origin-ip-v1.json",
+      "bytes": 12746,
+      "sha256": "6d6ec789c4d994913ae84a26021a8e8fe0c7eb3aaf008ee10ce623db7a87cb18",
+      "purpose": [
+        "origin",
+        "IP",
+        "TLS"
+      ],
+      "embedded": false
+    },
+    {
+      "path": "docs/vectors/federation-discovery-v1.json",
+      "bytes": 18774,
+      "sha256": "42fc649d28f097d22073d10e01c800ca653e177ec055a9cd2f40b047eb6a22da",
+      "purpose": [
+        "DNS",
+        "registry",
+        "authority"
+      ],
+      "embedded": false
+    },
+    {
+      "path": "docs/vectors/federation-authority-state-v1.json",
+      "bytes": 24926,
+      "sha256": "dbfae045d87a947ba5e9add41b03832159eb584c1ab1d8644ec5a34f27f8d616",
+      "purpose": [
+        "checkpoint",
+        "cohort",
+        "work",
+        "error",
+        "mutation"
+      ],
+      "embedded": false
+    },
+    {
+      "path": "docs/vectors/identity-log-v1.json",
+      "bytes": 4169,
+      "sha256": "bf49643f2986753ec91297b928f23ddeaa84a9138b65fa21fd9708b9d7df552e",
+      "purpose": [
+        "strict registry full-log input"
+      ],
+      "embedded": false
+    },
+    {
+      "path": "docs/vectors/message-signing-v1.json",
+      "bytes": 2558,
+      "sha256": "c19418cf505c22c4782b9840f89a2dabea02751515c4a59a014f520ba152bc92",
+      "purpose": [
+        "plaintext envelope input"
+      ],
+      "embedded": false
+    },
+    {
+      "path": "docs/vectors/e2ee-v2-cross-language.json",
+      "bytes": 11591,
+      "sha256": "6aacf482e22889f633d6bbf91b327d61837fe48ec54769924defbb4ccb2b6339",
+      "purpose": [
+        "encrypted-v2 envelope input"
+      ],
+      "embedded": false
+    }
+  ],
+  "activation_inputs": {
+    "plaintext": {
+      "canonical_vector": "docs/vectors/message-signing-v1.json",
+      "canonical_case": "mail_with_stable_ids_unicode",
+      "schema_consumer": "aweb.federation.envelope.FederatedDeliveryRequest",
+      "signed_address_source": "signed_payload.from",
+      "wrapper_address_role": "transport_consistency_only",
+      "sender_delivery_origin": "https://sender.fixture.test",
+      "target_delivery_origin": "https://receiver.fixture.test"
+    },
+    "encrypted_v2": {
+      "canonical_vector": "docs/vectors/e2ee-v2-cross-language.json",
+      "canonical_case": "python_mail_envelope",
+      "schema_consumer": "aweb.federation.envelope.FederatedDeliveryRequest",
+      "signed_address_source": "encrypted_envelope.from.address",
+      "plaintext_fallback": false,
+      "sender_delivery_origin": "https://sender.fixture.test",
+      "target_delivery_origin": "https://receiver.fixture.test"
+    },
+    "replay_globality": {
+      "sole_key": "message_id",
+      "kinds": [
+        "mail",
+        "chat"
+      ],
+      "conflict_dimensions": [
+        "envelope_hash",
+        "kind",
+        "sender",
+        "target",
+        "conversation_or_session",
+        "signature",
+        "signed_or_protected_bytes"
+      ],
+      "runtime_owner": "aweb-aazd.6"
+    }
+  },
+  "cases": [
+    {
+      "id": 1,
+      "name": "bidirectional plaintext mail first contact and continuation",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "bidirectional plaintext mail first contact and continuation",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 2,
+      "name": "bidirectional plaintext 1:1 chat first contact and continuation",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "bidirectional plaintext 1:1 chat first contact and continuation",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 3,
+      "name": "bidirectional encrypted-v2 mail and chat with ciphertext-only storage and separate Ed25519/X25519 authority",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:encrypted_v2"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "encrypted_v2"
+      ],
+      "expected_contract": "bidirectional encrypted-v2 mail and chat with ciphertext-only storage and separate Ed25519/X25519 authority",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 4,
+      "name": "same-registry compatibility",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "same-registry compatibility",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 5,
+      "name": "local did:key learned-route continuation and unknown first-contact failure",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "local did:key learned-route continuation and unknown first-contact failure",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 6,
+      "name": "missing wrapper address with signed address success",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "missing wrapper address with signed address success",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 7,
+      "name": "missing sender origin derivation and equal-present success",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "missing sender origin derivation and equal-present success",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 8,
+      "name": "key rotation route-origin rotation and DNS-authorized registry migration after checkpoint extension",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "key rotation route-origin rotation and DNS-authorized registry migration after checkpoint extension",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 9,
+      "name": "receiver-wide exact replay and changed-envelope conflict",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:replay_globality"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "replay_globality"
+      ],
+      "expected_contract": "receiver-wide exact replay and changed-envelope conflict",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 10,
+      "name": "degraded or unanchored head forces full log and unavailable or incomplete evidence fails",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "awid/tests/test_external_registry.py::test_degraded_or_unanchored_head_forces_full_log"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 11,
+      "name": "genesis full log creates restart-durable DID checkpoint",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_authority_core.py::test_checkpoint_vectors_execute_against_postgresql"
+      ],
+      "mutation_disposition": "not_applicable_positive_control"
+    },
+    {
+      "id": 12,
+      "name": "truncated forked malformed log and checkpoint omission fail",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "awid/tests/test_identity_log_verify.py::test_full_identity_log_vectors",
+        "server/tests/test_federation_authority_core.py::test_checkpoint_vectors_execute_against_postgresql"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 13,
+      "name": "two N+1 forks allow one checkpoint winner",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_authority_core.py::test_checkpoint_vectors_execute_against_postgresql"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 14,
+      "name": "delayed N+1 cannot overwrite N+2 including restart",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_authority_core.py::test_checkpoint_vectors_execute_against_postgresql"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 15,
+      "name": "legitimate N+2 reloads winning N+1 and advances",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_authority_core.py::test_checkpoint_vectors_execute_against_postgresql"
+      ],
+      "mutation_disposition": "not_applicable_positive_control"
+    },
+    {
+      "id": 16,
+      "name": "N+2 built on losing fork rejects",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_authority_core.py::test_checkpoint_vectors_execute_against_postgresql"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 17,
+      "name": "policy or storage rejection after Phase A leaves security state only",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "policy or storage rejection after Phase A leaves security state only",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 18,
+      "name": "forced Phase B failure rolls back every delivery effect",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "forced Phase B failure rolls back every delivery effect",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 19,
+      "name": "plaintext or encrypted wrapper address mismatch before DNS",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "plaintext or encrypted wrapper address mismatch before DNS",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 20,
+      "name": "unsigned-address historical continuation uses stored locator only on exact fresh DID and key",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "unsigned-address historical continuation uses stored locator only on exact fresh DID and key",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 21,
+      "name": "missing deleted reassigned or addressless locator fails",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "missing deleted reassigned or addressless locator fails",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 22,
+      "name": "origin mismatch and local wrapper injection fail without route update",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "origin mismatch and local wrapper injection fail without route update",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 23,
+      "name": "one DID at two addresses and origins cannot cross-hit cohorts",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_authority_core.py::test_cohort_vectors_execute_against_postgresql"
+      ],
+      "mutation_disposition": "not_applicable_positive_control"
+    },
+    {
+      "id": 24,
+      "name": "concurrent old and new authority tuples cannot merge",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_authority_core.py::test_cohort_vectors_execute_against_postgresql"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 25,
+      "name": "one worker advance invalidates another worker copy",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_preactivation_harness.py::test_two_workers_share_checkpoint_and_invalidation"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 26,
+      "name": "expired cohort refresh covers source change and source suppression without freshness SLA",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_authority_core.py::test_cohort_vectors_execute_against_postgresql"
+      ],
+      "mutation_disposition": "not_applicable_positive_control"
+    },
+    {
+      "id": 27,
+      "name": "envelope registry URL is ignored or rejected and never contacted",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_preactivation_harness.py::test_two_registries_record_exact_dns_http_tls_and_share_side_cohorts"
+      ],
+      "mutation_disposition": "not_applicable_positive_control"
+    },
+    {
+      "id": 28,
+      "name": "fabricated key without genesis-valid log fails",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "awid/tests/test_identity_log_verify.py::test_full_identity_log_vectors"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 29,
+      "name": "address-to-DID or key mismatch fails",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "awid/tests/test_external_authority.py::test_authority_lookup_vectors"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 30,
+      "name": "non-global IPv4 and IPv6 fail before HTTP",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "awid/tests/test_external_authority.py::test_individual_registry_ip_vectors"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 31,
+      "name": "mixed public and private answers fail",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "awid/tests/test_external_authority.py::test_all_resolved_addresses_are_validated"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 32,
+      "name": "rebinding cannot alter pinned IP and TLS verifies hostname",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "awid/tests/test_external_authority_http.py::test_pinned_tls_dials_selected_ip_and_preserves_hostname"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 33,
+      "name": "redirect has no follow-up and no ambient credentials escape",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "awid/tests/test_external_authority_http.py::test_pinned_transport_never_follows_redirect"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 34,
+      "name": "NXDOMAIN no-record DNS failure and authoritative 404 remain distinct",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "awid/tests/test_external_authority.py::test_strict_dns_discovery_vectors",
+        "awid/tests/test_external_authority.py::test_authority_lookup_vectors"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 35,
+      "name": "cross-instance concurrent mismatch performs one shared chain",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_preactivation_harness.py::test_two_workers_singleflight_one_real_chain_and_non_poisoning"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 36,
+      "name": "global domain origin concurrency token and read budgets are shared",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_preactivation_harness.py::test_two_workers_race_exact_shared_limits_and_token_bucket"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 37,
+      "name": "expired fence owner cannot publish after takeover",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_authority_work.py::test_lease_takeover_increments_persistent_fence_and_stale_owner_cannot_publish"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 38,
+      "name": "oversized or over-entry log bounds signature work",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "awid/tests/test_identity_log_verify.py::test_full_log_bounds_stop_before_signature_work",
+        "awid/tests/test_external_authority_http.py::test_pinned_transport_bounds_identity_encoded_json"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 39,
+      "name": "coordination outage or lock timeout returns stable 503 with no authorization",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_preactivation_harness.py::test_real_postgresql_lock_timeout_fails_closed_without_publication",
+        "scripts/e2e-federation-authority.sh#beta-outage.json"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 40,
+      "name": "conversation and contact do not transfer on reassignment",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "conversation and contact do not transfer on reassignment",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 41,
+      "name": "address-only contact cannot authorize and replacement requires proof plus acceptance",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "address-only contact cannot authorize and replacement requires proof plus acceptance",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 42,
+      "name": "same-team policy remains independent",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext"
+      ],
+      "expected_contract": "same-team policy remains independent",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 43,
+      "name": "missing recipient X25519 assertion remains distinct after sender authority",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:encrypted_v2"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "encrypted_v2"
+      ],
+      "expected_contract": "missing recipient X25519 assertion remains distinct after sender authority",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 44,
+      "name": "sender assertion under non-current key fails without plaintext fallback",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:encrypted_v2"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "encrypted_v2"
+      ],
+      "expected_contract": "sender assertion under non-current key fails without plaintext fallback",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 45,
+      "name": "concurrent mail and chat with one UUID serialize globally",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:replay_globality"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "replay_globality"
+      ],
+      "expected_contract": "concurrent mail and chat with one UUID serialize globally",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 46,
+      "name": "same UUID changed envelope conflicts and rollback permits retry",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:replay_globality"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "replay_globality"
+      ],
+      "expected_contract": "same UUID changed envelope conflicts and rollback permits retry",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 47,
+      "name": "wrong claim and correct claim share evidence without poisoning",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_preactivation_harness.py::test_two_workers_singleflight_one_real_chain_and_non_poisoning"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 48,
+      "name": "mismatch expiry and generation replacement remain claim-independent",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_authority_core.py::test_evidence_reuse_vectors"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 49,
+      "name": "every stable decision row has exact reason status retryability JSON",
+      "mode": "direct_core",
+      "owner": "aweb-aazd.4",
+      "evidence": [
+        "server/tests/test_federation_authority_core.py::test_stable_error_vector_is_the_runtime_error_vocabulary"
+      ],
+      "mutation_disposition": "executed_core_mutation"
+    },
+    {
+      "id": 50,
+      "name": "migration 015 collision legacy replay and receipt permanence contract",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:replay_globality"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "replay_globality"
+      ],
+      "expected_contract": "migration 015 collision legacy replay and receipt permanence contract",
+      "deferred_task": "aweb-aazd.6"
+    },
+    {
+      "id": 51,
+      "name": "pre-activation SOT and support assertions remain complete",
+      "mode": "activation_fixture",
+      "owner": "aweb-aazd.6",
+      "evidence": [
+        "activation_inputs:plaintext",
+        "activation_inputs:encrypted_v2",
+        "activation_inputs:replay_globality"
+      ],
+      "mutation_disposition": "activation_owned_fixture",
+      "fixture_refs": [
+        "plaintext",
+        "encrypted_v2",
+        "replay_globality"
+      ],
+      "expected_contract": "pre-activation SOT and support assertions remain complete",
+      "deferred_task": "aweb-aazd.6"
+    }
+  ]
+}
