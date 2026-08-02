@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories test-vector-provenance test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -55,6 +55,8 @@ help:
 	@echo "  test-ship-ci-contract Verify the canonical mandatory ship workflow"
 	@echo "  test-sot-source-inventories Verify canonical SOT tables and REST routers against source"
 	@echo "  test-vector-provenance Enforce root-only public conformance vectors and consumer paths"
+	@echo "  test-federation-error-reference Verify generated stable error/status/retryability reference"
+	@echo "  regenerate-federation-error-reference Regenerate the stable federation error reference"
 	@echo "  test-cli-reference Verify generated CLI help and root-command completeness"
 	@echo "  regenerate-cli-reference Regenerate the CLI reference from live Cobra help"
 	@echo "  test-mcp-tools-reference Verify the generated MCP inventory against live registration"
@@ -71,8 +73,8 @@ help:
 	@echo "  test-oas-pi-resident-e2e Run the guarded real-Pi wake/reply/retire proof"
 	@echo "  test-tmux-guard Run the guarded tmux migration and PATH-alias regressions"
 	@echo "  test-e2e     Run the end-to-end user journey and its mutation guard (requires Docker)"
-	@echo "  test-federation-harness Validate the 51-row inactive-core inventory and mutations"
-	@echo "  test-federation-e2e Run inactive-core topology and OSS federation journeys (requires Docker)"
+	@echo "  test-federation-harness Validate the 51-row direct-core historical inventory and mutations"
+	@echo "  test-federation-e2e Run the direct/non-ingress historical topology and OSS federation journeys (requires Docker)"
 	@echo "  test-a2a-gateway-e2e Run the A2A gateway Docker journey against real aweb+awid"
 	@echo "  check-a2a-copy-guardrails Block premature A2A trust/E2EE copy"
 	@echo "  check-extension-docs Verify extension docs, source events, vectors, and authority map"
@@ -117,7 +119,7 @@ build:
 # check-cli-go-tidy is here rather than behind test-cli by a deliberate reversal: it was placed
 # after it to inherit a warm module cache, and moving it forward reattributes that fetch rather
 # than adding one - about a second for 85MB when cold.
-test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
 
 # Editable AWID metadata is repeated in both committed Python locks. Check both
 # without repair, then prove a missing dependent-lock dependency is rejected.
@@ -139,13 +141,23 @@ test-vector-provenance:
 	python3 scripts/check_vector_provenance.py
 	python3 scripts/check_vector_provenance.py --self-test
 
+# The public support/error table is generated from the canonical code source and
+# cross-checked against the selected-policy vector. The focused suite proves
+# additions, duplicate reasons, Retry-After drift, and stale output fail closed.
+test-federation-error-reference:
+	python3 scripts/generate_federation_error_reference.py --check
+	python3 -m unittest discover -s scripts -p "test_generate_federation_error_reference.py" -v
+
+regenerate-federation-error-reference:
+	python3 scripts/generate_federation_error_reference.py
+
 # The strict authority vector readers must kill the two concrete security
 # weakenings found during the independent core review.
 test-federation-authority-mutations:
 	python3 scripts/test_federation_authority_mutations.py
 
-# The inactive-core harness inventories all 51 contract rows without claiming
-# activation-owned behavior and kills topology/provenance weakening mutations.
+# The direct-core historical harness inventories all 51 contract rows without
+# claiming ingress coverage and kills topology/provenance weakening mutations.
 test-federation-harness:
 	python3 scripts/check_federation_harness.py
 	python3 scripts/check_federation_harness.py --self-test

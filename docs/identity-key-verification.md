@@ -197,6 +197,28 @@ cached head), verify the whole log:
 Only a fully genesis-anchored log verification (or a head adjacent to such a
 verified head) yields `OK_VERIFIED`.
 
+### Strict federation use
+
+The general `aw` verifier categories above are not themselves cross-registry
+sender authority. Federation ingress uses the separate strict external-address
+adapter and never authorizes from `OK_DEGRADED`, TOFU, the receiver's home
+registry fallback, or a key cache indexed by bare `did:aw`.
+
+The strict adapter selects the registry from the client-signed sender address,
+requires the exact DNS controller/namespace/address/DID/key/origin tuple, and
+accepts only a genesis-verified full log or an adjacent head extending the exact
+receiver checkpoint. The checkpoint is keyed by `did:aw`, independent of
+registry origin, and is compare-and-swapped in PostgreSQL. A lower sequence,
+same-sequence fork, log omitting the checkpoint, unavailable required evidence,
+or inability to persist the checkpoint fails closed before delivery.
+
+A complete address-authority cohort may be reused for at most 60 seconds and
+then the receiver rereads DNS, namespace, address, key-or-log, and route origin.
+This protects against receiver-observed rollback and bounds receiver-chosen
+reuse; it does not prove source freshness. A DNS or registry source can suppress
+an unseen transition indefinitely by continuing to serve an old
+cryptographically valid chain.
+
 ### Notes on what this does and does not prove
 
 - `OK_VERIFIED` proves:
@@ -245,8 +267,9 @@ When receiving a message with `from_stable_id = did_aw`:
   - Only this result — a genesis-anchored verification — may replace a stale
     TOFU-pinned key for this `did_aw`.
 - If result is `OK_DEGRADED`:
-  - Continue operating with TOFU + rotation-announcement rules, but record
-    that stable identity verification was degraded.
+  - For general client trust displays, continue operating with TOFU +
+    rotation-announcement rules, but record that stable identity verification
+    was degraded. Strict federation ingress does not accept this result.
   - MUST NOT replace or overwrite a pinned key on the strength of this result.
     A degraded result may only trigger a full `/log` fetch to attempt a genesis
     -anchored verification.

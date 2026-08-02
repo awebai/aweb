@@ -324,6 +324,16 @@ support.
 Message trust has two layers: Ed25519 signature/recipient-binding verification,
 then continuity handling for a globally addressed sender.
 
+For cross-registry ingress, the receiving service's strict external-address
+path is stronger and separate from general client TOFU/cache behavior. It
+selects authority from the client-signed address, not the receiver's home
+registry, and requires DNS controller, exact namespace/address/DID/key/origin,
+genesis-anchored log evidence, and a PostgreSQL checkpoint/cohort commit.
+`OK_DEGRADED`, a general cache hit, or a process-local pin cannot authorize.
+The receiver may reuse a complete cohort for at most 60 seconds, but an
+external authority can suppress an unseen change by continuing to serve old
+valid evidence; this protocol therefore makes no global freshness SLA.
+
 ### TOFU pins and durable continuity
 
 For global identities, current Go and TypeScript clients keep an address-to-pin
@@ -392,12 +402,25 @@ identity is *never* sufficient on its own: the log proves `did:aw → did:key`,
 not `address → did:aw`, and an attacker who legitimately owns their own `did:aw`
 has a wholly valid log. The controller's authority is anchored in the address's
 `_awid` DNS TXT `controller=` field rather than in the registry response, so a
-compromised registry cannot forge it. The announcement is carried on the message
-and self-authenticating, so it needs no registry read route to be verified.
+registry response alone cannot forge it. Strict receiving authority also checks
+that the current DNS controller matches the proof and freshly resolves the new
+address/DID/key/origin chain.
 
-Operationally this means an address handover that is not accompanied by a
-controller-signed announcement will be refused. Publishing and transporting
-that announcement is a separate operation from changing the address row.
+A controller-signed announcement proves namespace intent; it does not silently
+transfer a recipient's trust relationship. For an identity-bound contact, an
+in-place old-DID to new-DID move requires all of: the canonical controller
+proof, current strict authority for the new DID, an exact-old compare-and-swap,
+and an authenticated request by the contact owner as explicit acceptance.
+Address-only legacy contacts remain inert until their owner explicitly binds
+them to the freshly resolved DID. Deleting a contact does not rebind or transfer
+it; any later new-contact creation is a distinct strict resolution and owner
+acceptance. Address reassignment by itself never transfers the old contact or
+conversation.
+
+Operationally this means an address handover without controller proof is
+refused, and even valid controller proof cannot create or transfer a contact
+without recipient acceptance. Publishing the proof, changing the address row,
+and accepting the relationship are distinct operations.
 
 ---
 

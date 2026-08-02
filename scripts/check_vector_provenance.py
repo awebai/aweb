@@ -260,16 +260,30 @@ ROOT_CONSUMERS = {
         'join(testDir, "..", "..", "docs", "vectors", "identity-log-negative-v1.json")',
     ),
     PurePosixPath("scripts/check-extension-docs.py"): _consumer(
-        "mutation-hook-call-sites-v1.json",
+        {
+            "federation-authority-state-v1.json",
+            "mutation-hook-call-sites-v1.json",
+        },
         'HOOK_INVENTORY = "vectors/mutation-hook-call-sites-v1.json"',
         "inventory_path = docs / HOOK_INVENTORY",
+        'vector_path = docs / "vectors/federation-authority-state-v1.json"',
+    ),
+    PurePosixPath("scripts/generate_federation_error_reference.py"): _consumer(
+        "federation-authority-state-v1.json",
+        'DEFAULT_VECTOR = ROOT / "docs/vectors/federation-authority-state-v1.json"',
+    ),
+    PurePosixPath("scripts/test_generate_federation_error_reference.py"): _consumer(
+        "federation-authority-state-v1.json",
+        'VECTOR = ROOT / "docs/vectors/federation-authority-state-v1.json"',
     ),
 }
 PACKAGE_GUARDS = {
     PurePosixPath("Makefile"): (
-        "test-sot-source-inventories test-vector-provenance test-cli-reference",
+        "test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations",
         "test-vector-provenance:",
         "python3 scripts/check_vector_provenance.py --self-test",
+        "test-federation-error-reference:",
+        "python3 scripts/generate_federation_error_reference.py --check",
     ),
     PurePosixPath("server/tests/test_package_data.py"): (
         '[uv, "build", "--out-dir", str(tmp_path)]',

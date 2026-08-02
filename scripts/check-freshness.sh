@@ -64,7 +64,18 @@ else
   status=1
 fi
 
-# 4. channel-core is a file: dependency of the claude-channel plugin and the pi
+# 4. The public stable federation error reference is generated from canonical
+#    code and cross-checked against the selected-policy vector. Its focused
+#    suite also proves stale output and Retry-After/vocabulary drift fail closed.
+section "federation error reference"
+if make --no-print-directory test-federation-error-reference; then
+  echo "federation error reference matches canonical code and authority vectors"
+else
+  echo "FAIL: federation error reference drift or incomplete stable-error coverage"
+  status=1
+fi
+
+# 5. channel-core is a file: dependency of the claude-channel plugin and the pi
 #    extension; both rebuild it from source and the plugin bundle is gated by
 #    scripts/check-package-dist.mjs (default-aaju). Verify a clean plugin build
 #    still carries the security surface (the bundle reflects current src).
@@ -76,7 +87,7 @@ else
   status=1
 fi
 
-# 5. pi-extension/dist is likewise untracked (default-aajc.5) and rebuilt from
+# 6. pi-extension/dist is likewise untracked (default-aajc.5) and rebuilt from
 #    src by prebuild/ensure-channel-core; verify a clean build produces a valid
 #    bundle so the published pi package can never carry stale channel-core.
 section "pi-extension bundle freshness"
@@ -87,7 +98,7 @@ else
   status=1
 fi
 
-# 6. Public docs served by the AWID site are tracked mirrors of their canonical
+# 7. Public docs served by the AWID site are tracked mirrors of their canonical
 #    docs. This is a comparison gate, not a release-time repair step.
 section "AWID public site document mirrors"
 if make --no-print-directory check-awid-site-docs; then
@@ -97,8 +108,9 @@ else
   status=1
 fi
 
-# 7. Negative controls for the other generated-artifact and mirror checks above.
-#    The MCP inventory's negative controls run in its focused suite in section 3.
+# 8. Negative controls for the other generated-artifact and mirror checks above.
+#    The MCP inventory's negative controls run in its focused suite in section 3;
+#    federation error reference negatives run in section 4.
 #    Each self-test first accepts the clean artifact, then seeds the exact stale
 #    artifact and requires a diagnostic failure. Both directions matter: an
 #    always-red gate is no more trustworthy than an always-green one.
@@ -110,7 +122,7 @@ else
   status=1
 fi
 
-# 8. Documentation path references. Deleted code must not be described as live;
+# 9. Documentation path references. Deleted code must not be described as live;
 #    default-aajc.6 removed the channel shadow modules while the architecture
 #    map still documented them as existing. The self-test proves this check can
 #    still FAIL, so it cannot decay into an always-green no-op.
@@ -122,7 +134,7 @@ else
   status=1
 fi
 
-# 9. The moved fixtures' ignore negations must stay EFFECTIVE, measured as an effect:
+# 10. The moved fixtures' ignore negations must stay EFFECTIVE, measured as an effect:
 #    a new file written into a protected subtree has to be visible to git. Stripping a
 #    negation does not untrack the files already tracked, so the loss appears only at
 #    the next regeneration - and library builds its expected golden set from the

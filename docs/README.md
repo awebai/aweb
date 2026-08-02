@@ -21,9 +21,9 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 91 tracked Markdown documents. This front door does not
+The baseline contains 92 tracked Markdown documents. This front door does not
 self-link, and two private-purpose transition artifacts are deliberately not
-exposed by public path or title. The remaining 88 public Markdown paths appear
+exposed by public path or title. The remaining 89 public Markdown paths appear
 below exactly once.
 
 ## Start here
@@ -58,6 +58,8 @@ authority.
   authority shapes for managed and customer-controlled teams.
 - [Identity and messaging contract](identity-messaging-contract.md) —
   identity-scoped delivery and first-contact routing.
+- [Federation error reference](federation-error-reference.md) — generated stable
+  reason, HTTP status, retryability, and safe-support contract.
 - [Global/local identity routing SOT](global-local-identity-routing.md) — shipped
   global/local route behavior and compatibility cleanup.
 - [Identity-key verification](identity-key-verification.md) — verifying current
