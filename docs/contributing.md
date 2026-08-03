@@ -189,6 +189,16 @@ real-binary profile/team/Library journey. The `Comprehensive ship gate` workflow
 runs that exact target for every pull request and every push to `main`; no person
 chooses whether the journeys run.
 
+The Go leg is accounted from native `go test -json` output by
+`scripts/check_go_test_accounting.py`. Its checked-in policy inventories the exact
+Linux package set, every conditional skip site and build constraint, the
+skip-sensitive tests that must report `run` then `pass`, and every separately
+tagged CLI e2e test. `make ship` selects the non-overridable Linux amd64 policy:
+a missing tool, package, test result, terminal result, malformed record, or any
+skip makes the gate red. The tagged real-stack command passes through the same
+parser with its own exact package/test set, so default coverage never stands in
+for the separately executed e2e result.
+
 Those suites run independently of each other. `make` stops a recipe at the first
 failing line, so while they were recipe lines a failure in one silently removed the
 coverage of every suite behind it — the federation journey failing meant the OSS

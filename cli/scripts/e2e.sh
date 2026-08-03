@@ -61,7 +61,7 @@ AW_BIN="$AW_BIN" \
 AWEB_URL="$AWEB_URL" \
 AWID_REGISTRY_URL="$AWID_URL" \
 LIBRARY_E2E_LIBRARY_URL="$LIBRARY_URL" \
-go test -tags e2e ./e2e -count=1 -v
+python3 "$REPO_ROOT/scripts/check_go_test_accounting.py" run --suite e2e -- go test -json -tags e2e ./e2e -count=1
 
 echo ""
 echo "ALL PASSED: real-binary e2e suite green against the live stack"

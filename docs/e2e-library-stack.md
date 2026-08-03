@@ -166,11 +166,12 @@ To iterate against an already-running stack without the up/down cycle:
 
 ```bash
 make -C cli e2e-up                       # up + seed, leave running
-cd cli/go && AW_E2E=1 AW_BIN=$PWD/aw \
+AW_E2E=1 AW_BIN="$PWD/cli/go/aw" \
   AWEB_URL=http://127.0.0.1:18000 \
   AWID_REGISTRY_URL=http://127.0.0.1:18010 \
   LIBRARY_E2E_LIBRARY_URL=http://127.0.0.1:18765 \
-  go test -tags e2e ./e2e -count=1 -v
+  python3 scripts/check_go_test_accounting.py run --suite e2e -- \
+    go test -json -tags e2e ./e2e -count=1
 make -C cli e2e-down                      # remove all state
 ```
 

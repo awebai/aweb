@@ -260,8 +260,12 @@ test-server:
 test-awid:
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
 
+# The parser's fixture mutations run before the real command. `ship` supplies the
+# inherited strict Linux policy; ordinary cross-platform runs still require a
+# complete structured package result but retain their platform skip semantics.
 test-cli:
-	cd cli/go && GOCACHE=/tmp/go-build go test ./... -count=1
+	python3 scripts/test_check_go_test_accounting.py
+	AW_GO_TEST_RELEASE_PLATFORM="$(AW_GO_TEST_RELEASE_PLATFORM)" GOCACHE=/tmp/go-build python3 scripts/check_go_test_accounting.py run --suite default -- go test -json ./... -count=1
 
 # The Node suites have separate lockfiles and a local file: dependency from the
 # host adapters to channel-core. Install all three before any Node test target
@@ -717,6 +721,10 @@ SHIP_SUITES := release-awid-check test-federation-e2e test-e2e cli-e2e
 ship-suites:
 	@MAKE="$(MAKE)" ./scripts/run-ship-suites.sh $(SHIP_SUITES)
 
+# Target-specific variables are inherited by prerequisites, so the test-cli leg
+# of release-all-check is strict. `override` prevents a command-line assignment
+# from silently downgrading the canonical release proof.
+ship: override AW_GO_TEST_RELEASE_PLATFORM := linux-amd64
 ship: release-all-check
 	@echo ""
 	$(MAKE) ship-suites
