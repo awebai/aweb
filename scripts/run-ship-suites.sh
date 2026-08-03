@@ -29,7 +29,8 @@
 # so the CI conclusion still carries what the summary would have said.
 #
 # Usage: run-ship-suites.sh <make-target>...
-#        MAKE=... to override the make used for each suite (the self-test does).
+#        SHIP_SUITE_MAKE=... overrides the child make for the self-test only;
+#        the canonical Make target supplies literal `make`.
 #
 # Run with --self-test to prove the properties above against stub suites: one
 # deliberate failure, and the suites behind it must still run and report.
@@ -37,9 +38,28 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MAKE="${MAKE:-make}"
+SUITE_MAKE="${SHIP_SUITE_MAKE:-make}"
 
 STATE=""
+
+reject_unsafe_make_modes() {
+  local word short=""
+  for word in ${MAKEFLAGS:-} ${MFLAGS:-}; do
+    case "$word" in
+      --just-print|--dry-run|--reconnaissance|--touch|--ignore-errors|--environment-overrides|--question|-n|-t|-i|-e|-q)
+        printf 'FAIL: ship suites refuse unsafe Make mode %s\n' "$word" >&2
+        return 1
+        ;;
+    esac
+    if [[ "$word" != --* && "$word" != *=* && -z "$short" ]]; then
+      short="${word#-}"
+    fi
+  done
+  if [[ "$short" == *n* || "$short" == *t* || "$short" == *i* || "$short" == *e* || "$short" == *q* ]]; then
+    printf 'FAIL: ship suites refuse unsafe Make flags %s\n' "$short" >&2
+    return 1
+  fi
+}
 
 # Written before any suite starts, so the summary can name suites that never ran.
 init_state() {
@@ -104,7 +124,7 @@ run_suites() {
   for suite in "$@"; do
     printf '\n=== ship suite: %s ===\n' "$suite"
     # Deliberately not `set -e`-guarded: a failure here must not stop the loop.
-    "$MAKE" "$suite" && status=0 || status=$?
+    env -u MAKEFLAGS -u MFLAGS "$SUITE_MAKE" "$suite" && status=0 || status=$?
     if [[ "$status" -eq 0 ]]; then
       record "$suite" "PASSED"
       printf '=== ship suite %s: PASSED ===\n' "$suite"
@@ -145,7 +165,7 @@ STUB
   chmod +x "$stub"
 
   echo "self-test: one failing suite must not stop the suites behind it, and the run must still be red"
-  out="$(MAKE="$stub" bash "${BASH_SOURCE[0]}" suite-a suite-b suite-c 2>&1)" && status=0 || status=$?
+  out="$(SHIP_SUITE_MAKE="$stub" bash "${BASH_SOURCE[0]}" suite-a suite-b suite-c 2>&1)" && status=0 || status=$?
 
   local problems=0
 
@@ -181,7 +201,7 @@ STUB
   # A suite whose command cannot be executed at all must still be reported,
   # rather than counting as a suite that passed quietly.
   echo "self-test: a suite whose command cannot be executed must report FAILED, not pass quietly"
-  out="$(MAKE="$work/no-such-make" bash "${BASH_SOURCE[0]}" suite-a suite-b 2>&1)" && status=0 || status=$?
+  out="$(SHIP_SUITE_MAKE="$work/no-such-make" bash "${BASH_SOURCE[0]}" suite-a suite-b 2>&1)" && status=0 || status=$?
   if [[ "$status" -eq 0 ]]; then
     printf 'FAIL: every suite failed to launch and the run still exited 0\n' >&2
     printf -- '--- the run being judged ---\n%s\n' "$out" >&2
@@ -207,7 +227,7 @@ STUB
   chmod +x "$stub"
 
   local log="$work/killed.log" pid
-  MAKE="$stub" bash "${BASH_SOURCE[0]}" suite-a suite-b suite-c > "$log" 2>&1 &
+  SHIP_SUITE_MAKE="$stub" bash "${BASH_SOURCE[0]}" suite-a suite-b suite-c > "$log" 2>&1 &
   pid="$!"
   # Wait for the blocking suite to be under way, then interrupt the run itself.
   local waited=0
@@ -250,7 +270,7 @@ STUB
     printf 'FAIL: the no-state probe did not apply, so this arm never reached the state it tests\n' >&2
     return 1
   fi
-  out="$(MAKE="$stub" bash "$probe" suite-a 2>&1)" && status=0 || status=$?
+  out="$(SHIP_SUITE_MAKE="$stub" bash "$probe" suite-a 2>&1)" && status=0 || status=$?
   if [[ "$status" -eq 0 ]]; then
     printf 'FAIL: a run that could not report which suites ran still exited 0\n' >&2
     printf -- '--- the run being judged ---\n%s\n' "$out" >&2
@@ -267,6 +287,8 @@ STUB
 
   echo "self-test passed: a failure does not stop the others, the aggregate stays red, an unreached suite reads as NOT RUN, a lost summary is red"
 }
+
+reject_unsafe_make_modes || exit $?
 
 if [[ "${1:-}" == "--self-test" ]]; then
   self_test

@@ -325,6 +325,7 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
       "down",
       "-v",
       "--remove-orphans",
+      "--rmi", "local",
     ], { cwd: serverDir, allowFailure: true, timeoutMs: 120_000 });
 
     await runCommand("docker", [
@@ -373,6 +374,7 @@ async function stopServer(server: ServerHandle | undefined): Promise<void> {
       "down",
       "-v",
       "--remove-orphans",
+      "--rmi", "local",
     ], { cwd: serverDir, allowFailure: true, timeoutMs: 120_000 });
     await rm(server.envFilePath, { force: true }).catch(() => {});
     await rm(server.overrideFilePath, { force: true }).catch(() => {});

@@ -133,9 +133,11 @@ class ShipCIContractTests(unittest.TestCase):
         return found
 
     def assert_ship_runs_every_suite_independently(self, makefile: str) -> None:
-        # := rather than ?= so the environment cannot change what the gate runs.
+        # `override :=` defeats both environment values and make -e.
         suites = self.require_match(
-            r"(?m)^SHIP_SUITES\s*:=\s*(.+)$", makefile, "Makefile must define SHIP_SUITES"
+            r"(?m)^override SHIP_SUITES\s*:=\s*(.+)$",
+            makefile,
+            "Makefile must define a non-overridable SHIP_SUITES",
         )
         listed = set(suites.group(1).split())
         self.assertEqual(
@@ -162,16 +164,16 @@ class ShipCIContractTests(unittest.TestCase):
             "Makefile must define a ship-suites target",
         )
         self.assertIn(
-            "./scripts/run-ship-suites.sh $(SHIP_SUITES)",
+            "SHIP_SUITE_MAKE=make ./scripts/run-ship-suites.sh $(SHIP_SUITES)",
             ship_suites.group(0),
             "ship-suites must hand the whole suite list to the runner",
         )
 
         ship = makefile[makefile.index("ship: release-all-check") :]
         self.assertIn(
-            "$(MAKE) ship-suites",
+            "+@make ship-suites",
             ship,
-            "ship must run the suites through ship-suites rather than as recipe lines",
+            "ship must use literal make to reach ship-suites rather than inherited MAKE",
         )
 
         # cli-e2e could exist as a name while doing nothing.
@@ -285,8 +287,8 @@ class ShipCIContractTests(unittest.TestCase):
     RUNNER_ARM_MUTATIONS = (
         (
             "independence: stop at the first failing suite",
-            '    "$MAKE" "$suite" && status=0 || status=$?',
-            '    "$MAKE" "$suite" || return 1',
+            '    env -u MAKEFLAGS -u MFLAGS "$SUITE_MAKE" "$suite" && status=0 || status=$?',
+            '    env -u MAKEFLAGS -u MFLAGS "$SUITE_MAKE" "$suite" || return 1',
             "suite-c never executed",
         ),
         (
@@ -344,7 +346,9 @@ class ShipCIContractTests(unittest.TestCase):
         self.assert_ship_runs_every_suite_independently(makefile)
 
         original = self.require_match(
-            r"(?m)^SHIP_SUITES\s*:=\s*.+$", makefile, "Makefile must define SHIP_SUITES"
+            r"(?m)^override SHIP_SUITES\s*:=\s*.+$",
+            makefile,
+            "Makefile must define SHIP_SUITES",
         ).group(0)
         mutations = {
             "a dropped suite": makefile.replace(
@@ -354,13 +358,15 @@ class ShipCIContractTests(unittest.TestCase):
                 original, original + " test-e2e-typo", 1
             ),
             "an environment-overridable list": makefile.replace(
-                original, original.replace(":=", "?=", 1), 1
+                original, original.replace("override ", "", 1), 1
             ),
             "the runner bypassed": makefile.replace(
-                "./scripts/run-ship-suites.sh $(SHIP_SUITES)", "true", 1
+                "SHIP_SUITE_MAKE=make ./scripts/run-ship-suites.sh $(SHIP_SUITES)",
+                "true",
+                1,
             ),
             "ship not calling ship-suites": makefile.replace(
-                "\t$(MAKE) ship-suites\n", "", 1
+                "\t+@make ship-suites\n", "", 1
             ),
         }
         for name, mutation in mutations.items():

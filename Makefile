@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-integration test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-integration test-channel-integration-contract test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -120,7 +120,7 @@ build:
 # check-cli-go-tidy is here rather than behind test-cli by a deliberate reversal: it was placed
 # after it to inherit a warm module cache, and moving it forward reattributes that fetch rather
 # than adding one - about a second for 85MB when cold.
-test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp test-ship-ci-contract test-channel-integration-contract test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
 
 # Editable AWID metadata is repeated in both committed Python locks. Check both
 # without repair, then prove a missing dependent-lock dependency is rejected.
@@ -281,6 +281,9 @@ test-channel:
 # target and enters releases as an independently reported ship suite.
 test-channel-integration: test-node-deps
 	./scripts/run-channel-integration.sh
+
+test-channel-integration-contract:
+	python3 scripts/e2e/test_channel_integration_contract.py
 
 # channel-core holds the identity, trust, pinstore and signature-decode logic
 # that channel and pi-extension are both built from, so its suite gates them.
@@ -717,17 +720,33 @@ cli-e2e:
 # make stops a recipe at the first failing line, which is why these are handed to
 # a runner instead of being recipe lines.
 #
-# Assigned with := so the environment cannot change what the gate runs. A
-# deliberate demonstration overrides it on the command line, which make allows
-# and the environment does not.
-SHIP_SUITES := release-awid-check test-channel-integration test-federation-e2e test-e2e cli-e2e
+# Reject Make modes that can print/touch/ignore/override without executing the
+# suite bodies. This is a parse-time error so -i cannot turn the refusal green.
+# BEGIN ship make mode guard
+ifneq ($(filter ship ship-suites,$(MAKECMDGOALS)),)
+ifneq ($(origin MAKE),default)
+$(error ship and ship-suites refuse MAKE replacement: $(MAKE) ($(origin MAKE)))
+endif
+SHIP_LONG_UNSAFE := $(filter --just-print --dry-run --reconnaissance --touch --ignore-errors --environment-overrides --question,$(MAKEFLAGS) $(MFLAGS))
+SHIP_SHORT_FLAGS := $(firstword $(filter-out --% %=%,$(MAKEFLAGS) $(MFLAGS)))
+SHIP_SHORT_UNSAFE := $(strip $(foreach flag,n t i e q,$(if $(findstring $(flag),$(SHIP_SHORT_FLAGS)),$(flag))))
+ifneq ($(strip $(SHIP_LONG_UNSAFE) $(SHIP_SHORT_UNSAFE)),)
+$(error ship and ship-suites refuse unsafe Make modes: $(MAKEFLAGS) $(MFLAGS))
+endif
+endif
+# END ship make mode guard
+
+# `override` prevents both environment and `-e` from redefining the release
+# inventory. The canonical recipe supplies literal `make`; inherited MAKE cannot
+# replace every child invocation with an unrelated successful executable.
+override SHIP_SUITES := release-awid-check test-channel-integration test-federation-e2e test-e2e cli-e2e
 
 ship-suites:
-	@MAKE="$(MAKE)" ./scripts/run-ship-suites.sh $(SHIP_SUITES)
+	+@SHIP_SUITE_MAKE=make ./scripts/run-ship-suites.sh $(SHIP_SUITES)
 
 ship: release-all-check
 	@echo ""
-	$(MAKE) ship-suites
+	+@make ship-suites
 	@echo ""
 	@echo "=== ship: ALL pre-release checks passed ==="
 	@echo "    server:  $(SERVER_VERSION)"
