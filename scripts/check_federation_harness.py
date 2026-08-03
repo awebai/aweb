@@ -12,6 +12,7 @@ from pathlib import Path
 _MANIFEST = Path("test-vectors/federation/preactivation-harness-v1.json")
 _TEST = Path("server/tests/test_federation_preactivation_harness.py")
 _STACK = Path("scripts/e2e-federation-authority.sh")
+_OSS_STACK = Path("scripts/e2e-oss-federation.sh")
 _WORKER = Path("scripts/federation-authority-worker.py")
 _DIRECT = {*range(10, 17), *range(23, 40), *range(47, 50)}
 _ACTIVATION = set(range(1, 52)) - _DIRECT
@@ -177,6 +178,7 @@ def check(root: Path, overrides: Mapping[Path, bytes] | None = None) -> list[str
 
     try:
         stack = _read(root, _STACK, overrides).decode()
+        oss_stack = _read(root, _OSS_STACK, overrides).decode()
         worker = _read(root, _WORKER, overrides).decode()
         tests = _read(root, _TEST, overrides).decode()
     except (OSError, UnicodeError) as exc:
@@ -198,6 +200,38 @@ def check(root: Path, overrides: Mapping[Path, bytes] | None = None) -> list[str
     ):
         if marker not in stack:
             failures.append(f"disposable topology omits guard: {marker}")
+    oss_markers = (
+        "federation-dns:",
+        'AWEB_FEDERATION_TEST: "1"',
+        "publish_strict_dns_authority",
+        "assert_strict_dns_authority",
+        "_awid.alpha IN TXT",
+        "_awid.beta IN TXT",
+        "registry=http://awid:8010",
+        'ALICE_CONTROLLER_DID="$(echo "$alice_create" | jq_field controller_did)"',
+        'BOB_CONTROLLER_DID="$(echo "$bob_create" | jq_field controller_did)"',
+        'publish_strict_dns_authority "$ALICE_CONTROLLER_DID" "$BOB_CONTROLLER_DID"',
+        'assert_eq "unknown local-only federated e2ee mail first contact rejected" "1" "$fed_local_exit"',
+        'assert_eq "unknown local-only federated e2ee chat first contact rejected" "1" "$fed_local_chat_exit"',
+        'assert_contains "unknown local-only federated e2ee mail fails closed" "$fed_local_out" "Federation encrypted sender address does not match"',
+        'assert_contains "unknown local-only federated e2ee chat fails closed" "$fed_local_chat_out" "Federation encrypted sender address does not match"',
+        'echo "Pacing strict authority at 30 resolutions/minute before Phase 5"',
+        "sleep 6",
+        "down -v --remove-orphans",
+        'docker ps -aq --filter label=com.docker.compose.project="$PROJECT"',
+        'docker volume ls -q --filter label=com.docker.compose.project="$PROJECT"',
+        'docker network ls -q --filter label=com.docker.compose.project="$PROJECT"',
+    )
+    for marker in oss_markers:
+        if marker not in oss_stack:
+            failures.append(f"OSS federation topology omits strict DNS guard: {marker}")
+    if oss_stack.count('AWEB_FEDERATION_TEST: "1"') != 2:
+        failures.append("both OSS federation receivers must enable isolated test policy")
+    if any(
+        oss_stack.count(f"# FEDERATION_DNS_IP_{receiver}") != 1
+        for receiver in ("ALPHA", "BETA")
+    ):
+        failures.append("both OSS federation receivers must use isolated authoritative DNS")
     for source_name, source in (("stack", stack), ("worker", worker)):
         if "/v1/federation/messages" in source or "/v1/federation/chat" in source:
             failures.append(f"{source_name} activates federation ingress")
@@ -239,6 +273,7 @@ def _manifest_mutation(root: Path, mutate: Callable[[dict], None]) -> dict[Path,
 
 def self_test(root: Path) -> list[str]:
     stack = (root / _STACK).read_bytes()
+    oss_stack = (root / _OSS_STACK).read_bytes()
     worker = (root / _WORKER).read_bytes()
     tests = (root / _TEST).read_bytes()
     controls = (
@@ -365,6 +400,89 @@ def self_test(root: Path) -> list[str]:
                 _TEST: tests.replace(
                     b'by_label["wrong"][1] == "sender_address_did_mismatch"',
                     b'by_label["wrong"][1]',
+                )
+            },
+        ),
+        (
+            "OSS strict DNS service removed",
+            {_OSS_STACK: oss_stack.replace(b"federation-dns:", b"retired-dns:")},
+        ),
+        (
+            "OSS isolated federation policy removed",
+            {
+                _OSS_STACK: oss_stack.replace(
+                    b'AWEB_FEDERATION_TEST: "1"',
+                    b'AWEB_FEDERATION_TEST: "0"',
+                )
+            },
+        ),
+        (
+            "OSS DNS authority publication removed",
+            {
+                _OSS_STACK: oss_stack.replace(
+                    b"publish_strict_dns_authority",
+                    b"publish_untrusted_dns_hint",
+                )
+            },
+        ),
+        (
+            "OSS DNS authority preflight removed",
+            {
+                _OSS_STACK: oss_stack.replace(
+                    b"assert_strict_dns_authority",
+                    b"skip_strict_dns_authority",
+                )
+            },
+        ),
+        (
+            "OSS identity key substituted for namespace controller",
+            {
+                _OSS_STACK: oss_stack.replace(
+                    b'publish_strict_dns_authority "$ALICE_CONTROLLER_DID" "$BOB_CONTROLLER_DID"',
+                    b'publish_strict_dns_authority "$ALICE_DID_KEY" "$BOB_DID_KEY"',
+                )
+            },
+        ),
+        (
+            "OSS unknown local first contact overclaimed",
+            {
+                _OSS_STACK: oss_stack.replace(
+                    b'assert_eq "unknown local-only federated e2ee mail first contact rejected" "1" "$fed_local_exit"',
+                    b'assert_eq "unknown local-only federated e2ee mail first contact rejected" "0" "$fed_local_exit"',
+                ).replace(
+                    b'assert_eq "unknown local-only federated e2ee chat first contact rejected" "1" "$fed_local_chat_exit"',
+                    b'assert_eq "unknown local-only federated e2ee chat first contact rejected" "0" "$fed_local_chat_exit"',
+                )
+            },
+        ),
+        (
+            "OSS production authority pacing removed",
+            {_OSS_STACK: oss_stack.replace(b"sleep 6", b"true # pacing removed")},
+        ),
+        (
+            "OSS beta receiver DNS wiring removed",
+            {
+                _OSS_STACK: oss_stack.replace(
+                    b"# FEDERATION_DNS_IP_BETA",
+                    b"# NO_FEDERATION_DNS_BETA",
+                )
+            },
+        ),
+        (
+            "OSS targeted teardown removed",
+            {
+                _OSS_STACK: oss_stack.replace(
+                    b"down -v --remove-orphans",
+                    b"down -v",
+                )
+            },
+        ),
+        (
+            "OSS network teardown proof removed",
+            {
+                _OSS_STACK: oss_stack.replace(
+                    b'docker network ls -q --filter label=com.docker.compose.project="$PROJECT"',
+                    b"true",
                 )
             },
         ),

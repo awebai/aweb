@@ -115,7 +115,7 @@ async def test_ensure_session_creates_session(aweb_cloud_db):
     assert conversation["created_by_did"] == "did:aw:alice"
     assert conversation["status"] == "active"
     assert {row["did"] for row in participants} == {"did:aw:alice", "did:aw:bob"}
-    assert {row["transport_hint"] for row in participants} == {"chat"}
+    assert {row["transport_hint"] for row in participants} == {"local"}
 
 
 @pytest.mark.asyncio
@@ -194,7 +194,7 @@ async def test_ensure_session_backfills_conversation_for_existing_chat_session(a
     )
     assert conversation["conversation_type"] == "chat"
     assert {row["did"] for row in participants} == {"did:aw:alice", "did:aw:bob"}
-    assert {row["transport_hint"] for row in participants} == {"chat"}
+    assert {row["transport_hint"] for row in participants} == {"local"}
 
 
 @pytest.mark.asyncio

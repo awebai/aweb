@@ -908,7 +908,8 @@ async def _deliver_remote_mail_and_project_locally(
                     "agent_id": auth.agent_id,
                     "alias": auth.alias or sender_address or sender_did,
                     "address": sender_address,
-                    "transport_hint": "sender",
+                    "current_did_key": sender_current_did,
+                    "transport_hint": "local",
                 },
                 recipients=[
                     {
@@ -918,7 +919,7 @@ async def _deliver_remote_mail_and_project_locally(
                         "address": target_address,
                         "delivery_origin": delivery_origin,
                         "current_did_key": target_current_did,
-                        "transport_hint": _recipient_transport_hint(payload),
+                        "transport_hint": "federation:" + delivery_origin,
                     }
                 ],
                 team_id=auth.team_id,
@@ -1682,7 +1683,8 @@ async def send_message(
                 "agent_id": auth.agent_id,
                 "alias": auth.alias or sender_address or sender_did,
                 "address": sender_address,
-                "transport_hint": "sender",
+                "current_did_key": (auth.did_key or "").strip() or None,
+                "transport_hint": "local",
             },
             recipients=[
                 {
@@ -1691,7 +1693,7 @@ async def send_message(
                     "alias": to_alias or (recipient or {}).get("alias") or recipient_did or "",
                     "address": _recipient_conversation_address(recipient, payload),
                     "current_did_key": (recipient or {}).get("did_key"),
-                    "transport_hint": _recipient_transport_hint(payload),
+                    "transport_hint": "local",
                 }
             ],
             team_id=auth.team_id,

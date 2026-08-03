@@ -462,9 +462,12 @@ async def test_send_message_to_local_alias_creates_conversation(aweb_cloud_db):
     by_did = {row["did"]: row for row in participants}
     assert by_did["did:aw:alice"]["role"] == "initiator"
     assert str(by_did["did:aw:alice"]["agent_id"]) == alice_agent_id
+    assert by_did["did:aw:alice"]["current_did_key"] == alice_did_key
+    assert by_did["did:aw:alice"]["transport_hint"] == "local"
     assert by_did["did:aw:bob"]["role"] == "participant"
     assert str(by_did["did:aw:bob"]["agent_id"]) == bob_agent_id
-    assert by_did["did:aw:bob"]["transport_hint"] == "to_alias"
+    assert by_did["did:aw:bob"]["current_did_key"] == bob_did_key
+    assert by_did["did:aw:bob"]["transport_hint"] == "local"
 
     async def _bob_auth():
         return MessagingAuth(
@@ -932,14 +935,18 @@ async def test_send_message_to_cross_team_did_creates_conversation(aweb_cloud_db
     assert conversation["team_id"] == "backend:acme.com"
     assert str(message["conversation_id"]) == conversation_id
     assert message["to_did"] == "did:aw:bob"
+    assert by_did["did:aw:alice"]["current_did_key"] == alice_did_key
+    assert by_did["did:aw:alice"]["transport_hint"] == "local"
     assert str(by_did["did:aw:bob"]["agent_id"]) == bob_agent_id
     assert by_did["did:aw:bob"]["address"] == "otherco.com/bob"
-    assert by_did["did:aw:bob"]["transport_hint"] == "to_did"
+    assert by_did["did:aw:bob"]["current_did_key"] == bob_did_key
+    assert by_did["did:aw:bob"]["transport_hint"] == "local"
 
 
 @pytest.mark.asyncio
 async def test_send_message_to_external_address_posts_federated_mail_and_projects_locally(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
+    bob_sk, _, bob_did_key = _make_keypair()
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
     alice_agent_id = await _insert_agent(
         aweb_cloud_db.aweb_db,
@@ -950,14 +957,16 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
         address="acme.com/alice",
     )
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_key = AsyncMock(
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key)
+    )
     registry.resolve_address = AsyncMock(
         return_value=Address(
             address_id="addr-2",
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:bob",
+            current_did_key=bob_did_key,
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://remote.example"),
@@ -1007,7 +1016,7 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
             "subject": "conversation address",
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:bob",
+            "to_did": bob_did_key,
             "to_stable_id": "did:aw:bob",
             "type": "mail",
         }
@@ -1046,7 +1055,7 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
     assert remote_body["envelope"]["sender_did_aw"] == "did:aw:alice"
     assert remote_body["envelope"]["sender_current_did_key"] == alice_did_key
     assert remote_body["envelope"]["target_did_aw"] == "did:aw:bob"
-    assert remote_body["envelope"]["target_current_did_key"] == "did:key:bob"
+    assert remote_body["envelope"]["target_current_did_key"] == bob_did_key
     participants = await _conversation_participants(aweb_cloud_db.aweb_db, conversation_id)
     by_did = {row["did"]: row for row in participants}
     message = await aweb_cloud_db.aweb_db.fetch_one(
@@ -1062,8 +1071,12 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
     assert message["to_did"] == "did:aw:bob"
     assert by_did["did:aw:bob"]["agent_id"] is None
     assert by_did["did:aw:bob"]["address"] == "otherco.com/bob"
-    assert by_did["did:aw:bob"]["current_did_key"] == "did:key:bob"
-    assert by_did["did:aw:bob"]["transport_hint"] == "to_address"
+    assert by_did["did:aw:alice"]["current_did_key"] == alice_did_key
+    assert by_did["did:aw:alice"]["delivery_origin"] is None
+    assert by_did["did:aw:alice"]["transport_hint"] == "local"
+    assert by_did["did:aw:bob"]["current_did_key"] == bob_did_key
+    assert by_did["did:aw:bob"]["delivery_origin"] == "https://remote.example"
+    assert by_did["did:aw:bob"]["transport_hint"] == "federation:https://remote.example"
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         retry = await client.post("/v1/messages", json=payload)
@@ -1077,6 +1090,26 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
         UUID(message_id),
     )
     assert projected_count == 1
+
+    reply_payload = _federated_mail_payload(
+        sender_sk=bob_sk,
+        sender_did_key=bob_did_key,
+        sender_did_aw="did:aw:bob",
+        sender_address="otherco.com/bob",
+        sender_delivery_origin="https://remote.example",
+        target_address="acme.com/alice",
+        target_did_aw="did:aw:alice",
+        target_did_key=alice_did_key,
+        target_delivery_origin="http://test",
+        subject="remote reply",
+        body="reply through the projected route",
+        conversation_id=conversation_id,
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.post("/v1/federation/messages", json=reply_payload)
+
+    assert reply.status_code == 200, reply.text
+    assert reply.json()["conversation_id"] == conversation_id
 
 
 @pytest.mark.asyncio

@@ -47,6 +47,7 @@ def copy_checkout(destination: Path) -> None:
             "server/tests/test_federation_activation_delivery.py",
             "server/tests/test_federation_envelope.py",
             "server/tests/test_messages_http.py",
+            "server/tests/test_chat_http.py",
             "server/tests/test_federation_preactivation_harness.py",
             "server/tests/test_mcp_contacts_consumer.py",
             "server/tests/test_awid_registry_client.py",
@@ -167,6 +168,10 @@ def main() -> None:
             "tests/test_federation_activation_delivery.py::test_phase_b_rejects_preexisting_noncanonical_stored_route",
             "tests/test_awid_registry_client.py::test_local_address_authority_ignores_cached_old_binding",
             "tests/test_federation_activation_delivery.py::test_phase_b_rejects_preexisting_external_chat_target_origin",
+            "tests/test_messages_http.py::test_send_message_to_external_address_posts_federated_mail_and_projects_locally",
+            "tests/test_chat_http.py::test_chat_to_external_address_posts_federated_chat_and_projects_locally",
+            "tests/test_chat_http.py::test_remote_chat_route_refresh_preserves_stable_authority_error",
+            "tests/test_chat_http.py::test_chat_continuation_refreshes_stale_delivery_origin_once",
         )
         activation_baseline = run_server_tests(checkout, *activation_nodes)
         if activation_baseline.returncode != 0:
@@ -482,12 +487,69 @@ def main() -> None:
             "test_contact_reassignment_requires_signed_explicit_acceptance",
         )
 
+        messages_route = checkout / "server" / "src" / "aweb" / "routes" / "messages.py"
+        replace_exact(
+            messages_route,
+            '                    "current_did_key": sender_current_did,\n',
+            "",
+        )
+        require_killed(
+            run_server_tests(checkout, activation_nodes[14]),
+            "test_send_message_to_external_address_posts_federated_mail_and_projects_locally",
+        )
+
+        chat_service = checkout / "server" / "src" / "aweb" / "messaging" / "chat.py"
+        replace_exact(
+            chat_service,
+            '                "transport_hint": transport_hint or (\n                    "federation:" + delivery_origin if delivery_origin else "local"\n                ),\n',
+            '                "transport_hint": "chat",\n',
+        )
+        require_killed(
+            run_server_tests(checkout, activation_nodes[15]),
+            "test_chat_to_external_address_posts_federated_chat_and_projects_locally",
+        )
+
+        chat_route = checkout / "server" / "src" / "aweb" / "routes" / "chat.py"
+        original_chat_route = chat_route.read_text(encoding="utf-8")
+        replace_exact(
+            chat_route,
+            '                    "_strict_authority_route_current": strict_authority is not None,\n',
+            "",
+        )
+        require_killed(
+            run_server_tests(checkout, activation_nodes[15]),
+            "test_chat_to_external_address_posts_federated_chat_and_projects_locally",
+        )
+        chat_route.write_text(original_chat_route, encoding="utf-8")
+
+        replace_exact(
+            chat_route,
+            "    except (HTTPException, FederationAuthorityError):\n        raise\n",
+            "    except HTTPException:\n        raise\n",
+        )
+        require_killed(
+            run_server_tests(checkout, activation_nodes[16]),
+            "test_remote_chat_route_refresh_preserves_stable_authority_error",
+        )
+        chat_route.write_text(original_chat_route, encoding="utf-8")
+
+        replace_exact(
+            chat_route,
+            "                current_did_key = $4,\n                transport_hint = 'federation:' || $3\n",
+            "                current_did_key = $4\n",
+        )
+        require_killed(
+            run_server_tests(checkout, activation_nodes[17]),
+            "test_chat_continuation_refreshes_stale_delivery_origin_once",
+        )
+
     print(
         "authority and activation mutation controls passed: network authority, "
         "Phase-A gating, identity-bound contacts, Phase-B atomicity, signed-address "
         "extraction, E2E no-downgrade, HTTP/MCP strict composition, contact-conversation "
-        "binding, route integrity, fresh local authority, and reassignment acceptance "
-        "weakenings were killed"
+        "binding, route integrity, outbound continuation projection, refreshed chat "
+        "routes, stable authority errors, fresh local authority, and reassignment "
+        "acceptance weakenings were killed"
     )
 
 
