@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
@@ -55,21 +58,8 @@ async def test_non_federation_field_validation_uses_fastapi_error_serialization(
     ]
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("field", "value", "reason"),
-    [
-        ("message_id", "not-a-uuid", "federation_envelope_invalid"),
-        ("timestamp", "not-a-timestamp", "federation_timestamp_invalid"),
-    ],
-)
-async def test_federation_field_validation_keeps_authority_error_contract(
-    field: str,
-    value: str,
-    reason: str,
-):
-    app = _create_validation_test_app()
-    payload = {
+def _federation_validation_payload() -> dict:
+    return {
         "envelope": {
             "version": 1,
             "type": "mail",
@@ -85,6 +75,23 @@ async def test_federation_field_validation_keeps_authority_error_contract(
         },
         "signature": "signature",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("message_id", "not-a-uuid", "federation_envelope_invalid"),
+        ("timestamp", "not-a-timestamp", "federation_timestamp_invalid"),
+    ],
+)
+async def test_federation_field_validation_keeps_authority_error_contract(
+    field: str,
+    value: str,
+    reason: str,
+):
+    app = _create_validation_test_app()
+    payload = _federation_validation_payload()
     payload["envelope"][field] = value
     async with AsyncClient(
         transport=ASGITransport(app=app, raise_app_exceptions=False),
@@ -103,3 +110,50 @@ async def test_federation_field_validation_keeps_authority_error_contract(
         "retryable": False,
         "correlation_id": "correlation-fixture",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value", "reason", "correlation_id"),
+    [
+        (
+            "message_id",
+            "not-a-uuid",
+            "federation_envelope_invalid",
+            "mounted-correlation-fixture",
+        ),
+        ("timestamp", "not-a-timestamp", "federation_timestamp_invalid", None),
+    ],
+)
+async def test_mounted_federation_validation_keeps_authority_error_contract(
+    field: str,
+    value: str,
+    reason: str,
+    correlation_id: str | None,
+):
+    parent_app = FastAPI()
+    parent_app.mount("/api", _create_validation_test_app())
+    payload = _federation_validation_payload()
+    payload["envelope"][field] = value
+    headers = {"X-Correlation-ID": correlation_id} if correlation_id else {}
+
+    async with AsyncClient(
+        transport=ASGITransport(app=parent_app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            "/api/v1/federation/messages",
+            headers=headers,
+            json=payload,
+        )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body.keys() == {"detail", "reason", "retryable", "correlation_id"}
+    assert body["detail"] == reason
+    assert body["reason"] == reason
+    assert body["retryable"] is False
+    if correlation_id is None:
+        UUID(body["correlation_id"])
+    else:
+        assert body["correlation_id"] == correlation_id

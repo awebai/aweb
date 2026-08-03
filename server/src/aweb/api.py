@@ -435,7 +435,13 @@ def create_app(
     async def _request_validation_error_handler(
         request: Request, exc: RequestValidationError
     ):
-        if request.url.path.startswith("/v1/federation/"):
+        request_path = request.url.path
+        root_path = request.scope.get("root_path", "").rstrip("/")
+        if root_path and (
+            request_path == root_path or request_path.startswith(f"{root_path}/")
+        ):
+            request_path = request_path[len(root_path) :] or "/"
+        if request_path.startswith("/v1/federation/"):
             from uuid import uuid4
 
             reason = (
