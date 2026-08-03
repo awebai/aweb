@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-integration test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -49,6 +49,7 @@ help:
 	@echo "  test-awid    Run awid service tests"
 	@echo "  test-cli     Run CLI tests"
 	@echo "  test-channel Run channel tests"
+	@echo "  test-channel-integration Run channel managed real-stack tests (release path)"
 	@echo "  test-channel-core Run channel-core tests"
 	@echo "  test-channel-core-process-guard Run the multi-process DeliveryStore guard (release path)"
 	@echo "  test-pi-extension Run pi-extension tests"
@@ -275,6 +276,11 @@ test-channel test-channel-core test-pi-extension: test-node-deps
 
 test-channel:
 	cd channel && npm test
+
+# Channel owns this managed real-stack suite. It stays outside the normal unit
+# target and enters releases as an independently reported ship suite.
+test-channel-integration: test-node-deps
+	./scripts/run-channel-integration.sh
 
 # channel-core holds the identity, trust, pinstore and signature-decode logic
 # that channel and pi-extension are both built from, so its suite gates them.
@@ -690,6 +696,8 @@ release-all-check:
 #    awid that unit/integration tests miss in isolation.
 #  - test-federation-e2e catches cross-server mail/chat federation
 #    regressions that single-server user journeys cannot see.
+#  - test-channel-integration catches live channel mail/chat, durable unread,
+#    stream outage and reconnect regressions against its owned managed stack.
 #  - cli e2e (make -C cli e2e) runs the real-stack profile/team/Library net:
 #    awid + aweb + Library from source, seeded, driven by the real aw binary.
 #    It catches the materialize/team/Library regressions hermetic tests miss
@@ -712,7 +720,7 @@ cli-e2e:
 # Assigned with := so the environment cannot change what the gate runs. A
 # deliberate demonstration overrides it on the command line, which make allows
 # and the environment does not.
-SHIP_SUITES := release-awid-check test-federation-e2e test-e2e cli-e2e
+SHIP_SUITES := release-awid-check test-channel-integration test-federation-e2e test-e2e cli-e2e
 
 ship-suites:
 	@MAKE="$(MAKE)" ./scripts/run-ship-suites.sh $(SHIP_SUITES)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -12,6 +13,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ship.yml"
 CONTRIBUTING = REPO_ROOT / "docs" / "contributing.md"
+CHANNEL_PACKAGE = REPO_ROOT / "channel" / "package.json"
+CHANNEL_INTEGRATION_TEST = REPO_ROOT / "channel" / "test" / "integration.test.ts"
+CHANNEL_INTEGRATION_RUNNER = REPO_ROOT / "scripts" / "run-channel-integration.sh"
 
 
 class ShipCIContractTests(unittest.TestCase):
@@ -112,7 +116,13 @@ class ShipCIContractTests(unittest.TestCase):
     # expected set, that each name is a real target, and that the runner is what
     # consumes the list.
     EXPECTED_SHIP_SUITES = frozenset(
-        {"release-awid-check", "test-federation-e2e", "test-e2e", "cli-e2e"}
+        {
+            "release-awid-check",
+            "test-channel-integration",
+            "test-federation-e2e",
+            "test-e2e",
+            "cli-e2e",
+        }
     )
 
     def require_match(self, pattern: str, text: str, message: str) -> re.Match[str]:
@@ -172,6 +182,52 @@ class ShipCIContractTests(unittest.TestCase):
 
         runner = REPO_ROOT / "scripts" / "run-ship-suites.sh"
         self.assertTrue(runner.is_file(), f"{runner} must exist")
+
+    def test_channel_real_stack_suite_is_complete_and_release_connected(self) -> None:
+        makefile = MAKEFILE.read_text(encoding="utf-8")
+        package = json.loads(CHANNEL_PACKAGE.read_text(encoding="utf-8"))
+        integration = CHANNEL_INTEGRATION_TEST.read_text(encoding="utf-8")
+        runner = CHANNEL_INTEGRATION_RUNNER.read_text(encoding="utf-8")
+
+        self.assertEqual(
+            package["scripts"]["test"],
+            "vitest run --exclude test/integration.test.ts",
+            "the normal channel unit gate must remain separate from the real-stack suite",
+        )
+        self.assertEqual(
+            package["scripts"]["test:integration"],
+            "vitest run test/integration.test.ts",
+            "test:integration must execute the real-stack test file rather than a broader or empty selector",
+        )
+
+        target = self.require_match(
+            r"(?m)^test-channel-integration:[^\n]*\n(?:\t.*\n)+",
+            makefile,
+            "Makefile must own a channel real-stack release target",
+        )
+        self.assertIn(
+            "./scripts/run-channel-integration.sh",
+            target.group(0),
+            "the release target must use the cleanup-owning integration runner",
+        )
+
+        for marker in (
+            'npm run test:integration',
+            'CHANNEL_INTEGRATION_COMPOSE_PROJECT="$PROJECT"',
+            'CHANNEL_INTEGRATION_TEMP_ROOT="$RUNTIME"',
+            'trap cleanup EXIT',
+            'down -v --remove-orphans',
+            'com.docker.compose.project="$PROJECT"',
+        ):
+            with self.subTest(runner_marker=marker):
+                self.assertIn(marker, runner)
+        self.assertIn("AWEB_TEST_URL", runner)
+        self.assertIn("AWID_TEST_URL", runner)
+        self.assertNotIn("docker system prune", runner)
+        self.assertNotIn("docker kill", runner)
+
+        self.assertIn('"--project-name", server.projectName', integration)
+        self.assertIn("projectName,", integration)
 
     RUNNER = REPO_ROOT / "scripts" / "run-ship-suites.sh"
 

@@ -52,6 +52,7 @@ interface ServerHandle {
   awebURL: string;
   awidURL: string;
   managed: boolean;
+  projectName?: string;
   envFilePath?: string;
   overrideFilePath?: string;
 }
@@ -114,9 +115,12 @@ describe.sequential("channel integration", () => {
   let transport: StdioClientTransport | undefined;
   let notifications: NotificationQueue;
   let channelStderr = "";
+  let tempRootOwnedByRunner = false;
 
   beforeAll(async () => {
-    tempRoot = await mkdtemp(join(tmpdir(), "channel-e2e-"));
+    const providedTempRoot = process.env.CHANNEL_INTEGRATION_TEMP_ROOT;
+    tempRoot = providedTempRoot ?? await mkdtemp(join(tmpdir(), "channel-e2e-"));
+    tempRootOwnedByRunner = Boolean(providedTempRoot);
     homeDir = join(tempRoot, "home");
     aliceDir = join(tempRoot, "alice");
     bobDir = join(tempRoot, "bob");
@@ -149,7 +153,7 @@ describe.sequential("channel integration", () => {
   afterAll(async () => {
     await transport?.close().catch(() => {});
     await stopServer(server);
-    if (tempRoot) {
+    if (tempRoot && !tempRootOwnedByRunner) {
       await rm(tempRoot, { recursive: true, force: true }).catch(() => {});
     }
   }, 45_000);
@@ -267,6 +271,8 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
 
   const envFilePath = join(tempRoot, ".env.integration");
   const overrideFilePath = join(tempRoot, "docker-compose.override.yml");
+  const projectName = process.env.CHANNEL_INTEGRATION_COMPOSE_PROJECT
+    ?? `aweb-channel-integration-${process.pid}-${Date.now()}`;
   const postgresUser = "aweb";
   const postgresPassword = "aweb-e2e-test";
   const postgresDb = "aweb";
@@ -298,54 +304,54 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     '      - "${POSTGRES_PORT}:5432"',
   ].join("\n"));
 
-  await runCommand("docker", [
-    "compose",
-    "-f", join(serverDir, "docker-compose.yml"),
-    "-f", overrideFilePath,
-    "--env-file", envFilePath,
-    "down",
-    "-v",
-  ], { cwd: serverDir, allowFailure: true, timeoutMs: 120_000 });
-
-  await runCommand("docker", [
-    "compose",
-    "-f", join(serverDir, "docker-compose.yml"),
-    "-f", overrideFilePath,
-    "--env-file", envFilePath,
-    "up",
-    "-d",
-    "--build",
-  ], { cwd: serverDir, timeoutMs: 300_000 });
-
   const awidURL = `http://127.0.0.1:${awidPort}`;
   const awebURL = `http://127.0.0.1:${awebPort}`;
-  try {
-    await waitForHealthyServer(awidURL);
-    await waitForHealthyServer(awebURL);
-  } catch (error) {
-    await stopServer({
-      awebURL,
-      awidURL,
-      managed: true,
-      envFilePath,
-      overrideFilePath,
-    });
-    throw error;
-  }
-
-  return {
+  const managedServer: ServerHandle = {
     awebURL,
     awidURL,
     managed: true,
+    projectName,
     envFilePath,
     overrideFilePath,
   };
+
+  try {
+    await runCommand("docker", [
+      "compose",
+      "--project-name", projectName,
+      "-f", join(serverDir, "docker-compose.yml"),
+      "-f", overrideFilePath,
+      "--env-file", envFilePath,
+      "down",
+      "-v",
+      "--remove-orphans",
+    ], { cwd: serverDir, allowFailure: true, timeoutMs: 120_000 });
+
+    await runCommand("docker", [
+      "compose",
+      "--project-name", projectName,
+      "-f", join(serverDir, "docker-compose.yml"),
+      "-f", overrideFilePath,
+      "--env-file", envFilePath,
+      "up",
+      "-d",
+      "--build",
+    ], { cwd: serverDir, timeoutMs: 300_000 });
+
+    await waitForHealthyServer(awidURL);
+    await waitForHealthyServer(awebURL);
+    return managedServer;
+  } catch (error) {
+    await stopServer(managedServer);
+    throw error;
+  }
 }
 
 async function composeAwebService(server: ServerHandle, action: "start" | "stop"): Promise<void> {
-  if (!server.managed || !server.envFilePath || !server.overrideFilePath) return;
+  if (!server.managed || !server.projectName || !server.envFilePath || !server.overrideFilePath) return;
   await runCommand("docker", [
     "compose",
+    "--project-name", server.projectName,
     "-f", join(serverDir, "docker-compose.yml"),
     "-f", server.overrideFilePath,
     "--env-file", server.envFilePath,
@@ -357,14 +363,16 @@ async function composeAwebService(server: ServerHandle, action: "start" | "stop"
 async function stopServer(server: ServerHandle | undefined): Promise<void> {
   if (!server) return;
 
-  if (server.managed && server.envFilePath && server.overrideFilePath) {
+  if (server.managed && server.projectName && server.envFilePath && server.overrideFilePath) {
     await runCommand("docker", [
       "compose",
+      "--project-name", server.projectName,
       "-f", join(serverDir, "docker-compose.yml"),
       "-f", server.overrideFilePath,
       "--env-file", server.envFilePath,
       "down",
       "-v",
+      "--remove-orphans",
     ], { cwd: serverDir, allowFailure: true, timeoutMs: 120_000 });
     await rm(server.envFilePath, { force: true }).catch(() => {});
     await rm(server.overrideFilePath, { force: true }).catch(() => {});
