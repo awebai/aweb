@@ -1,7 +1,9 @@
 {
   "schema_version": 1,
-  "repository": "https://github.com/OAS-Framework/oas.git",
-  "commit": "f7c1703422a37fc58f0aa506e9bcd8235e78fd24",
-  "purpose": "Reproducible OAS launch-environment seam input for aweb release tests",
-  "tradeoff": "The default no longer exercises uncommitted or newer local OAS integration work; pass OAS_TEST_ROOT explicitly for that opt-in coverage."
+  "repository": "https://github.com/awebai/oas.git",
+  "commit": "30499787aef91073ae2f115baea453306511e03b",
+  "purpose": "Reproducible OAS seam input for aweb release tests: released v0.20 upstream main plus the three aweb seams proposed upstream as OAS PRs 37, 48 and 69 (Pi task ordering, launch environment contract, retirement cleanup evidence).",
+  "tradeoff": "The default no longer exercises uncommitted or newer local OAS integration work; pass OAS_TEST_ROOT explicitly for that opt-in coverage.",
+  "retention": "Pinned through an aweb-controlled mirror rather than the upstream repository. The previous pin's ancestor lived on an upstream branch that was deleted, which invalidated the pin and forced a full rebuild. Upstream branch retention is not ours to promise, so the pin resolves from a repository we control.",
+  "verification": "A pinned tree must be able to start an agent. Prove that by executing a real spawn, not by inspecting the constructed command line: the defect this pin previously carried was invisible to the whole suite because nothing ever ran the command."
 }
