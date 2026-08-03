@@ -352,10 +352,8 @@ export async function startChannelLoop(options: ChannelLoopOptions): Promise<voi
     options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : undefined
   );
   await consumeAgentEvents(
-    // UNGUARDED: no test covers this function, so removing any dependency from
-    // this spread silently disables it rather than failing. Deleting
-    // undeliveredLog here leaves all 281 tests passing while the channel stops
-    // recording dropped messages entirely. See aweb-aayl.
+    // Keep each constructed dependency explicit: the startChannelLoop wiring
+    // regressions remove these links independently to prove their behavior stops.
     { ...options, deliveryStore, undeliveredLog, localDecrypt },
     dispatched,
     streamAgentEvents(options.client, options.signal, options.onStreamState),

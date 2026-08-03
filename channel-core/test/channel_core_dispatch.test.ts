@@ -579,6 +579,102 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(entries.some((entry) => entry.message_id === "mail-presented")).toBe(false);
   });
 
+  test("the real channel loop wires the durable delivery store into dispatch", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "aweb-channel-delivery-wiring-"));
+    const controller = new AbortController();
+    const client = {
+      openSSE: vi.fn().mockResolvedValue(new Response(
+        'event: mail_message\ndata: {"message_id":"mail-wiring-delivery-store"}\n\n',
+        { headers: { "content-type": "text/event-stream" } },
+      )),
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-wiring-delivery-store",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: self.alias,
+          subject: "delivery wiring",
+          body: "present once",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await startChannelLoop({
+      client: client as never,
+      pinStore: new PinStore(),
+      trust,
+      self,
+      signal: controller.signal,
+      workdir,
+      onAwakening: () => controller.abort(),
+    });
+
+    const marks = JSON.parse(
+      await readFile(join(workdir, ".aw", "channel-delivered-ids.json"), "utf-8"),
+    ) as Record<string, string>;
+    expect(marks).toHaveProperty("mail::mail-wiring-delivery-store");
+  });
+
+  test("the real channel loop wires local encrypted-message decryption into dispatch", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "aweb-channel-decrypt-wiring-"));
+    const awCommand = join(workdir, "fake-aw");
+    await writeFile(awCommand, `#!/usr/bin/env node
+const messageID = process.argv[process.argv.indexOf("--message-id") + 1];
+process.stdout.write(JSON.stringify({ messages: [{
+  message_id: messageID,
+  subject: "decrypted wiring subject",
+  body: "decrypted wiring body",
+}] }));
+`, { mode: 0o700 });
+    const controller = new AbortController();
+    const onAwakening = vi.fn(() => controller.abort());
+    const client = {
+      openSSE: vi.fn().mockResolvedValue(new Response(
+        'event: mail_message\ndata: {"message_id":"mail-wiring-decrypt"}\n\n',
+        { headers: { "content-type": "text/event-stream" } },
+      )),
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-wiring-decrypt",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: self.alias,
+          subject: "",
+          body: "",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+          content_mode: "encrypted_v2",
+          message_version: 2,
+          encrypted_envelope: {},
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await startChannelLoop({
+      client: client as never,
+      pinStore: new PinStore(),
+      trust,
+      self,
+      signal: controller.signal,
+      workdir,
+      awCommand,
+      onAwakening,
+    });
+
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "mail",
+      content: "decrypted wiring body",
+      meta: expect.objectContaining({ subject: "decrypted wiring subject" }),
+    }));
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-wiring-decrypt/ack");
+  });
+
   test("the real channel loop wires the durable undelivered record into dispatch", async () => {
     const workdir = await mkdtemp(join(tmpdir(), "aweb-channel-wiring-"));
     const controller = new AbortController();
