@@ -58,6 +58,39 @@ async def test_non_federation_field_validation_uses_fastapi_error_serialization(
     ]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mount_path", ["/api", "/v1/federation/spoof"])
+async def test_mounted_non_federation_validation_uses_fastapi_error_serialization(
+    mount_path: str,
+):
+    parent_app = FastAPI()
+    parent_app.mount(mount_path, _create_validation_test_app())
+    async with AsyncClient(
+        transport=ASGITransport(app=parent_app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as client:
+        response = await client.post(
+            f"{mount_path}/v1/messages",
+            json={
+                "to_address": "example.com/bob",
+                "body": "hello",
+                "message_id": "not-a-uuid",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.headers["content-type"] == "application/json"
+    assert response.json()["detail"] == [
+        {
+            "type": "value_error",
+            "loc": ["body", "message_id"],
+            "msg": "Value error, Invalid message_id format",
+            "input": "not-a-uuid",
+            "ctx": {"error": {}},
+        }
+    ]
+
+
 def _federation_validation_payload() -> dict:
     return {
         "envelope": {
