@@ -436,7 +436,9 @@ def create_app(
         request: Request, exc: RequestValidationError
     ):
         matched_route_path = getattr(request.scope.get("route"), "path", "")
-        if matched_route_path.startswith("/v1/federation/"):
+        if isinstance(matched_route_path, str) and matched_route_path.startswith(
+            "/v1/federation/"
+        ):
             from uuid import uuid4
 
             reason = (

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
@@ -89,6 +92,67 @@ async def test_mounted_non_federation_validation_uses_fastapi_error_serializatio
             "ctx": {"error": {}},
         }
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("include_route", "route"),
+    [
+        (False, None),
+        (True, SimpleNamespace()),
+        (True, SimpleNamespace(path=None)),
+        (True, SimpleNamespace(path=7)),
+        (True, SimpleNamespace(path=b"/v1/federation/messages")),
+        (True, SimpleNamespace(path=object())),
+    ],
+    ids=["absent", "missing-path", "none", "integer", "bytes", "object"],
+)
+async def test_unrecognized_route_metadata_uses_fastapi_error_serialization(
+    include_route: bool,
+    route: object,
+):
+    app = _create_validation_test_app()
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/v1/messages",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [],
+        "client": ("test", 123),
+        "server": ("test", 80),
+    }
+    if include_route:
+        scope["route"] = route
+    request = Request(scope)
+    error = RequestValidationError(
+        [
+            {
+                "type": "value_error",
+                "loc": ("body", "message_id"),
+                "msg": "Value error, Invalid message_id format",
+                "input": "not-a-uuid",
+                "ctx": {"error": ValueError("Invalid message_id format")},
+            }
+        ]
+    )
+
+    response = await app.exception_handlers[RequestValidationError](request, error)
+
+    assert response.status_code == 422
+    assert response.media_type == "application/json"
+    assert json.loads(response.body) == {
+        "detail": [
+            {
+                "type": "value_error",
+                "loc": ["body", "message_id"],
+                "msg": "Value error, Invalid message_id format",
+                "input": "not-a-uuid",
+                "ctx": {"error": {}},
+            }
+        ]
+    }
 
 
 def _federation_validation_payload() -> dict:
