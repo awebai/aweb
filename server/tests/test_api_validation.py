@@ -56,7 +56,18 @@ async def test_non_federation_field_validation_uses_fastapi_error_serialization(
 
 
 @pytest.mark.asyncio
-async def test_federation_field_validation_keeps_authority_error_contract():
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("message_id", "not-a-uuid", "federation_envelope_invalid"),
+        ("timestamp", "not-a-timestamp", "federation_timestamp_invalid"),
+    ],
+)
+async def test_federation_field_validation_keeps_authority_error_contract(
+    field: str,
+    value: str,
+    reason: str,
+):
     app = _create_validation_test_app()
     payload = {
         "envelope": {
@@ -69,11 +80,12 @@ async def test_federation_field_validation_keeps_authority_error_contract():
             "target_current_did_key": "did:key:bob",
             "target_delivery_origin": "https://example.com",
             "body": "hello",
-            "message_id": "not-a-uuid",
+            "message_id": "11111111-1111-4111-8111-111111111111",
             "timestamp": "2026-08-03T00:00:00Z",
         },
         "signature": "signature",
     }
+    payload["envelope"][field] = value
     async with AsyncClient(
         transport=ASGITransport(app=app, raise_app_exceptions=False),
         base_url="http://test",
@@ -86,8 +98,8 @@ async def test_federation_field_validation_keeps_authority_error_contract():
 
     assert response.status_code == 422
     assert response.json() == {
-        "detail": "federation_envelope_invalid",
-        "reason": "federation_envelope_invalid",
+        "detail": reason,
+        "reason": reason,
         "retryable": False,
         "correlation_id": "correlation-fixture",
     }

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
@@ -450,7 +451,7 @@ def create_app(
                     correlation_id=request.headers.get("X-Correlation-ID") or str(uuid4()),
                 ),
             )
-        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+        return await request_validation_exception_handler(request, exc)
 
     @app.exception_handler(FederationAuthorityError)
     async def _federation_authority_error_handler(
