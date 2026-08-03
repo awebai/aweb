@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -197,19 +198,28 @@ async def test_events_stream_includes_existing_unread_mail(aweb_cloud_db):
 
 @pytest.mark.asyncio
 async def test_events_stream_sends_idle_heartbeats(aweb_cloud_db, monkeypatch):
-    team_sk, _, team_did_key = _make_keypair()
-    bob_sk, _, bob_did_key = _make_keypair()
+    class _Clock:
+        def __init__(self):
+            self.current = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            self.sleeps = []
 
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        bob_did_key,
-        team_id="backend:acme.com",
-        alias="bob",
-        identity_scope="global",
-        member_did_aw="did:aw:bob",
-    )
-    cert_header = _encode_certificate(cert)
+        def now(self, tz=None):
+            return self.current
+
+        @staticmethod
+        def fromisoformat(raw):
+            return datetime.fromisoformat(raw)
+
+        async def sleep(self, delay):
+            self.sleeps.append(delay)
+            self.current += timedelta(seconds=delay)
+
+    class _ConnectedRequest:
+        async def is_disconnected(self):
+            return False
+
+    _, _, team_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
 
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -221,28 +231,48 @@ async def test_events_stream_sends_idle_heartbeats(aweb_cloud_db, monkeypatch):
         "backend",
         team_did_key,
     )
-    await aweb_cloud_db.aweb_db.execute(
+    bob = await aweb_cloud_db.aweb_db.fetch_one(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, role)
         VALUES ($1, $2, 'bob', 'global', 'developer')
+        RETURNING agent_id
         """,
         "backend:acme.com",
         bob_did_key,
     )
 
-    monkeypatch.setattr(events_module, "EVENTS_POLL_INTERVAL", 0.01)
-    monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.01)
+    clock = _Clock()
+    monkeypatch.setattr(events_module, "datetime", clock)
+    monkeypatch.setattr(events_module, "asyncio", SimpleNamespace(sleep=clock.sleep))
+    monkeypatch.setattr(events_module, "EVENTS_POLL_INTERVAL", 1.0)
+    monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 2.0)
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    deadline = (datetime.now(timezone.utc) + timedelta(seconds=0.05)).isoformat()
-    headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
-    headers["X-AWID-Team-Certificate"] = cert_header
+    started_at = clock.now(timezone.utc)
+    response = await events_module.event_stream(
+        request=_ConnectedRequest(),
+        deadline=(started_at + timedelta(seconds=3)).isoformat(),
+        db=app.state.db,
+        redis=None,
+        identity=SimpleNamespace(
+            team_id="backend:acme.com",
+            agent_id=str(bob["agent_id"]),
+            did_aw="did:aw:bob",
+            did_key=bob_did_key,
+        ),
+    )
+    stream = response.body_iterator
+    initial_keepalive = await anext(stream)
+    connected = await anext(stream)
+    subsequent_keepalive = await anext(stream, None)
+    await stream.aclose()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
-
-    assert resp.status_code == 200
-    assert resp.text.count(": keepalive") >= 2
+    assert response.status_code == 200
+    assert initial_keepalive == ": keepalive\n\n"
+    assert "event: connected" in connected
+    assert subsequent_keepalive == ": keepalive\n\n"
+    assert clock.sleeps == [1.0, 1.0]
+    assert clock.now(timezone.utc) - started_at == timedelta(seconds=2)
 
 
 @pytest.mark.asyncio
