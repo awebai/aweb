@@ -91,6 +91,46 @@ Also merged: `.57` (adapter signals broken bindings as subprocess failure),
 bounded, residuals stated), `.30`'s harness (preserved on main even though the
 proof is incomplete — it is what found the pi defect).
 
+## THE SEAM ERROR — read this before touching attach
+
+**`attach-existing` has never consumed an identity that aweb created**, for
+either identity class. Established by execution on 2026-08-04.
+
+- The adapter resolves an identity at
+  `<principal-home>/<team>/<ns>/{<did-suffix>|local-members/<member>}/credentials`.
+- A real aweb identity is a flat `.aw` beside its workspace — `signing.key`,
+  `teams.yaml`, `workspace.yaml`, `team-certs/`, `encryption.yaml`, and
+  `identity.yaml` for a global.
+- No `aw` command produces the adapter's shape for an identity it did not create.
+
+**The error is not the store shape.** For PROVISIONING that path is legitimate:
+OAS passes `--target-identity-home` and `aw` creates the identity there, so OAS
+names the location. For ATTACH the same path is an assumption about where
+somebody else's identity already lives, and it is wrong. One path gets to choose;
+the other must be told.
+
+**Why no test caught it:** every attach test builds the fixture in the adapter's
+own shape, so the tests and the code share the wrong premise. It surfaced only
+when a real identity was pointed at it.
+
+**The proposed fix, sized but NOT approved:** keep the store shape for
+provisioning; for attach take the identity home from the declaration. In the
+attach path `store.credentials` is used for nothing but `aw --identity-home` /
+`AWEB_IDENTITY_HOME`, and `store.state` has no reader at all — so this removes an
+abstraction rather than adding one. It needs containment and path-substitution
+review, which the original never had.
+
+**Also corrected:** aweb's SOT says a local identity is disposable, `did:key`
+only, no address, no trust continuity, deleted with its workspace. "Durable local
+principal" is not a thing this system has. AWID owns identity facts; aweb owns
+projections. The seam doc's model was wrong on both and is now fixed.
+
+**Loose object I own:** team member `attach-proof-1`
+(`agents/instances/attach-proof-1/.aw`, team `aweb-oas:aweb.ai`) — a throwaway
+created for the real-attach proof, never used, never launched. It is the CORRECT
+shape for the fixed design and the wrong shape for the current one. Destroy it if
+the fix is refused; it is mine to tear down and it must not be left orphaned.
+
 ## Blockers, in priority order
 
 1. **`.63` — IMPLEMENTED AND ACKed, NOT LANDED.** Branch `e2ee-dev`, reviewed
