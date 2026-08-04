@@ -221,26 +221,55 @@ function canonicalAbsolutePath(value) {
   return typeof value === "string" && isAbsolute(value) && normalize(resolve(value)) === value;
 }
 
+/** The identity handle a shape actually carries, as one comparable string.
+ *  Comparing address and stable_id field-by-field is vacuously TRUE for a local,
+ *  where both sides are undefined — that reads as a verified identity and is the
+ *  exact failure this avoids. Every shape must yield a non-empty handle. */
+function identityHandle(shapeOrDeclaration) {
+  const v = shapeOrDeclaration;
+  if (!v || typeof v !== "object") throw new TypeError("identity handle needs a declaration or persisted binding");
+  if (v.scope === "local") {
+    if (!v.team_id || !v.member_name) throw new TypeError("local identity handle needs team_id and member_name");
+    return `local:${v.team_id}/${v.member_name}`;
+  }
+  if (!v.stable_id || !v.address) throw new TypeError("global identity handle needs address and stable_id");
+  return `global:${v.stable_id}|${v.address}`;
+}
+
+/** A local has no public address and no did:aw. Show what it does have rather
+ *  than emitting nulls in the global fields, which would read as a global whose
+ *  identity could not be determined. */
+function attachedIdentityProjection(attached, type) {
+  if (attached.scope === "local") {
+    return { address: null, team_member_name: attached.member_name, did: null, type, cleanup_owner: "principal-owner" };
+  }
+  return { address: attached.address, team_member_name: null, did: attached.stable_id, type, cleanup_owner: "principal-owner" };
+}
+
 function validatePersistedAttachBinding(binding) {
   const fields = [
     "schema_version", "mode", "cleanup_owner", "principal", "declaration_path",
     "address", "stable_id", "team_id", "soul", "store",
   ];
   if (!exactFields(binding, fields, ["soul_version"])) throw new TypeError("persisted external attach binding has invalid fields");
-  if (binding.schema_version !== 1 || binding.mode !== "attach" || binding.cleanup_owner !== "external") {
+  const bindingIsLocal = binding.scope === "local";
+  const expectedSchemaVersion = bindingIsLocal ? 2 : 1;
+  if (binding.schema_version !== expectedSchemaVersion || binding.mode !== "attach" || binding.cleanup_owner !== "external") {
     throw new TypeError("persisted external attach binding has invalid authority fields");
   }
   if (typeof binding.principal !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(binding.principal)) {
     throw new TypeError("persisted external attach binding has an invalid principal name");
   }
-  validatePrincipalDeclaration({
+  const bindingDeclaration = {
     schema_version: binding.schema_version,
-    address: binding.address,
-    stable_id: binding.stable_id,
+    ...(bindingIsLocal
+      ? { scope: "local", member_name: binding.member_name }
+      : { address: binding.address, stable_id: binding.stable_id }),
     team_id: binding.team_id,
     soul: binding.soul,
     ...(binding.soul_version === undefined ? {} : { soul_version: binding.soul_version }),
-  });
+  };
+  validatePrincipalDeclaration(bindingDeclaration);
   if (!canonicalAbsolutePath(binding.declaration_path)) throw new TypeError("persisted declaration_path must be canonical and absolute");
   const declarationSuffix = join("oas", "agents", binding.soul, "principals", `${binding.principal}.yaml`);
   if (binding.declaration_path !== declarationSuffix && !binding.declaration_path.endsWith(`${sep}${declarationSuffix}`)) {
@@ -253,8 +282,11 @@ function validatePersistedAttachBinding(binding) {
     if (!canonicalAbsolutePath(path)) throw new TypeError(`persisted store.${field} must be canonical and absolute`);
   }
   assertPrincipalStoreContained(binding.store.home, binding.store);
-  const [teamName, teamNamespace] = binding.team_id.split(":");
-  const expectedPrincipal = join(binding.store.home, teamName, teamNamespace, binding.stable_id.slice("did:aw:".length));
+  // Derive the expected paths from the ONE store resolver rather than rebuilding
+  // the join here. A second copy of that layout is how the local and global
+  // namespaces would silently diverge, and the local shape has no stable_id to
+  // slice in any case.
+  const expectedPrincipal = resolvePrincipalStore(bindingDeclaration, { home: binding.store.home }).principal;
   if (binding.store.principal !== expectedPrincipal
       || binding.store.credentials !== join(expectedPrincipal, "credentials")
       || binding.store.state !== join(expectedPrincipal, "state")) {
@@ -648,15 +680,11 @@ function currentInstanceIdentityProjection({ context, soul, settings, evidence }
     const attached = validatePersistedAttachBinding(capability.identity_binding);
     const verified = evidence?.preflight?.principal;
     if (!verified || attached.principal !== evidence.binding.principal
-        || attached.address !== verified.declaration.address
-        || attached.stable_id !== verified.declaration.stable_id
+        || identityHandle(attached) !== identityHandle(verified.declaration)
         || attached.declaration_path !== verified.declarationPath) {
       throw new TypeError("persisted attached identity contradicts the selected principal");
     }
-    return {
-      found: true,
-      identity: { address: attached.address, team_member_name: null, did: attached.stable_id, type: "attached", cleanup_owner: "principal-owner" },
-    };
+    return { found: true, identity: attachedIdentityProjection(attached, "attached") };
   }
 
   const receipt = validateBindingReceipt(capability.identity_binding);
@@ -664,22 +692,15 @@ function currentInstanceIdentityProjection({ context, soul, settings, evidence }
     const attached = validatePersistedAttachBinding(capability.attachment);
     const verified = evidence?.preflight?.principal;
     if (!verified || attached.principal !== evidence.binding.principal
-        || attached.address !== verified.declaration.address
-        || attached.stable_id !== verified.declaration.stable_id
+        || identityHandle(attached) !== identityHandle(verified.declaration)
         || attached.declaration_path !== verified.declarationPath
-        || attached.stable_id !== receipt.resource_identity.stable_id
+        || (attached.scope !== "local" && attached.stable_id !== receipt.resource_identity.stable_id)
         || attached.declaration_path !== receipt.resource_identity.reference) {
       throw new TypeError("persisted attached identity contradicts its binding receipt");
     }
     return {
       found: true,
-      identity: {
-        address: attached.address,
-        team_member_name: null,
-        did: attached.stable_id,
-        type: receipt.mode === "attach-existing" ? "attached" : "durable",
-        cleanup_owner: "principal-owner",
-      },
+      identity: attachedIdentityProjection(attached, receipt.mode === "attach-existing" ? "attached" : "durable"),
     };
   }
 
