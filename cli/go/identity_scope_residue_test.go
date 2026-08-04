@@ -2,6 +2,7 @@ package aweb
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -133,40 +134,7 @@ func TestRetiredIdentityVocabularyIsConfinedToCompatibilityBoundaries(t *testing
 		"run/loop.go":              "describes a retained prompt",
 	}
 
-	var unexpected []string
-	err := filepath.WalkDir(".", func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if entry.Name() == "vendor" || entry.Name() == "testdata" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		rel := filepath.ToSlash(strings.TrimPrefix(path, "./"))
-		file, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer file.Close()
-		scanner := bufio.NewScanner(file)
-		for lineNumber := 1; scanner.Scan(); lineNumber++ {
-			line := strings.TrimSpace(scanner.Text())
-			if !hasRetiredIdentityVocabulary(line) {
-				continue
-			}
-			if remaining := allowed[rel][line]; remaining > 0 {
-				allowed[rel][line] = remaining - 1
-				continue
-			}
-			unexpected = append(unexpected, rel+":"+line)
-		}
-		return scanner.Err()
-	})
+	unexpected, err := scanRetiredIdentityVocabulary(".", allowed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,6 +151,55 @@ func TestRetiredIdentityVocabularyIsConfinedToCompatibilityBoundaries(t *testing
 	}
 }
 
+const maxRetiredIdentityVocabularyLineBytes = 4 << 20
+
+func scanRetiredIdentityVocabulary(root string, allowed map[string]map[string]int) ([]string, error) {
+	var unexpected []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if entry.Name() == ".cache" || entry.Name() == "vendor" || entry.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, bufio.MaxScanTokenSize), maxRetiredIdentityVocabularyLineBytes)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if !hasRetiredIdentityVocabulary(line) {
+				continue
+			}
+			if remaining := allowed[rel][line]; remaining > 0 {
+				allowed[rel][line] = remaining - 1
+				continue
+			}
+			unexpected = append(unexpected, rel+":"+line)
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("scan %s: %w", rel, err)
+		}
+		return nil
+	})
+	return unexpected, err
+}
+
 func hasRetiredIdentityVocabulary(line string) bool {
 	lower := strings.ToLower(line)
 	return strings.Contains(lower, "lifetime") || strings.Contains(lower, "persistent") || strings.Contains(lower, "ephemeral")
@@ -195,5 +212,47 @@ func TestRetiredIdentityVocabularyDetectorIncludesScopeMirrors(t *testing.T) {
 		if !hasRetiredIdentityVocabulary(line) {
 			t.Fatalf("detector missed %q", line)
 		}
+	}
+}
+
+func TestRetiredIdentityVocabularyScanSkipsOnlyRepositoryCacheState(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeResidueScanFixture(t, root, ".cache/go-mod/cache.go", strings.Repeat("x", 2<<20)+" PersistentScopeMirror")
+	writeResidueScanFixture(t, root, ".cache-source/tracked.go", "var PersistentScopeMirror string")
+
+	unexpected, err := scanRetiredIdentityVocabulary(root, map[string]map[string]int{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unexpected) != 1 || unexpected[0] != ".cache-source/tracked.go:var PersistentScopeMirror string" {
+		t.Fatalf("unexpected residue findings: %q", unexpected)
+	}
+}
+
+func TestRetiredIdentityVocabularyScanExaminesLongTrackedSourceLine(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	writeResidueScanFixture(t, root, "awid/long.go", strings.Repeat("x", 256<<10)+" PersistentScopeMirror")
+
+	unexpected, err := scanRetiredIdentityVocabulary(root, map[string]map[string]int{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unexpected) != 1 || !strings.HasPrefix(unexpected[0], "awid/long.go:") || !strings.Contains(unexpected[0], "PersistentScopeMirror") {
+		t.Fatalf("long tracked residue was not classified: findings=%d", len(unexpected))
+	}
+}
+
+func writeResidueScanFixture(t *testing.T, root, relativePath, content string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(relativePath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content+"\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
