@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1
+
+- Delivery store saves are serialized across processes, so concurrent Pi
+  runtimes can no longer clobber each other's read/delivery marks.
+- A corrupt delivery store is refused instead of silently reset: only a missing
+  file counts as empty, and read, JSON, root-shape, or timestamp failures
+  surface before an atomic save can overwrite existing marks.
+- Attached principals resolve their identity home correctly, so channel
+  operations under an attached identity use that principal's credentials.
+- Packaged ESM channel bundles are executable, fixing launch of the bundled
+  channel entry points from the installed package.
+
 ## 0.3.0
 
 - **Address handover is now fail-closed, and this is user-visible.** An address
