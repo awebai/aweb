@@ -1,7 +1,17 @@
-# oas-coord state — 2026-07-27 (post-restart; convergence adopted)
+# oas-coord state — 2026-08-04
 
-The restart has HAPPENED. Everything here is durable; nothing depends on tmux
-or model context.
+Everything here is durable; nothing depends on tmux or model context.
+
+**The OAS team from this epic is GONE.** `oas-seam-dev/rev`, `oas-runtime-dev/rev`,
+`oas-journey-dev`, `oas-contract-rev`, `oas-exec-dev/rev`, `oas-admission-rev`,
+`oas-retire-rev` — no windows, no presence. `atext.aweb.ai/developer-frontend`
+did the v0.20 port through 2026-07-31, but the current occupant of that alias is
+a different agent who correctly says the OAS work is not theirs. **Do not send
+work to those aliases; verify a recipient is reachable before routing anything.**
+
+**Staff through `aw team add … --start`, not `oas spawn`.** That is the proven
+path on this machine and it provisions identity through the Library, sidestepping
+the hosted-minting gap in `.66`. Current pair: `e2ee-dev`, `e2ee-rev`.
 
 ## Resume
 
@@ -19,19 +29,29 @@ is today's main decision.
 
 ## Repository state
 
-- **aweb**: `main`, pushed. Other teams push here too; `git fetch` before
-  assuming. My last verified-green run was the OAS suite 83/83.
-- **upstream OAS clone**: `~/prj/awebai/oas`, branch `working` — current
-  upstream `main` (Pepe's 192 commits) **plus** our 8 commits: the pi launch fix
-  and the 6-commit environment contract. This remains the deliberate
-  early-integration override (`OAS_TEST_ROOT=~/prj/awebai/oas`); the default
-  suite now materializes the immutable commit in `oas/upstream-test-pin.json`
-  into a repository-owned cache so local and CI release evidence is reproducible.
-- **Push to that clone is deliberately blocked**:
+- **aweb**: `main`. Other teams push here too; `git fetch` before assuming.
+  **My local main has UNPUSHED commits and origin has commits I lack** — check
+  `git rev-list --left-right --count origin/main...main` before branching anyone
+  off it. A developer branched off my unpushed main and their branch then carried
+  five of my unreviewed commits; see `.63`.
+- **upstream OAS clone**: `~/prj/awebai/oas`. Branch `working` is HISTORY, not
+  current — it was 8 commits on a pre-v0.20 base and its rebuild is abandoned.
+  Current is `aweb/v020-integration`: released v0.20 upstream main plus the three
+  seams open upstream as PRs 37, 48 and 69.
+- **The local `oas` binary is OURS, not upstream.** `@oas-framework/oas`
+  **0.20.0-aweb.1**, built from `aweb/v020-integration`. Released upstream 0.20.0
+  does NOT carry the three seams, which is why the version is not a bare 0.20.0.
+  Rollback: `npm i -g /private/tmp/oas-rollback-0.18.0/pkg`.
+- **The test pin resolves the same commit the binary runs**, through an
+  aweb-controlled mirror `github.com/awebai/oas` rather than upstream. Upstream
+  branch retention is not ours to promise: the previous pin's ancestor lived on
+  an upstream branch that was DELETED, which invalidated the pin and forced a
+  full rebuild.
+- **Push to the upstream clone is deliberately blocked**:
   `remote.origin.pushurl = BLOCKED-open-a-PR-for-Pepe-instead-see-aweb-oas-aaaa`.
-  Leave it blocked. Push feature branches by explicit URL only.
+  Leave it blocked. The `mirror` remote is ours and is where our branches go.
 
-## Upstream PRs (both OPEN, awaiting Pepe)
+## Upstream PRs (three OPEN, awaiting Pepe — who has NOT been told what they are for)
 
 - **PR 37** `fix/delimit-task-prompt-after-variadic-flags` — rebased onto current
   main and **reduced to the pi half only**; Pepe's `5a79622` already delimits
@@ -44,10 +64,13 @@ is today's main decision.
 
 ## What works
 
-`.60` shipped the customer path: a config naming a team and selecting the aweb
-capability gives READY or exactly one action; ordinary `oas spawn` provisions a
-disposable worker; `status` shows member name and DID; `retire` cleans up with
-the durable controller byte-unchanged. **No identity vocabulary anywhere.**
+`.60` shipped the customer path **for a BYOT team**, and that qualifier is
+load-bearing: every one of its tests drives a fake `aw` that answers
+`import-request`, which is the BYOT flow. Our own deployment team
+`aweb-oas:aweb.ai` is HOSTED, and the capability only mints under a local BYOT
+controller, so the shipped path has never run against the only kind of team we
+have. The claim is true about the object it tested and false about the object we
+run. See `.66`.
 
 Also merged: `.57` (adapter signals broken bindings as subprocess failure),
 `.56` (OAS_TEST_ROOT coupling fails legibly), `.28` (ordinary worker journey,
@@ -56,20 +79,24 @@ proof is incomplete — it is what found the pi defect).
 
 ## Blockers, in priority order
 
-1. **`.63`** — an attached principal can send but **cannot read** its own mail.
-   `configureClientE2EE` returns **silently** when key material is not found on a
-   read path, so this presents as `encrypted=true, decrypted=false` with no
-   error. Fix in two parts: (a) make missing key material observable — say it
-   could not decrypt and which path was consulted; (b) ensure every mail path
-   carries the resolved external identity home into the selection. Test with an
-   attached principal whose home **differs** from the ambient one.
-   **This is the only thing between us and a demonstrable resident.**
-2. **`.47`** — design resolved, one step to build: hosted retire must revoke the
-   team certificate under the **owner's** authority. Local path already does this
-   correctly. Self-retire cannot revoke on either path; it leaves a recorded
-   incomplete operation for the cleanup owner.
-3. **`.59`** — tmux fd exhaustion; new agents cannot be started. Root cause NOT
-   found. See below.
+1. **`.63` — IMPLEMENTED AND ACKed, NOT LANDED.** Branch `e2ee-dev`, reviewed
+   tip `64833dac`, task commit `2a25f085`. The root cause was NOT the resolver
+   I traced: `aw mail show` was refused outright by the `.11` default-deny
+   allowlist, which is why it diverged from `inbox`. Blocked only by my own five
+   unreviewed commits sitting under it. **Residual: no resident Pi/channel
+   journey was rerun — cross-runtime local channel decryption is UNPROVED and
+   must not be reported as proved.**
+2. **`.47`** — ours to build, unblocked, blocks `.44`. AC already exposes the
+   endpoints (`POST /{team_id}/agents/remove-member` and `add-member` in
+   `aweb_cloud/routers/teams.py`); what is missing is aweb calling revoke from
+   the SPAWNER's context, with OAS receiving no owner credential. Needs its own
+   human clearance: it IS cleanup/revocation authority.
+3. **`.66`** — spawned agents could not coordinate. Two halves fixed
+   (`cdab8f59` wrong-cause diagnosis, `a4659c60` soul scope). One open: a failed
+   spawn hook only WARNS. The kernel can now enforce `required` — deliberately
+   not switched on, because on this hosted deployment the hook fails every time,
+   so requiring it would mean no agents at all. `.47` first, then required.
+4. **`.59`** — tmux fd exhaustion. Root cause NOT found. See below.
 
 ## Design decision of the day
 
