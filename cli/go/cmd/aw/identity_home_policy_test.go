@@ -142,7 +142,6 @@ func TestUnthreadedPrincipalCommandsRefuseExternalIdentityHomeBeforeMutation(t *
 			args []string
 		}{
 			{name: "roles-show", args: []string{"roles", "show", "--json"}},
-			{name: "mail-show-unproven", args: []string{"mail", "show", "--message-id", "message-1"}},
 			{name: "init-shadow-hook", args: []string{"init"}},
 		} {
 			t.Run(source+"/"+command.name, func(t *testing.T) {

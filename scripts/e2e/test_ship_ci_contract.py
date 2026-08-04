@@ -97,7 +97,7 @@ class ShipCIContractTests(unittest.TestCase):
         makefile = MAKEFILE.read_text(encoding="utf-8")
         self.assertRegex(
             makefile,
-            r"(?m)^test-oas:\s+check-oas-launch-environment-contract\s+build\s+test-node-deps$",
+            r"(?m)^test-oas:\s+check-oas-launch-environment-contract\s+check-oas-pi-launch-order\s+build\s+test-node-deps$",
         )
         self.assertIn(
             'PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH"',

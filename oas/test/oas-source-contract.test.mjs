@@ -65,12 +65,47 @@ test("a present non-file contract marker still produces the readable diagnostic"
   assert.doesNotMatch(result.stderr, /EISDIR|node:fs|check-oas-launch-environment-contract\.mjs:\d+/);
 });
 
-test("test-oas checks the launch-environment contract before runtime setup or assertions", () => {
+test("test-oas checks both pinned OAS contracts before runtime setup or assertions", () => {
   const makefile = readFileSync(join(REPO_ROOT, "Makefile"), "utf8");
   assert.match(
     makefile,
-    /^test-oas:\s+check-oas-launch-environment-contract\s+build\s+test-node-deps$/m,
+    /^test-oas:\s+check-oas-launch-environment-contract\s+check-oas-pi-launch-order\s+build\s+test-node-deps$/m,
   );
+});
+
+test("the pinned Pi launch-order gate runs construction and loudly bounds skipped execution", () => {
+  const env = { ...process.env };
+  delete env.OAS_RUN_REAL_PI_LAUNCH_ORDER;
+  const result = spawnSync(
+    "make",
+    ["--no-print-directory", "check-oas-pi-launch-order", `OAS_TEST_ROOT=${process.env.OAS_TEST_ROOT}`],
+    { cwd: REPO_ROOT, encoding: "utf8", env },
+  );
+
+  assert.equal(result.status, 0, [result.stdout, result.stderr].filter(Boolean).join("\n"));
+  assert.match(result.stdout, /Pi launch-order construction: PASS/);
+  assert.match(result.stderr, /Pi launch-order execution: SKIPPED/);
+  assert.match(result.stderr, /real Pi runtime was not executed/);
+  assert.match(result.stderr, /construction only/);
+});
+
+test("opting into real Pi execution fails loudly instead of degrading when runtime setup is unavailable", () => {
+  const env = {
+    ...process.env,
+    OAS_RUN_REAL_PI_LAUNCH_ORDER: "1",
+    OAS_PI_LAUNCH_ORDER_AUTH: join(tmpdir(), "aweb-deliberately-missing-pi-auth.json"),
+  };
+  const result = spawnSync(
+    "make",
+    ["--no-print-directory", "check-oas-pi-launch-order", `OAS_TEST_ROOT=${process.env.OAS_TEST_ROOT}`],
+    { cwd: REPO_ROOT, encoding: "utf8", env },
+  );
+
+  assert.notEqual(result.status, 0, "requested execution must not silently fall back to construction");
+  assert.match(result.stdout, /Pi launch-order construction: PASS/);
+  assert.match(result.stderr, /Pi launch-order execution: RUNNING/);
+  assert.match(result.stderr, /real Pi authentication not found/);
+  assert.doesNotMatch(result.stderr, /execution: SKIPPED/);
 });
 
 // OAS_TEST_ROOT UNSET is a different state from OAS_TEST_ROOT set-but-contractless,
