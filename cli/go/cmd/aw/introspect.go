@@ -19,7 +19,7 @@ type introspectOutput struct {
 	DID                 string `json:"did,omitempty"`
 	StableID            string `json:"stable_id,omitempty"`
 	Custody             string `json:"custody,omitempty"`
-	Lifetime            string `json:"lifetime,omitempty"`
+	IdentityScope       string `json:"identity_scope,omitempty"`
 	InboundMode         string `json:"inbound_mode,omitempty"`
 	InboundModeLabel    string `json:"inbound_mode_label,omitempty"`
 	InboundConfigurable *bool  `json:"inbound_configurable,omitempty"`
@@ -39,13 +39,13 @@ var introspectCmd = &cobra.Command{
 		alias := sel.Alias
 
 		out := introspectOutput{
-			Alias:    alias,
-			Domain:   sel.Domain,
-			Address:  selectionAddress(sel),
-			DID:      sel.DID,
-			StableID: sel.StableID,
-			Custody:  sel.Custody,
-			Lifetime: awid.LegacyLifetimeForIdentityScope(sel.IdentityScope),
+			Alias:         alias,
+			Domain:        sel.Domain,
+			Address:       selectionAddress(sel),
+			DID:           sel.DID,
+			StableID:      sel.StableID,
+			Custody:       sel.Custody,
+			IdentityScope: sel.IdentityScope,
 		}
 		if out.Address == "" {
 			out.Address = deriveIdentityAddress(sel.Domain, alias)

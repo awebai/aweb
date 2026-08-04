@@ -227,7 +227,7 @@ The bundle may include:
 - doctor output and checks
 - non-secret platform metadata
 - non-secret `.aw` metadata such as team IDs, aliases, DID/address fields,
-  lifetime, custody, and parsed certificate metadata
+  identity scope, custody, and parsed certificate metadata
 - E2E operational metadata such as message ids, conversation ids, key ids,
   ciphertext hashes/sizes, delivery state, and verification/decryption error
   categories
@@ -257,9 +257,9 @@ review prompts, not automatic repairs.
 
 Examples:
 
-- `persistent_lifecycle_review`: global archive/delete/replace requires
+- `global_identity_lifecycle_review`: global archive/delete/replace requires
   external authorized review; missing local state alone is not sufficient.
-- `persistent_identity_registry_repair_review`: if the local DID key is valid,
+- `global_identity_registry_repair_review`: if the local DID key is valid,
   caller-authorized DID registration or registry repair is preferred before
   replacement. When local caller authority is present, the explicit command is
   `aw id register`.

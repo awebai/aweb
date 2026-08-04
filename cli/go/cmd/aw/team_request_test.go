@@ -79,13 +79,13 @@ func TestTeamRequestGlobalJSONIncludesStableFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:         memberDID,
-		StableID:    stableID,
-		Address:     "acme.com/alice",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: "https://api.awid.ai",
-		CreatedAt:   "2026-04-13T00:00:00Z",
+		DID:           memberDID,
+		StableID:      stableID,
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   "https://api.awid.ai",
+		CreatedAt:     "2026-04-13T00:00:00Z",
 	})
 
 	run := exec.CommandContext(ctx, bin, "id", "team", "request", "--team", "backend:acme.com", "--name", "alice", "--json")

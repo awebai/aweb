@@ -102,7 +102,7 @@ func TestInitGlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *
 				MemberDIDAW:   didAW,
 				MemberAddress: "juanre.aweb.ai/laptop",
 				Alias:         "laptop",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -348,7 +348,7 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 				MemberDIDAW:   didAW,
 				MemberAddress: "hostedchain.aweb.ai/laptop",
 				Alias:         "laptop",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"user_id":          "user-1",
@@ -375,10 +375,10 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 			didKey, _ := payload["did"].(string)
 			alias, _ := payload["alias"].(string)
 			encoded := signCert(awid.TeamCertificateFields{
-				Team:         teamID,
-				MemberDIDKey: didKey,
-				Alias:        alias,
-				Lifetime:     awid.LifetimeEphemeral,
+				Team:          teamID,
+				MemberDIDKey:  didKey,
+				Alias:         alias,
+				IdentityScope: awid.IdentityModeLocal,
 			})
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"server_url":     serverURL,
@@ -583,7 +583,7 @@ func TestInitSelfCustodialGlobalCLITreatsSameKeyAlreadyRegisteredAsSuccess(t *te
 				MemberDIDAW:   didAW,
 				MemberAddress: "juanre.aweb.ai/laptop",
 				Alias:         "laptop",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -709,10 +709,10 @@ func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 			}
 			didKey, _ := signupBody["did_key"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         "default:juanre.aweb.ai",
-				MemberDIDKey: didKey,
-				Alias:        "laptop",
-				Lifetime:     awid.LifetimeEphemeral,
+				Team:          "default:juanre.aweb.ai",
+				MemberDIDKey:  didKey,
+				Alias:         "laptop",
+				IdentityScope: awid.IdentityModeLocal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -795,9 +795,9 @@ func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 	if cert.MemberAddress != "" {
 		t.Fatalf("cert member_address=%q want empty", cert.MemberAddress)
 	}
-	wantLifetime := awid.LifetimeEphemeral
-	if cert.Lifetime != wantLifetime {
-		t.Fatalf("cert lifetime=%q want %q", cert.Lifetime, wantLifetime)
+	wantScope := awid.IdentityModeLocal
+	if cert.IdentityScope != wantScope {
+		t.Fatalf("cert identity_scope=%q want %q", cert.IdentityScope, wantScope)
 	}
 
 	var got map[string]any

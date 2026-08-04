@@ -197,7 +197,7 @@ func validateBootstrapRedeemResponse(
 		return nil, fmt.Errorf("bootstrap certificate member_did_key %q does not match generated did:key %q", cert.MemberDIDKey, didKey)
 	}
 
-	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(resp.IdentityScope, resp.Lifetime, cert.IdentityScope, cert.Lifetime))
+	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(resp.IdentityScope, cert.IdentityScope))
 	switch identityScope {
 	case awid.IdentityModeGlobal:
 		if strings.TrimSpace(stableID) == "" || strings.TrimSpace(address) == "" {
@@ -226,7 +226,7 @@ func validateBootstrapRedeemResponse(
 			return nil, fmt.Errorf("local bootstrap certificate unexpectedly contains global identity fields")
 		}
 	default:
-		return nil, fmt.Errorf("unsupported bootstrap identity_scope %q", firstNonEmpty(resp.IdentityScope, resp.Lifetime))
+		return nil, fmt.Errorf("unsupported bootstrap identity_scope %q", resp.IdentityScope)
 	}
 
 	return cert, nil
@@ -251,7 +251,7 @@ func persistBootstrapConnectState(
 		return err
 	}
 
-	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(resp.IdentityScope, resp.Lifetime, cert.IdentityScope, cert.Lifetime))
+	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(resp.IdentityScope, cert.IdentityScope))
 	if identityScope != awid.IdentityModeGlobal {
 		return nil
 	}

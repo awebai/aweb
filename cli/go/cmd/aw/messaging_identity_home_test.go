@@ -320,7 +320,7 @@ func TestExternalMultiTeamAliasEnumeratesPrincipalMemberships(t *testing.T) {
 	principalRoot := filepath.Join(root, "principal")
 	instance := filepath.Join(root, "instance")
 	writeMessagingPrincipalForTest(t, principalRoot, server.URL, "principal", did, key)
-	opsFixture := testSelectionFixture{AwebURL: server.URL, TeamID: "ops:aweb.test", Alias: "principal-ops", WorkspaceID: "workspace-ops", DID: did, Address: "aweb.test/principal", Custody: awid.CustodySelf, Lifetime: awid.LifetimeEphemeral, SigningKey: key}
+	opsFixture := testSelectionFixture{AwebURL: server.URL, TeamID: "ops:aweb.test", Alias: "principal-ops", WorkspaceID: "workspace-ops", DID: did, Address: "aweb.test/principal", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: key}
 	writeTeamCertificateWorkspaceForTest(t, principalRoot, workspaceBinding(server.URL, "ops:aweb.test", "principal-ops", "workspace-ops"), &opsFixture)
 	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(principalRoot)
 	if err != nil {
@@ -377,16 +377,16 @@ func messagingCertificateAuthPayload(teamID, timestamp string, body []byte) []by
 func writeMessagingPrincipalForTest(t *testing.T, root, serverURL, alias, did string, signingKey ed25519.PrivateKey) {
 	t.Helper()
 	writeSelectionFixtureForTest(t, root, testSelectionFixture{
-		AwebURL:     serverURL,
-		TeamID:      "runtime:aweb.test",
-		Alias:       alias,
-		WorkspaceID: "workspace-" + alias,
-		DID:         did,
-		Address:     "aweb.test/" + alias,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimeEphemeral,
-		SigningKey:  signingKey,
-		CreatedAt:   "2026-07-26T00:00:00Z",
+		AwebURL:       serverURL,
+		TeamID:        "runtime:aweb.test",
+		Alias:         alias,
+		WorkspaceID:   "workspace-" + alias,
+		DID:           did,
+		Address:       "aweb.test/" + alias,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		SigningKey:    signingKey,
+		CreatedAt:     "2026-07-26T00:00:00Z",
 	})
 	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{ActiveTeam: "runtime:aweb.test", Memberships: []awconfig.TeamMembership{{TeamID: "runtime:aweb.test", Alias: alias, CertPath: awconfig.TeamCertificateRelativePath("runtime:aweb.test")}}}); err != nil {
 		t.Fatal(err)

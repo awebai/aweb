@@ -747,11 +747,11 @@ func writeEphemeralSigningWorkspace(t *testing.T, workingDir, serverURL, address
 		handle = derivedHandle
 	}
 	writeIdentityForTest(t, workingDir, awconfig.WorktreeIdentity{
-		DID:       did,
-		Address:   address,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimeEphemeral,
-		CreatedAt: "2026-04-04T00:00:00Z",
+		DID:           did,
+		Address:       address,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		CreatedAt:     "2026-04-04T00:00:00Z",
 	})
 	writeWorkspaceBindingForTest(t, workingDir, workspaceBinding(serverURL, "backend:"+namespace, handle, "workspace-1"))
 }
@@ -786,12 +786,12 @@ func writeGlobalTeamSignedRequestWorkspaceForTest(t *testing.T, workingDir, serv
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()), &awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Address:   address,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-04T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Address:       address,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-04T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}

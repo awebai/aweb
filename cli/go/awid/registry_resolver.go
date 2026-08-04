@@ -42,7 +42,6 @@ type registryTeamMemberResponse struct {
 	MemberAddress string `json:"member_address"`
 	Alias         string `json:"alias"`
 	IdentityScope string `json:"identity_scope"`
-	Lifetime      string `json:"lifetime"`
 	IssuedAt      string `json:"issued_at"`
 }
 
@@ -180,7 +179,7 @@ func (r *RegistryResolver) resolve(ctx context.Context, identifier string, force
 				RegistryURL:    member.authority.RegistryURL,
 				DeliveryOrigin: deliveryOrigin,
 				Custody:        CustodySelf,
-				Lifetime:       LegacyLifetimeForIdentityScope(firstNonEmpty(member.response.IdentityScope, member.response.Lifetime)),
+				IdentityScope:  NormalizeIdentityScope(member.response.IdentityScope),
 				ResolvedAt:     r.now().UTC(),
 				ResolvedVia:    "registry",
 			}, nil
@@ -190,15 +189,15 @@ func (r *RegistryResolver) resolve(ctx context.Context, identifier string, force
 			return nil, fmt.Errorf("RegistryResolver: invalid member did:key: %w", err)
 		}
 		return &ResolvedIdentity{
-			DID:         member.response.MemberDIDKey,
-			Address:     address,
-			Handle:      member.response.Alias,
-			PublicKey:   ed25519.PublicKey(pub),
-			RegistryURL: member.authority.RegistryURL,
-			Custody:     CustodySelf,
-			Lifetime:    LegacyLifetimeForIdentityScope(firstNonEmpty(member.response.IdentityScope, member.response.Lifetime)),
-			ResolvedAt:  r.now().UTC(),
-			ResolvedVia: "registry",
+			DID:           member.response.MemberDIDKey,
+			Address:       address,
+			Handle:        member.response.Alias,
+			PublicKey:     ed25519.PublicKey(pub),
+			RegistryURL:   member.authority.RegistryURL,
+			Custody:       CustodySelf,
+			IdentityScope: NormalizeIdentityScope(member.response.IdentityScope),
+			ResolvedAt:    r.now().UTC(),
+			ResolvedVia:   "registry",
 		}, nil
 	}
 
@@ -251,7 +250,7 @@ func (r *RegistryResolver) resolve(ctx context.Context, identifier string, force
 		RegistryURL:    address.authority.RegistryURL,
 		DeliveryOrigin: deliveryOrigin,
 		Custody:        CustodySelf,
-		Lifetime:       LifetimePersistent,
+		IdentityScope:  IdentityModeGlobal,
 		ResolvedAt:     r.now().UTC(),
 		ResolvedVia:    "registry",
 	}, nil

@@ -142,7 +142,7 @@ func prepareRotationIdentity(requireSigningKey bool) (*awconfig.ResolvedIdentity
 		if err != nil {
 			return nil, "", "", err
 		}
-		if err := requirePersistentSelfCustodialIdentity(identity, signingKey); err != nil {
+		if err := requireGlobalSelfCustodialIdentity(identity, signingKey); err != nil {
 			return nil, "", "", err
 		}
 	}
@@ -168,7 +168,7 @@ func resolveRotationIdentity() (*awconfig.ResolvedIdentity, error) {
 	}
 	identity, err := awconfig.ResolveIdentityFromHome(workingDir, identityHome.Root)
 	if errors.Is(err, os.ErrNotExist) {
-		return resolveEphemeralIdentityWithoutState(workingDir)
+		return resolveLocalIdentityWithoutState(workingDir)
 	}
 	if err != nil {
 		return nil, err

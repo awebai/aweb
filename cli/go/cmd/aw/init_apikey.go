@@ -69,10 +69,8 @@ type apiKeyBootstrapResponse struct {
 	DID           string `json:"did"`
 	StableID      string `json:"stable_id"`
 	IdentityScope string `json:"identity_scope"`
-	// Lifetime is accepted only for compatibility with older hosted responses.
-	Lifetime string `json:"lifetime"`
-	Custody  string `json:"custody"`
-	APIKey   string `json:"api_key"`
+	Custody       string `json:"custody"`
+	APIKey        string `json:"api_key"`
 }
 
 type apiKeyPartialInitState struct {
@@ -603,14 +601,14 @@ func validateAPIKeyBootstrapResponse(
 	if len(strings.TrimSpace(resp.APIKey)) > maxWorkspaceAPIKeyLength {
 		return false, "", "", fmt.Errorf("workspace init response api_key exceeds %d bytes", maxWorkspaceAPIKeyLength)
 	}
-	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(resp.IdentityScope, resp.Lifetime, cert.IdentityScope, cert.Lifetime))
+	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(resp.IdentityScope, cert.IdentityScope))
 	switch identityScope {
 	case awid.IdentityModeGlobal:
 		persistent = true
 	case awid.IdentityModeLocal:
 		persistent = false
 	default:
-		return false, "", "", fmt.Errorf("workspace init response has unsupported identity_scope %q", firstNonEmpty(resp.IdentityScope, resp.Lifetime))
+		return false, "", "", fmt.Errorf("workspace init response has unsupported identity_scope %q", resp.IdentityScope)
 	}
 	if persistent != requestedPersistent {
 		return false, "", "", fmt.Errorf(

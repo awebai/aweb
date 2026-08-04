@@ -151,10 +151,10 @@ func resolveIdentityForDir(workingDir string) (*awconfig.ResolvedIdentity, error
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	return resolveEphemeralIdentityWithoutState(workingDir)
+	return resolveLocalIdentityWithoutState(workingDir)
 }
 
-func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.ResolvedIdentity, error) {
+func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIdentity, error) {
 	workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
 	if err != nil {
 		if workspace == nil && errors.Is(err, os.ErrNotExist) {
@@ -181,7 +181,7 @@ func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.Resolved
 	if err != nil {
 		return nil, fmt.Errorf("load active team certificate for %s: %w", activeTeamID, err)
 	}
-	if awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime)) != awid.IdentityModeLocal {
+	if awid.NormalizeIdentityScope(cert.IdentityScope) != awid.IdentityModeLocal {
 		return nil, usageError("current global identity is missing .aw/identity.yaml; restore it or run `aw init` again")
 	}
 
@@ -213,7 +213,6 @@ func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.Resolved
 		Domain:         "",
 		Custody:        awid.CustodySelf,
 		IdentityScope:  awid.IdentityModeLocal,
-		Lifetime:       awid.LifetimeEphemeral,
 		RegistryURL:    "",
 		RegistryStatus: "",
 		CreatedAt:      "",
@@ -1329,7 +1328,7 @@ func formatJSONOutput(v any) string {
 	data, _ := json.Marshal(v)
 	var compat any
 	if err := json.Unmarshal(data, &compat); err == nil {
-		compat = addJSONNameScopeCompat(compat)
+		compat = addJSONNameCompat(compat)
 		data, _ = json.MarshalIndent(compat, "", "  ")
 	} else {
 		data, _ = json.MarshalIndent(v, "", "  ")
@@ -1341,26 +1340,21 @@ func printJSON(v any) {
 	fmt.Println(formatJSONOutput(v))
 }
 
-func addJSONNameScopeCompat(v any) any {
+func addJSONNameCompat(v any) any {
 	switch typed := v.(type) {
 	case map[string]any:
 		for key, value := range typed {
-			typed[key] = addJSONNameScopeCompat(value)
+			typed[key] = addJSONNameCompat(value)
 		}
 		if _, hasName := typed["name"]; !hasName {
 			if alias, ok := typed["alias"].(string); ok && strings.TrimSpace(alias) != "" {
 				typed["name"] = alias
 			}
 		}
-		if _, hasScope := typed["identity_scope"]; !hasScope {
-			if lifetime, ok := typed["lifetime"].(string); ok && strings.TrimSpace(lifetime) != "" {
-				typed["identity_scope"] = awid.NormalizeIdentityScope(lifetime)
-			}
-		}
 		return typed
 	case []any:
 		for i, value := range typed {
-			typed[i] = addJSONNameScopeCompat(value)
+			typed[i] = addJSONNameCompat(value)
 		}
 		return typed
 	default:

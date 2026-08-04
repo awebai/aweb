@@ -42,7 +42,6 @@ type localSigningIdentity struct {
 	IdentityHome   string
 	TeamID         string
 	Custody        string
-	Lifetime       string
 }
 
 var (
@@ -288,7 +287,6 @@ func resolveLocalSigningIdentity() (*localSigningIdentity, error) {
 		IdentityHome:   strings.TrimSpace(sel.IdentityHome),
 		TeamID:         strings.TrimSpace(sel.TeamID),
 		Custody:        strings.TrimSpace(sel.Custody),
-		Lifetime:       awid.LegacyLifetimeForIdentityScope(sel.IdentityScope),
 	}, nil
 }
 

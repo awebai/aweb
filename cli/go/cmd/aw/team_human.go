@@ -1011,7 +1011,7 @@ func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDoma
 		MemberDIDAW:   strings.TrimSpace(plan.MemberDIDAW),
 		MemberAddress: strings.TrimSpace(plan.MemberAddress),
 		Alias:         strings.TrimSpace(plan.Name),
-		Lifetime:      strings.TrimSpace(plan.Lifetime),
+		IdentityScope: strings.TrimSpace(plan.Scope),
 	})
 	if err != nil {
 		return nil, err

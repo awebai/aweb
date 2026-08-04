@@ -196,7 +196,7 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	writeSelectionFixtureForTest(t, authorityDir, testSelectionFixture{
 		AwebURL: server.URL, TeamID: "backend:acme.test", Alias: "provisioner", WorkspaceID: "workspace-provisioner",
 		DID: authorityDID, StableID: authorityStableID, Address: "acme.test/provisioner", Custody: awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent, RegistryURL: server.URL, SigningKey: authorityKey,
+		IdentityScope: awid.IdentityModeGlobal, RegistryURL: server.URL, SigningKey: authorityKey,
 	})
 	_, shadowKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -205,7 +205,7 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	writeSelectionFixtureForTest(t, instanceDir, testSelectionFixture{
 		AwebURL: server.URL, TeamID: "backend:acme.test", Alias: "shadow", WorkspaceID: "workspace-shadow",
 		DID: awid.ComputeDIDKey(shadowKey.Public().(ed25519.PublicKey)), StableID: awid.ComputeStableID(shadowKey.Public().(ed25519.PublicKey)),
-		Address: "acme.test/shadow", Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, RegistryURL: server.URL, SigningKey: shadowKey,
+		Address: "acme.test/shadow", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: server.URL, SigningKey: shadowKey,
 	})
 
 	run := exec.CommandContext(ctx, bin, "id", "team", "provision-local",
@@ -422,7 +422,7 @@ func TestProvisionedCertificateIdentityUsesExplicitHomeForEncryption(t *testing.
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 		Team: "backend:acme.test", MemberDIDKey: awid.ComputeDIDKey(principalKey.Public().(ed25519.PublicKey)),
-		Alias: "provisioned", Lifetime: awid.LifetimeEphemeral,
+		Alias: "provisioned", IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatal(err)

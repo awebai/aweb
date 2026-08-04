@@ -52,10 +52,7 @@ type Selection struct {
 	SigningKey    string
 	Custody       string
 	IdentityScope string
-	// Lifetime is a deprecated-read-compat mirror of IdentityScope for callers
-	// still using persistent/ephemeral helpers during the config migration.
-	Lifetime    string
-	RegistryURL string
+	RegistryURL   string
 }
 
 type ResolveOptions struct {
@@ -189,7 +186,6 @@ func finalizeWorkspaceSelection(workingDir, identityHome string, externalIdentit
 	signingKey := ""
 	custody := ""
 	identityScope := ""
-	lifetime := ""
 	registryURL := ""
 	awebURL := ""
 	if ws != nil {
@@ -216,9 +212,8 @@ func finalizeWorkspaceSelection(workingDir, identityHome string, externalIdentit
 					did = v
 				}
 				stableID = strings.TrimSpace(cert.MemberDIDAW)
-				if v := awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime)); v == awid.IdentityModeLocal || v == awid.IdentityModeGlobal {
+				if v := awid.NormalizeIdentityScope(cert.IdentityScope); v == awid.IdentityModeLocal || v == awid.IdentityModeGlobal {
 					identityScope = v
-					lifetime = awid.LegacyLifetimeForIdentityScope(v)
 				}
 				if v := strings.TrimSpace(cert.MemberAddress); v != "" {
 					address = v
@@ -238,19 +233,12 @@ func finalizeWorkspaceSelection(workingDir, identityHome string, externalIdentit
 		}
 		if v := strings.TrimSpace(identity.IdentityScope); v != "" && identityScope == "" {
 			identityScope = v
-			lifetime = awid.LegacyLifetimeForIdentityScope(v)
 		}
 		if v := strings.TrimSpace(identity.StableID); v != "" && stableID == "" && identityScope != awid.IdentityModeLocal {
 			stableID = v
 		}
 		if v := strings.TrimSpace(identity.Custody); v != "" {
 			custody = v
-		}
-		if v := strings.TrimSpace(identity.Lifetime); v != "" && lifetime == "" {
-			lifetime = v
-			if identityScope == "" {
-				identityScope = awid.NormalizeIdentityScope(v)
-			}
 		}
 		if v := strings.TrimSpace(identity.RegistryURL); v != "" {
 			registryURL = v
@@ -294,7 +282,6 @@ func finalizeWorkspaceSelection(workingDir, identityHome string, externalIdentit
 		SigningKey:           signingKey,
 		Custody:              custody,
 		IdentityScope:        identityScope,
-		Lifetime:             lifetime,
 		RegistryURL:          registryURL,
 	}, nil
 }
@@ -305,10 +292,6 @@ func finalizeStandaloneIdentitySelection(workingDir, identityHome string, extern
 	address := strings.TrimSpace(identity.Address)
 	custody := strings.TrimSpace(identity.Custody)
 	identityScope := strings.TrimSpace(identity.IdentityScope)
-	lifetime := strings.TrimSpace(identity.Lifetime)
-	if lifetime == "" && identityScope != "" {
-		lifetime = awid.LegacyLifetimeForIdentityScope(identityScope)
-	}
 	signingKey := ""
 	if strings.EqualFold(custody, "self") {
 		signingKey = WorktreeSigningKeyPath(workingDir)
@@ -338,7 +321,6 @@ func finalizeStandaloneIdentitySelection(workingDir, identityHome string, extern
 		SigningKey:           signingKey,
 		Custody:              custody,
 		IdentityScope:        identityScope,
-		Lifetime:             lifetime,
 		RegistryURL:          strings.TrimSpace(identity.RegistryURL),
 	}, nil
 }

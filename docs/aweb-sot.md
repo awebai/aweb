@@ -124,11 +124,12 @@ combining authority across memberships.
 An **identity** is the principal the agent uses for messaging, coordination,
 and trust.
 
-Two identity classes exist:
+Two identity scopes exist:
 
-- **Local identity**: disposable, internal, one alias. Has only `did:key`.
-  Created by accepting a team invite or via spawn into the same team. Deleted
-  when the workspace is removed. Does not carry public trust continuity.
+- **Local identity**: team-local and single-team. Has only `did:key`; it has no
+  `did:aw` or public address. A local identity may remain durable across
+  sequential runtime sessions. Removing a workspace path does not itself retire
+  the membership certificate or release the member name.
 - **Global identity**: durable, trust-bearing. Has both `did:key` and
   `did:aw`. It may have zero, one, or many public addresses; DID registration is
   independent of address assignment. Supports rotation, archival, and
@@ -227,8 +228,9 @@ An **address** is the stable handle for a global identity:
 
 Three distinct lifecycle stories that must not be conflated:
 
-- **Delete**: local workspace teardown. Releases the alias for reuse. The single
-  user-facing lifecycle verb for local teardown.
+- **Delete**: local workspace-path teardown. It does not by itself retire the
+  identity's team membership, revoke its certificate, or release its member
+  name; those require an explicit team-authorized retirement operation.
 - **Archive**: global identity lifecycle cleanup with no continuity claim.
   Stops active participation, keeps history.
 - **Replace**: global identity continuity via owner-authorized replacement

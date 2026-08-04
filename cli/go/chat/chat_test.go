@@ -104,10 +104,10 @@ func mustTeamClient(t *testing.T, url string, teamID string) *awid.Client {
 		t.Fatal(err)
 	}
 	cert, err := awid.SignTeamCertificate(teamPriv, awid.TeamCertificateFields{
-		Team:         teamID,
-		MemberDIDKey: awid.ComputeDIDKey(pub),
-		Alias:        "alice",
-		Lifetime:     awid.LifetimePersistent,
+		Team:          teamID,
+		MemberDIDKey:  awid.ComputeDIDKey(pub),
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1713,19 +1713,19 @@ func TestSendWithReplySuppressesEphemeralContactTag(t *testing.T) {
 			switch identifier {
 			case "myteam/architect":
 				return &awid.ResolvedIdentity{
-					DID:         "did:key:z6MkSender",
-					Address:     identifier,
-					Lifetime:    awid.LifetimeEphemeral,
-					Custody:     awid.CustodySelf,
-					ResolvedVia: "registry",
+					DID:           "did:key:z6MkSender",
+					Address:       identifier,
+					IdentityScope: awid.IdentityModeLocal,
+					Custody:       awid.CustodySelf,
+					ResolvedVia:   "registry",
 				}, nil
 			case "myteam/implementer":
 				return &awid.ResolvedIdentity{
-					DID:         "did:key:z6MkSelf",
-					Address:     identifier,
-					Lifetime:    awid.LifetimePersistent,
-					Custody:     awid.CustodySelf,
-					ResolvedVia: "registry",
+					DID:           "did:key:z6MkSelf",
+					Address:       identifier,
+					IdentityScope: awid.IdentityModeGlobal,
+					Custody:       awid.CustodySelf,
+					ResolvedVia:   "registry",
 				}, nil
 			default:
 				t.Fatalf("identifier=%q", identifier)
@@ -3990,20 +3990,20 @@ func TestSendSuppressesContactTagForEphemeralStableDIDSSESender(t *testing.T) {
 			switch identifier {
 			case "myteam/architect":
 				return &awid.ResolvedIdentity{
-					DID:         "did:key:z6MkSender",
-					StableID:    "did:aw:architect",
-					Address:     identifier,
-					Lifetime:    awid.LifetimeEphemeral,
-					Custody:     awid.CustodySelf,
-					ResolvedVia: "registry",
+					DID:           "did:key:z6MkSender",
+					StableID:      "did:aw:architect",
+					Address:       identifier,
+					IdentityScope: awid.IdentityModeLocal,
+					Custody:       awid.CustodySelf,
+					ResolvedVia:   "registry",
 				}, nil
 			case "myteam/implementer":
 				return &awid.ResolvedIdentity{
-					DID:         "did:key:z6MkSelf",
-					Address:     identifier,
-					Lifetime:    awid.LifetimePersistent,
-					Custody:     awid.CustodySelf,
-					ResolvedVia: "registry",
+					DID:           "did:key:z6MkSelf",
+					Address:       identifier,
+					IdentityScope: awid.IdentityModeGlobal,
+					Custody:       awid.CustodySelf,
+					ResolvedVia:   "registry",
 				}, nil
 			default:
 				t.Fatalf("identifier=%q", identifier)
@@ -4111,20 +4111,20 @@ func TestSendUsesSignedPayloadStableIDForSSEIdentityMismatch(t *testing.T) {
 			switch identifier {
 			case "myteam/architect":
 				return &awid.ResolvedIdentity{
-					DID:         senderDID,
-					StableID:    stableID,
-					Address:     identifier,
-					Lifetime:    awid.LifetimePersistent,
-					Custody:     awid.CustodySelf,
-					ResolvedVia: "registry",
+					DID:           senderDID,
+					StableID:      stableID,
+					Address:       identifier,
+					IdentityScope: awid.IdentityModeGlobal,
+					Custody:       awid.CustodySelf,
+					ResolvedVia:   "registry",
 				}, nil
 			case "myteam/implementer":
 				return &awid.ResolvedIdentity{
-					DID:         "did:key:z6MkSelf",
-					Address:     identifier,
-					Lifetime:    awid.LifetimePersistent,
-					Custody:     awid.CustodySelf,
-					ResolvedVia: "registry",
+					DID:           "did:key:z6MkSelf",
+					Address:       identifier,
+					IdentityScope: awid.IdentityModeGlobal,
+					Custody:       awid.CustodySelf,
+					ResolvedVia:   "registry",
 				}, nil
 			default:
 				t.Fatalf("identifier=%q", identifier)

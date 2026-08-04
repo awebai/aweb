@@ -156,7 +156,7 @@ func setupProvisionedLocalMember(t *testing.T, listing certificateListingFunc) l
 	writeSelectionFixtureForTest(t, authorityDir, testSelectionFixture{
 		AwebURL: server.URL, TeamID: "backend:acme.test", Alias: "provisioner", WorkspaceID: "workspace-provisioner",
 		DID: authorityDID, StableID: authorityStableID, Address: "acme.test/provisioner", Custody: awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent, RegistryURL: server.URL, SigningKey: authorityKey,
+		IdentityScope: awid.IdentityModeGlobal, RegistryURL: server.URL, SigningKey: authorityKey,
 	})
 	_, shadowKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -165,7 +165,7 @@ func setupProvisionedLocalMember(t *testing.T, listing certificateListingFunc) l
 	writeSelectionFixtureForTest(t, instanceDir, testSelectionFixture{
 		AwebURL: server.URL, TeamID: "backend:acme.test", Alias: "shadow", WorkspaceID: "workspace-shadow",
 		DID: awid.ComputeDIDKey(shadowKey.Public().(ed25519.PublicKey)), StableID: awid.ComputeStableID(shadowKey.Public().(ed25519.PublicKey)),
-		Address: "acme.test/shadow", Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, RegistryURL: server.URL, SigningKey: shadowKey,
+		Address: "acme.test/shadow", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: server.URL, SigningKey: shadowKey,
 	})
 
 	env := append(testCommandEnv(root), "AWID_REGISTRY_URL="+server.URL)

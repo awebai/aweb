@@ -74,11 +74,11 @@ func newDoctorAwebServer(t *testing.T, cfg *doctorAwebServer) *doctorAwebServer 
 					alias = "other"
 				}
 				row := map[string]any{
-					"workspace_id":   "ws-ephemeral",
-					"alias":          alias,
-					"agent_lifetime": "ephemeral",
-					"status":         "active",
-					"last_seen":      "2026-04-18T00:00:00Z",
+					"workspace_id":         "ws-ephemeral",
+					"alias":                alias,
+					"agent_identity_scope": "local",
+					"status":               "active",
+					"last_seen":            "2026-04-18T00:00:00Z",
 					"claims": []map[string]any{{
 						"task_ref":   "AWEB-08",
 						"title":      "Doctor checks",

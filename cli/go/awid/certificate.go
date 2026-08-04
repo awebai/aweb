@@ -24,13 +24,11 @@ type TeamCertificate struct {
 	MemberAddress string `json:"member_address,omitempty"`
 	Alias         string `json:"alias"`
 	IdentityScope string `json:"identity_scope"`
-	// Lifetime is a deprecated local compatibility alias. It is accepted when
-	// loading old certificates but is not emitted by new certificate JSON.
-	Lifetime  string `json:"-"`
-	IssuedAt  string `json:"issued_at"`
-	Signature string `json:"signature"`
+	IssuedAt      string `json:"issued_at"`
+	Signature     string `json:"signature"`
 
-	scopeWireKey string
+	scopeWireKey   string
+	legacyLifetime string
 }
 
 // TeamCertificateFields are the inputs for signing a certificate.
@@ -41,8 +39,6 @@ type TeamCertificateFields struct {
 	MemberAddress string // optional; from identity.yaml, empty for local
 	Alias         string
 	IdentityScope string
-	// Lifetime is a deprecated compatibility input; use IdentityScope.
-	Lifetime string
 }
 
 // SignTeamCertificate creates and signs a team membership certificate
@@ -61,7 +57,7 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 		return nil, fmt.Errorf("alias is required")
 	}
 
-	rawScope := firstNonEmpty(fields.IdentityScope, fields.Lifetime)
+	rawScope := fields.IdentityScope
 	if strings.TrimSpace(rawScope) == "" {
 		return nil, fmt.Errorf("identity_scope is required")
 	}
@@ -69,8 +65,6 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 	if identityScope != IdentityModeGlobal && identityScope != IdentityModeLocal {
 		return nil, fmt.Errorf("identity_scope must be %q or %q", IdentityModeGlobal, IdentityModeLocal)
 	}
-	legacyLifetime := LegacyLifetimeForIdentityScope(identityScope)
-
 	certID, err := GenerateUUID4()
 	if err != nil {
 		return nil, err
@@ -94,7 +88,6 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 		MemberAddress: memberAddress,
 		Alias:         fields.Alias,
 		IdentityScope: identityScope,
-		Lifetime:      legacyLifetime,
 		IssuedAt:      issuedAt,
 		Signature:     base64.RawStdEncoding.EncodeToString(sig),
 	}, nil
@@ -115,12 +108,11 @@ func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) err
 		return fmt.Errorf("decode certificate signature: %w", err)
 	}
 
-	identityScope := NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime))
+	identityScope := NormalizeIdentityScope(cert.IdentityScope)
 	if identityScope != IdentityModeGlobal && identityScope != IdentityModeLocal {
 		return fmt.Errorf("certificate identity_scope is invalid")
 	}
 	cert.IdentityScope = identityScope
-	cert.Lifetime = LegacyLifetimeForIdentityScope(identityScope)
 
 	payload := canonicalCertificatePayload(
 		cert.CertificateID,
@@ -144,7 +136,7 @@ func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) err
 			cert.MemberDIDAW,
 			cert.MemberAddress,
 			cert.Alias,
-			cert.Lifetime,
+			cert.legacyLifetime,
 			cert.IssuedAt,
 			true,
 		)
@@ -218,7 +210,7 @@ func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 		IssuedAt      string `json:"issued_at"`
 		Signature     string `json:"signature"`
 	}
-	identityScope := NormalizeIdentityScope(firstNonEmpty(c.IdentityScope, c.Lifetime))
+	identityScope := NormalizeIdentityScope(c.IdentityScope)
 	if c.scopeWireKey == "lifetime" {
 		type legacyWire struct {
 			Version       int    `json:"version"`
@@ -242,7 +234,7 @@ func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 			MemberDIDAW:   c.MemberDIDAW,
 			MemberAddress: c.MemberAddress,
 			Alias:         c.Alias,
-			Lifetime:      LegacyLifetimeForIdentityScope(identityScope),
+			Lifetime:      c.legacyLifetime,
 			IssuedAt:      c.IssuedAt,
 			Signature:     c.Signature,
 		})
@@ -281,25 +273,26 @@ func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &w); err != nil {
 		return err
 	}
-	identityScope := NormalizeIdentityScope(firstNonEmpty(w.IdentityScope, w.Lifetime))
+	identityScope := NormalizeIdentityScope(w.IdentityScope)
 	scopeWireKey := "identity_scope"
 	if strings.TrimSpace(w.IdentityScope) == "" && strings.TrimSpace(w.Lifetime) != "" {
+		identityScope = IdentityScopeFromLegacyLifetime(w.Lifetime)
 		scopeWireKey = "lifetime"
 	}
 	*c = TeamCertificate{
-		Version:       w.Version,
-		CertificateID: w.CertificateID,
-		Team:          w.Team,
-		TeamDIDKey:    w.TeamDIDKey,
-		MemberDIDKey:  w.MemberDIDKey,
-		MemberDIDAW:   w.MemberDIDAW,
-		MemberAddress: w.MemberAddress,
-		Alias:         w.Alias,
-		IdentityScope: identityScope,
-		Lifetime:      LegacyLifetimeForIdentityScope(identityScope),
-		IssuedAt:      w.IssuedAt,
-		Signature:     w.Signature,
-		scopeWireKey:  scopeWireKey,
+		Version:        w.Version,
+		CertificateID:  w.CertificateID,
+		Team:           w.Team,
+		TeamDIDKey:     w.TeamDIDKey,
+		MemberDIDKey:   w.MemberDIDKey,
+		MemberDIDAW:    w.MemberDIDAW,
+		MemberAddress:  w.MemberAddress,
+		Alias:          w.Alias,
+		IdentityScope:  identityScope,
+		IssuedAt:       w.IssuedAt,
+		Signature:      w.Signature,
+		scopeWireKey:   scopeWireKey,
+		legacyLifetime: strings.TrimSpace(w.Lifetime),
 	}
 	return nil
 }

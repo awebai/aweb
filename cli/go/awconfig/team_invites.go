@@ -15,15 +15,15 @@ import (
 
 // TeamInvite is a pending team invite stored locally by the team controller.
 type TeamInvite struct {
-	InviteID    string `json:"invite_id" yaml:"invite_id"`
-	Domain      string `json:"domain" yaml:"domain"`
-	TeamName    string `json:"team_name" yaml:"team_name"`
-	Ephemeral   bool   `json:"ephemeral" yaml:"ephemeral"`
-	Secret      string `json:"secret" yaml:"secret"`
-	RegistryURL string `json:"registry_url,omitempty" yaml:"registry_url,omitempty"`
-	AwebURL     string `json:"aweb_url,omitempty" yaml:"aweb_url,omitempty"`
-	OperationID string `json:"operation_id,omitempty" yaml:"operation_id,omitempty"`
-	CreatedAt   string `json:"created_at" yaml:"created_at"`
+	InviteID      string `json:"invite_id" yaml:"invite_id"`
+	Domain        string `json:"domain" yaml:"domain"`
+	TeamName      string `json:"team_name" yaml:"team_name"`
+	IdentityScope string `json:"identity_scope" yaml:"identity_scope"`
+	Secret        string `json:"secret" yaml:"secret"`
+	RegistryURL   string `json:"registry_url,omitempty" yaml:"registry_url,omitempty"`
+	AwebURL       string `json:"aweb_url,omitempty" yaml:"aweb_url,omitempty"`
+	OperationID   string `json:"operation_id,omitempty" yaml:"operation_id,omitempty"`
+	CreatedAt     string `json:"created_at" yaml:"created_at"`
 }
 
 // TeamInviteToken is the JSON structure encoded in the invite token

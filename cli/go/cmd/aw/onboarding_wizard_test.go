@@ -371,10 +371,10 @@ func TestExecuteBYODPathDefaultsToLocalAlias(t *testing.T) {
 	}
 	didKey := awid.ComputeDIDKey(pub)
 	cert, err := awid.SignTeamCertificate(signingKey, awid.TeamCertificateFields{
-		Team:         "default:acme.com",
-		MemberDIDKey: didKey,
-		Alias:        "alice",
-		Lifetime:     awid.LifetimeEphemeral,
+		Team:          "default:acme.com",
+		MemberDIDKey:  didKey,
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -456,8 +456,8 @@ func TestExecuteBYODPathDefaultsToLocalAlias(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load cert: %v", err)
 	}
-	if savedCert.Lifetime != awid.LifetimeEphemeral {
-		t.Fatalf("cert lifetime=%q", savedCert.Lifetime)
+	if savedCert.IdentityScope != awid.IdentityModeLocal {
+		t.Fatalf("cert identity_scope=%q", savedCert.IdentityScope)
 	}
 	if savedCert.MemberDIDAW != "" || savedCert.MemberAddress != "" {
 		t.Fatalf("local cert should not carry stable fields: %+v", savedCert)
@@ -488,7 +488,7 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 		MemberDIDAW:   didAW,
 		MemberAddress: "acme.com/alice",
 		Alias:         "alice",
-		Lifetime:      awid.LifetimePersistent,
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -695,7 +695,7 @@ func TestExecuteBYODPathProvisionsLocalTeamWithoutIdentityRegistrationAgainstSer
 		t.Fatal("expected namespace registration")
 	}
 	if gotCertPayload["identity_scope"] != awid.IdentityModeLocal {
-		t.Fatalf("cert lifetime=%v", gotCertPayload["identity_scope"])
+		t.Fatalf("cert identity_scope=%v", gotCertPayload["identity_scope"])
 	}
 	if _, ok := gotCertPayload["member_did_aw"]; ok {
 		t.Fatalf("local certificate registration should omit member_did_aw: %v", gotCertPayload["member_did_aw"])
@@ -710,8 +710,8 @@ func TestExecuteBYODPathProvisionsLocalTeamWithoutIdentityRegistrationAgainstSer
 	if err != nil {
 		t.Fatalf("load cert: %v", err)
 	}
-	if cert.Lifetime != awid.LifetimeEphemeral {
-		t.Fatalf("saved cert lifetime=%q", cert.Lifetime)
+	if cert.IdentityScope != awid.IdentityModeLocal {
+		t.Fatalf("saved cert identity_scope=%q", cert.IdentityScope)
 	}
 }
 
@@ -831,7 +831,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 					MemberDIDAW:   didAW,
 					MemberAddress: memberAddress,
 					Alias:         alias,
-					Lifetime:      awid.LifetimePersistent,
+					IdentityScope: awid.IdentityModeGlobal,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -969,9 +969,9 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	if cert.Team != "default:jack.aweb.ai" {
 		t.Fatalf("cert team=%q", cert.Team)
 	}
-	wantLifetime := awid.LifetimePersistent
-	if cert.Lifetime != wantLifetime {
-		t.Fatalf("cert lifetime=%q want %q", cert.Lifetime, wantLifetime)
+	wantScope := awid.IdentityModeGlobal
+	if cert.IdentityScope != wantScope {
+		t.Fatalf("cert identity_scope=%q want %q", cert.IdentityScope, wantScope)
 	}
 	if strings.TrimSpace(cert.MemberDIDAW) == "" {
 		t.Fatalf("cert member_did_aw=%q must be set for global mode", cert.MemberDIDAW)
@@ -1100,7 +1100,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 					MemberDIDAW:   didAW,
 					MemberAddress: memberAddress,
 					Alias:         alias,
-					Lifetime:      awid.LifetimePersistent,
+					IdentityScope: awid.IdentityModeGlobal,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -1369,7 +1369,7 @@ func TestExecuteHostedPathWithCompatibilityAliasCreatesSelfCustodialGlobalCLIIde
 					MemberDIDAW:   didAW,
 					MemberAddress: memberAddress,
 					Alias:         alias,
-					Lifetime:      awid.LifetimePersistent,
+					IdentityScope: awid.IdentityModeGlobal,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -1429,9 +1429,9 @@ func TestExecuteHostedPathWithCompatibilityAliasCreatesSelfCustodialGlobalCLIIde
 	if err != nil {
 		t.Fatalf("LoadTeamCertificate: %v", err)
 	}
-	wantLifetime := awid.LifetimePersistent
-	if cert.Lifetime != wantLifetime {
-		t.Fatalf("cert lifetime=%q want %q", cert.Lifetime, wantLifetime)
+	wantScope := awid.IdentityModeGlobal
+	if cert.IdentityScope != wantScope {
+		t.Fatalf("cert identity_scope=%q want %q", cert.IdentityScope, wantScope)
 	}
 	if strings.TrimSpace(cert.MemberDIDAW) == "" {
 		t.Fatalf("cert member_did_aw=%q must be set for global mode", cert.MemberDIDAW)
@@ -1512,10 +1512,10 @@ func TestExecuteHostedPathDefaultsToLocalWithAliceAlias(t *testing.T) {
 				alias := strings.TrimSpace(signupBody["alias"].(string))
 				didKey := strings.TrimSpace(signupBody["did_key"].(string))
 				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-					Team:         "default:" + username + ".aweb.ai",
-					MemberDIDKey: didKey,
-					Alias:        alias,
-					Lifetime:     awid.LifetimeEphemeral,
+					Team:          "default:" + username + ".aweb.ai",
+					MemberDIDKey:  didKey,
+					Alias:         alias,
+					IdentityScope: awid.IdentityModeLocal,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -1682,7 +1682,7 @@ func TestExecuteHostedPathGlobalDoesNotSuggestUserAsAlias(t *testing.T) {
 					MemberDIDAW:   didAW,
 					MemberAddress: memberAddress,
 					Alias:         alias,
-					Lifetime:      awid.LifetimePersistent,
+					IdentityScope: awid.IdentityModeGlobal,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -2432,10 +2432,10 @@ func TestExecuteHostedPathOffersClaimHumanAfterPostInitSetup(t *testing.T) {
 				didKey := strings.TrimSpace(body["did_key"].(string))
 				alias := strings.TrimSpace(body["alias"].(string))
 				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-					Team:         "default:jack.aweb.ai",
-					MemberDIDKey: didKey,
-					Alias:        alias,
-					Lifetime:     awid.LifetimeEphemeral,
+					Team:          "default:jack.aweb.ai",
+					MemberDIDKey:  didKey,
+					Alias:         alias,
+					IdentityScope: awid.IdentityModeLocal,
 				})
 				if err != nil {
 					t.Fatal(err)

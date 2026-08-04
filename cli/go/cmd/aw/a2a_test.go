@@ -372,12 +372,12 @@ func TestA2APublishPostsDelegationThenPublicationAndVerifies(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Address:   address,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-06-07T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Address:       address,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-06-07T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}

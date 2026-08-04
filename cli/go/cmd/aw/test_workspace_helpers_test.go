@@ -206,18 +206,18 @@ func activeMembershipForTest(t *testing.T, state *awconfig.WorktreeWorkspace) *a
 }
 
 type testSelectionFixture struct {
-	AwebURL     string
-	TeamID      string
-	Alias       string
-	WorkspaceID string
-	DID         string
-	StableID    string
-	Address     string
-	Custody     string
-	Lifetime    string
-	RegistryURL string
-	SigningKey  ed25519.PrivateKey
-	CreatedAt   string
+	AwebURL       string
+	TeamID        string
+	Alias         string
+	WorkspaceID   string
+	DID           string
+	StableID      string
+	Address       string
+	Custody       string
+	IdentityScope string
+	RegistryURL   string
+	SigningKey    ed25519.PrivateKey
+	CreatedAt     string
 }
 
 func writeSelectionFixtureForTest(t *testing.T, workingDir string, fixture testSelectionFixture) {
@@ -240,7 +240,7 @@ func writeSelectionFixtureForTest(t *testing.T, workingDir string, fixture testS
 	}
 	writeWorkspaceBindingForTest(t, workingDir, workspace)
 
-	if fixture.DID == "" && fixture.StableID == "" && fixture.Custody == "" && fixture.Lifetime == "" && fixture.Address == "" {
+	if fixture.DID == "" && fixture.StableID == "" && fixture.Custody == "" && fixture.IdentityScope == "" && fixture.Address == "" {
 		return
 	}
 
@@ -249,13 +249,13 @@ func writeSelectionFixtureForTest(t *testing.T, workingDir string, fixture testS
 		createdAt = "2026-04-04T00:00:00Z"
 	}
 	writeIdentityForTest(t, workingDir, awconfig.WorktreeIdentity{
-		DID:         fixture.DID,
-		StableID:    fixture.StableID,
-		Address:     fixture.Address,
-		Custody:     fixture.Custody,
-		Lifetime:    fixture.Lifetime,
-		RegistryURL: fixture.RegistryURL,
-		CreatedAt:   createdAt,
+		DID:           fixture.DID,
+		StableID:      fixture.StableID,
+		Address:       fixture.Address,
+		Custody:       fixture.Custody,
+		IdentityScope: fixture.IdentityScope,
+		RegistryURL:   fixture.RegistryURL,
+		CreatedAt:     createdAt,
 	})
 
 }
@@ -281,9 +281,9 @@ func writeTeamCertificateWorkspaceForTest(t *testing.T, workingDir string, works
 	if fixture != nil && strings.TrimSpace(fixture.Address) != "" {
 		memberAddress = strings.TrimSpace(fixture.Address)
 	}
-	lifetime := awid.LifetimePersistent
-	if fixture != nil && strings.TrimSpace(fixture.Lifetime) != "" {
-		lifetime = strings.TrimSpace(fixture.Lifetime)
+	identityScope := awid.IdentityModeGlobal
+	if fixture != nil && strings.TrimSpace(fixture.IdentityScope) != "" {
+		identityScope = awid.NormalizeIdentityScope(fixture.IdentityScope)
 	}
 
 	_, teamKey, err := awid.GenerateKeypair()
@@ -301,7 +301,7 @@ func writeTeamCertificateWorkspaceForTest(t *testing.T, workingDir string, works
 			memberDID = awid.ComputeDIDKey(memberKey.Public().(ed25519.PublicKey))
 		}
 		memberStableID = strings.TrimSpace(fixture.StableID)
-		if memberStableID == "" && lifetime == awid.LifetimePersistent {
+		if memberStableID == "" && identityScope == awid.IdentityModeGlobal {
 			memberStableID = awid.ComputeStableID(memberKey.Public().(ed25519.PublicKey))
 		}
 	} else {
@@ -311,7 +311,7 @@ func writeTeamCertificateWorkspaceForTest(t *testing.T, workingDir string, works
 		}
 		memberKey = generatedKey
 		memberDID = awid.ComputeDIDKey(memberPub)
-		if lifetime == awid.LifetimePersistent {
+		if identityScope == awid.IdentityModeGlobal {
 			memberStableID = awid.ComputeStableID(memberPub)
 		}
 	}
@@ -322,7 +322,7 @@ func writeTeamCertificateWorkspaceForTest(t *testing.T, workingDir string, works
 		MemberDIDAW:   memberStableID,
 		MemberAddress: memberAddress,
 		Alias:         alias,
-		Lifetime:      lifetime,
+		IdentityScope: identityScope,
 	})
 	if err != nil {
 		t.Fatalf("sign team certificate: %v", err)
@@ -338,12 +338,12 @@ func writeTeamCertificateWorkspaceForTest(t *testing.T, workingDir string, works
 
 	if fixture == nil {
 		if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()), &awconfig.WorktreeIdentity{
-			DID:       memberDID,
-			StableID:  memberStableID,
-			Address:   memberAddress,
-			Custody:   awid.CustodySelf,
-			Lifetime:  lifetime,
-			CreatedAt: "2026-04-04T00:00:00Z",
+			DID:           memberDID,
+			StableID:      memberStableID,
+			Address:       memberAddress,
+			Custody:       awid.CustodySelf,
+			IdentityScope: identityScope,
+			CreatedAt:     "2026-04-04T00:00:00Z",
 		}); err != nil {
 			t.Fatalf("write worktree identity: %v", err)
 		}

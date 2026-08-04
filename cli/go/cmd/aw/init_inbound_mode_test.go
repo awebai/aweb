@@ -180,7 +180,7 @@ func TestProvisionHostedIdentityForwardsInboundModeContactsOnly(t *testing.T) {
 				MemberDIDAW:   didAW,
 				MemberAddress: "alice.aweb.ai/laptop",
 				Alias:         "laptop",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if certErr != nil {
 				t.Fatal(certErr)
@@ -252,7 +252,7 @@ func TestProvisionHostedIdentityOmitsInboundModeWhenUnset(t *testing.T) {
 				MemberDIDAW:   didAW,
 				MemberAddress: "bob.aweb.ai/laptop",
 				Alias:         "laptop",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if certErr != nil {
 				t.Fatal(certErr)
@@ -337,7 +337,7 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 				MemberDIDAW:   stableID,
 				MemberAddress: memberAddress,
 				Alias:         "alice",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if certErr != nil {
 				t.Fatal(certErr)
@@ -449,7 +449,7 @@ func TestRunAPIKeyBootstrapInitOmitsInboundModeWhenUnset(t *testing.T) {
 				MemberDIDAW:   stableID,
 				MemberAddress: memberAddress,
 				Alias:         "alice",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if certErr != nil {
 				t.Fatal(certErr)

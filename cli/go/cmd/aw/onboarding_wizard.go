@@ -449,15 +449,15 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 	if alias == "" {
 		alias = prepared.Plan.Name
 	}
-	lifetime := awid.LifetimeEphemeral
+	identityScope := awid.IdentityModeLocal
 	memberDIDAW := ""
 	memberAddress := ""
 	if req.Persistent {
-		lifetime = awid.LifetimePersistent
+		identityScope = awid.IdentityModeGlobal
 		memberDIDAW = prepared.Plan.DIDAW
 		memberAddress = prepared.Plan.Address
 	}
-	team, err := bootstrapLocalTeamMemberWithLifetime(
+	team, err := bootstrapLocalTeamMemberWithScope(
 		ctx,
 		registry,
 		prepared.Plan.RegistryURL,
@@ -469,7 +469,7 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 		memberDIDAW,
 		memberAddress,
 		alias,
-		lifetime,
+		identityScope,
 	)
 	if err != nil {
 		return nil, err
@@ -493,7 +493,7 @@ func persistGuidedBYODIdentity(provisioned *guidedBYODProvision) error {
 	if err := persistLocalSigningKeyAndCertificate(workingDir, provisioned.Identity.IdentityKey, provisioned.Certificate); err != nil {
 		return err
 	}
-	if strings.TrimSpace(provisioned.Certificate.Lifetime) == awid.LifetimeEphemeral {
+	if awid.NormalizeIdentityScope(provisioned.Certificate.IdentityScope) == awid.IdentityModeLocal {
 		return nil
 	}
 	return awconfig.SaveWorktreeIdentityTo(plan.IdentityPath, &awconfig.WorktreeIdentity{

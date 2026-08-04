@@ -281,10 +281,10 @@ func TestResolveExplicitInitAwebURLDefaultsForPublicAWIDTeam(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: "did:key:z6MkpPublicTeamMember111111111111111111111111111",
-		Alias:        "alice",
-		Lifetime:     awid.LifetimeEphemeral,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  "did:key:z6MkpPublicTeamMember111111111111111111111111111",
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatalf("sign team certificate: %v", err)
@@ -336,10 +336,10 @@ func TestResolveExplicitInitAwebURLOverrideWinsOverDiscoveryFallback(t *testing.
 		t.Fatal(err)
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: "did:key:z6MkpPublicTeamMember111111111111111111111111111",
-		Alias:        "alice",
-		Lifetime:     awid.LifetimeEphemeral,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  "did:key:z6MkpPublicTeamMember111111111111111111111111111",
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatalf("sign team certificate: %v", err)
@@ -865,7 +865,7 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 		t.Fatalf("team name=%v", gotTeamPayload["name"])
 	}
 	if gotCertPayload["identity_scope"] != awid.IdentityModeLocal {
-		t.Fatalf("cert lifetime=%v", gotCertPayload["identity_scope"])
+		t.Fatalf("cert identity_scope=%v", gotCertPayload["identity_scope"])
 	}
 	if _, ok := gotCertPayload["member_did_aw"]; ok {
 		t.Fatalf("local cert should not include member_did_aw: %v", gotCertPayload["member_did_aw"])
@@ -910,8 +910,8 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadTeamCertificate: %v", err)
 	}
-	if cert.Lifetime != awid.LifetimeEphemeral {
-		t.Fatalf("loaded cert lifetime=%q", cert.Lifetime)
+	if cert.IdentityScope != awid.IdentityModeLocal {
+		t.Fatalf("loaded cert identity_scope=%q", cert.IdentityScope)
 	}
 	if cert.MemberDIDAW != "" {
 		t.Fatalf("loaded cert member_did_aw=%q", cert.MemberDIDAW)

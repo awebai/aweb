@@ -44,8 +44,8 @@ func TestNormalizeSenderTrustVerifiesAuthoritativelyRefreshedLocalSender(t *test
 	pins := NewPinStore()
 	c.SetPinStore(pins, "")
 	resolver := &localFreshResolver{
-		cached: &ResolvedIdentity{DID: "did:key:old", Lifetime: LifetimePersistent, Custody: CustodySelf},
-		fresh:  &ResolvedIdentity{DID: "did:key:current", Lifetime: LifetimeEphemeral, Custody: CustodySelf},
+		cached: &ResolvedIdentity{DID: "did:key:old", IdentityScope: IdentityModeGlobal, Custody: CustodySelf},
+		fresh:  &ResolvedIdentity{DID: "did:key:current", IdentityScope: IdentityModeLocal, Custody: CustodySelf},
 	}
 	c.SetResolver(resolver)
 	address := "default:acme.com/alice"
@@ -218,8 +218,8 @@ func TestNormalizeSenderTrustDoesNotReconcileLegacyRecipientBindingMismatch(t *t
 	pins := NewPinStore()
 	c.SetPinStore(pins, "")
 	resolver := &localFreshResolver{
-		cached: &ResolvedIdentity{DID: "did:key:old", Lifetime: LifetimePersistent, Custody: CustodySelf},
-		fresh:  &ResolvedIdentity{DID: "did:key:current", Lifetime: LifetimeEphemeral, Custody: CustodySelf},
+		cached: &ResolvedIdentity{DID: "did:key:old", IdentityScope: IdentityModeGlobal, Custody: CustodySelf},
+		fresh:  &ResolvedIdentity{DID: "did:key:current", IdentityScope: IdentityModeLocal, Custody: CustodySelf},
 	}
 	c.SetResolver(resolver)
 	address := "default:acme.com/alice"
@@ -245,8 +245,8 @@ func TestNormalizeSenderTrustPreservesMismatchForLocalRosterKeyDifference(t *tes
 	c, _ := New("http://example")
 	c.SetPinStore(NewPinStore(), "")
 	c.SetResolver(&localFreshResolver{
-		cached: &ResolvedIdentity{DID: "did:key:old", Lifetime: LifetimePersistent, Custody: CustodySelf},
-		fresh:  &ResolvedIdentity{DID: "did:key:roster", Lifetime: LifetimeEphemeral, Custody: CustodySelf},
+		cached: &ResolvedIdentity{DID: "did:key:old", IdentityScope: IdentityModeGlobal, Custody: CustodySelf},
+		fresh:  &ResolvedIdentity{DID: "did:key:roster", IdentityScope: IdentityModeLocal, Custody: CustodySelf},
 	})
 	address := "default:acme.com/alice"
 	_, _ = c.NormalizeSenderTrust(context.Background(), Verified, address, "did:key:old", "", nil, nil, nil)
@@ -261,7 +261,7 @@ func TestNormalizeSenderTrustPreservesMismatchWhenLocalSenderAbsent(t *testing.T
 	c, _ := New("http://example")
 	c.SetPinStore(NewPinStore(), "")
 	c.SetResolver(&localFreshResolver{
-		cached:   &ResolvedIdentity{DID: "did:key:old", Lifetime: LifetimePersistent, Custody: CustodySelf},
+		cached:   &ResolvedIdentity{DID: "did:key:old", IdentityScope: IdentityModeGlobal, Custody: CustodySelf},
 		freshErr: &APIError{StatusCode: http.StatusNotFound},
 	})
 	address := "default:acme.com/alice"
@@ -277,7 +277,7 @@ func TestNormalizeSenderTrustReportsStaleWhenLocalRefreshUnavailable(t *testing.
 	c, _ := New("http://example")
 	c.SetPinStore(NewPinStore(), "")
 	c.SetResolver(&localFreshResolver{
-		cached:   &ResolvedIdentity{DID: "did:key:old", Lifetime: LifetimePersistent, Custody: CustodySelf},
+		cached:   &ResolvedIdentity{DID: "did:key:old", IdentityScope: IdentityModeGlobal, Custody: CustodySelf},
 		freshErr: errors.New("network unavailable"),
 	})
 	address := "default:acme.com/alice"

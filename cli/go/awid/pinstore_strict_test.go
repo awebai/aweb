@@ -283,7 +283,7 @@ func TestLoadPinStoreAcceptsOwnOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a populated store must round-trip: %v", err)
 	}
-	if back.CheckPin("alice@example.com", "did:key:zAlice", LifetimePersistent) != PinOK {
+	if back.CheckPin("alice@example.com", "did:key:zAlice", IdentityModeGlobal) != PinOK {
 		t.Error("round-tripped pin did not verify")
 	}
 	if back.Pins["did:key:zAlice"].LogSeq != 3 {
