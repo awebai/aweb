@@ -187,6 +187,33 @@ The v1 declaration is exactly: `schema_version` (`1`), `address`, `stable_id`
 (the `did:aw`), `team_id`, `soul`, and an optional `soul_version`. Unknown
 fields are rejected, so a stray secret cannot ride along.
 
+**`soul_version` changes only by explicit re-declaration, never as a side effect
+of a content operation.** A soul-content sync — importing, picking from a shelf,
+or any other operation that changes which soul bytes are on disk — must not
+write it. This seam owns that rule; the Library convergence design defers to it.
+
+The reason is what the field is *for*. `soul_version` records which soul version
+a principal was **declared against**. If a content operation silently updates it
+to match whatever it just pulled, the declaration can never disagree with the
+soul, and a value that cannot disagree cannot be evidence — it stops being able
+to tell you a principal is attached to a soul that moved underneath it. Prefer
+leaving it stale and letting the disagreement be readable.
+
+Two consequences that are easy to get wrong, both raised in review and both
+load-bearing:
+
+- **Staleness only carries signal if a deliberate update path exists.** If
+  *nothing* may write the field, permanent staleness becomes the normal state and
+  the alarm is always on, which is indistinguishable from no alarm and worse
+  because it looks like coverage. Explicit re-declaration is a reviewed
+  principal-side act, and it is what keeps a stale value meaningful.
+- **The comparison needs a named referent.** After local evolution the soul on
+  disk is no longer any published version, so "declared against version X" is
+  checkable only against the import receipt's recorded source version plus the
+  history since. That is a read-only cross-reference between two committed files,
+  with neither writer updating the other. Without naming the referent, "let the
+  disagreement be readable" has nothing to read.
+
 There is deliberately **no policy block**. Cleanup ownership is a property of
 the *binding mode* — including whether a provision was durable or disposable —
 not of a principal, so a policy field here would be speculative. The same
