@@ -14,7 +14,7 @@
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
 	release-all-check \
 	publish-skills \
-	cli-e2e ship-suites ship ship-gate check-ship-invocation
+	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
@@ -657,7 +657,7 @@ publish-skills:
 
 # ── Unified release ──────────────────────────────────────────────────
 
-release-all-check:
+release-all-check: check-ship-invocation
 	@echo "=== Validating versions ==="
 	@echo "  server:  $(SERVER_VERSION)"
 	@echo "  awid:    $(AWID_VERSION)"
@@ -733,20 +733,45 @@ SHIP_SUITES := release-awid-check test-federation-e2e test-e2e cli-e2e
 ship-suites:
 	@MAKE="$(MAKE)" ./scripts/run-ship-suites.sh $(SHIP_SUITES)
 
-# The gate derives every release version itself. An override on the command
-# line rides MAKEFLAGS into the gate's own scenario fixtures and turns a valid
-# run red, so the only accepted invocation is plain `make ship`.
+# The gate derives every release version and its suite list itself. Any
+# command-line override rides MAKEOVERRIDES into nested makes: CLI_VERSION
+# contaminates the version scenario fixtures, and SHIP_SUITES= can empty the
+# suite list while the run still reports green. So the only accepted
+# invocation is plain `make ship`:
+#  - nonempty MAKEOVERRIDES refuses every command-line override by name;
+#  - the origin check refuses `make -e`, where the environment would override
+#    the file assignments (without -e those assignments win, which is why
+#    environment copies of the other release variables are inert and allowed);
+#  - CLI_VERSION is additionally refused from the environment outright.
 check-ship-invocation:
-	@if [ "$(origin CLI_VERSION)" = "command line" ] || [ -n "$$CLI_VERSION" ]; then \
-		echo "ERROR: ship refuses CLI_VERSION overrides; the gate derives the version itself."; \
-		echo "       Run plain 'make ship'. Intentional version bumps go through release-cli-tag."; \
+	@if [ -n "$(MAKEOVERRIDES)" ]; then \
+		echo "ERROR: ship refuses command-line variable overrides: $(MAKEOVERRIDES)"; \
+		echo "       The gate derives its own versions and suite list. Run plain 'make ship'."; \
+		exit 1; \
+	fi
+	@case "$(origin SERVER_VERSION)/$(origin AWID_VERSION)/$(origin CHANNEL_VERSION)/$(origin CLI_VERSION)/$(origin SHIP_SUITES)" in \
+		*command*|*environment*) \
+			echo "ERROR: ship refuses overridden release variables (make -e or command line): SERVER_VERSION AWID_VERSION CHANNEL_VERSION CLI_VERSION SHIP_SUITES"; \
+			exit 1;; \
+	esac
+	@if [ -n "$$CLI_VERSION" ]; then \
+		echo "ERROR: ship refuses CLI_VERSION from the environment; the gate derives the version itself."; \
+		echo "       Intentional version bumps go through release-cli-tag."; \
+		exit 1; \
+	fi
+
+# ship-gate assumes services, toolchain, and inputs that only ship-env.sh
+# establishes; reaching it by name skips all of that ownership.
+check-ship-owner:
+	@if [ -z "$$AWEB_SHIP_ENV_READY" ]; then \
+		echo "ERROR: ship-gate refuses to run outside scripts/ship-env.sh; run plain 'make ship'."; \
 		exit 1; \
 	fi
 
 ship: check-ship-invocation
 	@./scripts/ship-env.sh $(MAKE) ship-gate
 
-ship-gate: release-all-check
+ship-gate: check-ship-owner release-all-check
 	@echo ""
 	$(MAKE) ship-suites
 	@echo ""

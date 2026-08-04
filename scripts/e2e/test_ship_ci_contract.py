@@ -208,7 +208,7 @@ class ShipCIContractTests(unittest.TestCase):
             "ship must run the gate under the environment owner so ambient services"
             " are provisioned or reused deterministically",
         )
-        gate = makefile[makefile.index("ship-gate: release-all-check") :]
+        gate = makefile[makefile.index("ship-gate: check-ship-owner release-all-check") :]
         self.assertIn(
             "$(MAKE) ship-suites",
             gate,
@@ -226,24 +226,37 @@ class ShipCIContractTests(unittest.TestCase):
 
     ENV_SCRIPT = REPO_ROOT / "scripts" / "ship-env.sh"
 
-    def test_ship_invocation_guard_refuses_cli_version_overrides(self) -> None:
-        """A CLI_VERSION override contaminates the gate's own scenario fixtures,
-        so the guard has to stop the run before anything executes."""
-        base_env = {k: v for k, v in os.environ.items() if k != "CLI_VERSION"}
-        refusals = (
-            (["make", "-s", "check-ship-invocation", "CLI_VERSION=9.9.9"], base_env),
-            (["make", "-s", "check-ship-invocation"], {**base_env, "CLI_VERSION": "9.9.9"}),
+    def refuse(self, cmd: list[str], env: dict[str, str], must_name: str) -> None:
+        result = subprocess.run(
+            cmd, cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=60
         )
-        for cmd, env in refusals:
-            result = subprocess.run(
-                cmd, cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=60
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, f"{cmd} must refuse")
+        self.assertIn("refuses", output, f"{cmd} must refuse, not fail incidentally")
+        self.assertIn(must_name, output, "the refusal must name the cause")
+
+    def test_ship_invocation_guard_refuses_release_variable_overrides(self) -> None:
+        """Any command-line override rides MAKEOVERRIDES into nested makes:
+        CLI_VERSION contaminates the version scenario fixtures, and SHIP_SUITES=
+        can silently empty the suite list while the run still reports green."""
+        base_env = {k: v for k, v in os.environ.items() if k != "CLI_VERSION"}
+        for override in (
+            "CLI_VERSION=9.9.9",
+            "SERVER_VERSION=9.9.9",
+            "AWID_VERSION=9.9.9",
+            "CHANNEL_VERSION=9.9.9",
+            "SHIP_SUITES=",
+        ):
+            self.refuse(
+                ["make", "-s", "check-ship-invocation", override],
+                base_env,
+                override.split("=")[0],
             )
-            self.assertNotEqual(result.returncode, 0, f"{cmd} must refuse the override")
-            self.assertIn(
-                "refuses CLI_VERSION",
-                result.stdout + result.stderr,
-                "the refusal must name the override so the fix is obvious",
-            )
+        self.refuse(
+            ["make", "-s", "check-ship-invocation"],
+            {**base_env, "CLI_VERSION": "9.9.9"},
+            "CLI_VERSION",
+        )
         clean = subprocess.run(
             ["make", "-s", "check-ship-invocation"],
             cwd=REPO_ROOT,
@@ -253,6 +266,32 @@ class ShipCIContractTests(unittest.TestCase):
             timeout=60,
         )
         self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+
+    def test_internal_gate_targets_cannot_bypass_the_guard(self) -> None:
+        """release-all-check and ship-gate are reachable by name, so each must
+        carry the envelope itself: the override guard on release-all-check, the
+        environment-owner marker on ship-gate."""
+        base_env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("CLI_VERSION", "AWEB_SHIP_ENV_READY")
+        }
+        self.refuse(
+            ["make", "-s", "release-all-check", "CLI_VERSION=9.9.9"],
+            base_env,
+            "CLI_VERSION",
+        )
+        self.refuse(
+            ["make", "-s", "release-all-check", "SHIP_SUITES="],
+            base_env,
+            "SHIP_SUITES",
+        )
+        self.refuse(["make", "-s", "ship-gate"], base_env, "ship-env")
+        self.refuse(
+            ["make", "-s", "ship-gate", "SHIP_SUITES="],
+            {**base_env, "AWEB_SHIP_ENV_READY": "1"},
+            "SHIP_SUITES",
+        )
 
     def test_ship_environment_owner_proves_its_arms(self) -> None:
         """Exit 0 alone would pass a self-test gutted to a no-op; require each
@@ -271,8 +310,10 @@ class ShipCIContractTests(unittest.TestCase):
         for arm in (
             "reachable services are reused and no container is started",
             "a plain local run provisions even when a foreign service is listening",
-            "unreachable services are provisioned and cleaned up",
+            "provisioning never touches containers it did not create",
+            "cleanup removes exactly the created container ids",
             "cleanup runs even when the gate fails",
+            "concurrent provisioning runs do not collide",
             "a mismatched Go toolchain is refused with the fix",
         ):
             self.assertIn(arm, result.stdout, f"self-test must prove: {arm}")
