@@ -1,6 +1,10 @@
 # Built binary
 /aw
 
+# GoReleaser writes release metadata here before compiling. Keep its own output
+# from making otherwise-clean release binaries report vcs.modified=true.
+/dist/
+
 # Test binaries
 *.test
 

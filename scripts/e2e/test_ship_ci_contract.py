@@ -50,6 +50,35 @@ class ShipCIContractTests(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     self.assert_ship_job_context(mutation)
 
+    def assert_release_all_checks_cli_vcs_stamps(self, makefile: str) -> None:
+        target = self.require_match(
+            r"(?m)^check-cli-release-vcs-stamps:\n\t([^\n]+)$",
+            makefile,
+            "Makefile must define the CLI release VCS-stamp gate",
+        )
+        self.assertEqual(
+            target.group(1),
+            "./scripts/check-cli-release-vcs-stamps.sh",
+            "the VCS-stamp target must execute the release-boundary regression",
+        )
+
+        start = makefile.index("release-all-check:")
+        end = makefile.index("# `make ship`", start)
+        release_all_check = makefile[start:end]
+        self.assertEqual(
+            release_all_check.count("$(MAKE) check-cli-release-vcs-stamps"),
+            1,
+            "release-all-check must run the CLI VCS-stamp gate exactly once",
+        )
+
+    def test_release_all_check_gates_cli_vcs_stamps(self) -> None:
+        makefile = MAKEFILE.read_text(encoding="utf-8")
+        self.assert_release_all_checks_cli_vcs_stamps(makefile)
+
+        mutation = makefile.replace("\t$(MAKE) check-cli-release-vcs-stamps\n", "", 1)
+        with self.assertRaises(AssertionError):
+            self.assert_release_all_checks_cli_vcs_stamps(mutation)
+
     def test_workflow_materializes_exact_cross_repo_inputs(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
 

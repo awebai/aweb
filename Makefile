@@ -3,7 +3,7 @@
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
-	check-aw-commit-repo-stamp check-cli-go-tidy check-server-locked-suite release-server-gate \
+	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps check-server-locked-suite release-server-gate \
 	check-awid-locked-suite release-awid-pypi-gate release-awid-image-gate \
 	release-server-check release-server-tag release-server-push \
 	release-awid-check release-awid-tag release-awid-push \
@@ -450,6 +450,12 @@ check-aw-commit-repo-stamp:
 check-cli-go-tidy:
 	cd cli/go && go mod tidy -diff
 
+# Reproduce GoReleaser's derived repository and pre-build dist/metadata.json,
+# then inspect the complete two-product, six-platform artifact matrix. This also
+# proves an unrelated unignored file still produces vcs.modified=true.
+check-cli-release-vcs-stamps:
+	./scripts/check-cli-release-vcs-stamps.sh
+
 check-server-locked-suite:
 	cd server && uv lock --check
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
@@ -662,6 +668,9 @@ release-all-check:
 	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
 		(echo "ERROR: channel package.json != plugin.json"; exit 1)
 	$(MAKE) release-cli-version-check
+	@echo ""
+	@echo "=== Verifying CLI release VCS stamps ==="
+	$(MAKE) check-cli-release-vcs-stamps
 	@echo ""
 	@echo "=== Running all tests ==="
 	$(MAKE) test
