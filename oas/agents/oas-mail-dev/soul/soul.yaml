@@ -1,6 +1,6 @@
 name: oas-mail-dev
 kind: persistent
 description: Implements the attached-principal mail decryption fix (aweb-oas-aaaa.63)
-repo: /Users/juanre/prj/awebai/aweb
+repo: .
 work: worktree
 runtime: pi
