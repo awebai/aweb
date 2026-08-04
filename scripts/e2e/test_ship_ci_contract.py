@@ -79,6 +79,16 @@ class ShipCIContractTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.assert_release_all_checks_cli_vcs_stamps(mutation)
 
+    def test_makefile_defines_no_all_product_tag_or_push_target(self) -> None:
+        makefile = MAKEFILE.read_text(encoding="utf-8")
+        for target in ("release-all-tag", "release-all-push"):
+            self.assertNotIn(
+                target,
+                makefile,
+                f"{target} must not exist: release tagging is per-component through"
+                " each artifact's own tag lane, never one commit tagging every product",
+            )
+
     def test_workflow_materializes_exact_cross_repo_inputs(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
 

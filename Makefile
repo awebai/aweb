@@ -12,7 +12,7 @@
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-all-check release-all-tag release-all-push \
+	release-all-check \
 	publish-skills \
 	cli-e2e ship-suites ship
 
@@ -91,8 +91,6 @@ help:
 	@echo "  awid-prod-migrate   Apply pending migrations to awid prod"
 	@echo ""
 	@echo "  release-all-check   Validate ALL products before release"
-	@echo "  release-all-tag     Commit version bumps and create all tags"
-	@echo "  release-all-push    Push main and all tags to trigger CI"
 	@echo ""
 	@echo "  release-server-check / -tag / -push   aweb server (PyPI)"
 	@echo "  release-channel-check / -tag / -push  channel plugin (npm)"
@@ -746,27 +744,6 @@ ship: release-all-check
 	@echo "    cli:     $(CLI_VERSION)"
 	@echo ""
 	@echo "    Ready for tag-push."
-
-release-all-tag: release-cli-version-check
-	@echo "=== Tagging all products ==="
-	git add server/pyproject.toml server/uv.lock channel/package.json channel/package-lock.json channel/.claude-plugin/plugin.json awid/pyproject.toml awid/uv.lock
-	git commit -m "release: aweb $(SERVER_VERSION), channel $(CHANNEL_VERSION), awid $(AWID_VERSION)"
-	git tag "server-v$(SERVER_VERSION)"
-	git tag "aw-v$(CLI_VERSION)"
-	git tag "channel-v$(CHANNEL_VERSION)"
-	git tag "awid-v$(AWID_VERSION)"
-	git tag "awid-service-v$(AWID_VERSION)"
-	@echo "Created tags: server-v$(SERVER_VERSION) aw-v$(CLI_VERSION) channel-v$(CHANNEL_VERSION) awid-v$(AWID_VERSION) awid-service-v$(AWID_VERSION)"
-
-release-all-push: release-cli-version-check
-	git push origin main
-	git push origin server-v$(SERVER_VERSION)
-	git push origin aw-v$(CLI_VERSION)
-	git push origin channel-v$(CHANNEL_VERSION)
-	git push origin awid-v$(AWID_VERSION)
-	git push origin awid-service-v$(AWID_VERSION)
-	$(MAKE) release-awid-site
-	@echo "All tags pushed and awid site deployed. CI will publish."
 
 clean:
 	@echo "Cleaning build artifacts..."
