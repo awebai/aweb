@@ -46,6 +46,16 @@ function canonicalAbsolutePath(value) {
   return typeof value === "string" && isAbsolute(value) && normalize(resolve(value)) === value;
 }
 
+/** A durable LOCAL cannot be a minting authority: provisioning identifies the
+ *  authority by address and did:aw, and a local has neither. The exact-field
+ *  check already fails closed on it, but "invalid or contradictory" sends the
+ *  reader hunting for a malformed receipt instead of naming the real reason. */
+function assertCreatorShapeSupported(creator) {
+  if (creator && typeof creator === "object" && creator.scope === "local") {
+    throw new TypeError("a durable local principal cannot act as a minting authority: provisioning identifies the authority by address and did:aw, and a local has neither");
+  }
+}
+
 function validCreator(creator) {
   return exactFields(creator, CREATOR_FIELDS)
     && typeof creator.principal === "string" && SAFE_ID.test(creator.principal)
@@ -71,9 +81,11 @@ export function validateMintingAuthorityReceipt(receipt) {
         || receipt.default_expiry_hours !== 24
         || receipt.maximum_expiry_days !== 30
         || receipt.rule_enforcement !== "declarative_no_universal_retirement_choke_point") {
+      assertCreatorShapeSupported(receipt.intended_creator);
       throw new TypeError("hosted minting authority receipt is invalid or contradictory");
     }
   } else if (local) {
+    assertCreatorShapeSupported(receipt.intended_creator);
     if (!exactFields(receipt, LOCAL_FIELDS)
         || receipt.schema_version !== 2
         || receipt.authority_class !== "machine-wide-awid-team-controller-key"
