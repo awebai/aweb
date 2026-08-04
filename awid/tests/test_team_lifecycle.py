@@ -6,7 +6,6 @@ namespace → team → certificates → revocation → rotation → deletion.
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -174,9 +173,11 @@ async def test_full_team_lifecycle(client, controller_identity):
     assert bob_cert["identity_scope"] == "local"
     assert bob_cert["member_did_aw"] is None
 
-    # Record timestamp before revocation for incremental sync test
-    time.sleep(0.01)  # ensure revoked_at > this timestamp
-    before_revoke = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    # Boundary for the incremental sync test, from the database clock:
+    # revoked_at is assigned by SQL NOW(), so a host-side timestamp races the
+    # database server's clock. bob's issued_at was written by that same clock
+    # strictly before the revocation transaction.
+    before_revoke = bob_cert["issued_at"].replace("+00:00", "Z")
 
     # ---------------------------------------------------------------
     # 5. Revoke bob's certificate
