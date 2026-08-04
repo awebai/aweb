@@ -2,8 +2,16 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, normalize, parse, relative, resolve, sep } from "node:path";
 
+// v1 describes a GLOBAL principal: registered did:aw plus a public address.
+// v2 adds the DURABLE LOCAL shape, which has neither. Measured, not assumed: a
+// durable local carries a team membership and certificate and nothing else, and
+// cold contact to one fails at recipient resolution with "Address not found", so
+// it cannot be expressed as a global with fields omitted. Five of one adopting
+// team's seven members are this shape.
 const REQUIRED_FIELDS = ["schema_version", "address", "stable_id", "team_id", "soul"];
+const LOCAL_REQUIRED_FIELDS = ["schema_version", "scope", "member_name", "team_id", "soul"];
 const ALLOWED_FIELDS = new Set([...REQUIRED_FIELDS, "soul_version"]);
+const LOCAL_ALLOWED_FIELDS = new Set([...LOCAL_REQUIRED_FIELDS, "soul_version"]);
 const TEAM_NAME_PATTERN = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
 const DOMAIN_LABEL_PATTERN = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
 const TEAM_NAMESPACE_PATTERN = `${DOMAIN_LABEL_PATTERN}(?:\\.${DOMAIN_LABEL_PATTERN})*`;
@@ -12,6 +20,7 @@ const FIELD_PATTERNS = Object.freeze({
   stable_id: "^did:aw:[A-Za-z0-9]+$",
   team_id: `^${TEAM_NAME_PATTERN}:${TEAM_NAMESPACE_PATTERN}$`,
   soul: "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+  member_name: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
 });
 const FIELD_REGEXPS = Object.fromEntries(
   Object.entries(FIELD_PATTERNS).map(([field, pattern]) => [field, new RegExp(pattern)]),
@@ -87,11 +96,32 @@ export function validatePrincipalDeclaration(declaration) {
     throw new TypeError("principal declaration must be an object");
   }
 
-  for (const field of REQUIRED_FIELDS) {
+  // A durable LOCAL is a different shape, not a degraded global: it has a team
+  // membership and certificate as its stable handle, and no did:aw or address to
+  // carry. Discriminated explicitly so a missing address can never be read as an
+  // omission from the global shape.
+  // Discriminate on ONE explicit field. Keying on schema_version too would make a
+  // global declaration with a bumped version silently reinterpreted as a local
+  // shape instead of being told its version is wrong.
+  const local = Object.hasOwn(declaration, "scope");
+  const required = local ? LOCAL_REQUIRED_FIELDS : REQUIRED_FIELDS;
+  const allowed = local ? LOCAL_ALLOWED_FIELDS : ALLOWED_FIELDS;
+
+  for (const field of required) {
     if (!Object.hasOwn(declaration, field)) throw new TypeError(`missing required field: ${field}`);
   }
   for (const field of Object.keys(declaration)) {
-    if (!ALLOWED_FIELDS.has(field)) throw new TypeError(`unknown field: ${field}`);
+    if (!allowed.has(field)) throw new TypeError(`unknown field: ${field}`);
+  }
+
+  if (local) {
+    if (declaration.schema_version !== 2) throw new TypeError("a local principal declaration must use schema_version 2");
+    if (declaration.scope !== "local") throw new TypeError('scope must be "local" (a global principal omits scope and uses schema_version 1)');
+    if (typeof declaration.member_name !== "string" || !FIELD_REGEXPS.member_name.test(declaration.member_name)) {
+      throw new TypeError("member_name must be a canonical lowercase team-local member name");
+    }
+    validateSharedPrincipalFields(declaration);
+    return declaration;
   }
 
   if (declaration.schema_version !== 1) throw new TypeError("schema_version must be 1");
@@ -101,6 +131,13 @@ export function validatePrincipalDeclaration(declaration) {
   if (typeof declaration.stable_id !== "string" || !FIELD_REGEXPS.stable_id.test(declaration.stable_id)) {
     throw new TypeError("stable_id must be a did:aw stable identity");
   }
+  validateSharedPrincipalFields(declaration);
+
+  return declaration;
+}
+
+/** team_id, soul and soul_version mean the same thing in both shapes. */
+function validateSharedPrincipalFields(declaration) {
   if (typeof declaration.team_id !== "string" || !FIELD_REGEXPS.team_id.test(declaration.team_id)) {
     throw new TypeError("team_id must use canonical lowercase DNS-style team-name:namespace form (no normalization or legacy underscores)");
   }
@@ -111,8 +148,6 @@ export function validatePrincipalDeclaration(declaration) {
       && (typeof declaration.soul_version !== "string" || declaration.soul_version.length === 0)) {
     throw new TypeError("soul_version must be a non-empty string");
   }
-
-  return declaration;
 }
 
 function absolutePath(value, source) {

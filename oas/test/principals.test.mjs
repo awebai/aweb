@@ -249,3 +249,64 @@ test("store resolution enforces containment after validation", () => {
     /escapes principal home/,
   );
 });
+
+// A durable TEAM-LOCAL member is a different shape, not a global with fields
+// missing. Measured rather than assumed: a durable local carries a team
+// membership and certificate and has no did:aw, and cold contact to one fails at
+// recipient resolution with "Address not found" — so it has no address to carry.
+const LOCAL = Object.freeze({
+  schema_version: 2,
+  scope: "local",
+  member_name: "snape",
+  team_id: "default:cjr.aweb.ai",
+  soul: "accounting-reviewer",
+});
+
+test("a durable local principal is declarable without an address or a did:aw", () => {
+  assert.deepEqual(validatePrincipalDeclaration({ ...LOCAL }), LOCAL);
+  assert.deepEqual(
+    validatePrincipalDeclaration({ ...LOCAL, soul_version: "1.2.3" }),
+    { ...LOCAL, soul_version: "1.2.3" },
+  );
+});
+
+test("a local declaration cannot carry global-only identity fields", () => {
+  // These are the two fields a local does not have. Accepting either would let a
+  // local be described as a degraded global and re-open the shape confusion.
+  assert.throws(() => validatePrincipalDeclaration({ ...LOCAL, address: "cjr.aweb.ai/snape" }), /unknown field: address/);
+  assert.throws(() => validatePrincipalDeclaration({ ...LOCAL, stable_id: "did:aw:2Abc" }), /unknown field: stable_id/);
+});
+
+test("the local shape is explicitly discriminated, never inferred from omission", () => {
+  assert.throws(() => validatePrincipalDeclaration({ ...LOCAL, schema_version: 1 }), /schema_version 2/);
+  assert.throws(() => validatePrincipalDeclaration({ ...LOCAL, scope: "global" }), /scope must be "local"/);
+  for (const field of ["scope", "member_name", "team_id", "soul"]) {
+    const partial = { ...LOCAL };
+    delete partial[field];
+    if (field === "scope") {
+      // Dropping scope stops it being a local declaration at all: it becomes a
+      // global one, which demands the global-only fields. The point is that a
+      // local is never inferred from what is absent.
+      assert.throws(() => validatePrincipalDeclaration(partial), /missing required field: address/);
+    } else {
+      assert.throws(() => validatePrincipalDeclaration(partial), new RegExp(`missing required field: ${field}`));
+    }
+  }
+});
+
+test("a local member name must be canonical, and unknown fields are still rejected", () => {
+  for (const bad of ["Snape", "snape_1", "-snape", "snape-", ""]) {
+    assert.throws(() => validatePrincipalDeclaration({ ...LOCAL, member_name: bad }), /member_name must be/);
+  }
+  assert.throws(() => validatePrincipalDeclaration({ ...LOCAL, secret: "k" }), /unknown field: secret/);
+});
+
+test("the global declaration is unchanged by the local shape", () => {
+  const global = { schema_version: 1, address: "example.test/x", stable_id: "did:aw:2Abc", team_id: "t:example.test", soul: "dev" };
+  assert.deepEqual(validatePrincipalDeclaration({ ...global }), global);
+  for (const field of ["address", "stable_id"]) {
+    const partial = { ...global };
+    delete partial[field];
+    assert.throws(() => validatePrincipalDeclaration(partial), new RegExp(`missing required field: ${field}`));
+  }
+});
