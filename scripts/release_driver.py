@@ -168,14 +168,25 @@ class Graph:
 
 @dataclass
 class FixtureState:
-    """Test provider: which components changed, plus environment and paths."""
+    """Test provider: which components changed, plus environment and paths.
+    bundled_changed_for overrides the per-consumer answer for a bundled input;
+    absent entries fall back to the input's own changed flag."""
 
     changed_components: dict[str, bool] = field(default_factory=dict)
+    bundled_changed_for: dict[tuple[str, str], bool] = field(default_factory=dict)
     env: dict[str, str] = field(default_factory=dict)
     existing_paths: set[str] = field(default_factory=set)
 
     def component_changed(self, component: Component) -> bool:
         return self.changed_components.get(component.name, False)
+
+    def bundled_input_changed_for(
+        self, bundled: Component, consumer: Component
+    ) -> bool:
+        key = (bundled.name, consumer.name)
+        if key in self.bundled_changed_for:
+            return self.bundled_changed_for[key]
+        return self.changed_components.get(bundled.name, False)
 
     def env_value(self, name: str) -> str | None:
         return self.env.get(name)
@@ -201,10 +212,14 @@ def compute_plan(graph: Graph, state) -> Plan:
     for name, component in graph.components.items():
         if component.publishable and state.component_changed(component):
             reasons[name] = "changed"
-    # A changed non-publishable input moves every consumer that bundles it.
+    # A bundled input has no published identity of its own: whether it changed
+    # is asked per consumer, against that consumer's last published tag. An
+    # input can be current for one consumer and stale for another.
     for source, consumers in graph.bundled_into.items():
-        if state.component_changed(graph.components[source]):
-            for consumer in consumers:
+        for consumer in consumers:
+            if state.bundled_input_changed_for(
+                graph.components[source], graph.components[consumer]
+            ):
                 reasons.setdefault(consumer, f"bundled-input:{source}")
 
     ordered: list[str] = []
@@ -293,6 +308,66 @@ def receipt_accepts(
     return True, "exact match"
 
 
+class ReceiptError(Exception):
+    pass
+
+
+def plan_digest(plan: Plan) -> str:
+    import hashlib
+
+    canonical = json.dumps(
+        {
+            "moving": [[n.component, n.reason] for n in plan.moving],
+            "contracts": [[e.a, e.b, e.journey] for e in plan.runtime_contract_edges],
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def seal_receipt(
+    plan: Plan, *, source_sha: str, entries: dict[str, ReceiptEntry]
+) -> bytes:
+    """A receipt exists after outward effects, so it is a sealed artifact bound
+    to the plan digest and source SHA - never a committed source file. The
+    outer digest makes any post-seal edit detectable."""
+    import hashlib
+
+    body = json.dumps(
+        {
+            "plan_digest": plan_digest(plan),
+            "source_sha": source_sha,
+            "entries": {
+                name: {"version": e.version, "digest": e.digest}
+                for name, e in sorted(entries.items())
+            },
+        },
+        sort_keys=True,
+    )
+    seal = hashlib.sha256(body.encode()).hexdigest()
+    return json.dumps({"body": body, "seal": seal}).encode()
+
+
+def load_sealed_receipt(data: bytes) -> Receipt:
+    import hashlib
+
+    try:
+        outer = json.loads(data)
+        body, seal = outer["body"], outer["seal"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ReceiptError(f"unreadable receipt: {exc}") from exc
+    if hashlib.sha256(body.encode()).hexdigest() != seal:
+        raise ReceiptError("receipt seal does not match its body")
+    parsed = json.loads(body)
+    return Receipt(
+        plan_digest=parsed["plan_digest"],
+        entries={
+            name: ReceiptEntry(version=e["version"], digest=e["digest"])
+            for name, e in parsed["entries"].items()
+        },
+    )
+
+
 def require_approval(node: PlanNode, *, approval: str | None) -> None:
     if approval is None:
         raise ApprovalRequired(
@@ -351,6 +426,22 @@ class GitRepositoryState:
             return True
         out = self._git(
             "diff", "--name-only", f"{tag}..origin/main", "--", *component.source_paths
+        )
+        return bool(out.strip())
+
+    def bundled_input_changed_for(
+        self, bundled: Component, consumer: Component
+    ) -> bool:
+        """The bundled input's paths, diffed against the CONSUMER's last
+        published tag: the input ships inside the consumer, so the consumer's
+        tag is the baseline that says whether users already have these bytes."""
+        if not bundled.source_paths:
+            return False
+        tag = self.last_published_tag(consumer)
+        if tag is None:
+            return True
+        out = self._git(
+            "diff", "--name-only", f"{tag}..origin/main", "--", *bundled.source_paths
         )
         return bool(out.strip())
 
