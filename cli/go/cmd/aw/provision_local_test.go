@@ -223,8 +223,29 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	if registeredCalls != 1 || registered == nil {
 		t.Fatalf("register_calls=%d cert=%+v", registeredCalls, registered)
 	}
-	if matches, err := awconfig.ListTeamInvitesByOperation("oas-AAAAAAAAAAAAAAAAAAAAAA"); err != nil || len(matches) != 1 {
+	matches, err := awconfig.ListTeamInvitesByOperation("oas-AAAAAAAAAAAAAAAAAAAAAA")
+	if err != nil || len(matches) != 1 {
 		t.Fatalf("response-loss grant matches=%+v err=%v", matches, err)
+	}
+	// Simulate a restart with the pending-invite shape written by the prior CLI.
+	// Reconciliation must normalize its scope before validating the local grant.
+	invitePath := filepath.Join(root, ".config", "aw", "team-invites", matches[0].InviteID+".json")
+	inviteBytes, err := os.ReadFile(invitePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacyInvite map[string]any
+	if err := json.Unmarshal(inviteBytes, &legacyInvite); err != nil {
+		t.Fatal(err)
+	}
+	delete(legacyInvite, "identity_scope")
+	legacyInvite["ephemeral"] = true
+	inviteBytes, err = json.MarshalIndent(legacyInvite, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(invitePath, append(inviteBytes, '\n'), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	recover := exec.CommandContext(ctx, bin, "id", "team", "provision-local",

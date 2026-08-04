@@ -1,9 +1,11 @@
 package awconfig
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -92,6 +94,59 @@ func TestSaveAndLoadTeamInvite(t *testing.T) {
 	}
 	if _, err := LoadTeamInvite("inv-002"); err == nil {
 		t.Fatal("expected error after delete")
+	}
+}
+
+func TestLoadTeamInviteNormalizesLegacyEphemeralScope(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ephemeral bool
+		wantScope string
+	}{
+		{name: "local", ephemeral: true, wantScope: "local"},
+		{name: "global", ephemeral: false, wantScope: "global"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			path, err := teamInvitePath("inv-legacy")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			legacy := []byte(`{"invite_id":"inv-legacy","domain":"acme.com","team_name":"backend","ephemeral":` + fmt.Sprint(tc.ephemeral) + `,"secret":"secret","created_at":"2026-04-06T00:00:00Z"}`)
+			if err := os.WriteFile(path, legacy, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := LoadTeamInvite("inv-legacy")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.IdentityScope != tc.wantScope {
+				t.Fatalf("identity_scope=%q want %q", loaded.IdentityScope, tc.wantScope)
+			}
+		})
+	}
+}
+
+func TestLoadTeamInviteRejectsConflictingLegacyEphemeralScope(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path, err := teamInvitePath("inv-conflict")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte(`{"invite_id":"inv-conflict","domain":"acme.com","team_name":"backend","identity_scope":"local","ephemeral":false,"secret":"secret","created_at":"2026-04-06T00:00:00Z"}`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadTeamInvite("inv-conflict"); err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("expected scope conflict, got %v", err)
 	}
 }
 

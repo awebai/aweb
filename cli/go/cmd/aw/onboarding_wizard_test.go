@@ -420,7 +420,7 @@ func TestExecuteBYODPathDefaultsToLocalAlias(t *testing.T) {
 		t.Fatalf("executeBYODPath: %v", err)
 	}
 
-	if gotReq.Persistent {
+	if gotReq.Global {
 		t.Fatal("expected default BYOD identity type to be local")
 	}
 	if gotName != "alice" {
@@ -538,7 +538,7 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 		PromptOut:  &bytes.Buffer{},
 		BaseURL:    "https://app.example",
 		Role:       "developer",
-		Persistent: true,
+		Global:     true,
 	})
 	if err != nil {
 		t.Fatalf("executeBYODPath: %v", err)
@@ -547,7 +547,7 @@ func TestExecuteBYODPathCreatesIdentityMaterialAndConnects(t *testing.T) {
 	if gotName != "alice" {
 		t.Fatalf("name=%q", gotName)
 	}
-	if !gotReq.Persistent {
+	if !gotReq.Global {
 		t.Fatal("expected global BYOD identity type")
 	}
 	if gotDomain != "Acme.com" {
@@ -881,7 +881,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 		Role:               "developer",
 		HumanName:          "Operator Jane",
 		AgentType:          "codex",
-		Persistent:         true,
+		Global:             true,
 		AskPostCreateSetup: true,
 	})
 	if err != nil {
@@ -1147,7 +1147,7 @@ func TestExecuteHostedPathRetriesUsernameAfterSignupConflict(t *testing.T) {
 		PromptIn:   strings.NewReader("jack\nlaptop\njack-2\n"),
 		PromptOut:  &out,
 		BaseURL:    server.URL,
-		Persistent: true,
+		Global:     true,
 	})
 	if err != nil {
 		t.Fatalf("executeHostedPath: %v", err)
@@ -1406,7 +1406,7 @@ func TestExecuteHostedPathWithCompatibilityAliasCreatesSelfCustodialGlobalCLIIde
 		PromptIn:   strings.NewReader("jack\nlaptop\nn\n"),
 		PromptOut:  &out,
 		BaseURL:    onboardingServer.URL + "/api",
-		Persistent: true,
+		Global:     true,
 	})
 	if err != nil {
 		t.Fatalf("executeHostedPath: %v", err)
@@ -1722,7 +1722,7 @@ func TestExecuteHostedPathGlobalDoesNotSuggestUserAsAlias(t *testing.T) {
 		PromptIn:   strings.NewReader("jack\n\nn\n"),
 		PromptOut:  &out,
 		BaseURL:    onboardingServer.URL + "/api",
-		Persistent: true,
+		Global:     true,
 	})
 	if err != nil {
 		t.Fatalf("executeHostedPath: %v", err)
@@ -1886,7 +1886,7 @@ func TestExecuteBYODPathProvisionsIdentityTeamAndWorkspaceAgainstServers(t *test
 		Role:        "developer",
 		HumanName:   "Operator Jane",
 		AgentType:   "codex",
-		Persistent:  true,
+		Global:      true,
 	})
 	if err != nil {
 		t.Fatalf("executeBYODPath: %v", err)
@@ -2111,7 +2111,7 @@ func TestExecuteBYODPathUsesSplitOriginServiceDiscovery(t *testing.T) {
 		Role:       "developer",
 		HumanName:  "Operator Jane",
 		AgentType:  "codex",
-		Persistent: true,
+		Global:     true,
 	})
 	if err != nil {
 		t.Fatalf("executeBYODPath: %v", err)

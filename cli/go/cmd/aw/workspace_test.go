@@ -620,7 +620,7 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 	}
 }
 
-func TestAwWorkspaceStatusDeletesGoneLocalIdentity(t *testing.T) {
+func TestAwWorkspaceStatusKeepsGoneDurableLocalIdentity(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
@@ -674,12 +674,7 @@ func TestAwWorkspaceStatusDeletesGoneLocalIdentity(t *testing.T) {
 			})
 		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
 			deletedWorkspace.Store(true)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace_id":     goneID,
-				"alias":            "bob",
-				"deleted_at":       "2026-04-09T00:00:00Z",
-				"identity_deleted": true,
-			})
+			t.Fatal("missing local workspace path must not trigger identity-deleting DELETE")
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -711,15 +706,15 @@ func TestAwWorkspaceStatusDeletesGoneLocalIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if !deletedWorkspace.Load() {
-		t.Fatal("expected gone workspace record deletion")
+	if deletedWorkspace.Load() {
+		t.Fatal("durable local identity was deleted from missing path alone")
 	}
-	if !strings.Contains(string(out), "gone_local_cleanup_candidate") || !strings.Contains(string(out), "deleted local identity") || !strings.Contains(string(out), "removed workspace record") {
-		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
+	if !strings.Contains(string(out), "gone_local_path_only") || !strings.Contains(string(out), "explicit membership retirement required") {
+		t.Fatalf("expected durable-local path-only output, got:\n%s", string(out))
 	}
 }
 
-func TestAwWorkspaceStatusDeletesGoneLocalIdentityFromIdentityScope(t *testing.T) {
+func TestAwWorkspaceStatusKeepsGoneLocalIdentityFromIdentityScope(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
@@ -769,12 +764,7 @@ func TestAwWorkspaceStatusDeletesGoneLocalIdentityFromIdentityScope(t *testing.T
 			})
 		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
 			deletedWorkspace.Store(true)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace_id":     goneID,
-				"alias":            "bob",
-				"deleted_at":       "2026-04-09T00:00:00Z",
-				"identity_deleted": true,
-			})
+			t.Fatal("missing local workspace path must not trigger identity-deleting DELETE")
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -805,11 +795,11 @@ func TestAwWorkspaceStatusDeletesGoneLocalIdentityFromIdentityScope(t *testing.T
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if !deletedWorkspace.Load() {
-		t.Fatal("expected gone workspace record deletion from agent_identity_scope=local")
+	if deletedWorkspace.Load() {
+		t.Fatal("agent_identity_scope=local triggered identity deletion from path absence")
 	}
-	if !strings.Contains(string(out), "gone_local_cleanup_candidate") || !strings.Contains(string(out), "deleted local identity") || !strings.Contains(string(out), "removed workspace record") {
-		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
+	if !strings.Contains(string(out), "gone_local_path_only") || !strings.Contains(string(out), "explicit membership retirement required") {
+		t.Fatalf("expected local path-only output, got:\n%s", string(out))
 	}
 }
 

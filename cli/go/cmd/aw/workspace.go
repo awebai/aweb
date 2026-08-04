@@ -588,7 +588,7 @@ func addWorktreeViaCloudBootstrap(
 		Role:         role,
 		HumanName:    strings.TrimSpace(state.HumanName),
 		AgentType:    strings.TrimSpace(state.AgentType),
-		Persistent:   false,
+		Global:       false,
 	})
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)

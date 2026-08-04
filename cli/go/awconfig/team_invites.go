@@ -26,6 +26,39 @@ type TeamInvite struct {
 	CreatedAt     string `json:"created_at" yaml:"created_at"`
 }
 
+// UnmarshalJSON preserves pending invites written before identity_scope became
+// canonical. Newly saved invites use only identity_scope.
+func (invite *TeamInvite) UnmarshalJSON(data []byte) error {
+	type canonicalTeamInvite TeamInvite
+	var wire struct {
+		canonicalTeamInvite
+		LegacyEphemeral *bool `json:"ephemeral"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+
+	scope := strings.ToLower(strings.TrimSpace(wire.IdentityScope))
+	if scope != "" && scope != "local" && scope != "global" {
+		return fmt.Errorf("invalid identity_scope %q", wire.IdentityScope)
+	}
+	if wire.LegacyEphemeral != nil {
+		legacyScope := "global"
+		if *wire.LegacyEphemeral {
+			legacyScope = "local"
+		}
+		if scope != "" && scope != legacyScope {
+			return fmt.Errorf("identity_scope %q conflicts with deprecated ephemeral value", scope)
+		}
+		if scope == "" {
+			scope = legacyScope
+		}
+	}
+	wire.IdentityScope = scope
+	*invite = TeamInvite(wire.canonicalTeamInvite)
+	return nil
+}
+
 // TeamInviteToken is the JSON structure encoded in the invite token
 // that gets shared with the invitee.
 type TeamInviteToken struct {

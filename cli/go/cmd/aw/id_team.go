@@ -260,12 +260,14 @@ var (
 	teamCreateDisplayName string
 	teamCreateRegistryURL string
 
-	teamInviteTeam         string
-	teamInviteNamespace    string
-	teamInviteLocal        bool
-	teamInviteGlobal       bool
-	teamInviteMemberLocal  bool
-	teamInviteMemberGlobal bool
+	teamInviteTeam                  string
+	teamInviteNamespace             string
+	teamInviteLocal                 bool
+	teamInviteGlobal                bool
+	teamInviteMemberLocal           bool
+	teamInviteMemberGlobal          bool
+	teamInviteDeprecatedLocalScope  bool
+	teamInviteDeprecatedGlobalScope bool
 
 	teamAcceptAlias     string
 	teamAcceptAddress   string
@@ -275,15 +277,16 @@ var (
 	teamAddAlias        string
 	teamAddAddress      string
 
-	teamAddTeam          string
-	teamAddNamespace     string
-	teamAddMember        string
-	teamAddMemberDID     string
-	teamAddMemberAlias   string
-	teamAddMemberLocal   bool
-	teamAddMemberGlobal  bool
-	teamAddMemberDIDAW   string
-	teamAddMemberAddress string
+	teamAddTeam                       string
+	teamAddNamespace                  string
+	teamAddMember                     string
+	teamAddMemberDID                  string
+	teamAddMemberAlias                string
+	teamAddMemberLocal                bool
+	teamAddMemberGlobal               bool
+	teamAddMemberDeprecatedScopeValue string
+	teamAddMemberDIDAW                string
+	teamAddMemberAddress              string
 
 	teamFetchCertTeam      string
 	teamFetchCertNamespace string
@@ -502,8 +505,12 @@ func init() {
 	teamInviteCmd.Flags().BoolVar(&teamInviteMemberGlobal, "member-global", false, "Create global member invite")
 	teamInviteCmd.Flags().BoolVar(&teamInviteLocal, "local", false, "Deprecated alias for --member-local")
 	teamInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Deprecated alias for --member-global")
+	teamInviteCmd.Flags().BoolVar(&teamInviteDeprecatedLocalScope, "ephemeral", false, "Deprecated alias for --member-local")
+	teamInviteCmd.Flags().BoolVar(&teamInviteDeprecatedGlobalScope, "persistent", false, "Deprecated alias for --member-global")
 	markDeprecatedHiddenFlag(teamInviteCmd, "local", "member-local")
 	markDeprecatedHiddenFlag(teamInviteCmd, "global", "member-global")
+	markDeprecatedHiddenFlag(teamInviteCmd, "ephemeral", "member-local")
+	markDeprecatedHiddenFlag(teamInviteCmd, "persistent", "member-global")
 	teamCmd.AddCommand(teamInviteCmd)
 
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")
@@ -534,6 +541,8 @@ func init() {
 	markDeprecatedHiddenFlag(teamAddMemberCmd, "alias", "name")
 	teamAddMemberCmd.Flags().BoolVar(&teamAddMemberLocal, "local", false, "Issue a local workspace member certificate for --did (default)")
 	teamAddMemberCmd.Flags().BoolVar(&teamAddMemberGlobal, "global", false, "Issue a global member certificate for --did")
+	teamAddMemberCmd.Flags().StringVar(&teamAddMemberDeprecatedScopeValue, "lifetime", "", "Deprecated identity scope selector")
+	markDeprecatedHiddenFlag(teamAddMemberCmd, "lifetime", "global or --local")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberDIDAW, "did-aw", "", "Optional stable did:aw when using --did")
 	teamAddMemberCmd.Flags().StringVar(&teamAddMemberAddress, "address", "", "Global member address when using --did; must resolve to --did-aw")
 	teamCmd.AddCommand(teamAddMemberCmd)
@@ -650,8 +659,8 @@ func runTeamInvite(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	global := teamInviteMemberGlobal || teamInviteGlobal
-	local := teamInviteMemberLocal || teamInviteLocal
+	global := teamInviteMemberGlobal || teamInviteGlobal || teamInviteDeprecatedGlobalScope
+	local := teamInviteMemberLocal || teamInviteLocal || teamInviteDeprecatedLocalScope
 	if global && local {
 		return usageError("--member-global and --member-local cannot be used together")
 	}
@@ -1272,12 +1281,12 @@ func createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL strin
 	return inviteID, token, nil
 }
 
-func createHostedTeamInviteToken(workingDir, teamID string, ephemeral bool) (string, string, error) {
-	return createHostedTeamInviteTokenAt(workingDir, "", teamID, ephemeral)
+func createHostedTeamInviteToken(workingDir, teamID string, localMember bool) (string, string, error) {
+	return createHostedTeamInviteTokenAt(workingDir, "", teamID, localMember)
 }
 
-func createHostedTeamInviteTokenAt(workingDir, identityHome, teamID string, ephemeral bool) (string, string, error) {
-	if !ephemeral {
+func createHostedTeamInviteTokenAt(workingDir, identityHome, teamID string, localMember bool) (string, string, error) {
+	if !localMember {
 		return "", "", usageError("--member-global is not supported for hosted team invites")
 	}
 	var client *aweb.Client
@@ -1937,16 +1946,26 @@ func teamKeyLoadError(teamID, domain string, err error) error {
 	)
 }
 
-func resolveTeamAddMemberScope() (string, error) {
-	global := teamAddMemberGlobal
-	local := teamAddMemberLocal
-	if global && local {
+func resolveTeamAddMemberScope(cmd *cobra.Command) (string, error) {
+	requestedScope := awid.IdentityModeLocal
+	if teamAddMemberGlobal && teamAddMemberLocal {
 		return "", usageError("--global and --local cannot be used together")
 	}
-	if global {
-		return awid.IdentityModeGlobal, nil
+	if teamAddMemberGlobal {
+		requestedScope = awid.IdentityModeGlobal
 	}
-	return awid.IdentityModeLocal, nil
+
+	if cmd.Flags().Changed("lifetime") {
+		legacyScope := awid.IdentityScopeFromLegacyLifetime(teamAddMemberDeprecatedScopeValue)
+		if legacyScope == "" {
+			return "", usageError("--lifetime must be ephemeral or persistent")
+		}
+		if (teamAddMemberGlobal || teamAddMemberLocal) && requestedScope != legacyScope {
+			return "", usageError("--lifetime conflicts with --global or --local")
+		}
+		requestedScope = legacyScope
+	}
+	return requestedScope, nil
 }
 
 func runTeamAddMember(cmd *cobra.Command, args []string) error {
@@ -1955,7 +1974,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	member := strings.TrimSpace(teamAddMember)
 	memberDID := strings.TrimSpace(teamAddMemberDID)
 	memberAlias := strings.TrimSpace(teamAddMemberAlias)
-	identityScope, err := resolveTeamAddMemberScope()
+	identityScope, err := resolveTeamAddMemberScope(cmd)
 	if err != nil {
 		return err
 	}
@@ -3717,11 +3736,11 @@ func validateMemberAddressForCertificate(
 	return nil
 }
 
-func resolveOrGenerateMemberDIDKey(workingDir string, ephemeral bool) (string, error) {
-	return resolveOrGenerateMemberDIDKeyAt(workingDir, "", ephemeral)
+func resolveOrGenerateMemberDIDKey(workingDir string, localMember bool) (string, error) {
+	return resolveOrGenerateMemberDIDKeyAt(workingDir, "", localMember)
 }
 
-func resolveOrGenerateMemberDIDKeyAt(workingDir, identityHome string, ephemeral bool) (string, error) {
+func resolveOrGenerateMemberDIDKeyAt(workingDir, identityHome string, localMember bool) (string, error) {
 	// Try to load existing identity.
 	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	if strings.TrimSpace(identityHome) != "" {
@@ -3750,7 +3769,7 @@ func resolveOrGenerateMemberDIDKeyAt(workingDir, identityHome string, ephemeral 
 		return awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)), nil
 	}
 
-	if !ephemeral {
+	if !localMember {
 		return "", usageError("no identity found; run `aw id create` first, or use --local invite")
 	}
 

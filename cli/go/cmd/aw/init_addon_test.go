@@ -22,7 +22,7 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 	oldSetupHooks := initSetupHooks
 	oldSetupChannel := initSetupChannel
 	oldRole := initRole
-	oldPersistent := initPersistent
+	oldPersistent := initGlobal
 	oldIsTTY := initIsTTY
 	t.Cleanup(func() {
 		initURL = oldURL
@@ -37,7 +37,7 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 		initSetupHooks = oldSetupHooks
 		initSetupChannel = oldSetupChannel
 		initRole = oldRole
-		initPersistent = oldPersistent
+		initGlobal = oldPersistent
 		initIsTTY = oldIsTTY
 	})
 
@@ -74,7 +74,7 @@ func TestRunInitSetupChannelExistingWorkspaceStaysAddonWithURLFlags(t *testing.T
 	initSetupHooks = false
 	initSetupChannel = true
 	initRole = ""
-	initPersistent = false
+	initGlobal = false
 	initIsTTY = func() bool { return false }
 	oldRunner := runClaudeChannelPluginCommand
 	runClaudeChannelPluginCommand = func(args ...string) error { return nil }

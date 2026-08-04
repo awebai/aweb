@@ -594,7 +594,7 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 }
 
 // NormalizeSenderTrust applies sender-specific trust normalization after
-// signature verification. It suppresses contact tags for ephemeral senders and
+// signature verification. It suppresses contact tags for local senders and
 // then applies continuity pinning using shared resolver metadata.
 func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationStatus, rawAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, isContact *bool) (VerificationStatus, *bool) {
 	// Mail applies recipient binding before sender continuity normalization.

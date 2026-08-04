@@ -1623,7 +1623,7 @@ func TestTeamHumanCreateFirstAgentGlobalHostedBootstrapAllowed(t *testing.T) {
 	if err := runTeamHumanCreate(nil, []string{"Eng"}); err != nil {
 		t.Fatalf("runTeamHumanCreate: %v", err)
 	}
-	if !captured.Persistent || captured.Name != "eng" || captured.Alias != "" {
+	if !captured.Global || captured.Name != "eng" || captured.Alias != "" {
 		t.Fatalf("hosted first-agent-global request = %+v", captured)
 	}
 }

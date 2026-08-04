@@ -39,7 +39,7 @@ type apiKeyInitRequest struct {
 	Role         string
 	HumanName    string
 	AgentType    string
-	Persistent   bool
+	Global       bool
 	// InboundMode is "open" or "team_and_contacts" when --inbound-mode is
 	// set on a global init, "" otherwise. The runner forwards it to
 	// /api/v1/workspaces/init only when non-empty; the server defaults
@@ -125,7 +125,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	// Cloud contract: global uses name (not alias), local uses alias (not name).
 	name := strings.TrimSpace(req.Name)
 	alias := strings.TrimSpace(req.Alias)
-	if req.Persistent {
+	if req.Global {
 		if name == "" {
 			return connectOutput{}, usageError("--name is required for global API-key bootstrap")
 		}
@@ -133,7 +133,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	}
 
 	var registry *awid.RegistryClient
-	if req.Persistent {
+	if req.Global {
 		var regErr error
 		registry, regErr = newRegistryClientWithPreferredBaseURL(strings.TrimSpace(req.RegistryURL))
 		if regErr != nil {
@@ -150,7 +150,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	didKey := material.DIDKey
 	localStableID := material.StableID
 
-	if req.Persistent {
+	if req.Global {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if _, regErr := registry.RegisterIdentity(
@@ -176,14 +176,14 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		RoleName:      strings.TrimSpace(req.Role),
 		HumanName:     strings.TrimSpace(req.HumanName),
 		AgentType:     strings.TrimSpace(req.AgentType),
-		IdentityScope: initIdentityScopeValue(req.Persistent),
+		IdentityScope: initIdentityScopeValue(req.Global),
 		InboundMode:   strings.TrimSpace(req.InboundMode),
 	})
 	if err != nil {
 		return connectOutput{}, err
 	}
 
-	if req.Persistent {
+	if req.Global {
 		if responseDID := strings.TrimSpace(resp.DID); responseDID != "" && responseDID != didKey {
 			if removeErr := removeAPIKeyPartialInit(req.WorkingDir, req.IdentityHome); removeErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not remove partial init state: %v\n", removeErr)
@@ -206,11 +206,11 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	if err != nil {
 		return connectOutput{}, fmt.Errorf("decode workspace init team cert: %w", err)
 	}
-	persistent, serverURL, stableID, err := validateAPIKeyBootstrapResponse(resp, cert, didKey, req.Persistent)
+	global, serverURL, stableID, err := validateAPIKeyBootstrapResponse(resp, cert, didKey, req.Global)
 	if err != nil {
 		return connectOutput{}, err
 	}
-	if persistent && stableID != localStableID {
+	if global && stableID != localStableID {
 		return connectOutput{}, fmt.Errorf("workspace init response stable_id %q does not match locally computed %q", stableID, localStableID)
 	}
 	if strings.TrimSpace(resp.APIKey) == "" {
@@ -221,7 +221,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	if err != nil {
 		return connectOutput{}, err
 	}
-	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.IdentityHome, req.RegistryURL, signingKey, didKey, stableID, cert, persistent); err != nil {
+	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.IdentityHome, req.RegistryURL, signingKey, didKey, stableID, cert, global); err != nil {
 		rollbackAwTree(req.WorkingDir, snapshot, req.IdentityHome)
 		return connectOutput{}, err
 	}
@@ -240,7 +240,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		rollbackAwTree(req.WorkingDir, snapshot, req.IdentityHome)
 		return connectOutput{}, fmt.Errorf("%w\n(local state from this attempt was rolled back; rerun the same command to resume)", err)
 	}
-	if persistent {
+	if global {
 		if err := removeAPIKeyPartialInit(req.WorkingDir, req.IdentityHome); err != nil {
 			return connectOutput{}, fmt.Errorf("remove partial API-key init state: %w", err)
 		}
@@ -318,8 +318,8 @@ func pruneEmptyAwDir(workingDir string, identityHomes ...string) {
 	}
 }
 
-func initIdentityScopeValue(persistent bool) string {
-	if persistent {
+func initIdentityScopeValue(global bool) string {
+	if global {
 		return awid.IdentityModeGlobal
 	}
 	return awid.IdentityModeLocal
@@ -330,7 +330,7 @@ func prepareAPIKeyBootstrapIdentity(
 	name string,
 	registry *awid.RegistryClient,
 ) (apiKeyBootstrapIdentityMaterial, error) {
-	if !req.Persistent {
+	if !req.Global {
 		partialPath := apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)
 		if err := preflightAPIKeyPartialInit(partialPath); err != nil {
 			return apiKeyBootstrapIdentityMaterial{}, err
@@ -563,8 +563,8 @@ func validateAPIKeyBootstrapResponse(
 	resp *apiKeyBootstrapResponse,
 	cert *awid.TeamCertificate,
 	didKey string,
-	requestedPersistent bool,
-) (persistent bool, serverURL, stableID string, err error) {
+	requestedGlobal bool,
+) (global bool, serverURL, stableID string, err error) {
 	if resp == nil {
 		return false, "", "", fmt.Errorf("missing workspace init response")
 	}
@@ -604,21 +604,21 @@ func validateAPIKeyBootstrapResponse(
 	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(resp.IdentityScope, cert.IdentityScope))
 	switch identityScope {
 	case awid.IdentityModeGlobal:
-		persistent = true
+		global = true
 	case awid.IdentityModeLocal:
-		persistent = false
+		global = false
 	default:
 		return false, "", "", fmt.Errorf("workspace init response has unsupported identity_scope %q", resp.IdentityScope)
 	}
-	if persistent != requestedPersistent {
+	if global != requestedGlobal {
 		return false, "", "", fmt.Errorf(
 			"workspace init response identity_scope %q does not match requested identity_scope %q",
 			identityScope,
-			initIdentityScopeValue(requestedPersistent),
+			initIdentityScopeValue(requestedGlobal),
 		)
 	}
 	stableID = strings.TrimSpace(resp.StableID)
-	if persistent {
+	if global {
 		if stableID == "" {
 			return false, "", "", fmt.Errorf("global identity workspace init response is missing stable_id")
 		}
@@ -635,7 +635,7 @@ func validateAPIKeyBootstrapResponse(
 				cert.MemberDIDAW,
 			)
 		}
-		return persistent, serverURL, stableID, nil
+		return global, serverURL, stableID, nil
 	}
 	if stableID != "" {
 		return false, "", "", fmt.Errorf("local workspace init response unexpectedly returned stable_id %q", stableID)
@@ -643,7 +643,7 @@ func validateAPIKeyBootstrapResponse(
 	if strings.TrimSpace(cert.MemberDIDAW) != "" || strings.TrimSpace(cert.MemberAddress) != "" {
 		return false, "", "", fmt.Errorf("local workspace init response unexpectedly contains global identity fields")
 	}
-	return persistent, serverURL, "", nil
+	return global, serverURL, "", nil
 }
 
 func normalizeBootstrapServerURL(raw string) (string, error) {
@@ -699,12 +699,12 @@ func persistAPIKeyBootstrapState(
 	didKey string,
 	stableID string,
 	cert *awid.TeamCertificate,
-	persistent bool,
+	global bool,
 ) error {
 	if err := persistLocalSigningKeyAndCertificateAt(workingDir, identityHome, signingKey, cert); err != nil {
 		return err
 	}
-	if !persistent {
+	if !global {
 		return nil
 	}
 	identityPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "identity.yaml")

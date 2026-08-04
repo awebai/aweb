@@ -312,6 +312,9 @@ func TestDeprecatedVocabularyFlagsWarn(t *testing.T) {
 		args []string
 		want string
 	}{
+		{name: "persistent to member-global", args: []string{"id", "team", "invite", "--persistent", "--help"}, want: "Flag --persistent has been deprecated, use --member-global"},
+		{name: "ephemeral to member-local", args: []string{"id", "team", "invite", "--ephemeral", "--help"}, want: "Flag --ephemeral has been deprecated, use --member-local"},
+		{name: "lifetime to global", args: []string{"id", "team", "add-member", "--lifetime", "persistent", "--help"}, want: "Flag --lifetime has been deprecated, use --global or --local"},
 		{name: "global to member-global", args: []string{"id", "team", "invite", "--global", "--help"}, want: "Flag --global has been deprecated, use --member-global"},
 		{name: "local to member-local", args: []string{"id", "team", "invite", "--local", "--help"}, want: "Flag --local has been deprecated, use --member-local"},
 		{name: "alias to name", args: []string{"id", "team", "accept-invite", "--alias", "bob", "--help"}, want: "Flag --alias has been deprecated, use --name"},

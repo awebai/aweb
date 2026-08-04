@@ -609,7 +609,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 			APIKey:       apiKey,
 			Name:         apiName,
 			Alias:        apiAlias,
-			Persistent:   firstAgentGlobal,
+			Global:       firstAgentGlobal,
 			HumanName:    resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 			AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 		})
@@ -901,7 +901,7 @@ func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, username, alia
 		HumanName:          resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 		AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 		Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
-		Persistent:         firstAgentGlobal,
+		Global:             firstAgentGlobal,
 		InboundMode:        canonicalInitInboundModeForWire(initInboundMode),
 		InjectAgentDocs:    !initDoNotTouchAgentsMD && !jsonFlag,
 		DoNotTouchAgentsMD: initDoNotTouchAgentsMD,
@@ -1125,7 +1125,7 @@ type teamHumanAddedAgent struct {
 	Source *teamProfileSource `json:"-"`
 	// ProfileSource states where this agent's profile came from, built from
 	// Source.Describe so the reported line and the resolution cannot drift apart.
-	ProfileSource string `json:"profile_source,omitempty"`
+	ProfileSource     string                  `json:"profile_source,omitempty"`
 	Scope             string                  `json:"scope,omitempty"`
 	Alias             string                  `json:"alias,omitempty"`
 	TeamID            string                  `json:"team_id,omitempty"`
@@ -1328,7 +1328,7 @@ func bootstrapTeamHumanAddAgentWithAPIKey(homeDir string, plan teamHumanAddedAge
 		RegistryURL:  registryURL,
 		APIKey:       apiKey,
 		Role:         teamHumanAddRoleForPlan(plan),
-		Persistent:   global,
+		Global:       global,
 	}
 	if global {
 		request.Name = strings.TrimSpace(plan.Name)

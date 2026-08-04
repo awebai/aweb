@@ -1379,7 +1379,7 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite",
 		"--team", "backend",
 		"--namespace", "acme.com",
-		"--member-global",
+		"--persistent",
 		"--json")
 	runInvite.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	runInvite.Dir = tmp
@@ -3925,7 +3925,7 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 		"--namespace", "acme.com",
 		"--did", memberDID,
 		"--name", "alice",
-		"--global",
+		"--lifetime", "persistent",
 		"--did-aw", memberDIDAW,
 		"--address", "acme.com/alice",
 		"--json")
