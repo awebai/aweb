@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract check-oas-pi-launch-order test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -63,6 +63,8 @@ help:
 	@echo "  regenerate-mcp-tools-reference Regenerate the MCP inventory from live registration"
 	@echo "  prepare-oas-test-root Materialize the clean committed OAS test pin"
 	@echo "  check-oas-launch-environment-contract Verify the pinned OAS seam dependency"
+	@echo "  check-oas-pi-launch-order Prove pinned Pi command construction; real execution is opt-in"
+	@echo "    real execution: OAS_RUN_REAL_PI_LAUNCH_ORDER=1 make test-oas"
 	@echo "    opt-in local OAS: make test-oas OAS_TEST_ROOT=/path/to/local/oas"
 	@echo "  freshness    Regenerate committed artifacts and fail on drift"
 	@echo "  check-node-audit Audit Node dependencies for known vulnerabilities"
@@ -308,10 +310,17 @@ prepare-oas-test-root:
 check-oas-launch-environment-contract: prepare-oas-test-root
 	@OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node scripts/check-oas-launch-environment-contract.mjs
 
+# Construction always runs. Real Pi execution is explicitly opt-in because it
+# consumes network/model tokens; the script reports the omitted layer on stderr.
+# Its runtime branch uses a named session on an isolated socket, with the tmux
+# guard first on PATH for the entire child process tree.
+check-oas-pi-launch-order: prepare-oas-test-root
+	@PATH="$(CURDIR)/scripts/guard-bin:$$PATH" OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node scripts/check-oas-pi-launch-order.mjs
+
 # The real spawn seam validates both the aweb capability command and its selected
 # Pi runtime even with --no-launch. Use only tools built/locked by this checkout;
 # ambient developer installs must not decide whether the release test passes.
-test-oas: check-oas-launch-environment-contract build test-node-deps
+test-oas: check-oas-launch-environment-contract check-oas-pi-launch-order build test-node-deps
 	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node --test oas/test/*.test.mjs
 
 test-oas-proof-helpers: prepare-oas-test-root
