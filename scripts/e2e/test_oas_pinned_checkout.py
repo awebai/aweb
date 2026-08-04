@@ -32,7 +32,7 @@ class OASPinnedCheckoutContractTests(unittest.TestCase):
 
     def test_pin_is_an_immutable_public_commit(self) -> None:
         pin = json.loads(PIN_FILE.read_text(encoding="utf-8"))
-        self.assertEqual(pin["repository"], "https://github.com/OAS-Framework/oas.git")
+        self.assertEqual(pin["repository"], "https://github.com/awebai/oas.git")
         self.assertRegex(pin["commit"], r"\A[0-9a-f]{40}\Z")
         self.assertNotEqual(pin["commit"], "0" * 40)
 
