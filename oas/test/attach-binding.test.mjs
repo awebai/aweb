@@ -1587,18 +1587,27 @@ test("a preflight failure with no configured settings is reported as itself, not
     "",
   ].join("\n"), 0o755);
 
+  // Assert the classification this failure MUST produce, not merely that the
+  // two previous wrong strings are gone. Forbidding one wrong answer still
+  // admits every other wrong answer, and an absence assertion passes whenever
+  // the checking is incomplete.
   const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
   const report = JSON.parse(result.stdout);
-  assert.equal(
-    /identity setup is required/i.test(report.message),
-    false,
-    `an authority failure must not be relabelled as missing settings: ${result.stdout}`,
+  assert.deepEqual(
+    {
+      readiness: report.readiness,
+      message: report.message,
+      next_action: report.next_action,
+      identity_resources_created: report.identity_resources_created,
+      instance_or_session_created: report.instance_or_session_created,
+    },
+    {
+      readiness: "needs_setup",
+      message: "the selected aweb identity settings could not be verified",
+      next_action: `$EDITOR '${join(f.repo, "oas-config.yaml")}'`,
+      identity_resources_created: false,
+      instance_or_session_created: false,
+    },
+    `authority failure must be classified as itself: ${result.stdout}`,
   );
-  assert.equal(
-    /no supported one-command identity setup exists yet/i.test(String(report.next_action)),
-    false,
-    `the next action must address the real failure: ${result.stdout}`,
-  );
-  assert.equal(report.identity_resources_created, false);
-  assert.equal(report.instance_or_session_created, false);
 });
