@@ -8,9 +8,11 @@ from uuid import uuid4
 
 from awid.external_authority import (
     OriginContext,
+    RegistryAuthority,
     SystemTXTOutcomeResolver,
     TXTOutcomeResolver,
     canonical_protocol_address,
+    canonical_registry_origin,
     discover_registry_authority,
 )
 from awid.external_registry import StrictExternalRegistry
@@ -44,6 +46,16 @@ class FederationAuthorityActivation:
     work: AuthorityWorkRepository
     resolver: StrictExternalRegistry
     txt_resolver: TXTOutcomeResolver
+    test_default_registry_authority: RegistryAuthority | None = None
+
+    async def _discover_registry_authority(self, domain: str) -> RegistryAuthority:
+        if self.test_default_registry_authority is not None:
+            return self.test_default_registry_authority
+        return await discover_registry_authority(
+            domain,
+            self.txt_resolver,
+            origin_context=self.resolver.origin_context,
+        )
 
     @staticmethod
     def _raise_published_failure(result: AuthorityWorkResult | None) -> None:
@@ -216,11 +228,7 @@ class FederationAuthorityActivation:
                     raise FederationAuthorityError("federation_authority_cas_conflict")
                 return authorized
 
-            authority = await discover_registry_authority(
-                domain,
-                self.txt_resolver,
-                origin_context=self.resolver.origin_context,
-            )
+            authority = await self._discover_registry_authority(domain)
             await self.work.consume_token(
                 bucket_kind="origin",
                 bucket_key=authority.registry_origin,
@@ -378,11 +386,7 @@ class FederationAuthorityActivation:
                 if resolved is None:
                     raise FederationAuthorityError("federation_resolver_busy")
                 return resolved
-            authority = await discover_registry_authority(
-                domain,
-                self.txt_resolver,
-                origin_context=self.resolver.origin_context,
-            )
+            authority = await self._discover_registry_authority(domain)
             await self.work.consume_token(
                 bucket_kind="origin",
                 bucket_key=authority.registry_origin,
@@ -517,18 +521,43 @@ def build_federation_authority_activation(db, *, public_origin: str) -> Federati
         "yes",
         "on",
     }
+    origin_context = OriginContext(
+        app_env=app_env,
+        federation_test_enabled=test_enabled,
+        listener_origin=public_origin,
+    )
     resolver = StrictExternalRegistry(
         txt_resolver=txt_resolver,
-        origin_context=OriginContext(
-            app_env=app_env,
-            federation_test_enabled=test_enabled,
-            listener_origin=public_origin,
-        ),
+        origin_context=origin_context,
     )
+    test_default_enabled = os.getenv(
+        "AWEB_FEDERATION_TEST_DEFAULT_REGISTRY", "false"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    test_default_registry_authority = None
+    if test_default_enabled:
+        if app_env.strip().lower() != "development" or not test_enabled:
+            raise ValueError(
+                "test default registry requires APP_ENV=development and "
+                "AWEB_FEDERATION_TEST=1"
+            )
+        registry_origin = (os.getenv("AWID_REGISTRY_URL") or "").strip()
+        if not registry_origin:
+            raise ValueError("test default registry requires AWID_REGISTRY_URL")
+        test_default_registry_authority = RegistryAuthority(
+            selection="public_default",
+            authority_name="",
+            controller_did=None,
+            inherited=False,
+            registry_explicit=False,
+            registry_origin=canonical_registry_origin(
+                registry_origin, context=origin_context
+            ),
+        )
     reuse_seconds = int(os.getenv("AWEB_FEDERATION_AUTHORITY_REUSE_SECONDS", "60"))
     return FederationAuthorityActivation(
         core=FederationAuthorityCore(repository, reuse_seconds=reuse_seconds),
         work=work,
         resolver=resolver,
         txt_resolver=txt_resolver,
+        test_default_registry_authority=test_default_registry_authority,
     )

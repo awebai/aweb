@@ -512,8 +512,12 @@ REDIS_PORT=$REDIS_PORT
 POSTGRES_PORT=$PG_PORT
 AWEB_PUBLIC_ORIGIN=$AWEB_URL
 AWID_PUBLIC_REGISTRY_URL=$AWID_URL
+APP_ENV=development
+AWEB_FEDERATION_TEST=1
+AWEB_FEDERATION_TEST_DEFAULT_REGISTRY=1
 AWEB_LOG_JSON=true
 AWID_LOG_JSON=true
+AWID_ALLOW_INSECURE_DELIVERY_ORIGIN=1
 AWID_RATE_LIMIT_BACKEND=redis
 AWID_RATE_LIMIT_DISABLED=1
 AWID_SKIP_DNS_VERIFY=1
@@ -591,6 +595,11 @@ ALICE_ADDRESS="$(echo "$create_out" | jq_field address)"
 assert_not_empty "alice did_key" "$ALICE_DID_KEY"
 assert_not_empty "alice did_aw" "$ALICE_DID_AW"
 assert_eq "alice address" "test.local/alice" "$ALICE_ADDRESS"
+capture_success test_delivery_origin "test.local delivery origin" run_aw_in "$ALICE_DIR" \
+  id namespace set-delivery-origin \
+  --namespace test.local \
+  --origin "$AWEB_URL" \
+  --json
 echo ""
 
 # ---------------------------------------------------------------------------
