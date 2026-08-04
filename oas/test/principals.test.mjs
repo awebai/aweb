@@ -8,7 +8,9 @@ import {
   assertPrincipalStoreContained,
   loadPrincipalDeclaration,
   parsePrincipalDeclarationYaml,
+  localPrincipalDeclarationSchema,
   principalDeclarationSchema,
+  principalDeclarationSchemaFor,
   resolvePrincipalHome,
   resolvePrincipalStore,
   validatePrincipalDeclaration,
@@ -329,4 +331,39 @@ test("the global declaration is unchanged by the local shape", () => {
     delete partial[field];
     assert.throws(() => validatePrincipalDeclaration(partial), new RegExp(`missing required field: ${field}`));
   }
+});
+
+
+test("a local store cannot contain, or be contained by, any global store on the same team", () => {
+  const home = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "aweb-oas-store-")));
+  temporaryDirectories.push(home);
+  const local = resolvePrincipalStore({ ...LOCAL, team_id: "t:e.test" }, { home }).principal;
+  // Adversarial: a did:aw whose id spells the separating component. A plain
+  // "members" component made this global the exact PARENT of every local path.
+  for (const id of ["localmembers", "localMembers", "snape", "members"]) {
+    const global = resolvePrincipalStore({
+      schema_version: 1, address: "e.test/x", stable_id: `did:aw:${id}`, team_id: "t:e.test", soul: "d",
+    }, { home }).principal;
+    assert.notEqual(local, global);
+    assert.equal(local.startsWith(global + sep), false, `local nested under global for did:aw:${id}`);
+    assert.equal(global.startsWith(local + sep), false, `global nested under local for did:aw:${id}`);
+  }
+});
+
+test("the reserved member name follows the issuing authority, which compares case-insensitively", () => {
+  for (const reserved of ["me", "ME", "Me", "mE"]) {
+    assert.throws(() => validatePrincipalDeclaration({ ...LOCAL, member_name: reserved }), /reserved alias/);
+  }
+});
+
+test("the exported schema selector follows the same discriminator as the validator", () => {
+  const global = { schema_version: 1, address: "e.test/x", stable_id: "did:aw:2Abc", team_id: "t:e.test", soul: "d" };
+  assert.equal(principalDeclarationSchemaFor(LOCAL), localPrincipalDeclarationSchema);
+  assert.equal(principalDeclarationSchemaFor(global), principalDeclarationSchema);
+  assert.equal(principalDeclarationSchemaFor(undefined), principalDeclarationSchema);
+  // The v1 $id contract must not move when a second shape is added.
+  assert.match(principalDeclarationSchema.$id, /principal-declaration-v1\.json$/);
+  assert.equal(localPrincipalDeclarationSchema.required.includes("member_name"), true);
+  assert.equal(localPrincipalDeclarationSchema.properties.address, undefined);
+  assert.equal(localPrincipalDeclarationSchema.properties.stable_id, undefined);
 });

@@ -9,6 +9,10 @@ import { isAbsolute, join, normalize, parse, relative, resolve, sep } from "node
 // it cannot be expressed as a global with fields omitted. Five of one adopting
 // team's seven members are this shape.
 const REQUIRED_FIELDS = ["schema_version", "address", "stable_id", "team_id", "soul"];
+// Impossible as a did:aw principal id, which is [A-Za-z0-9]+ only.
+export const LOCAL_STORE_COMPONENT = "local-members";
+// The issuing authority compares case-insensitively; matching case-sensitively
+// here would accept ME and Me, which the authority forbids.
 const RESERVED_MEMBER_NAMES = new Set(["me"]);
 const LOCAL_REQUIRED_FIELDS = ["schema_version", "scope", "member_name", "team_id", "soul"];
 const ALLOWED_FIELDS = new Set([...REQUIRED_FIELDS, "soul_version"]);
@@ -35,6 +39,9 @@ export const localPrincipalDeclarationSchema = Object.freeze({
   $schema: "https://json-schema.org/draft/2020-12/schema",
   $id: "https://aweb.ai/schemas/oas/principal-declaration-v2-local.json",
   title: "aweb OAS durable local principal declaration",
+  // STRUCTURAL ONLY. Reserved member names are a semantic rule owned by the
+  // issuing authority and are enforced by validatePrincipalDeclaration, not here;
+  // this schema alone does not represent the complete shape.
   type: "object",
   additionalProperties: false,
   required: LOCAL_REQUIRED_FIELDS,
@@ -149,7 +156,7 @@ export function validatePrincipalDeclaration(declaration) {
     if (typeof declaration.member_name !== "string" || !FIELD_REGEXPS.member_name.test(declaration.member_name)) {
       throw new TypeError("member_name must match the member name aw issues: [A-Za-z0-9][A-Za-z0-9_-]{0,63}");
     }
-    if (RESERVED_MEMBER_NAMES.has(declaration.member_name)) {
+    if (RESERVED_MEMBER_NAMES.has(declaration.member_name.toLowerCase())) {
       throw new TypeError(`member_name must not be a reserved alias: ${declaration.member_name}`);
     }
     validateSharedPrincipalFields(declaration);
@@ -269,10 +276,12 @@ export function resolvePrincipalStore(declaration, options = {}) {
   const home = resolvePrincipalHome(options);
   const [teamName, teamNamespace] = declaration.team_id.split(":");
   // A durable local has no did:aw to key on; its stable handle is the member
-  // name. Kept under a distinct `members/` level so a member name can never
-  // collide with a principal id derived from a did:aw.
+  // name. The separating component MUST be impossible as a global principal id,
+  // which is `did:aw:` plus [A-Za-z0-9]+ — a hyphen cannot appear there. A plain
+  // "members" was not impossible: the global did:aw:members resolves to exactly
+  // that directory and is then the PARENT of every local path under it.
   const principal = declaration.scope === "local"
-    ? join(home, teamName, teamNamespace, "members", declaration.member_name)
+    ? join(home, teamName, teamNamespace, LOCAL_STORE_COMPONENT, declaration.member_name)
     : join(home, teamName, teamNamespace, declaration.stable_id.slice("did:aw:".length));
   const credentials = join(principal, "credentials");
   const state = join(principal, "state");
