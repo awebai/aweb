@@ -23,10 +23,10 @@ func TestSignAndVerifyTeamCertificate(t *testing.T) {
 	memberDIDKey := ComputeDIDKey(memberPub)
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: memberDIDKey,
-		Alias:        "alice",
-		Lifetime:     LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  memberDIDKey,
+		Alias:         "alice",
+		IdentityScope: IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -43,8 +43,8 @@ func TestSignAndVerifyTeamCertificate(t *testing.T) {
 	if cert.IdentityScope != IdentityModeGlobal {
 		t.Fatalf("identity_scope=%q", cert.IdentityScope)
 	}
-	if cert.Lifetime != LifetimePersistent {
-		t.Fatalf("legacy lifetime=%q", cert.Lifetime)
+	if cert.IdentityScope != IdentityModeGlobal {
+		t.Fatalf("identity_scope=%q", cert.IdentityScope)
 	}
 	if cert.TeamDIDKey != teamDIDKey {
 		t.Fatalf("team_did_key=%q", cert.TeamDIDKey)
@@ -75,10 +75,10 @@ func TestVerifyTeamCertificateRejectsTampered(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -106,10 +106,10 @@ func TestVerifyTeamCertificateRejectsWrongTeamKey(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -131,10 +131,10 @@ func TestSaveAndLoadTeamCertificate(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -176,10 +176,10 @@ func TestSaveTeamCertificatePermissions(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -211,10 +211,10 @@ func TestEncodeTeamCertificateForHeader(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -248,10 +248,10 @@ func TestTeamCertificateJSON(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamPriv, TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -306,7 +306,7 @@ func TestLegacyLifetimeTeamCertificatePreservesSignedWireShape(t *testing.T) {
 		"",
 		"",
 		"alice",
-		LifetimePersistent,
+		"persistent",
 		issuedAt,
 		true,
 	)
@@ -329,7 +329,7 @@ func TestLegacyLifetimeTeamCertificatePreservesSignedWireShape(t *testing.T) {
 		TeamDIDKey:    teamDIDKey,
 		MemberDIDKey:  memberDIDKey,
 		Alias:         "alice",
-		Lifetime:      LifetimePersistent,
+		Lifetime:      "persistent",
 		IssuedAt:      issuedAt,
 		Signature:     signature,
 	})

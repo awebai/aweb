@@ -28,7 +28,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestPrintJSONDualEmitsNameAndIdentityScopeCompat(t *testing.T) {
+func TestPrintJSONOnlyAddsNameCompatibility(t *testing.T) {
 	out := captureIDCommandStdout(t, func() {
 		printJSON(map[string]any{
 			"alias":    "alice",
@@ -43,12 +43,18 @@ func TestPrintJSONDualEmitsNameAndIdentityScopeCompat(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["alias"] != "alice" || got["name"] != "alice" || got["lifetime"] != "persistent" || got["identity_scope"] != "global" {
+	if got["alias"] != "alice" || got["name"] != "alice" || got["lifetime"] != "persistent" {
 		t.Fatalf("top-level compat fields=%v", got)
 	}
+	if _, ok := got["identity_scope"]; ok {
+		t.Fatalf("generic output must not derive identity_scope from lifetime: %v", got)
+	}
 	nested := got["nested"].([]any)[0].(map[string]any)
-	if nested["alias"] != "bob" || nested["name"] != "bob" || nested["lifetime"] != "ephemeral" || nested["identity_scope"] != "local" {
+	if nested["alias"] != "bob" || nested["name"] != "bob" || nested["lifetime"] != "ephemeral" {
 		t.Fatalf("nested compat fields=%v", nested)
+	}
+	if _, ok := nested["identity_scope"]; ok {
+		t.Fatalf("generic nested output must not derive identity_scope from lifetime: %v", nested)
 	}
 }
 
@@ -438,8 +444,8 @@ func TestAwIDCreateWritesStandaloneIdentityAndRegisters(t *testing.T) {
 	if identity.IdentityScope != awid.IdentityModeGlobal {
 		t.Fatalf("identity_scope=%q", identity.IdentityScope)
 	}
-	if identity.Lifetime != awid.LifetimePersistent {
-		t.Fatalf("deprecated-read-compat identity lifetime=%q", identity.Lifetime)
+	if identity.IdentityScope != awid.IdentityModeGlobal {
+		t.Fatalf("identity_scope=%q", identity.IdentityScope)
 	}
 	identityRaw, err := os.ReadFile(identityPath)
 	if err != nil {
@@ -526,7 +532,7 @@ func TestAwIDEncryptionKeySetupAndRotatePublishesGlobalAssertion(t *testing.T) {
 		StableID:       stableID,
 		Address:        "acme.com/alice",
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    server.URL,
 		RegistryStatus: "registered",
 		CreatedAt:      "2026-05-26T00:00:00Z",
@@ -649,22 +655,22 @@ func TestEncryptionKeySetupUsesActiveLocalCertificateIdentity(t *testing.T) {
 	stableID := awid.ComputeStableID(pub)
 	tmp := t.TempDir()
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     "https://app.example.test/api",
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimeEphemeral,
-		SigningKey:  priv,
-		CreatedAt:   "2026-05-26T00:00:00Z",
+		AwebURL:       "https://app.example.test/api",
+		TeamID:        "backend:demo",
+		Alias:         "alice",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		SigningKey:    priv,
+		CreatedAt:     "2026-05-26T00:00:00Z",
 	})
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
 		DID:            did,
 		StableID:       stableID,
 		Address:        "demo/alice",
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    "https://api.awid.ai",
 		RegistryStatus: "registered",
 		CreatedAt:      "2026-05-26T00:00:00Z",
@@ -748,7 +754,7 @@ func TestEncryptionKeyEnsureRebindsGlobalAssertionWithoutRotatingActiveKey(t *te
 		StableID:       stableID,
 		Address:        "demo/alice",
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    "https://api.awid.ai",
 		RegistryStatus: "registered",
 		CreatedAt:      "2026-05-26T00:00:00Z",
@@ -774,22 +780,22 @@ func TestEncryptionKeyEnsureRebindsGlobalAssertionWithoutRotatingActiveKey(t *te
 		t.Fatalf("save encryption state: %v", err)
 	}
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     "https://app.example.test/api",
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimeEphemeral,
-		SigningKey:  priv,
-		CreatedAt:   "2026-05-26T00:00:00Z",
+		AwebURL:       "https://app.example.test/api",
+		TeamID:        "backend:demo",
+		Alias:         "alice",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		SigningKey:    priv,
+		CreatedAt:     "2026-05-26T00:00:00Z",
 	})
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
 		DID:            did,
 		StableID:       stableID,
 		Address:        "demo/alice",
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    "https://api.awid.ai",
 		RegistryStatus: "registered",
 		CreatedAt:      "2026-05-26T00:00:00Z",
@@ -843,15 +849,15 @@ func TestEnsureE2EEKeyReadyForSendPublishesExistingLocalRecord(t *testing.T) {
 	}))
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimeEphemeral,
-		SigningKey:  priv,
-		CreatedAt:   "2026-05-26T00:00:00Z",
+		AwebURL:       server.URL,
+		TeamID:        "backend:demo",
+		Alias:         "alice",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		SigningKey:    priv,
+		CreatedAt:     "2026-05-26T00:00:00Z",
 	})
 	if err := ensureLocalIdentityEncryptionKeyForDir(tmp, currentEncryptionKeyIdentityHome()); err != nil {
 		t.Fatal(err)
@@ -886,11 +892,11 @@ func TestEncryptionKeySetupSkipsAWIDWhenGlobalCertificateHasNoRegistryContext(t 
 	const teamID = "backend:demo"
 
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         teamID,
-		MemberDIDKey: memberDID,
-		MemberDIDAW:  stableID,
-		Alias:        "alice",
-		Lifetime:     awid.LifetimePersistent,
+		Team:          teamID,
+		MemberDIDKey:  memberDID,
+		MemberDIDAW:   stableID,
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -972,11 +978,11 @@ func TestAwIDCreateFailsIfIdentityExists(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:       "did:key:z6MkkExisting",
-		StableID:  "did:aw:existing",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-04T00:00:00Z",
+		DID:           "did:key:z6MkkExisting",
+		StableID:      "did:aw:existing",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-04T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1722,7 +1728,7 @@ func TestAwIDShowWorksWithStandaloneIdentity(t *testing.T) {
 		StableID:       stableID,
 		Address:        "acme.com/alice",
 		Custody:        "self",
-		Lifetime:       "persistent",
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    registryServer.URL,
 		RegistryStatus: "registered",
 		CreatedAt:      "2026-04-05T00:00:00Z",
@@ -1957,13 +1963,13 @@ func TestAwIDResolveWorksWithoutSigningKeyWhenIdentityRegistryURLPresent(t *test
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(awDir, "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:         did,
-		StableID:    stableID,
-		Address:     "acme.com/alice",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: registryServer.URL,
-		CreatedAt:   "2026-04-14T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   registryServer.URL,
+		CreatedAt:     "2026-04-14T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -2134,7 +2140,7 @@ func TestAwIDShowWorksWithoutIdentityFileForLocalWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	didKey := writeEphemeralIdentityWorkspaceForIDTest(t, tmp, "https://app.aweb.ai", "default:alice.aweb.ai", "alice-laptop", priv)
+	didKey := writeLocalIdentityWorkspaceForIDTest(t, tmp, "https://app.aweb.ai", "default:alice.aweb.ai", "alice-laptop", priv)
 
 	run := exec.CommandContext(ctx, bin, "id", "show", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -2151,8 +2157,11 @@ func TestAwIDShowWorksWithoutIdentityFileForLocalWorkspace(t *testing.T) {
 	if got["did_key"] != didKey {
 		t.Fatalf("did_key=%v want %v", got["did_key"], didKey)
 	}
-	if got["lifetime"] != awid.LifetimeEphemeral {
-		t.Fatalf("lifetime=%v", got["lifetime"])
+	if got["identity_scope"] != awid.IdentityModeLocal {
+		t.Fatalf("identity_scope=%v", got["identity_scope"])
+	}
+	if _, ok := got["lifetime"]; ok {
+		t.Fatalf("local identity output must not contain lifetime: %v", got)
 	}
 	if got["custody"] != awid.CustodySelf {
 		t.Fatalf("custody=%v", got["custody"])
@@ -2201,7 +2210,7 @@ func TestAwIDVerifyWorksWithoutIdentityFileForLocalWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, serverURL, "default:alice.aweb.ai", "alice-laptop", ephemeralKey)
+	writeLocalIdentityWorkspaceForIDTest(t, tmp, serverURL, "default:alice.aweb.ai", "alice-laptop", ephemeralKey)
 
 	run := exec.CommandContext(ctx, bin, "id", "verify", stableID, "--json")
 	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+serverURL)
@@ -2240,7 +2249,7 @@ func TestAwIDRotateKeyFailsClearlyWithoutIdentityFileForLocalWorkspace(t *testin
 	networkServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("unexpected network call during local rotate-key failure: %s %s", r.Method, r.URL.Path)
 	}))
-	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, networkServer.URL, "default:alice.aweb.ai", "alice-laptop", priv)
+	writeLocalIdentityWorkspaceForIDTest(t, tmp, networkServer.URL, "default:alice.aweb.ai", "alice-laptop", priv)
 
 	run := exec.CommandContext(ctx, bin, "id", "rotate-key", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -2271,7 +2280,7 @@ func TestAwIDRegisterFailsClearlyWithoutIdentityFileForLocalWorkspace(t *testing
 	networkServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("unexpected network call during local register failure: %s %s", r.Method, r.URL.Path)
 	}))
-	writeEphemeralIdentityWorkspaceForIDTest(t, tmp, networkServer.URL, "default:alice.aweb.ai", "alice-laptop", priv)
+	writeLocalIdentityWorkspaceForIDTest(t, tmp, networkServer.URL, "default:alice.aweb.ai", "alice-laptop", priv)
 
 	run := exec.CommandContext(ctx, bin, "id", "register", "--json")
 	run.Env = testCommandEnv(tmp)
@@ -2348,12 +2357,12 @@ func TestAwIDShowFailsForIdentityDIDMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(awDir, "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:       awid.ComputeDIDKey(wrongPub),
-		StableID:  awid.ComputeStableID(pub),
-		Address:   "alice.aweb.ai/alice-laptop",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-13T00:00:00Z",
+		DID:           awid.ComputeDIDKey(wrongPub),
+		StableID:      awid.ComputeStableID(pub),
+		Address:       "alice.aweb.ai/alice-laptop",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-13T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -2406,7 +2415,7 @@ func TestAwIDShowFailsWhenLocalCertMissingMemberDIDKey(t *testing.T) {
 		TeamDIDKey:    "did:key:z6MkTeam",
 		MemberDIDKey:  "",
 		Alias:         "alice-laptop",
-		Lifetime:      awid.LifetimeEphemeral,
+		IdentityScope: awid.IdentityModeLocal,
 		IssuedAt:      "2026-04-13T00:00:00Z",
 		Signature:     "invalid",
 	}
@@ -2691,13 +2700,13 @@ func writeSelfCustodyConfig(t *testing.T, workingDir, serverURL, address, namesp
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(workingDir, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:         did,
-		StableID:    stableID,
-		Address:     address,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: serverURL,
-		CreatedAt:   "2026-04-04T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Address:       address,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   serverURL,
+		CreatedAt:     "2026-04-04T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -2715,7 +2724,7 @@ func writeStandaloneSelfCustodyIdentity(t *testing.T, workingDir, address, did, 
 		StableID:       stableID,
 		Address:        address,
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    registryURL,
 		RegistryStatus: "registered",
 		CreatedAt:      "2026-04-05T00:00:00Z",
@@ -2827,16 +2836,16 @@ func cloneStringMap(src map[string]string) map[string]string {
 	return out
 }
 
-func writeEphemeralIdentityWorkspaceForIDTest(t *testing.T, workingDir, serverURL, teamID, alias string, signingKey ed25519.PrivateKey) string {
+func writeLocalIdentityWorkspaceForIDTest(t *testing.T, workingDir, serverURL, teamID, alias string, signingKey ed25519.PrivateKey) string {
 	t.Helper()
 	workspace := workspaceBinding(serverURL, teamID, alias, "workspace-1")
 	if err := awid.SaveSigningKey(filepath.Join(workingDir, ".aw", "signing.key"), signingKey); err != nil {
 		t.Fatalf("save signing key: %v", err)
 	}
 	writeTeamCertificateWorkspaceForTest(t, workingDir, workspace, &testSelectionFixture{
-		SigningKey: signingKey,
-		Lifetime:   awid.LifetimeEphemeral,
-		CreatedAt:  "2026-04-13T00:00:00Z",
+		SigningKey:    signingKey,
+		IdentityScope: awid.IdentityModeLocal,
+		CreatedAt:     "2026-04-13T00:00:00Z",
 	})
 	writeWorkspaceBindingForTest(t, workingDir, workspace)
 	if _, err := os.Stat(filepath.Join(workingDir, ".aw", "identity.yaml")); !os.IsNotExist(err) {

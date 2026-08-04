@@ -196,7 +196,7 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	writeSelectionFixtureForTest(t, authorityDir, testSelectionFixture{
 		AwebURL: server.URL, TeamID: "backend:acme.test", Alias: "provisioner", WorkspaceID: "workspace-provisioner",
 		DID: authorityDID, StableID: authorityStableID, Address: "acme.test/provisioner", Custody: awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent, RegistryURL: server.URL, SigningKey: authorityKey,
+		IdentityScope: awid.IdentityModeGlobal, RegistryURL: server.URL, SigningKey: authorityKey,
 	})
 	_, shadowKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -205,7 +205,7 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	writeSelectionFixtureForTest(t, instanceDir, testSelectionFixture{
 		AwebURL: server.URL, TeamID: "backend:acme.test", Alias: "shadow", WorkspaceID: "workspace-shadow",
 		DID: awid.ComputeDIDKey(shadowKey.Public().(ed25519.PublicKey)), StableID: awid.ComputeStableID(shadowKey.Public().(ed25519.PublicKey)),
-		Address: "acme.test/shadow", Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, RegistryURL: server.URL, SigningKey: shadowKey,
+		Address: "acme.test/shadow", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: server.URL, SigningKey: shadowKey,
 	})
 
 	run := exec.CommandContext(ctx, bin, "id", "team", "provision-local",
@@ -223,8 +223,29 @@ func TestProvisionLocalCommandUsesDeclaredAuthorityAndExternalTarget(t *testing.
 	if registeredCalls != 1 || registered == nil {
 		t.Fatalf("register_calls=%d cert=%+v", registeredCalls, registered)
 	}
-	if matches, err := awconfig.ListTeamInvitesByOperation("oas-AAAAAAAAAAAAAAAAAAAAAA"); err != nil || len(matches) != 1 {
+	matches, err := awconfig.ListTeamInvitesByOperation("oas-AAAAAAAAAAAAAAAAAAAAAA")
+	if err != nil || len(matches) != 1 {
 		t.Fatalf("response-loss grant matches=%+v err=%v", matches, err)
+	}
+	// Simulate a restart with the pending-invite shape written by the prior CLI.
+	// Reconciliation must normalize its scope before validating the local grant.
+	invitePath := filepath.Join(root, ".config", "aw", "team-invites", matches[0].InviteID+".json")
+	inviteBytes, err := os.ReadFile(invitePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacyInvite map[string]any
+	if err := json.Unmarshal(inviteBytes, &legacyInvite); err != nil {
+		t.Fatal(err)
+	}
+	delete(legacyInvite, "identity_scope")
+	legacyInvite["ephemeral"] = true
+	inviteBytes, err = json.MarshalIndent(legacyInvite, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(invitePath, append(inviteBytes, '\n'), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
 	recover := exec.CommandContext(ctx, bin, "id", "team", "provision-local",
@@ -422,7 +443,7 @@ func TestProvisionedCertificateIdentityUsesExplicitHomeForEncryption(t *testing.
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
 		Team: "backend:acme.test", MemberDIDKey: awid.ComputeDIDKey(principalKey.Public().(ed25519.PublicKey)),
-		Alias: "provisioned", Lifetime: awid.LifetimeEphemeral,
+		Alias: "provisioned", IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -620,7 +620,7 @@ func TestAwWorkspaceStatusTruncatesTeamLocks(t *testing.T) {
 	}
 }
 
-func TestAwWorkspaceStatusDeletesGoneLocalIdentity(t *testing.T) {
+func TestAwWorkspaceStatusKeepsGoneDurableLocalIdentity(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
@@ -663,23 +663,18 @@ func TestAwWorkspaceStatusDeletesGoneLocalIdentity(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"workspaces": []map[string]any{
 					{
-						"workspace_id":   goneID,
-						"alias":          "bob",
-						"agent_lifetime": "ephemeral",
-						"status":         "offline",
-						"workspace_path": missingPath,
+						"workspace_id":         goneID,
+						"alias":                "bob",
+						"agent_identity_scope": "local",
+						"status":               "offline",
+						"workspace_path":       missingPath,
 					},
 				},
 				"has_more": false,
 			})
 		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
 			deletedWorkspace.Store(true)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace_id":     goneID,
-				"alias":            "bob",
-				"deleted_at":       "2026-04-09T00:00:00Z",
-				"identity_deleted": true,
-			})
+			t.Fatal("missing local workspace path must not trigger identity-deleting DELETE")
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -711,15 +706,15 @@ func TestAwWorkspaceStatusDeletesGoneLocalIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if !deletedWorkspace.Load() {
-		t.Fatal("expected gone workspace record deletion")
+	if deletedWorkspace.Load() {
+		t.Fatal("durable local identity was deleted from missing path alone")
 	}
-	if !strings.Contains(string(out), "gone_local_cleanup_candidate") || !strings.Contains(string(out), "deleted local identity") || !strings.Contains(string(out), "removed workspace record") {
-		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
+	if !strings.Contains(string(out), "gone_local_path_only") || !strings.Contains(string(out), "explicit membership retirement required") {
+		t.Fatalf("expected durable-local path-only output, got:\n%s", string(out))
 	}
 }
 
-func TestAwWorkspaceStatusDeletesGoneLocalIdentityFromIdentityScope(t *testing.T) {
+func TestAwWorkspaceStatusKeepsGoneLocalIdentityFromIdentityScope(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
@@ -769,12 +764,7 @@ func TestAwWorkspaceStatusDeletesGoneLocalIdentityFromIdentityScope(t *testing.T
 			})
 		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
 			deletedWorkspace.Store(true)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"workspace_id":     goneID,
-				"alias":            "bob",
-				"deleted_at":       "2026-04-09T00:00:00Z",
-				"identity_deleted": true,
-			})
+			t.Fatal("missing local workspace path must not trigger identity-deleting DELETE")
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -805,11 +795,11 @@ func TestAwWorkspaceStatusDeletesGoneLocalIdentityFromIdentityScope(t *testing.T
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
-	if !deletedWorkspace.Load() {
-		t.Fatal("expected gone workspace record deletion from agent_identity_scope=local")
+	if deletedWorkspace.Load() {
+		t.Fatal("agent_identity_scope=local triggered identity deletion from path absence")
 	}
-	if !strings.Contains(string(out), "gone_local_cleanup_candidate") || !strings.Contains(string(out), "deleted local identity") || !strings.Contains(string(out), "removed workspace record") {
-		t.Fatalf("expected gone-workspace cleanup output, got:\n%s", string(out))
+	if !strings.Contains(string(out), "gone_local_path_only") || !strings.Contains(string(out), "explicit membership retirement required") {
+		t.Fatalf("expected local path-only output, got:\n%s", string(out))
 	}
 }
 
@@ -920,11 +910,11 @@ func TestAwWorkspaceStatusKeepsGoneGlobalIdentity(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"workspaces": []map[string]any{
 					{
-						"workspace_id":   goneID,
-						"alias":          "maintainer",
-						"agent_lifetime": "persistent",
-						"status":         "offline",
-						"workspace_path": missingPath,
+						"workspace_id":         goneID,
+						"alias":                "maintainer",
+						"agent_identity_scope": "global",
+						"status":               "offline",
+						"workspace_path":       missingPath,
 					},
 				},
 				"has_more": false,
@@ -974,7 +964,7 @@ func TestAwWorkspaceStatusKeepsGoneGlobalIdentity(t *testing.T) {
 	}
 }
 
-func TestAwWorkspaceStatusSkipsGoneWorkspaceWithUnknownLifetime(t *testing.T) {
+func TestAwWorkspaceStatusSkipsGoneWorkspaceWithUnknownIdentityScope(t *testing.T) {
 	t.Parallel()
 
 	const selfID = "11111111-1111-1111-1111-111111111111"
@@ -1027,7 +1017,7 @@ func TestAwWorkspaceStatusSkipsGoneWorkspaceWithUnknownLifetime(t *testing.T) {
 			})
 		case r.URL.Path == "/v1/workspaces/"+goneID && r.Method == http.MethodDelete:
 			deletedWorkspace.Store(true)
-			t.Fatalf("unknown-lifetime gone-workspace path must not call DELETE")
+			t.Fatalf("unknown-scope gone-workspace path must not call DELETE")
 		case r.URL.Path == "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -1060,10 +1050,10 @@ func TestAwWorkspaceStatusSkipsGoneWorkspaceWithUnknownLifetime(t *testing.T) {
 		t.Fatalf("run failed: %v\n%s", err, string(out))
 	}
 	if deletedWorkspace.Load() {
-		t.Fatal("unknown-lifetime gone-workspace path called DELETE")
+		t.Fatal("unknown-scope gone-workspace path called DELETE")
 	}
 	if !strings.Contains(string(out), "unknown_identity_scope_no_cleanup") || !strings.Contains(string(out), "no cleanup attempted") {
-		t.Fatalf("expected unknown-lifetime cleanup output, got:\n%s", string(out))
+		t.Fatalf("expected unknown-scope cleanup output, got:\n%s", string(out))
 	}
 }
 
@@ -1233,7 +1223,7 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 		StableID:       "did:aw:parent",
 		Address:        "source/alice",
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    server.URL,
 		RegistryStatus: "registered",
 		CreatedAt:      "2026-04-08T00:00:00Z",
@@ -1311,8 +1301,8 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 	if cert.Alias != "charlie" {
 		t.Fatalf("cert alias=%q", cert.Alias)
 	}
-	if cert.Lifetime != awid.LifetimeEphemeral {
-		t.Fatalf("cert lifetime=%q", cert.Lifetime)
+	if cert.IdentityScope != awid.IdentityModeLocal {
+		t.Fatalf("cert identity_scope=%q", cert.IdentityScope)
 	}
 	if cert.MemberDIDAW != "" {
 		t.Fatalf("cert member_did_aw=%q", cert.MemberDIDAW)
@@ -1522,10 +1512,10 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		t.Fatalf("save parent signing key: %v", err)
 	}
 	parentCert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         teamID,
-		MemberDIDKey: parentDID,
-		Alias:        "alice",
-		Lifetime:     awid.LifetimeEphemeral,
+		Team:          teamID,
+		MemberDIDKey:  parentDID,
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1693,10 +1683,10 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 				alias = "alice"
 			}
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         teamID,
-				MemberDIDKey: didKey,
-				Alias:        alias,
-				Lifetime:     awid.LifetimeEphemeral,
+				Team:          teamID,
+				MemberDIDKey:  didKey,
+				Alias:         alias,
+				IdentityScope: awid.IdentityModeLocal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -2003,7 +1993,7 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 		StableID:       "did:aw:parent",
 		Address:        "source/alice",
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    server.URL,
 		RegistryStatus: "registered",
 		CreatedAt:      "2026-04-08T00:00:00Z",
@@ -2116,7 +2106,7 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectAliasMismatches(t *t
 		StableID:       "did:aw:parent",
 		Address:        "source/alice",
 		Custody:        awid.CustodySelf,
-		Lifetime:       awid.LifetimePersistent,
+		IdentityScope:  awid.IdentityModeGlobal,
 		RegistryURL:    server.URL,
 		RegistryStatus: "registered",
 		CreatedAt:      "2026-04-08T00:00:00Z",
@@ -2292,16 +2282,16 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesHostedInviteWithoutTeamKe
 				t.Fatalf("encode child cert: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(awid.SpawnAcceptInviteResponse{
-				TeamID:     teamID,
-				TeamSlug:   "default",
-				Namespace:  "acme.aweb.ai",
-				Alias:      body.Alias,
-				ServerURL:  "http://" + r.Host,
-				DID:        body.DID,
-				Lifetime:   awid.IdentityModeLocal,
-				AccessMode: "open",
-				Created:    true,
-				TeamCert:   encoded,
+				TeamID:        teamID,
+				TeamSlug:      "default",
+				Namespace:     "acme.aweb.ai",
+				Alias:         body.Alias,
+				ServerURL:     "http://" + r.Host,
+				DID:           body.DID,
+				IdentityScope: awid.IdentityModeLocal,
+				AccessMode:    "open",
+				Created:       true,
+				TeamCert:      encoded,
 			})
 		case "/v1/connect":
 			cert := requireCertificateAuthForTest(t, r)
@@ -2453,10 +2443,10 @@ func TestAwWorkspaceAddWorktreeExternalIdentityHomeUsesParentAPIKey(t *testing.T
 			didKey, _ := initBody["did"].(string)
 			alias, _ := initBody["alias"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         teamID,
-				MemberDIDKey: didKey,
-				Alias:        alias,
-				Lifetime:     awid.LifetimeEphemeral,
+				Team:          teamID,
+				MemberDIDKey:  didKey,
+				Alias:         alias,
+				IdentityScope: awid.IdentityModeLocal,
 			})
 			if err != nil {
 				t.Fatalf("sign cert: %v", err)
@@ -2638,10 +2628,10 @@ updated_at: "2026-04-09T00:00:00Z"
 		t.Fatal(err)
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: awid.ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     awid.LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  awid.ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2746,10 +2736,10 @@ updated_at: "2026-04-09T00:00:00Z"
 		t.Fatal(err)
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: awid.ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     awid.LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  awid.ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)

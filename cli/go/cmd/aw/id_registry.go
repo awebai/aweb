@@ -21,7 +21,7 @@ type idShowOutput struct {
 	DIDAW                 string `json:"did_aw,omitempty"`
 	DIDKey                string `json:"did_key,omitempty"`
 	Custody               string `json:"custody,omitempty"`
-	Lifetime              string `json:"lifetime,omitempty"`
+	IdentityScope         string `json:"identity_scope,omitempty"`
 	RegistryStatus        string `json:"registry_status"`
 	RegistryURL           string `json:"registry_url,omitempty"`
 	RegistryCurrentDIDKey string `json:"registry_current_did_key,omitempty"`
@@ -136,7 +136,7 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := requirePersistentSelfCustodialIdentity(identity, signingKey); err != nil {
+	if err := requireGlobalSelfCustodialIdentity(identity, signingKey); err != nil {
 		return err
 	}
 	registry, err := resolveIdentityRegistryClient(identity)
@@ -192,7 +192,7 @@ func runIDShow(cmd *cobra.Command, args []string) error {
 		DIDAW:          identity.StableID,
 		DIDKey:         identity.DID,
 		Custody:        identity.Custody,
-		Lifetime:       awid.LegacyLifetimeForIdentityScope(identity.IdentityScope),
+		IdentityScope:  identity.IdentityScope,
 		RegistryStatus: "not_applicable",
 	}
 	if identity.IdentityScope == awid.IdentityModeGlobal && strings.TrimSpace(identity.StableID) != "" {
@@ -422,7 +422,7 @@ func executeIDNamespaceRotateController(opts idNamespaceRotateControllerOptions)
 	}, nil
 }
 
-func requirePersistentSelfCustodialIdentity(identity *awconfig.ResolvedIdentity, signingKey ed25519.PrivateKey) error {
+func requireGlobalSelfCustodialIdentity(identity *awconfig.ResolvedIdentity, signingKey ed25519.PrivateKey) error {
 	if identity == nil {
 		return fmt.Errorf("missing identity context")
 	}
@@ -485,7 +485,7 @@ func registryLookupURL(ctx context.Context, registry *awid.RegistryClient, ident
 }
 
 func resolveRegistryClientForLookup(workingDir string) (*awid.RegistryClient, *awconfig.ResolvedIdentity, error) {
-	identity, err := resolveOptionalPersistentIdentityForLookup(workingDir)
+	identity, err := resolveOptionalGlobalIdentityForLookup(workingDir)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -522,7 +522,7 @@ func resolveIdentitySigningKey(identity *awconfig.ResolvedIdentity) (ed25519.Pri
 	return priv, nil
 }
 
-func resolveOptionalPersistentIdentityForLookup(workingDir string) (*awconfig.ResolvedIdentity, error) {
+func resolveOptionalGlobalIdentityForLookup(workingDir string) (*awconfig.ResolvedIdentity, error) {
 	identity, err := awconfig.ResolveIdentity(workingDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

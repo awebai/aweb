@@ -103,10 +103,10 @@ func TestStableIDMigrationDeclinedStoreSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the next start cannot load the store: %v", err)
 	}
-	if got := reloaded.CheckPin("acme.com/bob", migrationStableID, LifetimePersistent); got != PinOK {
+	if got := reloaded.CheckPin("acme.com/bob", migrationStableID, IdentityModeGlobal); got != PinOK {
 		t.Fatalf("CheckPin(bob)=%v, want %v: the pin for the first address was lost", got, PinOK)
 	}
-	if got := reloaded.CheckPin("acme.com/alice", migrationDID, LifetimePersistent); got != PinOK {
+	if got := reloaded.CheckPin("acme.com/alice", migrationDID, IdentityModeGlobal); got != PinOK {
 		t.Fatalf("CheckPin(alice)=%v, want %v", got, PinOK)
 	}
 }

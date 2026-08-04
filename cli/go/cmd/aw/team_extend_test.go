@@ -327,7 +327,7 @@ func TestTeamExtendAmbientAPIKeyMatchingActiveTeamCreatesRoster(t *testing.T) {
 			}
 			didKey, _ := body["did"].(string)
 			alias, _ := body["alias"].(string)
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: alias, Lifetime: awid.LifetimeEphemeral})
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: alias, IdentityScope: awid.IdentityModeLocal})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -429,7 +429,7 @@ func TestTeamExtendCurrentWorkspaceGlobalPreflightHasZeroMutation(t *testing.T) 
 				t.Fatal(err)
 			}
 			didKey, _ := req["did"].(string)
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: "first", Lifetime: awid.LifetimeEphemeral})
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: "first", IdentityScope: awid.IdentityModeLocal})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -437,7 +437,7 @@ func TestTeamExtendCurrentWorkspaceGlobalPreflightHasZeroMutation(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"team_slug": "default", "namespace": "hosted.aweb.ai", "alias": "first", "server_url": serverURL, "did": didKey, "custody": "self", "lifetime": "ephemeral", "team_cert": encoded})
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_slug": "default", "namespace": "hosted.aweb.ai", "alias": "first", "server_url": serverURL, "did": didKey, "custody": "self", "identity_scope": "local", "team_cert": encoded})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-first", teamID, "first")
 		default:
@@ -601,7 +601,7 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 						t.Fatalf("unexpected roster member attempted: %q", alias)
 					}
 					didKey, _ := body["did"].(string)
-					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: alias, Lifetime: awid.LifetimeEphemeral})
+					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: alias, IdentityScope: awid.IdentityModeLocal})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -718,7 +718,7 @@ func TestTeamExtendFailedBootstrapAndWorktreeSetupRemoveHomeAndAllowSameNameRetr
 			}
 			didKey, _ := body["did"].(string)
 			alias, _ := body["alias"].(string)
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: alias, Lifetime: awid.LifetimeEphemeral})
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: alias, IdentityScope: awid.IdentityModeLocal})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -818,7 +818,7 @@ func TestTeamExtendAmbientAPIKeyTeamMismatchRollsBackWithWorkspaceAssertion(t *t
 			}
 			didKey, _ := body["did"].(string)
 			alias, _ := body["alias"].(string)
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: actualTeamID, MemberDIDKey: didKey, Alias: alias, Lifetime: awid.LifetimeEphemeral})
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: actualTeamID, MemberDIDKey: didKey, Alias: alias, IdentityScope: awid.IdentityModeLocal})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -909,7 +909,7 @@ func TestTeamExtendAPIKeyTeamIDMismatchRollsBackWithExplicitAuth(t *testing.T) {
 			}
 			didKey, _ := body["did"].(string)
 			alias, _ := body["alias"].(string)
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: actualTeamID, MemberDIDKey: didKey, Alias: alias, Lifetime: awid.LifetimeEphemeral})
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: actualTeamID, MemberDIDKey: didKey, Alias: alias, IdentityScope: awid.IdentityModeLocal})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -16,9 +16,6 @@ import (
 )
 
 const (
-	LifetimeEphemeral  = "ephemeral"
-	LifetimePersistent = "persistent"
-
 	CustodySelf      = "self"
 	CustodyCustodial = "custodial"
 )
@@ -30,7 +27,7 @@ const (
 	PinOK       PinResult = "ok"       // DID matches stored pin.
 	PinNew      PinResult = "new"      // No pin existed; caller should store one.
 	PinMismatch PinResult = "mismatch" // DID differs from stored pin.
-	PinSkipped  PinResult = "skipped"  // Ephemeral agent — no pin check.
+	PinSkipped  PinResult = "skipped"  // Local identity — no pin check.
 )
 
 // Pin records an agent's TOFU-pinned identity.
@@ -581,11 +578,11 @@ func (ps *PinStore) Save(path string) error {
 }
 
 // CheckPin checks whether a DID matches the stored pin for an address.
-// Ephemeral agents always return PinSkipped. If no pin exists for the
+// Local identities always return PinSkipped. If no pin exists for the
 // address, returns PinNew. If the stored DID matches, returns PinOK.
 // If it differs, returns PinMismatch.
-func (ps *PinStore) CheckPin(address, did, lifetime string) PinResult {
-	if lifetime == LifetimeEphemeral {
+func (ps *PinStore) CheckPin(address, did, identityScope string) PinResult {
+	if NormalizeIdentityScope(identityScope) == IdentityModeLocal {
 		return PinSkipped
 	}
 	pinnedDID, ok := ps.Addresses[address]

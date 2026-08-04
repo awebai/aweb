@@ -87,7 +87,7 @@ func TestConnectBootstrapGlobal(t *testing.T) {
 					MemberDIDAW:   globalDidAW,
 					MemberAddress: "juanre.aweb.ai/laptop-agent",
 					Alias:         "laptop-agent",
-					Lifetime:      awid.LifetimePersistent,
+					IdentityScope: awid.IdentityModeGlobal,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -99,7 +99,7 @@ func TestConnectBootstrapGlobal(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"certificate":    encoded,
 					"team_id":        "default:juanre.aweb.ai",
-					"lifetime":       "persistent",
+					"identity_scope": "global",
 					"alias":          "laptop-agent",
 					"did_aw":         globalDidAW,
 					"member_address": "juanre.aweb.ai/laptop-agent",
@@ -304,10 +304,10 @@ func TestConnectBootstrapLocal(t *testing.T) {
 				}
 				didKey, _ := redeemBody["did_key"].(string)
 				cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-					Team:         "default:juanre.aweb.ai",
-					MemberDIDKey: didKey,
-					Alias:        "ci-runner-01",
-					Lifetime:     awid.LifetimeEphemeral,
+					Team:          "default:juanre.aweb.ai",
+					MemberDIDKey:  didKey,
+					Alias:         "ci-runner-01",
+					IdentityScope: awid.IdentityModeLocal,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -317,10 +317,10 @@ func TestConnectBootstrapLocal(t *testing.T) {
 					t.Fatal(err)
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{
-					"certificate": encoded,
-					"team_id":     "default:juanre.aweb.ai",
-					"lifetime":    "ephemeral",
-					"alias":       "ci-runner-01",
+					"certificate":    encoded,
+					"team_id":        "default:juanre.aweb.ai",
+					"identity_scope": "local",
+					"alias":          "ci-runner-01",
 				})
 			case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
 				_ = json.NewEncoder(w).Encode(map[string]any{
@@ -494,7 +494,7 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 					MemberDIDAW:   globalDidAW,
 					MemberAddress: "juanre.aweb.ai/laptop-agent",
 					Alias:         "laptop-agent",
-					Lifetime:      awid.LifetimePersistent,
+					IdentityScope: awid.IdentityModeGlobal,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -506,7 +506,7 @@ func TestConnectBootstrapUsesDiscoveryAwebURLForConnect(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"certificate":    encoded,
 					"team_id":        "default:juanre.aweb.ai",
-					"lifetime":       "persistent",
+					"identity_scope": "global",
 					"alias":          "laptop-agent",
 					"did_aw":         globalDidAW,
 					"member_address": "juanre.aweb.ai/laptop-agent",

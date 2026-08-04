@@ -91,10 +91,10 @@ func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 				t.Fatalf("did=%q does not match public_key => %q", didKey, got)
 			}
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         "backend:acme.com",
-				MemberDIDKey: didKey,
-				Alias:        "alice",
-				Lifetime:     awid.LifetimeEphemeral,
+				Team:          "backend:acme.com",
+				MemberDIDKey:  didKey,
+				Alias:         "alice",
+				IdentityScope: awid.IdentityModeLocal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -274,7 +274,7 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 				MemberDIDAW:   stableID,
 				MemberAddress: memberAddress,
 				Alias:         "alice",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -293,7 +293,7 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 				"stable_id":      stableID,
 				"identity_scope": awid.IdentityModeGlobal,
 				"custody":        awid.CustodySelf,
-				"api_key":        "workspace-sk-persistent",
+				"api_key":        "workspace-sk-global",
 			})
 		case r.URL.Path == "/v1/connect":
 			requireCertificateAuthForTest(t, r)
@@ -326,7 +326,7 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 		Role:        "backend",
 		HumanName:   "Alice",
 		AgentType:   "codex",
-		Persistent:  true,
+		Global:      true,
 	})
 	if err != nil {
 		t.Fatalf("runAPIKeyBootstrapInit global: %v", err)
@@ -388,8 +388,8 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 	if identity.IdentityScope != awid.IdentityModeGlobal {
 		t.Fatalf("identity_scope=%q", identity.IdentityScope)
 	}
-	if identity.Lifetime != awid.LifetimePersistent {
-		t.Fatalf("deprecated-read-compat identity lifetime=%q", identity.Lifetime)
+	if identity.IdentityScope != awid.IdentityModeGlobal {
+		t.Fatalf("identity_scope=%q", identity.IdentityScope)
 	}
 	identityRaw, err := os.ReadFile(filepath.Join(tmp, ".aw", "identity.yaml"))
 	if err != nil {
@@ -405,7 +405,7 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 	if err != nil {
 		t.Fatalf("load workspace.yaml: %v", err)
 	}
-	if workspace.APIKey != "workspace-sk-persistent" {
+	if workspace.APIKey != "workspace-sk-global" {
 		t.Fatalf("workspace api_key=%q", workspace.APIKey)
 	}
 	if _, err := os.Stat(apiKeyPartialInitPath(tmp)); !os.IsNotExist(err) {
@@ -478,7 +478,7 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 				MemberDIDAW:   stableID,
 				MemberAddress: "alice.aweb.ai/alice",
 				Alias:         "alice",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -497,7 +497,7 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 				"stable_id":      stableID,
 				"identity_scope": awid.IdentityModeGlobal,
 				"custody":        awid.CustodySelf,
-				"api_key":        "workspace-sk-persistent",
+				"api_key":        "workspace-sk-global",
 			})
 		case r.URL.Path == "/v1/connect":
 			requireCertificateAuthForTest(t, r)
@@ -528,7 +528,7 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 		APIKey:      "aw_sk_test_persistent_resume",
 		Name:        "alice",
 		Role:        "backend",
-		Persistent:  true,
+		Global:      true,
 	}
 
 	if _, err := runAPIKeyBootstrapInit(req); err == nil || !strings.Contains(err.Error(), "POST /api/v1/workspaces/init returned 500") {
@@ -584,7 +584,7 @@ func TestRunAPIKeyBootstrapInitGlobalRejectsPartialContextMismatch(t *testing.T)
 		APIKey:      "aw_sk_test_partial_mismatch",
 		Name:        "alice",
 		Role:        "backend",
-		Persistent:  true,
+		Global:      true,
 	}
 	material, err := generateAPIKeyBootstrapIdentity()
 	if err != nil {
@@ -630,7 +630,7 @@ func TestRunAPIKeyBootstrapInitRegisterIdentityFailureShortCircuitsWorkspaceInit
 		RegistryURL: server.URL,
 		APIKey:      "aw_sk_test_persistent",
 		Name:        "alice",
-		Persistent:  true,
+		Global:      true,
 	})
 
 	if err == nil || !strings.Contains(err.Error(), "before workspace init") {
@@ -715,10 +715,10 @@ func TestRunAPIKeyBootstrapInitRejectsResponseDIDMismatch(t *testing.T) {
 			}
 			didKey, _ := body["did"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         "backend:acme.com",
-				MemberDIDKey: didKey,
-				Alias:        "alice",
-				Lifetime:     awid.LifetimeEphemeral,
+				Team:          "backend:acme.com",
+				MemberDIDKey:  didKey,
+				Alias:         "alice",
+				IdentityScope: awid.IdentityModeLocal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -778,7 +778,7 @@ func TestRunAPIKeyBootstrapInitRejectsResponseIdentityScopeMismatch(t *testing.T
 				MemberDIDAW:   "did:aw:alice",
 				MemberAddress: "alice.aweb.ai/alice",
 				Alias:         "alice",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -832,10 +832,10 @@ func TestRunAPIKeyBootstrapInitRejectsTamperedTeamCertificate(t *testing.T) {
 			}
 			didKey, _ := body["did"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         "backend:acme.com",
-				MemberDIDKey: didKey,
-				Alias:        "alice",
-				Lifetime:     awid.LifetimeEphemeral,
+				Team:          "backend:acme.com",
+				MemberDIDKey:  didKey,
+				Alias:         "alice",
+				IdentityScope: awid.IdentityModeLocal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -900,10 +900,10 @@ func TestRunAPIKeyBootstrapInitRejectsMissingOrNonSelfCustody(t *testing.T) {
 					}
 					didKey, _ := body["did"].(string)
 					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-						Team:         "backend:acme.com",
-						MemberDIDKey: didKey,
-						Alias:        "alice",
-						Lifetime:     awid.LifetimeEphemeral,
+						Team:          "backend:acme.com",
+						MemberDIDKey:  didKey,
+						Alias:         "alice",
+						IdentityScope: awid.IdentityModeLocal,
 					})
 					if err != nil {
 						t.Fatal(err)
@@ -959,10 +959,10 @@ func TestRunAPIKeyBootstrapInitRejectsOverlongWorkspaceAPIKey(t *testing.T) {
 			}
 			didKey, _ := body["did"].(string)
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:         "backend:acme.com",
-				MemberDIDKey: didKey,
-				Alias:        "alice",
-				Lifetime:     awid.LifetimeEphemeral,
+				Team:          "backend:acme.com",
+				MemberDIDKey:  didKey,
+				Alias:         "alice",
+				IdentityScope: awid.IdentityModeLocal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -1088,7 +1088,7 @@ func TestRunAPIKeyBootstrapInitDoesNotSendRepoOrigin(t *testing.T) {
 				MemberDIDAW:   stableID,
 				MemberAddress: "ama.aweb.ai/ama",
 				Alias:         "ama",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -1143,7 +1143,7 @@ func TestRunAPIKeyBootstrapInitDoesNotSendRepoOrigin(t *testing.T) {
 		RegistryURL: server.URL,
 		APIKey:      "aw_sk_test_no_repo_origin",
 		Name:        "ama",
-		Persistent:  true,
+		Global:      true,
 	}); err != nil {
 		t.Fatalf("runAPIKeyBootstrapInit: %v", err)
 	}
@@ -1211,7 +1211,7 @@ func TestRunAPIKeyBootstrapInitGlobalRollsBackOnConnectFailureAndResumes(t *test
 				MemberDIDAW:   stableID,
 				MemberAddress: "ama.aweb.ai/ama",
 				Alias:         "ama",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -1272,7 +1272,7 @@ func TestRunAPIKeyBootstrapInitGlobalRollsBackOnConnectFailureAndResumes(t *test
 		RegistryURL: server.URL,
 		APIKey:      "aw_sk_test_connect_rollback",
 		Name:        "ama",
-		Persistent:  true,
+		Global:      true,
 	}
 
 	if _, err := runAPIKeyBootstrapInit(req); err == nil || !strings.Contains(err.Error(), "422") {
@@ -1355,7 +1355,7 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 				MemberDIDAW:   existingStableID,
 				MemberAddress: "ama.aweb.ai/ama",
 				Alias:         "ama",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -1388,7 +1388,7 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 		RegistryURL: server.URL,
 		APIKey:      "aw_sk_test_taken_name",
 		Name:        "ama",
-		Persistent:  true,
+		Global:      true,
 	})
 	if err == nil {
 		t.Fatal("expected already-registered name to fail")

@@ -303,7 +303,7 @@ func (c *RegistryClient) RegisterCertificate(
 			MemberDIDAW:   cert.MemberDIDAW,
 			MemberAddress: cert.MemberAddress,
 			Alias:         cert.Alias,
-			IdentityScope: NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime)),
+			IdentityScope: NormalizeIdentityScope(cert.IdentityScope),
 			Certificate:   encodedCert,
 		},
 		nil,

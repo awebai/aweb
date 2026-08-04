@@ -2,81 +2,51 @@ package awid
 
 import "strings"
 
-type IdentityClass string
-
 const (
-	IdentityClassEphemeral  IdentityClass = LifetimeEphemeral
-	IdentityClassPersistent IdentityClass = LifetimePersistent
-	IdentityModeLocal                     = "local"
-	IdentityModeGlobal                    = "global"
+	IdentityModeLocal  = "local"
+	IdentityModeGlobal = "global"
 )
 
-func NormalizeLifetime(lifetime string) string {
-	switch strings.TrimSpace(strings.ToLower(lifetime)) {
-	case "", LifetimeEphemeral, IdentityModeLocal:
-		return LifetimeEphemeral
-	case LifetimePersistent, IdentityModeGlobal:
-		return LifetimePersistent
-	default:
-		return strings.TrimSpace(strings.ToLower(lifetime))
-	}
+func NormalizeIdentityScope(scope string) string {
+	return strings.TrimSpace(strings.ToLower(scope))
 }
 
-func NormalizeIdentityScope(scope string) string {
-	switch strings.TrimSpace(strings.ToLower(scope)) {
-	case "", LifetimeEphemeral, IdentityModeLocal:
+// IdentityScopeFromLegacyLifetime is the explicit compatibility adapter for
+// pre-v2 config and certificate decoders. Canonical code must not call it.
+func IdentityScopeFromLegacyLifetime(lifetime string) string {
+	switch strings.TrimSpace(strings.ToLower(lifetime)) {
+	case "ephemeral":
 		return IdentityModeLocal
-	case LifetimePersistent, IdentityModeGlobal:
+	case "persistent":
 		return IdentityModeGlobal
 	default:
-		return strings.TrimSpace(strings.ToLower(scope))
+		return ""
 	}
 }
 
-func LegacyLifetimeForIdentityScope(scope string) string {
-	if NormalizeIdentityScope(scope) == IdentityModeGlobal {
-		return LifetimePersistent
-	}
-	return LifetimeEphemeral
+func IdentityHasPublicAddress(scope string) bool {
+	return NormalizeIdentityScope(scope) == IdentityModeGlobal
 }
 
-func IdentityClassFromLifetime(lifetime string) IdentityClass {
-	switch NormalizeLifetime(lifetime) {
-	case LifetimePersistent:
-		return IdentityClassPersistent
-	default:
-		return IdentityClassEphemeral
-	}
-}
-
-func IdentityHasPublicAddress(lifetime string) bool {
-	return IdentityClassFromLifetime(lifetime) == IdentityClassPersistent
-}
-
-func RoutingHandle(alias, address, lifetime string) string {
+func RoutingHandle(alias, address, scope string) string {
 	if strings.TrimSpace(alias) != "" {
 		return strings.TrimSpace(alias)
 	}
-	if !IdentityHasPublicAddress(lifetime) {
+	if !IdentityHasPublicAddress(scope) {
 		return strings.TrimSpace(address)
 	}
 	return ""
 }
 
-func PublicAddress(address, lifetime string) string {
-	if !IdentityHasPublicAddress(lifetime) {
+func PublicAddress(address, scope string) string {
+	if !IdentityHasPublicAddress(scope) {
 		return ""
 	}
 	return strings.TrimSpace(address)
 }
 
-func DescribeIdentityClass(lifetime string) string {
-	switch IdentityClassFromLifetime(lifetime) {
-	case IdentityClassPersistent:
-		return IdentityModeGlobal
-	default:
-		return IdentityModeLocal
-	}
+func DescribeIdentityScope(scope string) string {
+	return NormalizeIdentityScope(scope)
 }
 
 func IsSelfCustodial(custody string) bool {

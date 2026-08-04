@@ -25,7 +25,6 @@ type WorkspaceInfo struct {
 	WorkspaceID        string           `json:"workspace_id"`
 	AgentID            string           `json:"agent_id,omitempty"`
 	Alias              string           `json:"alias"`
-	AgentLifetime      *string          `json:"agent_lifetime,omitempty"`
 	AgentIdentityScope *string          `json:"agent_identity_scope,omitempty"`
 	HumanName          *string          `json:"human_name,omitempty"`
 	ContextKind        *string          `json:"context_kind,omitempty"`

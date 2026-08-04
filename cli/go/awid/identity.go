@@ -21,7 +21,7 @@ type ResolvedIdentity struct {
 	RegistryURL    string
 	DeliveryOrigin string
 	Custody        string // "self" or "custodial"
-	Lifetime       string // "persistent" or "ephemeral"
+	IdentityScope  string // "local" or "global"
 	ResolvedAt     time.Time
 	ResolvedVia    string // "did:key", "registry", "pin"
 }

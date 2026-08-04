@@ -253,7 +253,7 @@ printf 'AW_DID=%s\n' "$AW_DID"
 		AwebURL: "https://team.example", TeamID: "backend:aweb.ai", Alias: "attached",
 		WorkspaceID: "workspace-attached", DID: did, StableID: awid.ComputeStableID(pub),
 		Address: "aweb.ai/attached", Custody: awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent, SigningKey: key,
+		IdentityScope: awid.IdentityModeGlobal, SigningKey: key,
 	})
 	identityHome, err := filepath.EvalSymlinks(filepath.Join(principalParent, ".aw"))
 	if err != nil {
@@ -599,7 +599,7 @@ func TestInstalledManifestDispatchInvokesTeamAuthRequest(t *testing.T) {
 	writeSelectionFixtureForTest(t, principal, testSelectionFixture{
 		AwebURL: server.URL, TeamID: "default:acme.com", Alias: "alice", WorkspaceID: "workspace-1",
 		DID: did, StableID: awid.ComputeStableID(priv.Public().(ed25519.PublicKey)), Address: "acme.com/alice",
-		Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, SigningKey: priv,
+		Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, SigningKey: priv,
 	})
 	identityHome, err := filepath.EvalSymlinks(filepath.Join(principal, ".aw"))
 	if err != nil {

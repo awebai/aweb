@@ -199,9 +199,10 @@ Rules:
 
 Current surfaces include `aw id team accept-invite <token>` and `aw team join
 <token>`. During compatibility, CLI JSON output may dual-emit `alias` and
-`name`, and may emit `identity_scope` beside a decoded legacy `lifetime` field.
-The deprecated `--alias` flag remains a hidden, warning compatibility alias for
-`--name`. New requests, registry storage, and product language use `name` as the
+`name`. Legacy certificate/config `lifetime` input is normalized at decode and
+normal output emits only `identity_scope`. The deprecated `--alias` flag remains
+a hidden, warning compatibility alias for `--name`. New requests, registry
+storage, and product language use `name` as the
 concept and `identity_scope=local|global` for scope.
 
 ## Command-to-verb mapping

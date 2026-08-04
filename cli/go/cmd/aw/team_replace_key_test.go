@@ -317,7 +317,7 @@ func TestTeamReplaceKeyWithOperatorIdentityHomeRefreshesOnlyTargetEncryptionKey(
 	operatorDID := awid.ComputeDIDKey(operatorPublicKey)
 	writeSelectionFixtureForTest(t, operatorRoot, testSelectionFixture{
 		AwebURL: server.URL, TeamID: "backend:acme.com", Alias: "captain", WorkspaceID: "workspace-captain",
-		DID: operatorDID, Custody: awid.CustodySelf, Lifetime: awid.LifetimeEphemeral,
+		DID: operatorDID, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal,
 		SigningKey: operatorSigningKey, CreatedAt: "2026-07-26T00:00:00Z",
 	})
 	operatorIdentityHome, err := filepath.EvalSymlinks(awconfig.WorktreeIdentityHome(operatorRoot))

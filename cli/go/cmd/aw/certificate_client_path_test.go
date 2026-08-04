@@ -21,7 +21,7 @@ func teamCertificateForClientTest(teamID, address, memberDIDKey string) *awid.Te
 		MemberDIDAW:   "did:aw:member",
 		MemberAddress: address,
 		Alias:         "member",
-		Lifetime:      awid.LifetimePersistent,
+		IdentityScope: awid.IdentityModeGlobal,
 		IssuedAt:      "2026-04-21T00:00:00Z",
 		Signature:     "sig",
 	}

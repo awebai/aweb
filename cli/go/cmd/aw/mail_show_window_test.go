@@ -174,11 +174,11 @@ func TestMailShowExactMessageDoesNotReportAConversationWindow(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableIDFromDidForTest(t, did),
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		StableID:      stableIDFromDidForTest(t, did),
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -249,11 +249,11 @@ func TestMailShowJSONKeepsStdoutCleanAndWarnsOnStderr(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableIDFromDidForTest(t, did),
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		StableID:      stableIDFromDidForTest(t, did),
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)

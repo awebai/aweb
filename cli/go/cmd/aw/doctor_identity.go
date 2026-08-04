@@ -49,13 +49,13 @@ type doctorIdentityState struct {
 	identityExists bool
 	identityErr    error
 
-	did      string
-	stableID string
-	address  string
-	domain   string
-	handle   string
-	custody  string
-	lifetime string
+	did           string
+	stableID      string
+	address       string
+	domain        string
+	handle        string
+	custody       string
+	identityScope string
 
 	registryURL       string
 	registryURLSource string
@@ -132,7 +132,7 @@ func collectDoctorIdentityStateAt(workingDir, identityHome string) *doctorIdenti
 		state.stableID = strings.TrimSpace(identity.StableID)
 		state.address = strings.TrimSpace(identity.Address)
 		state.custody = strings.TrimSpace(identity.Custody)
-		state.lifetime = awid.LegacyLifetimeForIdentityScope(identity.IdentityScope)
+		state.identityScope = awid.NormalizeIdentityScope(identity.IdentityScope)
 		if domain, handle, ok := awconfig.CutIdentityAddress(state.address); ok {
 			state.domain = domain
 			state.handle = handle
@@ -201,7 +201,7 @@ func (s *doctorIdentityState) loadIdentityExpectationFromCertificate() {
 	s.did = strings.TrimSpace(cert.MemberDIDKey)
 	s.stableID = strings.TrimSpace(cert.MemberDIDAW)
 	s.address = strings.TrimSpace(cert.MemberAddress)
-	s.lifetime = strings.TrimSpace(cert.Lifetime)
+	s.identityScope = awid.NormalizeIdentityScope(cert.IdentityScope)
 	s.custody = awid.CustodySelf
 	if domain, handle, ok := awconfig.CutIdentityAddress(s.address); ok {
 		s.domain = domain
@@ -239,9 +239,15 @@ func (r *doctorRunner) addIdentityLocalChecks(state *doctorIdentityState) {
 		r.add(blockedLocalCheck(doctorCheckIdentityLocalRegistrySource, "Registry URL source requires parsed identity context.", doctorCheckIdentityLocalContext, localPathTarget(state.identityPath)))
 		return
 	}
-	if strings.TrimSpace(state.lifetime) == awid.LifetimeEphemeral {
-		r.add(localCheck(doctorCheckIdentityLocalContext, doctorStatusOK, identityTarget(state), "Local identity context is available from the active team certificate.", "", map[string]any{"source": "team_certificate"}))
-		r.add(localCheck(doctorCheckIdentityLocalScope, doctorStatusOK, identityTarget(state), "Identity is local.", "", map[string]any{"identity_scope": awid.IdentityModeLocal, "legacy_lifetime": awid.LifetimeEphemeral}))
+	if state.identityScope == awid.IdentityModeLocal {
+		contextMessage := "Local identity context is available from the active team certificate."
+		contextSource := "team_certificate"
+		if state.identityExists {
+			contextMessage = "Local identity.yaml parsed successfully."
+			contextSource = awconfig.DefaultWorktreeIdentityRelativePath()
+		}
+		r.add(localCheck(doctorCheckIdentityLocalContext, doctorStatusOK, identityTarget(state), contextMessage, "", map[string]any{"source": contextSource}))
+		r.add(localCheck(doctorCheckIdentityLocalScope, doctorStatusOK, identityTarget(state), "Identity is local.", "", map[string]any{"identity_scope": awid.IdentityModeLocal}))
 		r.addIdentityDIDFormatCheck(state)
 		r.addIdentitySigningKeyCheck(state)
 		r.addIdentityEncryptionKeyLocalChecks(state)
@@ -253,9 +259,9 @@ func (r *doctorRunner) addIdentityLocalChecks(state *doctorIdentityState) {
 	}
 
 	if !state.identityExists {
-		if strings.TrimSpace(state.lifetime) == awid.LifetimePersistent {
-			r.add(localPathCheck(doctorCheckIdentityLocalContext, doctorStatusFail, state.identityPath, "Global identity.yaml is missing.", "Restore .aw/identity.yaml before using global identity or awid registry diagnostics.", map[string]any{"state": "missing", "expected_identity_scope": awid.IdentityModeGlobal, "legacy_lifetime": awid.LifetimePersistent, "source": "team_certificate"}))
-			r.add(localCheck(doctorCheckIdentityLocalScope, doctorStatusOK, identityTarget(state), "Active team certificate expects global identity.", "", map[string]any{"identity_scope": awid.IdentityModeGlobal, "legacy_lifetime": awid.LifetimePersistent, "source": "team_certificate"}))
+		if state.identityScope == awid.IdentityModeGlobal {
+			r.add(localPathCheck(doctorCheckIdentityLocalContext, doctorStatusFail, state.identityPath, "Global identity.yaml is missing.", "Restore .aw/identity.yaml before using global identity or awid registry diagnostics.", map[string]any{"state": "missing", "expected_identity_scope": awid.IdentityModeGlobal, "source": "team_certificate"}))
+			r.add(localCheck(doctorCheckIdentityLocalScope, doctorStatusOK, identityTarget(state), "Active team certificate expects global identity.", "", map[string]any{"identity_scope": awid.IdentityModeGlobal, "source": "team_certificate"}))
 			r.addIdentityDIDFormatCheck(state)
 			r.addIdentitySigningKeyCheck(state)
 			r.addIdentityEncryptionKeyLocalChecks(state)
@@ -275,13 +281,13 @@ func (r *doctorRunner) addIdentityLocalChecks(state *doctorIdentityState) {
 	}
 
 	r.add(localPathCheck(doctorCheckIdentityLocalContext, doctorStatusOK, state.identityPath, "Global identity.yaml parsed successfully.", "", map[string]any{"source": awconfig.DefaultWorktreeIdentityRelativePath()}))
-	switch state.lifetime {
-	case awid.LifetimePersistent:
-		r.add(localCheck(doctorCheckIdentityLocalScope, doctorStatusOK, identityTarget(state), "Identity is global.", "", map[string]any{"identity_scope": awid.IdentityModeGlobal, "legacy_lifetime": state.lifetime}))
+	switch state.identityScope {
+	case awid.IdentityModeGlobal:
+		r.add(localCheck(doctorCheckIdentityLocalScope, doctorStatusOK, identityTarget(state), "Identity is global.", "", map[string]any{"identity_scope": awid.IdentityModeGlobal}))
 	case "":
 		r.add(localPathCheck(doctorCheckIdentityLocalScope, doctorStatusFail, state.identityPath, "Global identity scope is missing.", "Repair identity.yaml with supported identity scope metadata.", nil))
 	default:
-		r.add(localPathCheck(doctorCheckIdentityLocalScope, doctorStatusFail, state.identityPath, "Identity scope is unknown.", "Repair identity.yaml with supported identity scope metadata.", map[string]any{"legacy_lifetime": state.lifetime}))
+		r.add(localPathCheck(doctorCheckIdentityLocalScope, doctorStatusFail, state.identityPath, "Identity scope is unknown.", "Repair identity.yaml with supported identity scope metadata.", map[string]any{"identity_scope": state.identityScope}))
 	}
 	r.addIdentityDIDFormatCheck(state)
 	r.addIdentitySigningKeyCheck(state)
@@ -395,7 +401,7 @@ func (r *doctorRunner) addIdentitySigningKeyCheck(state *doctorIdentityState) {
 			message = "Local signing key is missing."
 		}
 		check := localPathCheck(doctorCheckIdentityLocalSigningKey, status, state.signingKeyPath, message, "Restore .aw/signing.key or reconnect this identity.", map[string]any{"error": safeLocalKeyError(state.signingKeyErr)})
-		if strings.TrimSpace(state.lifetime) == awid.LifetimePersistent {
+		if state.identityScope == awid.IdentityModeGlobal {
 			check.Handoff = globalIdentityReplacementReviewHandoff(doctorAuthorityStatusNotDetected, nil)
 		}
 		r.add(check)
@@ -458,13 +464,13 @@ func (r *doctorRunner) addRegistryChecks(state *doctorIdentityState) {
 		doctorCheckAWIDAddressDeliveryOrigin,
 		doctorCheckAWIDAddressReverseListing,
 	}
-	if strings.TrimSpace(state.lifetime) == awid.LifetimeEphemeral {
+	if state.identityScope == awid.IdentityModeLocal {
 		for _, id := range awidCheckIDs {
 			r.add(awidCheck(id, doctorStatusInfo, "Public awid registration is not expected for local identity.", "", map[string]any{"reason": "local_identity_not_applicable"}))
 		}
 		return
 	}
-	if !state.identityExists && strings.TrimSpace(state.lifetime) == "" {
+	if !state.identityExists && strings.TrimSpace(state.identityScope) == "" {
 		for _, id := range awidCheckIDs {
 			r.add(awidCheck(id, doctorStatusInfo, "No identity context is available for awid registry diagnostics.", "", map[string]any{"reason": "no_identity_context"}))
 		}
@@ -757,13 +763,13 @@ func (r *doctorRunner) addBlockedAddressChecks(message, prerequisite string) {
 
 func registryPreconditionFailure(state *doctorIdentityState) string {
 	switch {
-	case !state.identityExists && strings.TrimSpace(state.lifetime) == awid.LifetimePersistent:
+	case !state.identityExists && state.identityScope == awid.IdentityModeGlobal:
 		return "missing_identity_context"
 	case state.registryURLErr != nil:
 		return "invalid_registry_url"
 	case strings.TrimSpace(state.registryURL) == "":
 		return "no_explicit_registry_url"
-	case strings.TrimSpace(state.lifetime) != awid.LifetimePersistent:
+	case state.identityScope != awid.IdentityModeGlobal:
 		return "global_identity_required"
 	case strings.TrimSpace(state.did) == "":
 		return "missing_did_key"

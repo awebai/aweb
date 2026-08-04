@@ -1363,12 +1363,12 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	memberDIDKey = awid.ComputeDIDKey(memberPub)
 	memberStableID = awid.ComputeStableID(memberPub)
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:       memberDIDKey,
-		StableID:  memberStableID,
-		Address:   "acme.com/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-06T00:00:00Z",
+		DID:           memberDIDKey,
+		StableID:      memberStableID,
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-06T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1541,13 +1541,13 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 		}},
 	})
 	writeIdentityForTest(t, inviterDir, awconfig.WorktreeIdentity{
-		DID:         "did:key:z6MkiR5hWfjt7SeH1Zs3xJMp5YowQbK5xkYH5BXMxHnXj1aA",
-		StableID:    "did:aw:alice",
-		Address:     "acme.com/alice",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: server.URL,
-		CreatedAt:   "2026-05-16T00:00:00Z",
+		DID:           "did:key:z6MkiR5hWfjt7SeH1Zs3xJMp5YowQbK5xkYH5BXMxHnXj1aA",
+		StableID:      "did:aw:alice",
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   server.URL,
+		CreatedAt:     "2026-05-16T00:00:00Z",
 	})
 
 	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite")
@@ -1594,16 +1594,16 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load certificate: %v", err)
 	}
-	wantLifetime := awid.LifetimeEphemeral
-	if cert.Lifetime != wantLifetime {
-		t.Fatalf("lifetime=%q want %q", cert.Lifetime, wantLifetime)
+	wantScope := awid.IdentityModeLocal
+	if cert.IdentityScope != wantScope {
+		t.Fatalf("lifetime=%q want %q", cert.IdentityScope, wantScope)
 	}
 	if cert.MemberDIDAW != "" || cert.MemberAddress != "" {
 		t.Fatalf("local cert should not include global identity fields: did_aw=%q address=%q", cert.MemberDIDAW, cert.MemberAddress)
 	}
 	requireWorktreeEncryptionKeyForTest(t, acceptDir)
 	if registeredCert["identity_scope"] != awid.IdentityModeLocal {
-		t.Fatalf("registry lifetime=%v", registeredCert["identity_scope"])
+		t.Fatalf("registry identity_scope=%v", registeredCert["identity_scope"])
 	}
 	teamState, err := awconfig.LoadTeamState(acceptDir)
 	if err != nil {
@@ -1702,10 +1702,10 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 			acceptVerifiedDID = true
 
 			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{
-				Team:         teamID,
-				MemberDIDKey: didKey,
-				Alias:        "bob",
-				Lifetime:     awid.LifetimeEphemeral,
+				Team:          teamID,
+				MemberDIDKey:  didKey,
+				Alias:         "bob",
+				IdentityScope: awid.IdentityModeLocal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -1725,7 +1725,7 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 				"server_url":     serverURL,
 				"did":            didKey,
 				"custody":        "self",
-				"lifetime":       "ephemeral",
+				"identity_scope": "local",
 				"access_mode":    "open",
 				"created":        true,
 				"team_cert":      encoded,
@@ -1836,8 +1836,8 @@ func TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load accepted hosted cert: %v", err)
 	}
-	if cert.Alias != "bob" || cert.Lifetime != awid.LifetimeEphemeral {
-		t.Fatalf("unexpected cert alias/lifetime: %q/%q", cert.Alias, cert.Lifetime)
+	if cert.Alias != "bob" || cert.IdentityScope != awid.IdentityModeLocal {
+		t.Fatalf("unexpected cert alias/identity_scope: %q/%q", cert.Alias, cert.IdentityScope)
 	}
 	if cert.MemberDIDAW != "" || cert.MemberAddress != "" {
 		t.Fatalf("local workspace cert has global fields: %q %q", cert.MemberDIDAW, cert.MemberAddress)
@@ -1944,7 +1944,7 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 				MemberDIDAW:   acceptedStableID,
 				MemberAddress: "globalhosted.aweb.ai/durable-child",
 				Alias:         "durable-child",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -2023,8 +2023,8 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load accepted hosted global cert: %v", err)
 	}
-	if cert.Alias != "durable-child" || cert.Lifetime != awid.LifetimePersistent {
-		t.Fatalf("unexpected cert alias/lifetime: %q/%q", cert.Alias, cert.Lifetime)
+	if cert.Alias != "durable-child" || cert.IdentityScope != awid.IdentityModeGlobal {
+		t.Fatalf("unexpected cert alias/identity_scope: %q/%q", cert.Alias, cert.IdentityScope)
 	}
 	if cert.MemberDIDAW != acceptedStableID {
 		t.Fatalf("cert member_did_aw=%q want %q", cert.MemberDIDAW, acceptedStableID)
@@ -2114,7 +2114,7 @@ func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) 
 			MemberDIDAW:   stableID,
 			MemberAddress: "globalhosted.aweb.ai/retry-child",
 			Alias:         "retry-child",
-			Lifetime:      awid.LifetimePersistent,
+			IdentityScope: awid.IdentityModeGlobal,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -2201,10 +2201,10 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 			t.Fatalf("retry did=%q want %q (must reuse the persisted key)", req.DID, firstDID)
 		}
 		cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{
-			Team:         teamID,
-			MemberDIDKey: req.DID,
-			Alias:        "retry-child",
-			Lifetime:     awid.LifetimeEphemeral,
+			Team:          teamID,
+			MemberDIDKey:  req.DID,
+			Alias:         "retry-child",
+			IdentityScope: awid.IdentityModeLocal,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -2224,7 +2224,7 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 			"server_url":     serverURL,
 			"did":            req.DID,
 			"custody":        "self",
-			"lifetime":       "ephemeral",
+			"identity_scope": "local",
 			"access_mode":    "open",
 			"created":        true,
 			"team_cert":      encoded,
@@ -2389,7 +2389,7 @@ func TestHostedTeamAcceptInviteRetryAllowsPendingKeyWithSavedCertificateNoIdenti
 		MemberDIDAW:   awid.ComputeStableID(pub),
 		MemberAddress: "partial.aweb.ai/recover",
 		Alias:         "recover",
-		Lifetime:      awid.LifetimePersistent,
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2429,7 +2429,7 @@ func TestHostedTeamAcceptInvitePartialCertWithoutMarkerGivesRecoveryGuidance(t *
 		MemberDIDAW:   awid.ComputeStableID(pub),
 		MemberAddress: "partial.aweb.ai/recover",
 		Alias:         "recover",
-		Lifetime:      awid.LifetimePersistent,
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2589,7 +2589,6 @@ func TestHostedGlobalAcceptNoAddressUsesExistingStableID(t *testing.T) {
 			MemberDIDKey:  globalDID,
 			MemberDIDAW:   globalStableID,
 			Alias:         "alice",
-			Lifetime:      awid.LifetimePersistent,
 			IdentityScope: awid.IdentityModeGlobal,
 		})
 		if err != nil {
@@ -3035,12 +3034,12 @@ func TestTeamAcceptInviteAddressOverrideUsesRegisteredAddress(t *testing.T) {
 	memberDIDKey = awid.ComputeDIDKey(memberPub)
 	memberStableID = awid.ComputeStableID(memberPub)
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:       memberDIDKey,
-		StableID:  memberStableID,
-		Address:   "acme.com/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-16T00:00:00Z",
+		DID:           memberDIDKey,
+		StableID:      memberStableID,
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-16T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -3121,12 +3120,12 @@ func TestTeamAcceptInviteRejectsAddressOnLocalInvite(t *testing.T) {
 		t.Fatal(err)
 	}
 	invite := &awconfig.TeamInvite{
-		InviteID:  inviteID,
-		Domain:    "local",
-		TeamName:  "default",
-		Ephemeral: true,
-		Secret:    secret,
-		CreatedAt: "2026-04-16T00:00:00Z",
+		InviteID:      inviteID,
+		Domain:        "local",
+		TeamName:      "default",
+		IdentityScope: awid.IdentityModeLocal,
+		Secret:        secret,
+		CreatedAt:     "2026-04-16T00:00:00Z",
 	}
 	writeTeamInviteForTest(t, tmp, invite)
 	token, err := awconfig.EncodeInviteToken(invite)
@@ -3198,12 +3197,12 @@ func TestTeamAcceptInviteAddressOverrideRejectsDifferentDID(t *testing.T) {
 	memberDIDKey = awid.ComputeDIDKey(memberPub)
 	memberStableID = awid.ComputeStableID(memberPub)
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:       memberDIDKey,
-		StableID:  memberStableID,
-		Address:   "acme.com/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-16T00:00:00Z",
+		DID:           memberDIDKey,
+		StableID:      memberStableID,
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-16T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -3300,13 +3299,13 @@ func TestLocalAcceptInviteRejectsPreseededGlobalIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	invite := &awconfig.TeamInvite{
-		InviteID:    inviteID,
-		Domain:      "local",
-		TeamName:    "default",
-		Ephemeral:   true,
-		Secret:      secret,
-		RegistryURL: server.URL,
-		CreatedAt:   "2026-04-13T00:00:00Z",
+		InviteID:      inviteID,
+		Domain:        "local",
+		TeamName:      "default",
+		IdentityScope: awid.IdentityModeLocal,
+		Secret:        secret,
+		RegistryURL:   server.URL,
+		CreatedAt:     "2026-04-13T00:00:00Z",
 	}
 	writeTeamInviteForTest(t, tmp, invite)
 	token, err := awconfig.EncodeInviteToken(invite)
@@ -3413,7 +3412,7 @@ func TestTeamAddMemberFlow(t *testing.T) {
 		t.Fatalf("registry cert member_address=%v", registeredCert["member_address"])
 	}
 	if registeredCert["identity_scope"] != awid.IdentityModeGlobal {
-		t.Fatalf("registry cert lifetime=%v", registeredCert["identity_scope"])
+		t.Fatalf("registry cert identity_scope=%v", registeredCert["identity_scope"])
 	}
 	encodedCert, ok := registeredCert["certificate"].(string)
 	if !ok || strings.TrimSpace(encodedCert) == "" {
@@ -3445,10 +3444,10 @@ func TestTeamFetchCertInstallsFetchedCertificate(t *testing.T) {
 	memberDID := awid.ComputeDIDKey(memberPub)
 	teamDID := awid.ComputeDIDKey(teamPub)
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: memberDID,
-		Alias:        "alice",
-		Lifetime:     awid.LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  memberDID,
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -3483,7 +3482,7 @@ func TestTeamFetchCertInstallsFetchedCertificate(t *testing.T) {
 			"certificate_id": responseCert.CertificateID,
 			"member_did_key": memberDID,
 			"alias":          "alice",
-			"lifetime":       awid.LifetimePersistent,
+			"identity_scope": awid.IdentityModeGlobal,
 			"issued_at":      responseCert.IssuedAt,
 			"certificate":    responseBlob,
 		})
@@ -3551,10 +3550,10 @@ func TestTeamFetchCertInstallsFetchedCertificate(t *testing.T) {
 	requireWorktreeEncryptionKeyForTest(t, tmp)
 
 	otherCert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: memberDID,
-		Alias:        "alice",
-		Lifetime:     awid.LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  memberDID,
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -3615,7 +3614,7 @@ func TestTeamRemoveMemberFlow(t *testing.T) {
 				"member_did_aw":  "did:aw:test123",
 				"member_address": "acme.com/alice",
 				"alias":          "alice",
-				"lifetime":       "persistent",
+				"identity_scope": "global",
 				"issued_at":      "2026-04-06T00:00:00Z",
 			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates/revoke"):
@@ -3740,7 +3739,7 @@ func TestTeamRemoveMemberFlowCrossNamespaceMember(t *testing.T) {
 				"member_did_aw":  "did:aw:bob",
 				"member_address": "partner.com/bob",
 				"alias":          "bob",
-				"lifetime":       "persistent",
+				"identity_scope": "global",
 				"issued_at":      "2026-04-06T00:00:00Z",
 			})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/certificates/revoke"):
@@ -3864,7 +3863,7 @@ func TestTeamAddMemberByDIDIssuesLocalCertificate(t *testing.T) {
 		t.Fatalf("registry cert alias=%v", registeredCert["alias"])
 	}
 	if registeredCert["identity_scope"] != awid.IdentityModeLocal {
-		t.Fatalf("registry cert lifetime=%v", registeredCert["identity_scope"])
+		t.Fatalf("registry cert identity_scope=%v", registeredCert["identity_scope"])
 	}
 	if _, ok := registeredCert["member_did_aw"]; ok {
 		t.Fatalf("registry cert member_did_aw=%v", registeredCert["member_did_aw"])
@@ -3926,7 +3925,7 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 		"--namespace", "acme.com",
 		"--did", memberDID,
 		"--name", "alice",
-		"--lifetime", awid.LifetimePersistent,
+		"--lifetime", "persistent",
 		"--did-aw", memberDIDAW,
 		"--address", "acme.com/alice",
 		"--json")
@@ -3958,7 +3957,7 @@ func TestTeamAddMemberByDIDIssuesGlobalCertificateWhenStableFieldsProvided(t *te
 		t.Fatalf("registry cert member_address=%v", gotCert["member_address"])
 	}
 	if gotCert["identity_scope"] != awid.IdentityModeGlobal {
-		t.Fatalf("registry cert lifetime=%v", gotCert["identity_scope"])
+		t.Fatalf("registry cert identity_scope=%v", gotCert["identity_scope"])
 	}
 }
 
@@ -4011,7 +4010,7 @@ func TestTeamAddMemberByDIDRejectsAddressForDifferentDID(t *testing.T) {
 		"--namespace", "acme.com",
 		"--did", memberDID,
 		"--name", "alice",
-		"--lifetime", awid.LifetimePersistent,
+		"--global",
 		"--did-aw", "did:aw:alice",
 		"--address", "acme.com/alice")
 	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
@@ -4106,10 +4105,10 @@ func TestCertShow(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: awid.ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     awid.LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  awid.ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -4266,13 +4265,13 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	memberDIDKey = awid.ComputeDIDKey(memberPub)
 	memberStableID = awid.ComputeStableID(memberPub)
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:         memberDIDKey,
-		StableID:    memberStableID,
-		Address:     "acme.com/alice",
-		RegistryURL: server.URL,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		CreatedAt:   "2026-04-09T00:00:00Z",
+		DID:           memberDIDKey,
+		StableID:      memberStableID,
+		Address:       "acme.com/alice",
+		RegistryURL:   server.URL,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-09T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}

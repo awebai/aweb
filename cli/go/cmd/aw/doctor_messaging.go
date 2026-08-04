@@ -28,7 +28,6 @@ type doctorMessagingState struct {
 	did      string
 	stableID string
 	address  string
-	lifetime string
 
 	signingKey ed25519.PrivateKey
 	signingErr error
@@ -84,7 +83,6 @@ func collectDoctorMessagingStateAt(workingDir, identityHome string) *doctorMessa
 	state.did = strings.TrimSpace(identityState.did)
 	state.stableID = strings.TrimSpace(identityState.stableID)
 	state.address = strings.TrimSpace(identityState.address)
-	state.lifetime = strings.TrimSpace(identityState.lifetime)
 	if state.signingKey == nil {
 		state.signingKey = identityState.signingKey
 		state.signingErr = identityState.signingKeyErr

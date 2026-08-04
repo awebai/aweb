@@ -44,12 +44,12 @@ func TestResolveWorkspaceWithMissingTeamsYAMLDoesNotFallbackToIdentity(t *testin
 		t.Fatal(err)
 	}
 	if err := SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &WorktreeIdentity{
-		DID:       "did:key:z6MkAlice",
-		StableID:  "did:aw:alice",
-		Address:   "acme.com/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-21T00:00:00Z",
+		DID:           "did:key:z6MkAlice",
+		StableID:      "did:aw:alice",
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-21T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestResolveStandaloneExternalIdentityRejectsSigningKeySymlink(t *testing.T)
 	}
 	if err := SaveWorktreeIdentityTo(filepath.Join(identityHome, "identity.yaml"), &WorktreeIdentity{
 		DID: "did:key:z6MkAlice", StableID: "did:aw:alice", Address: "acme.com/alice",
-		Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent,
+		Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -107,12 +107,12 @@ func TestResolveFallsBackToIdentityAddressWhenActiveCertMissing(t *testing.T) {
 		}},
 	})
 	if err := SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &WorktreeIdentity{
-		DID:       "did:key:z6MkBYOD",
-		StableID:  "did:aw:byod-support",
-		Address:   "acme.com/support",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-04T00:00:00Z",
+		DID:           "did:key:z6MkBYOD",
+		StableID:      "did:aw:byod-support",
+		Address:       "acme.com/support",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-04T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -155,12 +155,12 @@ func TestResolveSurfacesActiveCertParseError(t *testing.T) {
 		}},
 	})
 	if err := SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &WorktreeIdentity{
-		DID:       "did:key:z6MkBYOD",
-		StableID:  "did:aw:byod-support",
-		Address:   "acme.com/support",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-04T00:00:00Z",
+		DID:           "did:key:z6MkBYOD",
+		StableID:      "did:aw:byod-support",
+		Address:       "acme.com/support",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-04T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestResolvePrefersActiveCertMemberAddressOverIdentityAddress(t *testing.T) 
 		MemberDIDAW:   "did:aw:amy",
 		MemberAddress: "aweb.ai/amy",
 		Alias:         "amy",
-		Lifetime:      awid.LifetimePersistent,
+		IdentityScope: awid.IdentityModeGlobal,
 		IssuedAt:      "2026-04-21T00:00:00Z",
 		Signature:     "sig",
 	}); err != nil {
@@ -205,12 +205,12 @@ func TestResolvePrefersActiveCertMemberAddressOverIdentityAddress(t *testing.T) 
 		}},
 	})
 	if err := SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &WorktreeIdentity{
-		DID:       "did:key:z6MkAmy",
-		StableID:  "did:aw:amy",
-		Address:   "juan.aweb.ai/amy",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-21T00:00:00Z",
+		DID:           "did:key:z6MkAmy",
+		StableID:      "did:aw:amy",
+		Address:       "juan.aweb.ai/amy",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-21T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestResolveUsesEphemeralActiveCertIdentityOverPersistentIdentityFile(t *tes
 		TeamDIDKey:    "did:key:z6MkTeam",
 		MemberDIDKey:  "did:key:z6MkAliceEphemeral",
 		Alias:         "alice",
-		Lifetime:      awid.LifetimeEphemeral,
+		IdentityScope: awid.IdentityModeLocal,
 		IssuedAt:      "2026-04-21T00:00:00Z",
 		Signature:     "sig",
 	}); err != nil {
@@ -256,12 +256,12 @@ func TestResolveUsesEphemeralActiveCertIdentityOverPersistentIdentityFile(t *tes
 		}},
 	})
 	if err := SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &WorktreeIdentity{
-		DID:       "did:key:z6MkAlicePersistent",
-		StableID:  "did:aw:alice",
-		Address:   "test.local/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-21T00:00:00Z",
+		DID:           "did:key:z6MkAlicePersistent",
+		StableID:      "did:aw:alice",
+		Address:       "test.local/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-21T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -274,10 +274,10 @@ func TestResolveUsesEphemeralActiveCertIdentityOverPersistentIdentityFile(t *tes
 		t.Fatalf("did=%q want active certificate did:key", sel.DID)
 	}
 	if sel.StableID != "" {
-		t.Fatalf("stable_id=%q want empty for ephemeral active certificate", sel.StableID)
+		t.Fatalf("stable_id=%q want empty for local active certificate", sel.StableID)
 	}
-	if sel.Lifetime != awid.LifetimeEphemeral {
-		t.Fatalf("lifetime=%q want %q", sel.Lifetime, awid.LifetimeEphemeral)
+	if sel.IdentityScope != awid.IdentityModeLocal {
+		t.Fatalf("identity_scope=%q want %q", sel.IdentityScope, awid.IdentityModeLocal)
 	}
 }
 
@@ -293,7 +293,7 @@ func TestResolveLeavesAddressEmptyWhenIdentityAndActiveCertAddressMissing(t *tes
 		TeamDIDKey:    "did:key:z6MkTeam",
 		MemberDIDKey:  "did:key:z6MkAlice",
 		Alias:         "alice",
-		Lifetime:      awid.LifetimePersistent,
+		IdentityScope: awid.IdentityModeGlobal,
 		IssuedAt:      "2026-04-21T00:00:00Z",
 		Signature:     "sig",
 	}); err != nil {
@@ -392,7 +392,7 @@ func teamCertificateForSelectionTest(teamID, address string) *awid.TeamCertifica
 		MemberDIDAW:   "did:aw:member",
 		MemberAddress: address,
 		Alias:         "member",
-		Lifetime:      awid.LifetimePersistent,
+		IdentityScope: awid.IdentityModeGlobal,
 		IssuedAt:      "2026-04-21T00:00:00Z",
 		Signature:     "sig",
 	}

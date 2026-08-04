@@ -81,13 +81,13 @@ func preferredIdentityDisplayLabel(alias string, address string, stableID string
 func formatIntrospect(v any) string {
 	out := v.(introspectOutput)
 	var sb strings.Builder
-	if routing := awid.RoutingHandle(out.Alias, out.Address, out.Lifetime); routing != "" {
+	if routing := awid.RoutingHandle(out.Alias, out.Address, out.IdentityScope); routing != "" {
 		sb.WriteString(fmt.Sprintf("Routing:   %s\n", routing))
 	}
 	if out.Domain != "" {
 		sb.WriteString(fmt.Sprintf("Domain:    %s\n", out.Domain))
 	}
-	if address := awid.PublicAddress(out.Address, out.Lifetime); address != "" {
+	if address := awid.PublicAddress(out.Address, out.IdentityScope); address != "" {
 		sb.WriteString(fmt.Sprintf("Address:   %s\n", address))
 	}
 	if out.HumanName != "" {
@@ -117,8 +117,8 @@ func formatIntrospect(v any) string {
 	if out.Custody != "" {
 		sb.WriteString(fmt.Sprintf("Custody:   %s\n", out.Custody))
 	}
-	if out.Lifetime != "" {
-		sb.WriteString(fmt.Sprintf("Identity:  %s\n", awid.DescribeIdentityClass(out.Lifetime)))
+	if out.IdentityScope != "" {
+		sb.WriteString(fmt.Sprintf("Scope:     %s\n", awid.DescribeIdentityScope(out.IdentityScope)))
 	}
 	return sb.String()
 }

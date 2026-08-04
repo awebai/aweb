@@ -30,7 +30,7 @@ func TestDoctorSupportBundleExportSchemaIsExplicit(t *testing.T) {
 		fields []string
 	}{
 		{"doctorOutput", doctorOutput{}, []string{"checks", "fixes", "generated_at", "mode", "redactions", "status", "subject", "support_bundle", "version"}},
-		{"doctorSubject", doctorSubject{}, []string{"alias", "aweb_url", "identity_path", "lifetime", "team_id", "working_dir", "workspace_id"}},
+		{"doctorSubject", doctorSubject{}, []string{"alias", "aweb_url", "identity_path", "identity_scope", "team_id", "working_dir", "workspace_id"}},
 		{"doctorCheck", doctorCheck{}, []string{"authoritative", "authority", "detail", "fix", "handoff", "id", "message", "next_step", "source", "status", "target"}},
 		{"doctorTarget", doctorTarget{}, []string{"display", "id", "type"}},
 		{"doctorFixInfo", doctorFixInfo{}, []string{"available", "command", "dry_run", "reason", "safe"}},
@@ -38,8 +38,8 @@ func TestDoctorSupportBundleExportSchemaIsExplicit(t *testing.T) {
 		{"doctorRedaction", doctorRedaction{}, []string{"field", "reason"}},
 		{"doctorSupportBundleInfo", doctorSupportBundleInfo{}, []string{"generated_by", "local_metadata", "platform", "redaction_summary", "safe_to_share", "schema"}},
 		{"doctorSupportBundlePlatform", doctorSupportBundlePlatform{}, []string{"arch", "os"}},
-		{"doctorSupportBundleLocalMetadata", doctorSupportBundleLocalMetadata{}, []string{"address", "alias", "aweb_url", "certificate", "custody", "did_key", "hostname", "identity_scope", "identity_yaml_present", "lifetime", "registry_url", "role_name", "signing_key_present", "stable_id", "team_certificate_present", "team_id", "workspace_id", "workspace_path", "workspace_yaml_present"}},
-		{"doctorSupportBundleCertificateMetadata", doctorSupportBundleCertificateMetadata{}, []string{"alias", "identity_scope", "lifetime", "member_address", "member_did_aw", "member_did_key", "team_did_key", "team_id"}},
+		{"doctorSupportBundleLocalMetadata", doctorSupportBundleLocalMetadata{}, []string{"address", "alias", "aweb_url", "certificate", "custody", "did_key", "hostname", "identity_scope", "identity_yaml_present", "registry_url", "role_name", "signing_key_present", "stable_id", "team_certificate_present", "team_id", "workspace_id", "workspace_path", "workspace_yaml_present"}},
+		{"doctorSupportBundleCertificateMetadata", doctorSupportBundleCertificateMetadata{}, []string{"alias", "identity_scope", "member_address", "member_did_aw", "member_did_key", "team_did_key", "team_id"}},
 		{"doctorSupportBundleRedactionSummary", doctorSupportBundleRedactionSummary{}, []string{"by_reason", "count", "rule_version"}},
 		{"doctorFixPlan", doctorFixPlan{}, []string{"authority", "check_id", "dry_run", "high_impact", "next_step", "plan_id", "planned_mutations", "preconditions", "refusal_detail", "refusal_reason", "rollback_guidance", "safe", "source", "status", "target"}},
 		{"doctorFixMutation", doctorFixMutation{}, []string{"description", "operation", "path", "resource", "source_of_truth", "target"}},
@@ -132,15 +132,15 @@ func writeDoctorLocalFixture(t *testing.T, workingDir, awebURL string) {
 		t.Fatalf("generate keypair: %v", err)
 	}
 	writeSelectionFixtureForTest(t, workingDir, testSelectionFixture{
-		AwebURL:     awebURL,
-		TeamID:      "backend:example.com",
-		Alias:       "mia",
-		WorkspaceID: "ws-ephemeral",
-		DID:         awid.ComputeDIDKey(pub),
-		Address:     "example.com/mia",
-		Lifetime:    awid.LifetimeEphemeral,
-		SigningKey:  priv,
-		CreatedAt:   "2026-04-04T00:00:00Z",
+		AwebURL:       awebURL,
+		TeamID:        "backend:example.com",
+		Alias:         "mia",
+		WorkspaceID:   "ws-ephemeral",
+		DID:           awid.ComputeDIDKey(pub),
+		Address:       "example.com/mia",
+		IdentityScope: awid.IdentityModeLocal,
+		SigningKey:    priv,
+		CreatedAt:     "2026-04-04T00:00:00Z",
 	})
 	if err := os.Remove(filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("remove local identity: %v", err)
@@ -156,26 +156,26 @@ func writeDoctorGlobalFixture(t *testing.T, workingDir, awebURL string) ed25519.
 	did := awid.ComputeDIDKey(pub)
 	stableID := awid.ComputeStableID(pub)
 	writeSelectionFixtureForTest(t, workingDir, testSelectionFixture{
-		AwebURL:     awebURL,
-		TeamID:      "backend:example.com",
-		Alias:       "mia",
-		WorkspaceID: "ws-persistent",
-		DID:         did,
-		StableID:    stableID,
-		Address:     "example.com/mia",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		SigningKey:  priv,
-		CreatedAt:   "2026-04-04T00:00:00Z",
+		AwebURL:       awebURL,
+		TeamID:        "backend:example.com",
+		Alias:         "mia",
+		WorkspaceID:   "ws-persistent",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "example.com/mia",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		SigningKey:    priv,
+		CreatedAt:     "2026-04-04T00:00:00Z",
 	})
 	writeIdentityForTest(t, workingDir, awconfig.WorktreeIdentity{
-		DID:         did,
-		StableID:    stableID,
-		Address:     "example.com/mia",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: "https://registry.example.com",
-		CreatedAt:   "2026-04-04T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "example.com/mia",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   "https://registry.example.com",
+		CreatedAt:     "2026-04-04T00:00:00Z",
 	})
 	return priv
 }
@@ -1075,13 +1075,13 @@ func TestAwDoctorLocalChecksGlobalStableOnlyCertificateWithIdentityAddress(t *te
 		}},
 	})
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:         didKey,
-		StableID:    stableID,
-		Address:     "example.com/mia",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: "https://api.awid.ai",
-		CreatedAt:   "2026-04-04T00:00:00Z",
+		DID:           didKey,
+		StableID:      stableID,
+		Address:       "example.com/mia",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   "https://api.awid.ai",
+		CreatedAt:     "2026-04-04T00:00:00Z",
 	})
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--json")

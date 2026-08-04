@@ -438,7 +438,7 @@ func TestRegistryResolverResolveFreshBypassesLocalTeamMemberCache(t *testing.T) 
 	}
 }
 
-func TestRegistryResolverResolvesPersistentTeamMemberReference(t *testing.T) {
+func TestRegistryResolverResolvesGlobalTeamMemberReference(t *testing.T) {
 	t.Parallel()
 
 	pub, _, err := ed25519.GenerateKey(nil)
@@ -464,7 +464,7 @@ func TestRegistryResolverResolvesPersistentTeamMemberReference(t *testing.T) {
 				"member_did_aw":  stableID,
 				"member_address": "research.org/alice",
 				"alias":          "alice",
-				"lifetime":       "persistent",
+				"identity_scope": "global",
 				"issued_at":      "2026-04-04T00:00:00Z",
 			})
 		case "/v1/did/" + stableID + "/key":
@@ -517,8 +517,8 @@ func TestRegistryResolverResolvesPersistentTeamMemberReference(t *testing.T) {
 	if identity.Handle != "alice" {
 		t.Fatalf("Handle=%q", identity.Handle)
 	}
-	if identity.Lifetime != LifetimePersistent {
-		t.Fatalf("Lifetime=%q", identity.Lifetime)
+	if identity.IdentityScope != IdentityModeGlobal {
+		t.Fatalf("IdentityScope=%q", identity.IdentityScope)
 	}
 	if identity.ResolvedVia != "registry" {
 		t.Fatalf("ResolvedVia=%q", identity.ResolvedVia)
@@ -528,7 +528,7 @@ func TestRegistryResolverResolvesPersistentTeamMemberReference(t *testing.T) {
 	}
 }
 
-func TestRegistryResolverResolvesEphemeralTeamMemberReference(t *testing.T) {
+func TestRegistryResolverResolvesLocalTeamMemberReference(t *testing.T) {
 	t.Parallel()
 
 	pub, _, err := ed25519.GenerateKey(nil)
@@ -547,7 +547,7 @@ func TestRegistryResolverResolvesEphemeralTeamMemberReference(t *testing.T) {
 				"member_did_aw":  "",
 				"member_address": "",
 				"alias":          "eve",
-				"lifetime":       "ephemeral",
+				"identity_scope": "local",
 				"issued_at":      "2026-04-04T00:00:00Z",
 			})
 		default:
@@ -574,8 +574,8 @@ func TestRegistryResolverResolvesEphemeralTeamMemberReference(t *testing.T) {
 	if identity.Address != "backend:acme.com/eve" {
 		t.Fatalf("Address=%q", identity.Address)
 	}
-	if identity.Lifetime != LifetimeEphemeral {
-		t.Fatalf("Lifetime=%q", identity.Lifetime)
+	if identity.IdentityScope != IdentityModeLocal {
+		t.Fatalf("IdentityScope=%q", identity.IdentityScope)
 	}
 }
 
@@ -1143,6 +1143,23 @@ func TestRegistryResolverVerifyStableIdentityWalksFullLogRejectsTailMismatch(t *
 	}
 	if logCalls.Load() != 1 {
 		t.Fatalf("log_calls=%d, want 1", logCalls.Load())
+	}
+}
+
+func TestLegacyLifetimeConversionIsSeparateFromCanonicalScopeNormalization(t *testing.T) {
+	t.Parallel()
+
+	if got := NormalizeIdentityScope("persistent"); got != "persistent" {
+		t.Fatalf("canonical normalization accepted legacy lifetime: %q", got)
+	}
+	if got := NormalizeIdentityScope("ephemeral"); got != "ephemeral" {
+		t.Fatalf("canonical normalization accepted legacy lifetime: %q", got)
+	}
+	if got := IdentityScopeFromLegacyLifetime("persistent"); got != IdentityModeGlobal {
+		t.Fatalf("legacy persistent scope=%q", got)
+	}
+	if got := IdentityScopeFromLegacyLifetime("ephemeral"); got != IdentityModeLocal {
+		t.Fatalf("legacy ephemeral scope=%q", got)
 	}
 }
 
