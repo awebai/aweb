@@ -139,30 +139,40 @@ wrong place.
 | **Instance** | OAS | Until explicit retire | Home, worktree, task context |
 | **Session** | OAS | One model process | Nothing durable |
 
-### The two identity classes are not two sizes of one thing
+### The two identity classes, and a vocabulary collision worth naming
 
-Per aweb's own source of truth, and this contradicts how this document used to
-read:
+Per aweb's source of truth:
 
 - **Global identity**: durable and trust-bearing. Has `did:key` AND `did:aw`, may
   hold public addresses, supports rotation, archival and controlled replacement.
-- **Local identity**: **disposable, internal, one alias, `did:key` only, no
-  address, and NO public trust continuity. Deleted when the workspace is
-  removed.**
+- **Local identity**: internal, one team-scoped alias, `did:key` only, no public
+  address, no public trust continuity, and **deleted when its workspace is
+  removed**.
 
-So "durable local principal" is not a thing this system has, and this document
-should never have used the phrase. What long-running teams actually have is a
-**local identity whose workspace has persisted** — continuity by nobody having
-deleted it, not by any promise.
+**aweb calls a local identity "disposable". This document calls a binding
+"durable" or "disposable".** They are different axes and conflating them causes
+real confusion:
 
-That reframes what the adapter owes them. The requirement is not "support a
-durable local principal". It is:
+- aweb's axis is about **trust continuity**: only a global identity carries it.
+- this document's axis is about **cleanup ownership**: whether the instance that
+  attached a principal is entitled to destroy it.
 
-> **OAS must be able to run an instance against a PRE-EXISTING `.aw`, and must
-> never delete it.**
+A team-local identity attached with `cleanup_owner = external` is therefore
+perfectly coherent — it is a local identity by aweb's classification and a
+durable binding by ours. That is exactly what a team running long-lived local
+members has, and it is not a contradiction. What such an identity does NOT get is
+public trust continuity, and no binding mode can confer that.
 
-which is one rule, identical for both classes, and does not need a principal
-taxonomy to state.
+An earlier revision of this section asserted that "durable local principal is not
+a thing this system has", and further that the adapter should simply run an
+instance against a pre-existing `.aw` wherever it already sits. **Both were
+wrong, and the second was dangerous** — long-lived local identities in practice
+live inside `agents/instances/<name>/.aw`, and an ordinary correct `oas retire`
+deletes an instance home. Attaching in place would point the seam at an identity
+sitting exactly where retire destroys it, which is the failure this whole
+document exists to prevent. The host-local principal store below is not an
+alternative to `.aw`; it is where `.aw` material lives when it must outlive the
+instance using it.
 
 A principal's lifetime is a property of the **binding that created or attached
 it**, not of the kind of thing it is. The same identity machinery serves a
