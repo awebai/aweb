@@ -116,13 +116,53 @@ cleanup authority being deduced later from what happens to be on disk. The
 decision is made and recorded **at binding time**; retire consumes that record
 and does nothing it does not authorise.
 
-## The three entities
+## Who owns what
+
+An earlier version of this document put a single row here reading
+"Principal | aweb | Address, `did:aw` stable id". That was wrong in a way that
+mattered, and the correction is the first thing to read.
+
+| Layer | Owns | Does NOT own |
+|---|---|---|
+| **AWID** | Identity, team and certificate FACTS. Global `did:aw`, key history, address assignment, certificate issuance and revocation | Private keys. Execution |
+| **aweb** | Operational PROJECTIONS of those facts, plus messaging, coordination and delivery. Keys an agent as `(team_id, did_key)` presented via certificate | The identity facts themselves. Execution |
+| **OAS** | Instances, sessions, homes, worktrees, placement, and the adapter | Identity. Membership |
+
+Identity facts are AWID's, not aweb's. That distinction is not pedantry here: it
+decides where you look to establish whether something was really destroyed, and
+this whole document exists because that question was being answered from the
+wrong place.
 
 | Entity | Owner | Lifetime | Holds |
 |---|---|---|---|
-| **Principal** | aweb | **Declared** — disposable or durable | Address, `did:aw` stable id, credentials, durable mutable state |
+| **Identity** | AWID (facts), aweb (projection) | Independent of any instance | Key material in a workspace `.aw`; membership via team certificate |
 | **Instance** | OAS | Until explicit retire | Home, worktree, task context |
 | **Session** | OAS | One model process | Nothing durable |
+
+### The two identity classes are not two sizes of one thing
+
+Per aweb's own source of truth, and this contradicts how this document used to
+read:
+
+- **Global identity**: durable and trust-bearing. Has `did:key` AND `did:aw`, may
+  hold public addresses, supports rotation, archival and controlled replacement.
+- **Local identity**: **disposable, internal, one alias, `did:key` only, no
+  address, and NO public trust continuity. Deleted when the workspace is
+  removed.**
+
+So "durable local principal" is not a thing this system has, and this document
+should never have used the phrase. What long-running teams actually have is a
+**local identity whose workspace has persisted** — continuity by nobody having
+deleted it, not by any promise.
+
+That reframes what the adapter owes them. The requirement is not "support a
+durable local principal". It is:
+
+> **OAS must be able to run an instance against a PRE-EXISTING `.aw`, and must
+> never delete it.**
+
+which is one rule, identical for both classes, and does not need a principal
+taxonomy to state.
 
 A principal's lifetime is a property of the **binding that created or attached
 it**, not of the kind of thing it is. The same identity machinery serves a
