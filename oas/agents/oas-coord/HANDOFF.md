@@ -33,8 +33,16 @@ is today's main decision.
 
 ## Repository state
 
-- **aweb**: `main`. Other teams push here too; `git fetch` before assuming.
-  **Never let anyone branch off your local main without checking it against
+- **aweb**: work on `oas-coord/alice`, never on `main`. Keep local `main` as a
+  pure mirror of `origin/main` so a stray push cannot land coordinator work on
+  the shared branch. Forward before starting: fetch, reset the branch onto
+  `origin/main`, then work.
+  **`main` is shared with teams that cut releases from it.** A release gate can
+  be materializing this repository's pinned inputs at any moment, so an
+  unannounced push to `main` is not just a merge risk, it can change what a live
+  ship is building. Ask before pushing to `main` when any release may be in
+  flight, and never push a revert of something a gate is currently consuming.
+- **Never let anyone branch off your local main without checking it against
   origin first** — `git rev-list --left-right --count origin/main...main`. A
   developer once branched off unpushed local work here, so their branch silently
   carried unreviewed commits underneath a reviewed one, and the review scope had
