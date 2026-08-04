@@ -137,8 +137,7 @@ is explicit.
 
 ## Notes
 
-- The aweb-cloud repo is at `../aweb-cloud` relative to the aweb
+- The aweb-cloud repo is cloned at `../ac` relative to the aweb
   workspace.
-- Alice and bob own the cloud repo. Dave reviews OSS changes,
-  they review cloud changes.
-- Henry reviews OSS changes before release.
+- Ownership and review routing live in the active team instructions
+  and `aw workspace status`; do not rely on names written here.
