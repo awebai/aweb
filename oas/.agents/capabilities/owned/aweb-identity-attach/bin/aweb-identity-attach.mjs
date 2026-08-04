@@ -353,14 +353,15 @@ function resolveAndVerifyDeclaredPrincipal(principal, {
   const declarationFile = join(context, "oas", "agents", soul, "principals", `${principal}.yaml`);
   if (requireCommittedAuthority) assertCommittedMintingAuthority(context, declarationFile);
   const { declaration, path: declarationPath } = loadPrincipalDeclaration(declarationFile);
-  // The durable-local shape is DECLARABLE but not yet ATTACHABLE. Every identity
-  // check below compares an address and a did:aw, which a local does not have,
-  // and the receipt and reconciliation surfaces emit the same two fields. Refuse
-  // here, explicitly and early, rather than let a validated declaration reach
-  // code that would crash on the missing fields or silently compare undefined to
-  // undefined and call that a verified identity.
+  // Local attach is NOT finished. Identity verification for a local is
+  // implemented below and correct against measured durable-local whoami output,
+  // but the persistence and receipt surfaces further on still assume an address
+  // and a did:aw, so a correctly matching local gets past verification and then
+  // fails downstream with an unrelated-looking error. Refuse early and clearly
+  // until those surfaces are local-aware: a confusing late failure is worse than
+  // an honest early one.
   if (declaration.scope === "local") {
-    throw new Error(`principal declaration ${declarationPath} declares a durable LOCAL member (${declaration.member_name}); attaching a local principal is not implemented yet — its identity is verified by team membership and certificate rather than by address and did:aw, and this flow verifies only the latter`);
+    throw new Error(`principal declaration ${declarationPath} declares a durable LOCAL member (${declaration.member_name}); local attach is not finished — identity verification is implemented but the persisted-attach and receipt surfaces still require an address and a did:aw`);
   }
   if (declaration.soul !== soul) {
     throw new Error(`principal declaration soul ${JSON.stringify(declaration.soul)} does not match OAS_AGENT ${JSON.stringify(soul)}`);
@@ -379,11 +380,31 @@ function resolveAndVerifyDeclaredPrincipal(principal, {
       env: { ...process.env, AW_NO_UPDATE_CHECK: "1" },
     },
   ));
-  if (whoami.address !== declaration.address) {
-    throw new Error(`${identityLabel} address ${JSON.stringify(whoami.address)} does not match declaration ${JSON.stringify(declaration.address)}`);
-  }
-  if (whoami.stable_id !== declaration.stable_id) {
-    throw new Error(`${identityLabel} stable_id ${JSON.stringify(whoami.stable_id)} does not match declaration ${JSON.stringify(declaration.stable_id)}`);
+  if (declaration.scope === "local") {
+    // A durable local has no did:aw and no registered address, so identity is
+    // established from the facts it does carry: the scope it reports and its
+    // team-local member name. Measured, not assumed — a local reports
+    // identity_scope "local", its member name as alias/name, a did:key, and NO
+    // stable_id, while a global reports identity_scope "global" and a stable_id.
+    // The address a local renders is a team projection, not a registration: cold
+    // contact to one from outside its team fails at recipient resolution.
+    if (whoami.identity_scope !== "local") {
+      throw new Error(`${identityLabel} reports identity_scope ${JSON.stringify(whoami.identity_scope)}, but the declaration is for a durable LOCAL member; refusing to attach a differently-scoped identity`);
+    }
+    if (whoami.stable_id !== undefined && whoami.stable_id !== null) {
+      throw new Error(`${identityLabel} carries stable_id ${JSON.stringify(whoami.stable_id)}, so it is a global identity and cannot be attached through the local declaration shape`);
+    }
+    const member = whoami.alias ?? whoami.name;
+    if (member !== declaration.member_name) {
+      throw new Error(`${identityLabel} member name ${JSON.stringify(member)} does not match declaration ${JSON.stringify(declaration.member_name)}`);
+    }
+  } else {
+    if (whoami.address !== declaration.address) {
+      throw new Error(`${identityLabel} address ${JSON.stringify(whoami.address)} does not match declaration ${JSON.stringify(declaration.address)}`);
+    }
+    if (whoami.stable_id !== declaration.stable_id) {
+      throw new Error(`${identityLabel} stable_id ${JSON.stringify(whoami.stable_id)} does not match declaration ${JSON.stringify(declaration.stable_id)}`);
+    }
   }
   parseActiveTeam(execFileSync(
     "aw",

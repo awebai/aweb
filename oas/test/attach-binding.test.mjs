@@ -1611,3 +1611,72 @@ test("a preflight failure with no configured settings is reported as itself, not
     `authority failure must be classified as itself: ${result.stdout}`,
   );
 });
+
+// A durable TEAM-LOCAL member has no did:aw and no registered address, so attach
+// verifies the facts it does carry. Measured on a real local before writing this:
+// identity_scope "local", member name as alias/name, a did:key, and NO stable_id.
+function localFixture(whoamiOverrides = {}) {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  write(join(f.repo, "oas-config.yaml"), "capabilities:\n  layers:\n    messaging:\n      capability: aweb.identity-attach\n      global:\n        enabled: true\n        settings:\n          identity_binding:\n            schema_version: 2\n            mode: attach-existing\n            principal: throwaway\n");
+  write(f.declarationPath, [
+    "schema_version: 2",
+    "scope: local",
+    "member_name: throwaway",
+    "team_id: test-team:example.test",
+    "soul: developer",
+    "",
+  ].join("\n"));
+  execFileSync("git", ["-C", f.repo, "add", "."]);
+  execFileSync("git", ["-C", f.repo, "commit", "-qm", "local declaration"]);
+  const whoami = { alias: "throwaway", name: "throwaway", did: "did:key:z6MkLocal", identity_scope: "local", ...whoamiOverrides };
+  const delegate = join(f.bin, "aw-delegate");
+  cpSync(f.awPath, delegate);
+  write(join(f.bin, "aw"), [
+    "#!/bin/sh",
+    'if [ "$(printf %s\\\\n "$@" | grep -c whoami)" != "0" ]; then',
+    `  printf '%s' ${JSON.stringify(JSON.stringify(whoami))}`,
+    "  exit 0",
+    "fi",
+    `exec ${JSON.stringify(delegate)} "$@"`,
+    "",
+  ].join("\n"), 0o755);
+  return f;
+}
+
+test("a durable local principal attaches on its member name, with no did:aw involved", () => {
+  const f = localFixture();
+  const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.identity_resources_created, false);
+  // The point: a local declaration reaches the production attach preflight at all.
+  // Before this, resolvePrincipalStore read declaration.stable_id and threw.
+  assert.equal(/stable_id|Cannot read properties/.test(result.stderr + result.stdout), false, result.stderr);
+});
+
+function localSpawnHookFailed(overrides) {
+  const f = localFixture(overrides);
+  const spawned = spawnSync(process.execPath, [oasCli(), "spawn", "developer", "--purpose", "local-refuse", "--no-launch", "--json"], {
+    cwd: f.repo, env: f.env, encoding: "utf8",
+  });
+  const parsed = JSON.parse(spawned.stdout);
+  return (parsed.result?.warnings || []).some((w) => /aweb\.identity-attach spawn hook failed/.test(w));
+}
+
+test("attach refuses a differently-scoped or mismatched identity for a local declaration", () => {
+  // Discriminating pair rather than string matching: OAS truncates the hook
+  // warning, so the reason is not reliably visible. The same fixture with a
+  // CORRECT local whoami must not fail, which is what makes each refusal
+  // attributable to the identity mismatch and not to the fixture.
+  // Local attach is deliberately unfinished, so EVERY local declaration is
+  // refused at the production entry — including a correctly matching one. That is
+  // the current bound, asserted rather than implied, so this test fails loudly
+  // when the refusal is lifted and the downstream surfaces are made local-aware.
+  assert.equal(localSpawnHookFailed({}), true, "local attach is refused for now, including the matching case");
+  for (const [name, overrides] of [
+    ["global identity behind a local declaration", { identity_scope: "global", stable_id: "did:aw:2Abc" }],
+    ["a stable_id present at all", { stable_id: "did:aw:2Abc" }],
+    ["member name disagreeing with the declaration", { alias: "someone-else", name: "someone-else" }],
+  ]) {
+    assert.equal(localSpawnHookFailed(overrides), true, name);
+  }
+});

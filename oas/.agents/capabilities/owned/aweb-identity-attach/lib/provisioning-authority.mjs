@@ -95,11 +95,17 @@ export function validateMintingAuthorityReceipt(receipt) {
 
 function creatorReceipt({ principal, declarationPath, declaration }) {
   validatePrincipalDeclaration(declaration);
-  // A receipt that emitted undefined address/stable_id for a local would record a
-  // verified attachment that never happened. Refuse until the local shape has a
-  // receipt of its own keyed by member name and certificate.
+  // A local has no address or stable_id, so a receipt keyed on those would record
+  // undefined and read as a verified attachment that never happened. Record the
+  // handle a local actually has instead.
   if (declaration.scope === "local") {
-    throw new TypeError("creator receipts do not yet support durable local principals: a local has no address or stable_id to record");
+    return {
+      principal,
+      declaration_path: declarationPath,
+      scope: "local",
+      member_name: declaration.member_name,
+      team_id: declaration.team_id,
+    };
   }
   return {
     principal,
