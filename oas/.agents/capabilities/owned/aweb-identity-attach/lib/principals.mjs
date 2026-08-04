@@ -9,6 +9,7 @@ import { isAbsolute, join, normalize, parse, relative, resolve, sep } from "node
 // it cannot be expressed as a global with fields omitted. Five of one adopting
 // team's seven members are this shape.
 const REQUIRED_FIELDS = ["schema_version", "address", "stable_id", "team_id", "soul"];
+const RESERVED_MEMBER_NAMES = new Set(["me"]);
 const LOCAL_REQUIRED_FIELDS = ["schema_version", "scope", "member_name", "team_id", "soul"];
 const ALLOWED_FIELDS = new Set([...REQUIRED_FIELDS, "soul_version"]);
 const LOCAL_ALLOWED_FIELDS = new Set([...LOCAL_REQUIRED_FIELDS, "soul_version"]);
@@ -20,11 +21,39 @@ const FIELD_PATTERNS = Object.freeze({
   stable_id: "^did:aw:[A-Za-z0-9]+$",
   team_id: `^${TEAM_NAME_PATTERN}:${TEAM_NAMESPACE_PATTERN}$`,
   soul: "^[A-Za-z0-9][A-Za-z0-9._-]*$",
-  member_name: "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+  // The ISSUING AUTHORITY decides this, not this file. Kept identical to
+  // cli/go/cmd/aw/workspace.go workspaceAliasPattern and the server's
+  // AGENT_ALIAS_PATTERN/AGENT_ALIAS_MAX_LENGTH. Deriving it from the team-name
+  // pattern rejected names aw can issue (Build_Bot) and accepted overlength ones.
+  member_name: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
 });
 const FIELD_REGEXPS = Object.fromEntries(
   Object.entries(FIELD_PATTERNS).map(([field, pattern]) => [field, new RegExp(pattern)]),
 );
+
+export const localPrincipalDeclarationSchema = Object.freeze({
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://aweb.ai/schemas/oas/principal-declaration-v2-local.json",
+  title: "aweb OAS durable local principal declaration",
+  type: "object",
+  additionalProperties: false,
+  required: LOCAL_REQUIRED_FIELDS,
+  properties: {
+    schema_version: { type: "integer", const: 2 },
+    scope: { type: "string", const: "local" },
+    member_name: { type: "string", pattern: FIELD_PATTERNS.member_name },
+    team_id: { type: "string", pattern: FIELD_PATTERNS.team_id },
+    soul: { type: "string", pattern: FIELD_PATTERNS.soul },
+    soul_version: { type: "string", minLength: 1 },
+  },
+});
+
+/** Selected by the same discriminator the validator uses: presence of `scope`. */
+export function principalDeclarationSchemaFor(declaration) {
+  return declaration && typeof declaration === "object" && Object.hasOwn(declaration, "scope")
+    ? localPrincipalDeclarationSchema
+    : principalDeclarationSchema;
+}
 
 export const principalDeclarationSchema = Object.freeze({
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -118,7 +147,10 @@ export function validatePrincipalDeclaration(declaration) {
     if (declaration.schema_version !== 2) throw new TypeError("a local principal declaration must use schema_version 2");
     if (declaration.scope !== "local") throw new TypeError('scope must be "local" (a global principal omits scope and uses schema_version 1)');
     if (typeof declaration.member_name !== "string" || !FIELD_REGEXPS.member_name.test(declaration.member_name)) {
-      throw new TypeError("member_name must be a canonical lowercase team-local member name");
+      throw new TypeError("member_name must match the member name aw issues: [A-Za-z0-9][A-Za-z0-9_-]{0,63}");
+    }
+    if (RESERVED_MEMBER_NAMES.has(declaration.member_name)) {
+      throw new TypeError(`member_name must not be a reserved alias: ${declaration.member_name}`);
     }
     validateSharedPrincipalFields(declaration);
     return declaration;
@@ -236,8 +268,12 @@ export function resolvePrincipalStore(declaration, options = {}) {
   validatePrincipalDeclaration(declaration);
   const home = resolvePrincipalHome(options);
   const [teamName, teamNamespace] = declaration.team_id.split(":");
-  const principalId = declaration.stable_id.slice("did:aw:".length);
-  const principal = join(home, teamName, teamNamespace, principalId);
+  // A durable local has no did:aw to key on; its stable handle is the member
+  // name. Kept under a distinct `members/` level so a member name can never
+  // collide with a principal id derived from a did:aw.
+  const principal = declaration.scope === "local"
+    ? join(home, teamName, teamNamespace, "members", declaration.member_name)
+    : join(home, teamName, teamNamespace, declaration.stable_id.slice("did:aw:".length));
   const credentials = join(principal, "credentials");
   const state = join(principal, "state");
 

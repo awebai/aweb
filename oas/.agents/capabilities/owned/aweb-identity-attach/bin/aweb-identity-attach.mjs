@@ -353,6 +353,15 @@ function resolveAndVerifyDeclaredPrincipal(principal, {
   const declarationFile = join(context, "oas", "agents", soul, "principals", `${principal}.yaml`);
   if (requireCommittedAuthority) assertCommittedMintingAuthority(context, declarationFile);
   const { declaration, path: declarationPath } = loadPrincipalDeclaration(declarationFile);
+  // The durable-local shape is DECLARABLE but not yet ATTACHABLE. Every identity
+  // check below compares an address and a did:aw, which a local does not have,
+  // and the receipt and reconciliation surfaces emit the same two fields. Refuse
+  // here, explicitly and early, rather than let a validated declaration reach
+  // code that would crash on the missing fields or silently compare undefined to
+  // undefined and call that a verified identity.
+  if (declaration.scope === "local") {
+    throw new Error(`principal declaration ${declarationPath} declares a durable LOCAL member (${declaration.member_name}); attaching a local principal is not implemented yet — its identity is verified by team membership and certificate rather than by address and did:aw, and this flow verifies only the latter`);
+  }
   if (declaration.soul !== soul) {
     throw new Error(`principal declaration soul ${JSON.stringify(declaration.soul)} does not match OAS_AGENT ${JSON.stringify(soul)}`);
   }

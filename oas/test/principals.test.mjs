@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { afterEach, test } from "node:test";
 
 import {
@@ -294,11 +294,31 @@ test("the local shape is explicitly discriminated, never inferred from omission"
   }
 });
 
-test("a local member name must be canonical, and unknown fields are still rejected", () => {
-  for (const bad of ["Snape", "snape_1", "-snape", "snape-", ""]) {
-    assert.throws(() => validatePrincipalDeclaration({ ...LOCAL, member_name: bad }), /member_name must be/);
+test("a local member name is exactly what the issuing authority can issue", () => {
+  // Bounds taken from the issuer, not invented here: workspaceAliasPattern in
+  // cli/go/cmd/aw/workspace.go and AGENT_ALIAS_PATTERN/MAX_LENGTH on the server.
+  // Deriving them from the team-name pattern rejected names aw really issues.
+  for (const good of ["snape", "Build_Bot", "a", "A1", "x-y_z", "a".repeat(64)]) {
+    assert.deepEqual(validatePrincipalDeclaration({ ...LOCAL, member_name: good }).member_name, good);
   }
+  for (const bad of ["-snape", "_snape", "a".repeat(65), "", "sn ape", "sn/ape"]) {
+    assert.throws(() => validatePrincipalDeclaration({ ...LOCAL, member_name: bad }), /member_name must match/);
+  }
+  assert.throws(() => validatePrincipalDeclaration({ ...LOCAL, member_name: "me" }), /reserved alias/);
   assert.throws(() => validatePrincipalDeclaration({ ...LOCAL, secret: "k" }), /unknown field: secret/);
+});
+
+test("a local resolves a principal store that cannot collide with a global one", () => {
+  const home = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "aweb-oas-store-")));
+  temporaryDirectories.push(home);
+  const local = resolvePrincipalStore({ ...LOCAL }, { home });
+  const global = resolvePrincipalStore({
+    schema_version: 1, address: "e.test/x", stable_id: "did:aw:2Abc", team_id: "t:e.test", soul: "d",
+  }, { home });
+  // The crash this replaces: the store read declaration.stable_id unconditionally.
+  assert.ok(local.principal.endsWith(join("members", LOCAL.member_name)), local.principal);
+  assert.ok(!global.principal.includes(`${sep}members${sep}`), global.principal);
+  assert.notEqual(local.principal, global.principal);
 });
 
 test("the global declaration is unchanged by the local shape", () => {
