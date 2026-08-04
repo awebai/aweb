@@ -2,16 +2,20 @@
 
 Everything here is durable; nothing depends on tmux or model context.
 
-**The OAS team from this epic is GONE.** `oas-seam-dev/rev`, `oas-runtime-dev/rev`,
-`oas-journey-dev`, `oas-contract-rev`, `oas-exec-dev/rev`, `oas-admission-rev`,
-`oas-retire-rev` — no windows, no presence. `atext.aweb.ai/developer-frontend`
-did the v0.20 port through 2026-07-31, but the current occupant of that alias is
-a different agent who correctly says the OAS work is not theirs. **Do not send
-work to those aliases; verify a recipient is reachable before routing anything.**
+**Resolve who exists from `aw workspace status` and the active team instructions,
+never from this file.** Rosters, presence and current pairings change
+independently of any document, so a copy here becomes a durable contradiction.
+
+**An alias in a task, a handoff or a mail is not evidence that anyone is behind
+it.** Verify a recipient is reachable before routing work, and re-verify before
+believing a reply will come. This is not hypothetical caution: work was routed to
+this epic's agents after they were gone, and to an alias whose current occupant
+was a different agent doing unrelated work — who correctly refused to answer for
+work that was not theirs. Both failures looked exactly like a message in flight.
 
 **Staff through `aw team add … --start`, not `oas spawn`.** That is the proven
 path on this machine and it provisions identity through the Library, sidestepping
-the hosted-minting gap in `.66`. Current pair: `e2ee-dev`, `e2ee-rev`.
+the hosted-minting gap in `.66`.
 
 ## Resume
 
@@ -30,10 +34,12 @@ is today's main decision.
 ## Repository state
 
 - **aweb**: `main`. Other teams push here too; `git fetch` before assuming.
-  **My local main has UNPUSHED commits and origin has commits I lack** — check
-  `git rev-list --left-right --count origin/main...main` before branching anyone
-  off it. A developer branched off my unpushed main and their branch then carried
-  five of my unreviewed commits; see `.63`.
+  **Never let anyone branch off your local main without checking it against
+  origin first** — `git rev-list --left-right --count origin/main...main`. A
+  developer once branched off unpushed local work here, so their branch silently
+  carried unreviewed commits underneath a reviewed one, and the review scope had
+  to be recomputed twice. The rule is durable; the divergence it guards against
+  is transient and must be measured, never read from this file.
 - **upstream OAS clone**: `~/prj/awebai/oas`. Branch `working` is HISTORY, not
   current — it was 8 commits on a pre-v0.20 base and its rebuild is abandoned.
   Current is `aweb/v020-integration`: released v0.20 upstream main plus the three
@@ -82,10 +88,12 @@ proof is incomplete — it is what found the pi defect).
 1. **`.63` — IMPLEMENTED AND ACKed, NOT LANDED.** Branch `e2ee-dev`, reviewed
    tip `64833dac`, task commit `2a25f085`. The root cause was NOT the resolver
    I traced: `aw mail show` was refused outright by the `.11` default-deny
-   allowlist, which is why it diverged from `inbox`. Blocked only by my own five
-   unreviewed commits sitting under it. **Residual: no resident Pi/channel
-   journey was rerun — cross-runtime local channel decryption is UNPROVED and
-   must not be reported as proved.**
+   allowlist, which is why it diverged from `inbox`. **Read its current
+   prerequisites off the board, not from here** — they have already changed more
+   than once, and any count written down goes stale the next time a review round
+   adds a commit. **Residual: no resident Pi/channel journey was rerun —
+   cross-runtime local channel decryption is UNPROVED and must not be reported as
+   proved.**
 2. **`.47`** — ours to build, unblocked, blocks `.44`. AC already exposes the
    endpoints (`POST /{team_id}/agents/remove-member` and `add-member` in
    `aweb_cloud/routers/teams.py`); what is missing is aweb calling revoke from
