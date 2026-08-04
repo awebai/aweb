@@ -14,7 +14,7 @@
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
 	release-all-check \
 	publish-skills \
-	cli-e2e ship-suites ship
+	cli-e2e ship-suites ship ship-gate check-ship-invocation
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
@@ -733,7 +733,20 @@ SHIP_SUITES := release-awid-check test-federation-e2e test-e2e cli-e2e
 ship-suites:
 	@MAKE="$(MAKE)" ./scripts/run-ship-suites.sh $(SHIP_SUITES)
 
-ship: release-all-check
+# The gate derives every release version itself. An override on the command
+# line rides MAKEFLAGS into the gate's own scenario fixtures and turns a valid
+# run red, so the only accepted invocation is plain `make ship`.
+check-ship-invocation:
+	@if [ "$(origin CLI_VERSION)" = "command line" ] || [ -n "$$CLI_VERSION" ]; then \
+		echo "ERROR: ship refuses CLI_VERSION overrides; the gate derives the version itself."; \
+		echo "       Run plain 'make ship'. Intentional version bumps go through release-cli-tag."; \
+		exit 1; \
+	fi
+
+ship: check-ship-invocation
+	@./scripts/ship-env.sh $(MAKE) ship-gate
+
+ship-gate: release-all-check
 	@echo ""
 	$(MAKE) ship-suites
 	@echo ""

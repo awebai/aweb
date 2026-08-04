@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -196,11 +197,22 @@ class ShipCIContractTests(unittest.TestCase):
             "ship-suites must hand the whole suite list to the runner",
         )
 
-        ship = makefile[makefile.index("ship: release-all-check") :]
+        ship = self.require_match(
+            r"(?m)^ship: check-ship-invocation\n(?:\t.*\n)+",
+            makefile,
+            "ship must refuse overridden invocations before anything else runs",
+        )
+        self.assertIn(
+            "./scripts/ship-env.sh",
+            ship.group(0),
+            "ship must run the gate under the environment owner so ambient services"
+            " are provisioned or reused deterministically",
+        )
+        gate = makefile[makefile.index("ship-gate: release-all-check") :]
         self.assertIn(
             "$(MAKE) ship-suites",
-            ship,
-            "ship must run the suites through ship-suites rather than as recipe lines",
+            gate,
+            "ship-gate must run the suites through ship-suites rather than as recipe lines",
         )
 
         # cli-e2e could exist as a name while doing nothing.
@@ -211,6 +223,79 @@ class ShipCIContractTests(unittest.TestCase):
 
         runner = REPO_ROOT / "scripts" / "run-ship-suites.sh"
         self.assertTrue(runner.is_file(), f"{runner} must exist")
+
+    ENV_SCRIPT = REPO_ROOT / "scripts" / "ship-env.sh"
+
+    def test_ship_invocation_guard_refuses_cli_version_overrides(self) -> None:
+        """A CLI_VERSION override contaminates the gate's own scenario fixtures,
+        so the guard has to stop the run before anything executes."""
+        base_env = {k: v for k, v in os.environ.items() if k != "CLI_VERSION"}
+        refusals = (
+            (["make", "-s", "check-ship-invocation", "CLI_VERSION=9.9.9"], base_env),
+            (["make", "-s", "check-ship-invocation"], {**base_env, "CLI_VERSION": "9.9.9"}),
+        )
+        for cmd, env in refusals:
+            result = subprocess.run(
+                cmd, cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=60
+            )
+            self.assertNotEqual(result.returncode, 0, f"{cmd} must refuse the override")
+            self.assertIn(
+                "refuses CLI_VERSION",
+                result.stdout + result.stderr,
+                "the refusal must name the override so the fix is obvious",
+            )
+        clean = subprocess.run(
+            ["make", "-s", "check-ship-invocation"],
+            cwd=REPO_ROOT,
+            env=base_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+
+    def test_ship_environment_owner_proves_its_arms(self) -> None:
+        """Exit 0 alone would pass a self-test gutted to a no-op; require each
+        arm's evidence line, like the suite runner's self-test."""
+        result = subprocess.run(
+            ["bash", str(self.ENV_SCRIPT), "--self-test"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"ship-env self-test failed:\n{result.stdout}\n{result.stderr}",
+        )
+        for arm in (
+            "reachable services are reused and no container is started",
+            "a plain local run provisions even when a foreign service is listening",
+            "unreachable services are provisioned and cleaned up",
+            "cleanup runs even when the gate fails",
+            "a mismatched Go toolchain is refused with the fix",
+        ):
+            self.assertIn(arm, result.stdout, f"self-test must prove: {arm}")
+
+    def test_workflow_provisions_the_production_postgres_major(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            "postgres:17",
+            workflow,
+            "the hosted gate must run the PostgreSQL major production runs (17)",
+        )
+        self.assertNotIn("postgres:16", workflow)
+
+    def test_cli_version_scenarios_carry_the_override_leak_probe(self) -> None:
+        harness = (REPO_ROOT / "scripts" / "check-cli-release-version-test.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "leaked into scenario fixtures",
+            harness,
+            "the scenario harness must probe that an outer CLI_VERSION cannot"
+            " reach its fixtures through MAKEFLAGS or the environment",
+        )
 
     RUNNER = REPO_ROOT / "scripts" / "run-ship-suites.sh"
 
