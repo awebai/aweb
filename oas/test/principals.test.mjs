@@ -8,6 +8,7 @@ import {
   assertPrincipalStoreContained,
   loadPrincipalDeclaration,
   parsePrincipalDeclarationYaml,
+  LOCAL_STORE_COMPONENT,
   localPrincipalDeclarationSchema,
   principalDeclarationSchema,
   principalDeclarationSchemaFor,
@@ -318,7 +319,15 @@ test("a local resolves a principal store that cannot collide with a global one",
     schema_version: 1, address: "e.test/x", stable_id: "did:aw:2Abc", team_id: "t:e.test", soul: "d",
   }, { home });
   // The crash this replaces: the store read declaration.stable_id unconditionally.
-  assert.ok(local.principal.endsWith(join("members", LOCAL.member_name)), local.principal);
+  // Assert the EXACT trailing components, not a suffix: endsWith("members/<name>")
+  // also matches "local-members/<name>", so it passed without establishing which
+  // separator was used.
+  // What this proves and does NOT prove: it proves the path is built from the
+  // declared component, and nothing about whether that component is SAFE - it
+  // compares against the same constant that produced the path, so a bad constant
+  // would satisfy both sides. Safety is the containment test below, which is why
+  // that one is the load-bearing guard and this one is a shape check.
+  assert.deepEqual(local.principal.split(sep).slice(-2), [LOCAL_STORE_COMPONENT, LOCAL.member_name], local.principal);
   assert.ok(!global.principal.includes(`${sep}members${sep}`), global.principal);
   assert.notEqual(local.principal, global.principal);
 });
