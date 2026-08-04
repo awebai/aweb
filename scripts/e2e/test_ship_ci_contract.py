@@ -208,10 +208,21 @@ class ShipCIContractTests(unittest.TestCase):
             "ship must run the gate under the environment owner so ambient services"
             " are provisioned or reused deterministically",
         )
-        gate = makefile[makefile.index("ship-gate: check-ship-owner release-all-check") :]
+        gate = self.require_match(
+            r"(?m)^ship-gate: check-ship-owner\n(?:\t.*\n)+",
+            makefile,
+            "ship-gate's only prerequisite is the owner check: a sibling"
+            " prerequisite races it under parallel make",
+        )
+        self.assertIn(
+            "$(MAKE) release-all-check",
+            gate.group(0),
+            "ship-gate must run release-all-check from its recipe, after the"
+            " owner check has succeeded",
+        )
         self.assertIn(
             "$(MAKE) ship-suites",
-            gate,
+            gate.group(0),
             "ship-gate must run the suites through ship-suites rather than as recipe lines",
         )
 
@@ -288,9 +299,41 @@ class ShipCIContractTests(unittest.TestCase):
         )
         self.refuse(["make", "-s", "ship-gate"], base_env, "ship-env")
         self.refuse(
+            ["make", "-s", "check-ship-invocation", "MAKEOVERRIDES="],
+            base_env,
+            "MAKEOVERRIDES",
+        )
+        self.refuse(
+            [
+                "make",
+                "-s",
+                "check-ship-invocation",
+                "MAKEOVERRIDES=",
+                "OAS_TEST_ROOT=/tmp/not-canonical",
+            ],
+            base_env,
+            "MAKEOVERRIDES",
+        )
+        self.refuse(
             ["make", "-s", "ship-gate", "SHIP_SUITES="],
             {**base_env, "AWEB_SHIP_ENV_READY": "1"},
             "SHIP_SUITES",
+        )
+        parallel = subprocess.run(
+            ["make", "-j2", "ship-gate"],
+            cwd=REPO_ROOT,
+            env=base_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        output = parallel.stdout + parallel.stderr
+        self.assertNotEqual(parallel.returncode, 0)
+        self.assertIn("refuses", output)
+        self.assertNotIn(
+            "Validating versions",
+            output,
+            "under parallel make the gate must not start before the owner refusal",
         )
 
     def test_ship_environment_owner_proves_its_arms(self) -> None:

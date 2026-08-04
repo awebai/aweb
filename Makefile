@@ -744,6 +744,11 @@ ship-suites:
 #    environment copies of the other release variables are inert and allowed);
 #  - CLI_VERSION is additionally refused from the environment outright.
 check-ship-invocation:
+	@if [ "$(origin MAKEOVERRIDES)" = "command line" ]; then \
+		echo "ERROR: ship refuses MAKEOVERRIDES on the command line; suppressing override propagation is itself an override."; \
+		echo "       Run plain 'make ship'."; \
+		exit 1; \
+	fi
 	@if [ -n "$(MAKEOVERRIDES)" ]; then \
 		echo "ERROR: ship refuses command-line variable overrides: $(MAKEOVERRIDES)"; \
 		echo "       The gate derives its own versions and suite list. Run plain 'make ship'."; \
@@ -771,7 +776,12 @@ check-ship-owner:
 ship: check-ship-invocation
 	@./scripts/ship-env.sh $(MAKE) ship-gate
 
-ship-gate: check-ship-owner release-all-check
+# The owner check is ship-gate's ONLY prerequisite: a sibling prerequisite
+# races it under parallel make, letting the gate start work before the
+# refusal. Recipe-after-prerequisite is a make guarantee at any -j, so the
+# gate stages run as sequential sub-makes from the recipe.
+ship-gate: check-ship-owner
+	$(MAKE) release-all-check
 	@echo ""
 	$(MAKE) ship-suites
 	@echo ""
