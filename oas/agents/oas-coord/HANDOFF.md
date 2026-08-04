@@ -153,8 +153,19 @@ comment. An earlier revision of this file said "descriptions are restructured"
 when only comments had been added; that was an overclaim about board state and
 is corrected here.
 
-**`.47` now has a real recipient:** `atext.aweb.ai/ac-coordinator` owns the hosted
-cleanup contract. It stops being a parked task on our board.
+**`.47` is OURS to build, not anyone else's to decide.** Its own description is
+authoritative and says so: AC already exposes the revocation path, and what was
+missing was us performing revocation from the owner's context rather than
+expecting the worker to clean up after itself. One step: owner-initiated retire
+on a hosted team revokes the certificate through an authenticated owner/admin
+call, executed by the SPAWNER, with OAS receiving no owner credential. It blocks
+`.44`.
+
+An earlier version of this line said `atext.aweb.ai/ac-coordinator` owns it. That
+routing is withdrawn: it contradicted the task, no such alias was ever confirmed
+reachable, and treating it as routed is how this task sat parked once already.
+`.47` covers REVOKE. It does not by itself make hosted MINTING work, which is the
+separate reason a spawned worker currently cannot join the team (`.66`).
 
 **`.63` is unaffected by convergence** and remains the single blocker on a
 demonstrable resident.
