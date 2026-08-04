@@ -1565,3 +1565,40 @@ test("real OAS spawn rejects a non-attach binding without minting or cleanup aut
   });
   assert.equal(existsSync(f.awLog), false, "missing binding metadata must grant no cleanup authority");
 });
+
+test("a preflight failure with no configured settings is reported as itself, not as missing identity setup", () => {
+  const f = fixture({ mode: "attach-existing", schemaVersion: 2 });
+  configureCustomerTeamDefault(f);
+  // With no identity_binding configured the capability still forms a working
+  // default binding, so a later preflight failure is NOT a settings problem.
+  // Fail exactly one authority call, the way the real CLI refuses a command
+  // that is not identity-home-aware, and leave every other call working.
+  const delegate = join(f.bin, "aw-delegate");
+  cpSync(f.awPath, delegate);
+  write(join(f.bin, "aw"), [
+    "#!/bin/sh",
+    "for arg in \"$@\"; do",
+    "  if [ \"$arg\" = \"import-request\" ]; then",
+    "    echo 'command \"aw id team import-request\" is not yet identity-home-aware' >&2",
+    "    exit 1",
+    "  fi",
+    "done",
+    `exec ${JSON.stringify(delegate)} "$@"`,
+    "",
+  ].join("\n"), 0o755);
+
+  const result = statusCommand(["--soul", "developer", "--json"], f.repo, f.env);
+  const report = JSON.parse(result.stdout);
+  assert.equal(
+    /identity setup is required/i.test(report.message),
+    false,
+    `an authority failure must not be relabelled as missing settings: ${result.stdout}`,
+  );
+  assert.equal(
+    /no supported one-command identity setup exists yet/i.test(String(report.next_action)),
+    false,
+    `the next action must address the real failure: ${result.stdout}`,
+  );
+  assert.equal(report.identity_resources_created, false);
+  assert.equal(report.instance_or_session_created, false);
+});

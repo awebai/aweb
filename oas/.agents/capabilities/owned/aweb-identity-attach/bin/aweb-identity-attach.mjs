@@ -524,8 +524,14 @@ function bindingReadiness(settings, { context, soul, settingsSource }) {
     };
   }
   let binding;
+  let bindingFormed = false;
   try {
     binding = effectiveBindingSettings(settings);
+    // Absent settings are not a missing-setup condition once a default binding
+    // has been formed: everything that fails after this point is a failure of
+    // that binding, and reporting it as missing setup names the wrong cause and
+    // offers a next action that cannot fix it.
+    bindingFormed = true;
     const preflight = preflightBinding(binding, { instanceHome: context, context, soul });
     return {
       report: readinessReport({
@@ -539,7 +545,7 @@ function bindingReadiness(settings, { context, soul, settingsSource }) {
       evidence: { binding, preflight },
     };
   } catch (error) {
-    const missing = settings?.identity_binding == null;
+    const missing = settings?.identity_binding == null && !bindingFormed;
     const durable = settings?.identity_binding?.mode === "provision-durable";
     const issue = error instanceof ReadinessIssue
       ? error
