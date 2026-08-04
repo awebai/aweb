@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -744,6 +745,25 @@ func resolveMailTarget() (string, string, error) {
 	return "address", awid.NormalizeHostedHandleAddress(mailSendToAddress), nil
 }
 
+type e2eeDecryptionUnavailableError struct {
+	statePath string
+	reason    string
+}
+
+func (e *e2eeDecryptionUnavailableError) Error() string {
+	return fmt.Sprintf("E2E decryption unavailable: %s at %s", e.reason, e.statePath)
+}
+
+func configureClientE2EEForRead(cmd *cobra.Command, ctx context.Context, c *aweb.Client, sel *awconfig.Selection) error {
+	err := configureClientE2EE(ctx, c, sel, false)
+	var unavailable *e2eeDecryptionUnavailableError
+	if errors.As(err, &unavailable) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %v\n", unavailable)
+		return nil
+	}
+	return err
+}
+
 func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, required bool) error {
 	if c == nil || c.Client == nil || sel == nil {
 		return usageError("E2E messaging requires an initialized self-custodial workspace")
@@ -765,7 +785,7 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 	if err != nil {
 		if os.IsNotExist(err) {
 			if !required {
-				return nil
+				return &e2eeDecryptionUnavailableError{statePath: statePath, reason: "no encryption key state found"}
 			}
 			return usageError("E2E messaging requires a local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
 		}
@@ -774,7 +794,7 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 	record := state.ActiveRecord()
 	if record == nil {
 		if !required {
-			return nil
+			return &e2eeDecryptionUnavailableError{statePath: statePath, reason: "no active encryption key in state"}
 		}
 		return usageError("E2E messaging requires an active local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
 	}
@@ -889,7 +909,7 @@ var mailInboxCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := configureClientE2EE(ctx, c, sel, false); err != nil {
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
 			return err
 		}
 		resp, err := c.Inbox(ctx, awid.InboxParams{
@@ -1042,7 +1062,7 @@ var mailShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := configureClientE2EE(ctx, c, sel, false); err != nil {
+		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
 			return err
 		}
 		var resp *awid.InboxResponse

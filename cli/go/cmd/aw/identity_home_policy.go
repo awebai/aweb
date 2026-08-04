@@ -51,6 +51,7 @@ var identityHomeAwareCommandPaths = map[string]struct{}{
 	"aw mail inbox":             {},
 	"aw mail reply":             {},
 	"aw mail send":              {},
+	"aw mail show":              {},
 	"aw reset":                  {},
 	"aw role-name set":          {},
 	"aw run":                    {},
