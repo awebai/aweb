@@ -2325,10 +2325,19 @@ class SkewMatrixVerbTests(unittest.TestCase):
                         state=state, source_sha="s1", measurement=support,
                     ),
                 )
-        self.assertEqual(code, 1, "server side lacks a lane_ref: refusal")
-        # A coherent matrix run needs lane refs on all touched sides; the
-        # verb still reports the refusal deterministically.
-        self.assertIn("lane", buffer.getvalue() + str(code))
+        self.assertEqual(code, 0, "server is untouched: a one-side matrix")
+        matrix = json.loads(buffer.getvalue())
+        self.assertTrue(matrix["cells"])
+        for row in matrix["cells"]:
+            self.assertEqual(row["edge"], "client<->server")
+            self.assertEqual(row["a"]["kind"], "candidate")
+            self.assertEqual(
+                row["a"]["lane_ref"]["artifact"],
+                "gh-artifact:awebai/aweb:1:2",
+                "the exact staged reference is in the printed matrix",
+            )
+            self.assertEqual(row["b"]["kind"], "published")
+            self.assertEqual(row["b"]["version"], "3.0.0")
 
 
 if __name__ == "__main__":
