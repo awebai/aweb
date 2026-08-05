@@ -239,4 +239,25 @@ for bad in "--sha nope" "--version v1.2.3" "--digest $(printf '0%.0s' {1..64})";
 done
 ok "malformed input literals refused (3 forms)"
 
+# ── decide-npm: only 404 proves absence ─────────────────────────────
+D="$(printf '7%.0s' {1..64})"; E="$(printf '8%.0s' {1..64})"
+[[ "$(bash "$LANE" decide-npm --observed-status 404 --digest "$D")" == "PUBLISH" ]] \
+  || fail "404 must permit exactly one publication"
+[[ "$(bash "$LANE" decide-npm --observed-status 200 --digest "$D" --observed "$D")" == "ADOPT" ]] \
+  || fail "exact present bytes must adopt"
+ok "decide-npm publishes on proven absence, adopts exact bytes"
+expect_refusal "present mismatch is permanent" "permanent" \
+  decide-npm --observed-status 200 --digest "$D" --observed "$E"
+expect_refusal "outage is never absence" "never proof of absence" \
+  decide-npm --observed-status 503 --digest "$D"
+expect_refusal "unavailable digest never acts" "blind" \
+  decide-npm --observed-status 200 --digest "$D" --observed unavailable
+[[ "$(bash "$LANE" decide-npm --observed-status 404)" == "ABSENT" ]] \
+  || fail "guard probe: 404 must prove absence"
+ok "guard probe proves absence only from 404"
+expect_refusal "guard probe refuses present version" "already exists" \
+  decide-npm --observed-status 200
+expect_refusal "guard probe refuses outage" "never proof of absence" \
+  decide-npm --observed-status 500
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"
