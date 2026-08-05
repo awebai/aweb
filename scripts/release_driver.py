@@ -2730,6 +2730,32 @@ class SkewCell:
     b: dict
 
 
+def canonical_json_digest(value) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def skew_cell_preimage(cell: SkewCell) -> dict:
+    return {
+        "edge_id": cell.edge_id,
+        "edge_a": cell.edge_a,
+        "edge_b": cell.edge_b,
+        "journey": cell.journey,
+        "artifacts": dict(cell.artifacts),
+        "declared_direction": cell.declared_direction,
+        "direction": cell.direction,
+        "a_kind": cell.a_kind,
+        "b_kind": cell.b_kind,
+        "a": dict(cell.a),
+        "b": dict(cell.b),
+    }
+
+
+def skew_cell_identity(cell: SkewCell) -> str:
+    return canonical_json_digest(skew_cell_preimage(cell))
+
+
 def _candidate_side(component: str, staged: dict) -> dict:
     entry = staged.get(component)
     if entry is None or not entry.digest:
@@ -2818,7 +2844,31 @@ def compute_skew_cells(
     a_touched = edge.a in moving
     b_touched = edge.b in moving
     pairs: list[tuple[str, dict, str, dict]] = []
-    if a_touched and b_touched:
+    if (
+        edge.direction == "persisted-state-both"
+        and edge.a == edge.b
+        and a_touched
+    ):
+        # Persisted-state skew is temporal, not two independent network peers.
+        # One exact candidate is tested against EVERY measured published
+        # version in the canonical a=candidate/b=published layout. Generic
+        # both-side expansion would invent candidate×candidate and duplicate
+        # aliases of the same actor, neither of which can prove upgrade or
+        # non-atomic rollback compatibility.
+        candidate = _candidate_side(edge.a, staged)
+        versions = supported_for(edge.a)
+        latest = published_versions[edge.a]
+        for index, version in enumerate(versions):
+            kind = (
+                "published-latest" if version == latest
+                else "published-floor" if index == 0
+                else "published"
+            )
+            pairs.append((
+                "candidate", candidate, kind,
+                _published_side(edge.b, version, kind),
+            ))
+    elif a_touched and b_touched:
         cand_a = _candidate_side(edge.a, staged)
         cand_b = _candidate_side(edge.b, staged)
         pairs.append(("candidate", cand_a, "candidate", cand_b))
@@ -2859,6 +2909,152 @@ def compute_skew_cells(
     return cells
 
 
+def _staged_skew_identity(entry: ReceiptEntry) -> dict:
+    return {
+        "version": entry.version,
+        "digest": entry.digest,
+        "digest_set": entry.digest_set,
+        "lane_ref": entry.lane_ref,
+    }
+
+
+def freeze_skew_matrix(
+    edge: "RuntimeContractEdge", *, moving: set, staged: dict,
+    support: dict, published_versions: dict, staged_manifest_digest: str,
+) -> dict:
+    """Seal the complete ordered matrix preimage before any child executes.
+
+    The document is self-recomputing: it carries exactly the edge, endpoint
+    staged identities, ordered measured support, frozen publication truth, and
+    every full cell preimage. A child consumes this identity instead of
+    reconstructing completeness from whatever report files happen to exist.
+    """
+    if not re.fullmatch(r"[0-9a-f]{64}", staged_manifest_digest or ""):
+        raise ReceiptError(
+            "skew matrix requires the exact 64-hex staged-manifest digest"
+        )
+    endpoint_names = sorted({edge.a, edge.b})
+    relevant_staged = {
+        name: _staged_skew_identity(staged[name])
+        for name in endpoint_names
+        if name in moving and name in staged
+    }
+    cells = compute_skew_cells(
+        edge, moving=set(moving), staged=staged, support=support,
+        published_versions=published_versions,
+    )
+    preimage = {
+        "schema": "aweb.release-skew-matrix.v1",
+        "edge_id": edge_identity(edge),
+        "edge": {
+            "a": edge.a,
+            "b": edge.b,
+            "journey": edge.journey,
+            "artifacts": dict(edge.artifacts),
+            "direction": edge.direction,
+        },
+        "moving": sorted(set(moving)),
+        "staged_manifest_digest": staged_manifest_digest,
+        "staged": relevant_staged,
+        "support": json.loads(json.dumps(support, sort_keys=True)),
+        "published_versions": {
+            name: published_versions.get(name) for name in endpoint_names
+        },
+        "cells": [
+            {
+                "cell_id": skew_cell_identity(cell),
+                "preimage": skew_cell_preimage(cell),
+            }
+            for cell in cells
+        ],
+    }
+    return {
+        "matrix_id": canonical_json_digest(preimage),
+        "preimage": preimage,
+    }
+
+
+def validate_skew_matrix_document(document: dict) -> list[SkewCell]:
+    if not isinstance(document, dict) or set(document) != {"matrix_id", "preimage"}:
+        raise ReceiptError("skew matrix document must contain matrix_id and preimage")
+    preimage = document.get("preimage")
+    required = {
+        "schema", "edge_id", "edge", "moving", "staged_manifest_digest",
+        "staged", "support", "published_versions", "cells",
+    }
+    if not isinstance(preimage, dict) or set(preimage) != required:
+        raise ReceiptError("skew matrix preimage has the wrong schema")
+    if preimage.get("schema") != "aweb.release-skew-matrix.v1":
+        raise ReceiptError("skew matrix schema is not supported")
+    expected_matrix_id = canonical_json_digest(preimage)
+    if document.get("matrix_id") != expected_matrix_id:
+        raise ReceiptError("skew matrix identity does not equal its full preimage")
+    if not re.fullmatch(
+        r"[0-9a-f]{64}", preimage.get("staged_manifest_digest") or ""
+    ):
+        raise ReceiptError("skew matrix staged-manifest digest is malformed")
+    edge_data = preimage.get("edge")
+    if not isinstance(edge_data, dict) or set(edge_data) != {
+        "a", "b", "journey", "artifacts", "direction"
+    }:
+        raise ReceiptError("skew matrix edge preimage is malformed")
+    edge = RuntimeContractEdge(
+        a=edge_data["a"], b=edge_data["b"], journey=edge_data["journey"],
+        artifacts=edge_data["artifacts"], direction=edge_data["direction"],
+        supported={"policy": "additive-only"},
+    )
+    if preimage.get("edge_id") != edge_identity(edge):
+        raise ReceiptError("skew matrix edge identity does not equal its preimage")
+    moving = preimage.get("moving")
+    if (
+        not isinstance(moving, list)
+        or any(not isinstance(name, str) or not name for name in moving)
+        or moving != sorted(set(moving))
+    ):
+        raise ReceiptError("skew matrix moving set is malformed")
+    staged_data = preimage.get("staged")
+    staged_fields = {"version", "digest", "digest_set", "lane_ref"}
+    if (
+        not isinstance(staged_data, dict)
+        or any(
+            not isinstance(name, str)
+            or not isinstance(identity, dict)
+            or set(identity) != staged_fields
+            for name, identity in staged_data.items()
+        )
+    ):
+        raise ReceiptError("skew matrix staged identities are malformed")
+    if not isinstance(preimage.get("support"), dict) or not isinstance(
+        preimage.get("published_versions"), dict
+    ):
+        raise ReceiptError("skew matrix support/publication truth is malformed")
+    if not isinstance(preimage.get("cells"), list):
+        raise ReceiptError("skew matrix cell list is malformed")
+    try:
+        staged = {
+            name: ReceiptEntry(**identity)
+            for name, identity in staged_data.items()
+        }
+    except (TypeError, AttributeError) as exc:
+        raise ReceiptError("skew matrix staged identity is malformed") from exc
+    recomputed = compute_skew_cells(
+        edge, moving=set(moving), staged=staged,
+        support=preimage.get("support"),
+        published_versions=preimage.get("published_versions"),
+    )
+    declared_cells = preimage.get("cells")
+    expected_cells = [
+        {"cell_id": skew_cell_identity(cell),
+         "preimage": skew_cell_preimage(cell)}
+        for cell in recomputed
+    ]
+    if declared_cells != expected_cells:
+        raise ReceiptError(
+            "skew matrix cells do not equal the coordinator's recomputed matrix"
+        )
+    return recomputed
+
+
 class MatrixSkewRunner:
     """The skew provider run_plan executes between staging and the first
     publish: every accepted edge is ordered and invoked cell by cell, and
@@ -2869,21 +3065,54 @@ class MatrixSkewRunner:
         self._support = support
         self._published = dict(published_versions)
         self._moving = set(moving)
+        self._frozen_matrices: dict[str, tuple[dict, list[SkewCell]]] = {}
 
     def has_matrix(self, edge) -> bool:
         return self._harness.has_journey(edge)
 
-    def execute(self, edge, staged: dict) -> None:
+    def freeze_matrix(
+        self, edge, staged: dict, *, staged_manifest_digest: str
+    ) -> dict:
         if edge.declared_incomplete:
             raise ReceiptError(
                 f"runtime-contract {edge.a}<->{edge.b} is declared-incomplete;"
                 " skew never runs on unmeasured support"
             )
         support = self._support.resolve(edge.supported.get("record", {}), edge)
-        cells = compute_skew_cells(
-            edge, moving=self._moving, staged=staged,
-            support=support, published_versions=self._published,
+        document = freeze_skew_matrix(
+            edge, moving=self._moving, staged=staged, support=support,
+            published_versions=self._published,
+            staged_manifest_digest=staged_manifest_digest,
         )
+        freeze = getattr(self._harness, "freeze_matrix", None)
+        if freeze is None:
+            raise ReceiptError(
+                f"skew harness for {edge.journey!r} cannot persist the exact "
+                "frozen matrix before cell execution"
+            )
+        freeze(document)
+        cells = validate_skew_matrix_document(document)
+        self._frozen_matrices[edge_identity(edge)] = (document, cells)
+        return document
+
+    def execute(self, edge, staged: dict) -> None:
+        frozen = self._frozen_matrices.get(edge_identity(edge))
+        if frozen is None:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b} matrix is not frozen; "
+                "cell execution cannot infer completeness"
+            )
+        document, cells = frozen
+        expected_staged = document["preimage"]["staged"]
+        current_staged = {
+            name: _staged_skew_identity(staged[name])
+            for name in expected_staged
+            if name in staged
+        }
+        if current_staged != expected_staged:
+            raise ReceiptError(
+                "staged identities changed after the skew matrix was frozen"
+            )
         for cell in cells:
             try:
                 self._harness.run(cell)
@@ -2894,6 +3123,9 @@ class MatrixSkewRunner:
                     f"skew red on {cell.edge_a}<->{cell.edge_b} "
                     f"[{cell.a_kind} x {cell.b_kind}, {cell.direction}]: {exc}"
                 ) from exc
+        finish = getattr(self._harness, "finish_matrix", None)
+        if finish is not None:
+            finish(document)
 
 
 class AnchoredMeasurementAuthority:
@@ -2997,25 +3229,53 @@ class _FrozenSupport:
 
 
 class SkewHarnessRouter:
-    """Routes each cell to the checked-in harness registered for its exact
-    journey string (scripts/release_skew_harnesses.py). An unregistered
-    journey has no matrix, which the release path refuses - never skips."""
+    """Routes a frozen matrix and all its cells to ONE checked-in child.
+
+    Reusing the child instance preserves the exact matrix identity across cell
+    calls; creating a fresh factory result per cell would strand completeness
+    in process-local state and force the child to guess from directory contents.
+    """
+
+    def __init__(self):
+        self._instances: dict[str, object] = {}
 
     def has_journey(self, edge) -> bool:
         import release_skew_harnesses
 
         return edge.journey in release_skew_harnesses.REGISTRY
 
-    def run(self, cell) -> None:
+    def _instance(self, journey: str):
         import release_skew_harnesses
 
-        factory = release_skew_harnesses.REGISTRY.get(cell.journey)
+        factory = release_skew_harnesses.REGISTRY.get(journey)
         if factory is None:
             raise ReceiptError(
-                f"no skew harness is registered for journey "
-                f"{cell.journey!r}"
+                f"no skew harness is registered for journey {journey!r}"
             )
-        factory().run(cell)
+        if journey not in self._instances:
+            self._instances[journey] = factory()
+        return self._instances[journey]
+
+    def freeze_matrix(self, document) -> None:
+        validate_skew_matrix_document(document)
+        journey = document["preimage"]["edge"]["journey"]
+        harness = self._instance(journey)
+        freeze = getattr(harness, "freeze_matrix", None)
+        if freeze is None:
+            raise ReceiptError(
+                f"skew harness for {journey!r} cannot persist a frozen matrix"
+            )
+        freeze(document)
+
+    def run(self, cell) -> None:
+        self._instance(cell.journey).run(cell)
+
+    def finish_matrix(self, document) -> None:
+        journey = document["preimage"]["edge"]["journey"]
+        harness = self._instance(journey)
+        finish = getattr(harness, "finish_matrix", None)
+        if finish is not None:
+            finish(document)
 
 
 def build_production_skew(frozen: "FrozenPlan", *, state, measurement,
@@ -3610,6 +3870,11 @@ def run_plan(
     if _resume_manifest is not None:
         manifest = _resume_manifest
         manifest_id = manifest["_artifact_id"]
+        manifest_digest = manifest_id.rsplit(":", 1)[-1]
+        if not re.fullmatch(r"[0-9a-f]{64}", manifest_digest):
+            raise ReceiptError(
+                "resumed staged-manifest identity carries no exact digest"
+            )
         staged = {
             name: ReceiptEntry(
                 version=e["version"],
@@ -3672,6 +3937,12 @@ def run_plan(
         )
         manifest["_artifact_id"] = manifest_id
 
+    freeze_matrix = getattr(skew, "freeze_matrix", None)
+    if freeze_matrix is not None:
+        for edge in plan.runtime_contract_edges:
+            freeze_matrix(
+                edge, staged, staged_manifest_digest=manifest_digest
+            )
     for edge in plan.runtime_contract_edges:
         skew.execute(edge, staged)
 

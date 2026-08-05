@@ -3,8 +3,9 @@
 This module is a child of the release driver's frozen matrix.  It does not
 compute cells: it consumes one exact :class:`release_driver.SkewCell`, obtains
 the wheel bytes named by that cell, and proves a real populated PostgreSQL
-database survives first -> second -> first server operation.  The final first
-server run is the non-atomic rollout check.
+database survives published -> candidate -> published operation. The frozen
+cell direction chooses the focal upgrade or non-atomic rollback assertion; it
+never reorders those temporal actors.
 """
 
 from __future__ import annotations
@@ -53,8 +54,11 @@ def _url_bytes(url: str) -> bytes:
 class WheelResolver:
     """Resolve exact staged and published server wheels from cell identity."""
 
-    def __init__(self, *, staged_store=None, pypi_fetch=None):
+    def __init__(
+        self, *, staged_store=None, staged_authority=None, pypi_fetch=None
+    ):
         self._staged_store = staged_store
+        self._staged_authority = staged_authority
         self._pypi_fetch = pypi_fetch or _url_bytes
 
     def resolve(self, kind: str, side: dict, locator: str) -> WheelIdentity:
@@ -77,12 +81,23 @@ class WheelResolver:
                 repo="awebai/aweb",
                 workflow_path=".github/workflows/pypi-release.yml",
             )
+        if self._staged_authority is None:
+            self._staged_authority = rd.GithubArtifactDigestAuthority(
+                repo="awebai/aweb",
+                workflow_path=".github/workflows/pypi-release.yml",
+            )
         lane_data = side.get("lane_ref")
         if lane_data is None:
             raise rd.ReceiptError(
                 "candidate wheel requires the unchanged structured lane reference"
             )
         ref = rd.LaneRef.from_dict(lane_data)
+        authority_digest = self._staged_authority.expected_digest(ref.artifact)
+        if ref.zip_digest != f"sha256:{authority_digest}":
+            raise rd.ReceiptError(
+                f"candidate digest authority records sha256:{authority_digest}, "
+                f"not the frozen LaneRef {ref.zip_digest}"
+            )
         outer = self._staged_store.get(ref.artifact)
         outer_sha = hashlib.sha256(outer).hexdigest()
         if ref.zip_digest != f"sha256:{outer_sha}":
@@ -184,13 +199,76 @@ class WheelResolver:
 
 
 class PersistedStateHarness:
-    """Orchestrate one frozen persisted-state cell and its negative control."""
+    """Consume one coordinator-frozen persisted matrix without inference."""
 
-    def __init__(self, *, resolver: WheelResolver, journey):
+    def __init__(
+        self, *, resolver: WheelResolver, journey=None, journey_factory=None,
+        evidence_dir: Path | None = None,
+    ):
+        if (journey is None) == (journey_factory is None):
+            raise TypeError("provide exactly one of journey or journey_factory")
         self._resolver = resolver
-        self._journey = journey
+        self._fixed_journey = journey
+        self._journey_factory = journey_factory
+        configured = os.getenv("AWEB_PERSISTED_SKEW_EVIDENCE_DIR")
+        self._evidence_dir = Path(evidence_dir or configured or (
+            Path(tempfile.gettempdir()) / "aweb-persisted-skew-evidence"
+        )).resolve()
+        self._evidence_dir.mkdir(parents=True, exist_ok=True)
+        self._matrix: dict | None = None
+        self._cells: dict[str, rd.SkewCell] = {}
+        self._control_path: Path | None = None
 
-    def _validate_cell(self, cell) -> None:
+    def _new_journey(self):
+        if self._fixed_journey is not None:
+            journey, self._fixed_journey = self._fixed_journey, None
+            return journey
+        return self._journey_factory()
+
+    @staticmethod
+    def _atomic_json(path: Path, document: dict) -> Path:
+        body = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_bytes(body)
+        os.replace(temporary, path)
+        return path
+
+    def freeze_matrix(self, document) -> Path:
+        cells = rd.validate_skew_matrix_document(document)
+        edge = document["preimage"]["edge"]
+        if (
+            edge != {
+                "a": "server", "b": "server", "journey": JOURNEY,
+                "artifacts": ARTIFACTS, "direction": "persisted-state-both",
+            }
+            or any(
+                cell.a_kind != "candidate"
+                or not cell.b_kind.startswith("published")
+                for cell in cells
+            )
+        ):
+            raise rd.ReceiptError(
+                "persisted-state child accepts only its exact canonical "
+                "candidate/published frozen matrix"
+            )
+        if self._matrix is not None and self._matrix != document:
+            raise rd.ReceiptError("persisted-state child was given two matrices")
+        self._matrix = json.loads(json.dumps(document))
+        self._cells = {rd.skew_cell_identity(cell): cell for cell in cells}
+        path = self._evidence_dir / f"matrix-{document['matrix_id']}.json"
+        if path.exists() and json.loads(path.read_bytes()) != document:
+            raise rd.ReceiptError("matrix evidence path contains different bytes")
+        return self._atomic_json(path, document)
+
+    def _validate_cell(self, cell) -> str:
+        if self._matrix is None:
+            raise rd.ReceiptError("persisted-state cell arrived before its matrix")
+        cell_id = rd.skew_cell_identity(cell)
+        expected = self._cells.get(cell_id)
+        if expected != cell:
+            raise rd.ReceiptError(
+                "cell is not an exact member of the frozen persisted matrix"
+            )
         if (
             cell.journey != JOURNEY
             or cell.edge_a != "server"
@@ -198,89 +276,163 @@ class PersistedStateHarness:
             or cell.artifacts != ARTIFACTS
             or cell.declared_direction != "persisted-state-both"
             or cell.direction not in {"a-to-b", "b-to-a"}
+            or cell.a_kind != "candidate"
+            or not cell.b_kind.startswith("published")
         ):
             raise rd.ReceiptError(
-                "persisted-state harness accepts only the exact persisted-state "
-                f"edge contract, got {cell!r}"
+                "persisted-state cell is not the canonical candidate/published "
+                f"layout: {cell!r}"
             )
+        return cell_id
+
+    def _cleanup(self, journey, operation_error=None) -> dict:
+        try:
+            cleanup = journey.close()
+        except Exception as cleanup_error:
+            if operation_error is not None:
+                raise rd.ReceiptError(
+                    f"targeted cleanup failed after journey error: {cleanup_error}"
+                ) from operation_error
+            raise
+        if not isinstance(cleanup, dict) or not all((
+            cleanup.get("targeted_containers_absent"),
+            cleanup.get("processes_exited"), cleanup.get("temp_root_absent"),
+        )):
+            raise rd.ReceiptError(
+                f"targeted cleanup returned incomplete proof: {cleanup!r}"
+            )
+        return cleanup
 
     def run(self, cell) -> None:
-        self._validate_cell(cell)
-        a = self._resolver.resolve(cell.a_kind, cell.a, cell.artifacts["a"])
-        b = self._resolver.resolve(cell.b_kind, cell.b, cell.artifacts["b"])
-        first, second = (a, b) if cell.direction == "a-to-b" else (b, a)
-        first_kind, second_kind = (
-            (cell.a_kind, cell.b_kind)
-            if cell.direction == "a-to-b"
-            else (cell.b_kind, cell.a_kind)
+        cell_id = self._validate_cell(cell)
+        candidate = self._resolver.resolve(
+            cell.a_kind, cell.a, cell.artifacts["a"]
         )
-        database = None
+        published = self._resolver.resolve(
+            cell.b_kind, cell.b, cell.artifacts["b"]
+        )
+        journey = self._new_journey()
+        report = None
+        operation_error = None
         try:
-            database = self._journey.new_database(cell)
-            with self._journey.serve(first, database) as server:
-                self._journey.seed(server, cell)
-                seed_phase = (
-                    "published-seed"
-                    if first_kind.startswith("published") else "candidate-seed"
-                )
-                self._journey.exercise(server, seed_phase, cell)
-            before = self._journey.database_identity(database)
+            database = journey.new_database(cell)
+            with journey.serve(published, database) as server:
+                journey.seed(server, cell)
+                journey.published_seed_probe(server, cell)
+            seeded = journey.database_identity(database)
 
-            with self._journey.serve(second, database) as server:
-                second_phase = (
-                    "candidate-on-populated"
-                    if second_kind == "candidate" else "published-on-populated"
-                )
-                self._journey.exercise(server, second_phase, cell)
-            upgraded = self._journey.database_identity(database)
+            with journey.serve(candidate, database) as server:
+                if cell.direction == "b-to-a":
+                    journey.candidate_upgrade_assertion(server, cell)
+                else:
+                    journey.candidate_prepare_rollback(server, cell)
+            after_candidate = journey.database_identity(database)
 
-            with self._journey.serve(first, database) as server:
-                first_again_phase = (
-                    "published-on-upgraded"
-                    if first_kind.startswith("published")
-                    else "candidate-on-upgraded"
-                )
-                self._journey.exercise(server, first_again_phase, cell)
+            with journey.serve(published, database) as server:
+                if cell.direction == "a-to-b":
+                    journey.published_rollback_assertion(server, cell)
+                else:
+                    journey.published_after_upgrade(server, cell)
+            after_published = journey.database_identity(database)
 
-            control = self._journey.clone_database(database)
-            with self._journey.serve(second, control) as server:
-                self._journey.exercise(
-                    server, "negative-control-baseline", cell
-                )
-            self._journey.break_schema(control)
-            control_error = None
-            with self._journey.serve(second, control) as server:
+            report = {
+                "schema": "aweb.persisted-state-skew-cell.v2",
+                "matrix_id": self._matrix["matrix_id"],
+                "cell_id": cell_id,
+                "cell": rd.skew_cell_preimage(cell),
+                "candidate": self._wheel_report(candidate, cell.a_kind),
+                "published": self._wheel_report(published, cell.b_kind),
+                "chronology": ["published", "candidate", "published"],
+                "focal_actor": (
+                    "candidate" if cell.direction == "b-to-a" else "published"
+                ),
+                "database_seeded": seeded,
+                "database_after_candidate": after_candidate,
+                "database_after_published": after_published,
+                "result": "green",
+            }
+        except Exception as exc:
+            operation_error = exc
+        cleanup = self._cleanup(journey, operation_error)
+        if operation_error is not None:
+            raise operation_error
+        report["cleanup"] = cleanup
+        report["report_id"] = rd.canonical_json_digest(report)
+        path = self._evidence_dir / (
+            f"cell-{self._matrix['matrix_id']}-{cell_id}.json"
+        )
+        self._atomic_json(path, report)
+
+    def finish_matrix(self, document) -> Path:
+        if document != self._matrix:
+            raise rd.ReceiptError("finish request does not equal the frozen matrix")
+        if self._control_path is not None:
+            raise rd.ReceiptError("persisted-state negative control ran more than once")
+        self._control_path = self.run_negative_control()
+        return self._control_path
+
+    def run_negative_control(self) -> Path:
+        if self._matrix is None:
+            raise rd.ReceiptError("negative control requires a frozen matrix")
+        latest = [
+            cell for cell in self._cells.values()
+            if cell.b_kind == "published-latest" and cell.direction == "b-to-a"
+        ]
+        if len(latest) != 1:
+            raise rd.ReceiptError(
+                "negative control requires one exact latest published/candidate cell"
+            )
+        cell = latest[0]
+        candidate = self._resolver.resolve(
+            cell.a_kind, cell.a, cell.artifacts["a"]
+        )
+        published = self._resolver.resolve(
+            cell.b_kind, cell.b, cell.artifacts["b"]
+        )
+        journey = self._new_journey()
+        operation_error = None
+        report = None
+        try:
+            database = journey.new_database(cell)
+            with journey.serve(published, database) as server:
+                journey.seed(server, cell)
+                journey.published_seed_probe(server, cell)
+            with journey.serve(candidate, database) as server:
+                journey.candidate_prepare_rollback(server, cell)
+            control = journey.clone_database(database)
+            with journey.serve(candidate, control) as server:
+                baseline = journey.mail_control_baseline(server, cell)
+            journey.break_schema(control)
+            failure = None
+            with journey.serve(candidate, control) as server:
                 try:
-                    self._journey.exercise(server, "known-breaking-schema", cell)
-                except Exception as exc:  # the control is required to go red
-                    control_error = f"{type(exc).__name__}: {exc}"
-            if control_error is None:
+                    journey.mail_control_failure(server, cell)
+                except Exception as exc:
+                    failure = exc
+            if failure is None:
                 raise rd.ReceiptError(
-                    "persisted-state negative control stayed green after "
-                    "dropping aweb.messages.subject"
+                    "known-breaking messages.subject control stayed green"
                 )
-
-            self._journey.write_report({
-                "schema": "aweb.persisted-state-skew-measurement.v1",
-                "edge_id": cell.edge_id,
-                "edge": {"a": cell.edge_a, "b": cell.edge_b},
-                "journey": cell.journey,
-                "artifacts": dict(cell.artifacts),
-                "declared_direction": cell.declared_direction,
-                "cell_direction": cell.direction,
-                "first": self._wheel_report(first, first_kind),
-                "second": self._wheel_report(second, second_kind),
-                "database_seeded": before,
-                "database_after_transition": upgraded,
-                "negative_control": {
-                    "baseline": "green",
-                    "mutation": "ALTER TABLE aweb.messages DROP COLUMN subject",
-                    "result": "red",
-                    "error": control_error,
-                },
-            })
-        finally:
-            self._journey.close()
+            causal = journey.assert_causal_mail_failure(failure)
+            report = {
+                "schema": "aweb.persisted-state-skew-control.v1",
+                "matrix_id": self._matrix["matrix_id"],
+                "candidate": self._wheel_report(candidate, cell.a_kind),
+                "published": self._wheel_report(published, cell.b_kind),
+                "baseline": baseline,
+                "mutation": "ALTER TABLE aweb.messages DROP COLUMN subject",
+                "causal_signal": causal,
+                "result": "red-as-required",
+            }
+        except Exception as exc:
+            operation_error = exc
+        cleanup = self._cleanup(journey, operation_error)
+        if operation_error is not None:
+            raise operation_error
+        report["cleanup"] = cleanup
+        report["report_id"] = rd.canonical_json_digest(report)
+        path = self._evidence_dir / f"control-{self._matrix['matrix_id']}.json"
+        return self._atomic_json(path, report)
 
     @staticmethod
     def _wheel_report(wheel: WheelIdentity, kind: str) -> dict:
@@ -295,7 +447,7 @@ class PersistedStateHarness:
 
 def factory():
     return PersistedStateHarness(
-        resolver=WheelResolver(), journey=SubprocessPersistedStateJourney()
+        resolver=WheelResolver(), journey_factory=SubprocessPersistedStateJourney
     )
 
 
@@ -314,14 +466,9 @@ class SubprocessPersistedStateJourney:
     varied, and it always runs from the wheel bytes resolved from the cell.
     """
 
-    def __init__(self, *, evidence_dir: Path | None = None):
+    def __init__(self):
         self._repo = Path(__file__).resolve().parents[1]
         self._root = Path(tempfile.mkdtemp(prefix="aweb-persisted-skew-"))
-        configured = os.getenv("AWEB_PERSISTED_SKEW_EVIDENCE_DIR")
-        self._evidence_dir = Path(evidence_dir or configured or (
-            Path(tempfile.gettempdir()) / "aweb-persisted-skew-evidence"
-        )).resolve()
-        self._evidence_dir.mkdir(parents=True, exist_ok=True)
         suffix = uuid.uuid4().hex[:10]
         self._postgres = f"aweb-skew-pg-{suffix}"
         self._redis = f"aweb-skew-redis-{suffix}"
@@ -330,6 +477,8 @@ class SubprocessPersistedStateJourney:
         self._awid_port = self._free_port()
         self._aweb_port = self._free_port()
         self._processes: list[subprocess.Popen] = []
+        self._server_exit_codes: list[int] = []
+        self._containers: list[str] = []
         self._log_handles = []
         self._installed: dict[str, Path] = {}
         self._markers: list[str] = []
@@ -337,6 +486,8 @@ class SubprocessPersistedStateJourney:
         self._counter = 0
         self._started = False
         self._current_database: str | None = None
+        self._current_server_log: Path | None = None
+        self._closed_proof: dict | None = None
 
     @staticmethod
     def _free_port() -> int:
@@ -425,11 +576,13 @@ class SubprocessPersistedStateJourney:
             "-p", f"127.0.0.1:{self._postgres_port}:5432",
             "postgres:17-alpine",
         )
+        self._containers.append(self._postgres)
         self._docker(
             "run", "--rm", "-d", "--name", self._redis,
             "-p", f"127.0.0.1:{self._redis_port}:6379",
             "redis:7-alpine",
         )
+        self._containers.append(self._redis)
         self._wait_postgres()
         self._docker("exec", self._postgres, "createdb", "-U", "aweb", "aweb")
         self._docker("exec", self._postgres, "createdb", "-U", "aweb", "awid")
@@ -494,10 +647,12 @@ class SubprocessPersistedStateJourney:
     def serve(self, wheel, database):
         self._current_database = database
         venv = self._install(wheel)
-        log = open(
-            self._root / f"aweb-{wheel.version}-{database}-{uuid.uuid4().hex[:6]}.log",
-            "wb",
+        log_path = (
+            self._root
+            / f"aweb-{wheel.version}-{database}-{uuid.uuid4().hex[:6]}.log"
         )
+        self._current_server_log = log_path
+        log = open(log_path, "wb")
         self._log_handles.append(log)
         env = {
             **os.environ,
@@ -530,6 +685,7 @@ class SubprocessPersistedStateJourney:
                 process.kill()
                 process.wait(timeout=5)
             log.flush()
+            self._server_exit_codes.append(process.returncode)
 
     def _aw_env(self):
         home = self._root / "home"
@@ -596,9 +752,20 @@ class SubprocessPersistedStateJourney:
         ))
         self._aw("bob", "init", "--url", self._aweb_url)
 
-    def exercise(self, server, phase, cell):
+    def _next_marker(self, cell, phase):
         self._counter += 1
-        marker = f"skew-{cell.edge_id[:12]}-{self._counter}-{phase}"
+        return f"skew-{cell.edge_id[:12]}-{self._counter}-{phase}"
+
+    def _assert_mail_markers(self, phase):
+        inbox = self._aw("bob", "mail", "inbox", "--show-all", "--json")
+        for expected in self._markers:
+            if expected not in inbox:
+                raise rd.ReceiptError(
+                    f"mail journey did not preserve marker {expected!r} during {phase}"
+                )
+
+    def _mail_probe(self, cell, phase):
+        marker = self._next_marker(cell, phase)
         mail_args = [
             "mail", "send", "--plaintext", "--subject", marker,
             "--body", marker, "--json",
@@ -608,22 +775,20 @@ class SubprocessPersistedStateJourney:
         else:
             mail_args.extend(["--conversation-id", self._mail_conversation])
         sent = self._json_output(self._aw("alice", *mail_args))
-        observed_conversation = sent.get("conversation_id")
-        if not observed_conversation:
+        observed = sent.get("conversation_id")
+        if not observed:
             raise rd.ReceiptError("mail journey returned no conversation identity")
-        if self._mail_conversation not in (None, observed_conversation):
+        if self._mail_conversation not in (None, observed):
             raise rd.ReceiptError(
-                "mail continuation changed conversation identity across server restart"
+                "mail continuation changed conversation identity across restart"
             )
-        self._mail_conversation = observed_conversation
+        self._mail_conversation = observed
         self._markers.append(marker)
-        inbox = self._aw("bob", "mail", "inbox", "--show-all", "--json")
-        for expected in self._markers:
-            if expected not in inbox:
-                raise rd.ReceiptError(
-                    f"mail journey did not preserve marker {expected!r} during {phase}"
-                )
+        self._assert_mail_markers(phase)
+        return {"conversation_id": observed, "marker": marker}
 
+    def _chat_probe(self, cell, phase):
+        marker = self._next_marker(cell, phase)
         self._aw(
             "alice", "chat", "send-and-leave", "--plaintext", "bob", marker,
         )
@@ -631,6 +796,8 @@ class SubprocessPersistedStateJourney:
         if marker not in history:
             raise rd.ReceiptError(f"chat journey lost {marker!r} during {phase}")
 
+    def _task_lock_probe(self, cell, phase):
+        marker = self._next_marker(cell, phase)
         self._aw(
             "alice", "task", "create", "--title", marker,
             "--description", "persisted-state skew fixture", "--type", "task",
@@ -639,7 +806,6 @@ class SubprocessPersistedStateJourney:
         tasks = self._aw("alice", "task", "list", "--json")
         if marker not in tasks:
             raise rd.ReceiptError(f"task journey lost {marker!r} during {phase}")
-
         resource = f"persisted-skew-{self._counter}"
         self._aw(
             "alice", "lock", "acquire", "--resource-key", resource,
@@ -649,6 +815,55 @@ class SubprocessPersistedStateJourney:
         if resource not in locks:
             raise rd.ReceiptError(f"lock journey did not observe {resource!r}")
         self._aw("alice", "lock", "release", "--resource-key", resource, "--json")
+
+    def published_seed_probe(self, server, cell):
+        self._mail_probe(cell, "published-seed")
+        self._chat_probe(cell, "published-seed")
+        self._task_lock_probe(cell, "published-seed")
+
+    def candidate_upgrade_assertion(self, server, cell):
+        self._mail_probe(cell, "candidate-upgrade-focal")
+        self._chat_probe(cell, "candidate-upgrade-focal")
+        self._task_lock_probe(cell, "candidate-upgrade-focal")
+
+    def published_after_upgrade(self, server, cell):
+        self._assert_mail_markers("published-after-upgrade")
+        self._task_lock_probe(cell, "published-after-upgrade")
+
+    def candidate_prepare_rollback(self, server, cell):
+        self._chat_probe(cell, "candidate-prepares-rollback")
+        self._task_lock_probe(cell, "candidate-prepares-rollback")
+
+    def published_rollback_assertion(self, server, cell):
+        self._mail_probe(cell, "published-rollback-focal")
+        self._task_lock_probe(cell, "published-rollback-focal")
+
+    def mail_control_baseline(self, server, cell):
+        return self._mail_probe(cell, "negative-control-baseline")
+
+    def mail_control_failure(self, server, cell):
+        return self._mail_probe(cell, "known-breaking-schema")
+
+    def assert_causal_mail_failure(self, error):
+        if self._current_server_log is None:
+            raise rd.ReceiptError("mail control has no exact server diagnostic")
+        for handle in self._log_handles:
+            handle.flush()
+        log = self._current_server_log.read_text(errors="replace")
+        missing_column = (
+            "subject" in log
+            and ("UndefinedColumn" in log or "42703" in log
+                 or "does not exist" in log)
+        )
+        if "http 500" not in str(error).lower() or not missing_column:
+            raise rd.ReceiptError(
+                "mail failure lacks the causal messages.subject/42703 diagnostic"
+            )
+        return {
+            "sqlstate": "42703",
+            "column": "messages.subject",
+            "diagnostic_sha256": hashlib.sha256(log.encode()).hexdigest(),
+        }
 
     def _psql(self, database: str, sql: str) -> bytes:
         return self._docker(
@@ -689,17 +904,11 @@ class SubprocessPersistedStateJourney:
     def break_schema(self, database):
         self._psql(database, "ALTER TABLE aweb.messages DROP COLUMN subject")
 
-    def write_report(self, report):
-        report = {**report, "result": "green"}
-        body = json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
-        identity = hashlib.sha256(body).hexdigest()
-        path = self._evidence_dir / f"cell-{report['edge_id']}-{identity}.json"
-        temporary = path.with_suffix(".tmp")
-        temporary.write_bytes(body)
-        os.replace(temporary, path)
-        print(f"persisted-state skew evidence: {path} sha256:{identity}")
-
     def close(self):
+        if self._closed_proof is not None:
+            return dict(self._closed_proof)
+        errors = []
+        process_results = []
         for process in reversed(self._processes):
             if process.poll() is None:
                 process.terminate()
@@ -708,140 +917,172 @@ class SubprocessPersistedStateJourney:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
-        for name in (self._redis, self._postgres):
-            subprocess.run(
-                ["docker", "rm", "-f", name], capture_output=True
-            )
+            process_results.append(process.returncode)
         for handle in self._log_handles:
             try:
                 handle.close()
-            except Exception:
-                pass
-        shutil.rmtree(self._root, ignore_errors=True)
-
-
-def _version_key(version: str):
-    try:
-        return tuple(int(part) for part in version.split("."))
-    except ValueError as exc:
-        raise rd.ReceiptError(
-            f"measured published version {version!r} is not dotted numeric"
-        ) from exc
-
-
-def aggregate_support(evidence_dir: Path) -> dict:
-    """Build the anchor body only from green exact-cell evidence."""
-    reports = []
-    for path in sorted(Path(evidence_dir).glob("cell-*.json")):
-        body = path.read_bytes()
-        report = json.loads(body)
-        reports.append((path, body, report))
-    if not reports:
-        raise rd.ReceiptError("no persisted-state cell evidence to aggregate")
-    first = reports[0][2]
-    bound = {
-        key: first[key]
-        for key in ("edge_id", "edge", "journey", "artifacts", "declared_direction")
-    }
-    directions = set()
-    published = set()
-    candidate_identities: dict[str, dict] = {}
-    transition_orders: dict[str, set[str]] = {}
-    evidence = []
-    for path, body, report in reports:
-        current = {
-            key: report[key]
-            for key in ("edge_id", "edge", "journey", "artifacts", "declared_direction")
-        }
-        if current != bound:
-            raise rd.ReceiptError(f"evidence {path} binds a different edge")
-        control = report.get("negative_control", {})
-        if (
-            report.get("result") != "green"
-            or control.get("baseline") != "green"
-            or control.get("result") != "red"
-        ):
-            raise rd.ReceiptError(f"evidence {path} is not green with a red control")
-        directions.add(report["cell_direction"])
-        sides = (report["first"], report["second"])
-        candidates = []
-        published_sides = []
-        for side in sides:
-            kind = str(side.get("kind", ""))
-            if kind == "candidate":
-                identity = {
-                    key: side[key]
-                    for key in ("filename", "version", "sha256", "source")
-                }
-                candidate_identities[
-                    json.dumps(identity, sort_keys=True, separators=(",", ":"))
-                ] = identity
-                candidates.append(side)
-            elif kind.startswith("published"):
-                published.add(side["version"])
-                published_sides.append(side)
-        if len(candidates) == 1 and len(published_sides) == 1:
-            version = published_sides[0]["version"]
-            order = (
-                "published-to-candidate"
-                if str(report["first"]["kind"]).startswith("published")
-                else "candidate-to-published"
+            except Exception as exc:
+                errors.append(f"log close: {exc}")
+        for name in reversed(self._containers):
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+            observed = subprocess.run(
+                ["docker", "ps", "-a", "--filter", f"name=^/{name}$",
+                 "--format", "{{.Names}}"],
+                capture_output=True,
             )
-            transition_orders.setdefault(version, set()).add(order)
-        evidence.append({
-            "file": path.name,
-            "sha256": hashlib.sha256(body).hexdigest(),
-            "cell_direction": report["cell_direction"],
-            "first": {k: report["first"][k] for k in ("kind", "version", "sha256")},
-            "second": {k: report["second"][k] for k in ("kind", "version", "sha256")},
-        })
-    if directions != {"a-to-b", "b-to-a"}:
+            if observed.returncode != 0:
+                errors.append(
+                    f"cannot verify targeted container {name}: "
+                    + observed.stderr.decode(errors="replace")[-500:]
+                )
+            elif observed.stdout.strip():
+                errors.append(f"targeted container remains: {name}")
+        shutil.rmtree(self._root, ignore_errors=True)
+        if self._root.exists():
+            errors.append(f"temporary root remains: {self._root}")
+        if errors:
+            raise rd.ReceiptError("; ".join(errors))
+        all_exit_codes = process_results + list(self._server_exit_codes)
+        self._closed_proof = {
+            "targeted_containers": list(self._containers),
+            "targeted_containers_absent": True,
+            "process_exit_codes": all_exit_codes,
+            "processes_exited": all(code is not None for code in all_exit_codes),
+            "temp_root_absent": True,
+        }
+        return dict(self._closed_proof)
+
+
+def _report_without_id(report: dict) -> dict:
+    return {key: value for key, value in report.items() if key != "report_id"}
+
+
+def _candidate_matches_frozen(report: dict, cell: rd.SkewCell) -> bool:
+    candidate = report.get("candidate", {})
+    source = candidate.get("source", {})
+    wheel_digest = (cell.a.get("digest_set") or {}).get(candidate.get("filename"))
+    lane_ref = cell.a.get("lane_ref") or {}
+    return (
+        candidate.get("kind") == "candidate"
+        and candidate.get("version") == cell.a.get("version")
+        and candidate.get("sha256") == wheel_digest
+        and source.get("artifact") == lane_ref.get("artifact")
+        and source.get("source_sha") == lane_ref.get("aw_source_sha")
+        and source.get("outer_zip_sha256")
+            == str(lane_ref.get("zip_digest", "")).removeprefix("sha256:")
+        and source.get("digest_set") == cell.a.get("digest_set")
+        and source.get("canonical_set_digest") == cell.a.get("digest")
+    )
+
+
+def aggregate_support(matrix_path: Path) -> dict:
+    """Build incomplete/unanchored support from one exact frozen matrix.
+
+    Expected report names derive from the matrix's complete cell-ID set. The
+    directory is used only to prove there are neither missing nor extra reports;
+    it never defines what the matrix was.
+    """
+    matrix_path = Path(matrix_path)
+    document = json.loads(matrix_path.read_bytes())
+    cells = rd.validate_skew_matrix_document(document)
+    matrix_id = document["matrix_id"]
+    if matrix_path.name != f"matrix-{matrix_id}.json":
+        raise rd.ReceiptError("matrix filename does not equal its matrix identity")
+    expected = {
+        f"cell-{matrix_id}-{rd.skew_cell_identity(cell)}.json": cell
+        for cell in cells
+    }
+    actual = {
+        path.name: path
+        for path in matrix_path.parent.glob(f"cell-{matrix_id}-*.json")
+    }
+    if set(actual) != set(expected):
         raise rd.ReceiptError(
-            f"persisted-state evidence lacks both directions: {sorted(directions)}"
+            "persisted-state report-file set does not equal the exact frozen "
+            f"cell set; missing={sorted(set(expected) - set(actual))}, "
+            f"extra={sorted(set(actual) - set(expected))}"
         )
+    report_digests = []
+    candidate_identities = {}
+    for name, cell in expected.items():
+        report_bytes = actual[name].read_bytes()
+        report = json.loads(report_bytes)
+        cell_id = rd.skew_cell_identity(cell)
+        if report.get("matrix_id") != matrix_id:
+            raise rd.ReceiptError(f"{name}: report binds the wrong matrix")
+        if report.get("cell_id") != cell_id:
+            raise rd.ReceiptError(f"{name}: report binds the wrong cell")
+        if report.get("cell") != rd.skew_cell_preimage(cell):
+            raise rd.ReceiptError(f"{name}: report cell preimage drifted")
+        if report.get("schema") != "aweb.persisted-state-skew-cell.v2":
+            raise rd.ReceiptError(f"{name}: report schema is unsupported")
+        if report.get("result") != "green":
+            raise rd.ReceiptError(f"{name}: report is not green")
+        cleanup = report.get("cleanup", {})
+        if not all((
+            cleanup.get("targeted_containers_absent"),
+            cleanup.get("processes_exited"), cleanup.get("temp_root_absent"),
+        )):
+            raise rd.ReceiptError(f"{name}: report lacks completed cleanup")
+        expected_report_id = rd.canonical_json_digest(_report_without_id(report))
+        if report.get("report_id") != expected_report_id:
+            raise rd.ReceiptError(f"{name}: report digest does not recompute")
+        if not _candidate_matches_frozen(report, cell):
+            raise rd.ReceiptError(f"{name}: candidate is not the frozen identity")
+        published = report.get("published", {})
+        if (
+            published.get("kind") != cell.b_kind
+            or published.get("version") != cell.b.get("version")
+        ):
+            raise rd.ReceiptError(f"{name}: published actor is not the frozen side")
+        expected_focal = "candidate" if cell.direction == "b-to-a" else "published"
+        if (
+            report.get("chronology") != ["published", "candidate", "published"]
+            or report.get("focal_actor") != expected_focal
+        ):
+            raise rd.ReceiptError(f"{name}: temporal actor semantics drifted")
+        candidate = report["candidate"]
+        candidate_identities[
+            json.dumps(candidate, sort_keys=True, separators=(",", ":"))
+        ] = candidate
+        report_digests.append({
+            "cell_id": cell_id,
+            "report_id": expected_report_id,
+            "file_sha256": hashlib.sha256(report_bytes).hexdigest(),
+        })
     if len(candidate_identities) != 1:
         raise rd.ReceiptError(
-            "persisted-state evidence must bind one exact candidate identity; "
-            f"found {len(candidate_identities)}"
+            "persisted-state reports do not bind one exact candidate"
         )
-    if not published:
-        raise rd.ReceiptError("persisted-state evidence contains no published server")
-    incomplete = {
-        version: sorted({"published-to-candidate", "candidate-to-published"}
-                        - transition_orders.get(version, set()))
-        for version in published
-        if transition_orders.get(version, set()) != {
-            "published-to-candidate", "candidate-to-published"
-        }
-    }
-    if incomplete:
-        raise rd.ReceiptError(
-            "persisted-state evidence lacks both transition orders for every "
-            f"published version: {incomplete}"
-        )
-    versions = sorted(published, key=_version_key)
-    candidate = next(iter(candidate_identities.values()))
-    return {
+    preimage = document["preimage"]
+    edge = preimage["edge"]
+    measurement = {
         "schema": "aweb.runtime-support-measurement.v1",
-        "edge": bound["edge"],
-        "journey": bound["journey"],
-        "artifacts": bound["artifacts"],
-        "direction": bound["declared_direction"],
-        "supported_versions": {"server": versions},
-        "candidate": candidate,
-        "evidence": evidence,
+        "status": "incomplete-unanchored",
+        "matrix_id": matrix_id,
+        "edge": {"a": edge["a"], "b": edge["b"]},
+        "journey": edge["journey"],
+        "artifacts": edge["artifacts"],
+        "direction": edge["direction"],
+        "staged_manifest_digest": preimage["staged_manifest_digest"],
+        "supported_versions": preimage["support"]["supported_versions"],
+        "published_versions": preimage["published_versions"],
+        "candidate": next(iter(candidate_identities.values())),
+        "reports": report_digests,
     }
+    measurement["measurement_id"] = rd.canonical_json_digest(measurement)
+    return measurement
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="verb", required=True)
     aggregate = subparsers.add_parser("aggregate")
-    aggregate.add_argument("--evidence-dir", type=Path, required=True)
+    aggregate.add_argument("--matrix", type=Path, required=True)
     aggregate.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.verb == "aggregate":
-        document = aggregate_support(args.evidence_dir)
+        document = aggregate_support(args.matrix)
         body = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_bytes(body)
