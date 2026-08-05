@@ -446,15 +446,15 @@ class ChannelPiHarness:
         return client
 
     def run(self, cell) -> None:
-        client_component = self._validate_cell(cell)
-        client = self._resolver.resolve(
-            cell.a_kind, cell.a, cell.artifacts["a"]
-        )
-        server = self._resolver.resolve(
-            cell.b_kind, cell.b, cell.artifacts["b"]
-        )
-        negative = None
         try:
+            self._validate_cell(cell)
+            client = self._resolver.resolve(
+                cell.a_kind, cell.a, cell.artifacts["a"]
+            )
+            server = self._resolver.resolve(
+                cell.b_kind, cell.b, cell.artifacts["b"]
+            )
+            negative = None
             if cell.direction == "a-to-b":
                 observation = {"request": self._journey.run_client_request(
                     client, server, cell
@@ -658,7 +658,23 @@ def aggregate_support(reports: list[dict], *, expected_cell_ids: list[str]) -> d
         )
     clients = set()
     servers = set()
+    first = reports[0]
+    bound = {
+        key: first.get(key)
+        for key in (
+            "edge_id", "edge", "journey", "artifacts", "declared_direction"
+        )
+    }
     for report in reports:
+        current = {key: report.get(key) for key in bound}
+        if current != bound:
+            raise rd.ReceiptError(
+                f"cell {report.get('cell_id')} binds a different edge"
+            )
+        if report.get("schema") != "aweb.channel-pi-server-skew-cell.v1":
+            raise rd.ReceiptError(
+                f"cell {report.get('cell_id')} has the wrong evidence schema"
+            )
         direction = report.get("cell_direction")
         observation = report.get("observation") or {}
         if direction == "a-to-b" and set(observation) != {"request"}:
@@ -671,13 +687,27 @@ def aggregate_support(reports: list[dict], *, expected_cell_ids: list[str]) -> d
             )
         if report.get("result") != "green":
             raise rd.ReceiptError(f"cell {report.get('cell_id')} is not green")
+        if (
+            str(report.get("client_kind", "")).startswith("published")
+            and report.get("server_kind") == "candidate"
+        ):
+            control = report.get("negative_control") or {}
+            if (
+                control.get("request") != LEGACY_MARK_READ_REQUEST
+                or control.get("unmutated_status") != 200
+                or control.get("mutated_status") != 422
+                or control.get("evidence_class")
+                != "control-only-not-candidate"
+            ):
+                raise rd.ReceiptError(
+                    f"cell {report.get('cell_id')} lacks the required-field control"
+                )
         client = report["client_artifact"]
         server = report["server_artifact"]
         if str(report["client_kind"]).startswith("published"):
             clients.add(client["version"])
         if str(report["server_kind"]).startswith("published"):
             servers.add(server["version"])
-    first = reports[0]
     return {
         "schema": "aweb.runtime-support-measurement.v1",
         "completeness": "unanchored-local-measurement",

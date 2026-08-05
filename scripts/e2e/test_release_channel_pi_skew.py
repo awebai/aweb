@@ -360,6 +360,18 @@ class ChildHarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(rd.ReceiptError, "channel/Pi-server edge"):
             self.run_cell(wrong)
 
+    def test_journey_closes_when_artifact_resolution_refuses(self):
+        class RefusingResolver:
+            def resolve(self, kind, side, locator):
+                raise rd.ReceiptError("artifact refused")
+
+        journey = FakeJourney()
+        with self.assertRaisesRegex(rd.ReceiptError, "artifact refused"):
+            skew.ChannelPiHarness(
+                resolver=RefusingResolver(), journey=journey, evidence=Reports()
+            ).run(cell())
+        self.assertEqual(journey.events, [("close",)])
+
 
 class MatrixCoverageTests(unittest.TestCase):
     @staticmethod
@@ -464,6 +476,23 @@ class MeasurementCompletenessTests(unittest.TestCase):
         report["cell_direction"] = "b-to-a"
         with self.assertRaisesRegex(rd.ReceiptError, "event assertion"):
             skew.aggregate_support([report], expected_cell_ids=[report["cell_id"]])
+
+    def test_aggregate_refuses_mixed_edges_or_missing_required_control(self):
+        channel_report = self.report(cell())
+        pi_report = self.report(cell(client="pi"))
+        with self.assertRaisesRegex(rd.ReceiptError, "different edge"):
+            skew.aggregate_support(
+                [channel_report, pi_report],
+                expected_cell_ids=[channel_report["cell_id"], pi_report["cell_id"]],
+            )
+        controlled = self.report(cell(
+            a_kind="published-latest", b_kind="candidate"
+        ))
+        controlled["negative_control"] = None
+        with self.assertRaisesRegex(rd.ReceiptError, "required-field control"):
+            skew.aggregate_support(
+                [controlled], expected_cell_ids=[controlled["cell_id"]]
+            )
 
 
 class RegistrationAndJourneyParameterTests(unittest.TestCase):
