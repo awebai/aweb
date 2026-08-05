@@ -1,7 +1,8 @@
 //go:build e2e
 
-// Real-stack end-to-end tests: they drive the actually-built `aw` binary via
+// Real-stack end-to-end tests: they drive the exact selected `aw` binary via
 // os/exec against the live awid + aweb + Library stack (docker-compose.e2e.yml).
+// The ordinary target builds it; release-skew cells supply staged/published bytes.
 // There are no httptest servers and no injected mocks here - that is the whole
 // point of this suite. It exercises the same code paths a human's `aw` runs.
 //
@@ -41,8 +42,8 @@ func libraryURL() string { return envOr("LIBRARY_E2E_LIBRARY_URL", "http://127.0
 
 const seededBlueprintRef = "aweb.team"
 
-// awBinary resolves the built aw binary: AW_BIN if set, else cli/go/aw (one
-// directory up from this package).
+// awBinary resolves the selected aw binary: AW_BIN if set, else cli/go/aw
+// (one directory up from this package).
 func awBinary(t *testing.T) string {
 	t.Helper()
 	if bin := strings.TrimSpace(os.Getenv("AW_BIN")); bin != "" {
@@ -67,6 +68,22 @@ func requireE2E(t *testing.T) {
 	t.Helper()
 	if os.Getenv("AW_E2E") != "1" {
 		t.Skip("set AW_E2E=1 and bring up the stack (make -C cli e2e) to run real-stack e2e")
+	}
+}
+
+// requestedSkewDirection binds a release-driver cell to this invocation. The
+// CLI/server journey is request/response shaped, so both matrix directions run
+// the complete mutation + readback contract rather than silently deduplicating
+// one direction.
+func requestedSkewDirection(t *testing.T) string {
+	t.Helper()
+	direction := strings.TrimSpace(os.Getenv("AW_SKEW_DIRECTION"))
+	switch direction {
+	case "", "a-to-b", "b-to-a":
+		return direction
+	default:
+		t.Fatalf("unsupported AW_SKEW_DIRECTION %q", direction)
+		return ""
 	}
 }
 
@@ -248,6 +265,10 @@ func TestRealStackSeededBlueprintVisible(t *testing.T) {
 
 func TestRealStackWorkspacePresenceAndLocksUseDistinctIdentifiers(t *testing.T) {
 	requireE2E(t)
+	direction := requestedSkewDirection(t)
+	if direction != "" {
+		t.Logf("release skew cell direction: %s", direction)
+	}
 	tm := newThrowawayTeam(t)
 
 	if err := os.Remove(filepath.Join(tm.workspace, ".aw", "workspace.yaml")); err != nil {

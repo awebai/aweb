@@ -151,6 +151,11 @@ type = "pointer"
 from = "ac-pin"
 to = ["ac-gate"]
 
+# The .7.1 child emits this edge's measured support document through
+# `make measure-release-skew-cli-server`. Keep the declaration incomplete until
+# those exact candidate/published cell bytes are externally anchored; then add
+# measured:<id> plus its structured workflow-artifact record in the reviewed
+# anchoring round. Server 1.26.31 is the known-red distinct-ID/lock control.
 [[edge]]
 type = "runtime-contract"
 a = "aw"

@@ -42,3 +42,9 @@ def register(journey: str, factory) -> None:
             "owns each journey"
         )
     REGISTRY[journey] = factory
+
+
+# Child registration: CLI/server exact-artifact real-stack journey (.7.1).
+from release_skew_cli_server import CliServerSkewHarness
+
+register("make cli-e2e", CliServerSkewHarness)
