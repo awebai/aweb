@@ -79,6 +79,11 @@ def fixture_graph_dict() -> dict:
                 "direction": "both",
                 "supported": {
                     "set": "measured:fixture-fleet-2026-08-01",
+                    "record": {
+                        "authority": "workflow-artifacts",
+                        "artifact_id": "measurement:fixture-fleet-2026-08-01",
+                        "digest": "fixture-digest",
+                    },
                     "policy": "additive-only",
                 },
             },
@@ -294,7 +299,12 @@ class PlanDigestTests(unittest.TestCase):
         for edge in mutated["edge"]:
             if edge["type"] == "runtime-contract":
                 edge["supported"] = {
-                    "set": "measured:other",
+                    "set": "approved-deprecation:record-1",
+                    "record": {
+                        "authority": "workflow-artifacts",
+                        "artifact_id": "deprecation:record-1",
+                        "digest": "d1",
+                    },
                     "policy": "breaking-with-approved-deprecation",
                 }
         graph_b = rd.Graph.from_dict(mutated)
@@ -409,11 +419,11 @@ class ReceiptTests(unittest.TestCase):
     def test_seal_refuses_entry_set_mismatch(self) -> None:
         graph, plan = self.make_plan()
         with self.assertRaises(rd.ReceiptError):
-            rd.seal_receipt(plan, graph, source_sha="s1", entries={}, approvals=())
+            rd.seal_receipt(plan, graph, source_sha="s1", entries={}, approvals={})
         extra = self.entries_for(plan)
-        extra["stowaway"] = rd.ReceiptEntry("1.0.0", "dx", None, None)
+        extra["stowaway"] = rd.ReceiptEntry(version="1.0.0", digest="dx")
         with self.assertRaises(rd.ReceiptError):
-            rd.seal_receipt(plan, graph, source_sha="s1", entries=extra, approvals=())
+            rd.seal_receipt(plan, graph, source_sha="s1", entries=extra, approvals={})
 
     def test_load_requires_external_expected_digest(self) -> None:
         """The seal is not self-contained: load verifies against a digest the
@@ -421,7 +431,7 @@ class ReceiptTests(unittest.TestCase):
         beside an edited body must not pass."""
         graph, plan = self.make_plan()
         sealed, digest = rd.seal_receipt(
-            plan, graph, source_sha="s1", entries=self.entries_for(plan), approvals=()
+            plan, graph, source_sha="s1", entries=self.entries_for(plan), approvals={}
         )
         loaded = rd.load_sealed_receipt(sealed, expected_digest=digest)
         self.assertEqual(loaded.source_sha, "s1")
@@ -439,7 +449,7 @@ class ReceiptTests(unittest.TestCase):
     def test_receipt_matches_run_compares_plan_and_source(self) -> None:
         graph, plan = self.make_plan()
         sealed, digest = rd.seal_receipt(
-            plan, graph, source_sha="s1", entries=self.entries_for(plan), approvals=()
+            plan, graph, source_sha="s1", entries=self.entries_for(plan), approvals={}
         )
         receipt = rd.load_sealed_receipt(sealed, expected_digest=digest)
         ok, _ = rd.receipt_matches_run(receipt, plan, graph, source_sha="s1")
@@ -630,58 +640,82 @@ class FourPhaseProtocolTests(unittest.TestCase):
         self.assertIn("digest", str(caught.exception))
 
     def test_run_seals_receipt_and_records_digest_with_authority(self) -> None:
-        graph, plan, lanes, _, authority, entries = self.run_fixture()
-        self.assertEqual(set(entries), {n.component for n in plan.moving})
-        kinds = {k.split(":")[0] for k in authority.recorded}
-        self.assertEqual(
-            kinds,
-            {"plan", "receipt"},
-            "the frozen plan and the final receipt must both be anchored",
-        )
-        receipt_id = next(k for k in authority.recorded if k.startswith("receipt:"))
-        receipt = rd.load_sealed_receipt(
-            rd.read_receipt_bytes(receipt_id),
-            expected_digest=authority.recorded[receipt_id],
-        )
-        ok, why = rd.receipt_matches_run(receipt, plan, graph, source_sha="s1")
-        self.assertTrue(ok, why)
-        plan_id = next(k for k in authority.recorded if k.startswith("plan:"))
-        self.assertEqual(
-            receipt.frozen_plan_id,
-            authority.recorded[plan_id],
-            "every receipt binds the frozen plan id it executed",
-        )
+        import tempfile
 
-    def test_publish_failure_anchors_a_partial_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph = complete_fixture_graph()
+            state = orchestration_state()
+            plan = rd.compute_plan(graph, state)
+            lanes = FixtureLanes(available={n.component for n in plan.moving})
+            store = rd.FileArtifactStore(root)
+            authority = rd.FileDigestAuthority(root)
+            entries = rd.run_plan(
+                plan, graph, lanes,
+                skew=FixtureSkew(), authority=authority, store=store,
+                source_sha="s1", approvals={}, state=state,
+            )
+            self.assertEqual(set(entries), {n.component for n in plan.moving})
+            kinds = {k.split(":")[0] for k in authority.recorded_ids()}
+            self.assertLessEqual(
+                {"plan", "staged-manifest", "transition", "receipt"},
+                kinds,
+                "plan, staged manifest, every transition, and the final receipt"
+                " must all be anchored",
+            )
+            receipt_id = next(
+                k for k in authority.recorded_ids() if k.startswith("receipt:")
+            )
+            receipt = rd.load_sealed_receipt(
+                store.get(receipt_id),
+                expected_digest=authority.expected_digest(receipt_id),
+            )
+            ok, why = rd.receipt_matches_run(receipt, plan, graph, source_sha="s1")
+            self.assertTrue(ok, why)
+            self.assertTrue(receipt.frozen_plan_id)
+            self.assertTrue(receipt.staged_manifest_id)
+            self.assertTrue(
+                all(e.phase == "verified" for e in receipt.entries.values())
+            )
+
+    def test_publish_failure_leaves_anchored_transitions(self) -> None:
+        """Per-transition anchoring IS the durable partial state: a failure
+        after the first publish leaves that transition anchored, with no
+        reliance on exception handling for crash consistency."""
+        import tempfile
+
         class FailingSecondPublish(FixtureLanes):
             def publish(self, node, staged):
                 if len([c for k, c in self.calls if k == "publish"]) == 1:
                     raise RuntimeError("registry outage mid-run")
                 return super().publish(node, staged)
 
-        graph = complete_fixture_graph()
-        state = orchestration_state()
-        plan = rd.compute_plan(graph, state)
-        lanes = FailingSecondPublish(available={n.component for n in plan.moving})
-        authority = FixtureAuthority()
-        with self.assertRaises(RuntimeError):
-            rd.run_plan(
-                plan, graph, lanes,
-                skew=FixtureSkew(), authority=authority,
-                source_sha="s1", approvals={}, state=state,
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph = complete_fixture_graph()
+            state = orchestration_state()
+            plan = rd.compute_plan(graph, state)
+            lanes = FailingSecondPublish(
+                available={n.component for n in plan.moving}
             )
-        partial_id = next(
-            (k for k in authority.recorded if k.startswith("receipt-partial:")), None
-        )
-        self.assertIsNotNone(
-            partial_id, "the partial state at failure must be externally anchored"
-        )
-        receipt = rd.load_sealed_receipt(
-            rd.read_receipt_bytes(partial_id),
-            expected_digest=authority.recorded[partial_id],
-        )
-        self.assertTrue(receipt.partial)
-        self.assertEqual(len(receipt.entries), 1)
+            store = rd.FileArtifactStore(root)
+            authority = rd.FileDigestAuthority(root)
+            with self.assertRaises(RuntimeError):
+                rd.run_plan(
+                    plan, graph, lanes,
+                    skew=FixtureSkew(), authority=authority, store=store,
+                    source_sha="s1", approvals={}, state=state,
+                )
+            transitions = [
+                k
+                for k in authority.recorded_ids()
+                if k.startswith("transition:") and ":published:" in k
+            ]
+            self.assertEqual(
+                len(transitions),
+                1,
+                "the successful first publish must be durably anchored",
+            )
 
 
 class ResumeTests(unittest.TestCase):
@@ -713,11 +747,11 @@ class ResumeTests(unittest.TestCase):
         graph = complete_fixture_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
-        done = rd.ReceiptEntry(version="1.1.0", digest="staged-client")
+        done = rd.ReceiptEntry(version="1.1.0", digest="staged-client", phase="published")
         partial = {"client": done}
         remaining = rd.resume_remaining(plan, partial, observed={"client": done})
         self.assertEqual([n.component for n in remaining], ["plugin", "pointer"])
-        drifted = rd.ReceiptEntry(version="1.1.0", digest="other")
+        drifted = rd.ReceiptEntry(version="1.1.0", digest="other", phase="published")
         with self.assertRaises(rd.ReceiptError):
             rd.resume_remaining(plan, partial, observed={"client": drifted})
 
@@ -736,7 +770,7 @@ class SealValidationTests(unittest.TestCase):
             for n in plan.moving
         }
         with self.assertRaises(rd.ReceiptError) as caught:
-            rd.seal_receipt(plan, graph, source_sha="s1", entries=entries, approvals=())
+            rd.seal_receipt(plan, graph, source_sha="s1", entries=entries, approvals={})
         self.assertIn("pointer_state", str(caught.exception))
 
     def test_seal_refuses_approval_required_node_without_approvals(self) -> None:
@@ -757,7 +791,7 @@ class SealValidationTests(unittest.TestCase):
             for n in plan.moving
         }
         with self.assertRaises(rd.ReceiptError) as caught:
-            rd.seal_receipt(plan, graph, source_sha="s1", entries=entries, approvals=())
+            rd.seal_receipt(plan, graph, source_sha="s1", entries=entries, approvals={})
         self.assertIn("approval", str(caught.exception))
 
 

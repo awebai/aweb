@@ -102,9 +102,10 @@ credential_paths = [
 # pointer update cannot demand production credentials.
 
 [component.sites]
-source_paths = ["docs/", "awid/site/"]
+source_paths = ["docs/identity-guide.md", "docs/trust-model.md", "awid/site/"]
 lane = { command = "make release-awid-site" }
 publishable = false
+approval_required = true
 # The awid landing site: a delivery node with a real lane. No delivered
 # baseline is observable from this repository's origin (the deploy branch the
 # lane pushes is absent there), so sites plans conservatively on every run

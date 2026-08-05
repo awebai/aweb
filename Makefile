@@ -616,6 +616,7 @@ release-receipt:
 
 test-release-driver:
 	python3 scripts/e2e/test_release_driver.py
+	python3 scripts/e2e/test_release_driver_cli.py
 
 test-release-cli-version:
 	bash scripts/check-cli-release-version-test.sh
