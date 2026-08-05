@@ -420,6 +420,11 @@ class FederationHarnessTests(unittest.TestCase):
             value, sort_keys=True, separators=(",", ":")
         )
 
+    def prime(self, harness, cells):
+        harness._matrix = {"matrix_id": None}
+        harness._cells = {rd.skew_cell_identity(cell): cell for cell in cells}
+        return harness
+
     def harness(self, root, journey):
         wheels = self.wheels()
 
@@ -448,8 +453,8 @@ class FederationHarnessTests(unittest.TestCase):
             )
 
         with tempfile.TemporaryDirectory() as tmp:
-            harness = self.harness(tmp, journey)
             cells = [self.cell("a-to-b"), self.cell("b-to-a")]
+            harness = self.prime(self.harness(tmp, journey), cells)
             for cell in cells:
                 harness.run(cell)
             reports = [
@@ -482,8 +487,10 @@ class FederationHarnessTests(unittest.TestCase):
                         returncode=0, stdout=mutate(env), stderr=""
                     ),
                 )
+                value = self.cell()
+                self.prime(harness, [value])
                 with self.assertRaises(rd.ReceiptError):
-                    harness.run(self.cell())
+                    harness.run(value)
                 self.assertFalse((Path(tmp) / "cells").exists())
 
     def test_dependency_only_inventory_mismatch_is_red(self):
@@ -498,8 +505,10 @@ class FederationHarnessTests(unittest.TestCase):
                     stderr="",
                 )
 
+            value = self.cell()
+            harness = self.prime(self.harness(tmp, journey), [value])
             with self.assertRaisesRegex(rd.ReceiptError, "dependency"):
-                self.harness(tmp, journey).run(self.cell())
+                harness.run(value)
             self.assertFalse((Path(tmp) / "cells").exists())
 
     def test_child_forces_keep_off_despite_ambient_debug_setting(self):
@@ -515,9 +524,47 @@ class FederationHarnessTests(unittest.TestCase):
                 tmp,
                 lambda env: SimpleNamespace(returncode=3, stdout="bad", stderr="worse"),
             )
+            value = self.cell()
+            self.prime(harness, [value])
             with self.assertRaisesRegex(rd.ReceiptError, "federation skew journey"):
-                harness.run(self.cell())
+                harness.run(value)
             self.assertFalse((Path(tmp) / "cells").exists())
+
+    def test_frozen_lifecycle_persists_before_effect_and_finishes_incomplete(self):
+        def journey(env):
+            return SimpleNamespace(returncode=0, stdout=self.observation(env), stderr="")
+
+        candidate = self.cell().a
+        staged = {"server": rd.ReceiptEntry(
+            version=candidate["version"], digest=candidate["digest"],
+            digest_set=candidate["digest_set"], lane_ref=candidate["lane_ref"],
+        )}
+        contract = rd.RuntimeContractEdge(
+            a="server", b="server", journey=federation.JOURNEY,
+            artifacts={"a": "pypi:aweb", "b": "pypi:aweb"},
+            direction="both", supported={"policy": "additive-only"},
+        )
+        document = rd.freeze_skew_matrix(
+            contract, moving={"server"}, staged=staged,
+            support={"supported_versions": {"server": ["1.26.35"]}},
+            published_versions={"server": "1.26.35"},
+            staged_manifest_digest="f" * 64,
+        )
+        cells = rd.validate_skew_matrix_document(document)
+        with tempfile.TemporaryDirectory() as tmp:
+            harness = self.harness(tmp, journey)
+            with self.assertRaisesRegex(rd.ReceiptError, "before.*matrix"):
+                harness.run(cells[0])
+            matrix_path = harness.freeze_matrix(document)
+            self.assertTrue(matrix_path.is_file())
+            for value in cells:
+                harness.run(value)
+            aggregate_path = harness.finish_matrix(document)
+            aggregate = json.loads(aggregate_path.read_text())
+            self.assertEqual(aggregate["matrix_id"], document["matrix_id"])
+            self.assertEqual(aggregate["status"], "incomplete-unanchored")
+            self.assertFalse(aggregate["support_complete"])
+            self.assertIsNone(aggregate["anchor"])
 
     def test_complete_matrix_aggregate_binds_reports_and_one_candidate(self):
         def journey(env):
@@ -525,7 +572,7 @@ class FederationHarnessTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             cells = [self.cell("a-to-b"), self.cell("b-to-a")]
-            harness = self.harness(tmp, journey)
+            harness = self.prime(self.harness(tmp, journey), cells)
             for cell in cells:
                 harness.run(cell)
             aggregate = federation.aggregate_cell_reports(cells, Path(tmp))
@@ -559,7 +606,7 @@ class FederationHarnessTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             cells = [self.cell("a-to-b"), self.cell("b-to-a")]
-            harness = self.harness(tmp, journey)
+            harness = self.prime(self.harness(tmp, journey), cells)
             for cell in cells:
                 harness.run(cell)
             federation.aggregate_cell_reports(cells, Path(tmp))
@@ -635,8 +682,10 @@ class FederationHarnessTests(unittest.TestCase):
                     returncode=0, stdout=self.observation(env), stderr=""
                 ),
             )
-            harness.run(self.cell("a-to-b"))
-            harness.run(self.cell("b-to-a"))
+            cells = [self.cell("a-to-b"), self.cell("b-to-a")]
+            self.prime(harness, cells)
+            for value in cells:
+                harness.run(value)
         self.assertEqual(len(cell_calls), 2, "ordinary cells must run no historical controls")
 
     def test_control_dependency_inventories_must_match_across_runtimes_and_runs(self):

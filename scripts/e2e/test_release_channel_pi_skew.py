@@ -255,10 +255,32 @@ class FakeResolver:
         body = f"{side['component']}:{side['version']}".encode()
         source = {"kind": "candidate" if kind == "candidate" else "published"}
         if kind != "candidate":
-            source["registry"] = locator
+            filename = f"{side['component']}.artifact"
+            digest_set = {filename: sha(body)}
+            source.update(
+                registry=locator,
+                metadata_url=(
+                    f"https://registry.npmjs.org/"
+                    f"{skew.CLIENT_ARTIFACTS[side['component']].removeprefix('npm:').replace('/', '%2F')}/"
+                    f"{side['version']}"
+                    if side["component"] in {"channel", "pi"} else
+                    f"https://pypi.org/pypi/aweb/{side['version']}/json"
+                ),
+                digest_set=digest_set,
+                canonical_set_digest=rd.canonical_digest_of_set(digest_set),
+            )
+            source[
+                "tarball_url" if side["component"] in {"channel", "pi"}
+                else "download_url"
+            ] = (
+                f"https://registry.npmjs.org/{filename}"
+                if side["component"] in {"channel", "pi"} else
+                f"https://files.pythonhosted.org/{filename}"
+            )
         if kind == "candidate":
             source.update(
                 lane_ref=side["lane_ref"],
+                outer_zip_sha256=side["lane_ref"]["zip_digest"].removeprefix("sha256:"),
                 digest_set=side["digest_set"],
                 canonical_set_digest=sha(
                     json.dumps(side["digest_set"], sort_keys=True).encode()
@@ -406,13 +428,21 @@ def cell(client="channel", direction="a-to-b", a_kind="candidate",
     )
 
 
+def prime_harness(harness, value, matrix_id=None):
+    harness._matrix = {"matrix_id": matrix_id}
+    harness._cells = {rd.skew_cell_identity(value): value}
+    return harness
+
+
 class ChildHarnessTests(unittest.TestCase):
     def run_cell(self, value, *, journey=None):
         reports = Reports()
         journey = journey or FakeJourney()
-        skew.ChannelPiHarness(
+        harness = skew.ChannelPiHarness(
             resolver=FakeResolver(), journey=journey, evidence=reports,
-        ).run(value)
+        )
+        prime_harness(harness, value)
+        harness.run(value)
         return journey, reports.items[0]
 
     def test_request_and_event_directions_execute_distinct_observed_assertions(self):
@@ -431,29 +461,21 @@ class ChildHarnessTests(unittest.TestCase):
             "a": "npm:@awebai/claude-channel", "b": "pypi:aweb",
         })
 
-    def test_required_field_control_is_disposable_exact_and_precontinuation(self):
+    def test_required_field_control_is_separate_from_candidate_evidence(self):
         journey, report = self.run_cell(cell(
             client="pi", direction="a-to-b",
             a_kind="published-floor", b_kind="candidate",
         ))
-        control_event = next(event for event in journey.events if event[0] == "control")
-        self.assertEqual(control_event[1], {"up_to_message_id": skew.LEGACY_MESSAGE_ID})
-        self.assertEqual(report["negative_control"], {
-            "request": {"up_to_message_id": skew.LEGACY_MESSAGE_ID},
-            "unmutated_status": 200,
-            "mutated_status": 422,
-            "mutation_subject": "disposable required-field server",
-            "evidence_class": "control-only-not-candidate",
-        })
+        self.assertFalse(any(event[0] == "control" for event in journey.events))
+        self.assertNotIn("negative_control", report)
         self.assertNotIn("mutation_subject", report["server_artifact"])
 
-    def test_control_must_be_green_then_422(self):
-        for statuses in ((500, 422), (200, 200), (200, 400)):
-            with self.assertRaisesRegex(rd.ReceiptError, "200.*422"):
-                self.run_cell(
-                    cell(a_kind="published-latest", b_kind="candidate"),
-                    journey=FakeJourney(control=statuses),
-                )
+    def test_control_is_not_hidden_in_ordinary_cells(self):
+        journey, _ = self.run_cell(
+            cell(a_kind="published-latest", b_kind="candidate"),
+            journey=FakeJourney(control=(500, 500)),
+        )
+        self.assertFalse(any(event[0] == "control" for event in journey.events))
 
     def test_each_invocation_has_a_bounded_noncolliding_compose_project(self):
         first = skew.compose_project_name(Path("/tmp/channel-skew-run-a"), cell())
@@ -471,19 +493,25 @@ class ChildHarnessTests(unittest.TestCase):
 
         reports = Reports()
         with self.assertRaisesRegex(rd.ReceiptError, "structured"):
-            skew.ChannelPiHarness(
+            harness = skew.ChannelPiHarness(
                 resolver=FakeResolver(), journey=LabelOnlyJourney(), evidence=reports
-            ).run(cell())
+            )
+            value = cell()
+            prime_harness(harness, value)
+            harness.run(value)
         self.assertEqual(reports.items, [])
 
     def test_cleanup_failure_blocks_and_writes_no_green_evidence(self):
         reports = Reports()
         with self.assertRaisesRegex(rd.ReceiptError, "cleanup refused"):
-            skew.ChannelPiHarness(
+            harness = skew.ChannelPiHarness(
                 resolver=FakeResolver(),
                 journey=FakeJourney(close_error="cleanup refused"),
                 evidence=reports,
-            ).run(cell())
+            )
+            value = cell()
+            prime_harness(harness, value)
+            harness.run(value)
         self.assertEqual(reports.items, [])
 
     def test_runtime_inventory_must_bind_lock_and_exact_server(self):
@@ -498,9 +526,12 @@ class ChildHarnessTests(unittest.TestCase):
 
         journey.observation = wrong_runtime
         with self.assertRaisesRegex(rd.ReceiptError, "runtime inventory"):
-            skew.ChannelPiHarness(
+            harness = skew.ChannelPiHarness(
                 resolver=FakeResolver(), journey=journey, evidence=reports,
-            ).run(cell())
+            )
+            value = cell()
+            prime_harness(harness, value)
+            harness.run(value)
         self.assertEqual(reports.items, [])
 
         with self.assertRaisesRegex(rd.ReceiptError, "unlocked distribution"):
@@ -522,9 +553,12 @@ class ChildHarnessTests(unittest.TestCase):
 
         journey = FakeJourney()
         with self.assertRaisesRegex(rd.ReceiptError, "artifact refused"):
-            skew.ChannelPiHarness(
+            harness = skew.ChannelPiHarness(
                 resolver=RefusingResolver(), journey=journey, evidence=Reports()
-            ).run(cell())
+            )
+            value = cell()
+            prime_harness(harness, value)
+            harness.run(value)
         self.assertEqual(journey.events, [("close",)])
 
 
@@ -572,9 +606,11 @@ class MatrixCoverageTests(unittest.TestCase):
             self.assertEqual(len(cells), 10)
             reports = Reports()
             for value in cells:
-                skew.ChannelPiHarness(
+                harness = skew.ChannelPiHarness(
                     resolver=FakeResolver(), journey=FakeJourney(), evidence=reports,
-                ).run(value)
+                )
+                prime_harness(harness, value)
+                harness.run(value)
             self.assertEqual(len({item["cell_id"] for item in reports.items}), 10)
             self.assertEqual(
                 {item["cell_direction"] for item in reports.items},
@@ -585,6 +621,84 @@ class MatrixCoverageTests(unittest.TestCase):
                 self.assertEqual(set(report["observation"]), {expected})
             skew.aggregate_support(reports.items, expected_cells=cells)
 
+    def test_frozen_lifecycle_persists_first_finishes_incomplete_and_controls_once(self):
+        client = "channel"
+        contract = rd.RuntimeContractEdge(
+            a=client, b="server", journey=skew.CHANNEL_JOURNEY,
+            artifacts={"a": skew.CLIENT_ARTIFACTS[client], "b": "pypi:aweb"},
+            direction="both", supported={"policy": "additive-only"},
+        )
+        staged = {
+            client: self.staged(client, "1.2.3"),
+            "server": self.staged("server", "1.26.35"),
+        }
+        document = rd.freeze_skew_matrix(
+            contract, moving={client, "server"}, staged=staged,
+            support={"supported_versions": {
+                client: ["1.2.2"], "server": ["1.26.34"],
+            }},
+            published_versions={client: "1.2.2", "server": "1.26.34"},
+            staged_manifest_digest="f" * 64,
+        )
+        cells = rd.validate_skew_matrix_document(document)
+        journeys = []
+
+        def factory():
+            journey = FakeJourney()
+            journeys.append(journey)
+            return journey
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = skew.FileEvidenceWriter(Path(tmp))
+            harness = skew.ChannelPiHarness(
+                resolver=FakeResolver(), journey_factory=factory, evidence=evidence,
+            )
+            with self.assertRaisesRegex(rd.ReceiptError, "before.*matrix"):
+                harness.run(cells[0])
+            matrix_path = harness.freeze_matrix(document)
+            self.assertTrue(matrix_path.is_file())
+            self.assertEqual(journeys, [], "freeze must precede every child effect")
+            for value in cells:
+                harness.run(value)
+            self.assertFalse(any(
+                event[0] == "control" for journey in journeys for event in journey.events
+            ))
+            aggregate_path = harness.finish_matrix(document)
+            aggregate = json.loads(aggregate_path.read_text())
+            self.assertEqual(aggregate["status"], "incomplete-unanchored")
+            self.assertFalse(aggregate["support_complete"])
+            self.assertIsNone(aggregate["anchor"])
+            self.assertEqual(aggregate["matrix_id"], document["matrix_id"])
+            controls = [
+                event for journey in journeys for event in journey.events
+                if event[0] == "control"
+            ]
+            self.assertEqual(len(controls), 1)
+            cell_path = next((Path(tmp) / "cells").iterdir())
+            original = cell_path.read_bytes()
+            tampered = json.loads(original)
+            tampered["server_artifact"]["sha256"] = "0" * 64
+            tampered["report_id"] = rd.canonical_json_digest({
+                key: value for key, value in tampered.items() if key != "report_id"
+            })
+            cell_path.write_text(json.dumps(
+                tampered, sort_keys=True, separators=(",", ":")
+            ))
+            with self.assertRaisesRegex(rd.ReceiptError, "artifact|runtime"):
+                skew.aggregate_frozen_matrix(
+                    matrix_path, Path(tmp), control_path=harness._control_path
+                )
+            cell_path.write_bytes(original)
+            extra = Path(tmp) / "cells" / "stale.json"
+            extra.write_text("{}")
+            with self.assertRaisesRegex(rd.ReceiptError, "file set"):
+                skew.aggregate_frozen_matrix(
+                    matrix_path, Path(tmp), control_path=harness._control_path
+                )
+            extra.unlink()
+            with self.assertRaisesRegex(rd.ReceiptError, "more than once"):
+                harness.finish_matrix(document)
+
     def test_one_moving_side_evidences_every_measured_published_version(self):
         cells = self.matrix("channel", {"channel"})
         self.assertEqual(len(cells), 4)
@@ -593,13 +707,22 @@ class MatrixCoverageTests(unittest.TestCase):
         )
         reports = Reports()
         for value in cells:
-            skew.ChannelPiHarness(
+            harness = skew.ChannelPiHarness(
                 resolver=FakeResolver(), journey=FakeJourney(), evidence=reports,
-            ).run(value)
+            )
+            prime_harness(harness, value)
+            harness.run(value)
         self.assertEqual(len(reports.items), 4)
 
 
 class MeasurementCompletenessTests(unittest.TestCase):
+    @staticmethod
+    def resign(report):
+        report["report_id"] = rd.canonical_json_digest({
+            key: value for key, value in report.items() if key != "report_id"
+        })
+        return report
+
     def report(self, value):
         _, report = ChildHarnessTests().run_cell(value)
         return report
@@ -628,6 +751,7 @@ class MeasurementCompletenessTests(unittest.TestCase):
         with self.assertRaisesRegex(rd.ReceiptError, "duplicate exact cells"):
             skew.aggregate_support([report, report], expected_cells=[value])
         report["cell_direction"] = "b-to-a"
+        self.resign(report)
         with self.assertRaisesRegex(rd.ReceiptError, "cell preimage"):
             skew.aggregate_support([report], expected_cells=[value])
 
@@ -643,10 +767,11 @@ class MeasurementCompletenessTests(unittest.TestCase):
         runtime["sha256"] = sha(json.dumps(
             preimage, sort_keys=True, separators=(",", ":")
         ).encode())
+        self.resign(reports[1])
         with self.assertRaisesRegex(rd.ReceiptError, "runtime inventory differs"):
             skew.aggregate_support(reports, expected_cells=cells)
 
-    def test_aggregate_refuses_mixed_edges_or_missing_required_control(self):
+    def test_aggregate_refuses_mixed_edges(self):
         channel_cell = cell()
         pi_cell = cell(client="pi")
         channel_report = self.report(channel_cell)
@@ -655,26 +780,24 @@ class MeasurementCompletenessTests(unittest.TestCase):
             skew.aggregate_support(
                 [channel_report, pi_report], expected_cells=[channel_cell, pi_cell]
             )
-        controlled_cell = cell(a_kind="published-latest", b_kind="candidate")
-        controlled = self.report(controlled_cell)
-        controlled["negative_control"] = None
-        with self.assertRaisesRegex(rd.ReceiptError, "required-field control"):
-            skew.aggregate_support([controlled], expected_cells=[controlled_cell])
 
     def test_aggregate_recomputes_cell_and_artifact_evidence(self):
         value = cell(direction="a-to-b")
         report = self.report(value)
         report["client_artifact"]["sha256"] = "0" * 64
+        self.resign(report)
         with self.assertRaisesRegex(rd.ReceiptError, "artifact.*preimage"):
             skew.aggregate_support([report], expected_cells=[value])
 
         report = self.report(value)
         report["cell"]["a"]["version"] = "9.9.9"
+        self.resign(report)
         with self.assertRaisesRegex(rd.ReceiptError, "cell preimage"):
             skew.aggregate_support([report], expected_cells=[value])
 
         report = self.report(value)
         report["server_runtime"]["sha256"] = "0" * 64
+        self.resign(report)
         with self.assertRaisesRegex(rd.ReceiptError, "runtime inventory"):
             skew.aggregate_support([report], expected_cells=[value])
 
