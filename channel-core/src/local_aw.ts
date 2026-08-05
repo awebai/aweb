@@ -7,14 +7,26 @@ import type { PinStoreWriter } from "./identity/pinstore.js";
 
 const execFileAsync = promisify(execFile);
 
+export interface DecryptedMailContent {
+  message_id: string;
+  subject: string;
+  body: string;
+}
+
+export interface DecryptedChatContent {
+  message_id: string;
+  body: string;
+}
+
 export interface LocalDecryptProvider {
-  mailMessage?(messageID: string): Promise<Partial<InboxMessage> | null>;
-  chatMessage?(sessionID: string, messageID: string): Promise<Partial<ChatMessage> | null>;
+  mailMessage?(messageID: string): Promise<DecryptedMailContent | null>;
+  chatMessage?(sessionID: string, messageID: string): Promise<DecryptedChatContent | null>;
 }
 
 export interface LocalAWDecryptOptions {
   workdir: string;
   awCommand?: string;
+  teamID?: string;
 }
 
 export interface LocalAWPinStoreOptions {
@@ -45,29 +57,32 @@ export function createLocalAWPinStoreWriter(options: LocalAWPinStoreOptions = {}
 
 export function createLocalAWDecryptProvider(options: LocalAWDecryptOptions): LocalDecryptProvider {
   const awCommand = options.awCommand || process.env.AW_BIN || "aw";
+  const teamArgs = options.teamID?.trim() ? ["--team", options.teamID.trim()] : [];
   return {
-    async mailMessage(messageID: string): Promise<Partial<InboxMessage> | null> {
+    async mailMessage(messageID: string): Promise<DecryptedMailContent | null> {
       const id = messageID.trim();
       if (!id) return null;
       const { stdout } = await execFileAsync(
         awCommand,
-        ["mail", "show", "--message-id", id, "--json"],
+        [...teamArgs, "mail", "show", "--message-id", id, "--json"],
         { cwd: options.workdir, timeout: 15_000, maxBuffer: 1024 * 1024 },
       );
       const payload = parseJSONOutput<{ messages?: InboxMessage[] }>(stdout);
-      return (payload.messages || []).find((msg) => msg.message_id === id) || null;
+      const message = (payload.messages || []).find((msg) => msg.message_id === id);
+      return message ? { message_id: message.message_id, subject: message.subject, body: message.body } : null;
     },
-    async chatMessage(sessionID: string, messageID: string): Promise<Partial<ChatMessage> | null> {
+    async chatMessage(sessionID: string, messageID: string): Promise<DecryptedChatContent | null> {
       const session = sessionID.trim();
       const id = messageID.trim();
       if (!session || !id) return null;
       const { stdout } = await execFileAsync(
         awCommand,
-        ["chat", "history", "--session-id", session, "--message-id", id, "--limit", "1", "--json"],
+        [...teamArgs, "chat", "history", "--session-id", session, "--message-id", id, "--limit", "1", "--json"],
         { cwd: options.workdir, timeout: 15_000, maxBuffer: 1024 * 1024 },
       );
       const payload = parseJSONOutput<{ messages?: ChatMessage[] }>(stdout);
-      return (payload.messages || []).find((msg) => msg.message_id === id) || null;
+      const message = (payload.messages || []).find((msg) => msg.message_id === id);
+      return message ? { message_id: message.message_id, body: message.body } : null;
     },
   };
 }

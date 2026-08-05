@@ -10,7 +10,7 @@ describe("createLocalAWDecryptProvider", () => {
     const dir = await mkdtemp(join(tmpdir(), "aweb-local-aw-"));
     const script = join(dir, "aw");
     await writeFile(script, `#!/bin/sh
-if [ "$1 $2 $3 $4" != "mail show --message-id mail-1" ]; then
+if [ "$*" != "--team backend:acme.com mail show --message-id mail-1 --json" ]; then
   echo "unexpected args: $*" >&2
   exit 7
 fi
@@ -18,7 +18,7 @@ printf '{"messages":[{"message_id":"mail-1","subject":"hello","body":"decrypted 
 `);
     await chmod(script, 0o755);
 
-    const provider = createLocalAWDecryptProvider({ workdir: dir, awCommand: script });
+    const provider = createLocalAWDecryptProvider({ workdir: dir, awCommand: script, teamID: "backend:acme.com" });
     await expect(provider.mailMessage?.("mail-1")).resolves.toMatchObject({
       message_id: "mail-1",
       subject: "hello",
@@ -30,7 +30,7 @@ printf '{"messages":[{"message_id":"mail-1","subject":"hello","body":"decrypted 
     const dir = await mkdtemp(join(tmpdir(), "aweb-local-aw-"));
     const script = join(dir, "aw");
     await writeFile(script, `#!/bin/sh
-if [ "$1 $2 $3 $4 $5 $6" != "chat history --session-id sess-1 --message-id chat-1" ]; then
+if [ "$*" != "--team backend:acme.com chat history --session-id sess-1 --message-id chat-1 --limit 1 --json" ]; then
   echo "unexpected args: $*" >&2
   exit 7
 fi
@@ -38,7 +38,7 @@ printf '{"session_id":"sess-1","messages":[{"message_id":"chat-1","body":"decryp
 `);
     await chmod(script, 0o755);
 
-    const provider = createLocalAWDecryptProvider({ workdir: dir, awCommand: script });
+    const provider = createLocalAWDecryptProvider({ workdir: dir, awCommand: script, teamID: "backend:acme.com" });
     await expect(provider.chatMessage?.("sess-1", "chat-1")).resolves.toMatchObject({
       message_id: "chat-1",
       body: "decrypted chat",
