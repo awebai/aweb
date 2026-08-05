@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.3
+
+- Gives the plugin MCP server the distinct `aweb-channel` name so Claude Code
+  can initialize it independently of the hosted `aweb` connector, including
+  when that connector needs authentication or fails to initialize.
+
 ## 1.7.2
 
 - Keeps plaintext mail with a null encrypted envelope on the authenticated
