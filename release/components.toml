@@ -44,7 +44,7 @@ verify = { command = "docker manifest inspect ghcr.io/awebai/awid:{version}" }
 source_paths = ["cli/go/"]
 version_source = { type = "tag-history", script = "scripts/cli-release-version.sh" }
 tag_format = "aw-v{version}"
-publish_lane = { workflow = ".github/workflows/aw-release.yml", registry = { type = "github-release", repo = "awebai/aw" } }
+publish_lane = { workflow = ".github/workflows/aw-release.yml", repository = "awebai/aw", provider = "github-workflow-artifacts", modes = ["stage-only", "publish-continuation", "verify-only"], registry = { type = "github-release", repo = "awebai/aw" } }
 verify = { command = "scripts/check-cli-release-vcs-stamps.sh" }
 
 [component.channel-core]

@@ -307,7 +307,7 @@ class CliPathTests(unittest.TestCase):
                 )
 
             class ObservingLanes(FixtureLanes):
-                def observe(self, node):
+                def observe(self, node, staged=None):
                     if node.component == "client":
                         return rd.ReceiptEntry(
                             version=node.version or "0.0.0",
@@ -362,7 +362,7 @@ class CliPathTests(unittest.TestCase):
                 providers=self.providers_for(root, state, lanes=lanes),
             )
             class ObserveAll(FixtureLanes):
-                def observe(self, node):
+                def observe(self, node, staged=None):
                     return rd.ReceiptEntry(
                         version=node.version or "0.0.0",
                         digest=f"staged-{node.component}",
@@ -756,7 +756,7 @@ class ReceiptVerificationTests(unittest.TestCase):
             )
 
             class ObserveAll(FixtureLanes):
-                def observe(self, node):
+                def observe(self, node, staged=None):
                     return rd.ReceiptEntry(
                         version=node.version or "0.0.0",
                         digest=f"staged-{node.component}",
@@ -803,7 +803,7 @@ class ResumeBindingTests(unittest.TestCase):
             planned = json.loads(buffer.getvalue())
 
             class CountingLanes(FixtureLanes):
-                def observe(self, node):
+                def observe(self, node, staged=None):
                     self.calls.append(("observe", node.component))
                     return None
 
@@ -999,7 +999,7 @@ class PostPublicationResumeTests(unittest.TestCase):
                 def stage(self, node):
                     raise AssertionError("resume must never stage")
 
-                def observe(self, node):
+                def observe(self, node, staged=None):
                     if node.component == "client":
                         return rd.ReceiptEntry(
                             version="1.1.0",
@@ -1074,7 +1074,7 @@ class ObservationFieldTests(unittest.TestCase):
             helper, graph_path, planned, plan, receipt_id = self.seeded(root, state)
 
             class WrongPointer(FixtureLanes):
-                def observe(self, node):
+                def observe(self, node, staged=None):
                     return rd.ReceiptEntry(
                         version=node.version or "0.0.0",
                         digest=f"staged-{node.component}",
@@ -1097,7 +1097,7 @@ class ObservationFieldTests(unittest.TestCase):
             helper, graph_path, planned, plan, receipt_id = self.seeded(root, state)
 
             class NoPointerField(FixtureLanes):
-                def observe(self, node):
+                def observe(self, node, staged=None):
                     return rd.ReceiptEntry(
                         version=node.version or "0.0.0",
                         digest=f"staged-{node.component}",
@@ -1199,7 +1199,7 @@ class RegistryDigestSetObservationTests(unittest.TestCase):
             )
 
             class ScalarObserver(FixtureLanes):
-                def observe(self, node):
+                def observe(self, node, staged=None):
                     return rd.ReceiptEntry(
                         version=node.version or "0.0.0",
                         digest=canonical
@@ -1229,7 +1229,7 @@ class RegistryDigestSetObservationTests(unittest.TestCase):
             )
 
             class SetObserver(ScalarObserver):
-                def observe(self, node):
+                def observe(self, node, staged=None):
                     entry = super().observe(node)
                     if node.component == "client":
                         return rd.ReceiptEntry(
@@ -1781,7 +1781,7 @@ class StageBoundaryTests(unittest.TestCase):
                 def stage(self, node):
                     raise AssertionError("resume must never stage")
 
-                def observe(self, node):
+                def observe(self, node, staged=None):
                     if node.component == "client":
                         return rd.ReceiptEntry(
                             version="1.1.0", digest=canonical, phase="published"
@@ -1974,7 +1974,7 @@ class RerunIdempotencyTests(unittest.TestCase):
                 def publish(self, node, staged):
                     raise AssertionError("rerun must never republish")
 
-                def observe(self, node):
+                def observe(self, node, staged=None):
                     done = first[node.component]
                     return rd.ReceiptEntry(
                         version=done.version,
@@ -2317,7 +2317,7 @@ class ResumeManifestTests(unittest.TestCase):
                 def stage(self, node):
                     raise AssertionError("resume must never stage")
 
-                def observe(self, node):
+                def observe(self, node, staged=None):
                     if node.component == "client":
                         return rd.ReceiptEntry(
                             version=node.version or "0.0.0",

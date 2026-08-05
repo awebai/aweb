@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import io
 import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -791,6 +792,10 @@ class ReceiptEntry:
     # {"obligation": str, "evidence_id": str, "digest": str, ...extensions}.
     delivery_proof: dict | None = None
     digest_set: dict | None = None  # complete artifact set for registry components
+    # The structured lane stage reference (LaneRef.to_dict()), persisted
+    # unchanged so resume and continuation always name the original
+    # run/artifact/source/digest.
+    lane_ref: dict | None = None
 
 
 @dataclass
@@ -887,6 +892,7 @@ def seal_receipt(
                     "phase": e.phase,
                     "pointer_state": e.pointer_state,
                     "delivery_proof": e.delivery_proof,
+                    "lane_ref": e.lane_ref,
                 }
                 for name, e in sorted(entries.items())
             },
@@ -927,6 +933,7 @@ def load_sealed_receipt(data: bytes, *, expected_digest: str) -> Receipt:
                 pointer_state=e.get("pointer_state"),
                 delivery_proof=e.get("delivery_proof"),
                 digest_set=e.get("digest_set"),
+                lane_ref=e.get("lane_ref"),
             )
             for name, e in parsed["entries"].items()
         },
@@ -1034,6 +1041,14 @@ class FileDigestAuthority:
 # Neither capability is writable from here.
 
 GITHUB_ARTIFACT_REPO_ALLOWLIST = ("awebai/aw",)
+AW_LANE_WORKFLOW_PATH = ".github/workflows/aw-release.yml"
+ANCHOR_REPO = "awebai/aweb"
+ANCHOR_WORKFLOW_PATH = ".github/workflows/release-anchor.yml"
+ANCHOR_WORKFLOW_FILE = "release-anchor.yml"
+# The anchor body travels as a workflow-dispatch input (gzip+base64); a real
+# frozen plan measures ~2KB, so this bound is generous while keeping inputs
+# far under the dispatch payload limit.
+ANCHOR_BODY_LIMIT = 131072
 
 
 def _run_gh_api(path: str) -> bytes:
@@ -1094,6 +1109,11 @@ class GithubArtifactStore:
             self._api, artifact_id
         )
         run = json.loads(self._api(f"repos/{repo}/actions/runs/{run_id}"))
+        if run.get("path") != AW_LANE_WORKFLOW_PATH:
+            raise ReceiptError(
+                f"{artifact_id}: staging run used workflow "
+                f"{run.get('path')!r}, not the reviewed {AW_LANE_WORKFLOW_PATH}"
+            )
         if run.get("conclusion") != "success":
             raise ReceiptError(
                 f"{artifact_id}: staging run concluded "
@@ -1140,6 +1160,269 @@ class GithubArtifactDigestAuthority:
             "the external digest authority is not caller-writable; GitHub "
             "records the digest at upload"
         )
+
+
+class GithubAnchorTransport:
+    """Real transport over the anchors repository: paginated artifact
+    listing, raw ZIP download, and the dispatch of the checked-in anchor
+    workflow. Inputs reach the dispatch as literal fields, never shell."""
+
+    def __init__(self, api=None, repo: str = ANCHOR_REPO):
+        self._api = api or _run_gh_api
+        self.repo = repo
+
+    def list_artifacts(self) -> list[dict]:
+        collected: list[dict] = []
+        page = 1
+        while True:
+            body = json.loads(self._api(
+                f"repos/{self.repo}/actions/artifacts?per_page=100&page={page}"
+            ))
+            artifacts = body.get("artifacts", [])
+            if not artifacts:
+                return collected
+            collected.extend(artifacts)
+            page += 1
+
+    def artifact_zip(self, artifact_id) -> bytes:
+        return self._api(
+            f"repos/{self.repo}/actions/artifacts/{artifact_id}/zip"
+        )
+
+    def dispatch_anchor(self, logical_id: str, digest: str, body_gzip_b64: str):
+        import subprocess
+
+        result = subprocess.run(
+            [
+                "gh", "workflow", "run", ANCHOR_WORKFLOW_FILE,
+                "--repo", self.repo,
+                "-f", f"logical_id={logical_id}",
+                "-f", f"digest={digest}",
+                "-f", f"body_gzip_b64={body_gzip_b64}",
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise ReceiptError(
+                "anchor dispatch failed: "
+                + result.stderr.decode(errors="replace").strip()
+            )
+
+
+def _anchor_name(logical_id: str, digest: str) -> str:
+    # Collision-resistant hash of the EXACT logical id; the artifact itself
+    # carries the exact id for verification, the name only locates it.
+    id_hash = hashlib.sha256(logical_id.encode()).hexdigest()
+    return f"anchor--{id_hash}--{digest}"
+
+
+def _validated_anchor_candidates(transport, logical_id: str) -> dict[str, bytes]:
+    """All nonexpired anchors for the logical id, fully validated: the raw
+    ZIP must hash to GitHub's API digest before extraction, the embedded
+    record must name the EXACT logical id, and the body must hash to the
+    digest the artifact name declares. Returns {digest: body}."""
+    import zipfile
+
+    prefix = f"anchor--{hashlib.sha256(logical_id.encode()).hexdigest()}--"
+    found: dict[str, bytes] = {}
+    for artifact in transport.list_artifacts():
+        name = artifact.get("name", "")
+        if not name.startswith(prefix) or artifact.get("expired") is not False:
+            continue
+        declared = name[len(prefix):]
+        zip_bytes = transport.artifact_zip(artifact["id"])
+        api_digest = (artifact.get("digest") or "").removeprefix("sha256:")
+        if hashlib.sha256(zip_bytes).hexdigest() != api_digest:
+            raise ReceiptError(
+                f"anchor {name}: ZIP bytes do not hash to the API digest"
+            )
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            record = json.loads(archive.read("record.json"))
+            body = archive.read("body")
+        if record.get("logical_id") != logical_id:
+            raise ReceiptError(
+                f"anchor {name}: record names {record.get('logical_id')!r}, "
+                f"not the requested {logical_id!r}"
+            )
+        actual = hashlib.sha256(body).hexdigest()
+        if actual != declared or record.get("digest") != declared:
+            raise ReceiptError(
+                f"anchor {name}: body digest {actual} does not equal the "
+                f"declared {declared}"
+            )
+        if declared in found and found[declared] != body:
+            raise ReceiptError(
+                f"anchor {name}: duplicate anchors disagree on content"
+            )
+        found[declared] = body
+    if len(found) > 1:
+        raise ReceiptError(
+            f"{logical_id}: conflicting anchors record digests "
+            f"{sorted(found)}; refusing"
+        )
+    return found
+
+
+class GithubAnchorStore:
+    """Writable external anchor store: put dispatches the checked-in anchor
+    workflow when no exact anchor exists and reconciles by deterministic
+    identity; get returns validated anchored bytes."""
+
+    POLL_ATTEMPTS = 60
+
+    def __init__(self, transport=None, waiter=None):
+        self._transport = transport or GithubAnchorTransport()
+        self._waiter = waiter if waiter is not None else (
+            lambda: __import__("time").sleep(5)
+        )
+
+    def get(self, artifact_id: str) -> bytes:
+        found = _validated_anchor_candidates(self._transport, artifact_id)
+        if not found:
+            raise ReceiptError(f"no anchor recorded for {artifact_id}")
+        return next(iter(found.values()))
+
+    def put(self, artifact_id: str, data: bytes) -> None:
+        digest = hashlib.sha256(data).hexdigest()
+        found = _validated_anchor_candidates(self._transport, artifact_id)
+        if found:
+            if digest in found:
+                return  # reconciled: the exact anchor already exists
+            raise ReceiptError(
+                f"{artifact_id} is anchored with digest {sorted(found)[0]}, "
+                f"refusing different bytes {digest}"
+            )
+        if len(data) > ANCHOR_BODY_LIMIT:
+            raise ReceiptError(
+                f"{artifact_id}: body of {len(data)} bytes exceeds the anchor "
+                f"input bound of {ANCHOR_BODY_LIMIT}"
+            )
+        import base64
+        import gzip
+
+        encoded = base64.b64encode(gzip.compress(data)).decode()
+        self._transport.dispatch_anchor(artifact_id, digest, encoded)
+        for _ in range(self.POLL_ATTEMPTS):
+            found = _validated_anchor_candidates(self._transport, artifact_id)
+            if digest in found:
+                return
+            self._waiter()
+        raise ReceiptError(
+            f"{artifact_id}: anchor did not appear after dispatch; a repeated "
+            "put reconciles by deterministic identity before dispatching again"
+        )
+
+
+class GithubAnchorDigestAuthority:
+    """Digest records resolve from validated anchor artifacts; record()
+    verifies the already-uploaded anchor and never dispatches or writes."""
+
+    trust_class = "external-immutable"
+
+    def __init__(self, transport=None):
+        self._transport = transport or GithubAnchorTransport()
+
+    def expected_digest(self, artifact_id: str) -> str | None:
+        found = _validated_anchor_candidates(self._transport, artifact_id)
+        if not found:
+            return None
+        return next(iter(found))
+
+    def record(self, artifact_id: str, digest: str) -> None:
+        found = _validated_anchor_candidates(self._transport, artifact_id)
+        if not found:
+            raise ReceiptError(
+                f"{artifact_id}: no anchor uploaded; record verifies, the "
+                "store's put dispatches"
+            )
+        if digest not in found:
+            raise ReceiptError(
+                f"{artifact_id}: anchor records {sorted(found)[0]}, not the "
+                f"expected {digest}"
+            )
+
+    def recorded_ids(self) -> list[str]:
+        import zipfile
+
+        ids: set[str] = set()
+        for artifact in self._transport.list_artifacts():
+            name = artifact.get("name", "")
+            if not name.startswith("anchor--") or artifact.get("expired") is not False:
+                continue
+            zip_bytes = self._transport.artifact_zip(artifact["id"])
+            api_digest = (artifact.get("digest") or "").removeprefix("sha256:")
+            if hashlib.sha256(zip_bytes).hexdigest() != api_digest:
+                raise ReceiptError(
+                    f"anchor {name}: ZIP bytes do not hash to the API digest"
+                )
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+                record = json.loads(archive.read("record.json"))
+            ids.add(record["logical_id"])
+        return sorted(ids)
+
+
+@dataclass(frozen=True)
+class LaneRef:
+    """A lane's structured stage reference: the exact external artifact, the
+    INDEPENDENTLY SUPPLIED lane source SHA (never read from the artifact's
+    own manifest), and the artifact's outer ZIP digest as the caller binds
+    it. Persisted unchanged through staging, publication, verification,
+    receipts, and resume."""
+
+    artifact: str
+    aw_source_sha: str
+    zip_digest: str
+
+    def __post_init__(self):
+        _parse_gh_artifact_id(self.artifact)
+        if not re.fullmatch(r"[0-9a-f]{40}", self.aw_source_sha or ""):
+            raise ReceiptError(
+                f"lane source must be exactly 40 lowercase hex characters, "
+                f"got {self.aw_source_sha!r}"
+            )
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", self.zip_digest or ""):
+            raise ReceiptError(
+                f"lane zip digest must be sha256:<64 hex>, got {self.zip_digest!r}"
+            )
+
+    def to_dict(self) -> dict:
+        return {
+            "artifact": self.artifact,
+            "aw_source_sha": self.aw_source_sha,
+            "zip_digest": self.zip_digest,
+        }
+
+    @classmethod
+    def from_dict(cls, data) -> "LaneRef":
+        if not isinstance(data, dict) or set(data) != {
+            "artifact", "aw_source_sha", "zip_digest"
+        }:
+            raise ReceiptError(
+                f"lane reference must carry exactly artifact/aw_source_sha/"
+                f"zip_digest, got {data!r}"
+            )
+        return cls(**data)
+
+
+def parse_stage_artifact_argument(value: str) -> tuple[str, LaneRef]:
+    """--stage-artifact component=<name>,ref=<gh-artifact:...>,source=<40hex>,
+    digest=sha256:<64hex> - literal-validated before anything uses it."""
+    fields = {}
+    for part in value.split(","):
+        key, _, item = part.partition("=")
+        fields[key] = item
+    if set(fields) != {"component", "ref", "source", "digest"} or not all(
+        fields.values()
+    ):
+        raise ReceiptError(
+            "--stage-artifact must be component=<name>,ref=<gh-artifact:...>,"
+            f"source=<sha>,digest=<sha256:hex>, got {value!r}"
+        )
+    return fields["component"], LaneRef(
+        artifact=fields["ref"],
+        aw_source_sha=fields["source"],
+        zip_digest=fields["digest"],
+    )
 
 
 def validate_lane_staged_artifact(
@@ -1203,6 +1486,215 @@ def validate_lane_staged_artifact(
                     f"manifest's {digest}"
                 )
     return manifest
+
+
+def _fetch_aw_release_asset(name: str, version: str) -> bytes | None:
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        result = subprocess.run(
+            ["gh", "release", "download", f"v{version}",
+             "--repo", GITHUB_ARTIFACT_REPO_ALLOWLIST[0],
+             "--pattern", name, "--output", f"{tmp}/{name}"],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            return None
+        return Path(f"{tmp}/{name}").read_bytes()
+
+
+def _fetch_npm_tarball(package: str, version: str) -> bytes | None:
+    import subprocess
+    import urllib.request
+
+    result = subprocess.run(
+        ["npm", "view", f"{package}@{version}", "dist.tarball"],
+        capture_output=True, text=True,
+    )
+    tarball = result.stdout.strip()
+    if result.returncode != 0 or not tarball:
+        return None
+    with urllib.request.urlopen(tarball) as response:
+        return response.read()
+
+
+class AwLaneRuns:
+    """The aw-release.yml runs surface used for continuation correlation.
+    The listing reads the newest page, which bounds the snapshot window the
+    exactly-one-new-run check operates over; the reviewed workflow's
+    non-cancelling concurrency group serializes runs."""
+
+    def __init__(self, api=None):
+        self._api = api or _run_gh_api
+        self.repo = GITHUB_ARTIFACT_REPO_ALLOWLIST[0]
+
+    def list_run_ids(self) -> list[int]:
+        body = json.loads(self._api(
+            f"repos/{self.repo}/actions/workflows/aw-release.yml/runs"
+            "?per_page=100"
+        ))
+        return [run["id"] for run in body.get("workflow_runs", [])]
+
+    def dispatch(self, inputs: dict) -> None:
+        import subprocess
+
+        command = ["gh", "workflow", "run", "aw-release.yml",
+                   "--repo", self.repo]
+        for key, value in sorted(inputs.items()):
+            command += ["-f", f"{key}={value}"]
+        result = subprocess.run(command, capture_output=True)
+        if result.returncode != 0:
+            raise ReceiptError(
+                "continuation dispatch failed: "
+                + result.stderr.decode(errors="replace").strip()
+            )
+
+    def run_conclusion(self, run_id) -> str | None:
+        body = json.loads(self._api(
+            f"repos/{self.repo}/actions/runs/{run_id}"
+        ))
+        return body.get("conclusion")
+
+
+class AwWorkflowLane:
+    """The aw component's lane over the reviewed three-mode workflow.
+    stage() loads the referenced staged bytes; publish() dispatches the
+    reviewed continuation and requires the complete set observed; observe()
+    reports real remote state from the ANCHORED staged entry; verify()
+    re-observes. Nothing here rebuilds or repacks."""
+
+    POLL_ATTEMPTS = 240
+
+    def __init__(self, *, reader, refs, release_fetch, npm_fetch, runs,
+                 waiter=None):
+        self._reader = reader
+        self._refs = refs  # component -> LaneRef
+        self._release_fetch = release_fetch  # (asset_name, version) -> bytes|None
+        self._npm = NpmRegistryObserver(fetch=npm_fetch)
+        self._runs = runs
+        self._waiter = waiter if waiter is not None else (
+            lambda: __import__("time").sleep(15)
+        )
+
+    def has_lane(self, component: str) -> bool:
+        return component in self._refs
+
+    def stage(self, node) -> "ReceiptEntry":
+        ref = self._refs[node.component]
+        data = self._reader.get(ref.artifact)
+        actual = f"sha256:{hashlib.sha256(data).hexdigest()}"
+        if actual != ref.zip_digest:
+            raise ReceiptError(
+                f"{node.component}: staged bytes hash {actual}, not the "
+                f"caller-bound {ref.zip_digest}"
+            )
+        manifest = validate_lane_staged_artifact(
+            data,
+            expected_source_sha=ref.aw_source_sha,
+            expected_version=node.version,
+        )
+        files = manifest["files"]
+        return ReceiptEntry(
+            version=node.version,
+            digest=canonical_digest_of_set(files),
+            digest_set=files,
+            lane_ref=ref.to_dict(),
+        )
+
+    def _observe_set(self, staged: "ReceiptEntry") -> dict[str, str | None]:
+        """One real observation per staged identity; never an expectation."""
+        observed: dict[str, str | None] = {}
+        npm_names = []
+        release_names = []
+        for name in staged.digest_set:
+            base = name.rsplit("/", 1)[-1]
+            if base.endswith(".tgz"):
+                npm_names.append((name, base))
+            else:
+                release_names.append((name, base))
+        release = GithubReleaseObserver(
+            fetch=lambda base: self._release_fetch(base, staged.version)
+        )
+        release_observed = release.observe([base for _, base in release_names])
+        for name, base in release_names:
+            observed[name] = release_observed[base]
+        for name, base in npm_names:
+            stem = base.removesuffix(".tgz")
+            package, _, version = stem.replace("awebai-", "@awebai/", 1
+                ).rpartition("-")
+            observed[name] = self._npm.observe(package, version)
+        return observed
+
+    def observe(self, node, staged: "ReceiptEntry | None" = None):
+        if staged is None or staged.digest_set is None:
+            raise ReceiptError(
+                f"{node.component}: observation requires the anchored staged "
+                "entry; expected values are never re-derived"
+            )
+        observed = self._observe_set(staged)
+        adopted, missing = classify_remote_state(staged.digest_set, observed)
+        if missing:
+            return None
+        return ReceiptEntry(
+            version=staged.version,
+            digest=canonical_digest_of_set(
+                {name: observed[name] for name in staged.digest_set}
+            ),
+            phase="published",
+            digest_set={name: observed[name] for name in staged.digest_set},
+            lane_ref=staged.lane_ref,
+        )
+
+    def publish(self, node, staged: "ReceiptEntry") -> "ReceiptEntry":
+        ref = LaneRef.from_dict(staged.lane_ref)
+        _, run_id, gh_artifact_id = _parse_gh_artifact_id(ref.artifact)
+        before = set(self._runs.list_run_ids())
+        self._runs.dispatch({
+            "mode": "publish-continuation",
+            "version": staged.version,
+            "source_sha": ref.aw_source_sha,
+            "stage_run_id": run_id,
+            "stage_artifact_id": gh_artifact_id,
+            "stage_zip_digest": ref.zip_digest,
+        })
+        new_runs: list = []
+        for _ in range(self.POLL_ATTEMPTS):
+            new_runs = [r for r in self._runs.list_run_ids() if r not in before]
+            if new_runs:
+                break
+            self._waiter()
+        if len(new_runs) != 1:
+            raise ReceiptError(
+                f"{node.component}: expected exactly one new continuation run, "
+                f"identified {len(new_runs)}; refusing"
+            )
+        conclusion = None
+        for _ in range(self.POLL_ATTEMPTS):
+            conclusion = self._runs.run_conclusion(new_runs[0])
+            if conclusion is not None:
+                break
+            self._waiter()
+        if conclusion != "success":
+            raise ReceiptError(
+                f"{node.component}: continuation run {new_runs[0]} concluded "
+                f"{conclusion!r}, not success"
+            )
+        observed = self.observe(node, staged)
+        if observed is None:
+            raise ReceiptError(
+                f"{node.component}: items missing after publication; a "
+                "successful continuation must leave the complete exact set"
+            )
+        return observed
+
+    def verify(self, node, published: "ReceiptEntry") -> None:
+        observed = self.observe(node, published)
+        if observed is None:
+            raise ReceiptError(
+                f"{node.component}: verification observes an incomplete "
+                "published set"
+            )
 
 
 # ── lane observers: one SHA-256 per published item ───────────────────
@@ -1371,6 +1863,7 @@ def seal_staged_manifest(
                     "digest": e.digest,
                     "digest_set": e.digest_set,
                     "pointer_state": e.pointer_state,
+                    "lane_ref": e.lane_ref,
                     # A delivery proof cannot exist before publication; the
                     # manifest declares the OBLIGATION and the receipt carries
                     # the post-publication proof the observer validates.
@@ -1434,6 +1927,9 @@ def validate_staged_manifest(
     for name, entry in entries.items():
         if not entry.get("digest") or not entry.get("version"):
             raise ReceiptError(f"{name}: manifest entry needs digest and version")
+        lane_ref = entry.get("lane_ref")
+        if lane_ref is not None:
+            LaneRef.from_dict(lane_ref)
         digest_set = entry.get("digest_set")
         if digest_set is not None:
             if not isinstance(digest_set, dict) or not digest_set or not all(
@@ -1481,6 +1977,11 @@ def adopt_observed(manifest: dict, component: str, observed: ReceiptEntry) -> No
         raise ReceiptError(
             f"{component}: observed {observed.version}/{observed.digest} does not "
             f"equal the anchored staged manifest {entry['version']}/{entry['digest']}"
+        )
+    if entry.get("lane_ref") is not None and observed.lane_ref != entry["lane_ref"]:
+        raise ReceiptError(
+            f"{component}: lane reference does not equal the anchored staged "
+            "manifest reference"
         )
 
 
@@ -1696,6 +2197,7 @@ def run_plan(
                 phase="staged",
                 pointer_state=e.get("pointer_state"),
                 digest_set=e.get("digest_set"),
+                lane_ref=e.get("lane_ref"),
             )
             for name, e in manifest["entries"].items()
         }
@@ -1831,6 +2333,7 @@ def run_plan(
             pointer_state=result.pointer_state,
             delivery_proof=result.delivery_proof,
             digest_set=result.digest_set,
+            lane_ref=result.lane_ref,
         )
         published[node.component] = entry
         sequence += 1
@@ -1853,6 +2356,7 @@ def run_plan(
             pointer_state=published[node.component].pointer_state,
             delivery_proof=published[node.component].delivery_proof,
             digest_set=published[node.component].digest_set,
+            lane_ref=published[node.component].lane_ref,
         )
         verified[node.component] = entry
 
@@ -1965,7 +2469,18 @@ def resume_plan(
             if record["kind"] == "published":
                 claimed.add(record["component"])
     for node in plan.moving:
-        observed = lanes.observe(node) if hasattr(lanes, "observe") else None
+        manifest_entry = manifest["entries"][node.component]
+        anchored = ReceiptEntry(
+            version=manifest_entry["version"],
+            digest=manifest_entry["digest"],
+            phase="staged",
+            pointer_state=manifest_entry.get("pointer_state"),
+            digest_set=manifest_entry.get("digest_set"),
+            lane_ref=manifest_entry.get("lane_ref"),
+        )
+        observed = (
+            lanes.observe(node, anchored) if hasattr(lanes, "observe") else None
+        )
         if observed is None:
             if node.component in claimed:
                 raise ReceiptError(
@@ -2019,6 +2534,7 @@ def resume_plan(
             pointer_state=observed.pointer_state,
             delivery_proof=observed.delivery_proof,
             digest_set=observed.digest_set,
+            lane_ref=observed.lane_ref,
         )
     return run_plan(
         plan,
@@ -2487,8 +3003,11 @@ register_authority(
     AuthorityRegistration(
         kind="github-workflow-artifacts",
         trust_class="external-immutable",
-        factory=GithubArtifactDigestAuthority,
-        store_factory=GithubArtifactStore,
+        # The writable anchors pair carries the driver's own evidence
+        # (plan/manifest/transitions/receipt); the aw lane's staged bytes
+        # are read through the separate read-only GithubArtifactStore.
+        factory=GithubAnchorDigestAuthority,
+        store_factory=GithubAnchorStore,
     )
 )
 
@@ -2523,6 +3042,13 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         "--manifest-id",
         help="explicit full staged-manifest artifact id for resume binding",
     )
+    run_parser.add_argument(
+        "--stage-artifact",
+        action="append",
+        default=[],
+        help="component=<name>,ref=gh-artifact:<repo>:<run>:<artifact>,"
+        "source=<lane source sha>,digest=sha256:<artifact zip digest>",
+    )
     receipt_parser = sub.add_parser("release-receipt")
     receipt_parser.add_argument("--artifact-id", required=True)
     receipt_parser.add_argument("--plan-id", required=True)
@@ -2545,9 +3071,24 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 )
             authority = registration.factory()
             store = registration.store_factory()
+        lanes = None
+        if registration.kind == "github-workflow-artifacts":
+            refs = dict(
+                parse_stage_artifact_argument(item)
+                for item in getattr(args, "stage_artifact", [])
+            )
+            if refs:
+                lanes = AwWorkflowLane(
+                    reader=GithubArtifactStore(),
+                    refs=refs,
+                    release_fetch=_fetch_aw_release_asset,
+                    npm_fetch=_fetch_npm_tarball,
+                    runs=AwLaneRuns(),
+                )
         providers = Providers(
             store=store,
             authority=authority,
+            lanes=lanes,
             authority_trust=registration.trust_class,
         )
         if args.verb in ("plan", "release-run"):
@@ -2840,7 +3381,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                         "approval record"
                     )
                     return 1
-            observed = lanes.observe(node)
+            observed = lanes.observe(node, receipt.entries[node.component])
             if observed is None:
                 print(
                     f"MISMATCH: {node.component}: no authoritative observation "

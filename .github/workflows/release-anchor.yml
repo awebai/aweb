@@ -1,0 +1,68 @@
+name: Release Anchor
+
+# Dispatch-only external anchor for release evidence (plan, staged manifest,
+# transitions, receipt). The release driver's anchors store dispatches this
+# workflow; it verifies the declared digest against the decoded body and
+# uploads ONE deterministically named immutable workflow artifact. It
+# publishes nothing and has no other outward effect.
+#
+# The artifact name is anchor--<sha256 of the exact logical id>--<digest>,
+# so a crashed or timed-out writer reconciles by identity: an anchor either
+# exists with exactly these bytes or the driver refuses. Retention bounds
+# how long anchors remain readable; durable post-expiry archival is tracked
+# as aweb-abbe.9.
+
+on:
+  workflow_dispatch:
+    inputs:
+      logical_id:
+        description: 'Exact logical artifact id being anchored'
+        required: true
+      digest:
+        description: 'sha256 of the decoded body, 64 lowercase hex'
+        required: true
+      body_gzip_b64:
+        description: 'Body bytes, gzip then base64'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  anchor:
+    name: Verify and anchor
+    runs-on: ubuntu-latest
+    env:
+      LOGICAL_ID: ${{ inputs.logical_id }}
+      DIGEST: ${{ inputs.digest }}
+      BODY_GZIP_B64: ${{ inputs.body_gzip_b64 }}
+    steps:
+      - name: Validate inputs and decode the body
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo "REFUSE: digest must be 64 lowercase hex" >&2; exit 1; }
+          [[ -n "$LOGICAL_ID" && "$LOGICAL_ID" != *$'\n'* ]] \
+            || { echo "REFUSE: logical_id must be a nonempty single line" >&2; exit 1; }
+          [[ "${#BODY_GZIP_B64}" -le 262144 ]] \
+            || { echo "REFUSE: encoded body exceeds the anchor input bound" >&2; exit 1; }
+          mkdir anchor
+          printf '%s' "$BODY_GZIP_B64" | base64 -d | gunzip > anchor/body
+          actual="$(sha256sum anchor/body | awk '{print $1}')"
+          [[ "$actual" == "$DIGEST" ]] \
+            || { echo "REFUSE: body digest $actual does not equal declared $DIGEST" >&2; exit 1; }
+          printf '{"logical_id": %s, "digest": "%s"}\n' \
+            "$(python3 -c 'import json,os; print(json.dumps(os.environ["LOGICAL_ID"]))')" \
+            "$DIGEST" > anchor/record.json
+          id_hash="$(printf '%s' "$LOGICAL_ID" | sha256sum | awk '{print $1}')"
+          echo "ANCHOR_NAME=anchor--${id_hash}--${DIGEST}" >> "$GITHUB_ENV"
+
+      - name: Upload the anchor artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ANCHOR_NAME }}
+          path: anchor/
+          if-no-files-found: error
+          # The repository maximum; the toolkit clamps with a warning if the
+          # configured limit is lower. Post-expiry archival: aweb-abbe.9.
+          retention-days: 400

@@ -1009,6 +1009,20 @@ class GraphContractTests(unittest.TestCase):
             any(c["env"] == "MIGRATION_GATE_ENV_FILE" for c in ac_gate.credential_paths)
         )
 
+    def test_aw_lane_declares_the_reviewed_external_surface(self) -> None:
+        """aweb-abbe.2.1: the aw lane points at the aw repository's reviewed
+        dispatch workflow, the allowlisted provider, and exactly the three
+        reviewed modes - not at this repository's checkout surface."""
+        graph = rd.Graph.load(rd.GRAPH_PATH)
+        lane = graph.components["aw"].publish_lane
+        self.assertEqual(lane.get("repository"), "awebai/aw")
+        self.assertEqual(lane.get("provider"), "github-workflow-artifacts")
+        self.assertEqual(
+            lane.get("modes"),
+            ["stage-only", "publish-continuation", "verify-only"],
+        )
+        self.assertEqual(lane.get("workflow"), ".github/workflows/aw-release.yml")
+
     def test_ac_pin_is_a_forced_pointer_consumer_of_server_and_awid(self) -> None:
         """alice's counterexample: awid moving without ac-pin in the plan is
         the missed-consumer failure the graph exists to prevent."""
