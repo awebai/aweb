@@ -44,6 +44,11 @@ def register(journey: str, factory) -> None:
     REGISTRY[journey] = factory
 
 
+# Child registration: CLI/server exact-artifact real-stack journey (.7.1).
+from release_skew_cli_server import CliServerSkewHarness
+
+register("make cli-e2e", CliServerSkewHarness)
+
 from release_federation_skew import FederationSkewHarness, JOURNEY
 
 # Historical mutation controls belong to the explicit measurement step, never
