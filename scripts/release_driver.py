@@ -636,6 +636,18 @@ def freeze_plan(
             f"{e.a}<->{e.b}": measurement.resolve(e.supported.get("record", {}), e)
             for e in complete_edges
         }
+    if plan.runtime_contract_edges and state is not None:
+        # Bind the authoritative published version of EVERY touched runtime
+        # endpoint - including untouched sides - so execution can refuse
+        # drift instead of substituting live values for frozen truth.
+        endpoints = sorted({
+            name for e in plan.runtime_contract_edges for name in (e.a, e.b)
+        })
+        resolved["runtime_published"] = {
+            name: state.published_version(graph.components[name])
+            if name in graph.components else None
+            for name in endpoints
+        }
     content = {
         "source_sha": source_sha,
         "plan_digest": plan_digest(plan, graph),
@@ -2588,6 +2600,94 @@ class MatrixSkewRunner:
                 ) from exc
 
 
+class AnchoredMeasurementAuthority:
+    """The production measurement resolution: the record names the
+    external authority artifact carrying the measured support document,
+    and the document resolves through the SAME independently checked
+    store-bytes + digest-authority capabilities as every other anchor -
+    then schema-binds to the exact edge, journey, and support set."""
+
+    def __init__(self, *, store, authority):
+        self._store = store
+        self._authority = authority
+
+    def resolve(self, record, edge):
+        if (
+            not isinstance(record, dict)
+            or record.get("authority") != "workflow-artifacts"
+            or not record.get("artifact_id")
+            or not isinstance(record.get("artifact_id"), str)
+            or not record.get("digest")
+            or not isinstance(record.get("digest"), str)
+        ):
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: support record must "
+                "name authority workflow-artifacts with a nonempty "
+                f"artifact_id and digest, got {record!r}"
+            )
+        recorded = self._authority.expected_digest(record["artifact_id"])
+        if recorded is None:
+            return None  # unresolvable at the authority; blocked, not invented
+        if recorded != record["digest"]:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: the authority records "
+                f"digest {recorded}, the edge declares {record['digest']}"
+            )
+        body = self._store.get(record["artifact_id"])
+        actual = hashlib.sha256(body).hexdigest()
+        if actual != record["digest"]:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: measurement bytes "
+                f"hash {actual}, not the declared {record['digest']}"
+            )
+        try:
+            doc = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: measurement body is "
+                f"not valid JSON ({exc})"
+            ) from exc
+        if doc.get("edge") != {"a": edge.a, "b": edge.b}:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
+                f"edge {doc.get('edge')!r}, not this edge"
+            )
+        if doc.get("journey") != edge.journey:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
+                f"journey {doc.get('journey')!r}, not {edge.journey!r}"
+            )
+        supported = doc.get("supported_versions")
+        if not isinstance(supported, dict) or not supported or not all(
+            isinstance(k, str) and isinstance(v, list)
+            and all(isinstance(item, str) for item in v)
+            for k, v in supported.items()
+        ):
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: measurement "
+                "supported_versions must map components to version lists"
+            )
+        return doc
+
+
+class _FrozenSupport:
+    """Support resolution from the sealed frozen snapshot: the matrix is
+    driven by frozen truth, never by a live resolver."""
+
+    def __init__(self, measurements: dict):
+        self._measurements = measurements
+
+    def resolve(self, record, edge):
+        key = f"{edge.a}<->{edge.b}"
+        sealed = self._measurements.get(key)
+        if sealed is None:
+            raise ReceiptError(
+                f"runtime-contract {key}: no measurement is sealed in the "
+                "frozen plan; execution never resolves support live"
+            )
+        return sealed
+
+
 class SkewHarnessRouter:
     """Routes each cell to the checked-in harness registered for its exact
     journey string (scripts/release_skew_harnesses.py). An unregistered
@@ -2610,12 +2710,15 @@ class SkewHarnessRouter:
         factory().run(cell)
 
 
-def build_production_skew(frozen: "FrozenPlan", *, state, measurement):
-    """The skew provider ordinary release-run composes in a fresh process:
-    measured support through the configured measurement authority,
-    authoritative published versions from repository state, and the
-    checked-in child-harness router. A plan touching no runtime edge needs
-    no matrix; a touched edge with missing state or measurement refuses."""
+def build_production_skew(frozen: "FrozenPlan", *, state, measurement,
+                          harness=None):
+    """The skew provider ordinary release-run composes in a fresh process.
+    FROZEN TRUTH DRIVES THE MATRIX: support cells come from the sealed
+    measurements and endpoint versions in the frozen snapshot. Before any
+    harness runs, the CURRENT observations - live measurement resolution
+    and live authoritative published versions - must equal those frozen
+    values; drift refuses. A plan touching no runtime edge needs no
+    matrix; missing state or measurement refuses."""
     plan = frozen.plan
     if not plan.runtime_contract_edges:
         return NoSkew()
@@ -2629,20 +2732,44 @@ def build_production_skew(frozen: "FrozenPlan", *, state, measurement):
             "the plan touches runtime-contract edges but no repository state "
             "is configured to supply authoritative published versions"
         )
+    frozen_measurements = frozen.resolved.get("measurements") or {}
+    frozen_published = frozen.resolved.get("runtime_published")
+    if frozen_published is None:
+        raise ReceiptError(
+            "the frozen plan seals no runtime endpoint versions; refusing to "
+            "substitute live values for frozen truth"
+        )
     graph = frozen.graph
-    published: dict = {}
+
+    def canon(value):
+        return json.loads(json.dumps(value, sort_keys=True, default=str))
+
     for edge in plan.runtime_contract_edges:
+        if edge.declared_incomplete:
+            continue
+        key = f"{edge.a}<->{edge.b}"
+        live = measurement.resolve(edge.supported.get("record", {}), edge)
+        if canon(live) != canon(frozen_measurements.get(key)):
+            raise ReceiptError(
+                f"runtime-contract {key}: the live measurement no longer "
+                "equals the frozen sealed record; refusing drifted support"
+            )
         for name in (edge.a, edge.b):
-            if name not in published:
-                component = graph.components.get(name)
-                published[name] = (
-                    state.published_version(component)
-                    if component is not None else None
+            component = graph.components.get(name)
+            current = (
+                state.published_version(component)
+                if component is not None else None
+            )
+            if current != frozen_published.get(name):
+                raise ReceiptError(
+                    f"runtime-contract {key}: published {name} is now "
+                    f"{current!r}, the frozen plan sealed "
+                    f"{frozen_published.get(name)!r}; refusing drift"
                 )
     return MatrixSkewRunner(
-        harness=SkewHarnessRouter(),
-        support=measurement,
-        published_versions=published,
+        harness=harness if harness is not None else SkewHarnessRouter(),
+        support=_FrozenSupport(frozen_measurements),
+        published_versions=frozen_published,
         moving={n.component for n in plan.moving},
     )
 
@@ -2951,7 +3078,8 @@ def _frozen_drift(
     current = canon(current)
     drift: list[str] = []
     allowed_tags = allowed_tag_transitions or {}
-    for section in ("pins", "baselines", "tags", "measurements"):
+    for section in ("pins", "baselines", "tags", "measurements",
+                    "runtime_published"):
         frozen_section = frozen_resolved.get(section, {}) or {}
         current_section = current.get(section, {}) or {}
         for key in sorted(set(frozen_section) | set(current_section)):
@@ -3059,6 +3187,16 @@ def run_plan(
             complete = [
                 e for e in plan.runtime_contract_edges if not e.declared_incomplete
             ]
+            if plan.runtime_contract_edges and state is not None:
+                endpoints = sorted({
+                    name for e in plan.runtime_contract_edges
+                    for name in (e.a, e.b)
+                })
+                current["runtime_published"] = {
+                    name: state.published_version(graph.components[name])
+                    if name in graph.components else None
+                    for name in endpoints
+                }
             current["measurements"] = {
                 f"{e.a}<->{e.b}": measurement.resolve(
                     e.supported.get("record", {}), e
@@ -4050,6 +4188,14 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
     args = parser.parse_args(argv)
 
     graph = Graph.load(Path(args.graph))
+    if (
+        providers is not None
+        and providers.measurement is None
+        and providers.authority_trust == "external-immutable"
+    ):
+        providers.measurement = AnchoredMeasurementAuthority(
+            store=providers.store, authority=providers.authority
+        )
     if providers is None:
         root = Path(args.store_root)
         root.mkdir(parents=True, exist_ok=True)
@@ -4072,10 +4218,18 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             )
             if refs:
                 lanes = compose_workflow_lanes(graph, refs)
+        measurement = None
+        if registration.trust_class == "external-immutable":
+            # Production measurement resolution rides the same external
+            # store/authority capabilities; there is no local fallback.
+            measurement = AnchoredMeasurementAuthority(
+                store=store, authority=authority
+            )
         providers = Providers(
             store=store,
             authority=authority,
             lanes=lanes,
+            measurement=measurement,
             authority_trust=registration.trust_class,
         )
         if args.verb in ("plan", "release-run", "skew-matrix"):
@@ -4225,6 +4379,8 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             runner = build_production_skew(
                 frozen, state=state, measurement=providers.measurement
             )
+            frozen_measurements = frozen.resolved.get("measurements") or {}
+            frozen_published = frozen.resolved.get("runtime_published") or {}
             rows = []
             for edge in plan.runtime_contract_edges:
                 if edge.declared_incomplete:
@@ -4233,20 +4389,12 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                         "declared-incomplete; the matrix never runs on "
                         "unmeasured support"
                     )
-                support = providers.measurement.resolve(
-                    edge.supported.get("record", {}), edge
-                )
                 cells = compute_skew_cells(
                     edge,
                     moving={n.component for n in plan.moving},
-                    staged=staged, support=support,
-                    published_versions={
-                        name: state.published_version(
-                            frozen_graph.components[name]
-                        ) if state is not None
-                        and name in frozen_graph.components else None
-                        for name in (edge.a, edge.b)
-                    },
+                    staged=staged,
+                    support=frozen_measurements.get(f"{edge.a}<->{edge.b}"),
+                    published_versions=frozen_published,
                 )
                 for cell in cells:
                     rows.append({

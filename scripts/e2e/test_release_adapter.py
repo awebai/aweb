@@ -2340,5 +2340,162 @@ class SkewMatrixVerbTests(unittest.TestCase):
             self.assertEqual(row["b"]["version"], "3.0.0")
 
 
+def measurement_record():
+    return {"authority": "workflow-artifacts",
+            "artifact_id": "measurement:fixture-fleet",
+            "digest": ""}
+
+
+def anchor_measurement(transport, edge, *, supported=None, journey=None,
+                       edge_binding=None, body=None):
+    doc = {
+        "edge": edge_binding or {"a": edge.a, "b": edge.b},
+        "journey": journey or edge.journey,
+        "supported_versions": supported or {
+            "client": ["1.0.0"], "server": ["3.0.0"]},
+    }
+    payload = body if body is not None else json.dumps(
+        doc, sort_keys=True).encode()
+    store = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
+    store.put("measurement:fixture-fleet", payload)
+    return sha256(payload)
+
+
+class AnchoredMeasurementTests(unittest.TestCase):
+    def adapter(self, transport):
+        return rd.AnchoredMeasurementAuthority(
+            store=rd.GithubAnchorStore(transport=transport,
+                                       waiter=lambda: None),
+            authority=rd.GithubAnchorDigestAuthority(transport=transport),
+        )
+
+    def test_a_coherent_record_resolves_to_its_schema_bound_support(self) -> None:
+        transport = FakeAnchorTransport()
+        edge = skew_edge()
+        digest = anchor_measurement(transport, edge)
+        record = {**measurement_record(), "digest": digest}
+        doc = self.adapter(transport).resolve(record, edge)
+        self.assertEqual(doc["supported_versions"]["server"], ["3.0.0"])
+
+    def test_missing_record_is_unresolvable_not_invented(self) -> None:
+        transport = FakeAnchorTransport()
+        record = {**measurement_record(), "digest": "0" * 64}
+        self.assertIsNone(self.adapter(transport).resolve(record, skew_edge()))
+
+    def test_malformed_record_schema_refuses(self) -> None:
+        adapter = self.adapter(FakeAnchorTransport())
+        for record in ({}, {"authority": "elsewhere", "artifact_id": "x",
+                            "digest": "d"},
+                       {"authority": "workflow-artifacts",
+                        "artifact_id": "", "digest": "d"}):
+            with self.assertRaises(rd.ReceiptError, msg=str(record)):
+                adapter.resolve(record, skew_edge())
+
+    def test_record_digest_must_equal_the_authority(self) -> None:
+        transport = FakeAnchorTransport()
+        edge = skew_edge()
+        anchor_measurement(transport, edge)
+        record = {**measurement_record(), "digest": "0" * 64}
+        with self.assertRaises(rd.ReceiptError):
+            self.adapter(transport).resolve(record, edge)
+
+    def test_wrong_edge_binding_refuses(self) -> None:
+        transport = FakeAnchorTransport()
+        edge = skew_edge()
+        digest = anchor_measurement(
+            transport, edge, edge_binding={"a": "other", "b": "server"})
+        record = {**measurement_record(), "digest": digest}
+        with self.assertRaises(rd.ReceiptError) as caught:
+            self.adapter(transport).resolve(record, edge)
+        self.assertIn("edge", str(caught.exception))
+
+    def test_wrong_journey_and_bad_support_schema_refuse(self) -> None:
+        for kwargs in ({"journey": "another journey"},
+                       {"supported": {"client": "not-a-list"}},
+                       {"body": b"not json"}):
+            transport = FakeAnchorTransport()
+            edge = skew_edge()
+            digest = anchor_measurement(transport, edge, **kwargs)
+            record = {**measurement_record(), "digest": digest}
+            with self.assertRaises(rd.ReceiptError, msg=str(kwargs)):
+                self.adapter(transport).resolve(record, edge)
+
+
+class FrozenTruthSkewTests(unittest.TestCase):
+    """Execution never substitutes live values for frozen truth."""
+
+    def freeze(self, *, support_versions=None):
+        graph = rd.Graph.from_dict(fixture_graph_dict())
+        state = orchestration_state(
+            published_versions={"client": "1.0.0", "plugin": "2.0.0",
+                                "server": "3.0.0"})
+        plan = rd.compute_plan(graph, state)
+
+        class Support:
+            def __init__(self, versions):
+                self.versions = versions
+                self.calls = 0
+
+            def resolve(self, record, edge):
+                self.calls += 1
+                return {"supported_versions": dict(self.versions)}
+
+        live = Support(support_versions or {"client": ["1.0.0"],
+                                            "server": ["3.0.0"]})
+        frozen_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha="s1", state=state, measurement=live)
+        frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+        return frozen, state, live
+
+    def test_frozen_snapshot_binds_every_touched_endpoint_version(self) -> None:
+        frozen, _, _ = self.freeze()
+        self.assertEqual(
+            frozen.resolved["runtime_published"],
+            {"client": "1.0.0", "server": "3.0.0"},
+            "the untouched server endpoint is bound too",
+        )
+
+    def test_live_measurement_drift_refuses_before_any_harness(self) -> None:
+        frozen, state, live = self.freeze()
+        live.versions = {"client": ["1.0.0"], "server": ["9.9.9"]}
+        harness = RecordingHarness()
+        with self.assertRaises(rd.ReceiptError) as caught:
+            runner = rd.build_production_skew(
+                frozen, state=state, measurement=live, harness=harness)
+            for edge in frozen.plan.runtime_contract_edges:
+                runner.execute(edge, {})
+        self.assertIn("frozen", str(caught.exception))
+        self.assertEqual(harness.cells, [])
+
+    def test_live_published_drift_refuses_before_any_harness(self) -> None:
+        frozen, _, live = self.freeze()
+        drifted = orchestration_state(
+            published_versions={"client": "1.0.0", "plugin": "2.0.0",
+                                "server": "3.5.0"})
+        harness = RecordingHarness()
+        with self.assertRaises(rd.ReceiptError):
+            rd.build_production_skew(
+                frozen, state=drifted, measurement=live, harness=harness)
+        self.assertEqual(harness.cells, [])
+
+    def test_the_exact_frozen_record_drives_the_cells(self) -> None:
+        frozen, state, live = self.freeze()
+        harness = RecordingHarness()
+        runner = rd.build_production_skew(
+            frozen, state=state, measurement=live, harness=harness)
+        # Mutating the live resolver AFTER composition must not change the
+        # matrix: cells come from the frozen sealed record.
+        live.versions = {"client": ["8.8.8"], "server": ["9.9.9"]}
+        staged = {"client": staged_entry("client", "1.1.0"),
+                  "plugin": staged_entry("plugin", "2.1.0")}
+        for edge in frozen.plan.runtime_contract_edges:
+            runner.execute(edge, staged)
+        self.assertTrue(harness.cells)
+        for cell in harness.cells:
+            if cell.b_kind == "published":
+                self.assertEqual(cell.b["version"], "3.0.0",
+                                 "frozen support, not the mutated live set")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
