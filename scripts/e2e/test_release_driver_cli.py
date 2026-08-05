@@ -1301,6 +1301,219 @@ class SplitProviderTests(unittest.TestCase):
             self.assertIn("RESOLVED s1", result.stdout)
 
 
+class DeliveryMomentTests(unittest.TestCase):
+    def test_missing_delivery_proof_stops_before_downstream_publish(self) -> None:
+        """alice's reproduction: channel (delivery_restart) published without
+        proof; the driver still published the downstream pointer and verified
+        both, failing only at receipt sealing. The exact call trace: channel
+        publish may occur; downstream pointer publish and EVERY verify call
+        must be absent."""
+        data = fixture_graph_dict()
+        data["component"]["client"]["delivery_restart"] = {
+            "proof": "restart evidence per installed host"
+        }
+        graph = rd.Graph.from_dict(data)
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+
+        class NoProofLanes(FixtureLanes):
+            def publish(self, node, staged):
+                self.calls.append(("publish", node.component))
+                return staged  # no delivery proof attached
+
+        lanes = NoProofLanes({n.component for n in plan.moving})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(rd.ReceiptError) as caught:
+                rd.run_plan(
+                    plan, graph, lanes,
+                    skew=FixtureSkew(),
+                    authority=rd.FileDigestAuthority(root),
+                    store=rd.FileArtifactStore(root),
+                    source_sha="s1", approvals={}, state=state,
+                    providers=rd.Providers(
+                        store=rd.FileArtifactStore(root),
+                        authority=rd.FileDigestAuthority(root),
+                        measurement=AllRecordsResolve(),
+                    ),
+                )
+            self.assertIn("delivery proof", str(caught.exception))
+            publishes = [c for k, c in lanes.calls if k == "publish"]
+            self.assertEqual(
+                publishes, ["client"],
+                "the failing node may publish; nothing downstream may",
+            )
+            verifies = [c for k, c in lanes.calls if k == "verify"]
+            self.assertEqual(verifies, [], "no verify call may follow the stop")
+
+
+class StructuredProofTests(unittest.TestCase):
+    def delivery_graph(self):
+        data = fixture_graph_dict()
+        data["component"]["client"]["delivery_restart"] = {
+            "proof": "restart evidence per installed host"
+        }
+        return rd.Graph.from_dict(data)
+
+    def run_with_proof(self, proof):
+        graph = self.delivery_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+
+        class ProofLanes(FixtureLanes):
+            def publish(self, node, staged):
+                self.calls.append(("publish", node.component))
+                if node.component == "client":
+                    return rd.ReceiptEntry(
+                        version=staged.version, digest=staged.digest,
+                        phase=staged.phase, pointer_state=staged.pointer_state,
+                        delivery_proof=proof,
+                    )
+                return staged
+
+        lanes = ProofLanes({n.component for n in plan.moving})
+        import tempfile as tf
+
+        with tf.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rd.run_plan(
+                plan, graph, lanes,
+                skew=FixtureSkew(),
+                authority=rd.FileDigestAuthority(root),
+                store=rd.FileArtifactStore(root),
+                source_sha="s1", approvals={}, state=state,
+                providers=rd.Providers(
+                    store=rd.FileArtifactStore(root),
+                    authority=rd.FileDigestAuthority(root),
+                    measurement=AllRecordsResolve(),
+                ),
+            )
+        return lanes
+
+    def test_structured_proof_completes(self) -> None:
+        lanes = self.run_with_proof(
+            {
+                "obligation": "delivery-restart-proof",
+                "evidence_id": "restart:host-1:pid-42",
+                "digest": "sha-evidence",
+            }
+        )
+        self.assertIn(("publish", "plugin"), lanes.calls)
+
+    def test_free_text_proof_refuses_at_publish(self) -> None:
+        """alice's refinement: nonempty free text is not delivery evidence."""
+        with self.assertRaises(rd.ReceiptError) as caught:
+            self.run_with_proof("restarted, trust me")
+        self.assertIn("structured record", str(caught.exception))
+
+    def test_wrong_obligation_type_refuses(self) -> None:
+        with self.assertRaises(rd.ReceiptError):
+            self.run_with_proof(
+                {
+                    "obligation": "delivery-lane-proof",
+                    "evidence_id": "x",
+                    "digest": "d",
+                }
+            )
+
+    def test_empty_evidence_identity_refuses(self) -> None:
+        with self.assertRaises(rd.ReceiptError):
+            self.run_with_proof(
+                {
+                    "obligation": "delivery-restart-proof",
+                    "evidence_id": "",
+                    "digest": "d",
+                }
+            )
+
+
+class ManifestSemanticLoadTests(unittest.TestCase):
+    def test_hash_valid_noncanonical_manifest_refuses_on_load(self) -> None:
+        """alice's reproduction: a hash-valid registry manifest whose scalar
+        digest was NOT the canonical digest of its stored set passed resume
+        and final verification with a matching observer."""
+        data = fixture_graph_dict()
+        data["component"]["client"]["publish_lane"] = {
+            "workflow": "wf/client.yml",
+            "registry": {"type": "pypi", "package": "client"},
+        }
+        graph = rd.Graph.from_dict(data)
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        entries = {
+            n.component: {
+                "version": n.version or "0.0.0",
+                "digest": "NOT-CANONICAL"
+                if n.component == "client"
+                else f"staged-{n.component}",
+                "digest_set": {"client-1.1.0.tar.gz": "sha-aaa"}
+                if n.component == "client"
+                else None,
+                "pointer_state": "ok" if n.reason.startswith("pointer:") else None,
+                "delivery_obligation": None,
+            }
+            for n in plan.moving
+        }
+        import hashlib
+
+        body = json.dumps(
+            {
+                "frozen_plan_id": "FPID",
+                "source_sha": "s1",
+                "entries": entries,
+            },
+            sort_keys=True,
+        ).encode()
+        digest = hashlib.sha256(body).hexdigest()
+        manifest = rd.load_staged_manifest(body, expected_digest=digest)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.validate_staged_manifest(
+                manifest, plan=plan, graph=graph,
+                frozen_plan_id="FPID", source_sha="s1",
+            )
+        self.assertIn("canonical", str(caught.exception))
+
+    def test_fabricated_obligation_and_malformed_set_refuse(self) -> None:
+        graph = fixture_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        base_entries = {
+            n.component: {
+                "version": n.version or "0.0.0",
+                "digest": f"staged-{n.component}",
+                "digest_set": None,
+                "pointer_state": "ok" if n.reason.startswith("pointer:") else None,
+                "delivery_obligation": None,
+            }
+            for n in plan.moving
+        }
+        fabricated = json.loads(json.dumps(base_entries))
+        fabricated["client"]["delivery_obligation"] = "caller-invented-text"
+        with self.assertRaises(rd.ReceiptError):
+            rd.validate_staged_manifest(
+                {"frozen_plan_id": "F", "source_sha": "s1", "entries": fabricated},
+                plan=plan, graph=graph, frozen_plan_id="F", source_sha="s1",
+            )
+        malformed = json.loads(json.dumps(base_entries))
+        malformed["client"]["digest_set"] = {"": "sha"}
+        with self.assertRaises(rd.ReceiptError):
+            rd.validate_staged_manifest(
+                {"frozen_plan_id": "F", "source_sha": "s1", "entries": malformed},
+                plan=plan, graph=graph, frozen_plan_id="F", source_sha="s1",
+            )
+        missing_pointer = json.loads(json.dumps(base_entries))
+        missing_pointer["pointer"]["pointer_state"] = None
+        with self.assertRaises(rd.ReceiptError):
+            rd.validate_staged_manifest(
+                {
+                    "frozen_plan_id": "F",
+                    "source_sha": "s1",
+                    "entries": missing_pointer,
+                },
+                plan=plan, graph=graph, frozen_plan_id="F", source_sha="s1",
+            )
+
+
 class TagDeltaTests(unittest.TestCase):
     def frozen_and_current(self, current_tags: dict):
         frozen_resolved = {

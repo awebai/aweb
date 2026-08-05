@@ -848,9 +848,15 @@ def seal_receipt(
         needs_delivery = component is not None and (
             component.delivery_restart is not None or component.lane is not None
         )
-        if needs_delivery and not entry.delivery_proof:
-            raise ReceiptError(
-                f"{node.component}: delivery node sealed without delivery_proof"
+        if needs_delivery:
+            if not entry.delivery_proof:
+                raise ReceiptError(
+                    f"{node.component}: delivery node sealed without delivery_proof"
+                )
+            validate_delivery_proof(
+                entry.delivery_proof,
+                _delivery_obligation(graph, node.component),
+                node.component,
             )
         if component is not None and component.approval_required:
             approval = approvals.get(node.component)
@@ -1150,6 +1156,76 @@ def _delivery_obligation(graph: "Graph | None", component_name: str) -> str | No
     return None
 
 
+def validate_staged_manifest(
+    manifest: dict,
+    *,
+    plan: Plan | None = None,
+    graph: Graph | None = None,
+    frozen_plan_id: str | None = None,
+    source_sha: str | None = None,
+) -> None:
+    """Semantic validation of a staged manifest: an authority proves which
+    bytes were recorded, not that those bytes satisfy the schema. Used before
+    seal AND after every load, before observation or any lane call."""
+    entries = manifest.get("entries")
+    if not isinstance(entries, dict) or not entries:
+        raise ReceiptError("staged manifest has no entry map")
+    if frozen_plan_id is not None and manifest.get("frozen_plan_id") != frozen_plan_id:
+        raise ReceiptError("staged manifest does not bind this frozen plan")
+    if source_sha is not None and manifest.get("source_sha") != source_sha:
+        raise ReceiptError("staged manifest does not bind this source")
+    if plan is not None:
+        planned = {n.component for n in plan.moving}
+        if set(entries) != planned:
+            raise ReceiptError(
+                "staged manifest entry set does not equal the planned set"
+            )
+        for node in plan.moving:
+            entry = entries[node.component]
+            if node.version is not None and entry.get("version") != node.version:
+                raise ReceiptError(
+                    f"{node.component}: manifest version {entry.get('version')} "
+                    f"does not equal the frozen candidate {node.version}"
+                )
+            if node.reason.startswith("pointer:") and not entry.get("pointer_state"):
+                raise ReceiptError(
+                    f"{node.component}: pointer candidate state missing from "
+                    "the staged manifest"
+                )
+    for name, entry in entries.items():
+        if not entry.get("digest") or not entry.get("version"):
+            raise ReceiptError(f"{name}: manifest entry needs digest and version")
+        digest_set = entry.get("digest_set")
+        if digest_set is not None:
+            if not isinstance(digest_set, dict) or not digest_set or not all(
+                isinstance(k, str) and k and isinstance(v, str) and v
+                for k, v in digest_set.items()
+            ):
+                raise ReceiptError(
+                    f"{name}: manifest digest_set is not a schema-valid "
+                    "nonempty map"
+                )
+            if entry["digest"] != canonical_digest_of_set(digest_set):
+                raise ReceiptError(
+                    f"{name}: manifest scalar digest is not the canonical "
+                    "digest of its stored set"
+                )
+        if graph is not None and name in graph.components:
+            expected_obligation = _delivery_obligation(graph, name)
+            if entry.get("delivery_obligation") != expected_obligation:
+                raise ReceiptError(
+                    f"{name}: manifest delivery obligation "
+                    f"{entry.get('delivery_obligation')!r} does not derive from "
+                    f"the frozen graph ({expected_obligation!r})"
+                )
+            component = graph.components[name]
+            if (component.publish_lane or {}).get("registry") and digest_set is None:
+                raise ReceiptError(
+                    f"{name}: a registry component's manifest entry requires "
+                    "its complete digest set"
+                )
+
+
 def load_staged_manifest(data: bytes, *, expected_digest: str) -> dict:
     if hashlib.sha256(data).hexdigest() != expected_digest:
         raise ReceiptError("staged manifest does not match its recorded digest")
@@ -1427,6 +1503,10 @@ def run_plan(
         manifest = load_staged_manifest(
             manifest_bytes, expected_digest=manifest_digest
         )
+        validate_staged_manifest(
+            manifest, plan=plan, graph=graph,
+            frozen_plan_id=frozen_plan_id, source_sha=source_sha,
+        )
         manifest["_artifact_id"] = manifest_id
 
     for edge in plan.runtime_contract_edges:
@@ -1489,6 +1569,20 @@ def run_plan(
                     f"{node.component}: published digest set does not equal the "
                     "anchored staged manifest set"
                 )
+        if manifest_entry.get("delivery_obligation"):
+            # Delivery evidence at the moment of effect: missing or malformed
+            # proof stops the run BEFORE this node anchors or any downstream
+            # node publishes - never discovered at final sealing.
+            if not result.delivery_proof:
+                raise ReceiptError(
+                    f"{node.component}: publish produced no delivery proof for "
+                    f"its declared {manifest_entry['delivery_obligation']}"
+                )
+            validate_delivery_proof(
+                result.delivery_proof,
+                manifest_entry["delivery_obligation"],
+                node.component,
+            )
         entry = ReceiptEntry(
             version=result.version,
             digest=result.digest,
@@ -1588,6 +1682,10 @@ def resume_plan(
         candidate = load_staged_manifest(
             store.get(artifact_id), expected_digest=expected
         )
+        validate_staged_manifest(
+            candidate, plan=plan, graph=graph,
+            frozen_plan_id=frozen.frozen_id, source_sha=source_sha,
+        )
         if candidate["frozen_plan_id"] != frozen.frozen_id:
             raise ReceiptError(
                 f"manifest {artifact_id} binds frozen plan "
@@ -1661,10 +1759,17 @@ def resume_plan(
                     f"{node.component}: observed digest set does not equal the "
                     "anchored staged manifest set"
                 )
-        if manifest_entry.get("delivery_obligation") and not observed.delivery_proof:
-            raise ReceiptError(
-                f"{node.component}: adoption requires observed delivery "
-                f"evidence for its declared {manifest_entry['delivery_obligation']}"
+        if manifest_entry.get("delivery_obligation"):
+            if not observed.delivery_proof:
+                raise ReceiptError(
+                    f"{node.component}: adoption requires observed delivery "
+                    f"evidence for its declared "
+                    f"{manifest_entry['delivery_obligation']}"
+                )
+            validate_delivery_proof(
+                observed.delivery_proof,
+                manifest_entry["delivery_obligation"],
+                node.component,
             )
         published[node.component] = ReceiptEntry(
             version=observed.version,
@@ -1711,6 +1816,28 @@ def _put_content_addressed(store, authority, artifact_id, data, digest) -> None:
     elif recorded != digest:
         raise ReceiptError(
             f"{artifact_id}: authority records digest {recorded}, computed {digest}"
+        )
+
+
+def validate_delivery_proof(proof, obligation: str, component: str) -> None:
+    """Delivery proof is a STRUCTURED record - the declared obligation type
+    plus an immutable evidence identity and digest - never nonempty free
+    text. Missing fields, wrong obligation type, or empty identity/digest
+    refuse immediately after publish. Lane tasks may extend the record."""
+    if not isinstance(proof, dict):
+        raise ReceiptError(
+            f"{component}: delivery proof must be a structured record for its "
+            f"declared {obligation}, not {type(proof).__name__}"
+        )
+    if proof.get("obligation") != obligation:
+        raise ReceiptError(
+            f"{component}: delivery proof declares obligation "
+            f"{proof.get('obligation')!r}, expected {obligation!r}"
+        )
+    if not proof.get("evidence_id") or not proof.get("digest"):
+        raise ReceiptError(
+            f"{component}: delivery proof requires a nonempty immutable "
+            "evidence identity and digest"
         )
 
 
@@ -2397,6 +2524,14 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             providers.store.get(receipt.staged_manifest_id),
             expected_digest=manifest_digest,
         )
+        try:
+            validate_staged_manifest(
+                manifest, plan=frozen.plan, graph=frozen.graph,
+                frozen_plan_id=args.plan_id, source_sha=frozen.source_sha,
+            )
+        except ReceiptError as exc:
+            print(f"MISMATCH: {exc}")
+            return 1
         if manifest["frozen_plan_id"] != args.plan_id:
             print("MISMATCH: the staged manifest does not bind this frozen plan")
             return 1
@@ -2512,6 +2647,15 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     )
                     return 1
             if manifest_entry.get("delivery_obligation"):
+                try:
+                    validate_delivery_proof(
+                        entry.delivery_proof,
+                        manifest_entry["delivery_obligation"],
+                        node.component,
+                    )
+                except ReceiptError as exc:
+                    print(f"MISMATCH: {exc}")
+                    return 1
                 if observed.delivery_proof is None:
                     print(
                         f"BLOCKED: {node.component}: the observer cannot "
@@ -2519,10 +2663,24 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                         f"{manifest_entry['delivery_obligation']}"
                     )
                     return 1
-                if observed.delivery_proof != entry.delivery_proof:
+                try:
+                    validate_delivery_proof(
+                        observed.delivery_proof,
+                        manifest_entry["delivery_obligation"],
+                        node.component,
+                    )
+                except ReceiptError as exc:
+                    print(f"BLOCKED: {exc}")
+                    return 1
+                if (
+                    observed.delivery_proof.get("evidence_id")
+                    != entry.delivery_proof.get("evidence_id")
+                    or observed.delivery_proof.get("digest")
+                    != entry.delivery_proof.get("digest")
+                ):
                     print(
-                        f"MISMATCH: {node.component}: observed delivery state "
-                        "does not equal the receipt's proof"
+                        f"MISMATCH: {node.component}: observed delivery "
+                        "evidence identity does not equal the receipt's proof"
                     )
                     return 1
         print(
