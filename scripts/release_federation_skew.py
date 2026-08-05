@@ -196,11 +196,14 @@ class WheelResolver:
                 not isinstance(name, str)
                 or Path(name).name != name
                 or package_type not in {"bdist_wheel", "sdist"}
-                or record.get("yanked") not in (None, False)
+                or record.get("yanked") is not False
                 or not isinstance(digest, str)
                 or not re.fullmatch(r"[0-9a-f]{64}", digest)
                 or parsed.scheme != "https"
-                or parsed.hostname != "files.pythonhosted.org"
+                or parsed.netloc != "files.pythonhosted.org"
+                or bool(parsed.params)
+                or bool(parsed.query)
+                or bool(parsed.fragment)
                 or Path(urllib.parse.unquote(parsed.path)).name != name
             ):
                 raise release_driver.ReceiptError(

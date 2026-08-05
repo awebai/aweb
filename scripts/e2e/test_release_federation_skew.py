@@ -229,6 +229,55 @@ class PublishedWheelTests(unittest.TestCase):
                     Response(json.dumps(value).encode())
                 ).published("1.26.35")
 
+    def test_published_urls_and_yanked_flags_are_exact(self):
+        wheel_name = "aweb-1.26.35-py3-none-any.whl"
+        sdist_name = "aweb-1.26.35.tar.gz"
+        valid = [{
+            "filename": wheel_name,
+            "packagetype": "bdist_wheel",
+            "url": f"https://files.pythonhosted.org/packages/{wheel_name}",
+            "digests": {"sha256": "a" * 64},
+            "yanked": False,
+        }, {
+            "filename": sdist_name,
+            "packagetype": "sdist",
+            "url": f"https://files.pythonhosted.org/packages/{sdist_name}",
+            "digests": {"sha256": "b" * 64},
+            "yanked": False,
+        }]
+        unsafe_urls = (
+            f"https://user:secret@files.pythonhosted.org/packages/{wheel_name}",
+            f"https://files.pythonhosted.org:444/packages/{wheel_name}",
+            f"https://files.pythonhosted.org/packages/{wheel_name};variant",
+            f"https://files.pythonhosted.org/packages/{wheel_name}?variant=other",
+            f"https://files.pythonhosted.org/packages/{wheel_name}#fragment",
+        )
+        mutations = []
+        for url in unsafe_urls:
+            mutations.append([{**valid[0], "url": url}, valid[1]])
+        for yanked in (None, "missing"):
+            record = dict(valid[0])
+            if yanked == "missing":
+                record.pop("yanked")
+            else:
+                record["yanked"] = None
+            mutations.append([record, valid[1]])
+        for records in mutations:
+            metadata = {"info": {"version": "1.26.35"}, "urls": records}
+
+            calls = []
+
+            def metadata_only(request, timeout=0, value=metadata):
+                calls.append(request.full_url)
+                if request.full_url == "https://pypi.org/pypi/aweb/1.26.35/json":
+                    return Response(json.dumps(value).encode())
+                raise AssertionError(f"unsafe metadata reached fetch: {request.full_url}")
+
+            with self.subTest(records=records):
+                with self.assertRaises(rd.ReceiptError):
+                    federation.WheelResolver(urlopen=metadata_only).published("1.26.35")
+                self.assertEqual(calls, ["https://pypi.org/pypi/aweb/1.26.35/json"])
+
     def test_only_metadata_404_is_classified_as_absence(self):
         def metadata_404(request, timeout=0):
             raise urllib.error.HTTPError(request.full_url, 404, "missing", {}, None)
