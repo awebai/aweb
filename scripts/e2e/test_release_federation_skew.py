@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import socket
 import sys
+import tempfile
 import unittest
 import urllib.error
 import zipfile
@@ -207,6 +209,17 @@ class PublishedWheelTests(unittest.TestCase):
 @unittest.skipIf(federation is None, "release_federation_skew is not implemented")
 class FederationHarnessTests(unittest.TestCase):
     def cell(self, direction="a-to-b"):
+        candidate = {
+            "component": "server",
+            "version": "1.26.36",
+            "digest": "sha256:candidate-set",
+            "digest_set": {"aweb-1.26.36.whl": "c" * 64},
+            "lane_ref": {
+                "artifact": "gh-artifact:awebai/aweb:41:42",
+                "aw_source_sha": "d" * 40,
+                "zip_digest": "sha256:" + "e" * 64,
+            },
+        }
         return SimpleNamespace(
             edge_id="e" * 64,
             edge_a="server",
@@ -217,12 +230,12 @@ class FederationHarnessTests(unittest.TestCase):
             direction=direction,
             a_kind="candidate",
             b_kind="published",
-            a={"component": "server", "version": "1.26.36"},
-            b={"component": "server", "version": "1.26.35"},
+            a=candidate,
+            b={"component": "server", "version": "1.26.35", "kind": "published"},
         )
 
-    def test_each_cell_installs_both_exact_wheels_and_reverses_direction(self):
-        wheels = {
+    def wheels(self):
+        return {
             "1.26.36": federation.WheelArtifact(
                 "aweb-1.26.36.whl", "1.26.36", b"candidate", sha256(b"candidate")
             ),
@@ -231,10 +244,48 @@ class FederationHarnessTests(unittest.TestCase):
             ),
         }
 
+    def observation(self, env, **changes):
+        value = {
+            "schema": federation.OBSERVATION_SCHEMA,
+            "cell_id": env["AWEB_FED_E2E_CELL_ID"],
+            "initiated_side": "a" if env["AWEB_FED_E2E_DIRECTION"] == "a-to-b" else "b",
+            "project": env["AWEB_FED_E2E_PROJECT"],
+            "ports": {
+                "awid": int(env["AWID_FED_E2E_PORT"]),
+                "alpha": int(env["AWEB_ALPHA_E2E_PORT"]),
+                "beta": int(env["AWEB_BETA_E2E_PORT"]),
+            },
+            "alpha": {
+                "version": env["AWEB_ALPHA_VERSION"],
+                "wheel_sha256": env["AWEB_ALPHA_WHEEL_SHA256"],
+                "mcp_version": env["AWEB_FED_E2E_MCP_VERSION"],
+                "inventory_sha256": "a" * 64,
+            },
+            "beta": {
+                "version": env["AWEB_BETA_VERSION"],
+                "wheel_sha256": env["AWEB_BETA_WHEEL_SHA256"],
+                "mcp_version": env["AWEB_FED_E2E_MCP_VERSION"],
+                "inventory_sha256": "b" * 64,
+            },
+            "outcomes": dict(federation.REQUIRED_OUTCOMES),
+        }
+        value.update(changes)
+        return federation.OBSERVATION_PREFIX + json.dumps(
+            value, sort_keys=True, separators=(",", ":")
+        )
+
+    def harness(self, root, journey):
+        wheels = self.wheels()
+
         class Resolver:
             def side(self, value, kind):
                 return wheels[value["version"]]
 
+        return federation.FederationSkewHarness(
+            resolver=Resolver(), journey=journey, report_dir=Path(root)
+        )
+
+    def test_each_cell_binds_full_identity_observation_and_reverses_direction(self):
         calls = []
 
         def journey(env):
@@ -246,42 +297,95 @@ class FederationHarnessTests(unittest.TestCase):
             )
             self.assertEqual(Path(env["AWEB_ALPHA_WHEEL"]).read_bytes(), expected[0])
             self.assertEqual(Path(env["AWEB_BETA_WHEEL"]).read_bytes(), expected[1])
-            return SimpleNamespace(returncode=0, stdout="green", stderr="")
+            return SimpleNamespace(
+                returncode=0, stdout=self.observation(env) + "\n", stderr=""
+            )
 
-        harness = federation.FederationSkewHarness(
-            resolver=Resolver(), journey=journey, controls=lambda: None
-        )
-        harness.run(self.cell("a-to-b"))
-        harness.run(self.cell("b-to-a"))
-        self.assertEqual(
-            [call["AWEB_FED_E2E_DIRECTION"] for call in calls],
-            ["a-to-b", "b-to-a"],
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            harness = self.harness(tmp, journey)
+            cells = [self.cell("a-to-b"), self.cell("b-to-a")]
+            for cell in cells:
+                harness.run(cell)
+            reports = [
+                json.loads((Path(tmp) / "cells" / f"{federation.cell_identity(c)}.json").read_text())
+                for c in cells
+            ]
+
+        self.assertNotEqual(reports[0]["cell_id"], reports[1]["cell_id"])
+        self.assertEqual(reports[0]["cell"], federation.cell_preimage(cells[0]))
+        self.assertEqual(reports[1]["cell"], federation.cell_preimage(cells[1]))
         self.assertEqual(
             [(call["AWEB_ALPHA_VERSION"], call["AWEB_BETA_VERSION"]) for call in calls],
             [("1.26.36", "1.26.35"), ("1.26.35", "1.26.36")],
-            "b-to-a must make side B the actual alpha initiator",
         )
-        for call in calls:
-            self.assertEqual(call["AWEB_FED_E2E_SERVER_MODE"], "wheel")
-            self.assertEqual(call["AWEB_FED_E2E_CELL_ID"], "e" * 64)
+        self.assertNotEqual(calls[0]["AWEB_FED_E2E_PROJECT"], calls[1]["AWEB_FED_E2E_PROJECT"])
+        self.assertTrue(all(call["AWEB_FED_E2E_MCP_VERSION"] == "1.26.0" for call in calls))
 
-    def test_nonzero_cell_journey_is_red(self):
-        wheel = federation.WheelArtifact("aweb.whl", "1.0.0", b"x", sha256(b"x"))
-
-        class Resolver:
-            def side(self, value, kind):
-                return wheel
-
-        harness = federation.FederationSkewHarness(
-            resolver=Resolver(),
-            journey=lambda env: SimpleNamespace(returncode=3, stdout="bad", stderr="worse"),
-            controls=lambda: None,
+    def test_success_without_exact_or_untampered_observation_is_red_and_writes_nothing(self):
+        mutations = (
+            lambda env: "green without evidence",
+            lambda env: self.observation(env, cell_id="0" * 64),
+            lambda env: self.observation(env, initiated_side="b"),
+            lambda env: self.observation(env) + "\n" + self.observation(env),
         )
-        with self.assertRaisesRegex(rd.ReceiptError, "federation skew journey"):
-            harness.run(self.cell())
+        for mutate in mutations:
+            with self.subTest(mutate=mutate), tempfile.TemporaryDirectory() as tmp:
+                harness = self.harness(
+                    tmp,
+                    lambda env, mutate=mutate: SimpleNamespace(
+                        returncode=0, stdout=mutate(env), stderr=""
+                    ),
+                )
+                with self.assertRaises(rd.ReceiptError):
+                    harness.run(self.cell())
+                self.assertFalse((Path(tmp) / "cells").exists())
 
-    def test_controls_require_named_1221_red_and_1230_green(self):
+    def test_nonzero_cell_journey_is_red_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            harness = self.harness(
+                tmp,
+                lambda env: SimpleNamespace(returncode=3, stdout="bad", stderr="worse"),
+            )
+            with self.assertRaisesRegex(rd.ReceiptError, "federation skew journey"):
+                harness.run(self.cell())
+            self.assertFalse((Path(tmp) / "cells").exists())
+
+    def test_complete_matrix_aggregate_binds_reports_and_one_candidate(self):
+        def journey(env):
+            return SimpleNamespace(returncode=0, stdout=self.observation(env), stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cells = [self.cell("a-to-b"), self.cell("b-to-a")]
+            harness = self.harness(tmp, journey)
+            for cell in cells:
+                harness.run(cell)
+            aggregate = federation.aggregate_cell_reports(cells, Path(tmp))
+            self.assertEqual(aggregate["status"], "incomplete-unanchored")
+            self.assertEqual(len(aggregate["reports"]), 2)
+            self.assertEqual(aggregate["candidate"]["side"], cells[0].a)
+            self.assertIsNone(aggregate["anchor"])
+
+            report_path = Path(tmp) / "cells" / f"{federation.cell_identity(cells[0])}.json"
+            report_path.write_text(report_path.read_text().replace("1.26.36", "9.9.9"))
+            with self.assertRaisesRegex(rd.ReceiptError, "report"):
+                federation.aggregate_cell_reports(cells, Path(tmp))
+
+    def test_invocations_reserve_distinct_token_derived_loopback_ports(self):
+        first = federation.reserve_invocation(token="0" * 32)
+        second = federation.reserve_invocation(token="1" * 32)
+        try:
+            self.assertNotEqual(first.project, second.project)
+            self.assertTrue(set(first.ports).isdisjoint(second.ports))
+            for port in first.ports + second.ports:
+                probe = socket.socket()
+                with self.assertRaises(OSError):
+                    probe.bind(("127.0.0.1", port))
+                probe.close()
+        finally:
+            first.release()
+            second.release()
+
+    def test_controls_are_one_explicit_measurement_and_never_hidden_in_cells(self):
         versions = []
 
         class Resolver:
@@ -293,7 +397,7 @@ class FederationHarnessTests(unittest.TestCase):
 
         calls = []
 
-        def journey(env):
+        def control_journey(env):
             calls.append(dict(env))
             if env["AWEB_BETA_VERSION"] == "1.22.1":
                 return SimpleNamespace(
@@ -303,14 +407,26 @@ class FederationHarnessTests(unittest.TestCase):
                 )
             return SimpleNamespace(returncode=0, stdout="route probe green", stderr="")
 
-        federation.prove_route_controls(Resolver(), journey)
+        with tempfile.TemporaryDirectory() as tmp:
+            report = federation.prove_route_controls(
+                Resolver(), control_journey, report_dir=Path(tmp)
+            )
+            self.assertEqual(report["schema"], federation.CONTROL_SCHEMA)
+            self.assertTrue((Path(tmp) / "control.json").is_file())
         self.assertEqual(versions, ["1.23.0", "1.22.1"])
         self.assertEqual(len(calls), 2)
-        self.assertTrue(all(c["AWEB_FED_E2E_ROUTE_PROBE_ONLY"] == "1" for c in calls))
-        self.assertEqual(calls[0]["AWEB_ALPHA_VERSION"], "1.23.0")
-        self.assertEqual(calls[0]["AWEB_BETA_VERSION"], "1.22.1")
-        self.assertEqual(calls[1]["AWEB_ALPHA_VERSION"], "1.23.0")
-        self.assertEqual(calls[1]["AWEB_BETA_VERSION"], "1.23.0")
+
+        cell_calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            harness = self.harness(
+                tmp,
+                lambda env: cell_calls.append(dict(env)) or SimpleNamespace(
+                    returncode=0, stdout=self.observation(env), stderr=""
+                ),
+            )
+            harness.run(self.cell("a-to-b"))
+            harness.run(self.cell("b-to-a"))
+        self.assertEqual(len(cell_calls), 2, "ordinary cells must run no historical controls")
 
     def test_negative_control_must_fail_for_the_exact_missing_route(self):
         class Resolver:
@@ -342,7 +458,11 @@ class ParameterizedJourneyContractTests(unittest.TestCase):
             self.assertIn(marker, script)
         self.assertIn("sha256sum -c", dockerfile)
         self.assertIn("pip install --no-cache-dir", dockerfile)
-        self.assertIn("mcp<2", dockerfile)
+        self.assertIn("mcp==$MCP_VERSION", dockerfile)
+        self.assertNotIn("mcp<2", dockerfile)
+        self.assertIn("alpha installs exact locked mcp", script)
+        self.assertIn("beta installs exact locked mcp", script)
+        self.assertIn("inventory_sha256", script)
         self.assertNotIn("COPY server/src", dockerfile)
 
     def test_route_probe_precedes_setup_and_direction_is_evidenced(self):
@@ -354,6 +474,8 @@ class ParameterizedJourneyContractTests(unittest.TestCase):
         self.assertIn("AWEB_FED_E2E_ROUTE_PROBE_ONLY", script)
         self.assertIn("AWEB_FED_E2E_DIRECTION", script)
         self.assertIn("AWEB_FED_E2E_CELL_ID", script)
+        self.assertIn("AWEB_FED_E2E_PROJECT", script)
+        self.assertIn("AWEB_FEDERATION_SKEW_OBSERVATION=", script)
         self.assertIn("skew cell direction", script)
 
 
