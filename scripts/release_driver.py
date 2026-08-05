@@ -1074,10 +1074,18 @@ LANE_ARTIFACT_SOURCES = {
     "server": ("awebai/aweb", ".github/workflows/pypi-release.yml"),
     "awid-pypi": ("awebai/aweb", ".github/workflows/pypi-release.yml"),
     "awid-image": ("awebai/aweb", ".github/workflows/awid-image-release.yml"),
+    "channel": ("awebai/aweb", ".github/workflows/npm-release.yml"),
+    "pi": ("awebai/aweb", ".github/workflows/npm-release.yml"),
+    "skills": ("awebai/aweb", ".github/workflows/npm-release.yml"),
 }
 GITHUB_ARTIFACT_REPO_ALLOWLIST = tuple(sorted(
     {repo for repo, _ in LANE_ARTIFACT_SOURCES.values()}
 ))
+NPM_LANE_COMPONENTS = ("channel", "pi", "skills")
+# The npm lane is the only composed lane that consumes delivery evidence;
+# composition refuses a proof for any component outside this set so no
+# caller-supplied proof is ever accepted and ignored.
+DELIVERY_PROOF_CONSUMERS = NPM_LANE_COMPONENTS
 ANCHOR_REPO = "awebai/aweb"
 ANCHOR_WORKFLOW_PATH = ".github/workflows/release-anchor.yml"
 ANCHOR_WORKFLOW_FILE = "release-anchor.yml"
@@ -1545,6 +1553,35 @@ def expected_lane_payload_names(version: str) -> tuple[list[str], list[str]]:
                   "windows-x64", "windows-arm64")
     ]
     return dist, npm
+
+
+def parse_delivery_proof_arguments(values: list[str]) -> dict[str, dict]:
+    """--delivery-proof component=<c>,obligation=<o>,evidence_id=<e>,
+    digest=<d> - the separately supplied structured delivery evidence.
+    Literal-validated; publication never fabricates what is not supplied."""
+    proofs: dict[str, dict] = {}
+    for value in values:
+        fields: dict[str, str] = {}
+        for part in value.split(","):
+            key, _, item = part.partition("=")
+            if key in fields:
+                raise ReceiptError(
+                    f"--delivery-proof repeats field {key!r} in {value!r}"
+                )
+            fields[key] = item
+        if set(fields) != {"component", "obligation", "evidence_id",
+                           "digest"} or not all(fields.values()):
+            raise ReceiptError(
+                "--delivery-proof must be component=<c>,obligation=<o>,"
+                f"evidence_id=<e>,digest=<d>, got {value!r}"
+            )
+        component = fields.pop("component")
+        if component in proofs:
+            raise ReceiptError(
+                f"--delivery-proof names component {component} more than once"
+            )
+        proofs[component] = fields
+    return proofs
 
 
 def parse_stage_artifact_arguments(values: list[str]) -> dict[str, LaneRef]:
@@ -2281,6 +2318,153 @@ class AwidImageWorkflowLane(_WorkflowLaneBase):
         )
 
 
+def validate_npm_lane_artifact(
+    zip_bytes: bytes, *, expected_source_sha: str, expected_version: str,
+    package: str, profile: str,
+) -> tuple[dict, str, bytes]:
+    """The npm lane protocol: exactly one tgz payload (skills may add its
+    release ZIPs), manifest/canonical binding, and the reviewed .3 package
+    profile validated against the UNPACKED tgz through the exact reviewed
+    checker (scripts/npm-exact-publish.sh). Returns (manifest, tgz name,
+    tgz bytes)."""
+    import subprocess
+    import tempfile
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+        manifest = _lane_manifest_common(
+            archive, expected_source_sha=expected_source_sha,
+            expected_version=expected_version, expected_package=package,
+        )
+        files = manifest["files"]
+        tgzs = [name for name in files if name.endswith(".tgz")]
+        if len(tgzs) != 1:
+            raise ReceiptError(
+                f"staged manifest must bind exactly one tgz payload; bound "
+                f"{sorted(tgzs)}"
+            )
+        extras = [name for name in files
+                  if name != tgzs[0] and not name.endswith(".zip")]
+        if extras or (package != "skills" and len(files) != 1):
+            raise ReceiptError(
+                f"staged manifest binds payloads outside the protocol: "
+                f"{sorted(set(files) - {tgzs[0]})}"
+            )
+        _validate_lane_members(archive, files, {b: b for b in files})
+        tgz_bytes = archive.read(tgzs[0])
+    with tempfile.TemporaryDirectory() as tmp:
+        tgz_path = Path(tmp) / tgzs[0]
+        tgz_path.write_bytes(tgz_bytes)
+        result = subprocess.run(
+            ["bash", str(REPO_ROOT / "scripts/npm-exact-publish.sh"),
+             "inspect-tgz", "--tgz", str(tgz_path),
+             "--version", expected_version,
+             "--profile", profile, "--source-root", str(REPO_ROOT)],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise ReceiptError(
+                "staged tgz fails the reviewed package profile: "
+                + result.stderr.decode(errors="replace").strip()
+            )
+    return manifest, tgzs[0], tgz_bytes
+
+
+class NpmWorkflowLane(_WorkflowLaneBase):
+    """channel / pi / skills over npm-release.yml. Observation is the
+    registry tarball's one SHA-256: absent continues, exact adopts,
+    mismatch and outage refuse. Delivery evidence for obligated components
+    is SEPARATELY SUPPLIED structured proof, validated at the moment of
+    effect; publication alone never fabricates delivery."""
+
+    def __init__(self, *, npm_name, npm_observe, expected_obligation=None,
+                 delivery_proofs=None, **kwargs):
+        super().__init__(**kwargs)
+        self._npm_name = npm_name
+        self._npm_observe = npm_observe  # (package, version) -> sha|None; raises when unavailable
+        self._expected_obligation = expected_obligation
+        self._delivery_proofs = dict(delivery_proofs or {})
+
+    def _require_valid_proof(self, component: str):
+        """The graph-derived obligation gates BEFORE any outward call:
+        missing, malformed, or wrong-obligation proof refuses, and a proof
+        supplied for an unobligated component refuses too."""
+        proof = self._delivery_proofs.get(component)
+        if self._expected_obligation is None:
+            if proof is not None:
+                raise ReceiptError(
+                    f"{component} carries no delivery obligation; an "
+                    "unexpected supplied proof is refused, never ignored"
+                )
+            return None
+        if proof is None:
+            raise ReceiptError(
+                f"{component}: its declared {self._expected_obligation} "
+                "requires separately supplied delivery evidence BEFORE any "
+                "outward call; none was supplied"
+            )
+        validate_delivery_proof(proof, self._expected_obligation, component)
+        return proof
+
+    def publish(self, node, staged: "ReceiptEntry") -> "ReceiptEntry":
+        self._require_valid_proof(node.component)
+        # Observe FIRST: exact existing registry bytes adopt with zero
+        # dispatches; mismatch and outage refuse; only proven absence
+        # permits one continuation.
+        observed = self.observe(node, staged)
+        if observed is not None:
+            return observed
+        return super().publish(node, staged)
+
+    def stage(self, node) -> "ReceiptEntry":
+        ref = self._refs[node.component]
+        data = self._fetch_staged(ref)
+        manifest, _, _ = validate_npm_lane_artifact(
+            data,
+            expected_source_sha=ref.aw_source_sha,
+            expected_version=node.version,
+            package=node.component,
+            profile=node.component,
+        )
+        files = manifest["files"]
+        return ReceiptEntry(
+            version=node.version,
+            digest=canonical_digest_of_set(files),
+            digest_set=files,
+            lane_ref=ref.to_dict(),
+        )
+
+    def _continuation_inputs(self, staged):
+        inputs = super()._continuation_inputs(staged)
+        return {"package": self.component, **inputs}
+
+    def observe(self, node, staged: "ReceiptEntry | None" = None):
+        if staged is None or staged.digest_set is None:
+            raise ReceiptError(
+                f"{node.component}: observation requires the anchored staged "
+                "entry; expected values are never re-derived"
+            )
+        tgz_name = next(
+            name for name in staged.digest_set if name.endswith(".tgz")
+        )
+        remote = self._npm_observe(self._npm_name, staged.version)
+        if remote is None:
+            return None
+        if remote != staged.digest_set[tgz_name]:
+            raise ReceiptError(
+                f"{node.component}: registry serves sha256 {remote}, staged "
+                f"is {staged.digest_set[tgz_name]}; permanent"
+            )
+        return ReceiptEntry(
+            version=staged.version,
+            digest=staged.digest,
+            phase="published",
+            digest_set=dict(staged.digest_set),
+            delivery_proof=self._require_valid_proof(node.component),
+            lane_ref=staged.lane_ref,
+        )
+
+
 class WorkflowLanes:
     """Per-component delegation over the composed lane objects."""
 
@@ -2360,12 +2544,77 @@ def _observe_ghcr_tag_factory(repository: str):
     return observe
 
 
-def compose_workflow_lanes(graph: "Graph", refs: dict) -> WorkflowLanes:
+def _observe_npm_registry(package: str, version: str, http=None):
+    """Authoritative tri-state registry observation: HTTP 404 alone proves
+    absence; a present version resolves and hashes its exact tarball;
+    transport failure, 5xx, or malformed metadata BLOCKS - an outage is
+    never permission to treat a version as absent."""
+    if http is None:
+        import urllib.error
+        import urllib.request
+
+        def http(url):
+            try:
+                with urllib.request.urlopen(url) as response:
+                    return response.status, response.read()
+            except urllib.error.HTTPError as exc:
+                return exc.code, b""
+            except Exception as exc:
+                raise ReceiptError(
+                    f"npm registry observation failed for {url}: {exc}"
+                ) from exc
+    encoded = package.replace("/", "%2F")
+    status, body = http(f"https://registry.npmjs.org/{encoded}/{version}")
+    if status == 404:
+        return None
+    if status != 200:
+        raise ReceiptError(
+            f"{package}@{version}: registry returned status {status}; an "
+            "outage is never proof of absence"
+        )
+    try:
+        tarball = json.loads(body)["dist"]["tarball"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ReceiptError(
+            f"{package}@{version}: malformed registry metadata ({exc}); "
+            "malformed evidence is never an observation"
+        ) from exc
+    status, data = http(tarball)
+    if status != 200:
+        raise ReceiptError(
+            f"{package}@{version}: tarball download returned status {status}"
+        )
+    return hashlib.sha256(data).hexdigest()
+
+
+def compose_workflow_lanes(
+    graph: "Graph", refs: dict, delivery_proofs: dict | None = None
+) -> WorkflowLanes:
     """Fresh-process lane composition, gated by the typed graph: a lane
     composes only for a component whose publish_lane declares the exact
     allowlisted provider, repository, workflow, and the three reviewed
     modes matching LANE_ARTIFACT_SOURCES."""
     lanes: dict = {}
+    delivery_proofs = dict(delivery_proofs or {})
+    foreign = sorted(set(delivery_proofs) - set(refs))
+    if foreign:
+        raise ReceiptError(
+            f"--delivery-proof names components not composed in this run: "
+            f"{foreign}"
+        )
+    for component, proof in delivery_proofs.items():
+        obligation = _delivery_obligation(graph, component)
+        if obligation is None:
+            raise ReceiptError(
+                f"{component} has no delivery obligation in the graph; a "
+                "supplied delivery proof is refused, never ignored"
+            )
+        if component not in DELIVERY_PROOF_CONSUMERS:
+            raise ReceiptError(
+                f"{component}'s composed lane does not consume delivery "
+                "evidence; a supplied delivery proof is refused, never ignored"
+            )
+        validate_delivery_proof(proof, obligation, component)
     modes = ["stage-only", "publish-continuation", "verify-only"]
     for component, ref in refs.items():
         source = LANE_ARTIFACT_SOURCES.get(component)
@@ -2409,6 +2658,17 @@ def compose_workflow_lanes(graph: "Graph", refs: dict) -> WorkflowLanes:
                 reader=reader, lane_authority=authority,
                 refs={component: ref}, runs=runs,
                 pypi_observe=_observe_pypi,
+            )
+        elif component in NPM_LANE_COMPONENTS:
+            registry = (declared.get("registry") or {})
+            lanes[component] = NpmWorkflowLane(
+                component=component,
+                npm_name=registry.get("package", component),
+                expected_obligation=_delivery_obligation(graph, component),
+                reader=reader, lane_authority=authority,
+                refs={component: ref}, runs=runs,
+                npm_observe=_observe_npm_registry,
+                delivery_proofs=delivery_proofs,
             )
         else:
             registry = (declared.get("registry") or {})
@@ -4238,6 +4498,13 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         help="explicit full staged-manifest artifact id for resume binding",
     )
     run_parser.add_argument(
+        "--delivery-proof",
+        action="append",
+        default=[],
+        help="component=<name>,obligation=<type>,evidence_id=<id>,"
+        "digest=<digest> - separately supplied structured delivery evidence",
+    )
+    run_parser.add_argument(
         "--stage-artifact",
         action="append",
         default=[],
@@ -4289,7 +4556,12 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 getattr(args, "stage_artifact", [])
             )
             if refs:
-                lanes = compose_workflow_lanes(graph, refs)
+                lanes = compose_workflow_lanes(
+                    graph, refs,
+                    delivery_proofs=parse_delivery_proof_arguments(
+                        getattr(args, "delivery_proof", [])
+                    ),
+                )
         measurement = None
         if registration.trust_class == "external-immutable":
             # Production measurement resolution rides the same external

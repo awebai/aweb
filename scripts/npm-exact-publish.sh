@@ -22,6 +22,13 @@
 #   validate-inputs  [--sha <40-hex>] [--version <X.Y.Z>]
 #                    [--digest sha256:<64-hex>] [--run-id <n>] [--artifact-id <n>]
 #       Literal-format validation for dispatch inputs.
+#   decide-npm       --observed-status <http-code> [--digest <staged sha256>]
+#                    [--observed <remote sha256 | unavailable>]
+#       Tri-state registry decision. Only HTTP 404 proves absence. With
+#       --digest: 404 -> PUBLISH, 200 with identical --observed -> ADOPT,
+#       200 with different or unavailable digest refuses, any other
+#       status refuses (outage is never proof of absence). Without
+#       --digest (stage guard probe): 404 -> ABSENT, anything else refuses.
 #
 # pack-inspect also accepts --profile <channel|pi|skills> --source-root
 # <repo root>: package-specific contract checks against the unpacked tgz
@@ -44,7 +51,7 @@ sha256() {
 
 MODE="${1:-}"; shift || true
 DIR='' VERSION='' OUT='' TGZ='' PACKAGE='' OBSERVED='' PROFILE='' SOURCE_ROOT=''
-MANIFEST='' STAGING='' SHA='' DIGEST='' RUN_ID='' ARTIFACT_ID=''
+MANIFEST='' STAGING='' SHA='' DIGEST='' RUN_ID='' ARTIFACT_ID='' STATUS=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) DIR="$2"; shift 2 ;;
@@ -53,6 +60,7 @@ while [[ $# -gt 0 ]]; do
     --tgz) TGZ="$2"; shift 2 ;;
     --package) PACKAGE="$2"; shift 2 ;;
     --observed) OBSERVED="$2"; shift 2 ;;
+    --observed-status) STATUS="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
     --source-root) SOURCE_ROOT="$2"; shift 2 ;;
     --manifest) MANIFEST="$2"; shift 2 ;;
@@ -166,6 +174,30 @@ PY
     [[ -z "$PROFILE" ]] || profile_inspect "$tgz"
     printf 'STAGED: %s sha256 %s\n' "$(basename "$tgz")" "$(sha256 "$tgz")"
     ;;
+  inspect-tgz)
+    [[ -n "$TGZ" && -f "$TGZ" && -n "$VERSION" ]] \
+      || { echo "inspect-tgz requires --tgz --version" >&2; exit 2; }
+    python3 - "$TGZ" "$VERSION" <<'PY'
+import json, sys, tarfile
+path, version = sys.argv[1], sys.argv[2]
+with tarfile.open(path) as t:
+    names = t.getnames()
+    pkg = json.load(t.extractfile("package/package.json"))
+if pkg["version"] != version:
+    sys.exit(f"REFUSE: tgz declares version {pkg['version']}, expected {version}")
+main = pkg.get("main")
+if main:
+    entry = "package/" + main.lstrip("./")
+    if entry not in names:
+        sys.exit(f"REFUSE: declared main {main.lstrip('./')} is missing from the tgz")
+for spec in pkg.get("files", []):
+    prefix = "package/" + spec.rstrip("/")
+    if not any(n == prefix or n.startswith(prefix + "/") for n in names):
+        sys.exit(f"REFUSE: files entry {spec} contributed nothing to the tgz")
+PY
+    [[ -z "$PROFILE" ]] || profile_inspect "$TGZ"
+    printf 'INSPECTED: %s sha256 %s\n' "$(basename "$TGZ")" "$(sha256 "$TGZ")"
+    ;;
   publish-exact)
     [[ -n "$TGZ" && -f "$TGZ" ]] || fail "publish-exact requires an existing --tgz"
     npm publish "$TGZ" --access public
@@ -185,6 +217,37 @@ PY
     [[ "$s" == "$o" ]] \
       || fail "published bytes $o do not equal staged bytes $s for $(basename "$TGZ")"
     printf 'VERIFIED: published equals staged (%s)\n' "$s"
+    ;;
+  decide-npm)
+    # Tri-state registry decision: HTTP 404 alone proves absence (PUBLISH);
+    # a present version adopts only on exact digest (ADOPT) and refuses on
+    # mismatch; any other status or an unavailable digest refuses - an
+    # outage is never permission to stage as absent or publish blind.
+    [[ -n "$STATUS" ]] \
+      || { echo "decide-npm requires --observed-status (and --digest when deciding a staged tgz)" >&2; exit 2; }
+    if [[ -z "$DIGEST" ]]; then
+      # Absence probe (stage guard): no staged bytes yet, so only absence
+      # can be proven; presence and outage both refuse.
+      case "$STATUS" in
+        404) echo ABSENT ;;
+        200) fail "version already exists on the registry" ;;
+        *) fail "registry returned status ${STATUS}; an outage is never proof of absence" ;;
+      esac
+      exit 0
+    fi
+    case "$STATUS" in
+      404) echo PUBLISH ;;
+      200)
+        [[ -n "$OBSERVED" && "$OBSERVED" != "unavailable" ]] \
+          || fail "present version with unavailable remote digest; refusing to act blind"
+        if [[ "$OBSERVED" == "$DIGEST" ]]; then
+          echo ADOPT
+        else
+          fail "registry serves $OBSERVED, staged is $DIGEST; permanent"
+        fi
+        ;;
+      *) fail "registry returned status ${STATUS}; an outage is never proof of absence" ;;
+    esac
     ;;
   require-publishable)
     [[ -n "$MANIFEST" ]] || fail "require-publishable requires --manifest"

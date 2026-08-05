@@ -179,10 +179,10 @@ class RegistrationTests(unittest.TestCase):
 def anchor_artifact_zip(logical_id: str, body: bytes) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
-        z.writestr("record.json", json.dumps(
+        zip_member(z, "record.json", json.dumps(
             {"logical_id": logical_id, "digest": sha256(body)}
         ))
-        z.writestr("body", body)
+        zip_member(z, "body", body)
     return buffer.getvalue()
 
 
@@ -416,6 +416,17 @@ def lane_payload_bytes(version="1.34.3"):
     return members
 
 
+ZIP_FIXTURE_STAMP = (2020, 1, 1, 0, 0, 0)
+
+
+def zip_member(archive, name, data):
+    """Deterministic fixture member: zipfile.writestr stamps the current
+    local time into each entry, so two builds of identical content straddling
+    a second boundary produce different bytes and flake any exact-digest
+    comparison."""
+    archive.writestr(zipfile.ZipInfo(name, date_time=ZIP_FIXTURE_STAMP), data)
+
+
 def lane_zip(*, mode="stage-only", source_sha="a" * 40, version="1.34.3",
              tamper_payload=False, drop_payload=False, extra_payload=False,
              break_canonical=False, duplicate_member=False) -> bytes:
@@ -440,17 +451,17 @@ def lane_zip(*, mode="stage-only", source_sha="a" * 40, version="1.34.3",
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
-        z.writestr("manifest.json", json.dumps(manifest))
+        zip_member(z, "manifest.json", json.dumps(manifest))
         for name, data in members.items():
             if drop_payload and name == f"npm/awebai-aw-{version}.tgz":
                 continue
             if tamper_payload and name.endswith("linux_amd64.tar.gz"):
                 data = b"tampered"
-            z.writestr(name, data)
+            zip_member(z, name, data)
         if extra_payload:
-            z.writestr("dist/uninvited.bin", b"extra")
+            zip_member(z, "dist/uninvited.bin", b"extra")
         if duplicate_member:
-            z.writestr("npm/checksums.txt", members["dist/checksums.txt"])
+            zip_member(z, "npm/checksums.txt", members["dist/checksums.txt"])
     return buffer.getvalue()
 
 
@@ -1303,9 +1314,9 @@ def pypi_lane_zip(*, package="server", pypi_name="aweb", version="1.26.36",
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
-        z.writestr("manifest.json", json.dumps(manifest))
+        zip_member(z, "manifest.json", json.dumps(manifest))
         for name, data in members.items():
-            z.writestr(name, data)
+            zip_member(z, name, data)
     return buffer.getvalue()
 
 
@@ -1394,11 +1405,11 @@ def image_lane_zip(*, version="0.5.15", mode="stage-only",
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
-        z.writestr("manifest.json", json.dumps(manifest))
-        z.writestr("awid-oci.tar", archive)
-        z.writestr("identities.json", identities_bytes)
+        zip_member(z, "manifest.json", json.dumps(manifest))
+        zip_member(z, "awid-oci.tar", archive)
+        zip_member(z, "identities.json", identities_bytes)
         if duplicate_member:
-            z.writestr("identities.json", identities_bytes)
+            zip_member(z, "identities.json", identities_bytes)
     return buffer.getvalue()
 
 
@@ -1505,7 +1516,7 @@ class PypiWorkflowLaneTests(unittest.TestCase):
         zip_bytes = pypi_lane_zip()
         buffer = io.BytesIO(zip_bytes)
         with zipfile.ZipFile(buffer, "a") as z:
-            z.writestr("manifest.json", "{}")
+            zip_member(z, "manifest.json", "{}")
         with self.assertRaises(rd.ReceiptError) as caught:
             rd.validate_pypi_lane_artifact(
                 buffer.getvalue(), expected_source_sha="c" * 40,
@@ -2722,6 +2733,451 @@ class CellIdentityTests(unittest.TestCase):
                                  "the harness selects the declared "
                                  "published artifact without guessing")
                 self.assertEqual(cell.declared_direction, edge.direction)
+
+
+def channel_tgz(*, version="1.7.2", plugin_version=None, sentinel=True):
+    """A tgz satisfying the reviewed .3 channel profile."""
+    import tarfile
+
+    markers = "\n".join([
+        "const stableID = certificateStableID || identityStableID",
+        'case "app_event"', 'kind: "app"',
+        "stableIdentityStateHash",
+        "seq>1 requires rotate_key operation",
+        "did:aw not derived from genesis key",
+        "verifyStableIdentityViaFullLog",
+        "pin store is empty or has no document",
+    ])
+    if sentinel:
+        markers += ("\naweb-channel-core-security/"
+                    "did-log-genesis-bound-v2+full-log-v1+"
+                    "pinstore-fail-closed-v1")
+    files = {
+        "package/package.json": json.dumps({
+            "name": "@awebai/claude-channel", "version": version,
+            "main": "./dist/index.js",
+            "files": ["dist", ".mcp.json", ".claude-plugin"],
+        }),
+        "package/dist/index.js": markers,
+        "package/.mcp.json": json.dumps(
+            {"mcpServers": {"aweb": {"command": "node"}}}),
+        "package/.claude-plugin/plugin.json": json.dumps(
+            {"name": "channel", "version": plugin_version or version}),
+    }
+    import gzip
+
+    buffer = io.BytesIO()
+    # gzip stamps the current time into its header; mtime=0 keeps two
+    # builds of identical content byte-identical.
+    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode="w") as tar:
+            for name, content in files.items():
+                data = content.encode()
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+def npm_lane_zip(*, package="channel", version="1.7.2", mode="stage-only",
+                 source_sha="f" * 40, tgz=None):
+    tgz = tgz if tgz is not None else channel_tgz(version=version)
+    tgz_name = f"awebai-claude-channel-{version}.tgz"
+    files = {tgz_name: sha256(tgz)}
+    canonical = sha256(json.dumps(files, sort_keys=True).encode())
+    manifest = {
+        "mode": mode, "package": package, "tag": f"channel-v{version}",
+        "candidate_version": version, "source_sha": source_sha,
+        "files": files, "canonical_set_digest": canonical,
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as z:
+        zip_member(z, "manifest.json", json.dumps(manifest))
+        zip_member(z, tgz_name, tgz)
+    return buffer.getvalue()
+
+
+GOOD_PROOF = {"obligation": "delivery-restart-proof",
+              "evidence_id": "restart:host-1:pid-9", "digest": "sha-evidence"}
+
+
+def npm_lane(zip_bytes, *, observer, runs=None, source_sha="f" * 40,
+             delivery_proofs=None, expected_obligation="delivery-restart-proof"):
+    api = FakeGithubApi(repo="awebai/aweb", zip_bytes=zip_bytes,
+                        workflow_path=".github/workflows/npm-release.yml")
+    return rd.NpmWorkflowLane(
+        component="channel",
+        npm_name="@awebai/claude-channel",
+        expected_obligation=expected_obligation,
+        reader=rd.GithubArtifactStore(
+            api=api, repo="awebai/aweb",
+            workflow_path=".github/workflows/npm-release.yml"),
+        lane_authority=rd.GithubArtifactDigestAuthority(
+            api=api, repo="awebai/aweb",
+            workflow_path=".github/workflows/npm-release.yml"),
+        refs={"channel": lane_ref_for(api, zip_bytes, source_sha)},
+        npm_observe=observer,
+        runs=runs if runs is not None else FakeAwRuns(),
+        delivery_proofs=delivery_proofs or {},
+        waiter=lambda: None,
+    ), api
+
+
+class NpmWorkflowLaneTests(unittest.TestCase):
+    def node(self):
+        return rd.PlanNode(component="channel", reason="changed",
+                           version="1.7.2")
+
+    def test_stage_validates_the_lane_and_channel_profile(self) -> None:
+        zip_bytes = npm_lane_zip()
+        lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
+        entry = lane.stage(self.node())
+        self.assertEqual(list(entry.digest_set),
+                         ["awebai-claude-channel-1.7.2.tgz"])
+        self.assertEqual(entry.digest,
+                         rd.canonical_digest_of_set(entry.digest_set))
+
+    def test_stage_refuses_a_profile_violation_in_the_tgz(self) -> None:
+        zip_bytes = npm_lane_zip(tgz=channel_tgz(sentinel=False))
+        lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
+        with self.assertRaises(rd.ReceiptError):
+            lane.stage(self.node())
+        zip_bytes = npm_lane_zip(tgz=channel_tgz(plugin_version="9.9.9"))
+        lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
+        with self.assertRaises(rd.ReceiptError):
+            lane.stage(self.node())
+
+    def test_observation_absent_exact_mismatch_outage(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        tgz_digest = sha256(tgz)
+        node = self.node()
+        state = {"value": None}
+
+        def observer(package, version):
+            if state["value"] == "outage":
+                raise rd.ReceiptError("registry unavailable")
+            return state["value"]
+
+        lane, _ = npm_lane(zip_bytes, observer=observer,
+                           delivery_proofs={"channel": dict(GOOD_PROOF)})
+        staged = lane.stage(node)
+        self.assertIsNone(lane.observe(node, staged), "absent continues")
+        state["value"] = tgz_digest
+        observed = lane.observe(node, staged)
+        self.assertEqual(observed.digest_set, staged.digest_set)
+        self.assertEqual(observed.delivery_proof, GOOD_PROOF)
+        state["value"] = "0" * 64
+        with self.assertRaises(rd.ReceiptError):
+            lane.observe(node, staged)
+        state["value"] = "outage"
+        with self.assertRaises(rd.ReceiptError):
+            lane.observe(node, staged)
+
+    def test_publish_dispatches_package_inputs_and_attaches_proof(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        tgz_digest = sha256(tgz)
+        runs = FakeAwRuns()
+        state = {"value": None}
+        lane, api = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        staged = lane.stage(self.node())
+        original = runs.dispatch
+
+        def dispatch(inputs):
+            original(inputs)
+            state["value"] = tgz_digest
+        runs.dispatch = dispatch
+        published = lane.publish(self.node(), staged)
+        self.assertEqual(published.delivery_proof, GOOD_PROOF)
+        self.assertEqual(runs.dispatched[0]["package"], "channel")
+        self.assertEqual(runs.dispatched[0]["mode"], "publish-continuation")
+        self.assertEqual(runs.dispatched[0]["stage_run_id"], str(api.run_id))
+
+    def refusal_dispatches_nothing(self, *, delivery_proofs,
+                                   expected_obligation, needle):
+        """Missing/wrong delivery evidence precedes every outward call."""
+        zip_bytes = npm_lane_zip()
+        runs = FakeAwRuns()
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: None, runs=runs,
+            delivery_proofs=delivery_proofs,
+            expected_obligation=expected_obligation)
+        staged = lane.stage(self.node())
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.publish(self.node(), staged)
+        self.assertIn(needle, str(caught.exception))
+        self.assertEqual(runs.dispatched, [],
+                         "the refusal must precede the dispatch")
+
+    def test_missing_proof_for_an_obligated_component_refuses_before_dispatch(
+            self) -> None:
+        self.refusal_dispatches_nothing(
+            delivery_proofs={},
+            expected_obligation="delivery-restart-proof",
+            needle="delivery")
+
+    def test_malformed_proof_refuses_before_dispatch(self) -> None:
+        self.refusal_dispatches_nothing(
+            delivery_proofs={"channel": {
+                "obligation": "delivery-restart-proof",
+                "evidence_id": 7, "digest": "d"}},
+            expected_obligation="delivery-restart-proof",
+            needle="nonempty string")
+
+    def test_wrong_obligation_refuses_before_dispatch(self) -> None:
+        self.refusal_dispatches_nothing(
+            delivery_proofs={"channel": {
+                "obligation": "delivery-lane-proof",
+                "evidence_id": "e", "digest": "d"}},
+            expected_obligation="delivery-restart-proof",
+            needle="obligation")
+
+    def test_unobligated_component_rejects_an_unexpected_proof(self) -> None:
+        self.refusal_dispatches_nothing(
+            delivery_proofs={"channel": dict(GOOD_PROOF)},
+            expected_obligation=None,
+            needle="no delivery obligation")
+
+    def test_exact_existing_registry_bytes_adopt_without_dispatch(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        runs = FakeAwRuns()
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: sha256(tgz),
+            runs=runs, delivery_proofs={"channel": dict(GOOD_PROOF)})
+        staged = lane.stage(self.node())
+        published = lane.publish(self.node(), staged)
+        self.assertEqual(published.phase, "published")
+        self.assertEqual(runs.dispatched, [],
+                         "exact adoption dispatches zero runs")
+
+
+class NpmRegistryClassifierTests(unittest.TestCase):
+    """The PRODUCTION classifier: only 404 proves absence."""
+
+    def classify(self, responses):
+        def http(url):
+            return responses.pop(0)
+        return rd._observe_npm_registry(
+            "@awebai/claude-channel", "1.7.2", http=http)
+
+    def test_404_proves_absence(self) -> None:
+        self.assertIsNone(self.classify([(404, b"")]))
+
+    def test_present_returns_the_tarball_digest(self) -> None:
+        meta = json.dumps({"dist": {
+            "tarball": "https://registry.npmjs.org/x/-/x-1.7.2.tgz"}}).encode()
+        digest = self.classify([(200, meta), (200, b"tgz-bytes")])
+        self.assertEqual(digest, sha256(b"tgz-bytes"))
+
+    def test_outage_and_malformed_block(self) -> None:
+        for responses in ([(503, b"")], [(200, b"not json")],
+                          [(200, json.dumps({}).encode())],
+                          [(200, json.dumps({"dist": {"tarball": "u"}}).encode()),
+                           (500, b"")]):
+            with self.assertRaises(rd.ReceiptError, msg=str(responses)):
+                self.classify(list(responses))
+
+
+class ComposedProofConsumptionTests(unittest.TestCase):
+    """Every supplied proof key is validated centrally at composition: it
+    must name a composed component whose graph-derived delivery obligation
+    is nonempty AND whose composed lane consumes delivery evidence. No
+    caller-supplied proof may be accepted and ignored."""
+
+    @staticmethod
+    def ref():
+        return rd.LaneRef(
+            artifact="gh-artifact:awebai/aweb:1:2",
+            aw_source_sha="f" * 40,
+            zip_digest="sha256:" + "6" * 64)
+
+    def refuse(self, component, proof, needle, graph=None):
+        graph = graph or rd.Graph.load(rd.GRAPH_PATH)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.compose_workflow_lanes(
+                graph, {component: self.ref()},
+                delivery_proofs={component: proof})
+        self.assertIn(component, str(caught.exception))
+        self.assertIn(needle, str(caught.exception))
+
+    def test_unobligated_composed_components_refuse_a_proof(self) -> None:
+        for component in ("server", "awid-image", "skills"):
+            self.refuse(component, dict(GOOD_PROOF),
+                        "no delivery obligation")
+
+    def test_obligated_component_on_nonconsuming_lane_refuses(self) -> None:
+        graph = rd.Graph.load(rd.GRAPH_PATH)
+        raw = dict(graph.canonical)
+        raw["component"] = dict(raw["component"])
+        raw["component"]["server"] = dict(raw["component"]["server"])
+        raw["component"]["server"]["delivery_restart"] = {
+            "proof": "restart per host"}
+        self.refuse("server", dict(GOOD_PROOF),
+                    "does not consume delivery evidence",
+                    graph=rd.Graph.from_dict(raw))
+
+    def test_malformed_proof_refuses_at_composition(self) -> None:
+        bad = dict(GOOD_PROOF)
+        bad["obligation"] = "delivery-lane-proof"
+        self.refuse("channel", bad, "obligation")
+
+    def test_valid_channel_and_pi_proofs_compose(self) -> None:
+        graph = rd.Graph.load(rd.GRAPH_PATH)
+        lanes = rd.compose_workflow_lanes(
+            graph, {"channel": self.ref(), "pi": self.ref()},
+            delivery_proofs={"channel": dict(GOOD_PROOF),
+                             "pi": dict(GOOD_PROOF)})
+        self.assertTrue(lanes.has_lane("channel"))
+        self.assertTrue(lanes.has_lane("pi"))
+
+
+class ForeignProofKeyTests(unittest.TestCase):
+    def test_proofs_for_uncomposed_components_refuse(self) -> None:
+        graph = rd.Graph.load(rd.GRAPH_PATH)
+        refs = {"channel": rd.LaneRef(
+            artifact="gh-artifact:awebai/aweb:1:2",
+            aw_source_sha="f" * 40,
+            zip_digest="sha256:" + "6" * 64)}
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.compose_workflow_lanes(
+                graph, refs,
+                delivery_proofs={"pi": dict(GOOD_PROOF)})
+        self.assertIn("pi", str(caught.exception))
+
+
+class DeliveryProofArgumentTests(unittest.TestCase):
+    def test_well_formed_proof_parses_and_malformed_refuses(self) -> None:
+        proofs = rd.parse_delivery_proof_arguments([
+            "component=channel,obligation=delivery-restart-proof,"
+            "evidence_id=restart:h1:p9,digest=sha-evidence",
+        ])
+        self.assertEqual(proofs["channel"]["obligation"],
+                         "delivery-restart-proof")
+        for bad in ("component=channel,obligation=,evidence_id=e,digest=d",
+                    "component=channel",
+                    "component=channel,obligation=o,evidence_id=e,digest=d,"
+                    "component=again"):
+            with self.assertRaises(rd.ReceiptError, msg=bad):
+                rd.parse_delivery_proof_arguments([bad])
+        with self.assertRaises(rd.ReceiptError):
+            rd.parse_delivery_proof_arguments([
+                "component=channel,obligation=o,evidence_id=e,digest=d",
+                "component=channel,obligation=o,evidence_id=e,digest=d",
+            ])
+
+
+class NpmLaneEndToEndTests(unittest.TestCase):
+    def test_channel_crash_resume_zero_restage_with_proof(self) -> None:
+        transport = FakeAnchorTransport()
+        version = "1.7.2"
+        graph = rd.Graph.from_dict({
+            "component": {
+                "channel": {
+                    "source_paths": ["x/"],
+                    "version_source": {"type": "manifest", "path": "x/v"},
+                    "tag_format": "channel-v{version}",
+                    "publish_lane": {
+                        "workflow": ".github/workflows/npm-release.yml",
+                        "repository": "awebai/aweb",
+                        "provider": "github-workflow-artifacts",
+                        "modes": ["stage-only", "publish-continuation",
+                                  "verify-only"],
+                        "registry": {"type": "npm",
+                                     "package": "@awebai/claude-channel"},
+                    },
+                    "verify": {"command": "true"},
+                    "delivery_restart": {"proof": "restart per host"},
+                },
+            },
+            "edge": [],
+        })
+        state = rd.FixtureState(
+            changed_components={"channel": True},
+            versions={"channel": version},
+            published_versions={"channel": "1.7.1"},
+        )
+        tgz = channel_tgz(version=version)
+        registry = {"value": None}
+
+        def lane_factory(*, publish_ok):
+            zip_bytes = npm_lane_zip(version=version, tgz=tgz)
+            runs = FakeAwRuns(
+                conclusion="success" if publish_ok else "failure")
+            if publish_ok:
+                original = runs.dispatch
+
+                def dispatch(inputs):
+                    original(inputs)
+                    registry["value"] = sha256(tgz)
+                runs.dispatch = dispatch
+            lane, _ = npm_lane(
+                zip_bytes, observer=lambda p, v: registry["value"],
+                runs=runs,
+                delivery_proofs={"channel": dict(GOOD_PROOF)})
+            lane.stage_calls = 0
+            original_stage = lane.stage
+
+            def counted(node):
+                lane.stage_calls += 1
+                return original_stage(node)
+            lane.stage = counted
+            return lane
+
+        store = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
+        authority = rd.GithubAnchorDigestAuthority(transport=transport)
+        plan = rd.compute_plan(graph, state)
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        rd._put_content_addressed(
+            store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
+        frozen = rd.load_frozen_plan(
+            store.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+        with self.assertRaises(rd.ReceiptError):
+            rd.run_plan(
+                plan, graph, lane_factory(publish_ok=False),
+                skew=NoRuntimeSkew(), authority=authority, store=store,
+                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                providers=rd.Providers(store=store, authority=authority),
+            )
+        store2 = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
+        authority2 = rd.GithubAnchorDigestAuthority(transport=transport)
+        resume_lane = lane_factory(publish_ok=True)
+        frozen2 = rd.load_frozen_plan(
+            store2.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+        entries = rd.resume_plan(
+            rd.compute_plan(graph, state), graph,
+            lanes=resume_lane, skew=NoRuntimeSkew(),
+            store=store2, authority=authority2,
+            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            require_external_authority=True,
+            authority_trust="external-immutable",
+        )
+        self.assertEqual(resume_lane.stage_calls, 0, "zero restage")
+        self.assertEqual(entries["channel"].phase, "verified")
+        self.assertEqual(entries["channel"].delivery_proof, GOOD_PROOF)
+
+
+class NpmLaneCompositionTests(unittest.TestCase):
+    def test_graph_declares_the_npm_lane_surface(self) -> None:
+        graph = rd.Graph.load(rd.GRAPH_PATH)
+        for name in ("channel", "pi", "skills"):
+            lane = graph.components[name].publish_lane
+            self.assertEqual(lane.get("provider"),
+                             "github-workflow-artifacts", name)
+            self.assertEqual(lane.get("repository"), "awebai/aweb", name)
+            self.assertEqual(
+                rd.LANE_ARTIFACT_SOURCES[name],
+                ("awebai/aweb", ".github/workflows/npm-release.yml"),
+            )
+        refs = {"channel": rd.LaneRef(
+            artifact="gh-artifact:awebai/aweb:1:2",
+            aw_source_sha="f" * 40,
+            zip_digest="sha256:" + "6" * 64)}
+        lanes = rd.compose_workflow_lanes(graph, refs)
+        self.assertTrue(lanes.has_lane("channel"))
 
 
 if __name__ == "__main__":
