@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""Channel/Pi ↔ server skew child harness contract tests (tmux-free)."""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import sys
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+
+SCRIPTS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SCRIPTS))
+
+import release_driver as rd  # noqa: E402
+import release_channel_pi_skew as skew  # noqa: E402
+
+
+def sha(body: bytes) -> str:
+    return hashlib.sha256(body).hexdigest()
+
+
+def lane_zip(component: str, version: str = "1.2.3"):
+    if component in {"channel", "pi"}:
+        name = (
+            f"awebai-claude-channel-{version}.tgz"
+            if component == "channel" else f"awebai-pi-{version}.tgz"
+        )
+        payload = f"exact-{component}-tgz".encode()
+        member = name
+    else:
+        name = f"aweb-{version}-py3-none-any.whl"
+        payload = b"exact-server-wheel"
+        member = f"dist/{name}"
+    files = {name: sha(payload)}
+    if component == "server":
+        sdist = f"aweb-{version}.tar.gz"
+        files[sdist] = sha(b"exact-server-sdist")
+    manifest = {
+        "mode": "stage-only",
+        "package": component,
+        "source_sha": "a" * 40,
+        "candidate_version": version,
+        "files": files,
+        "canonical_set_digest": sha(json.dumps(files, sort_keys=True).encode()),
+    }
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+        archive.writestr(member, payload)
+        if component == "server":
+            archive.writestr(f"dist/{sdist}", b"exact-server-sdist")
+    return output.getvalue(), name, payload, files, manifest
+
+
+class BytesStore:
+    def __init__(self, body):
+        self.body = body
+        self.requests = []
+
+    def get(self, artifact_id):
+        self.requests.append(artifact_id)
+        return self.body
+
+
+class DigestAuthority:
+    def __init__(self, digest):
+        self.digest = digest
+        self.requests = []
+
+    def expected_digest(self, artifact_id):
+        self.requests.append(artifact_id)
+        return self.digest
+
+
+class CandidateArtifactTests(unittest.TestCase):
+    def resolver(self, body, authority_digest=None, validator=None):
+        self.store = BytesStore(body)
+        self.authority = DigestAuthority(authority_digest or sha(body))
+        self.validated = []
+
+        def validate(data, **kwargs):
+            self.validated.append((data, kwargs))
+            if validator:
+                return validator(data, **kwargs)
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+                tgz = next(name for name in manifest["files"] if name.endswith(".tgz"))
+                return manifest, tgz, archive.read(tgz)
+
+        return skew.ArtifactResolver(
+            staged_store_factory=lambda component: self.store,
+            staged_authority_factory=lambda component: self.authority,
+            npm_lane_validator=validate,
+        )
+
+    def side(self, component, body, files, version="1.2.3"):
+        return {
+            "component": component,
+            "version": version,
+            "digest": rd.canonical_digest_of_set(files),
+            "digest_set": files,
+            "lane_ref": {
+                "artifact": "gh-artifact:awebai/aweb:17:23",
+                "aw_source_sha": "a" * 40,
+                "zip_digest": "sha256:" + sha(body),
+            },
+        }
+
+    def test_candidate_npm_uses_separate_authority_then_exact_store_and_profile(self):
+        body, name, tgz, files, _ = lane_zip("channel")
+        artifact = self.resolver(body).resolve(
+            "candidate", self.side("channel", body, files),
+            "npm:@awebai/claude-channel",
+        )
+        ref = "gh-artifact:awebai/aweb:17:23"
+        self.assertEqual(self.authority.requests, [ref])
+        self.assertEqual(self.store.requests, [ref])
+        self.assertEqual(artifact.filename, name)
+        self.assertEqual(artifact.bytes, tgz)
+        self.assertEqual(artifact.sha256, files[name])
+        self.assertEqual(self.validated[0][1]["profile"], "channel")
+        self.assertEqual(artifact.source["lane_ref"]["artifact"], ref)
+
+    def test_candidate_server_uses_complete_lane_set_and_exact_wheel(self):
+        body, name, wheel, files, _ = lane_zip("server")
+        artifact = self.resolver(body).resolve(
+            "candidate", self.side("server", body, files), "pypi:aweb"
+        )
+        self.assertEqual(artifact.filename, name)
+        self.assertEqual(artifact.bytes, wheel)
+        self.assertEqual(artifact.sha256, files[name])
+        self.assertEqual(artifact.source["digest_set"], files)
+
+    def test_authority_mismatch_refuses_before_store_read(self):
+        body, _, _, files, _ = lane_zip("pi")
+        resolver = self.resolver(body, authority_digest="0" * 64)
+        with self.assertRaisesRegex(rd.ReceiptError, "independent authority"):
+            resolver.resolve(
+                "candidate", self.side("pi", body, files), "npm:@awebai/pi"
+            )
+        self.assertEqual(self.store.requests, [])
+
+    def test_candidate_changed_complete_set_or_missing_lane_ref_refuses(self):
+        body, _, _, files, _ = lane_zip("channel")
+        resolver = self.resolver(body)
+        side = self.side("channel", body, files)
+        with self.assertRaisesRegex(rd.ReceiptError, "lane reference"):
+            resolver.resolve("candidate", {**side, "lane_ref": None},
+                             "npm:@awebai/claude-channel")
+        with self.assertRaisesRegex(rd.ReceiptError, "complete set"):
+            resolver.resolve(
+                "candidate", {**side, "digest_set": {"other.tgz": "0" * 64}},
+                "npm:@awebai/claude-channel",
+            )
+
+
+class PublishedArtifactTests(unittest.TestCase):
+    def test_published_npm_reuses_404_outage_classifier_and_exact_profile(self):
+        tgz = b"published channel tgz"
+        metadata_url = "https://registry.npmjs.org/%40awebai%2Fclaude-channel/1.7.1"
+        tarball_url = "https://registry.example/channel.tgz"
+        metadata = json.dumps({"dist": {"tarball": tarball_url}}).encode()
+        responses = {
+            metadata_url: (200, metadata),
+            tarball_url: (200, tgz),
+        }
+        checked = []
+        resolver = skew.ArtifactResolver(
+            http_get=lambda url: responses[url],
+            npm_profile_check=lambda body, component, version: checked.append(
+                (body, component, version)
+            ),
+        )
+        artifact = resolver.resolve(
+            "published-latest", {"component": "channel", "version": "1.7.1"},
+            "npm:@awebai/claude-channel",
+        )
+        self.assertEqual(artifact.bytes, tgz)
+        self.assertEqual(artifact.sha256, sha(tgz))
+        self.assertEqual(checked, [(tgz, "channel", "1.7.1")])
+
+        absent = skew.ArtifactResolver(http_get=lambda url: (404, b""))
+        with self.assertRaisesRegex(rd.ReceiptError, "404.*absent"):
+            absent.resolve(
+                "published-floor", {"component": "pi", "version": "0.3.0"},
+                "npm:@awebai/pi",
+            )
+        outage = skew.ArtifactResolver(http_get=lambda url: (503, b""))
+        with self.assertRaisesRegex(rd.ReceiptError, "outage is never proof"):
+            outage.resolve(
+                "published-floor", {"component": "pi", "version": "0.3.0"},
+                "npm:@awebai/pi",
+            )
+
+    def test_published_server_reuses_pypi_status_and_digest_set(self):
+        wheel = b"published wheel"
+        wheel_name = "aweb-1.26.34-py3-none-any.whl"
+        wheel_url = "https://files.example/aweb.whl"
+        metadata_url = "https://pypi.org/pypi/aweb/1.26.34/json"
+        metadata = json.dumps({"urls": [{
+            "filename": wheel_name,
+            "packagetype": "bdist_wheel",
+            "url": wheel_url,
+            "digests": {"sha256": sha(wheel)},
+        }]}).encode()
+        resolver = skew.ArtifactResolver(
+            pypi_observe=lambda package, version: (200, {wheel_name: sha(wheel)}),
+            http_get=lambda url: (200, metadata if url == metadata_url else wheel),
+        )
+        artifact = resolver.resolve(
+            "published", {"component": "server", "version": "1.26.34"},
+            "pypi:aweb",
+        )
+        self.assertEqual(artifact.bytes, wheel)
+        self.assertEqual(artifact.sha256, sha(wheel))
+        self.assertEqual(artifact.source["registry"], "pypi:aweb")
+
+        for status, needle in ((404, "404.*absent"), (503, "unavailability")):
+            resolver = skew.ArtifactResolver(
+                pypi_observe=lambda package, version, status=status: (status, {})
+            )
+            with self.assertRaisesRegex(rd.ReceiptError, needle):
+                resolver.resolve(
+                    "published", {"component": "server", "version": "1.26.34"},
+                    "pypi:aweb",
+                )
+
+
+class FakeResolver:
+    def __init__(self):
+        self.calls = []
+
+    def resolve(self, kind, side, locator):
+        self.calls.append((kind, side["component"], side["version"], locator))
+        body = f"{side['component']}:{side['version']}".encode()
+        return skew.PackageArtifact(
+            component=side["component"], filename=f"{side['component']}.artifact",
+            version=side["version"], sha256=sha(body), bytes=body,
+            source={"kind": kind},
+        )
+
+
+class FakeJourney:
+    def __init__(self, control=(200, 422)):
+        self.events = []
+        self.control = control
+
+    def run_client_request(self, client, server, cell):
+        self.events.append(("request", client.component, server.component, cell.direction))
+        return {"assertion": "exact mark-read request accepted", "status": 200}
+
+    def run_server_event(self, client, server, cell):
+        self.events.append(("event", server.component, client.component, cell.direction))
+        return {"assertion": "exact SSE event presented before ack", "presented": True}
+
+    def run_mark_read_control(self, payload):
+        self.events.append(("control", payload))
+        return {
+            "unmutated_status": self.control[0],
+            "mutated_status": self.control[1],
+            "mutation_subject": "disposable required-field server",
+        }
+
+    def close(self):
+        self.events.append(("close",))
+
+
+class Reports:
+    def __init__(self):
+        self.items = []
+
+    def write(self, report):
+        self.items.append(report)
+
+
+def cell(client="channel", direction="a-to-b", a_kind="candidate",
+         b_kind="published-latest"):
+    locator = (
+        "npm:@awebai/claude-channel" if client == "channel" else "npm:@awebai/pi"
+    )
+    journey = skew.CHANNEL_JOURNEY if client == "channel" else skew.PI_JOURNEY
+    return rd.SkewCell(
+        edge_id=f"edge-{client}", edge_a=client, edge_b="server",
+        journey=journey, artifacts={"a": locator, "b": "pypi:aweb"},
+        declared_direction="both", direction=direction,
+        a_kind=a_kind, b_kind=b_kind,
+        a={"component": client, "version": "1.2.3"},
+        b={"component": "server", "version": "1.26.34"},
+    )
+
+
+class ChildHarnessTests(unittest.TestCase):
+    def run_cell(self, value, *, journey=None):
+        reports = Reports()
+        journey = journey or FakeJourney()
+        skew.ChannelPiHarness(
+            resolver=FakeResolver(), journey=journey, evidence=reports,
+        ).run(value)
+        return journey, reports.items[0]
+
+    def test_request_and_event_directions_execute_distinct_observed_assertions(self):
+        request_journey, request = self.run_cell(cell(direction="a-to-b"))
+        event_journey, event = self.run_cell(cell(direction="b-to-a"))
+        self.assertEqual(request_journey.events[0][0], "request")
+        self.assertEqual(event_journey.events[0][0], "event")
+        self.assertEqual(set(request["observation"]), {"request"})
+        self.assertEqual(set(event["observation"]), {"event"})
+        self.assertNotEqual(request["cell_id"], event["cell_id"])
+        self.assertEqual(request["edge_id"], "edge-channel")
+        self.assertEqual(request["artifacts"], {
+            "a": "npm:@awebai/claude-channel", "b": "pypi:aweb",
+        })
+
+    def test_required_field_control_is_disposable_exact_and_precontinuation(self):
+        journey, report = self.run_cell(cell(
+            client="pi", direction="a-to-b",
+            a_kind="published-floor", b_kind="candidate",
+        ))
+        control_event = next(event for event in journey.events if event[0] == "control")
+        self.assertEqual(control_event[1], {"up_to_message_id": skew.LEGACY_MESSAGE_ID})
+        self.assertEqual(report["negative_control"], {
+            "request": {"up_to_message_id": skew.LEGACY_MESSAGE_ID},
+            "unmutated_status": 200,
+            "mutated_status": 422,
+            "mutation_subject": "disposable required-field server",
+            "evidence_class": "control-only-not-candidate",
+        })
+        self.assertNotIn("mutation_subject", report["server_artifact"])
+
+    def test_control_must_be_green_then_422(self):
+        for statuses in ((500, 422), (200, 200), (200, 400)):
+            with self.assertRaisesRegex(rd.ReceiptError, "200.*422"):
+                self.run_cell(
+                    cell(a_kind="published-latest", b_kind="candidate"),
+                    journey=FakeJourney(control=statuses),
+                )
+
+    def test_other_edges_and_labels_refuse(self):
+        wrong = cell()
+        wrong = rd.SkewCell(**{**wrong.__dict__, "artifacts": {"a": "x", "b": "y"}})
+        with self.assertRaisesRegex(rd.ReceiptError, "channel/Pi-server edge"):
+            self.run_cell(wrong)
+
+
+class MeasurementCompletenessTests(unittest.TestCase):
+    def report(self, value):
+        _, report = ChildHarnessTests().run_cell(value)
+        return report
+
+    def test_aggregate_requires_every_exact_cell_not_a_global_direction_union(self):
+        cells = [
+            cell(direction="a-to-b", a_kind="candidate", b_kind="published-latest"),
+            cell(direction="b-to-a", a_kind="candidate", b_kind="published-latest"),
+            cell(direction="a-to-b", a_kind="published-floor", b_kind="candidate"),
+            cell(direction="b-to-a", a_kind="published-floor", b_kind="candidate"),
+        ]
+        reports = [self.report(value) for value in cells]
+        expected = [skew.cell_identity(value) for value in cells]
+        document = skew.aggregate_support(reports, expected_cell_ids=expected)
+        self.assertEqual(document["completeness"], "unanchored-local-measurement")
+        self.assertEqual(document["supported_versions"]["channel"], ["1.2.3"])
+        self.assertEqual(document["supported_versions"]["server"], ["1.26.34"])
+        with self.assertRaisesRegex(rd.ReceiptError, "missing exact cells"):
+            skew.aggregate_support(reports[:-1], expected_cell_ids=expected)
+
+    def test_aggregate_refuses_duplicate_or_direction_label_without_matching_assertion(self):
+        value = cell(direction="a-to-b")
+        report = self.report(value)
+        with self.assertRaisesRegex(rd.ReceiptError, "duplicate exact cells"):
+            skew.aggregate_support([report, report], expected_cell_ids=[report["cell_id"]])
+        report["cell_direction"] = "b-to-a"
+        with self.assertRaisesRegex(rd.ReceiptError, "event assertion"):
+            skew.aggregate_support([report], expected_cell_ids=[report["cell_id"]])
+
+
+class RegistrationAndJourneyParameterTests(unittest.TestCase):
+    def test_both_exact_journeys_are_registered_once(self):
+        import release_skew_harnesses as registry
+
+        self.assertIs(registry.REGISTRY[skew.CHANNEL_JOURNEY], skew.channel_factory)
+        self.assertIs(registry.REGISTRY[skew.PI_JOURNEY], skew.pi_factory)
+
+    def test_focused_target_is_in_release_driver_gate(self):
+        makefile = (SCRIPTS.parent / "Makefile").read_text()
+        target = makefile.split("test-release-channel-pi-skew:", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("test_release_channel_pi_skew.py", target)
+        release = makefile.split("test-release-driver:", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("test-release-channel-pi-skew", release)
+
+    def test_existing_real_journeys_accept_exact_installed_package_roots(self):
+        channel = (SCRIPTS.parent / "channel/test/integration.test.ts").read_text()
+        resident = (SCRIPTS.parent / "scripts/e2e-oas-attached-principal-retire.sh").read_text()
+        self.assertIn("AWEB_CHANNEL_PACKAGE_ROOT", channel)
+        self.assertIn("OAS_PROOF_PI_PACKAGE_ROOT", resident)
+        self.assertIn("exact installed Pi package", resident)
+
+    def test_graph_support_records_remain_explicitly_incomplete(self):
+        graph = rd.Graph.load(rd.GRAPH_PATH)
+        for journey in (skew.CHANNEL_JOURNEY, skew.PI_JOURNEY):
+            edge = next(edge for edge in graph.runtime_edges if edge.journey == journey)
+            self.assertTrue(edge.declared_incomplete)
+            self.assertEqual(edge.supported, {"policy": "additive-only"})
+
+
+if __name__ == "__main__":
+    unittest.main()
