@@ -111,9 +111,11 @@ jobs:
           if [[ "$MODE" == "stage-only" ]]; then
             [[ -z "$remote_tag" ]] \
               || { echo "REFUSE: tag ${TAG_PREFIX}${VERSION} already exists remotely at $remote_tag" >&2; exit 1; }
-            if npm view "${NPM_NAME}@${VERSION}" version >/dev/null 2>&1; then
-              echo "REFUSE: ${NPM_NAME}@${VERSION} already exists on npm" >&2; exit 1
-            fi
+            enc="$(node -p "encodeURIComponent(process.env.NPM_NAME)")"
+            status="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${enc}/${VERSION}")"
+            decision="$(bash scripts/npm-exact-publish.sh decide-npm --observed-status "$status")"
+            [[ "$decision" == "ABSENT" ]] \
+              || { echo "REFUSE: registry decision for ${NPM_NAME}@${VERSION} is ${decision}, not ABSENT" >&2; exit 1; }
           else
             deref="$(git rev-parse "${TAG_PREFIX}${VERSION}^{}" 2>/dev/null || true)"
             [[ "$deref" == "$SOURCE_SHA" ]] \
@@ -345,13 +347,32 @@ jobs:
         run: |
           set -euo pipefail
           staged="$(ls staging/*.tgz)"
-          if tarball="$(npm view "${NPM_NAME}@${VERSION}" dist.tarball 2>/dev/null)" && [[ -n "$tarball" ]]; then
-            curl -fsSL -o observed.tgz "$tarball"
-            bash scripts/npm-exact-publish.sh verify-published --tgz "$staged" --observed observed.tgz
-            echo "adopted ${NPM_NAME}@${VERSION} (byte-identical)"
-          else
-            bash scripts/npm-exact-publish.sh publish-exact --tgz "$staged"
+          staged_digest="$(sha256sum "$staged" | awk '{print $1}')"
+          enc="$(node -p "encodeURIComponent(process.env.NPM_NAME)")"
+          status="$(curl -s -o packument.json -w '%{http_code}' "https://registry.npmjs.org/${enc}/${VERSION}")"
+          observed_args=()
+          if [[ "$status" == "200" ]]; then
+            observed=unavailable
+            if tarball="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dist"]["tarball"])' packument.json 2>/dev/null)" \
+               && curl -fsSL -o observed.tgz "$tarball"; then
+              observed="$(sha256sum observed.tgz | awk '{print $1}')"
+            fi
+            observed_args=(--observed "$observed")
           fi
+          decision="$(bash scripts/npm-exact-publish.sh decide-npm \
+            --observed-status "$status" --digest "$staged_digest" "${observed_args[@]}")"
+          case "$decision" in
+            ADOPT)
+              bash scripts/npm-exact-publish.sh verify-published --tgz "$staged" --observed observed.tgz
+              echo "adopted ${NPM_NAME}@${VERSION} (byte-identical)"
+              ;;
+            PUBLISH)
+              bash scripts/npm-exact-publish.sh publish-exact --tgz "$staged"
+              ;;
+            *)
+              echo "REFUSE: unexpected registry decision '${decision}'" >&2; exit 1
+              ;;
+          esac
 
       - name: Verify published state equals staged bytes
         env:
