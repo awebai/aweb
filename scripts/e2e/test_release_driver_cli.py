@@ -950,6 +950,417 @@ class SubprocessSurfaceTests(unittest.TestCase):
             self.assertNotIn("no record", result.stdout)
 
 
+class PostPublicationResumeTests(unittest.TestCase):
+    def test_resume_completes_after_genuine_publication(self) -> None:
+        """alice's reproduction: freeze client 1.1.0 over registry 1.0.0,
+        publish and anchor, advance authoritative registry to 1.1.0, observe
+        the staged digest, resume - and it refused "version not advanced".
+        The adopted candidate's registry movement is the SATISFIED expected
+        transition."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = rd.FileArtifactStore(root)
+            authority = rd.FileDigestAuthority(root)
+            graph = fixture_graph()
+            before = orchestration_state()
+            plan = rd.compute_plan(graph, before)
+            frozen_bytes, frozen_id = rd.freeze_plan(
+                plan, graph, source_sha="s1", state=before,
+                measurement=AllRecordsResolve(),
+            )
+            store.put(f"plan:s1:{frozen_id}", frozen_bytes)
+            authority.record(f"plan:s1:{frozen_id}", frozen_id)
+            frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+
+            class CrashSecondPublish(FixtureLanes):
+                def publish(self, node, staged):
+                    if len([c for k, c in self.calls if k == "publish"]) == 1:
+                        raise KeyboardInterrupt
+                    return super().publish(node, staged)
+
+            crash = CrashSecondPublish({n.component for n in plan.moving})
+            with self.assertRaises(KeyboardInterrupt):
+                rd.run_plan(
+                    plan, graph, crash,
+                    skew=FixtureSkew(), authority=authority, store=store,
+                    source_sha="s1", approvals={}, state=before, frozen=frozen,
+                    providers=rd.Providers(
+                        store=store, authority=authority,
+                        measurement=AllRecordsResolve(),
+                    ),
+                )
+            # Authoritative state has genuinely transitioned: client is now
+            # published at the candidate version.
+            after = orchestration_state(
+                published_versions={"client": "1.1.0", "plugin": "2.0.0"},
+            )
+
+            class ObservingLanes(FixtureLanes):
+                def stage(self, node):
+                    raise AssertionError("resume must never stage")
+
+                def observe(self, node):
+                    if node.component == "client":
+                        return rd.ReceiptEntry(
+                            version="1.1.0",
+                            digest="staged-client",
+                            phase="published",
+                        )
+                    return None
+
+            resume_lanes = ObservingLanes({n.component for n in plan.moving})
+            entries = rd.resume_plan(
+                plan, graph,
+                lanes=resume_lanes, skew=FixtureSkew(),
+                store=store, authority=authority,
+                source_sha="s1", approvals={}, state=after,
+                frozen=frozen, measurement=AllRecordsResolve(),
+            )
+            self.assertEqual(set(entries), {n.component for n in plan.moving})
+            publishes = [c for k, c in resume_lanes.calls if k == "publish"]
+            self.assertNotIn("client", publishes)
+
+
+class ObservationFieldTests(unittest.TestCase):
+    def seeded(self, root: Path, state):
+        helper = CliPathTests("graph_file")
+        graph_path = helper.graph_file(root)
+        import contextlib, io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            rd.main(
+                ["--graph", str(graph_path), "plan"],
+                providers=helper.providers_for(root, state),
+            )
+        planned = json.loads(buffer.getvalue())
+        graph = rd.Graph.load(graph_path)
+        plan = rd.compute_plan(graph, state)
+        lanes = FixtureLanes({n.component for n in plan.moving})
+        rd.main(
+            [
+                "--graph", str(graph_path),
+                "release-run", "--allow-local-authority",
+                "--plan-id", planned["frozen_plan_id"],
+                "--plan-artifact-id", planned["plan_artifact_id"],
+            ],
+            providers=helper.providers_for(root, state, lanes=lanes),
+        )
+        authority = rd.FileDigestAuthority(root)
+        receipt_id = next(
+            k for k in authority.recorded_ids() if k.startswith("receipt:")
+        )
+        return helper, graph_path, planned, plan, receipt_id
+
+    def verify_with(self, root, state, helper, graph_path, planned, receipt_id, observer_cls, plan):
+        observers = observer_cls({n.component for n in plan.moving})
+        return rd.main(
+            [
+                "--graph", str(graph_path),
+                "release-receipt",
+                "--artifact-id", receipt_id,
+                "--plan-id", planned["frozen_plan_id"],
+                "--plan-artifact-id", planned["plan_artifact_id"],
+            ],
+            providers=helper.providers_for(root, state, lanes=observers),
+        )
+
+    def test_wrong_pointer_state_from_observer_refuses(self) -> None:
+        """alice's reproduction: same version/digest, pointer_state=WRONG,
+        real verb printed MATCH."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = orchestration_state()
+            helper, graph_path, planned, plan, receipt_id = self.seeded(root, state)
+
+            class WrongPointer(FixtureLanes):
+                def observe(self, node):
+                    return rd.ReceiptEntry(
+                        version=node.version or "0.0.0",
+                        digest=f"staged-{node.component}",
+                        phase="published",
+                        pointer_state="WRONG"
+                        if node.reason.startswith("pointer:")
+                        else None,
+                    )
+
+            code = self.verify_with(
+                root, state, helper, graph_path, planned, receipt_id,
+                WrongPointer, plan,
+            )
+            self.assertNotEqual(code, 0)
+
+    def test_missing_required_observation_field_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = orchestration_state()
+            helper, graph_path, planned, plan, receipt_id = self.seeded(root, state)
+
+            class NoPointerField(FixtureLanes):
+                def observe(self, node):
+                    return rd.ReceiptEntry(
+                        version=node.version or "0.0.0",
+                        digest=f"staged-{node.component}",
+                        phase="published",
+                        pointer_state=None,
+                    )
+
+            code = self.verify_with(
+                root, state, helper, graph_path, planned, receipt_id,
+                NoPointerField, plan,
+            )
+            self.assertNotEqual(
+                code, 0, "an observer that cannot produce a required field blocks"
+            )
+
+
+class RegistryDigestSetObservationTests(unittest.TestCase):
+    def test_registry_component_requires_complete_observed_set(self) -> None:
+        """alice's rendering detail: an opaque lane-chosen scalar detached
+        from the complete filename/asset set must not verify; the canonical
+        digest of the COMPLETE observed set must equal the receipt digest."""
+        data = fixture_graph_dict()
+        data["component"]["client"]["publish_lane"] = {
+            "workflow": "wf/client.yml",
+            "registry": {"type": "pypi", "package": "client"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = CliPathTests("graph_file")
+            graph_path = root / "graph.toml"
+            import io as io_module
+
+            # Reuse the helper's emitter through a fresh graph file.
+            original = helper.graph_file(root)
+            graph_path = original  # emitter wrote fixture; rewrite with registry
+            text = original.read_text()
+            text = text.replace(
+                'publish_lane = { "workflow": "wf/client.yml" }',
+                'publish_lane = { workflow = "wf/client.yml", registry = { type = "pypi", package = "client" } }',
+            )
+            text = text.replace(
+                'publish_lane = {"workflow": "wf/client.yml"}',
+                'publish_lane = { workflow = "wf/client.yml", registry = { type = "pypi", package = "client" } }',
+            )
+            text = text.replace(
+                'publish_lane = { workflow = "wf/client.yml" }',
+                'publish_lane = { workflow = "wf/client.yml", registry = { type = "pypi", package = "client" } }',
+            )
+            original.write_text(text)
+
+            state = orchestration_state(
+                registry_unavailable={},
+                published_versions={"client": "1.0.0", "plugin": "2.0.0"},
+            )
+            import contextlib, io
+
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = rd.main(
+                    ["--graph", str(graph_path), "plan"],
+                    providers=helper.providers_for(root, state),
+                )
+            planned = json.loads(buffer.getvalue())
+            graph = rd.Graph.load(graph_path)
+            plan = rd.compute_plan(graph, state)
+            digest_set = {"client-1.1.0.tar.gz": "sha-aaa"}
+            canonical = rd.canonical_digest_of_set(digest_set)
+
+            class RegistryLanes(FixtureLanes):
+                def stage(self, node):
+                    entry = super().stage(node)
+                    if node.component == "client":
+                        return rd.ReceiptEntry(
+                            version=entry.version,
+                            digest=canonical,
+                            phase=entry.phase,
+                            pointer_state=entry.pointer_state,
+                        )
+                    return entry
+
+                def publish(self, node, staged):
+                    self.calls.append(("publish", node.component))
+                    return staged
+
+            lanes = RegistryLanes({n.component for n in plan.moving})
+            rd.main(
+                [
+                    "--graph", str(graph_path),
+                    "release-run", "--allow-local-authority",
+                    "--plan-id", planned["frozen_plan_id"],
+                    "--plan-artifact-id", planned["plan_artifact_id"],
+                ],
+                providers=helper.providers_for(root, state, lanes=lanes),
+            )
+            authority = rd.FileDigestAuthority(root)
+            receipt_id = next(
+                k for k in authority.recorded_ids() if k.startswith("receipt:")
+            )
+
+            class ScalarObserver(FixtureLanes):
+                def observe(self, node):
+                    return rd.ReceiptEntry(
+                        version=node.version or "0.0.0",
+                        digest=canonical
+                        if node.component == "client"
+                        else f"staged-{node.component}",
+                        phase="published",
+                        pointer_state="pointer-ok"
+                        if node.reason.startswith("pointer:")
+                        else None,
+                    )
+
+            code = rd.main(
+                [
+                    "--graph", str(graph_path),
+                    "release-receipt",
+                    "--artifact-id", receipt_id,
+                    "--plan-id", planned["frozen_plan_id"],
+                    "--plan-artifact-id", planned["plan_artifact_id"],
+                ],
+                providers=helper.providers_for(
+                    root, state,
+                    lanes=ScalarObserver({n.component for n in plan.moving}),
+                ),
+            )
+            self.assertNotEqual(
+                code, 0, "a scalar-only observer for a registry component blocks"
+            )
+
+            class SetObserver(ScalarObserver):
+                def observe(self, node):
+                    entry = super().observe(node)
+                    if node.component == "client":
+                        return rd.ReceiptEntry(
+                            version=entry.version,
+                            digest=entry.digest,
+                            phase=entry.phase,
+                            pointer_state=entry.pointer_state,
+                            digest_set=digest_set,
+                        )
+                    return entry
+
+            code = rd.main(
+                [
+                    "--graph", str(graph_path),
+                    "release-receipt",
+                    "--artifact-id", receipt_id,
+                    "--plan-id", planned["frozen_plan_id"],
+                    "--plan-artifact-id", planned["plan_artifact_id"],
+                ],
+                providers=helper.providers_for(
+                    root, state,
+                    lanes=SetObserver({n.component for n in plan.moving}),
+                ),
+            )
+            self.assertEqual(code, 0)
+
+
+class SplitProviderTests(unittest.TestCase):
+    def test_fresh_process_resolves_split_store_and_authority(self) -> None:
+        """alice's requirement: artifact bytes from the configured external
+        store, expected digest from the INDEPENDENT authority, no shared
+        local store between processes."""
+        import subprocess as sp
+
+        with tempfile.TemporaryDirectory() as store_tmp, \
+                tempfile.TemporaryDirectory() as authority_tmp:
+            store_root = Path(store_tmp)
+            authority_root = Path(authority_tmp)
+            store = rd.FileArtifactStore(store_root)
+            authority = rd.FileDigestAuthority(authority_root)
+            graph = fixture_graph()
+            state = orchestration_state()
+            plan = rd.compute_plan(graph, state)
+            frozen_bytes, frozen_id = rd.freeze_plan(
+                plan, graph, source_sha="s1", state=state,
+                measurement=AllRecordsResolve(),
+            )
+            plan_artifact_id = f"plan:s1:{frozen_id}"
+            store.put(plan_artifact_id, frozen_bytes)
+            authority.record(plan_artifact_id, frozen_id)
+
+            script = (
+                "import sys; sys.path.insert(0, %r); "
+                "import release_driver as rd; from pathlib import Path; "
+                "store = rd.FileArtifactStore(Path(%r)); "
+                "authority = rd.FileDigestAuthority(Path(%r)); "
+                "frozen = rd.load_frozen_plan("
+                "store.get(%r), expected_id=authority.expected_digest(%r)); "
+                "print('RESOLVED', frozen.source_sha, len(frozen.plan.moving))"
+            ) % (
+                str(REPO_ROOT / "scripts"), str(store_root), str(authority_root),
+                plan_artifact_id, plan_artifact_id,
+            )
+            result = sp.run(
+                ["python3", "-c", script],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("RESOLVED s1", result.stdout)
+
+
+class ResumeAmbiguityTests(unittest.TestCase):
+    def test_multiple_exact_manifests_demand_explicit_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = rd.FileArtifactStore(root)
+            authority = rd.FileDigestAuthority(root)
+            graph = fixture_graph()
+            state = orchestration_state()
+            plan = rd.compute_plan(graph, state)
+            frozen_bytes, frozen_id = rd.freeze_plan(
+                plan, graph, source_sha="s1", state=state,
+                measurement=AllRecordsResolve(),
+            )
+            frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+            for salt in ("one", "two"):
+                entries = {
+                    n.component: rd.ReceiptEntry(
+                        version=n.version or "0.0.0",
+                        digest=f"staged-{n.component}-{salt}",
+                        pointer_state="ok"
+                        if n.reason.startswith("pointer:")
+                        else None,
+                    )
+                    for n in plan.moving
+                }
+                body, digest = rd.seal_staged_manifest(
+                    plan, frozen_plan_id=frozen_id, source_sha="s1",
+                    entries=entries, graph=graph,
+                )
+                artifact_id = f"staged-manifest:{frozen_id}:{digest}"
+                store.put(artifact_id, body)
+                authority.record(artifact_id, digest)
+            lanes = FixtureLanes({n.component for n in plan.moving})
+            with self.assertRaises(rd.ReceiptError) as caught:
+                rd.resume_plan(
+                    plan, graph,
+                    lanes=lanes, skew=FixtureSkew(),
+                    store=store, authority=authority,
+                    source_sha="s1", approvals={}, state=state,
+                    frozen=frozen, measurement=AllRecordsResolve(),
+                )
+            self.assertIn("manifest-id", str(caught.exception))
+
+
+class ExternalContextPathTests(unittest.TestCase):
+    def test_relative_external_context_checkout_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            helper = CliPathTests("graph_file")
+            graph_path = helper.graph_file(Path(tmp))
+            with self.assertRaises(SystemExit) as caught:
+                rd.main(
+                    [
+                        "--graph", str(graph_path),
+                        "--external-context", "github.com/awebai/ac=relative/path",
+                        "plan",
+                    ],
+                    providers=None,
+                )
+            self.assertIn("absolute", str(caught.exception))
+
+
 class MakeSurfaceTests(unittest.TestCase):
     def test_make_targets_pass_provider_configuration(self) -> None:
         import subprocess as sp

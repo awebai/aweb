@@ -429,7 +429,9 @@ def compute_plan(graph: Graph, state) -> Plan:
     return Plan(moving=moving, runtime_contract_edges=contracts)
 
 
-def check_declared_inputs(graph: Graph, plan: Plan, state) -> list[str]:
+def check_declared_inputs(
+    graph: Graph, plan: Plan, state, adopted: set | None = None
+) -> list[str]:
     """Everything a release needs, checked BEFORE anything runs, each failure
     named. Credential paths are presence-only: contents are never read.
     Unknown registry truth is unavailable, and unavailable blocks."""
@@ -437,7 +439,12 @@ def check_declared_inputs(graph: Graph, plan: Plan, state) -> list[str]:
     for node in plan.moving:
         component = graph.components[node.component]
 
-        if component.publishable and component.version_source:
+        adopted_component = node.component in (adopted or set())
+        if component.publishable and component.version_source and not adopted_component:
+            # For an ADOPTED component, only its own registry/tag movement to
+            # the staged candidate identity is the named expected transition;
+            # its credentials, pins and baselines still validate below, as
+            # does everything about every other component.
             unavailable = state.registry_unavailable_reason(component)
             if unavailable is not None:
                 problems.append(
@@ -575,9 +582,12 @@ def _resolved_snapshot(plan: Plan, graph: Graph, state) -> dict:
             component = graph.components[node.component]
             if component.tag_format:
                 prefix = component.tag_format.split("{version}", 1)[0]
-                snapshot["tags"].update(
-                    {t: s for t, s in tags.items() if t.startswith(prefix)}
-                )
+                # Keyed per component so a resumed candidate's own planned tag
+                # classifies as the expected transition without suppressing
+                # unrelated tag drift.
+                snapshot["tags"][node.component] = {
+                    t: s for t, s in tags.items() if t.startswith(prefix)
+                }
     for node in plan.moving:
         component = graph.components[node.component]
         entry: dict = {}
@@ -777,6 +787,7 @@ class ReceiptEntry:
     phase: str = "staged"  # staged | published | verified
     pointer_state: str | None = None
     delivery_proof: str | None = None
+    digest_set: dict | None = None  # complete artifact set for registry components
 
 
 @dataclass
@@ -1020,12 +1031,17 @@ class Providers:
 
 @dataclass(frozen=True)
 class AuthorityRegistration:
-    """An allowlisted authority kind: configuration selects one of these by
-    name; arbitrary import-by-path composition does not exist."""
+    """An allowlisted provider kind: configuration selects one of these by
+    name; arbitrary import-by-path composition does not exist. A registration
+    constructs the ARTIFACT STORE and the DIGEST AUTHORITY as separate
+    capabilities (an external release workflow stores bytes where other
+    runners can fetch them, and digests where an independent authority
+    attests them); lane observers join when .2-.4 provide them."""
 
     kind: str
     trust_class: str
-    factory: object
+    factory: object  # digest-authority factory
+    store_factory: object = None
 
 
 AUTHORITY_ALLOWLIST: dict[str, AuthorityRegistration] = {}
@@ -1047,6 +1063,8 @@ def build_providers(
     source_sha: str | None = None,
     measurement=None,
 ) -> Providers:
+    if authority_registration.store_factory is not None:
+        store = authority_registration.store_factory()
     return Providers(
         store=store,
         authority=authority_registration.factory(),
@@ -1149,7 +1167,10 @@ def _frozen_drift(
         frozen_section = frozen_resolved.get(section, {}) or {}
         current_section = current.get(section, {}) or {}
         for key in sorted(set(frozen_section) | set(current_section)):
-            if any(key.startswith(f"{c}:") or key == c for c in skip_components):
+            # Only the adopted candidate's OWN registry/tag identity is an
+            # expected transition; its pins, baselines and measurements are
+            # not exempt.
+            if section == "tags" and key in skip_components:
                 continue
             if frozen_section.get(key) != current_section.get(key):
                 drift.append(
@@ -1256,7 +1277,9 @@ def run_plan(
                 + "; ".join(drift)
             )
     if state is not None:
-        problems = check_declared_inputs(graph, plan, state)
+        problems = check_declared_inputs(
+            graph, plan, state, adopted=set(_resume_published or {})
+        )
         if problems:
             raise BlockedByDeclaredInputs("; ".join(problems))
     complete_edges = [
@@ -1482,6 +1505,11 @@ def resume_plan(
             if a.startswith(f"staged-manifest:{frozen.frozen_id}:")
         ]
     )
+    if manifest_id is None and len(candidate_ids) > 1:
+        raise ReceiptError(
+            "multiple staged manifests are anchored for this exact frozen plan; "
+            "pass the explicit --manifest-id instead of relying on iteration order"
+        )
     for artifact_id in candidate_ids:
         expected = authority.expected_digest(artifact_id)
         if expected is None:
@@ -1583,6 +1611,16 @@ def _put_content_addressed(store, authority, artifact_id, data, digest) -> None:
         raise ReceiptError(
             f"{artifact_id}: authority records digest {recorded}, computed {digest}"
         )
+
+
+def canonical_digest_of_set(digest_set: dict) -> str:
+    """The canonical digest whose preimage is the COMPLETE artifact digest
+    set (filenames/assets/platform manifests to immutable digests). Registry
+    components stage and verify this form - never an opaque scalar detached
+    from the set."""
+    return hashlib.sha256(
+        json.dumps(digest_set, sort_keys=True).encode()
+    ).hexdigest()
 
 
 class _MemoryStore:
@@ -2016,24 +2054,22 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         root = Path(args.store_root)
         root.mkdir(parents=True, exist_ok=True)
         registration = AUTHORITY_ALLOWLIST[args.authority]
-        authority = (
-            FileDigestAuthority(root)
-            if registration.kind == "local-development"
-            else registration.factory()
-        )
+        if registration.kind == "local-development":
+            authority = FileDigestAuthority(root)
+            store = FileArtifactStore(root)
+        else:
+            authority = registration.factory()
+            store = (
+                registration.store_factory()
+                if registration.store_factory is not None
+                else FileArtifactStore(root)
+            )
         providers = Providers(
-            store=FileArtifactStore(root),
+            store=store,
             authority=authority,
             authority_trust=registration.trust_class,
         )
         if args.verb in ("plan", "release-run"):
-            subprocess.run(
-                [
-                    "git", "-C", str(REPO_ROOT), "fetch", "origin", "--quiet",
-                    "+refs/heads/*:refs/remotes/origin/*",
-                ],
-                check=True,
-            )
             declared_repos = {
                 pin.get("pin_repository")
                 for component in graph.components.values()
@@ -2046,6 +2082,12 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 if not repo or not checkout:
                     raise SystemExit(
                         f"--external-context must be repository=checkout, got {item!r}"
+                    )
+                if not Path(checkout).is_absolute():
+                    raise SystemExit(
+                        f"--external-context checkout must be an absolute path "
+                        f"(got {checkout!r}); a relative path lets the working "
+                        "directory change pin-source identity"
                     )
                 if repo not in declared_repos:
                     raise SystemExit(
@@ -2065,6 +2107,13 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                         f"{remote.stdout.strip()!r} is not the declared repository {repo}"
                     )
                 external_contexts[repo] = checkout
+            subprocess.run(
+                [
+                    "git", "-C", str(REPO_ROOT), "fetch", "origin", "--quiet",
+                    "+refs/heads/*:refs/remotes/origin/*",
+                ],
+                check=True,
+            )
             providers.state = GitRepositoryState(
                 registry=RegistryProviders(), external_contexts=external_contexts
             )
@@ -2319,6 +2368,48 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     f"receipt {entry.version}/{entry.digest}"
                 )
                 return 1
+            if node.reason.startswith("pointer:"):
+                if observed.pointer_state is None:
+                    print(
+                        f"BLOCKED: {node.component}: the observer cannot "
+                        "produce the required pointer state"
+                    )
+                    return 1
+                if observed.pointer_state != entry.pointer_state:
+                    print(
+                        f"MISMATCH: {node.component}: observed pointer state "
+                        f"{observed.pointer_state!r} does not equal the receipt "
+                        f"{entry.pointer_state!r}"
+                    )
+                    return 1
+            if (component.publish_lane or {}).get("registry"):
+                if observed.digest_set is None:
+                    print(
+                        f"BLOCKED: {node.component}: the observer cannot "
+                        "produce the complete registry artifact digest set"
+                    )
+                    return 1
+                if canonical_digest_of_set(observed.digest_set) != entry.digest:
+                    print(
+                        f"MISMATCH: {node.component}: the canonical digest of "
+                        "the observed complete artifact set does not equal the "
+                        "receipt digest"
+                    )
+                    return 1
+            if manifest_entry.get("delivery_obligation"):
+                if observed.delivery_proof is None:
+                    print(
+                        f"BLOCKED: {node.component}: the observer cannot "
+                        "produce the required delivery state for its declared "
+                        f"{manifest_entry['delivery_obligation']}"
+                    )
+                    return 1
+                if observed.delivery_proof != entry.delivery_proof:
+                    print(
+                        f"MISMATCH: {node.component}: observed delivery state "
+                        "does not equal the receipt's proof"
+                    )
+                    return 1
         print(
             "MATCH: receipt is anchored, bound to its frozen plan and staged "
             "manifest, entry-identical to the manifest, structurally approved, "
