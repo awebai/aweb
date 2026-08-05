@@ -40,6 +40,9 @@ EDGE = rd.RuntimeContractEdge(
     supported={"policy": "additive-only"},
 )
 EDGE_ID = rd.edge_identity(EDGE)
+NEGATIVE_SERVER_VERSION = "1.26.31"
+FIRST_SUPPORTED_SERVER_VERSION = "1.26.35"
+DIRTY_FLEET_AW_VERSION = "1.34.2"
 NEGATIVE_FEATURE_MARKERS = (
     "workspace and agent identifiers were not distinct",
     "workspace status locks",
@@ -148,6 +151,12 @@ class CliServerArtifactResolver:
     def _candidate(self, side: dict, root: Path) -> ResolvedArtifact:
         component = side["component"]
         version = side.get("version") or ""
+        if component == "aw" and version == DIRTY_FLEET_AW_VERSION:
+            raise rd.ReceiptError(
+                f"aw {version} is a rejected dirty published artifact; it may "
+                "be exercised only as installed-fleet compatibility, never "
+                "as candidate provenance"
+            )
         ref = rd.LaneRef.from_dict(side.get("lane_ref"))
         store, authority = self._staged_capabilities(component)
         authoritative = authority.expected_digest(ref.artifact)
@@ -238,22 +247,25 @@ class CliServerArtifactResolver:
         output = root / "aw"
         output.write_bytes(executable)
         output.chmod(output.stat().st_mode | stat.S_IXUSR)
+        evidence = {
+            "component": "aw",
+            "version": version,
+            "kind": kind,
+            "registry": "github-release:awebai/aw",
+            "tag": f"v{version}",
+            "checksums_sha256": _sha256(checksums),
+            "payload_name": archive_name,
+            "outer_sha256": actual,
+            "registry_sha256": expected,
+            "payload_sha256": _sha256(executable),
+        }
+        if version == DIRTY_FLEET_AW_VERSION:
+            evidence.update({
+                "provenance_status": "rejected-dirty",
+                "use": "installed-fleet-compatibility-only",
+            })
         return ResolvedArtifact(
-            component="aw",
-            version=version,
-            path=output,
-            evidence={
-                "component": "aw",
-                "version": version,
-                "kind": kind,
-                "registry": "github-release:awebai/aw",
-                "tag": f"v{version}",
-                "checksums_sha256": _sha256(checksums),
-                "payload_name": archive_name,
-                "outer_sha256": actual,
-                "registry_sha256": expected,
-                "payload_sha256": _sha256(executable),
-            },
+            component="aw", version=version, path=output, evidence=evidence
         )
 
     def _published_server(self, side: dict, kind: str, root: Path) -> ResolvedArtifact:
@@ -496,6 +508,22 @@ def measure_support(
     harness,
 ) -> dict:
     """Run the known-red control, then the runner-defined supported matrix."""
+    server_support = supported_versions.get("server") or []
+    if negative_server in server_support:
+        raise rd.ReceiptError(
+            f"server {negative_server} is negative-only and cannot enter "
+            "supported_versions"
+        )
+    if negative_server != NEGATIVE_SERVER_VERSION:
+        raise rd.ReceiptError(
+            f"CLI/server measurement control must be {NEGATIVE_SERVER_VERSION}, "
+            f"got {negative_server}"
+        )
+    if not server_support or server_support[0] != FIRST_SUPPORTED_SERVER_VERSION:
+        raise rd.ReceiptError(
+            f"the measured server floor must start at the first published fix "
+            f"{FIRST_SUPPORTED_SERVER_VERSION}, got {server_support}"
+        )
     negative_cells = rd.compute_skew_cells(
         EDGE,
         moving={"aw"},
@@ -529,6 +557,8 @@ def measure_support(
         published_versions=published_versions,
     )
     evidence = [harness.run_evidenced(item) for item in supported_cells]
+    if DIRTY_FLEET_AW_VERSION in (supported_versions.get("aw") or []):
+        _require_dirty_fleet_evidence(evidence)
     return {
         "schema": "aweb.release.runtime-support-measurement.v1",
         "edge_id": EDGE_ID,
@@ -537,12 +567,53 @@ def measure_support(
         "artifacts": dict(ARTIFACTS),
         "direction": DIRECTION,
         "policy": "additive-only",
+        "support_basis": {
+            "server": {
+                "negative_only": NEGATIVE_SERVER_VERSION,
+                "first_supported": FIRST_SUPPORTED_SERVER_VERSION,
+                "required_feature": "distinct workspace/agent lock and presence identity",
+            },
+            "aw": {
+                DIRTY_FLEET_AW_VERSION: {
+                    "provenance_status": "rejected-dirty",
+                    "use": "installed-fleet-compatibility-only",
+                    "candidate_eligible": False,
+                }
+            },
+        },
         "supported_versions": {
             name: list(versions) for name, versions in sorted(supported_versions.items())
         },
         "negative_control": negative_evidence,
         "evidence": evidence,
     }
+
+
+def _require_dirty_fleet_evidence(evidence: list[dict]) -> None:
+    observed = [
+        artifact
+        for row in evidence
+        for artifact in row.get("artifacts", [])
+        if artifact.get("component") == "aw"
+        and artifact.get("version") == DIRTY_FLEET_AW_VERSION
+    ]
+    if not observed:
+        raise rd.ReceiptError(
+            f"aw {DIRTY_FLEET_AW_VERSION} support lacks independently bound "
+            "installed-fleet artifact evidence"
+        )
+    for artifact in observed:
+        if (
+            artifact.get("kind") == "candidate"
+            or artifact.get("provenance_status") != "rejected-dirty"
+            or artifact.get("use") != "installed-fleet-compatibility-only"
+            or artifact.get("outer_sha256") != artifact.get("registry_sha256")
+            or not re.fullmatch(r"[0-9a-f]{64}", artifact.get("payload_sha256", ""))
+        ):
+            raise rd.ReceiptError(
+                f"aw {DIRTY_FLEET_AW_VERSION} evidence is not exact public "
+                f"installed-fleet compatibility evidence: {artifact!r}"
+            )
 
 
 def _entry_from_manifest(name: str, entry: dict) -> rd.ReceiptEntry:
@@ -564,7 +635,7 @@ def main(argv: list[str] | None = None) -> int:
     measure.add_argument("--supported-server", action="append", required=True)
     measure.add_argument("--published-aw-latest", required=True)
     measure.add_argument("--published-server-latest", required=True)
-    measure.add_argument("--negative-server", default="1.26.31")
+    measure.add_argument("--negative-server", default=NEGATIVE_SERVER_VERSION)
     measure.add_argument("--output", required=True)
     args = parser.parse_args(argv)
 

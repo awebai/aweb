@@ -171,14 +171,24 @@ deleted and the suite installs the manifest the real way.
 exact `LaneRef` and validated against the GitHub Actions outer-ZIP digest and
 staged digest set. Published sides are downloaded from the exact GitHub Release
 or PyPI version and checked against `checksums.txt` or PyPI's file SHA-256.
-`make cli-server-skew-cell` then runs only the distinct workspace/agent-ID
-presence-and-lock journey with the selected binary and server wheel; neither
-release artifact is rebuilt.
+`make cli-server-skew-cell` requires both the resolved `AW_BIN` and server
+wheel and refuses when either is absent; there is no varied-side source-build
+fallback. It runs only the distinct workspace/agent-ID presence-and-lock
+journey. For `a-to-b`, CLI connect/heartbeat/lock mutations are checked in raw
+authenticated server state: the lock holder must be the roster agent ID and not
+the workspace ID. For `b-to-a`, the selected CLI must decode the server status
+and roster response into distinct IDs, an attributed lock, and active presence.
+Neither release artifact is rebuilt.
 
 `make test-release-skew-cli-server` is the focused, non-Docker contract suite.
 Once exact candidate LaneRefs exist, `make measure-release-skew-cli-server`
 runs the known-red server 1.26.31 control and the runner-defined supported
-matrix and writes a digest-bearing JSON support document. That document does
+matrix and writes a digest-bearing JSON support document. Server 1.26.31 is
+negative-only: it filters lock-holder agent IDs as workspace IDs. Server
+1.26.35 is the first published fix and the initial measured floor. Published aw
+1.34.2 is measured only as installed-fleet compatibility and is explicitly
+recorded as rejected dirty provenance; its independently checked public bytes
+cannot be candidate or release-provenance evidence. That document does
 not become release authority merely by existing locally: it must later be
 independently anchored as a workflow artifact, reviewed, and referenced by the
 `aw`↔`server` edge in `release/components.toml`. The measurement target does

@@ -185,6 +185,14 @@ class ArtifactResolutionTests(unittest.TestCase):
         self.assertEqual(server.evidence["payload_sha256"], sha(b"candidate-wheel"))
         self.assertEqual(aw.evidence["lane_ref"], aw_side["lane_ref"])
 
+    def test_rejected_dirty_aw_release_cannot_be_candidate_provenance(self):
+        aw_zip, manifest = staged_aw_zip(version="1.34.2")
+        resolver = self.resolver(staged={"aw": aw_zip})
+        side = candidate_side("aw", "1.34.2", aw_zip, manifest, "a" * 40)
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(rd.ReceiptError, "rejected dirty.*candidate"):
+                resolver.resolve(side, "candidate", "github-release:awebai/aw", Path(tmp))
+
     def test_candidate_ref_digest_mismatch_refuses_before_extraction(self):
         import release_skew_cli_server as subject
 
@@ -205,29 +213,32 @@ class ArtifactResolutionTests(unittest.TestCase):
                 resolver.resolve(side, "candidate", "github-release:awebai/aw", Path(tmp))
             self.assertEqual(list(Path(tmp).iterdir()), [])
 
-    def test_published_github_release_uses_exact_tag_and_checksums(self):
+    def test_published_dirty_aw_floor_is_digest_bound_compatibility_only(self):
         archive = archive_with_aw(b"published-aw")
         calls = []
 
         def fetch(version, name):
             calls.append((version, name))
             if name == "checksums.txt":
-                return f"{sha(archive)}  aw_1.34.3_darwin_arm64.tar.gz\n".encode()
+                return f"{sha(archive)}  aw_1.34.2_darwin_arm64.tar.gz\n".encode()
             return archive
 
         resolver = self.resolver(staged={}, release=fetch)
-        side = {"component": "aw", "version": "1.34.3", "kind": "published-latest"}
+        side = {"component": "aw", "version": "1.34.2", "kind": "published-floor"}
         with tempfile.TemporaryDirectory() as tmp:
             result = resolver.resolve(
-                side, "published-latest", "github-release:awebai/aw", Path(tmp)
+                side, "published-floor", "github-release:awebai/aw", Path(tmp)
             )
             self.assertEqual(result.path.read_bytes(), b"published-aw")
         self.assertEqual(
             calls,
-            [("1.34.3", "checksums.txt"), ("1.34.3", "aw_1.34.3_darwin_arm64.tar.gz")],
+            [("1.34.2", "checksums.txt"), ("1.34.2", "aw_1.34.2_darwin_arm64.tar.gz")],
         )
         self.assertEqual(result.evidence["outer_sha256"], sha(archive))
+        self.assertEqual(result.evidence["registry_sha256"], sha(archive))
         self.assertEqual(result.evidence["payload_sha256"], sha(b"published-aw"))
+        self.assertEqual(result.evidence["provenance_status"], "rejected-dirty")
+        self.assertEqual(result.evidence["use"], "installed-fleet-compatibility-only")
 
     def test_published_pypi_wheel_uses_registry_digest(self):
         wheel = b"published-wheel"
@@ -393,7 +404,20 @@ class MeasurementTests(unittest.TestCase):
                     evidence = {"outcome": "red", "cell": subject.cell_document(value), "artifacts": [{"payload_sha256": "a" * 64}]}
                     evidence["error"] = "server status locks = [], want one lock"
                     raise subject.SkewJourneyFailure(evidence["error"], evidence)
-                return {"outcome": "green", "cell": subject.cell_document(value), "artifacts": [{"payload_sha256": "b" * 64}]}
+                artifacts = [{"payload_sha256": "b" * 64}]
+                for side in (value.a, value.b):
+                    if side.get("component") == "aw" and side.get("version") == "1.34.2":
+                        artifacts.append({
+                            "component": "aw",
+                            "version": "1.34.2",
+                            "kind": "published-floor",
+                            "outer_sha256": "c" * 64,
+                            "registry_sha256": "c" * 64,
+                            "payload_sha256": "d" * 64,
+                            "provenance_status": "rejected-dirty",
+                            "use": "installed-fleet-compatibility-only",
+                        })
+                return {"outcome": "green", "cell": subject.cell_document(value), "artifacts": artifacts}
 
         document = subject.measure_support(
             staged=staged,
@@ -406,12 +430,30 @@ class MeasurementTests(unittest.TestCase):
         self.assertEqual(document["journey"], "make cli-e2e")
         self.assertEqual(document["direction"], "both")
         self.assertEqual(document["supported_versions"]["aw"], ["1.34.2", "1.34.3"])
+        self.assertEqual(document["support_basis"]["server"]["first_supported"], "1.26.35")
+        self.assertEqual(document["support_basis"]["server"]["negative_only"], "1.26.31")
+        self.assertEqual(
+            document["support_basis"]["aw"]["1.34.2"]["provenance_status"],
+            "rejected-dirty",
+        )
         self.assertEqual({row["outcome"] for row in document["negative_control"]}, {"red"})
         self.assertEqual({row["outcome"] for row in document["evidence"]}, {"green"})
         self.assertEqual(
             {row["cell"]["direction"] for row in document["evidence"]},
             {"a-to-b", "b-to-a"},
         )
+
+    def test_negative_server_version_cannot_enter_supported_versions(self):
+        import release_skew_cli_server as subject
+
+        with self.assertRaisesRegex(rd.ReceiptError, "negative-only.*supported_versions"):
+            subject.measure_support(
+                staged={},
+                supported_versions={"aw": ["1.34.2", "1.34.3"], "server": ["1.26.31", "1.26.35"]},
+                published_versions={"aw": "1.34.3", "server": "1.26.35"},
+                negative_server="1.26.31",
+                harness=None,
+            )
 
     def test_unrelated_negative_failure_refuses_measurement(self):
         import release_skew_cli_server as subject

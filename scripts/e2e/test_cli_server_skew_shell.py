@@ -21,6 +21,32 @@ def executable(path: Path, body: str) -> Path:
 
 
 class CliE2EScriptTests(unittest.TestCase):
+    def test_skew_wrapper_has_no_varied_side_source_fallback(self):
+        wrapper = ROOT / "scripts/e2e/run_cli_server_skew_cell.sh"
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            aw = executable(tmp / "aw", "#!/bin/sh\nexit 0\n")
+            wheel = tmp / "aweb-1.26.35-py3-none-any.whl"
+            wheel.write_bytes(b"wheel")
+            base = os.environ.copy()
+            base["AW_SKEW_DIRECTION"] = "a-to-b"
+            cases = (
+                ({"AWEB_E2E_SERVER_WHEEL": str(wheel)}, "AW_BIN must name the exact resolved aw binary"),
+                ({"AW_BIN": str(aw)}, "AWEB_E2E_SERVER_WHEEL must name the exact resolved server wheel"),
+            )
+            for supplied, expected in cases:
+                with self.subTest(expected=expected):
+                    env = base.copy()
+                    env.pop("AW_BIN", None)
+                    env.pop("AWEB_E2E_SERVER_WHEEL", None)
+                    env.update(supplied)
+                    result = subprocess.run(
+                        ["bash", str(wrapper)], cwd=ROOT, env=env,
+                        text=True, capture_output=True,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(expected, result.stderr)
+
     def test_prebuilt_binary_skips_build_and_test_selector_reaches_go(self):
         with tempfile.TemporaryDirectory() as raw:
             tmp = Path(raw)
