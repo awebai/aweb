@@ -361,7 +361,23 @@ class CliPathTests(unittest.TestCase):
                 ],
                 providers=self.providers_for(root, state, lanes=lanes),
             )
-            fresh = self.providers_for(root, state)
+            class ObserveAll(FixtureLanes):
+                def observe(self, node):
+                    return rd.ReceiptEntry(
+                        version=node.version or "0.0.0",
+                        digest=f"staged-{node.component}",
+                        phase="published",
+                        pointer_state="pointer-ok"
+                        if node.reason.startswith("pointer:")
+                        else None,
+                    )
+
+            graph_loaded = rd.Graph.load(graph_path)
+            plan_again = rd.compute_plan(graph_loaded, state)
+            fresh = self.providers_for(
+                root, state,
+                lanes=ObserveAll({n.component for n in plan_again.moving}),
+            )
             receipt_ids = [
                 k for k in fresh.authority.recorded_ids() if k.startswith("receipt:")
             ]
@@ -517,7 +533,8 @@ class StagedManifestTests(unittest.TestCase):
             state = orchestration_state()
             plan = rd.compute_plan(graph, state)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state
+                plan, graph, source_sha="s1", state=state,
+                measurement=AllRecordsResolve(),
             )
             manifest_entries = {
                 n.component: rd.ReceiptEntry(
@@ -548,6 +565,324 @@ class StagedManifestTests(unittest.TestCase):
             rd.adopt_observed(manifest, "client", good)
             with self.assertRaises(rd.ReceiptError):
                 rd.adopt_observed(manifest, "client", bad)
+
+
+class FrozenEnforcementTests(unittest.TestCase):
+    def pin_state(self, sha: str) -> rd.FixtureState:
+        return rd.FixtureState(
+            changed_components={"server": True},
+            versions={"server": "3.1.0"},
+            published_versions={"server": "3.0.0"},
+            env={"FIXTURE_GATE_ENV_FILE": "/private/creds"},
+            existing_paths={"/private/creds", "../server-src"},
+            pin_values={"release-pin.toml": sha},
+            checkout_heads={"../server-src": sha},
+            checkout_remotes={"../server-src": "github.com/example/server"},
+        )
+
+    def test_execution_refuses_pin_state_drifted_from_frozen(self) -> None:
+        """alice's reproduction: frozen with satisfied pin aaaa, executed with
+        satisfied pin bbbb, release completed. Frozen resolved truth must be
+        compared, not merely recorded."""
+        graph = fixture_graph()
+        frozen_state = self.pin_state("aaaa")
+        plan = rd.compute_plan(graph, frozen_state)
+        frozen_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha="s1", state=frozen_state,
+            measurement=AllRecordsResolve(),
+        )
+        frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+        drifted = self.pin_state("bbbb")
+        lanes = FixtureLanes({n.component for n in plan.moving})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            providers = rd.Providers(
+                store=rd.FileArtifactStore(root),
+                authority=rd.FileDigestAuthority(root),
+                lanes=lanes,
+                skew=FixtureSkew(),
+                measurement=AllRecordsResolve(),
+            )
+            with self.assertRaises(rd.ReceiptError) as caught:
+                rd.run_plan(
+                    plan, graph, providers=providers,
+                    source_sha="s1",
+                    approvals={"cloud-pin": rd.Approval("juan", "now")},
+                    state=drifted, frozen=frozen,
+                )
+            self.assertIn("aaaa", str(caught.exception))
+            self.assertIn("bbbb", str(caught.exception))
+            self.assertEqual(lanes.calls, [])
+
+    def test_freeze_with_complete_edges_requires_measurement_provider(self) -> None:
+        graph = fixture_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        with self.assertRaises(rd.BlockedByDeclaredInputs):
+            rd.freeze_plan(plan, graph, source_sha="s1", state=state)
+
+    def test_frozen_measurement_binding_is_enforced_at_execution(self) -> None:
+        graph = fixture_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        frozen_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha="s1", state=state,
+            measurement=AllRecordsResolve(),
+        )
+        frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+        self.assertTrue(frozen.resolved.get("measurements"))
+
+        class DifferentRecords:
+            def resolve(self, record, edge):
+                return {"digest": "different-resolution", "edge": (edge.a, edge.b)}
+
+        lanes = FixtureLanes({n.component for n in plan.moving})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            providers = rd.Providers(
+                store=rd.FileArtifactStore(root),
+                authority=rd.FileDigestAuthority(root),
+                lanes=lanes,
+                skew=FixtureSkew(),
+                measurement=DifferentRecords(),
+            )
+            with self.assertRaises(rd.ReceiptError):
+                rd.run_plan(
+                    plan, graph, providers=providers,
+                    source_sha="s1", approvals={}, state=state, frozen=frozen,
+                )
+            self.assertEqual(lanes.calls, [])
+
+
+class ReceiptVerificationTests(unittest.TestCase):
+    def seeded_run(self, root: Path, state):
+        helper = CliPathTests("graph_file")
+        graph_path = helper.graph_file(root)
+        import contextlib, io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            rd.main(
+                ["--graph", str(graph_path), "plan"],
+                providers=helper.providers_for(root, state),
+            )
+        planned = json.loads(buffer.getvalue())
+        graph = rd.Graph.load(graph_path)
+        plan = rd.compute_plan(graph, state)
+        lanes = FixtureLanes({n.component for n in plan.moving})
+        rd.main(
+            [
+                "--graph", str(graph_path),
+                "release-run", "--allow-local-authority",
+                "--plan-id", planned["frozen_plan_id"],
+                "--plan-artifact-id", planned["plan_artifact_id"],
+            ],
+            providers=helper.providers_for(root, state, lanes=lanes),
+        )
+        return helper, graph_path, planned, graph, plan
+
+    def test_foreign_digest_receipt_is_refused(self) -> None:
+        """alice's reproduction: manifest anchored with A-* digests, receipt
+        sealed with unrelated B-* digests, real verb printed MATCH."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = orchestration_state()
+            helper, graph_path, planned, graph, plan = self.seeded_run(root, state)
+            store = rd.FileArtifactStore(root)
+            authority = rd.FileDigestAuthority(root)
+            frozen = rd.load_frozen_plan(
+                store.get(planned["plan_artifact_id"]),
+                expected_id=planned["frozen_plan_id"],
+            )
+            forged_entries = {
+                n.component: rd.ReceiptEntry(
+                    version=n.version or "0.0.0",
+                    digest=f"B-{n.component}",
+                    phase="verified",
+                    pointer_state="ok" if n.reason.startswith("pointer:") else None,
+                )
+                for n in frozen.plan.moving
+            }
+            manifest_id = next(
+                k for k in authority.recorded_ids()
+                if k.startswith("staged-manifest:")
+            )
+            sealed, digest = rd.seal_receipt(
+                frozen.plan, graph, source_sha="s1",
+                entries=forged_entries, approvals={},
+                frozen_plan_id=planned["frozen_plan_id"],
+                staged_manifest_id=manifest_id,
+            )
+            forged_id = f"receipt:{planned['frozen_plan_id']}:{digest}"
+            store.put(forged_id, sealed)
+            authority.record(forged_id, digest)
+            observers = FixtureLanes(set())
+            code = rd.main(
+                [
+                    "--graph", str(graph_path),
+                    "release-receipt",
+                    "--artifact-id", forged_id,
+                    "--plan-id", planned["frozen_plan_id"],
+                    "--plan-artifact-id", planned["plan_artifact_id"],
+                ],
+                providers=helper.providers_for(root, state, lanes=observers),
+            )
+            self.assertNotEqual(
+                code, 0,
+                "a receipt whose digests are not the manifest's must refuse",
+            )
+
+    def test_receipt_verification_requires_lane_observation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = orchestration_state()
+            helper, graph_path, planned, graph, plan = self.seeded_run(root, state)
+            authority = rd.FileDigestAuthority(root)
+            receipt_id = next(
+                k for k in authority.recorded_ids() if k.startswith("receipt:")
+            )
+            code = rd.main(
+                [
+                    "--graph", str(graph_path),
+                    "release-receipt",
+                    "--artifact-id", receipt_id,
+                    "--plan-id", planned["frozen_plan_id"],
+                    "--plan-artifact-id", planned["plan_artifact_id"],
+                ],
+                providers=helper.providers_for(root, state),
+            )
+            self.assertNotEqual(
+                code, 0, "verification without authoritative observers must block"
+            )
+
+            class ObserveAll(FixtureLanes):
+                def observe(self, node):
+                    return rd.ReceiptEntry(
+                        version=node.version or "0.0.0",
+                        digest=f"staged-{node.component}",
+                        phase="published",
+                        pointer_state="pointer-ok"
+                        if node.reason.startswith("pointer:")
+                        else None,
+                    )
+
+            frozen = rd.load_frozen_plan(
+                rd.FileArtifactStore(root).get(planned["plan_artifact_id"]),
+                expected_id=planned["frozen_plan_id"],
+            )
+            observers = ObserveAll({n.component for n in frozen.plan.moving})
+            code = rd.main(
+                [
+                    "--graph", str(graph_path),
+                    "release-receipt",
+                    "--artifact-id", receipt_id,
+                    "--plan-id", planned["frozen_plan_id"],
+                    "--plan-artifact-id", planned["plan_artifact_id"],
+                ],
+                providers=helper.providers_for(root, state, lanes=observers),
+            )
+            self.assertEqual(code, 0)
+
+
+class ResumeBindingTests(unittest.TestCase):
+    def test_local_authority_resume_without_downgrade_refuses(self) -> None:
+        """alice's reproduction: --resume omitted the production trust gate."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = orchestration_state()
+            helper = CliPathTests("graph_file")
+            graph_path = helper.graph_file(root)
+            import contextlib, io
+
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                rd.main(
+                    ["--graph", str(graph_path), "plan"],
+                    providers=helper.providers_for(root, state),
+                )
+            planned = json.loads(buffer.getvalue())
+
+            class CountingLanes(FixtureLanes):
+                def observe(self, node):
+                    self.calls.append(("observe", node.component))
+                    return None
+
+            lanes = CountingLanes(set())
+            code = rd.main(
+                [
+                    "--graph", str(graph_path),
+                    "release-run", "--resume",
+                    "--plan-id", planned["frozen_plan_id"],
+                    "--plan-artifact-id", planned["plan_artifact_id"],
+                ],
+                providers=helper.providers_for(root, state, lanes=lanes),
+            )
+            self.assertNotEqual(code, 0)
+            self.assertEqual(
+                lanes.calls, [], "no observe or lane calls before trust"
+            )
+
+    def test_resume_requires_exact_manifest_frozen_binding(self) -> None:
+        """Two anchored manifests with the same source and component set must
+        not cross-bind; the frozen_plan_id decides."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = rd.FileArtifactStore(root)
+            authority = rd.FileDigestAuthority(root)
+            graph = fixture_graph()
+            state = orchestration_state()
+            plan = rd.compute_plan(graph, state)
+            entries = {
+                n.component: rd.ReceiptEntry(
+                    version=n.version or "0.0.0",
+                    digest=f"staged-{n.component}",
+                    pointer_state="ok" if n.reason.startswith("pointer:") else None,
+                )
+                for n in plan.moving
+            }
+            foreign_bytes, foreign_digest = rd.seal_staged_manifest(
+                plan, frozen_plan_id="FOREIGN-PLAN", source_sha="s1",
+                entries=entries,
+            )
+            foreign_id = f"staged-manifest:FOREIGN-PLAN:{foreign_digest}"
+            store.put(foreign_id, foreign_bytes)
+            authority.record(foreign_id, foreign_digest)
+            frozen_bytes, frozen_id = rd.freeze_plan(
+                plan, graph, source_sha="s1", state=state,
+                measurement=AllRecordsResolve(),
+            )
+            frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+            lanes = FixtureLanes({n.component for n in plan.moving})
+            with self.assertRaises(rd.ReceiptError):
+                rd.resume_plan(
+                    plan, graph,
+                    lanes=lanes, skew=FixtureSkew(),
+                    store=store, authority=authority,
+                    source_sha="s1", approvals={}, state=state,
+                    frozen=frozen, measurement=AllRecordsResolve(),
+                )
+
+
+class StateBoundaryTests(unittest.TestCase):
+    def test_version_without_digest_refused_at_state_boundary(self) -> None:
+        """alice's reproduction: an injected provider returning (version, None)
+        was accepted. The STATE interface enforces the digest-set schema."""
+
+        class SloppyProvider:
+            def published(self, component):
+                return ("1.2.3", None)
+
+        state = rd.GitRepositoryState(registry=SloppyProvider())
+        component = rd.Component(
+            name="x",
+            publish_lane={
+                "workflow": "w",
+                "registry": {"type": "pypi", "package": "x"},
+            },
+        )
+        reason = state.registry_unavailable_reason(component)
+        self.assertIsNotNone(reason)
+        self.assertIn("digest", reason)
 
 
 class SubprocessSurfaceTests(unittest.TestCase):
@@ -604,10 +939,109 @@ class SubprocessSurfaceTests(unittest.TestCase):
                 text=True,
                 timeout=120,
             )
-            self.assertEqual(
-                result.returncode, 0, f"{result.stdout}\n{result.stderr}"
+            # Across a process boundary, the shipped binary resolves the
+            # anchored plan and receipt from the durable store and reaches the
+            # OBSERVER gate - the correct .5-state endpoint, since fixture
+            # observers cannot cross a process. Artifact-resolution failures
+            # would print REFUSED/no-record instead.
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("observers", result.stdout)
+            self.assertNotIn("REFUSED", result.stdout)
+            self.assertNotIn("no record", result.stdout)
+
+
+class MakeSurfaceTests(unittest.TestCase):
+    def test_make_targets_pass_provider_configuration(self) -> None:
+        import subprocess as sp
+
+        rendered = sp.run(
+            [
+                "make", "-n", "release-run",
+                "PLAN_ID=p", "PLAN_ARTIFACT_ID=pa", "AUTHORITY=local-development",
+                "STORE_ROOT=/tmp/store", "ALLOW_LOCAL_AUTHORITY=1",
+                "EXTERNAL_CONTEXT=github.com/awebai/ac=/tmp/ac",
+            ],
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+        ).stdout
+        for fragment in (
+            "--plan-id \"p\"",
+            "--plan-artifact-id \"pa\"",
+            "--authority \"local-development\"",
+            "--store-root \"/tmp/store\"",
+            "--allow-local-authority",
+            "--external-context \"github.com/awebai/ac=/tmp/ac\"",
+        ):
+            self.assertIn(fragment, rendered, rendered)
+        receipt = sp.run(
+            [
+                "make", "-n", "release-receipt",
+                "ARTIFACT_ID=a", "PLAN_ID=p", "PLAN_ARTIFACT_ID=pa",
+                "STORE_ROOT=/tmp/store",
+            ],
+            cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+        ).stdout
+        for fragment in ("--artifact-id \"a\"", "--store-root \"/tmp/store\""):
+            self.assertIn(fragment, receipt, receipt)
+
+
+class RerunIdempotencyTests(unittest.TestCase):
+    def test_complete_rerun_adopts_and_reanchors_idempotently(self) -> None:
+        """A rerun of a fully completed release verifies and adopts: it
+        publishes nothing and the immutable final receipt reconciles rather
+        than refusing or republishing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = rd.FileArtifactStore(root)
+            authority = rd.FileDigestAuthority(root)
+            graph = fixture_graph()
+            state = orchestration_state()
+            plan = rd.compute_plan(graph, state)
+            frozen_bytes, frozen_id = rd.freeze_plan(
+                plan, graph, source_sha="s1", state=state,
+                measurement=AllRecordsResolve(),
             )
-            self.assertIn("MATCH", result.stdout)
+            store.put(f"plan:s1:{frozen_id}", frozen_bytes)
+            authority.record(f"plan:s1:{frozen_id}", frozen_id)
+            frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+            lanes = FixtureLanes({n.component for n in plan.moving})
+            first = rd.run_plan(
+                plan, graph, lanes,
+                skew=FixtureSkew(), authority=authority, store=store,
+                source_sha="s1", approvals={}, state=state, frozen=frozen,
+                providers=rd.Providers(
+                    store=store, authority=authority,
+                    measurement=AllRecordsResolve(),
+                ),
+            )
+
+            class ObserveAll(FixtureLanes):
+                def stage(self, node):
+                    raise AssertionError("rerun must never stage")
+
+                def publish(self, node, staged):
+                    raise AssertionError("rerun must never republish")
+
+                def observe(self, node):
+                    done = first[node.component]
+                    return rd.ReceiptEntry(
+                        version=done.version,
+                        digest=done.digest,
+                        phase="published",
+                        pointer_state=done.pointer_state,
+                        delivery_proof=done.delivery_proof,
+                    )
+
+            rerun_lanes = ObserveAll({n.component for n in plan.moving})
+            entries = rd.resume_plan(
+                plan, graph,
+                lanes=rerun_lanes, skew=FixtureSkew(),
+                store=store, authority=authority,
+                source_sha="s1", approvals={}, state=state,
+                frozen=frozen, measurement=AllRecordsResolve(),
+            )
+            self.assertEqual(set(entries), {n.component for n in plan.moving})
+            publishes = [c for k, c in rerun_lanes.calls if k == "publish"]
+            self.assertEqual(publishes, [])
 
 
 class FrozenSnapshotTests(unittest.TestCase):
@@ -617,7 +1051,7 @@ class FrozenSnapshotTests(unittest.TestCase):
         graph = fixture_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, _ = rd.freeze_plan(plan, graph, source_sha="s1", state=state)
+        frozen_bytes, _ = rd.freeze_plan(plan, graph, source_sha="s1", state=state, measurement=AllRecordsResolve())
         parsed = json.loads(frozen_bytes)
         parsed["content"]["plan_digest"] = "not-the-plan"
         forged = json.dumps(parsed, sort_keys=True).encode()
@@ -649,10 +1083,12 @@ class FrozenSnapshotTests(unittest.TestCase):
             checkout_heads={"../server-src": "cafebabe"},
         )
         _, id_a = rd.freeze_plan(
-            rd.compute_plan(graph, state_a), graph, source_sha="s1", state=state_a
+            rd.compute_plan(graph, state_a), graph, source_sha="s1", state=state_a,
+            measurement=AllRecordsResolve(),
         )
         _, id_b = rd.freeze_plan(
-            rd.compute_plan(graph, state_b), graph, source_sha="s1", state=state_b
+            rd.compute_plan(graph, state_b), graph, source_sha="s1", state=state_b,
+            measurement=AllRecordsResolve(),
         )
         self.assertNotEqual(
             id_a, id_b, "resolved pin state must be bound into the frozen plan"
@@ -717,7 +1153,7 @@ class FrozenTruthTests(unittest.TestCase):
         graph = fixture_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, _ = rd.freeze_plan(plan, graph, source_sha="s1", state=state)
+        frozen_bytes, _ = rd.freeze_plan(plan, graph, source_sha="s1", state=state, measurement=AllRecordsResolve())
         parsed = json.loads(frozen_bytes)
         parsed["content"]["plan_digest"] = "not-the-plan"
         import hashlib
@@ -736,7 +1172,8 @@ class FrozenTruthTests(unittest.TestCase):
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state
+            plan, graph, source_sha="s1", state=state,
+            measurement=AllRecordsResolve(),
         )
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
         self.assertEqual(frozen.source_sha, "s1")
@@ -750,7 +1187,8 @@ class FrozenTruthTests(unittest.TestCase):
             state = orchestration_state()
             plan = rd.compute_plan(graph, state)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state
+                plan, graph, source_sha="s1", state=state,
+                measurement=AllRecordsResolve(),
             )
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
             lanes = FixtureLanes({n.component for n in plan.moving})
@@ -891,12 +1329,19 @@ class ResumeManifestTests(unittest.TestCase):
                         raise KeyboardInterrupt
                     return super().publish(node, staged)
 
+            frozen_bytes, frozen_id = rd.freeze_plan(
+                plan, graph, source_sha="s1", state=state,
+                measurement=AllRecordsResolve(),
+            )
+            store.put(f"plan:s1:{frozen_id}", frozen_bytes)
+            authority.record(f"plan:s1:{frozen_id}", frozen_id)
+            frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
             crash_lanes = CrashSecondPublish({n.component for n in plan.moving})
             with self.assertRaises(KeyboardInterrupt):
                 rd.run_plan(
                     plan, graph, crash_lanes,
                     skew=FixtureSkew(), authority=authority, store=store,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha="s1", approvals={}, state=state, frozen=frozen,
                     providers=rd.Providers(
                         store=store, authority=authority,
                         measurement=AllRecordsResolve(),
@@ -927,6 +1372,7 @@ class ResumeManifestTests(unittest.TestCase):
                 approvals={},
                 state=state,
                 measurement=AllRecordsResolve(),
+                frozen=frozen,
             )
             self.assertEqual(set(entries), {n.component for n in plan.moving})
             publishes = [c for k, c in resume_lanes.calls if k == "publish"]

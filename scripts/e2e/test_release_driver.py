@@ -744,7 +744,7 @@ class ResumeTests(unittest.TestCase):
         graph = complete_fixture_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1", measurement=AllRecordsResolve())
         moved_state = orchestration_state(
             changed_components={"plugin": True},
         )
@@ -758,7 +758,7 @@ class ResumeTests(unittest.TestCase):
     def test_tampered_frozen_plan_is_refused(self) -> None:
         graph = complete_fixture_graph()
         plan = rd.compute_plan(graph, orchestration_state())
-        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1", measurement=AllRecordsResolve())
         with self.assertRaises(rd.ReceiptError):
             rd.load_frozen_plan(frozen_bytes.replace(b"s1", b"s2"), expected_id=frozen_id)
 

@@ -602,16 +602,33 @@ def _resolved_snapshot(plan: Plan, graph: Graph, state) -> dict:
 
 
 def freeze_plan(
-    plan: Plan, graph: Graph, *, source_sha: str, state=None
+    plan: Plan, graph: Graph, *, source_sha: str, state=None, measurement=None
 ) -> tuple[bytes, str]:
     """The plan that will execute, sealed BEFORE any outward effect, binding
     the resolved external state it was computed from. Reruns take this
     artifact's id; live drift cannot rewrite a release in flight."""
+    resolved = _resolved_snapshot(plan, graph, state)
+    complete_edges = [
+        e for e in plan.runtime_contract_edges if not e.declared_incomplete
+    ]
+    if complete_edges:
+        if measurement is None:
+            raise BlockedByDeclaredInputs(
+                "a plan with complete runtime-contract records cannot be "
+                "anchored without a measurement authority to resolve them"
+            )
+        record_problems = check_measurement_records(complete_edges, measurement)
+        if record_problems:
+            raise BlockedByDeclaredInputs("; ".join(record_problems))
+        resolved["measurements"] = {
+            f"{e.a}<->{e.b}": measurement.resolve(e.supported.get("record", {}), e)
+            for e in complete_edges
+        }
     content = {
         "source_sha": source_sha,
         "plan_digest": plan_digest(plan, graph),
         "graph": graph.canonical,
-        "resolved": _resolved_snapshot(plan, graph, state),
+        "resolved": resolved,
         "moving": [
             {
                 "component": n.component,
@@ -1051,6 +1068,7 @@ def seal_staged_manifest(
     frozen_plan_id: str,
     source_sha: str,
     entries: dict[str, ReceiptEntry],
+    graph: Graph | None = None,
 ) -> tuple[bytes, str]:
     """The complete staged-artifact digest set, sealed after ALL stage calls
     and before any skew or publish. It is the only digest source for skew,
@@ -1072,7 +1090,10 @@ def seal_staged_manifest(
                     "version": e.version,
                     "digest": e.digest,
                     "pointer_state": e.pointer_state,
-                    "delivery_proof": e.delivery_proof,
+                    # A delivery proof cannot exist before publication; the
+                    # manifest declares the OBLIGATION and the receipt carries
+                    # the post-publication proof the observer validates.
+                    "delivery_obligation": _delivery_obligation(graph, name),
                 }
                 for name, e in sorted(entries.items())
             },
@@ -1080,6 +1101,17 @@ def seal_staged_manifest(
         sort_keys=True,
     ).encode()
     return body, hashlib.sha256(body).hexdigest()
+
+
+def _delivery_obligation(graph: "Graph | None", component_name: str) -> str | None:
+    if graph is None or component_name not in graph.components:
+        return None
+    component = graph.components[component_name]
+    if component.delivery_restart is not None:
+        return "delivery-restart-proof"
+    if component.lane is not None:
+        return "delivery-lane-proof"
+    return None
 
 
 def load_staged_manifest(data: bytes, *, expected_digest: str) -> dict:
@@ -1099,6 +1131,42 @@ def adopt_observed(manifest: dict, component: str, observed: ReceiptEntry) -> No
             f"{component}: observed {observed.version}/{observed.digest} does not "
             f"equal the anchored staged manifest {entry['version']}/{entry['digest']}"
         )
+
+
+def _frozen_drift(
+    frozen_resolved: dict, current: dict, skip_components: set
+) -> list[str]:
+    """Named differences between the frozen snapshot and the currently
+    resolved execution inputs. Components already published in a resume are
+    the only named expected transition and are skipped."""
+    def canon(value):
+        return json.loads(json.dumps(value, sort_keys=True, default=str))
+
+    frozen_resolved = canon(frozen_resolved)
+    current = canon(current)
+    drift: list[str] = []
+    for section in ("pins", "baselines", "tags", "measurements"):
+        frozen_section = frozen_resolved.get(section, {}) or {}
+        current_section = current.get(section, {}) or {}
+        for key in sorted(set(frozen_section) | set(current_section)):
+            if any(key.startswith(f"{c}:") or key == c for c in skip_components):
+                continue
+            if frozen_section.get(key) != current_section.get(key):
+                drift.append(
+                    f"{section}[{key}]: frozen {frozen_section.get(key)!r} vs "
+                    f"current {current_section.get(key)!r}"
+                )
+    frozen_components = frozen_resolved.get("components", {}) or {}
+    current_components = current.get("components", {}) or {}
+    for name in sorted(set(frozen_components) | set(current_components)):
+        if name in skip_components:
+            continue
+        if frozen_components.get(name) != current_components.get(name):
+            drift.append(
+                f"components[{name}]: frozen {frozen_components.get(name)!r} vs "
+                f"current {current_components.get(name)!r}"
+            )
+    return drift
 
 
 def check_measurement_records(contracts, measurement_provider) -> list[str]:
@@ -1168,6 +1236,25 @@ def run_plan(
             f"frozen plan source {frozen.source_sha} does not equal the "
             f"execution source {source_sha}; frozen truth is never substituted"
         )
+    if frozen is not None and state is not None:
+        current = _resolved_snapshot(plan, graph, state)
+        if measurement is not None:
+            complete = [
+                e for e in plan.runtime_contract_edges if not e.declared_incomplete
+            ]
+            current["measurements"] = {
+                f"{e.a}<->{e.b}": measurement.resolve(
+                    e.supported.get("record", {}), e
+                )
+                for e in complete
+            }
+        skip_components = set(_resume_published or {})
+        drift = _frozen_drift(frozen.resolved, current, skip_components)
+        if drift:
+            raise ReceiptError(
+                "declared execution inputs drifted from the frozen snapshot: "
+                + "; ".join(drift)
+            )
     if state is not None:
         problems = check_declared_inputs(graph, plan, state)
         if problems:
@@ -1212,7 +1299,8 @@ def run_plan(
         frozen_plan_id = frozen.frozen_id
     else:
         frozen_bytes, frozen_plan_id = freeze_plan(
-            plan, graph, source_sha=source_sha, state=state
+            plan, graph, source_sha=source_sha, state=state,
+            measurement=measurement,
         )
         plan_artifact_id = f"plan:{source_sha}:{frozen_plan_id}"
         _put_content_addressed(
@@ -1228,7 +1316,6 @@ def run_plan(
                 digest=e["digest"],
                 phase="staged",
                 pointer_state=e.get("pointer_state"),
-                delivery_proof=e.get("delivery_proof"),
             )
             for name, e in manifest["entries"].items()
         }
@@ -1252,6 +1339,7 @@ def run_plan(
             frozen_plan_id=frozen_plan_id,
             source_sha=source_sha,
             entries=staged,
+            graph=graph,
         )
         manifest_id = f"staged-manifest:{frozen_plan_id}:{manifest_digest}"
         _put_content_addressed(
@@ -1366,32 +1454,63 @@ def resume_plan(
     state=None,
     frozen: "FrozenPlan | None" = None,
     measurement=None,
+    require_external_authority: bool = False,
+    authority_trust: str = "local-development",
+    manifest_id: str | None = None,
 ) -> dict[str, ReceiptEntry]:
     """Resume from the ORIGINAL anchored staged manifest: fetch it by id,
     verify it through the authority, stage NOTHING, observe every claimed
     publication against authoritative lane state, and adopt only on exact
     manifest match. Skew re-runs against the manifest bytes (a crash may
     have interrupted it), then the remainder publishes from those digests."""
+    if require_external_authority and authority_trust != "external-immutable":
+        raise ReceiptError(
+            "the release path requires an external-immutable digest authority "
+            "established by trusted composition; resume is not exempt (trust "
+            f"class {authority_trust!r})"
+        )
+    if frozen is None:
+        raise ReceiptError("resume requires the anchored frozen plan")
     planned = {n.component for n in plan.moving}
     manifest = None
-    for artifact_id in authority.recorded_ids():
-        if not artifact_id.startswith("staged-manifest:"):
-            continue
+    candidate_ids = (
+        [manifest_id]
+        if manifest_id is not None
+        else [
+            a
+            for a in authority.recorded_ids()
+            if a.startswith(f"staged-manifest:{frozen.frozen_id}:")
+        ]
+    )
+    for artifact_id in candidate_ids:
+        expected = authority.expected_digest(artifact_id)
+        if expected is None:
+            raise ReceiptError(f"manifest {artifact_id} has no authority record")
         candidate = load_staged_manifest(
-            store.get(artifact_id),
-            expected_digest=authority.expected_digest(artifact_id),
+            store.get(artifact_id), expected_digest=expected
         )
+        if candidate["frozen_plan_id"] != frozen.frozen_id:
+            raise ReceiptError(
+                f"manifest {artifact_id} binds frozen plan "
+                f"{candidate['frozen_plan_id']}, not {frozen.frozen_id}"
+            )
         if (
             candidate["source_sha"] == source_sha
             and set(candidate["entries"]) == planned
+            and all(
+                candidate["entries"][n.component]["version"] == n.version
+                for n in plan.moving
+                if n.version is not None
+            )
         ):
             manifest = candidate
             manifest["_artifact_id"] = artifact_id
             break
     if manifest is None:
         raise ReceiptError(
-            "no anchored staged manifest matches this plan; resume is only "
-            "possible from the original anchored staging"
+            "no anchored staged manifest binds this exact frozen plan, source, "
+            "component set and versions; resume is only possible from the "
+            "original anchored staging"
         )
     published: dict[str, ReceiptEntry] = {}
     claimed: set[str] = set()
@@ -1424,8 +1543,7 @@ def resume_plan(
             phase="published",
             pointer_state=observed.pointer_state
             or manifest_entry.get("pointer_state"),
-            delivery_proof=observed.delivery_proof
-            or manifest_entry.get("delivery_proof"),
+            delivery_proof=observed.delivery_proof,
         )
     return run_plan(
         plan,
@@ -1671,9 +1789,21 @@ class GitRepositoryState:
                 self._registry_cache[component.name] = (None, None)
             else:
                 try:
-                    self._registry_cache[component.name] = self.registry.published(
-                        component
-                    )
+                    result = self.registry.published(component)
+                    version, digests = result
+                    if not version or not isinstance(digests, dict) or not digests or not all(
+                        isinstance(k, str) and isinstance(v, str) and v
+                        for k, v in digests.items()
+                    ):
+                        # Schema enforcement at the STATE boundary: a version
+                        # without a complete digest set is unavailable no
+                        # matter which provider produced it.
+                        self._registry_cache[component.name] = (
+                            f"registry returned no schema-valid digest set for "
+                            f"{component.name}"
+                        )
+                    else:
+                        self._registry_cache[component.name] = result
                 except RegistryUnavailable as exc:
                     self._registry_cache[component.name] = str(exc)
         return self._registry_cache[component.name]
@@ -1850,6 +1980,13 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
     parser.add_argument("--graph", default=str(GRAPH_PATH))
     parser.add_argument("--store-root", default=str(REPO_ROOT / ".release-runs"))
     parser.add_argument(
+        "--external-context",
+        action="append",
+        default=[],
+        help="repository=absolute-checkout mapping for external pin contexts; "
+        "the checkout's remote identity must equal the repository",
+    )
+    parser.add_argument(
         "--authority",
         default="local-development",
         choices=sorted(AUTHORITY_ALLOWLIST),
@@ -1864,6 +2001,10 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
     run_parser.add_argument("--resume", action="store_true")
     run_parser.add_argument("--approval", action="append", default=[])
     run_parser.add_argument("--allow-local-authority", action="store_true")
+    run_parser.add_argument(
+        "--manifest-id",
+        help="explicit full staged-manifest artifact id for resume binding",
+    )
     receipt_parser = sub.add_parser("release-receipt")
     receipt_parser.add_argument("--artifact-id", required=True)
     receipt_parser.add_argument("--plan-id", required=True)
@@ -1893,7 +2034,40 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 ],
                 check=True,
             )
-            providers.state = GitRepositoryState(registry=RegistryProviders())
+            declared_repos = {
+                pin.get("pin_repository")
+                for component in graph.components.values()
+                for pin in component.sibling_pins
+                if pin.get("pin_repository")
+            }
+            external_contexts: dict[str, str] = {}
+            for item in args.external_context:
+                repo, _, checkout = item.partition("=")
+                if not repo or not checkout:
+                    raise SystemExit(
+                        f"--external-context must be repository=checkout, got {item!r}"
+                    )
+                if repo not in declared_repos:
+                    raise SystemExit(
+                        f"--external-context repository {repo!r} is not declared "
+                        f"by any pin in the graph (allowlist: {sorted(declared_repos)})"
+                    )
+                remote = subprocess.run(
+                    ["git", "-C", checkout, "remote", "get-url", "origin"],
+                    capture_output=True,
+                    text=True,
+                )
+                if remote.returncode != 0 or canonical_remote(
+                    remote.stdout.strip()
+                ) != repo:
+                    raise SystemExit(
+                        f"--external-context checkout {checkout} remote "
+                        f"{remote.stdout.strip()!r} is not the declared repository {repo}"
+                    )
+                external_contexts[repo] = checkout
+            providers.state = GitRepositoryState(
+                registry=RegistryProviders(), external_contexts=external_contexts
+            )
             providers.source_sha = subprocess.run(
                 ["git", "-C", str(REPO_ROOT), "rev-parse", "origin/main"],
                 check=True,
@@ -1907,7 +2081,8 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         plan = compute_plan(graph, state)
         problems = check_declared_inputs(graph, plan, state)
         frozen_bytes, frozen_id = freeze_plan(
-            plan, graph, source_sha=source_sha, state=state
+            plan, graph, source_sha=source_sha, state=state,
+            measurement=providers.measurement,
         )
         plan_artifact_id = f"plan:{source_sha}:{frozen_id}"
         _put_content_addressed(
@@ -1992,6 +2167,9 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     state=state,
                     frozen=frozen,
                     measurement=providers.measurement,
+                    require_external_authority=not args.allow_local_authority,
+                    authority_trust=providers.authority_trust,
+                    manifest_id=args.manifest_id,
                 )
             else:
                 run_plan(
@@ -2064,25 +2242,87 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         if manifest_digest is None:
             print("MISMATCH: the receipt's staged manifest is not anchored")
             return 1
+        manifest = load_staged_manifest(
+            providers.store.get(receipt.staged_manifest_id),
+            expected_digest=manifest_digest,
+        )
+        if manifest["frozen_plan_id"] != args.plan_id:
+            print("MISMATCH: the staged manifest does not bind this frozen plan")
+            return 1
+        if manifest["source_sha"] != frozen.source_sha:
+            print("MISMATCH: the staged manifest source differs from the frozen plan")
+            return 1
         frozen_components = frozen.graph.components
         approvals = dict(receipt.approvals)
+        lanes = providers.lanes
+        if lanes is None or not hasattr(lanes, "observe"):
+            print(
+                "BLOCKED: receipt verification requires authoritative lane "
+                "observers for published/pointer/delivery state; none configured"
+            )
+            return 1
         for node in frozen.plan.moving:
             component = frozen_components[node.component]
             entry = receipt.entries[node.component]
-            if node.reason.startswith("pointer:") and not entry.pointer_state:
-                print(f"MISMATCH: {node.component} lacks pointer_state")
+            manifest_entry = manifest["entries"].get(node.component)
+            if manifest_entry is None:
+                print(f"MISMATCH: {node.component} missing from the staged manifest")
                 return 1
             if (
-                component.delivery_restart is not None or component.lane is not None
-            ) and not entry.delivery_proof:
-                print(f"MISMATCH: {node.component} lacks delivery_proof")
+                entry.version != manifest_entry["version"]
+                or entry.digest != manifest_entry["digest"]
+            ):
+                print(
+                    f"MISMATCH: {node.component} receipt "
+                    f"{entry.version}/{entry.digest} does not equal staged "
+                    f"manifest {manifest_entry['version']}/{manifest_entry['digest']}"
+                )
                 return 1
-            if component.approval_required and node.component not in approvals:
-                print(f"MISMATCH: {node.component} lacks its approval record")
+            if entry.pointer_state != manifest_entry.get("pointer_state"):
+                print(
+                    f"MISMATCH: {node.component} pointer state differs from the "
+                    "staged manifest's immutable candidate identity"
+                )
+                return 1
+            if manifest_entry.get("delivery_obligation") and not entry.delivery_proof:
+                print(
+                    f"MISMATCH: {node.component} carries no post-publication "
+                    f"proof for its declared {manifest_entry['delivery_obligation']}"
+                )
+                return 1
+            if component.approval_required:
+                approval = approvals.get(node.component)
+                if (
+                    not isinstance(approval, dict)
+                    or not approval.get("who")
+                    or not approval.get("when")
+                ):
+                    print(
+                        f"MISMATCH: {node.component} lacks a structurally valid "
+                        "approval record"
+                    )
+                    return 1
+            observed = lanes.observe(node)
+            if observed is None:
+                print(
+                    f"MISMATCH: {node.component}: no authoritative observation "
+                    "of published state"
+                )
+                return 1
+            if (
+                observed.version != entry.version
+                or observed.digest != entry.digest
+            ):
+                print(
+                    f"MISMATCH: {node.component}: observed "
+                    f"{observed.version}/{observed.digest} does not equal the "
+                    f"receipt {entry.version}/{entry.digest}"
+                )
                 return 1
         print(
             "MATCH: receipt is anchored, bound to its frozen plan and staged "
-            "manifest, all entries verified with required proofs and approvals"
+            "manifest, entry-identical to the manifest, structurally approved, "
+            "and equal to authoritative lane observation"
         )
         return 0
     return 2

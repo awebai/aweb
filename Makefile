@@ -601,19 +601,22 @@ release-channel-push:
 
 # What must ship, in what order, from the declared component graph and
 # authoritative remote state. Exit 1 when a declared input is unsatisfied.
+# AUTHORITY selects an allowlisted digest-authority kind; STORE_ROOT the
+# durable artifact store; EXTERNAL_CONTEXT repeatable repository=checkout
+# mappings for external pin contexts.
 release-plan:
-	@python3 scripts/release_driver.py plan
+	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") plan
 
 # Executes an anchored frozen plan over available publish lanes; fails closed
 # naming every gap. PLAN_ID and PLAN_ARTIFACT_ID are required.
 release-run:
-	@python3 scripts/release_driver.py release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(foreach a,$(APPROVAL),--approval "$(a)")
+	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(if $(MANIFEST_ID),--manifest-id "$(MANIFEST_ID)") $(if $(ALLOW_LOCAL_AUTHORITY),--allow-local-authority) $(foreach a,$(APPROVAL),--approval "$(a)")
 
 # Verifies an anchored receipt against its anchored frozen plan. ARTIFACT_ID,
 # PLAN_ID and PLAN_ARTIFACT_ID are required; digests resolve through the
 # configured authority, never from caller-presented values.
 release-receipt:
-	@python3 scripts/release_driver.py release-receipt --artifact-id "$(ARTIFACT_ID)" --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)"
+	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") release-receipt --artifact-id "$(ARTIFACT_ID)" --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)"
 
 test-release-driver:
 	python3 scripts/e2e/test_release_driver.py
