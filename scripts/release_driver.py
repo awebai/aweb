@@ -1045,10 +1045,10 @@ AW_LANE_WORKFLOW_PATH = ".github/workflows/aw-release.yml"
 ANCHOR_REPO = "awebai/aweb"
 ANCHOR_WORKFLOW_PATH = ".github/workflows/release-anchor.yml"
 ANCHOR_WORKFLOW_FILE = "release-anchor.yml"
-# The anchor body travels as a workflow-dispatch input (gzip+base64); a real
-# frozen plan measures ~2KB, so this bound is generous while keeping inputs
-# far under the dispatch payload limit.
-ANCHOR_BODY_LIMIT = 131072
+# GitHub bounds the TOTAL workflow-dispatch payload at 65,535 characters;
+# the check bounds the ENCODED body plus the other input fields with margin,
+# both here before dispatch and again inside the workflow.
+ANCHOR_DISPATCH_LIMIT = 64000
 
 
 def _run_gh_api(path: str) -> bytes:
@@ -1098,6 +1098,30 @@ def _gh_artifact_metadata(api, artifact_id: str) -> tuple[dict, str, str, str]:
     return meta, repo, run_id, gh_artifact_id
 
 
+def _validated_aw_artifact_meta(api, artifact_id: str):
+    """Metadata plus producing-run validation shared by the aw lane's
+    store and digest authority: exact reviewed workflow path, successful
+    non-fork run, unexpired artifact."""
+    meta, repo, run_id, gh_artifact_id = _gh_artifact_metadata(api, artifact_id)
+    run = json.loads(api(f"repos/{repo}/actions/runs/{run_id}"))
+    if run.get("path") != AW_LANE_WORKFLOW_PATH:
+        raise ReceiptError(
+            f"{artifact_id}: staging run used workflow "
+            f"{run.get('path')!r}, not the reviewed {AW_LANE_WORKFLOW_PATH}"
+        )
+    if run.get("conclusion") != "success":
+        raise ReceiptError(
+            f"{artifact_id}: staging run concluded "
+            f"{run.get('conclusion')!r}, not success"
+        )
+    if run.get("head_repository", {}).get("full_name") != repo:
+        raise ReceiptError(
+            f"{artifact_id}: staging run came from "
+            f"{run.get('head_repository', {}).get('full_name')!r}, not {repo}"
+        )
+    return meta, repo, run_id, gh_artifact_id
+
+
 class GithubArtifactStore:
     """Read-only exact-bytes retrieval of a staged workflow artifact."""
 
@@ -1105,25 +1129,9 @@ class GithubArtifactStore:
         self._api = api or _run_gh_api
 
     def get(self, artifact_id: str) -> bytes:
-        meta, repo, run_id, gh_artifact_id = _gh_artifact_metadata(
+        meta, repo, run_id, gh_artifact_id = _validated_aw_artifact_meta(
             self._api, artifact_id
         )
-        run = json.loads(self._api(f"repos/{repo}/actions/runs/{run_id}"))
-        if run.get("path") != AW_LANE_WORKFLOW_PATH:
-            raise ReceiptError(
-                f"{artifact_id}: staging run used workflow "
-                f"{run.get('path')!r}, not the reviewed {AW_LANE_WORKFLOW_PATH}"
-            )
-        if run.get("conclusion") != "success":
-            raise ReceiptError(
-                f"{artifact_id}: staging run concluded "
-                f"{run.get('conclusion')!r}, not success"
-            )
-        if run.get("head_repository", {}).get("full_name") != repo:
-            raise ReceiptError(
-                f"{artifact_id}: staging run came from "
-                f"{run.get('head_repository', {}).get('full_name')!r}, not {repo}"
-            )
         data = self._api(
             f"repos/{repo}/actions/artifacts/{gh_artifact_id}/zip"
         )
@@ -1152,7 +1160,7 @@ class GithubArtifactDigestAuthority:
         self._api = api or _run_gh_api
 
     def expected_digest(self, artifact_id: str) -> str:
-        meta, _, _, _ = _gh_artifact_metadata(self._api, artifact_id)
+        meta, _, _, _ = _validated_aw_artifact_meta(self._api, artifact_id)
         return meta["digest"].removeprefix("sha256:")
 
     def record(self, artifact_id: str, digest: str) -> None:
@@ -1189,6 +1197,9 @@ class GithubAnchorTransport:
             f"repos/{self.repo}/actions/artifacts/{artifact_id}/zip"
         )
 
+    def anchor_run(self, run_id) -> dict:
+        return json.loads(self._api(f"repos/{self.repo}/actions/runs/{run_id}"))
+
     def dispatch_anchor(self, logical_id: str, digest: str, body_gzip_b64: str):
         import subprocess
 
@@ -1216,39 +1227,79 @@ def _anchor_name(logical_id: str, digest: str) -> str:
     return f"anchor--{id_hash}--{digest}"
 
 
-def _validated_anchor_candidates(transport, logical_id: str) -> dict[str, bytes]:
-    """All nonexpired anchors for the logical id, fully validated: the raw
-    ZIP must hash to GitHub's API digest before extraction, the embedded
-    record must name the EXACT logical id, and the body must hash to the
-    digest the artifact name declares. Returns {digest: body}."""
+def _validate_anchor_artifact(transport, artifact: dict) -> tuple[str, str, bytes]:
+    """Full validation of one anchor artifact: producing run provenance
+    (exact release-anchor.yml, success, this repository), raw ZIP hashed
+    against GitHub's API digest before extraction, name hash bound to the
+    exact recorded logical id, and body hashed against the declared digest.
+    Returns (logical_id, digest, body)."""
     import zipfile
 
+    name = artifact.get("name", "")
+    run_id = (artifact.get("workflow_run") or {}).get("id")
+    run = transport.anchor_run(run_id)
+    if run.get("path") != ANCHOR_WORKFLOW_PATH:
+        raise ReceiptError(
+            f"anchor {name}: produced by workflow {run.get('path')!r}, not "
+            f"the reviewed {ANCHOR_WORKFLOW_PATH} (release-anchor.yml)"
+        )
+    if run.get("conclusion") != "success":
+        raise ReceiptError(
+            f"anchor {name}: producing run concluded "
+            f"{run.get('conclusion')!r}, not success"
+        )
+    if run.get("head_repository", {}).get("full_name") != ANCHOR_REPO:
+        raise ReceiptError(
+            f"anchor {name}: producing run came from "
+            f"{run.get('head_repository', {}).get('full_name')!r}"
+        )
+    zip_bytes = transport.artifact_zip(artifact["id"])
+    api_digest = (artifact.get("digest") or "").removeprefix("sha256:")
+    if hashlib.sha256(zip_bytes).hexdigest() != api_digest:
+        raise ReceiptError(
+            f"anchor {name}: ZIP bytes do not hash to the API digest"
+        )
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+        record = json.loads(archive.read("record.json"))
+        body = archive.read("body")
+    logical_id = record.get("logical_id")
+    declared = record.get("digest")
+    expected_name = _anchor_name(logical_id or "", declared or "")
+    if name != expected_name:
+        raise ReceiptError(
+            f"anchor {name}: name does not derive from the recorded logical "
+            f"id and digest"
+        )
+    actual = hashlib.sha256(body).hexdigest()
+    if actual != declared:
+        raise ReceiptError(
+            f"anchor {name}: body digest {actual} does not equal the "
+            f"declared {declared}"
+        )
+    return logical_id, declared, body
+
+
+def _validated_anchor_candidates(transport, logical_id: str) -> dict[str, bytes]:
+    """All anchors for the logical id, fully validated by the shared
+    validator. A matching EXPIRED identity refuses: its evidence is
+    unreadable and must never be silently re-anchored. Returns
+    {digest: body}."""
     prefix = f"anchor--{hashlib.sha256(logical_id.encode()).hexdigest()}--"
     found: dict[str, bytes] = {}
     for artifact in transport.list_artifacts():
         name = artifact.get("name", "")
-        if not name.startswith(prefix) or artifact.get("expired") is not False:
+        if not name.startswith(prefix):
             continue
-        declared = name[len(prefix):]
-        zip_bytes = transport.artifact_zip(artifact["id"])
-        api_digest = (artifact.get("digest") or "").removeprefix("sha256:")
-        if hashlib.sha256(zip_bytes).hexdigest() != api_digest:
+        if artifact.get("expired") is not False:
             raise ReceiptError(
-                f"anchor {name}: ZIP bytes do not hash to the API digest"
+                f"{logical_id}: anchor {name} is expired; its evidence is "
+                "unreadable and the identity must not be re-anchored"
             )
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
-            record = json.loads(archive.read("record.json"))
-            body = archive.read("body")
-        if record.get("logical_id") != logical_id:
+        found_id, declared, body = _validate_anchor_artifact(transport, artifact)
+        if found_id != logical_id:
             raise ReceiptError(
-                f"anchor {name}: record names {record.get('logical_id')!r}, "
-                f"not the requested {logical_id!r}"
-            )
-        actual = hashlib.sha256(body).hexdigest()
-        if actual != declared or record.get("digest") != declared:
-            raise ReceiptError(
-                f"anchor {name}: body digest {actual} does not equal the "
-                f"declared {declared}"
+                f"anchor {name}: record names {found_id!r}, not the "
+                f"requested {logical_id!r}"
             )
         if declared in found and found[declared] != body:
             raise ReceiptError(
@@ -1292,15 +1343,17 @@ class GithubAnchorStore:
                 f"{artifact_id} is anchored with digest {sorted(found)[0]}, "
                 f"refusing different bytes {digest}"
             )
-        if len(data) > ANCHOR_BODY_LIMIT:
-            raise ReceiptError(
-                f"{artifact_id}: body of {len(data)} bytes exceeds the anchor "
-                f"input bound of {ANCHOR_BODY_LIMIT}"
-            )
         import base64
         import gzip
 
         encoded = base64.b64encode(gzip.compress(data)).decode()
+        total = len(encoded) + len(artifact_id) + len(digest)
+        if total > ANCHOR_DISPATCH_LIMIT:
+            raise ReceiptError(
+                f"{artifact_id}: encoded dispatch payload of {total} "
+                f"characters exceeds the bound of {ANCHOR_DISPATCH_LIMIT}; "
+                "GitHub rejects oversize dispatches before the workflow runs"
+            )
         self._transport.dispatch_anchor(artifact_id, digest, encoded)
         for _ in range(self.POLL_ATTEMPTS):
             found = _validated_anchor_candidates(self._transport, artifact_id)
@@ -1342,22 +1395,19 @@ class GithubAnchorDigestAuthority:
             )
 
     def recorded_ids(self) -> list[str]:
-        import zipfile
-
         ids: set[str] = set()
         for artifact in self._transport.list_artifacts():
             name = artifact.get("name", "")
-            if not name.startswith("anchor--") or artifact.get("expired") is not False:
+            if not name.startswith("anchor--"):
                 continue
-            zip_bytes = self._transport.artifact_zip(artifact["id"])
-            api_digest = (artifact.get("digest") or "").removeprefix("sha256:")
-            if hashlib.sha256(zip_bytes).hexdigest() != api_digest:
-                raise ReceiptError(
-                    f"anchor {name}: ZIP bytes do not hash to the API digest"
-                )
-            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
-                record = json.loads(archive.read("record.json"))
-            ids.add(record["logical_id"])
+            if artifact.get("expired") is not False:
+                # An expired anchor is unreadable evidence; reads of its
+                # identity refuse loudly through the candidate validator.
+                continue
+            logical_id, _, _ = _validate_anchor_artifact(
+                self._transport, artifact
+            )
+            ids.add(logical_id)
         return sorted(ids)
 
 
@@ -1425,6 +1475,23 @@ def parse_stage_artifact_argument(value: str) -> tuple[str, LaneRef]:
     )
 
 
+def expected_lane_payload_names(version: str) -> tuple[list[str], list[str]]:
+    """The aw lane's exact payload basenames for a version: six archives +
+    checksums.txt under dist/, seven npm tgz under npm/."""
+    dist = []
+    for platform in ("linux_amd64", "linux_arm64", "darwin_amd64",
+                     "darwin_arm64", "windows_amd64", "windows_arm64"):
+        ext = "zip" if platform.startswith("windows") else "tar.gz"
+        dist.append(f"aw_{version}_{platform}.{ext}")
+    dist.append("checksums.txt")
+    npm = [f"awebai-aw-{version}.tgz"] + [
+        f"awebai-aw-{p}-{version}.tgz"
+        for p in ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64",
+                  "windows-x64", "windows-arm64")
+    ]
+    return dist, npm
+
+
 def validate_lane_staged_artifact(
     zip_bytes: bytes, *, expected_source_sha: str, expected_version: str
 ) -> dict:
@@ -1466,23 +1533,46 @@ def validate_lane_staged_artifact(
                 "staged manifest canonical set digest does not recompute "
                 "from its files map"
             )
+        # The real reviewed protocol: manifest files keys are exactly the
+        # 14 basenames; each exists as exactly one dist/ or npm/ member.
+        dist_names, npm_names = expected_lane_payload_names(expected_version)
+        expected_keys = set(dist_names) | set(npm_names)
+        if set(files) != expected_keys:
+            raise ReceiptError(
+                f"staged manifest binds {sorted(files)}, expected exactly the "
+                f"{len(expected_keys)} protocol payloads for {expected_version}"
+            )
+        member_for = {}
         payload_names = [n for n in names if n != "manifest.json"]
-        expected_names = set(files)
-        for name in payload_names:
-            if name not in expected_names:
+        for member in payload_names:
+            prefix, _, base = member.partition("/")
+            if prefix not in ("dist", "npm") or not base or base not in files:
                 raise ReceiptError(
-                    f"staged artifact carries {name}, which the manifest "
+                    f"staged artifact carries {member}, which the manifest "
                     "does not bind"
                 )
-        for name, digest in files.items():
-            if name not in payload_names:
+            expected_prefix = "dist" if base in dist_names else "npm"
+            if prefix != expected_prefix:
                 raise ReceiptError(
-                    f"staged manifest binds {name}, missing from the artifact"
+                    f"staged artifact places {base} under {prefix}/, the "
+                    f"protocol places it under {expected_prefix}/"
                 )
-            actual = hashlib.sha256(archive.read(name)).hexdigest()
+            if base in member_for:
+                raise ReceiptError(
+                    f"staged artifact carries {base} more than once "
+                    f"({member_for[base]} and {member})"
+                )
+            member_for[base] = member
+        for base, digest in files.items():
+            member = member_for.get(base)
+            if member is None:
+                raise ReceiptError(
+                    f"staged manifest binds {base}, missing from the artifact"
+                )
+            actual = hashlib.sha256(archive.read(member)).hexdigest()
             if actual != digest:
                 raise ReceiptError(
-                    f"{name}: payload digest {actual} does not equal the "
+                    f"{base}: payload digest {actual} does not equal the "
                     f"manifest's {digest}"
                 )
     return manifest
@@ -1566,9 +1656,10 @@ class AwWorkflowLane:
 
     POLL_ATTEMPTS = 240
 
-    def __init__(self, *, reader, refs, release_fetch, npm_fetch, runs,
-                 waiter=None):
+    def __init__(self, *, reader, lane_authority, refs, release_fetch,
+                 npm_fetch, runs, waiter=None):
         self._reader = reader
+        self._lane_authority = lane_authority
         self._refs = refs  # component -> LaneRef
         self._release_fetch = release_fetch  # (asset_name, version) -> bytes|None
         self._npm = NpmRegistryObserver(fetch=npm_fetch)
@@ -1582,6 +1673,15 @@ class AwWorkflowLane:
 
     def stage(self, node) -> "ReceiptEntry":
         ref = self._refs[node.component]
+        # Independent capability first: the expected digest resolves through
+        # the separately constructed lane authority and must equal the
+        # caller binding BEFORE any blob is read.
+        independent = self._lane_authority.expected_digest(ref.artifact)
+        if f"sha256:{independent}" != ref.zip_digest:
+            raise ReceiptError(
+                f"{node.component}: independent authority records "
+                f"sha256:{independent}, not the caller-bound {ref.zip_digest}"
+            )
         data = self._reader.get(ref.artifact)
         actual = f"sha256:{hashlib.sha256(data).hexdigest()}"
         if actual != ref.zip_digest:
@@ -2271,6 +2371,8 @@ def run_plan(
                     "phase": entry.phase,
                     "pointer_state": entry.pointer_state,
                     "delivery_proof": entry.delivery_proof,
+                    "lane_ref": entry.lane_ref,
+                    "digest_set": entry.digest_set,
                 },
             },
             sort_keys=True,
@@ -2467,7 +2569,23 @@ def resume_plan(
                 )
             record = json.loads(body)
             if record["kind"] == "published":
-                claimed.add(record["component"])
+                component = record["component"]
+                manifest_entry = manifest["entries"].get(component)
+                if manifest_entry is None:
+                    raise ReceiptError(
+                        f"transition {artifact_id} claims publication of "
+                        f"{component}, absent from the staged manifest"
+                    )
+                claimed_entry = record.get("entry", {})
+                for field_name in ("version", "digest", "digest_set", "lane_ref"):
+                    if claimed_entry.get(field_name) != manifest_entry.get(
+                        field_name
+                    ):
+                        raise ReceiptError(
+                            f"transition {artifact_id}: claimed {field_name} "
+                            "does not equal the anchored staged manifest entry"
+                        )
+                claimed.add(component)
     for node in plan.moving:
         manifest_entry = manifest["entries"][node.component]
         anchored = ReceiptEntry(
@@ -3080,6 +3198,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             if refs:
                 lanes = AwWorkflowLane(
                     reader=GithubArtifactStore(),
+                    lane_authority=GithubArtifactDigestAuthority(),
                     refs=refs,
                     release_fetch=_fetch_aw_release_asset,
                     npm_fetch=_fetch_npm_tarball,

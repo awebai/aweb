@@ -44,8 +44,8 @@ jobs:
             || { echo "REFUSE: digest must be 64 lowercase hex" >&2; exit 1; }
           [[ -n "$LOGICAL_ID" && "$LOGICAL_ID" != *$'\n'* ]] \
             || { echo "REFUSE: logical_id must be a nonempty single line" >&2; exit 1; }
-          [[ "${#BODY_GZIP_B64}" -le 262144 ]] \
-            || { echo "REFUSE: encoded body exceeds the anchor input bound" >&2; exit 1; }
+          [[ "${#BODY_GZIP_B64}" -le 64000 ]] \
+            || { echo "REFUSE: encoded body exceeds the dispatch payload bound" >&2; exit 1; }
           mkdir anchor
           printf '%s' "$BODY_GZIP_B64" | base64 -d | gunzip > anchor/body
           actual="$(sha256sum anchor/body | awk '{print $1}')"

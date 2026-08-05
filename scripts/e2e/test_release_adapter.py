@@ -184,12 +184,14 @@ class FakeAnchorTransport:
     dispatch materializes a real artifact ZIP after `latency` polls, the
     listing carries API digests and expiry, and everything is enumerable."""
 
-    def __init__(self, latency: int = 0):
+    def __init__(self, latency: int = 0, *, run_path=None, run_conclusion=None):
         self.artifacts: list[dict] = []
         self.dispatches: list[tuple[str, str]] = []
         self._pending: list[tuple[int, dict]] = []
         self.latency = latency
         self._next_id = 1
+        self._run_path = run_path or ".github/workflows/release-anchor.yml"
+        self._run_conclusion = run_conclusion or "success"
 
     def _materialize(self, logical_id: str, body: bytes, *, expired=False):
         digest = sha256(body)
@@ -200,10 +202,18 @@ class FakeAnchorTransport:
             "name": name,
             "digest": f"sha256:{sha256(zip_bytes)}",
             "expired": expired,
+            "workflow_run": {"id": 7000 + self._next_id},
             "_zip": zip_bytes,
         }
         self._next_id += 1
         return entry
+
+    def anchor_run(self, run_id) -> dict:
+        return {
+            "path": self._run_path,
+            "conclusion": self._run_conclusion,
+            "head_repository": {"full_name": "awebai/aweb"},
+        }
 
     def seed(self, logical_id: str, body: bytes, *, expired=False):
         self.artifacts.append(self._materialize(logical_id, body, expired=expired))
@@ -276,13 +286,54 @@ class AnchorStoreTests(unittest.TestCase):
         with self.assertRaises(rd.ReceiptError):
             authority.expected_digest("plan:s1:abc")
 
-    def test_expired_anchors_are_not_evidence(self) -> None:
+    def test_matching_expired_identity_refuses_reads_and_writes(self) -> None:
+        """An identity whose anchor expired is compromised evidence: reads
+        refuse naming expiry, and put must NOT re-anchor it."""
         transport = FakeAnchorTransport()
         transport.seed("plan:s1:abc", b"body", expired=True)
         store, authority = anchor_pair(transport)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            store.get("plan:s1:abc")
+        self.assertIn("expired", str(caught.exception))
+        with self.assertRaises(rd.ReceiptError):
+            authority.expected_digest("plan:s1:abc")
+        with self.assertRaises(rd.ReceiptError):
+            store.put("plan:s1:abc", b"body")
+        self.assertEqual(transport.dispatches, [])
+
+    def test_anchor_from_a_foreign_workflow_refuses(self) -> None:
+        transport = FakeAnchorTransport(run_path=".github/workflows/other.yml")
+        transport.seed("plan:s1:abc", b"body")
+        store, authority = anchor_pair(transport)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            store.get("plan:s1:abc")
+        self.assertIn("release-anchor.yml", str(caught.exception))
+        with self.assertRaises(rd.ReceiptError):
+            authority.expected_digest("plan:s1:abc")
+        _, fresh = anchor_pair(transport)
+        with self.assertRaises(rd.ReceiptError):
+            fresh.recorded_ids()
+
+    def test_anchor_from_a_failed_run_refuses(self) -> None:
+        transport = FakeAnchorTransport(run_conclusion="failure")
+        transport.seed("plan:s1:abc", b"body")
+        store, _ = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError):
             store.get("plan:s1:abc")
-        self.assertIsNone(authority.expected_digest("plan:s1:abc"))
+
+    def test_encoded_dispatch_payload_is_bounded(self) -> None:
+        """GitHub bounds the TOTAL dispatch payload at 65,535 characters; an
+        incompressible body below any raw-byte bound still overflows once
+        base64-encoded and must refuse BEFORE any outward dispatch."""
+        import os
+
+        transport = FakeAnchorTransport()
+        store, _ = anchor_pair(transport)
+        incompressible = os.urandom(60000)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            store.put("plan:big", incompressible)
+        self.assertEqual(transport.dispatches, [])
+        self.assertIn("dispatch payload", str(caught.exception))
 
     def test_zip_bytes_must_match_the_api_digest(self) -> None:
         transport = FakeAnchorTransport()
@@ -292,15 +343,6 @@ class AnchorStoreTests(unittest.TestCase):
         with self.assertRaises(rd.ReceiptError) as caught:
             store.get("plan:s1:abc")
         self.assertIn("digest", str(caught.exception))
-
-    def test_oversize_body_refuses_before_dispatch(self) -> None:
-        transport = FakeAnchorTransport()
-        store, _ = anchor_pair(transport)
-        import os
-        with self.assertRaises(rd.ReceiptError) as caught:
-            store.put("plan:big", os.urandom(rd.ANCHOR_BODY_LIMIT + 1))
-        self.assertEqual(transport.dispatches, [])
-        self.assertIn("bound", str(caught.exception))
 
     def test_record_verifies_and_never_dispatches(self) -> None:
         transport = FakeAnchorTransport()
@@ -344,15 +386,40 @@ class AnchorStoreTests(unittest.TestCase):
         self.assertEqual([a["id"] for a in listed], [1, 2])
 
 
+def lane_payload_names(version="1.34.3"):
+    """The real aw lane protocol: 14 basenames, members under dist/ or npm/."""
+    dist = []
+    for platform in ("linux_amd64", "linux_arm64", "darwin_amd64",
+                     "darwin_arm64", "windows_amd64", "windows_arm64"):
+        ext = "zip" if platform.startswith("windows") else "tar.gz"
+        dist.append(f"aw_{version}_{platform}.{ext}")
+    dist.append("checksums.txt")
+    npm = [f"awebai-aw-{version}.tgz"] + [
+        f"awebai-aw-{p}-{version}.tgz"
+        for p in ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64",
+                  "windows-x64", "windows-arm64")
+    ]
+    return dist, npm
+
+
+def lane_payload_bytes(version="1.34.3"):
+    dist, npm = lane_payload_names(version)
+    members = {f"dist/{n}": f"bytes-of-{n}".encode() for n in dist}
+    members.update({f"npm/{n}": f"bytes-of-{n}".encode() for n in npm})
+    return members
+
+
 def lane_zip(*, mode="stage-only", source_sha="a" * 40, version="1.34.3",
              tamper_payload=False, drop_payload=False, extra_payload=False,
-             break_canonical=False) -> bytes:
-    payloads = {
-        "dist/aw_1.34.3_linux_amd64.tar.gz": b"archive-bytes",
-        "dist/checksums.txt": b"checksums",
-        "npm/awebai-aw-1.34.3.tgz": b"tgz-bytes",
+             break_canonical=False, duplicate_member=False) -> bytes:
+    members = lane_payload_bytes(version)
+    # The REAL protocol shape (proven against the run-3 artifact): ZIP
+    # members carry dist/ or npm/ prefixes, manifest files keys are the 14
+    # basenames.
+    files = {
+        name.rsplit("/", 1)[-1]: sha256(data)
+        for name, data in members.items()
     }
-    files = {name: sha256(data) for name, data in payloads.items()}
     canonical = sha256(json.dumps(files, sort_keys=True).encode())
     if break_canonical:
         canonical = "0" * 64
@@ -367,14 +434,16 @@ def lane_zip(*, mode="stage-only", source_sha="a" * 40, version="1.34.3",
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
         z.writestr("manifest.json", json.dumps(manifest))
-        for name, data in payloads.items():
-            if drop_payload and name.endswith(".tgz"):
+        for name, data in members.items():
+            if drop_payload and name == f"npm/awebai-aw-{version}.tgz":
                 continue
-            if tamper_payload and name.endswith(".tar.gz"):
+            if tamper_payload and name.endswith("linux_amd64.tar.gz"):
                 data = b"tampered"
             z.writestr(name, data)
         if extra_payload:
             z.writestr("dist/uninvited.bin", b"extra")
+        if duplicate_member:
+            z.writestr("npm/checksums.txt", members["dist/checksums.txt"])
     return buffer.getvalue()
 
 
@@ -384,7 +453,7 @@ class LaneStagedArtifactTests(unittest.TestCase):
             lane_zip(), expected_source_sha="a" * 40, expected_version="1.34.3",
         )
         self.assertEqual(manifest["mode"], "stage-only")
-        self.assertEqual(len(manifest["files"]), 3)
+        self.assertEqual(len(manifest["files"]), 14)
 
     def test_verify_only_artifact_is_never_publishable(self) -> None:
         with self.assertRaises(rd.ReceiptError) as caught:
@@ -411,6 +480,14 @@ class LaneStagedArtifactTests(unittest.TestCase):
                 expected_source_sha="a" * 40, expected_version="1.34.3",
             )
         self.assertIn("linux_amd64", str(caught.exception))
+
+    def test_duplicate_member_placement_refuses(self) -> None:
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.validate_lane_staged_artifact(
+                lane_zip(duplicate_member=True),
+                expected_source_sha="a" * 40, expected_version="1.34.3",
+            )
+        self.assertIn("checksums.txt", str(caught.exception))
 
     def test_missing_payload_refuses(self) -> None:
         with self.assertRaises(rd.ReceiptError) as caught:
@@ -636,6 +713,7 @@ def lane_fixture(*, zip_bytes=None, remote=None, runs=None):
 
     lane = rd.AwWorkflowLane(
         reader=rd.GithubArtifactStore(api=api),
+        lane_authority=rd.GithubArtifactDigestAuthority(api=api),
         refs={"aw": rd.LaneRef(
             artifact=artifact_id_for(api),
             aw_source_sha="a" * 40,
@@ -653,20 +731,17 @@ def aw_node(version="1.34.3"):
     return rd.PlanNode(component="aw", reason="changed", version=version)
 
 
-LANE_PAYLOADS = {
-    "dist/aw_1.34.3_linux_amd64.tar.gz": b"archive-bytes",
-    "dist/checksums.txt": b"checksums",
-    "npm/awebai-aw-1.34.3.tgz": b"tgz-bytes",
-}
-
-
 def remote_state(*names):
-    """Remote publication state keyed the way the lane observes it."""
-    full = {
-        "aw_1.34.3_linux_amd64.tar.gz": b"archive-bytes",
-        "checksums.txt": b"checksums",
-        "npm:@awebai/aw@1.34.3": b"tgz-bytes",
-    }
+    """Remote publication state keyed the way the lane observes it: release
+    assets by basename, npm tarballs by package@version."""
+    dist, npm = lane_payload_names()
+    full = {n: f"bytes-of-{n}".encode() for n in dist}
+    for n in npm:
+        stem = n.removesuffix(".tgz")
+        package, _, version = stem.replace(
+            "awebai-", "@awebai/", 1
+        ).rpartition("-")
+        full[f"npm:{package}@{version}"] = f"bytes-of-{n}".encode()
     return {k: v for k, v in full.items() if not names or k in names}
 
 
@@ -677,7 +752,8 @@ class AwWorkflowLaneTests(unittest.TestCase):
         self.assertFalse(lane.has_lane("server"))
         entry = lane.stage(aw_node())
         self.assertEqual(entry.version, "1.34.3")
-        self.assertEqual(set(entry.digest_set), set(LANE_PAYLOADS))
+        dist, npm = lane_payload_names()
+        self.assertEqual(set(entry.digest_set), set(dist) | set(npm))
         self.assertEqual(
             entry.digest, rd.canonical_digest_of_set(entry.digest_set)
         )
@@ -688,6 +764,7 @@ class AwWorkflowLaneTests(unittest.TestCase):
         api = FakeGithubApi(zip_bytes=zip_bytes)
         lane = rd.AwWorkflowLane(
             reader=rd.GithubArtifactStore(api=api),
+            lane_authority=rd.GithubArtifactDigestAuthority(api=api),
             refs={"aw": rd.LaneRef(
                 artifact=artifact_id_for(api),
                 aw_source_sha="a" * 40,
@@ -702,11 +779,44 @@ class AwWorkflowLaneTests(unittest.TestCase):
             lane.stage(aw_node())
         self.assertIn("caller", str(caught.exception))
 
+    def test_independent_authority_metadata_gates_the_read(self) -> None:
+        """alice's finding: blob retrieval and the expected API digest must
+        be independent capabilities. A wrong independent digest refuses
+        BEFORE bytes are read, even when the reader would return coherent
+        bytes."""
+        zip_bytes = lane_zip()
+        reader_api = FakeGithubApi(zip_bytes=zip_bytes)
+        wrong_meta_api = FakeGithubApi(
+            zip_bytes=zip_bytes, digest="sha256:" + "1" * 64
+        )
+        lane = rd.AwWorkflowLane(
+            reader=rd.GithubArtifactStore(api=reader_api),
+            lane_authority=rd.GithubArtifactDigestAuthority(api=wrong_meta_api),
+            refs={"aw": rd.LaneRef(
+                artifact=artifact_id_for(reader_api),
+                aw_source_sha="a" * 40,
+                zip_digest=f"sha256:{sha256(zip_bytes)}",
+            )},
+            release_fetch=lambda name, version: None,
+            npm_fetch=lambda p, v: None,
+            runs=FakeAwRuns(),
+            waiter=lambda: None,
+        )
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.stage(aw_node())
+        self.assertIn("independent", str(caught.exception))
+        self.assertNotIn(
+            f"repos/awebai/aw/actions/artifacts/{reader_api.artifact_id}/zip",
+            reader_api.calls,
+            "the blob must not be fetched when the authority refuses",
+        )
+
     def test_stage_refuses_a_wrong_lane_source(self) -> None:
         zip_bytes = lane_zip(source_sha="c" * 40)
         api = FakeGithubApi(zip_bytes=zip_bytes)
         lane = rd.AwWorkflowLane(
             reader=rd.GithubArtifactStore(api=api),
+            lane_authority=rd.GithubArtifactDigestAuthority(api=api),
             refs={"aw": rd.LaneRef(
                 artifact=artifact_id_for(api),
                 aw_source_sha="a" * 40,
@@ -849,6 +959,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
         api = FakeGithubApi(zip_bytes=zip_bytes)
         lane = CountingLane(
             reader=rd.GithubArtifactStore(api=api),
+            lane_authority=rd.GithubArtifactDigestAuthority(api=api),
             refs={"aw": rd.LaneRef(
                 artifact=artifact_id_for(api),
                 aw_source_sha="a" * 40,
@@ -950,6 +1061,17 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
         self.assertTrue(ok, why)
         self.assertEqual(receipt.entries["aw"].lane_ref["artifact"],
                          "gh-artifact:awebai/aw:30977506589:8918869285")
+        published_transitions = [
+            json.loads(store3.get(i))
+            for i in authority3.recorded_ids()
+            if i.startswith("transition:") and ":published:" in i
+        ]
+        self.assertTrue(published_transitions)
+        for record in published_transitions:
+            self.assertEqual(
+                record["entry"]["lane_ref"]["aw_source_sha"], "a" * 40
+            )
+            self.assertTrue(record["entry"]["digest_set"])
 
     def test_resume_adopts_exact_remote_state_without_continuation(self) -> None:
         transport = FakeAnchorTransport()
@@ -982,6 +1104,63 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
                          "exact remote state adopts; no continuation")
         self.assertEqual(lane2.stage_calls, 0)
         self.assertEqual(entries["aw"].phase, "verified")
+
+    def test_resume_refuses_a_tampered_published_transition(self) -> None:
+        """A transition claiming publication must match the anchored staged
+        manifest entry exactly; an authentic-but-wrong record refuses."""
+        transport = FakeAnchorTransport()
+        store, authority, lane = self.compose(
+            transport, runs=FakeAwRuns(conclusion="failure"), remote={}
+        )
+        graph, plan, frozen = self.frozen_fixture(store, authority)
+        with self.assertRaises(rd.ReceiptError):
+            rd.run_plan(
+                plan, graph, lane,
+                skew=NoRuntimeSkew(), authority=authority, store=store,
+                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                providers=rd.Providers(store=store, authority=authority),
+            )
+        manifest_id = next(
+            i for i in authority.recorded_ids()
+            if i.startswith("staged-manifest:")
+        )
+        forged = json.dumps({
+            "frozen_plan_id": frozen.frozen_id,
+            "staged_manifest_id": manifest_id,
+            "sequence": 99,
+            "component": "aw",
+            "kind": "published",
+            "entry": {
+                "version": "1.34.3",
+                "digest": "0" * 64,
+                "phase": "published",
+                "pointer_state": None,
+                "delivery_proof": None,
+                "lane_ref": None,
+                "digest_set": {"forged": "0" * 64},
+            },
+        }, sort_keys=True).encode()
+        forged_digest = sha256(forged)
+        forged_id = (
+            f"transition:{frozen.frozen_id}:099:published:aw:{forged_digest}"
+        )
+        rd._put_content_addressed(store, authority, forged_id, forged, forged_digest)
+        runs = FakeAwRuns()
+        remote = remote_state()
+        store2, authority2, lane2 = self.compose(
+            transport, runs=runs, remote=remote
+        )
+        graph2, plan2, frozen2 = self.frozen_fixture(store2, authority2)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.resume_plan(
+                plan2, graph2,
+                lanes=lane2, skew=NoRuntimeSkew(),
+                store=store2, authority=authority2,
+                source_sha="s1", approvals={}, state=None, frozen=frozen2,
+                require_external_authority=True,
+                authority_trust="external-immutable",
+            )
+        self.assertIn("transition", str(caught.exception))
 
     def test_resume_refuses_mismatched_remote_state(self) -> None:
         transport = FakeAnchorTransport()
