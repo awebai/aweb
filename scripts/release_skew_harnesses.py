@@ -57,3 +57,9 @@ from release_channel_pi_skew import (  # noqa: E402
 register("make cli-e2e", CliServerSkewHarness)
 register(CHANNEL_JOURNEY, channel_factory)
 register(PI_JOURNEY, pi_factory)
+
+from release_federation_skew import FederationSkewHarness, JOURNEY
+
+# Historical mutation controls belong to the explicit measurement step, never
+# an ordinary release cell. A fresh stateless child owns exactly one invocation.
+register(JOURNEY, FederationSkewHarness)
