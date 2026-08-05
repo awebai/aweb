@@ -42,6 +42,100 @@ JOURNEY = (
 )
 ARTIFACTS = {"a": "pypi:aweb", "b": "pypi:aweb"}
 PUBLISHED_REGISTRY = "pypi:aweb"
+PYPI_METADATA_URL = "https://pypi.org/pypi/aweb/{version}/json"
+PUBLISHED_REPORT_KEYS = {"kind", "filename", "version", "sha256", "source"}
+PUBLISHED_SOURCE_KEYS = {
+    "kind", "registry", "metadata_url", "download_url", "digest_set",
+    "canonical_set_digest",
+}
+
+
+def expected_wheel_name(version: str) -> str:
+    return f"aweb-{version}-py3-none-any.whl"
+
+
+def expected_sdist_name(version: str) -> str:
+    return f"aweb-{version}.tar.gz"
+
+
+def validate_published_identity(published, *, version: str, label: str) -> dict:
+    """One shared validation of a published actor's COMPLETE identity, used by
+    the aggregate for every report. Nothing here trusts a self-presented
+    report: each field is re-derived from the frozen published version."""
+    if not isinstance(published, dict) or set(published) != PUBLISHED_REPORT_KEYS:
+        present = set(published) if isinstance(published, dict) else set()
+        raise rd.ReceiptError(
+            f"{label}: published report keys are not exactly "
+            f"{sorted(PUBLISHED_REPORT_KEYS)} (missing "
+            f"{sorted(PUBLISHED_REPORT_KEYS - present)}, unexpected "
+            f"{sorted(present - PUBLISHED_REPORT_KEYS)})"
+        )
+    source = published["source"]
+    if not isinstance(source, dict) or set(source) != PUBLISHED_SOURCE_KEYS:
+        present = set(source) if isinstance(source, dict) else set()
+        raise rd.ReceiptError(
+            f"{label}: published source keys are not exactly "
+            f"{sorted(PUBLISHED_SOURCE_KEYS)} (missing "
+            f"{sorted(PUBLISHED_SOURCE_KEYS - present)}, unexpected "
+            f"{sorted(present - PUBLISHED_SOURCE_KEYS)})"
+        )
+    if published["version"] != version:
+        raise rd.ReceiptError(
+            f"{label}: published version {published['version']!r} is not the "
+            f"frozen {version!r}"
+        )
+    wheel_name = expected_wheel_name(version)
+    sdist_name = expected_sdist_name(version)
+    if published["filename"] != wheel_name:
+        raise rd.ReceiptError(
+            f"{label}: published filename {published['filename']!r} is not the "
+            f"exact wheel {wheel_name!r}"
+        )
+    digest_set = source["digest_set"]
+    if not isinstance(digest_set, dict) or set(digest_set) != {
+        wheel_name, sdist_name
+    }:
+        raise rd.ReceiptError(
+            f"{label}: published digest set is not the exact release set "
+            f"{sorted([wheel_name, sdist_name])}"
+        )
+    for name, digest in digest_set.items():
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise rd.ReceiptError(
+                f"{label}: published digest for {name} is not lowercase 64-hex"
+            )
+    if published["sha256"] != digest_set[wheel_name]:
+        raise rd.ReceiptError(
+            f"{label}: published sha256 does not equal the digest-set entry "
+            "for its own wheel"
+        )
+    if source["canonical_set_digest"] != rd.canonical_digest_of_set(digest_set):
+        raise rd.ReceiptError(
+            f"{label}: published canonical scalar does not recompute from its "
+            "digest set"
+        )
+    if source["kind"] != "published" or source["registry"] != PUBLISHED_REGISTRY:
+        raise rd.ReceiptError(
+            f"{label}: published source kind/registry is not the exact "
+            f"published {PUBLISHED_REGISTRY}"
+        )
+    if source["metadata_url"] != PYPI_METADATA_URL.format(version=version):
+        raise rd.ReceiptError(
+            f"{label}: published metadata URL is not the exact PyPI metadata "
+            f"URL for {version}"
+        )
+    parsed = urllib.parse.urlparse(source["download_url"] or "")
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != WheelResolver.PYPI_HOST
+        or bool(parsed.params) or bool(parsed.query) or bool(parsed.fragment)
+        or Path(urllib.parse.unquote(parsed.path)).name != wheel_name
+    ):
+        raise rd.ReceiptError(
+            f"{label}: published download URL is not an exact extras-free "
+            f"{WheelResolver.PYPI_HOST} URL whose basename is {wheel_name!r}"
+        )
+    return published
 
 
 @dataclass(frozen=True)
@@ -242,6 +336,21 @@ class WheelResolver:
         if len(by_type["bdist_wheel"]) != 1 or len(by_type["sdist"]) != 1:
             raise rd.ReceiptError(
                 f"PyPI aweb {version} must bind exactly one wheel and one sdist"
+            )
+        # Filename is bound to package TYPE, not just present in the set:
+        # swapping only the two packagetype values would otherwise select and
+        # fetch the sdist as the wheel.
+        wheel_name = expected_wheel_name(version)
+        sdist_name = expected_sdist_name(version)
+        if (
+            by_type["bdist_wheel"][0]["filename"] != wheel_name
+            or by_type["sdist"][0]["filename"] != sdist_name
+        ):
+            raise rd.ReceiptError(
+                f"PyPI aweb {version} package types do not bind their exact "
+                f"filenames: bdist_wheel is "
+                f"{by_type['bdist_wheel'][0]['filename']!r}, sdist is "
+                f"{by_type['sdist'][0]['filename']!r}"
             )
         item = by_type["bdist_wheel"][0]
         filename = item["filename"]
@@ -1148,7 +1257,7 @@ def aggregate_support(matrix_path: Path) -> dict:
     report_digests = []
     candidate_identities = {}
     dependency_postures: set[str] = set()
-    published_identities: dict[tuple, dict] = {}
+    published_identities: dict[str, dict] = {}
     for name, cell in expected.items():
         report_bytes = actual[name].read_bytes()
         report = json.loads(report_bytes)
@@ -1195,43 +1304,20 @@ def aggregate_support(matrix_path: Path) -> dict:
             or published.get("version") != cell.b.get("version")
         ):
             raise rd.ReceiptError(f"{name}: published actor is not the frozen side")
-        # The published actor's COMPLETE identity is re-validated, not just its
-        # kind and version: a self-presented report can recompute its own
-        # report_id, so an unrevalidated filename/sha/registry/digest set would
-        # let unrelated bytes be presented as the measured published side.
-        source = published.get("source") or {}
-        digest_set = source.get("digest_set")
-        filename = published.get("filename")
-        if (
-            source.get("kind") != "published"
-            or source.get("registry") != PUBLISHED_REGISTRY
-            or not isinstance(digest_set, dict) or not digest_set
-            or not isinstance(filename, str) or not filename
-            or filename not in digest_set
-            or not isinstance(published.get("sha256"), str)
-            or published["sha256"] != digest_set[filename]
-            or source.get("canonical_set_digest")
-            != rd.canonical_digest_of_set(digest_set)
-        ):
-            raise rd.ReceiptError(
-                f"{name}: published identity does not revalidate (registry, "
-                "exact filename, sha, complete digest set, canonical scalar)"
-            )
-        expected_names = {
-            f"aweb-{published['version']}-py3-none-any.whl",
-            f"aweb-{published['version']}.tar.gz",
-        }
-        if set(digest_set) != expected_names:
-            raise rd.ReceiptError(
-                f"{name}: published digest set {sorted(digest_set)} is not the "
-                f"exact release set {sorted(expected_names)}"
-            )
+        # One shared validation of the COMPLETE published identity, re-derived
+        # from the FROZEN published version rather than from anything the
+        # report presents about itself.
+        frozen_version = cell.b.get("version")
+        validate_published_identity(
+            published, version=frozen_version, label=name)
+        # Keyed by the frozen version ALONE: keying by (version, sha) would let
+        # a tampered sha open a second key and escape the consistency check.
         prior_published = published_identities.setdefault(
-            (published["version"], published["sha256"]), published)
+            frozen_version, published)
         if prior_published != published:
             raise rd.ReceiptError(
-                f"{name}: published identity differs across cells for the same "
-                "exact version"
+                f"{name}: published identity for frozen version "
+                f"{frozen_version} differs across directional cells"
             )
         expected_focal = "candidate" if cell.direction == "b-to-a" else "published"
         if (
@@ -1271,6 +1357,13 @@ def aggregate_support(matrix_path: Path) -> dict:
         "supported_versions": preimage["support"]["supported_versions"],
         "published_versions": preimage["published_versions"],
         "candidate": next(iter(candidate_identities.values())),
+        # Canonically ordered so measurement_id binds these exact bytes: the
+        # published actors are part of what the measurement asserts, not
+        # incidental context.
+        "published_identities": [
+            published_identities[version]
+            for version in sorted(published_identities)
+        ],
         "reports": report_digests,
     }
     measurement["measurement_id"] = rd.canonical_json_digest(measurement)
