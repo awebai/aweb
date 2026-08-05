@@ -743,7 +743,7 @@ class NackCorrectionControlTests(unittest.TestCase):
         index = json.dumps({
             "schema": archive.ReviewedMainIndexAuthority.INDEX_SCHEMA,
             "entries": [entry],
-        }).encode()
+        }, sort_keys=True, separators=(",", ":")).encode()
 
         class FakeGit:
             def ls_remote(self, ref):
@@ -762,7 +762,7 @@ class NackCorrectionControlTests(unittest.TestCase):
         validate = archive.semantic_validator()
         manifest = {"kind": "anchor-artifact", "logical_id": "x",
                     "source_digest": "a" * 64}
-        with self.assertRaisesRegex(rd.ReceiptError, "release-anchor"):
+        with self.assertRaisesRegex(rd.ReceiptError, "not a valid ZIP"):
             validate(b"not a zip", manifest)
 
     def test_semantic_validator_refuses_unknown_kind(self):
@@ -827,6 +827,258 @@ class NackCorrectionControlTests(unittest.TestCase):
             self.assertEqual(sha256(out.read_bytes()), sha256(encoded))
             with self.assertRaisesRegex(rd.ReceiptError, "overwrite"):
                 archive._atomic_write_bytes(out, encoded)
+
+
+class SemanticValidatorRoundTwoTests(unittest.TestCase):
+    """Alice's .9 round-2 blocker 1: the validator must accept a REAL valid
+    anchor bundle (outer ZIP digest and inner body digest are different
+    identities by design) and must truly reproduce a workflow bundle."""
+
+    @staticmethod
+    def real_anchor(logical_id="receipt:plan:1", body=b"sealed-inner-body"):
+        import io
+        import zipfile
+
+        digest = sha256(body)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("record.json", json.dumps(
+                {"logical_id": logical_id, "digest": digest}))
+            z.writestr("body", body)
+        outer = buf.getvalue()
+        manifest = {
+            "schema": archive.MANIFEST_SCHEMA,
+            "logical_id": logical_id,
+            "kind": "anchor-artifact",
+            "source": dict(SOURCE, anchor=rd._anchor_name(logical_id, digest)),
+            "source_digest": sha256(outer),   # OUTER ZIP digest, by design
+            "body_sha256": sha256(outer),
+        }
+        return outer, manifest, digest
+
+    def test_valid_real_anchor_bundle_is_accepted(self):
+        outer, manifest, _ = self.real_anchor()
+        archive.semantic_validator()(outer, manifest)
+
+    def test_inner_body_digest_mismatch_refuses(self):
+        import io
+        import zipfile
+
+        body = b"sealed-inner-body"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("record.json", json.dumps(
+                {"logical_id": "receipt:plan:1", "digest": sha256(b"other")}))
+            z.writestr("body", body)
+        outer = buf.getvalue()
+        manifest = {
+            "schema": archive.MANIFEST_SCHEMA, "logical_id": "receipt:plan:1",
+            "kind": "anchor-artifact",
+            "source": dict(SOURCE, anchor=rd._anchor_name(
+                "receipt:plan:1", sha256(b"other"))),
+            "source_digest": sha256(outer), "body_sha256": sha256(outer),
+        }
+        with self.assertRaisesRegex(rd.ReceiptError, "inner body"):
+            archive.semantic_validator()(outer, manifest)
+
+    def test_anchor_name_not_derived_from_logical_id_refuses(self):
+        outer, manifest, digest = self.real_anchor()
+        manifest = dict(manifest, source=dict(
+            manifest["source"], anchor=rd._anchor_name("other:id", digest)))
+        with self.assertRaisesRegex(rd.ReceiptError, "anchor name"):
+            archive.semantic_validator()(outer, manifest)
+
+    def test_record_logical_id_mismatch_refuses(self):
+        outer, manifest, _ = self.real_anchor(logical_id="receipt:plan:1")
+        manifest = dict(manifest, logical_id="receipt:other")
+        with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+            archive.semantic_validator()(outer, manifest)
+
+
+class WorkflowBundleValidatorTests(unittest.TestCase):
+    """A complete workflow bundle must be reproduced member by member, and
+    every member type must actually be validated - including transitions."""
+
+    @staticmethod
+    def transition_doc():
+        return {
+            "frozen_plan_id": "f" * 64,
+            "staged_manifest_id": "sha256:" + "e" * 64,
+            "sequence": 1,
+            "component": "channel",
+            "kind": "published",
+            "entry": {
+                "version": "1.7.2", "digest": "d" * 64, "phase": "published",
+                "pointer_state": None, "delivery_proof": None,
+                "lane_ref": None, "digest_set": {"x.tgz": "a" * 64},
+            },
+        }
+
+    def bundle(self, *, members=None, tamper=None, extra=None, drop=None):
+        import io
+        import zipfile
+
+        transition = json.dumps(self.transition_doc(), sort_keys=True).encode()
+        payloads = members or {"transition-001.json": ("transition", transition)}
+        record_members = []
+        for name, (mtype, data) in payloads.items():
+            record_members.append({
+                "name": name, "type": mtype,
+                "logical_id": f"logical:{name}",
+                "digest": sha256(data),
+            })
+        record = {"schema": archive.BUNDLE_SCHEMA,
+                  "logical_id": "receipt:plan:1",
+                  "members": record_members}
+        if tamper:
+            record = tamper(record)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("archive-bundle.json", json.dumps(record))
+            for name, (_, data) in payloads.items():
+                if drop and name == drop:
+                    continue
+                z.writestr(name, data)
+            if extra:
+                z.writestr(extra, b"unexpected")
+        manifest = {
+            "schema": archive.MANIFEST_SCHEMA, "logical_id": "receipt:plan:1",
+            "kind": "workflow-artifact",
+            "source": {k: v for k, v in SOURCE.items() if k != "anchor"},
+            "source_digest": "c" * 64, "body_sha256": "c" * 64,
+        }
+        return buf.getvalue(), manifest
+
+    def test_complete_bundle_with_transition_validates(self):
+        body, manifest = self.bundle()
+        archive.semantic_validator()(body, manifest)
+
+    def test_corrupt_transition_refuses(self):
+        bad = dict(self.transition_doc())
+        bad.pop("entry")
+        data = json.dumps(bad, sort_keys=True).encode()
+        body, manifest = self.bundle(
+            members={"transition-001.json": ("transition", data)})
+        with self.assertRaisesRegex(rd.ReceiptError, "transition document"):
+            archive.semantic_validator()(body, manifest)
+
+    def test_missing_declared_member_refuses(self):
+        body, manifest = self.bundle(drop="transition-001.json")
+        with self.assertRaisesRegex(rd.ReceiptError, "missing"):
+            archive.semantic_validator()(body, manifest)
+
+    def test_extra_undeclared_member_refuses(self):
+        body, manifest = self.bundle(extra="stowaway.json")
+        with self.assertRaisesRegex(rd.ReceiptError, "unexpected"):
+            archive.semantic_validator()(body, manifest)
+
+    def test_swapped_member_digest_refuses(self):
+        def tamper(record):
+            record["members"][0]["digest"] = "b" * 64
+            return record
+        body, manifest = self.bundle(tamper=tamper)
+        with self.assertRaisesRegex(rd.ReceiptError, "hashes"):
+            archive.semantic_validator()(body, manifest)
+
+    def test_missing_bundle_record_refuses(self):
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("receipt.json", b"{}")
+        manifest = {
+            "schema": archive.MANIFEST_SCHEMA, "logical_id": "receipt:plan:1",
+            "kind": "workflow-artifact",
+            "source": {k: v for k, v in SOURCE.items() if k != "anchor"},
+            "source_digest": "c" * 64, "body_sha256": "c" * 64,
+        }
+        with self.assertRaisesRegex(rd.ReceiptError, "archive-bundle.json"):
+            archive.semantic_validator()(buf.getvalue(), manifest)
+
+    def test_bundle_logical_id_must_equal_manifest(self):
+        def tamper(record):
+            record["logical_id"] = "receipt:other"
+            return record
+        body, manifest = self.bundle(tamper=tamper)
+        with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+            archive.semantic_validator()(body, manifest)
+
+
+class ReviewedIndexRoundTwoTests(unittest.TestCase):
+    """Alice's .9 round-2 blocker 2: index completeness is enforced, not
+    claimed."""
+
+    def authority(self, document_bytes):
+        class FakeGit:
+            def ls_remote(self, ref):
+                return "b" * 40
+            def is_ancestor(self, a, d):
+                return True
+            def file_at(self, commit, path):
+                return document_bytes
+        return archive.ReviewedMainIndexAuthority(
+            remote="https://github.com/awebai/aweb.git",
+            reviewed_commit="a" * 40, git=FakeGit())
+
+    def valid_entry(self, logical_id="receipt:plan:1"):
+        store, auth, transport = fresh_env()
+        return do_archive(store, auth, transport, logical_id=logical_id)
+
+    def canonical_index(self, entries):
+        return json.dumps({
+            "schema": archive.ReviewedMainIndexAuthority.INDEX_SCHEMA,
+            "entries": entries,
+        }, sort_keys=True, separators=(",", ":")).encode()
+
+    def test_noncanonical_index_bytes_refuse(self):
+        entry = self.valid_entry()
+        pretty = json.dumps({
+            "schema": archive.ReviewedMainIndexAuthority.INDEX_SCHEMA,
+            "entries": [entry]}, indent=2).encode()
+        with self.assertRaisesRegex(rd.ReceiptError, "canonical"):
+            self.authority(pretty).lookup(entry["logical_id"])
+
+    def test_extra_top_level_key_refuses(self):
+        entry = self.valid_entry()
+        doc = json.dumps({
+            "schema": archive.ReviewedMainIndexAuthority.INDEX_SCHEMA,
+            "entries": [entry], "extra": 1},
+            sort_keys=True, separators=(",", ":")).encode()
+        with self.assertRaisesRegex(rd.ReceiptError, "schema|keys"):
+            self.authority(doc).lookup(entry["logical_id"])
+
+    def test_malformed_unrelated_entry_refuses(self):
+        entry = self.valid_entry()
+        doc = self.canonical_index([entry, {"logical_id": "junk"}])
+        with self.assertRaisesRegex(rd.ReceiptError, "index entry"):
+            self.authority(doc).lookup(entry["logical_id"])
+
+    def test_global_duplicate_logical_ids_refuse(self):
+        entry = self.valid_entry()
+        doc = self.canonical_index([entry, dict(entry)])
+        with self.assertRaisesRegex(rd.ReceiptError, "more than once|duplicate"):
+            self.authority(doc).lookup(entry["logical_id"])
+
+    def test_valid_canonical_index_returns_entry(self):
+        entry = self.valid_entry()
+        doc = self.canonical_index([entry])
+        self.assertEqual(self.authority(doc).lookup(entry["logical_id"]), entry)
+
+    def test_established_ssh_remote_is_production(self):
+        transport = archive.GitBranchArchive(
+            remote="ssh://git@ssh.github.com:443/awebai/aweb.git",
+            branch="release-receipts")
+        self.addCleanup(transport.close)
+        self.assertEqual(transport.trust_class, "durable-byte-store")
+
+    def test_atomic_write_refuses_preexisting_part_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "x.json"
+            part = Path(tmp) / "x.json.part"
+            part.write_bytes(b"squatted")
+            with self.assertRaisesRegex(rd.ReceiptError, "temporary|exists"):
+                archive._atomic_write_bytes(out, b"data")
 
 
 class GateTests(unittest.TestCase):

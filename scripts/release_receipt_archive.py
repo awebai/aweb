@@ -49,6 +49,10 @@ from release_driver import ReceiptError
 
 INDEX_ENTRY_SCHEMA = "aweb.release-archive-index-entry.v1"
 MANIFEST_SCHEMA = "aweb.release-archive-manifest.v1"
+BUNDLE_SCHEMA = "aweb.release-archive-bundle.v1"
+BUNDLE_MEMBER_TYPES = (
+    "frozen-plan", "sealed-receipt", "staged-manifest", "transition",
+)
 PRODUCTION_TRUST_CLASSES = ("durable-byte-store",)
 MAX_IDENTITY_LENGTH = 200
 
@@ -73,6 +77,8 @@ _BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./-]{0,62}")
 PRODUCTION_REMOTES = (
     "https://github.com/awebai/aweb.git",
     "git@github.com:awebai/aweb.git",
+    # The transport this repository actually pushes with.
+    "ssh://git@ssh.github.com:443/awebai/aweb.git",
 )
 PRODUCTION_BRANCH = "release-receipts"
 
@@ -534,11 +540,26 @@ class ReviewedMainIndexAuthority:
             raise ReceiptError("reviewed index blob is malformed") from exc
         if (
             not isinstance(document, dict)
+            or set(document) != {"schema", "entries"}
             or document.get("schema") != self.INDEX_SCHEMA
             or not isinstance(document.get("entries"), list)
         ):
-            raise ReceiptError("reviewed index has the wrong top-level schema")
-        return document["entries"]
+            raise ReceiptError(
+                "reviewed index has the wrong top-level schema or keys"
+            )
+        if blob != _canonical(document):
+            raise ReceiptError("reviewed index blob is not canonical bytes")
+        entries = [_validate_entry(entry) for entry in document["entries"]]
+        seen: set[str] = set()
+        for entry in entries:
+            logical = entry["logical_id"]
+            if logical in seen:
+                raise ReceiptError(
+                    f"reviewed index records logical id {logical!r} more than "
+                    "once; refusing ambiguity"
+                )
+            seen.add(logical)
+        return entries
 
     def lookup(self, logical_id: str) -> dict | None:
         matches = [
@@ -599,6 +620,10 @@ class _GitReader:
 
     def close(self) -> None:
         shutil.rmtree(self._root, ignore_errors=True)
+        if self._root.exists():
+            raise ReceiptError(
+                f"reviewed-index temporary root remains: {self._root}"
+            )
 
 
 class GitBranchArchive:
@@ -773,74 +798,146 @@ class GitBranchArchive:
 
 def semantic_validator(providers=None):
     """Production semantic validator: parses the sealed body per kind and
-    re-runs the EXISTING release-driver loaders/validators, not a membership
-    check. A corrupted-but-hash-consistent bundle whose semantics are invalid
-    is refused here even though its digests recompute."""
+    re-runs the EXISTING release-driver loaders/validators.
+
+    Digest identities are kept distinct by construction: manifest.source_digest
+    is the OUTER artifact digest recorded by the archive, while an anchor's
+    record.json carries the INNER body digest. They are different identities
+    and are never compared to each other; each is checked against the thing it
+    actually identifies.
+    """
+    import io
+    import zipfile
+
     import release_driver as rd
+
+    def _members(body: bytes, label: str) -> dict[str, bytes]:
+        try:
+            with zipfile.ZipFile(io.BytesIO(body)) as archive_zip:
+                names = archive_zip.namelist()
+                if len(names) != len(set(names)):
+                    raise ReceiptError(f"{label} contains duplicate ZIP names")
+                return {name: archive_zip.read(name) for name in names}
+        except zipfile.BadZipFile as exc:
+            raise ReceiptError(f"{label} is not a valid ZIP") from exc
+
+    def _anchor(body: bytes, manifest: dict) -> None:
+        members = _members(body, "archived anchor body")
+        missing = {"record.json", "body"} - set(members)
+        extra = set(members) - {"record.json", "body"}
+        if missing or extra:
+            raise ReceiptError(
+                f"archived anchor bundle members are wrong: missing "
+                f"{sorted(missing)}, unexpected {sorted(extra)}"
+            )
+        try:
+            record = json.loads(members["record.json"])
+        except json.JSONDecodeError as exc:
+            raise ReceiptError("archived anchor record.json is malformed") from exc
+        if set(record) != {"logical_id", "digest"}:
+            raise ReceiptError(
+                "archived anchor record.json does not carry exactly "
+                "logical_id and digest"
+            )
+        inner_digest = _sha256(members["body"])
+        if inner_digest != record["digest"]:
+            raise ReceiptError(
+                f"archived anchor inner body hashes {inner_digest}, not the "
+                f"recorded {record['digest']}"
+            )
+        if record["logical_id"] != manifest["logical_id"]:
+            raise ReceiptError(
+                "archived anchor record logical id does not equal the "
+                "manifest logical id"
+            )
+        expected_name = rd._anchor_name(record["logical_id"], record["digest"])
+        if manifest["source"].get("anchor") != expected_name:
+            raise ReceiptError(
+                "archived anchor name is not derived from the exact logical "
+                f"id and inner digest (expected {expected_name})"
+            )
+
+    def _workflow(body: bytes, manifest: dict) -> None:
+        members = _members(body, "archived workflow-artifact body")
+        record_bytes = members.get("archive-bundle.json")
+        if record_bytes is None:
+            raise ReceiptError(
+                "archived workflow-artifact carries no archive-bundle.json "
+                "binding its exact members"
+            )
+        try:
+            record = json.loads(record_bytes)
+        except json.JSONDecodeError as exc:
+            raise ReceiptError("archive-bundle.json is malformed") from exc
+        if (
+            not isinstance(record, dict)
+            or set(record) != {"schema", "logical_id", "members"}
+            or record["schema"] != BUNDLE_SCHEMA
+            or record["logical_id"] != manifest["logical_id"]
+            or not isinstance(record["members"], list)
+            or not record["members"]
+        ):
+            raise ReceiptError(
+                "archive-bundle.json does not bind this bundle's exact "
+                "schema, logical id, and nonempty member list"
+            )
+        declared: dict[str, dict] = {}
+        for member in record["members"]:
+            if (
+                not isinstance(member, dict)
+                or set(member) != {"name", "type", "logical_id", "digest"}
+                or not isinstance(member["name"], str)
+                or member["type"] not in BUNDLE_MEMBER_TYPES
+                or not _HEX64.fullmatch(str(member["digest"]))
+            ):
+                raise ReceiptError(
+                    "archive-bundle.json member entry is malformed"
+                )
+            if member["name"] in declared:
+                raise ReceiptError(
+                    f"archive-bundle.json declares {member['name']} twice"
+                )
+            declared[member["name"]] = member
+        present = set(members) - {"archive-bundle.json"}
+        if present != set(declared):
+            raise ReceiptError(
+                "archived bundle members do not equal the declared set: "
+                f"missing {sorted(set(declared) - present)}, unexpected "
+                f"{sorted(present - set(declared))}"
+            )
+        for name, member in declared.items():
+            data = members[name]
+            actual = _sha256(data)
+            if actual != member["digest"]:
+                raise ReceiptError(
+                    f"archived bundle member {name} hashes {actual}, not the "
+                    f"declared {member['digest']}"
+                )
+            kind_of_member = member["type"]
+            if kind_of_member == "frozen-plan":
+                rd.load_frozen_plan(data, expected_id=member["logical_id"])
+            elif kind_of_member == "sealed-receipt":
+                rd.load_sealed_receipt(
+                    data, expected_digest=member["digest"])
+            elif kind_of_member == "staged-manifest":
+                loaded = rd.load_staged_manifest(
+                    data, expected_digest=member["digest"])
+                rd.validate_staged_manifest(loaded)
+            elif kind_of_member == "transition":
+                try:
+                    document = json.loads(data)
+                except json.JSONDecodeError as exc:
+                    raise ReceiptError(
+                        f"archived transition {name} is not valid JSON"
+                    ) from exc
+                rd.validate_transition_document(document)
 
     def validate(body: bytes, manifest: dict) -> None:
         kind = manifest.get("kind")
         if kind == "anchor-artifact":
-            # The anchor body is the exact release-anchor ZIP; its record.json
-            # binds a logical id and a body digest, and the archived manifest's
-            # source_digest is that verified anchor digest.
-            import io
-            import zipfile
-
-            try:
-                with zipfile.ZipFile(io.BytesIO(body)) as archive:
-                    record = json.loads(archive.read("record.json"))
-                    inner = archive.read("body")
-            except (zipfile.BadZipFile, KeyError, json.JSONDecodeError) as exc:
-                raise ReceiptError(
-                    "archived anchor body is not a valid release-anchor "
-                    "bundle"
-                ) from exc
-            if _sha256(inner) != record.get("digest"):
-                raise ReceiptError(
-                    "archived anchor inner body does not hash to its recorded "
-                    "digest"
-                )
-            if record.get("logical_id") != manifest.get("logical_id"):
-                raise ReceiptError(
-                    "archived anchor record logical id does not equal the "
-                    "manifest logical id"
-                )
-            if record.get("digest") != manifest.get("source_digest"):
-                raise ReceiptError(
-                    "archived anchor digest does not equal the manifest "
-                    "source_digest"
-                )
+            _anchor(body, manifest)
         elif kind == "workflow-artifact":
-            # A workflow-artifact archives a sealed plan/receipt/manifest bundle
-            # ZIP; re-run the matching loader so a semantically corrupt bundle
-            # is refused after byte verification.
-            import io
-            import zipfile
-
-            try:
-                with zipfile.ZipFile(io.BytesIO(body)) as archive:
-                    names = set(archive.namelist())
-                    reader = {n: archive.read(n) for n in names}
-            except zipfile.BadZipFile as exc:
-                raise ReceiptError(
-                    "archived workflow-artifact body is not a valid ZIP"
-                ) from exc
-            if "receipt.json" in reader:
-                rd.load_sealed_receipt(
-                    reader["receipt.json"],
-                    expected_digest=_sha256(reader["receipt.json"]))
-            elif "plan.json" in reader:
-                plan_bytes = reader["plan.json"]
-                rd.load_frozen_plan(
-                    plan_bytes, expected_id=_sha256(plan_bytes))
-            elif "manifest.json" in reader:
-                rd.validate_staged_manifest(json.loads(reader["manifest.json"]))
-            else:
-                raise ReceiptError(
-                    "archived workflow-artifact bundle carries no recognized "
-                    "sealed document (receipt.json/plan.json/manifest.json)"
-                )
+            _workflow(body, manifest)
         else:
             raise ReceiptError(
                 f"no semantic validator is defined for archive kind {kind!r}"
@@ -850,10 +947,23 @@ def semantic_validator(providers=None):
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
-    if path.exists():
+    """Exclusive create of both the temporary and final paths: a pre-existing
+    output OR a squatted .part path (possibly a symlink pointing elsewhere)
+    refuses instead of being followed."""
+    if path.exists() or path.is_symlink():
         raise ReceiptError(f"refusing to overwrite existing output {path}")
     tmp = path.with_suffix(path.suffix + ".part")
-    tmp.write_bytes(data)
+    if tmp.exists() or tmp.is_symlink():
+        raise ReceiptError(
+            f"refusing to write through pre-existing temporary path {tmp}"
+        )
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+    except BaseException:
+        os.unlink(tmp)
+        raise
     os.replace(tmp, path)
 
 
