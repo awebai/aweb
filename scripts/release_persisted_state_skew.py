@@ -15,11 +15,14 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
 import tempfile
 import time
+import tomllib
+import urllib.parse
 import urllib.request
 import uuid
 import zipfile
@@ -35,6 +38,8 @@ JOURNEY = (
     "rollout is non-atomic"
 )
 ARTIFACTS = {"a": "pypi:aweb", "b": "pypi:aweb"}
+MCP_VERSION = "1.26.0"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @dataclass(frozen=True)
@@ -49,6 +54,57 @@ class WheelIdentity:
 def _url_bytes(url: str) -> bytes:
     with urllib.request.urlopen(url, timeout=60) as response:
         return response.read()
+
+
+def _safe_pypi_filename(value, version: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or Path(value).name != value
+        or "/" in value
+        or "\\" in value
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", value)
+    ):
+        raise rd.ReceiptError(
+            f"PyPI aweb {version} carries unsafe artifact filename {value!r}"
+        )
+    return value
+
+
+def _validate_pypi_record(record, version: str) -> tuple[str, str]:
+    if not isinstance(record, dict):
+        raise rd.ReceiptError(
+            f"PyPI aweb {version} has malformed release file metadata"
+        )
+    filename = _safe_pypi_filename(record.get("filename"), version)
+    if record.get("packagetype") not in {"bdist_wheel", "sdist"}:
+        raise rd.ReceiptError(
+            f"PyPI aweb {version}/{filename} has unsupported package type"
+        )
+    if record.get("yanked") is not False:
+        raise rd.ReceiptError(
+            f"PyPI aweb {version}/{filename} is yanked or ambiguous"
+        )
+    digests = record.get("digests")
+    digest = digests.get("sha256") if isinstance(digests, dict) else ""
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise rd.ReceiptError(
+            f"PyPI aweb {version}/{filename} has no SHA-256 metadata"
+        )
+    url = record.get("url")
+    parsed = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+    if (
+        parsed is None
+        or parsed.scheme != "https"
+        or parsed.netloc != "files.pythonhosted.org"
+        or parsed.query
+        or parsed.fragment
+        or Path(urllib.parse.unquote(parsed.path)).name != filename
+    ):
+        raise rd.ReceiptError(
+            f"PyPI aweb {version}/{filename} has unsafe or mismatched URL {url!r}"
+        )
+    return filename, digest
 
 
 class WheelResolver:
@@ -164,26 +220,58 @@ class WheelResolver:
             raise rd.ReceiptError(
                 f"PyPI metadata for aweb {version} is not valid JSON"
             ) from exc
-        wheels = [
-            item for item in metadata.get("urls", [])
-            if item.get("packagetype") == "bdist_wheel"
-        ]
-        if len(wheels) != 1:
+        if not isinstance(metadata, dict):
+            raise rd.ReceiptError(f"PyPI has no metadata for aweb {version}")
+        info = metadata.get("info")
+        info_version = info.get("version") if isinstance(info, dict) else None
+        if info_version != version:
             raise rd.ReceiptError(
-                f"PyPI aweb {version} exposes {len(wheels)} wheels, expected one"
+                f"PyPI metadata info.version {info_version!r} is not requested {version!r}"
+            )
+        records = metadata.get("urls")
+        if not isinstance(records, list) or not records:
+            raise rd.ReceiptError(f"PyPI aweb {version} release file set is empty")
+        registry_set = {}
+        by_type = {}
+        for record in records:
+            filename, digest = _validate_pypi_record(record, version)
+            if filename in registry_set:
+                raise rd.ReceiptError(
+                    f"PyPI aweb {version} repeats release filename {filename}"
+                )
+            registry_set[filename] = digest
+            by_type.setdefault(record["packagetype"], []).append(record)
+        expected_names = {
+            f"aweb-{version}-py3-none-any.whl",
+            f"aweb-{version}.tar.gz",
+        }
+        if set(registry_set) != expected_names or set(by_type) != {
+            "bdist_wheel", "sdist"
+        }:
+            raise rd.ReceiptError(
+                f"PyPI aweb {version} release file set is not exact: "
+                f"got {sorted(registry_set)}, expected {sorted(expected_names)}"
+            )
+        wheels = by_type["bdist_wheel"]
+        sdists = by_type["sdist"]
+        if (
+            len(wheels) != 1
+            or wheels[0]["filename"] != f"aweb-{version}-py3-none-any.whl"
+            or len(sdists) != 1
+            or sdists[0]["filename"] != f"aweb-{version}.tar.gz"
+        ):
+            raise rd.ReceiptError(
+                f"PyPI aweb {version} release file set has the wrong types"
             )
         item = wheels[0]
-        expected = (item.get("digests") or {}).get("sha256")
-        if not isinstance(expected, str) or len(expected) != 64:
-            raise rd.ReceiptError(
-                f"PyPI aweb {version} wheel has no SHA-256 metadata"
-            )
+        expected = registry_set[item["filename"]]
         body = self._pypi_fetch(item["url"])
         actual = hashlib.sha256(body).hexdigest()
         if actual != expected:
             raise rd.ReceiptError(
                 f"published wheel hash {actual} does not equal PyPI's {expected}"
             )
+        registry_set = dict(sorted(registry_set.items()))
         return WheelIdentity(
             filename=item["filename"],
             version=version,
@@ -194,8 +282,72 @@ class WheelResolver:
                 "registry": "pypi:aweb",
                 "metadata_url": metadata_url,
                 "download_url": item["url"],
+                "registry_digest_set": registry_set,
+                "registry_set_digest": rd.canonical_digest_of_set(registry_set),
+                "payload_sha256": actual,
             },
         )
+
+
+def _validate_runtime_proofs(proofs, expected_wheels) -> tuple[list[dict], dict]:
+    expected_keys = {
+        "sequence", "wheel_sha256", "wheel_version",
+        "installed_distributions", "installed_distributions_sha256",
+    }
+    if not isinstance(proofs, list) or len(proofs) != len(expected_wheels):
+        raise rd.ReceiptError(
+            "persisted-state runtime evidence does not cover every server start"
+        )
+    normalized = []
+    dependency_inventories = {}
+    for sequence, (proof, wheel) in enumerate(zip(proofs, expected_wheels), 1):
+        if not isinstance(proof, dict) or set(proof) != expected_keys:
+            raise rd.ReceiptError(
+                f"persisted-state runtime proof has the wrong shape: {proof!r}"
+            )
+        inventory = proof.get("installed_distributions")
+        valid_inventory = (
+            isinstance(inventory, dict)
+            and bool(inventory)
+            and all(
+                isinstance(name, str)
+                and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name)
+                and isinstance(version, str)
+                and bool(version)
+                for name, version in inventory.items()
+            )
+        )
+        inventory_digest = (
+            rd.canonical_json_digest(inventory) if valid_inventory else ""
+        )
+        wheel_version, wheel_sha256 = wheel
+        if (
+            proof.get("sequence") != sequence
+            or proof.get("wheel_version") != wheel_version
+            or proof.get("wheel_sha256") != wheel_sha256
+            or not re.fullmatch(r"[0-9a-f]{64}", str(wheel_sha256))
+            or not valid_inventory
+            or inventory.get("aweb") != wheel_version
+            or inventory.get("mcp") != MCP_VERSION
+            or proof.get("installed_distributions_sha256") != inventory_digest
+        ):
+            raise rd.ReceiptError(
+                "persisted-state runtime proof does not bind the exact "
+                f"wheel and installed distributions: {proof!r}"
+            )
+        dependencies = {
+            name: version for name, version in inventory.items()
+            if name != "aweb"
+        }
+        dependency_digest = rd.canonical_json_digest(dependencies)
+        dependency_inventories.setdefault(dependency_digest, dependencies)
+        normalized.append(dict(proof))
+    if len(dependency_inventories) != 1:
+        raise rd.ReceiptError(
+            "persisted-state runtimes differ in dependency resolution beyond "
+            f"the aweb wheel: {dependency_inventories!r}"
+        )
+    return normalized, next(iter(dependency_inventories.values()))
 
 
 class PersistedStateHarness:
@@ -218,6 +370,7 @@ class PersistedStateHarness:
         self._matrix: dict | None = None
         self._cells: dict[str, rd.SkewCell] = {}
         self._control_path: Path | None = None
+        self._dependency_inventory: dict | None = None
 
     def _new_journey(self):
         if self._fixed_journey is not None:
@@ -285,6 +438,24 @@ class PersistedStateHarness:
             )
         return cell_id
 
+    def _runtime_evidence(self, journey, wheels) -> list[dict]:
+        getter = getattr(journey, "runtime_proofs", None)
+        if getter is None:
+            raise rd.ReceiptError(
+                "persisted-state journey produced no installed-distribution evidence"
+            )
+        proofs, dependencies = _validate_runtime_proofs(
+            getter(), [(wheel.version, wheel.sha256) for wheel in wheels]
+        )
+        if self._dependency_inventory is None:
+            self._dependency_inventory = dependencies
+        elif dependencies != self._dependency_inventory:
+            raise rd.ReceiptError(
+                "persisted-state cells/control differ in dependency resolution "
+                "beyond the aweb wheel"
+            )
+        return proofs
+
     def _cleanup(self, journey, operation_error=None) -> dict:
         try:
             cleanup = journey.close()
@@ -334,6 +505,9 @@ class PersistedStateHarness:
                 else:
                     journey.published_after_upgrade(server, cell)
             after_published = journey.database_identity(database)
+            runtime_proofs = self._runtime_evidence(
+                journey, [published, candidate, published]
+            )
 
             report = {
                 "schema": "aweb.persisted-state-skew-cell.v2",
@@ -349,6 +523,7 @@ class PersistedStateHarness:
                 "database_seeded": seeded,
                 "database_after_candidate": after_candidate,
                 "database_after_published": after_published,
+                "runtime_proofs": runtime_proofs,
                 "result": "green",
             }
         except Exception as exc:
@@ -414,6 +589,9 @@ class PersistedStateHarness:
                     "known-breaking messages.subject control stayed green"
                 )
             causal = journey.assert_causal_mail_failure(failure)
+            runtime_proofs = self._runtime_evidence(
+                journey, [published, candidate, candidate, candidate]
+            )
             report = {
                 "schema": "aweb.persisted-state-skew-control.v1",
                 "matrix_id": self._matrix["matrix_id"],
@@ -422,6 +600,7 @@ class PersistedStateHarness:
                 "baseline": baseline,
                 "mutation": "ALTER TABLE aweb.messages DROP COLUMN subject",
                 "causal_signal": causal,
+                "runtime_proofs": runtime_proofs,
                 "result": "red-as-required",
             }
         except Exception as exc:
@@ -458,6 +637,27 @@ def server_command(venv: Path, port: int) -> list[str]:
     ]
 
 
+def locked_mcp_version() -> str:
+    with (REPO_ROOT / "server" / "uv.lock").open("rb") as stream:
+        packages = tomllib.load(stream).get("package", [])
+    versions = [
+        package.get("version") for package in packages
+        if package.get("name") == "mcp"
+    ]
+    if versions != [MCP_VERSION]:
+        raise rd.ReceiptError(
+            f"server/uv.lock must bind mcp {MCP_VERSION}, found {versions!r}"
+        )
+    return versions[0]
+
+
+def runtime_install_command(python: Path, wheel: Path) -> list[str]:
+    return [
+        "uv", "pip", "install", "--python", str(python), str(wheel),
+        f"mcp=={locked_mcp_version()}",
+    ]
+
+
 class SubprocessPersistedStateJourney:
     """Run exact wheel processes over one isolated real OSS stack.
 
@@ -480,7 +680,8 @@ class SubprocessPersistedStateJourney:
         self._server_exit_codes: list[int] = []
         self._containers: list[str] = []
         self._log_handles = []
-        self._installed: dict[str, Path] = {}
+        self._installed: dict[str, tuple[Path, dict]] = {}
+        self._runtime_proofs: list[dict] = []
         self._markers: list[str] = []
         self._mail_conversation: str | None = None
         self._counter = 0
@@ -574,7 +775,7 @@ class SubprocessPersistedStateJourney:
             "-e", "POSTGRES_PASSWORD=aweb-skew",
             "-e", "POSTGRES_DB=postgres",
             "-p", f"127.0.0.1:{self._postgres_port}:5432",
-            "postgres:17-alpine",
+            "postgres:17-alpine", "-c", "log_error_verbosity=verbose",
         )
         self._containers.append(self._postgres)
         self._docker(
@@ -617,7 +818,7 @@ class SubprocessPersistedStateJourney:
         self._start_infrastructure()
         return "aweb"
 
-    def _install(self, wheel: WheelIdentity) -> Path:
+    def _install(self, wheel: WheelIdentity) -> tuple[Path, dict]:
         existing = self._installed.get(wheel.sha256)
         if existing is not None:
             return existing
@@ -629,24 +830,51 @@ class SubprocessPersistedStateJourney:
         venv = self._root / "venvs" / wheel.sha256
         self._run(["uv", "venv", "--python", "3.12", str(venv)])
         python = venv / "bin" / "python"
-        self._run([
-            "uv", "pip", "install", "--python", str(python), str(wheel_path)
-        ])
-        installed = self._run([
-            str(python), "-c",
-            "import importlib.metadata; print(importlib.metadata.version('aweb'))",
-        ]).decode().strip()
-        if installed != wheel.version:
+        self._run(runtime_install_command(python, wheel_path))
+        inventory_script = """
+import importlib.metadata, json, re
+versions = {}
+for distribution in importlib.metadata.distributions():
+    name = re.sub(r"[-_.]+", "-", distribution.metadata["Name"]).lower()
+    version = distribution.version
+    if name in versions and versions[name] != version:
+        raise SystemExit(f"multiple installed versions for {name}")
+    versions[name] = version
+print(json.dumps(dict(sorted(versions.items())), sort_keys=True, separators=(",", ":")))
+"""
+        try:
+            inventory = json.loads(self._run(
+                [str(python), "-c", inventory_script]
+            ))
+        except (json.JSONDecodeError, TypeError) as exc:
             raise rd.ReceiptError(
-                f"installed wheel reports aweb {installed}, expected {wheel.version}"
+                "installed-distribution inventory is not valid JSON"
+            ) from exc
+        if inventory.get("aweb") != wheel.version:
+            raise rd.ReceiptError(
+                f"installed wheel reports aweb {inventory.get('aweb')}, "
+                f"expected {wheel.version}"
             )
-        self._installed[wheel.sha256] = venv
-        return venv
+        if inventory.get("mcp") != MCP_VERSION:
+            raise rd.ReceiptError(
+                f"installed runtime reports mcp {inventory.get('mcp')}, "
+                f"expected {MCP_VERSION}"
+            )
+        installed = (venv, inventory)
+        self._installed[wheel.sha256] = installed
+        return installed
 
     @contextmanager
     def serve(self, wheel, database):
         self._current_database = database
-        venv = self._install(wheel)
+        venv, inventory = self._install(wheel)
+        self._runtime_proofs.append({
+            "sequence": len(self._runtime_proofs) + 1,
+            "wheel_sha256": wheel.sha256,
+            "wheel_version": wheel.version,
+            "installed_distributions": dict(inventory),
+            "installed_distributions_sha256": rd.canonical_json_digest(inventory),
+        })
         log_path = (
             self._root
             / f"aweb-{wheel.version}-{database}-{uuid.uuid4().hex[:6]}.log"
@@ -686,6 +914,9 @@ class SubprocessPersistedStateJourney:
                 process.wait(timeout=5)
             log.flush()
             self._server_exit_codes.append(process.returncode)
+
+    def runtime_proofs(self):
+        return [dict(proof) for proof in self._runtime_proofs]
 
     def _aw_env(self):
         home = self._root / "home"
@@ -849,21 +1080,97 @@ class SubprocessPersistedStateJourney:
             raise rd.ReceiptError("mail control has no exact server diagnostic")
         for handle in self._log_handles:
             handle.flush()
-        log = self._current_server_log.read_text(errors="replace")
-        missing_column = (
-            "subject" in log
-            and ("UndefinedColumn" in log or "42703" in log
-                 or "does not exist" in log)
-        )
-        if "http 500" not in str(error).lower() or not missing_column:
+        if not re.search(r"\bhttp(?: status)? 500\b", str(error), re.IGNORECASE):
             raise rd.ReceiptError(
                 "mail failure lacks the causal messages.subject/42703 diagnostic"
             )
-        return {
-            "sqlstate": "42703",
-            "column": "messages.subject",
-            "diagnostic_sha256": hashlib.sha256(log.encode()).hexdigest(),
-        }
+        sqlstate_pattern = re.compile(r"\b(42703)\b")
+        direct_column_pattern = re.compile(
+            r"(?<![A-Za-z0-9_.])(?:aweb\.)?(messages)\.(subject)"
+            r"(?![A-Za-z0-9_.])",
+            re.IGNORECASE,
+        )
+        postgres_alias_error = re.compile(
+            r"^\d{4}-\d{2}-\d{2} .* \[(\d+)\] ERROR:\s+"
+            r"(42703):\s+column\s+([a-z_][a-z0-9_]*)\."
+            r"(subject)\s+does not exist\b",
+            re.IGNORECASE,
+        )
+        entries = self._current_server_log.read_text(
+            errors="replace"
+        ).splitlines()
+        postgres = getattr(self, "_postgres", None)
+        if postgres is not None:
+            observed = subprocess.run(
+                ["docker", "logs", postgres], capture_output=True
+            )
+            if observed.returncode != 0:
+                raise rd.ReceiptError(
+                    "cannot read exact PostgreSQL control diagnostics: "
+                    + observed.stderr.decode(errors="replace")[-500:]
+                )
+            entries.extend(
+                (observed.stdout + observed.stderr).decode(
+                    errors="replace"
+                ).splitlines()
+            )
+        event_start = re.compile(
+            r"^\d{4}-\d{2}-\d{2} .* \[\d+\] "
+            r"(?:ERROR|FATAL|PANIC|WARNING|LOG):"
+        )
+        for index, entry in enumerate(entries):
+            sqlstate = sqlstate_pattern.search(entry)
+            if sqlstate is None:
+                continue
+            direct = direct_column_pattern.search(entry)
+            if direct is not None:
+                return {
+                    "sqlstate": sqlstate.group(1),
+                    "column": f"{direct.group(1).lower()}.{direct.group(2).lower()}",
+                    "diagnostic_column": direct.group(0).lower(),
+                    "relation": "aweb.messages",
+                    "diagnostic_sha256": hashlib.sha256(entry.encode()).hexdigest(),
+                }
+            aliased = postgres_alias_error.search(entry)
+            if aliased is None:
+                continue
+            end = index + 1
+            while end < len(entries) and not event_start.match(entries[end]):
+                end += 1
+            block = "\n".join(entries[index:end])
+            pid, extracted_sqlstate, alias, extracted_column = aliased.groups()
+            statement = re.search(
+                rf"^\d{{4}}-\d{{2}}-\d{{2}} .* \[{re.escape(pid)}\] "
+                rf"STATEMENT:\s*$",
+                block,
+                re.IGNORECASE | re.MULTILINE,
+            )
+            relation = re.search(
+                rf'\bFROM\s+"?aweb"?\."?messages"?\s+{re.escape(alias)}\b',
+                block,
+                re.IGNORECASE,
+            )
+            projected = re.search(
+                rf"(?<![A-Za-z0-9_]){re.escape(alias)}\.subject"
+                rf"(?![A-Za-z0-9_])",
+                block,
+                re.IGNORECASE,
+            )
+            if (
+                statement is not None
+                and relation is not None
+                and projected is not None
+            ):
+                return {
+                    "sqlstate": extracted_sqlstate,
+                    "column": f"messages.{extracted_column.lower()}",
+                    "diagnostic_column": f"{alias.lower()}.{extracted_column.lower()}",
+                    "relation": "aweb.messages",
+                    "diagnostic_sha256": hashlib.sha256(block.encode()).hexdigest(),
+                }
+        raise rd.ReceiptError(
+            "mail failure lacks the causal messages.subject/42703 diagnostic"
+        )
 
     def _psql(self, database: str, sql: str) -> bytes:
         return self._docker(
@@ -975,6 +1282,45 @@ def _candidate_matches_frozen(report: dict, cell: rd.SkewCell) -> bool:
     )
 
 
+def _published_matches_registry(report: dict, cell: rd.SkewCell) -> bool:
+    published = report.get("published", {})
+    source = published.get("source", {})
+    version = cell.b.get("version")
+    digest_set = source.get("registry_digest_set")
+    expected_names = {
+        f"aweb-{version}-py3-none-any.whl",
+        f"aweb-{version}.tar.gz",
+    }
+    filename = published.get("filename")
+    url = source.get("download_url")
+    parsed = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+    return (
+        published.get("kind") == cell.b_kind
+        and published.get("version") == version
+        and filename == f"aweb-{version}-py3-none-any.whl"
+        and isinstance(digest_set, dict)
+        and set(digest_set) == expected_names
+        and all(
+            isinstance(digest, str)
+            and re.fullmatch(r"[0-9a-f]{64}", digest)
+            for digest in digest_set.values()
+        )
+        and source.get("registry") == "pypi:aweb"
+        and source.get("metadata_url")
+            == f"https://pypi.org/pypi/aweb/{version}/json"
+        and source.get("registry_set_digest")
+            == rd.canonical_digest_of_set(digest_set)
+        and published.get("sha256") == digest_set.get(filename)
+        and source.get("payload_sha256") == published.get("sha256")
+        and parsed is not None
+        and parsed.scheme == "https"
+        and parsed.netloc == "files.pythonhosted.org"
+        and not parsed.query
+        and not parsed.fragment
+        and Path(urllib.parse.unquote(parsed.path)).name == filename
+    )
+
+
 def aggregate_support(matrix_path: Path) -> dict:
     """Build incomplete/unanchored support from one exact frozen matrix.
 
@@ -1004,6 +1350,7 @@ def aggregate_support(matrix_path: Path) -> dict:
         )
     report_digests = []
     candidate_identities = {}
+    dependency_inventories = {}
     for name, cell in expected.items():
         report_bytes = actual[name].read_bytes()
         report = json.loads(report_bytes)
@@ -1030,11 +1377,23 @@ def aggregate_support(matrix_path: Path) -> dict:
         if not _candidate_matches_frozen(report, cell):
             raise rd.ReceiptError(f"{name}: candidate is not the frozen identity")
         published = report.get("published", {})
-        if (
-            published.get("kind") != cell.b_kind
-            or published.get("version") != cell.b.get("version")
-        ):
-            raise rd.ReceiptError(f"{name}: published actor is not the frozen side")
+        if not _published_matches_registry(report, cell):
+            raise rd.ReceiptError(
+                f"{name}: published actor lacks the complete bound PyPI release"
+            )
+        runtime_proofs, dependencies = _validate_runtime_proofs(
+            report.get("runtime_proofs"),
+            [
+                (published.get("version"), published.get("sha256")),
+                (report["candidate"].get("version"), report["candidate"].get("sha256")),
+                (published.get("version"), published.get("sha256")),
+            ],
+        )
+        if runtime_proofs != report.get("runtime_proofs"):
+            raise rd.ReceiptError(f"{name}: runtime proof normalization drifted")
+        dependency_inventories[
+            rd.canonical_json_digest(dependencies)
+        ] = dependencies
         expected_focal = "candidate" if cell.direction == "b-to-a" else "published"
         if (
             report.get("chronology") != ["published", "candidate", "published"]
@@ -1053,6 +1412,11 @@ def aggregate_support(matrix_path: Path) -> dict:
     if len(candidate_identities) != 1:
         raise rd.ReceiptError(
             "persisted-state reports do not bind one exact candidate"
+        )
+    if len(dependency_inventories) != 1:
+        raise rd.ReceiptError(
+            "persisted-state reports differ in dependency resolution beyond "
+            f"the aweb wheel: {dependency_inventories!r}"
         )
     preimage = document["preimage"]
     edge = preimage["edge"]

@@ -2208,6 +2208,30 @@ class MatrixSkewRunnerTests(unittest.TestCase):
         runner = self.runner(RecordingHarness(journeys=()))
         self.assertFalse(runner.has_matrix(skew_edge()))
 
+    def test_run_only_harness_refuses_at_freeze_without_executing(self) -> None:
+        class RunOnlyHarness:
+            def __init__(self):
+                self.cells = []
+
+            def has_journey(self, edge):
+                return True
+
+            def run(self, cell):
+                self.cells.append(cell)
+
+        harness = RunOnlyHarness()
+        runner = self.runner(harness)
+        with self.assertRaisesRegex(rd.ReceiptError, "persist.*frozen matrix"):
+            runner.freeze_matrix(
+                skew_edge(),
+                {
+                    "client": staged_entry("client", "1.2.0"),
+                    "server": staged_entry("server", "3.2.0"),
+                },
+                staged_manifest_digest="a" * 64,
+            )
+        self.assertEqual(harness.cells, [])
+
     def test_declared_incomplete_edge_refuses_at_the_runner(self) -> None:
         edge = rd.RuntimeContractEdge(
             a="client", b="server", journey="make fixture-journey",
