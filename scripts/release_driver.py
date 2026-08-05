@@ -3997,25 +3997,26 @@ def run_plan(
     def anchor_transition(
         component: str, entry: ReceiptEntry, sequence: int, kind: str
     ) -> None:
-        body = json.dumps(
-            {
-                "frozen_plan_id": frozen_plan_id,
-                "staged_manifest_id": manifest_id,
-                "sequence": sequence,
-                "component": component,
-                "kind": kind,
-                "entry": {
-                    "version": entry.version,
-                    "digest": entry.digest,
-                    "phase": entry.phase,
-                    "pointer_state": entry.pointer_state,
-                    "delivery_proof": entry.delivery_proof,
-                    "lane_ref": entry.lane_ref,
-                    "digest_set": entry.digest_set,
-                },
+        document = {
+            "frozen_plan_id": frozen_plan_id,
+            "staged_manifest_id": manifest_id,
+            "sequence": sequence,
+            "component": component,
+            "kind": kind,
+            "entry": {
+                "version": entry.version,
+                "digest": entry.digest,
+                "phase": entry.phase,
+                "pointer_state": entry.pointer_state,
+                "delivery_proof": entry.delivery_proof,
+                "lane_ref": entry.lane_ref,
+                "digest_set": entry.digest_set,
             },
-            sort_keys=True,
-        ).encode()
+        }
+        # The sealing path validates the same shape the archive re-validates,
+        # so a transition can never be written in a form restore would refuse.
+        validate_transition_document(document)
+        body = json.dumps(document, sort_keys=True).encode()
         digest = hashlib.sha256(body).hexdigest()
         artifact_id = (
             f"transition:{frozen_plan_id}:{sequence:03d}:{kind}:"

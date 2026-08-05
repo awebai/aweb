@@ -829,81 +829,100 @@ class NackCorrectionControlTests(unittest.TestCase):
                 archive._atomic_write_bytes(out, encoded)
 
 
-class SemanticValidatorRoundTwoTests(unittest.TestCase):
-    """Alice's .9 round-2 blocker 1: the validator must accept a REAL valid
-    anchor bundle (outer ZIP digest and inner body digest are different
-    identities by design) and must truly reproduce a workflow bundle."""
-
-    @staticmethod
-    def real_anchor(logical_id="receipt:plan:1", body=b"sealed-inner-body"):
-        import io
-        import zipfile
-
-        digest = sha256(body)
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as z:
-            z.writestr("record.json", json.dumps(
-                {"logical_id": logical_id, "digest": digest}))
-            z.writestr("body", body)
-        outer = buf.getvalue()
-        manifest = {
-            "schema": archive.MANIFEST_SCHEMA,
-            "logical_id": logical_id,
-            "kind": "anchor-artifact",
-            "source": dict(SOURCE, anchor=rd._anchor_name(logical_id, digest)),
-            "source_digest": sha256(outer),   # OUTER ZIP digest, by design
-            "body_sha256": sha256(outer),
-        }
-        return outer, manifest, digest
-
-    def test_valid_real_anchor_bundle_is_accepted(self):
-        outer, manifest, _ = self.real_anchor()
-        archive.semantic_validator()(outer, manifest)
-
-    def test_inner_body_digest_mismatch_refuses(self):
-        import io
-        import zipfile
-
-        body = b"sealed-inner-body"
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as z:
-            z.writestr("record.json", json.dumps(
-                {"logical_id": "receipt:plan:1", "digest": sha256(b"other")}))
-            z.writestr("body", body)
-        outer = buf.getvalue()
-        manifest = {
-            "schema": archive.MANIFEST_SCHEMA, "logical_id": "receipt:plan:1",
-            "kind": "anchor-artifact",
-            "source": dict(SOURCE, anchor=rd._anchor_name(
-                "receipt:plan:1", sha256(b"other"))),
-            "source_digest": sha256(outer), "body_sha256": sha256(outer),
-        }
-        with self.assertRaisesRegex(rd.ReceiptError, "inner body"):
-            archive.semantic_validator()(outer, manifest)
-
-    def test_anchor_name_not_derived_from_logical_id_refuses(self):
-        outer, manifest, digest = self.real_anchor()
-        manifest = dict(manifest, source=dict(
-            manifest["source"], anchor=rd._anchor_name("other:id", digest)))
-        with self.assertRaisesRegex(rd.ReceiptError, "anchor name"):
-            archive.semantic_validator()(outer, manifest)
-
-    def test_record_logical_id_mismatch_refuses(self):
-        outer, manifest, _ = self.real_anchor(logical_id="receipt:plan:1")
-        manifest = dict(manifest, logical_id="receipt:other")
-        with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
-            archive.semantic_validator()(outer, manifest)
+def real_graph_and_plan():
+    graph = rd.Graph.from_dict({
+        "component": {
+            "channel": {
+                "source_paths": ["channel/"],
+                "version_source": {"type": "manifest", "path": "channel/v"},
+                "tag_format": "channel-v{version}",
+                "verify": {"command": "true"},
+            },
+        },
+        "edge": [],
+    })
+    state = rd.FixtureState(
+        changed_components={"channel": True},
+        versions={"channel": "1.7.2"},
+        published_versions={"channel": "1.7.1"},
+    )
+    return graph, rd.compute_plan(graph, state)
 
 
-class WorkflowBundleValidatorTests(unittest.TestCase):
-    """A complete workflow bundle must be reproduced member by member, and
-    every member type must actually be validated - including transitions."""
+def anchor_bundle(logical_id: str, inner: bytes):
+    """A REAL release-anchor artifact: {record.json, body} plus the manifest
+    archive_sealed would record for it."""
+    import io
+    import zipfile
 
-    @staticmethod
-    def transition_doc():
-        return {
-            "frozen_plan_id": "f" * 64,
-            "staged_manifest_id": "sha256:" + "e" * 64,
+    digest = sha256(inner)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("record.json", json.dumps(
+            {"logical_id": logical_id, "digest": digest}))
+        z.writestr("body", inner)
+    outer = buf.getvalue()
+    manifest = {
+        "schema": archive.MANIFEST_SCHEMA,
+        "logical_id": logical_id,
+        "kind": "anchor-artifact",
+        "source": dict(SOURCE, anchor=rd._anchor_name(logical_id, digest)),
+        "source_digest": sha256(outer),
+        "body_sha256": sha256(outer),
+    }
+    return outer, manifest
+
+
+class RealAnchorSemanticsTests(unittest.TestCase):
+    """Positives built from the EXISTING seal paths, not an invented format."""
+
+    def setUp(self):
+        self.graph, self.plan = real_graph_and_plan()
+        self.plan_bytes, self.frozen_id = rd.freeze_plan(
+            self.plan, self.graph, source_sha="a" * 40)
+        self.validate = archive.semantic_validator()
+
+    def test_real_frozen_plan_anchor_validates(self):
+        body, manifest = anchor_bundle(
+            f"plan:{'a' * 40}:{self.frozen_id}", self.plan_bytes)
+        self.validate(body, manifest)
+
+    def test_frozen_plan_with_unrelated_body_refuses(self):
+        other_bytes, _ = rd.freeze_plan(
+            self.plan, self.graph, source_sha="b" * 40)
+        body, manifest = anchor_bundle(
+            f"plan:{'a' * 40}:{self.frozen_id}", other_bytes)
+        with self.assertRaises(rd.ReceiptError):
+            self.validate(body, manifest)
+
+    def test_real_sealed_receipt_anchor_validates(self):
+        entries = {"channel": rd.ReceiptEntry(
+            version="1.7.2", digest="d" * 64, phase="verified")}
+        sealed, digest = rd.seal_receipt(
+            self.plan, self.graph, source_sha="a" * 40, entries=entries,
+            approvals={}, frozen_plan_id=self.frozen_id,
+            staged_manifest_id="staged-manifest:" + self.frozen_id + ":" + "e" * 64,
+        )
+        body, manifest = anchor_bundle(
+            f"receipt:{self.frozen_id}:{digest}", sealed)
+        self.validate(body, manifest)
+
+    def test_receipt_bound_to_a_different_frozen_plan_refuses(self):
+        entries = {"channel": rd.ReceiptEntry(
+            version="1.7.2", digest="d" * 64, phase="verified")}
+        sealed, digest = rd.seal_receipt(
+            self.plan, self.graph, source_sha="a" * 40, entries=entries,
+            approvals={}, frozen_plan_id=self.frozen_id,
+            staged_manifest_id="staged-manifest:" + self.frozen_id + ":" + "e" * 64,
+        )
+        body, manifest = anchor_bundle(f"receipt:{'f' * 64}:{digest}", sealed)
+        with self.assertRaisesRegex(rd.ReceiptError, "binds frozen plan"):
+            self.validate(body, manifest)
+
+    def transition_document(self, **overrides):
+        document = {
+            "frozen_plan_id": self.frozen_id,
+            "staged_manifest_id": f"staged-manifest:{self.frozen_id}:{'e' * 64}",
             "sequence": 1,
             "component": "channel",
             "kind": "published",
@@ -913,96 +932,127 @@ class WorkflowBundleValidatorTests(unittest.TestCase):
                 "lane_ref": None, "digest_set": {"x.tgz": "a" * 64},
             },
         }
+        document.update(overrides)
+        return document
 
-    def bundle(self, *, members=None, tamper=None, extra=None, drop=None):
+    def transition_anchor(self, document):
+        inner = json.dumps(document, sort_keys=True).encode()
+        logical = (
+            f"transition:{document['frozen_plan_id']}:"
+            f"{document['sequence']:03d}:{document['kind']}:"
+            f"{document['component']}:{sha256(inner)}"
+        )
+        return anchor_bundle(logical, inner)
+
+    def test_real_transition_anchor_validates(self):
+        body, manifest = self.transition_anchor(self.transition_document())
+        self.validate(body, manifest)
+
+    def test_transition_whose_logical_id_lies_refuses(self):
+        document = self.transition_document()
+        inner = json.dumps(document, sort_keys=True).encode()
+        # logical id claims a different component than the document carries
+        logical = (f"transition:{self.frozen_id}:001:published:pi:"
+                   f"{sha256(inner)}")
+        body, manifest = anchor_bundle(logical, inner)
+        with self.assertRaisesRegex(rd.ReceiptError, "disagrees"):
+            self.validate(body, manifest)
+
+    def test_transition_with_wrong_sequence_in_id_refuses(self):
+        document = self.transition_document(sequence=2)
+        inner = json.dumps(document, sort_keys=True).encode()
+        logical = (f"transition:{self.frozen_id}:001:published:channel:"
+                   f"{sha256(inner)}")
+        body, manifest = anchor_bundle(logical, inner)
+        with self.assertRaisesRegex(rd.ReceiptError, "disagrees"):
+            self.validate(body, manifest)
+
+    def test_unknown_logical_class_refuses(self):
+        body, manifest = anchor_bundle("mystery:1:2", b"x")
+        with self.assertRaisesRegex(rd.ReceiptError, "logical id class"):
+            self.validate(body, manifest)
+
+    def test_anchor_name_not_derived_from_logical_id_refuses(self):
+        body, manifest = anchor_bundle(
+            f"plan:{'a' * 40}:{self.frozen_id}", self.plan_bytes)
+        manifest = dict(manifest, source=dict(
+            manifest["source"], anchor=rd._anchor_name("other:id", "0" * 64)))
+        with self.assertRaisesRegex(rd.ReceiptError, "anchor name"):
+            self.validate(body, manifest)
+
+    def test_inner_body_digest_mismatch_refuses(self):
         import io
         import zipfile
 
-        transition = json.dumps(self.transition_doc(), sort_keys=True).encode()
-        payloads = members or {"transition-001.json": ("transition", transition)}
-        record_members = []
-        for name, (mtype, data) in payloads.items():
-            record_members.append({
-                "name": name, "type": mtype,
-                "logical_id": f"logical:{name}",
-                "digest": sha256(data),
-            })
-        record = {"schema": archive.BUNDLE_SCHEMA,
-                  "logical_id": "receipt:plan:1",
-                  "members": record_members}
-        if tamper:
-            record = tamper(record)
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as z:
-            z.writestr("archive-bundle.json", json.dumps(record))
-            for name, (_, data) in payloads.items():
-                if drop and name == drop:
-                    continue
-                z.writestr(name, data)
-            if extra:
-                z.writestr(extra, b"unexpected")
+            z.writestr("record.json", json.dumps(
+                {"logical_id": f"plan:{'a' * 40}:{self.frozen_id}",
+                 "digest": sha256(b"other")}))
+            z.writestr("body", self.plan_bytes)
         manifest = {
-            "schema": archive.MANIFEST_SCHEMA, "logical_id": "receipt:plan:1",
-            "kind": "workflow-artifact",
-            "source": {k: v for k, v in SOURCE.items() if k != "anchor"},
+            "schema": archive.MANIFEST_SCHEMA,
+            "logical_id": f"plan:{'a' * 40}:{self.frozen_id}",
+            "kind": "anchor-artifact",
+            "source": dict(SOURCE, anchor=rd._anchor_name(
+                f"plan:{'a' * 40}:{self.frozen_id}", sha256(b"other"))),
             "source_digest": "c" * 64, "body_sha256": "c" * 64,
         }
-        return buf.getvalue(), manifest
+        with self.assertRaisesRegex(rd.ReceiptError, "inner body"):
+            self.validate(buf.getvalue(), manifest)
 
-    def test_complete_bundle_with_transition_validates(self):
-        body, manifest = self.bundle()
-        archive.semantic_validator()(body, manifest)
 
-    def test_corrupt_transition_refuses(self):
-        bad = dict(self.transition_doc())
-        bad.pop("entry")
-        data = json.dumps(bad, sort_keys=True).encode()
-        body, manifest = self.bundle(
-            members={"transition-001.json": ("transition", data)})
+class TransitionSetTests(unittest.TestCase):
+    @staticmethod
+    def document(sequence, component="channel", plan="f" * 64):
+        return {
+            "frozen_plan_id": plan,
+            "staged_manifest_id": f"staged-manifest:{plan}:{'e' * 64}",
+            "sequence": sequence, "component": component, "kind": "published",
+            "entry": {
+                "version": "1.7.2", "digest": "d" * 64, "phase": "published",
+                "pointer_state": None, "delivery_proof": None,
+                "lane_ref": None, "digest_set": {},
+            },
+        }
+
+    def test_complete_ordered_set_validates(self):
+        archive.validate_transition_set(
+            [self.document(1), self.document(2), self.document(3)])
+
+    def test_duplicate_sequence_refuses(self):
+        with self.assertRaisesRegex(rd.ReceiptError, "ordered set"):
+            archive.validate_transition_set(
+                [self.document(1), self.document(1)])
+
+    def test_gap_in_sequence_refuses(self):
+        with self.assertRaisesRegex(rd.ReceiptError, "ordered set"):
+            archive.validate_transition_set(
+                [self.document(1), self.document(3)])
+
+    def test_mixed_frozen_plans_refuse(self):
+        with self.assertRaisesRegex(rd.ReceiptError, "multiple frozen plans"):
+            archive.validate_transition_set(
+                [self.document(1), self.document(2, plan="a" * 64)])
+
+    def test_empty_set_refuses(self):
+        with self.assertRaisesRegex(rd.ReceiptError, "empty"):
+            archive.validate_transition_set([])
+
+
+class SealTimeTransitionValidationTests(unittest.TestCase):
+    def test_sealing_path_validates_the_same_shape(self):
+        # anchor_transition validates before sealing, so the sealing and
+        # re-validation paths share one definition and cannot drift.
+        source = (SCRIPTS / "release_driver.py").read_text()
+        sealing = source[source.index("def anchor_transition("):]
+        sealing = sealing[:sealing.index("_put_content_addressed")]
+        self.assertIn("validate_transition_document(document)", sealing)
+
+    def test_invalid_transition_document_refuses(self):
+        bad = {"frozen_plan_id": "f" * 64, "sequence": 1}
         with self.assertRaisesRegex(rd.ReceiptError, "transition document"):
-            archive.semantic_validator()(body, manifest)
-
-    def test_missing_declared_member_refuses(self):
-        body, manifest = self.bundle(drop="transition-001.json")
-        with self.assertRaisesRegex(rd.ReceiptError, "missing"):
-            archive.semantic_validator()(body, manifest)
-
-    def test_extra_undeclared_member_refuses(self):
-        body, manifest = self.bundle(extra="stowaway.json")
-        with self.assertRaisesRegex(rd.ReceiptError, "unexpected"):
-            archive.semantic_validator()(body, manifest)
-
-    def test_swapped_member_digest_refuses(self):
-        def tamper(record):
-            record["members"][0]["digest"] = "b" * 64
-            return record
-        body, manifest = self.bundle(tamper=tamper)
-        with self.assertRaisesRegex(rd.ReceiptError, "hashes"):
-            archive.semantic_validator()(body, manifest)
-
-    def test_missing_bundle_record_refuses(self):
-        import io
-        import zipfile
-
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as z:
-            z.writestr("receipt.json", b"{}")
-        manifest = {
-            "schema": archive.MANIFEST_SCHEMA, "logical_id": "receipt:plan:1",
-            "kind": "workflow-artifact",
-            "source": {k: v for k, v in SOURCE.items() if k != "anchor"},
-            "source_digest": "c" * 64, "body_sha256": "c" * 64,
-        }
-        with self.assertRaisesRegex(rd.ReceiptError, "archive-bundle.json"):
-            archive.semantic_validator()(buf.getvalue(), manifest)
-
-    def test_bundle_logical_id_must_equal_manifest(self):
-        def tamper(record):
-            record["logical_id"] = "receipt:other"
-            return record
-        body, manifest = self.bundle(tamper=tamper)
-        with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
-            archive.semantic_validator()(body, manifest)
+            rd.validate_transition_document(bad)
 
 
 class ReviewedIndexRoundTwoTests(unittest.TestCase):

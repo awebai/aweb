@@ -49,10 +49,6 @@ from release_driver import ReceiptError
 
 INDEX_ENTRY_SCHEMA = "aweb.release-archive-index-entry.v1"
 MANIFEST_SCHEMA = "aweb.release-archive-manifest.v1"
-BUNDLE_SCHEMA = "aweb.release-archive-bundle.v1"
-BUNDLE_MEMBER_TYPES = (
-    "frozen-plan", "sealed-receipt", "staged-manifest", "transition",
-)
 PRODUCTION_TRUST_CLASSES = ("durable-byte-store",)
 MAX_IDENTITY_LENGTH = 200
 
@@ -796,15 +792,28 @@ class GitBranchArchive:
             )
 
 
-def semantic_validator(providers=None):
-    """Production semantic validator: parses the sealed body per kind and
-    re-runs the EXISTING release-driver loaders/validators.
+ANCHOR_LOGICAL_CLASSES = ("plan", "staged-manifest", "transition", "receipt")
 
-    Digest identities are kept distinct by construction: manifest.source_digest
-    is the OUTER artifact digest recorded by the archive, while an anchor's
-    record.json carries the INNER body digest. They are different identities
-    and are never compared to each other; each is checked against the thing it
-    actually identifies.
+
+def semantic_validator(providers=None):
+    """Production semantic validator over the REAL sealed formats.
+
+    There is no archive-specific bundle format: ``archive_sealed`` copies
+    already-sealed bytes verbatim, so the only things it can validate are the
+    formats the release path actually produces.
+
+    An anchor artifact is the release-anchor ZIP {record.json, body}. The
+    logical id in record.json names the document class AND carries its
+    cross-document bindings, so the inner body is dispatched by that class and
+    every binding the id asserts is checked against the document itself:
+
+      plan:<source_sha>:<frozen_id>                     -> load_frozen_plan
+      staged-manifest:<frozen_plan_id>:<digest>         -> load_staged_manifest
+      transition:<frozen_plan_id>:<seq>:<kind>:<comp>:<digest>
+      receipt:<frozen_plan_id>:<digest>                 -> load_sealed_receipt
+
+    A workflow artifact is a lane staging ZIP; its own manifest names the
+    package, and the exact reviewed lane validator for that package runs.
     """
     import io
     import zipfile
@@ -820,6 +829,91 @@ def semantic_validator(providers=None):
                 return {name: archive_zip.read(name) for name in names}
         except zipfile.BadZipFile as exc:
             raise ReceiptError(f"{label} is not a valid ZIP") from exc
+
+    def _inner_semantics(logical_id: str, inner: bytes, digest: str) -> None:
+        klass = logical_id.split(":", 1)[0]
+        if klass not in ANCHOR_LOGICAL_CLASSES:
+            raise ReceiptError(
+                f"archived anchor logical id class {klass!r} is not one of "
+                f"{list(ANCHOR_LOGICAL_CLASSES)}"
+            )
+        if klass == "plan":
+            parts = logical_id.split(":")
+            if len(parts) != 3:
+                raise ReceiptError("plan logical id is malformed")
+            frozen_id = parts[2]
+            if frozen_id != digest:
+                raise ReceiptError(
+                    "plan logical id frozen identity does not equal the "
+                    "recorded body digest"
+                )
+            rd.load_frozen_plan(inner, expected_id=frozen_id)
+        elif klass == "staged-manifest":
+            parts = logical_id.split(":")
+            if len(parts) != 3:
+                raise ReceiptError("staged-manifest logical id is malformed")
+            frozen_plan_id, manifest_digest = parts[1], parts[2]
+            if manifest_digest != digest:
+                raise ReceiptError(
+                    "staged-manifest logical id digest does not equal the "
+                    "recorded body digest"
+                )
+            document = rd.load_staged_manifest(inner, expected_digest=digest)
+            if document.get("frozen_plan_id") != frozen_plan_id:
+                raise ReceiptError(
+                    "archived staged manifest binds frozen plan "
+                    f"{document.get('frozen_plan_id')!r}, not the "
+                    f"{frozen_plan_id!r} its logical id asserts"
+                )
+            rd.validate_staged_manifest(document)
+        elif klass == "transition":
+            parts = logical_id.split(":")
+            if len(parts) != 6:
+                raise ReceiptError("transition logical id is malformed")
+            _, frozen_plan_id, sequence, kind, component, body_digest = parts
+            if body_digest != digest:
+                raise ReceiptError(
+                    "transition logical id digest does not equal the recorded "
+                    "body digest"
+                )
+            try:
+                document = json.loads(inner)
+            except json.JSONDecodeError as exc:
+                raise ReceiptError(
+                    "archived transition body is not valid JSON"
+                ) from exc
+            rd.validate_transition_document(document)
+            mismatches = [
+                name for name, expected, actual in (
+                    ("frozen_plan_id", frozen_plan_id,
+                     document["frozen_plan_id"]),
+                    ("sequence", sequence, f"{document['sequence']:03d}"),
+                    ("kind", kind, document["kind"]),
+                    ("component", component, document["component"]),
+                ) if expected != actual
+            ]
+            if mismatches:
+                raise ReceiptError(
+                    "archived transition document disagrees with the bindings "
+                    f"its logical id asserts: {mismatches}"
+                )
+        else:
+            parts = logical_id.split(":")
+            if len(parts) != 3:
+                raise ReceiptError("receipt logical id is malformed")
+            frozen_plan_id, receipt_digest = parts[1], parts[2]
+            if receipt_digest != digest:
+                raise ReceiptError(
+                    "receipt logical id digest does not equal the recorded "
+                    "body digest"
+                )
+            receipt = rd.load_sealed_receipt(inner, expected_digest=digest)
+            if getattr(receipt, "frozen_plan_id", None) != frozen_plan_id:
+                raise ReceiptError(
+                    "archived receipt binds frozen plan "
+                    f"{getattr(receipt, 'frozen_plan_id', None)!r}, not the "
+                    f"{frozen_plan_id!r} its logical id asserts"
+                )
 
     def _anchor(body: bytes, manifest: dict) -> None:
         members = _members(body, "archived anchor body")
@@ -856,81 +950,47 @@ def semantic_validator(providers=None):
                 "archived anchor name is not derived from the exact logical "
                 f"id and inner digest (expected {expected_name})"
             )
+        _inner_semantics(record["logical_id"], members["body"], record["digest"])
 
     def _workflow(body: bytes, manifest: dict) -> None:
         members = _members(body, "archived workflow-artifact body")
-        record_bytes = members.get("archive-bundle.json")
-        if record_bytes is None:
+        raw = members.get("manifest.json")
+        if raw is None:
             raise ReceiptError(
-                "archived workflow-artifact carries no archive-bundle.json "
-                "binding its exact members"
+                "archived workflow artifact carries no lane manifest.json"
             )
         try:
-            record = json.loads(record_bytes)
+            lane_manifest = json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise ReceiptError("archive-bundle.json is malformed") from exc
-        if (
-            not isinstance(record, dict)
-            or set(record) != {"schema", "logical_id", "members"}
-            or record["schema"] != BUNDLE_SCHEMA
-            or record["logical_id"] != manifest["logical_id"]
-            or not isinstance(record["members"], list)
-            or not record["members"]
-        ):
-            raise ReceiptError(
-                "archive-bundle.json does not bind this bundle's exact "
-                "schema, logical id, and nonempty member list"
+            raise ReceiptError("archived lane manifest.json is malformed") from exc
+        package = lane_manifest.get("package")
+        source_sha = lane_manifest.get("source_sha")
+        version = lane_manifest.get("candidate_version")
+        if package in ("channel", "pi", "skills"):
+            rd.validate_npm_lane_artifact(
+                body, expected_source_sha=source_sha,
+                expected_version=version, package=package, profile=package,
             )
-        declared: dict[str, dict] = {}
-        for member in record["members"]:
-            if (
-                not isinstance(member, dict)
-                or set(member) != {"name", "type", "logical_id", "digest"}
-                or not isinstance(member["name"], str)
-                or member["type"] not in BUNDLE_MEMBER_TYPES
-                or not _HEX64.fullmatch(str(member["digest"]))
-            ):
-                raise ReceiptError(
-                    "archive-bundle.json member entry is malformed"
-                )
-            if member["name"] in declared:
-                raise ReceiptError(
-                    f"archive-bundle.json declares {member['name']} twice"
-                )
-            declared[member["name"]] = member
-        present = set(members) - {"archive-bundle.json"}
-        if present != set(declared):
-            raise ReceiptError(
-                "archived bundle members do not equal the declared set: "
-                f"missing {sorted(set(declared) - present)}, unexpected "
-                f"{sorted(present - set(declared))}"
+        elif package in ("server", "awid-pypi"):
+            rd.validate_pypi_lane_artifact(
+                body, expected_source_sha=source_sha,
+                expected_version=version, package=package,
+                pypi_name="aweb" if package == "server" else "awid-service",
             )
-        for name, member in declared.items():
-            data = members[name]
-            actual = _sha256(data)
-            if actual != member["digest"]:
-                raise ReceiptError(
-                    f"archived bundle member {name} hashes {actual}, not the "
-                    f"declared {member['digest']}"
-                )
-            kind_of_member = member["type"]
-            if kind_of_member == "frozen-plan":
-                rd.load_frozen_plan(data, expected_id=member["logical_id"])
-            elif kind_of_member == "sealed-receipt":
-                rd.load_sealed_receipt(
-                    data, expected_digest=member["digest"])
-            elif kind_of_member == "staged-manifest":
-                loaded = rd.load_staged_manifest(
-                    data, expected_digest=member["digest"])
-                rd.validate_staged_manifest(loaded)
-            elif kind_of_member == "transition":
-                try:
-                    document = json.loads(data)
-                except json.JSONDecodeError as exc:
-                    raise ReceiptError(
-                        f"archived transition {name} is not valid JSON"
-                    ) from exc
-                rd.validate_transition_document(document)
+        elif package == "awid-image":
+            rd.validate_image_lane_artifact(
+                body, expected_source_sha=source_sha,
+                expected_version=version,
+            )
+        elif package is None:
+            rd.validate_lane_staged_artifact(
+                body, expected_source_sha=source_sha,
+                expected_version=version,
+            )
+        else:
+            raise ReceiptError(
+                f"archived lane artifact names unknown package {package!r}"
+            )
 
     def validate(body: bytes, manifest: dict) -> None:
         kind = manifest.get("kind")
@@ -944,6 +1004,29 @@ def semantic_validator(providers=None):
             )
 
     return validate
+
+
+def validate_transition_set(documents: list) -> None:
+    """An archived transition SET must be the complete ordered sequence for one
+    frozen plan: sequences strictly increasing from 1 with no gaps, no repeats,
+    and one frozen plan throughout."""
+    import release_driver as rd
+
+    if not documents:
+        raise ReceiptError("transition set is empty")
+    plans = {d.get("frozen_plan_id") for d in documents}
+    if len(plans) != 1:
+        raise ReceiptError(
+            f"transition set spans multiple frozen plans: {sorted(plans)}"
+        )
+    for document in documents:
+        rd.validate_transition_document(document)
+    sequences = [d["sequence"] for d in documents]
+    if sorted(sequences) != list(range(1, len(sequences) + 1)):
+        raise ReceiptError(
+            f"transition sequences are not the complete ordered set 1..n: "
+            f"{sequences}"
+        )
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
