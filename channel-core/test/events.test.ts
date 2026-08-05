@@ -5,7 +5,22 @@ import {
   streamErrorCause,
   type EventStreamState,
 } from "../src/index.js";
-import { parseAgentEvent } from "../src/api/events.js";
+import {
+  EVENT_STREAM_DEADLINE_MS,
+  EVENT_STREAM_INACTIVITY_MS,
+  EVENT_STREAM_SERVER_HEARTBEAT_MS,
+  parseAgentEvent,
+} from "../src/api/events.js";
+
+function sseFrame(event: string, payload: object): Uint8Array {
+  return new TextEncoder().encode(
+    `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`,
+  );
+}
+
+function sseComment(): Uint8Array {
+  return new TextEncoder().encode(": keepalive\n\n");
+}
 
 describe("parseAgentEvent", () => {
   test("maps actionable_mail to mail_message", () => {
@@ -112,6 +127,259 @@ describe("parseAgentEvent", () => {
     abort.abort();
     await vi.runAllTimersAsync();
     await consuming;
+    vi.useRealTimers();
+  });
+
+  test("reconnects a permanently half-open stream within the inactivity bound and catches the durable snapshot", async () => {
+    vi.useFakeTimers();
+    const states: EventStreamState[] = [];
+    const received: string[] = [];
+    const abort = new AbortController();
+    let attempts = 0;
+    let firstCancelled = 0;
+    const client = {
+      openSSE: vi.fn(async () => {
+        attempts++;
+        if (attempts === 1) {
+          return new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(sseFrame("connected", {}));
+            },
+            cancel() {
+              firstCancelled++;
+            },
+          }));
+        }
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(sseFrame("connected", {}));
+            controller.enqueue(sseFrame("actionable_chat", {
+              session_id: "durable-session",
+              conversation_id: "durable-session",
+            }));
+          },
+        }));
+      }),
+    };
+    const consuming = (async () => {
+      for await (const event of streamAgentEvents(
+        client as never,
+        abort.signal,
+        (state) => states.push(state),
+      )) {
+        received.push(event.type);
+        if (event.type === "chat_message") {
+          abort.abort();
+          break;
+        }
+      }
+    })();
+
+    await vi.waitFor(() => expect(received).toEqual(["connected"]));
+    await vi.advanceTimersByTimeAsync(EVENT_STREAM_INACTIVITY_MS);
+    await vi.waitFor(() => expect(states.at(-1)?.state).toBe("disconnected"));
+    expect(attempts).toBe(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    await consuming;
+
+    expect(attempts).toBe(2);
+    expect(firstCancelled).toBe(1);
+    expect(received).toEqual(["connected", "connected", "chat_message"]);
+    expect(states.map((state) => state.state)).toEqual([
+      "connected", "disconnected", "reconnected",
+    ]);
+    await vi.advanceTimersByTimeAsync(EVENT_STREAM_DEADLINE_MS * 2);
+    expect(attempts).toBe(2);
+    vi.useRealTimers();
+  });
+
+  test("counts SSE comments as liveness on a healthy idle stream", async () => {
+    vi.useFakeTimers();
+    const abort = new AbortController();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let attempts = 0;
+    const client = {
+      openSSE: vi.fn(async () => {
+        attempts++;
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller;
+            controller.enqueue(sseFrame("connected", {}));
+          },
+        }));
+      }),
+    };
+    const consuming = (async () => {
+      for await (const _event of streamAgentEvents(client as never, abort.signal)) {
+        // Heartbeat comments are liveness bytes, not agent events.
+      }
+    })();
+
+    await vi.waitFor(() => expect(streamController).toBeDefined());
+    for (let elapsed = 0; elapsed < EVENT_STREAM_DEADLINE_MS / 2;
+      elapsed += EVENT_STREAM_SERVER_HEARTBEAT_MS) {
+      await vi.advanceTimersByTimeAsync(EVENT_STREAM_SERVER_HEARTBEAT_MS);
+      streamController!.enqueue(sseComment());
+      await Promise.resolve();
+      expect(attempts).toBe(1);
+    }
+
+    abort.abort();
+    await vi.runAllTimersAsync();
+    await consuming;
+    expect(attempts).toBe(1);
+    vi.useRealTimers();
+  });
+
+  test("local absolute deadline caps a stream that sends endless heartbeat comments", async () => {
+    vi.useFakeTimers();
+    const states: EventStreamState[] = [];
+    const abort = new AbortController();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let attempts = 0;
+    const received: string[] = [];
+    const client = {
+      openSSE: vi.fn(async () => {
+        attempts++;
+        if (attempts === 1) {
+          return new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+              streamController = controller;
+              controller.enqueue(sseFrame("connected", {}));
+            },
+          }));
+        }
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(sseFrame("connected", {}));
+            controller.enqueue(sseFrame("actionable_mail", {
+              message_id: "deadline-catch-up",
+              conversation_id: "deadline-conversation",
+            }));
+          },
+        }));
+      }),
+    };
+    const consuming = (async () => {
+      for await (const event of streamAgentEvents(
+        client as never,
+        abort.signal,
+        (state) => states.push(state),
+      )) {
+        received.push(event.type);
+        if (event.type === "mail_message") {
+          abort.abort();
+          break;
+        }
+      }
+    })();
+
+    await vi.waitFor(() => expect(received).toEqual(["connected"]));
+    for (let elapsed = 0;
+      elapsed < EVENT_STREAM_DEADLINE_MS - EVENT_STREAM_SERVER_HEARTBEAT_MS;
+      elapsed += EVENT_STREAM_SERVER_HEARTBEAT_MS) {
+      await vi.advanceTimersByTimeAsync(EVENT_STREAM_SERVER_HEARTBEAT_MS);
+      streamController!.enqueue(sseComment());
+      await Promise.resolve();
+      expect(attempts).toBe(1);
+    }
+    await vi.advanceTimersByTimeAsync(EVENT_STREAM_SERVER_HEARTBEAT_MS);
+    await consuming;
+
+    expect(attempts).toBe(2);
+    expect(received).toEqual(["connected", "connected", "mail_message"]);
+    expect(states.map((state) => state.state)).toEqual(["connected"]);
+    vi.useRealTimers();
+  });
+
+  test("cleans the losing inactivity timer when EOF races the watchdog", async () => {
+    vi.useFakeTimers();
+    const states: EventStreamState[] = [];
+    const abort = new AbortController();
+    let firstController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let attempts = 0;
+    const client = {
+      openSSE: vi.fn(async () => {
+        attempts++;
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            if (attempts === 1) firstController = controller;
+            controller.enqueue(sseFrame("connected", {}));
+          },
+        }));
+      }),
+    };
+    const consuming = (async () => {
+      for await (const _event of streamAgentEvents(
+        client as never,
+        abort.signal,
+        (state) => states.push(state),
+      )) {
+        // Keep consuming until the one expected reconnect is established.
+      }
+    })();
+
+    await vi.waitFor(() => expect(firstController).toBeDefined());
+    await vi.advanceTimersByTimeAsync(EVENT_STREAM_INACTIVITY_MS - 1);
+    firstController!.close();
+    await vi.advanceTimersByTimeAsync(1001);
+    await vi.waitFor(() => expect(attempts).toBe(2));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(attempts).toBe(2);
+    expect(states.map((state) => state.state)).toEqual([
+      "connected", "disconnected", "reconnected",
+    ]);
+
+    abort.abort();
+    await vi.runAllTimersAsync();
+    await consuming;
+    vi.useRealTimers();
+  });
+
+  test("preserves immediate planned-EOF reconnect without a false outage state", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-05T00:00:00Z"));
+    const states: EventStreamState[] = [];
+    const abort = new AbortController();
+    let firstController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let attempts = 0;
+    const client = {
+      openSSE: vi.fn(async () => {
+        attempts++;
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            if (attempts === 1) firstController = controller;
+            controller.enqueue(sseFrame("connected", {}));
+            if (attempts === 2) {
+              controller.enqueue(sseFrame("actionable_chat", {
+                session_id: "planned-catch-up",
+                conversation_id: "planned-catch-up",
+              }));
+            }
+          },
+        }));
+      }),
+    };
+    const consuming = (async () => {
+      for await (const event of streamAgentEvents(
+        client as never,
+        abort.signal,
+        (state) => states.push(state),
+      )) {
+        if (event.type === "connected" && attempts === 1) {
+          vi.setSystemTime(Date.now() + 4 * 60 * 1000);
+          firstController!.close();
+        }
+        if (event.type === "chat_message") {
+          abort.abort();
+          break;
+        }
+      }
+    })();
+
+    await consuming;
+    expect(attempts).toBe(2);
+    expect(states.map((state) => state.state)).toEqual(["connected"]);
     vi.useRealTimers();
   });
 

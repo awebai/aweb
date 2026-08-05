@@ -43,6 +43,11 @@ export interface AgentEvent {
   payload?: Record<string, unknown>;
 }
 
+export const EVENT_STREAM_SERVER_HEARTBEAT_MS = 30_000;
+export const EVENT_STREAM_INACTIVITY_MS = 2 * EVENT_STREAM_SERVER_HEARTBEAT_MS + 15_000;
+export const EVENT_STREAM_DEADLINE_MS = 5 * 60 * 1000;
+const EVENT_STREAM_PLANNED_CLOSE_MS = 4 * 60 * 1000;
+
 /**
  * Consume the agent event stream (GET /v1/events/stream).
  * Yields parsed AgentEvent objects. Reconnects on stream end.
@@ -57,15 +62,34 @@ export async function* streamAgentEvents(
   let retryInMs = 1000;
   const maxRetryInMs = 5000;
   while (!signal.aborted) {
-    const deadline = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    const openedAt = Date.now();
+    const deadline = new Date(openedAt + EVENT_STREAM_DEADLINE_MS).toISOString();
+    const attemptAbort = new AbortController();
+    let deadlineReached = false;
+    const abortAttempt = () => attemptAbort.abort(signal.reason);
+    signal.addEventListener("abort", abortAttempt, { once: true });
+    const deadlineTimer = setTimeout(() => {
+      deadlineReached = true;
+      attemptAbort.abort(new Error("event stream local deadline reached"));
+    }, EVENT_STREAM_DEADLINE_MS);
+    const finishAttempt = () => {
+      clearTimeout(deadlineTimer);
+      signal.removeEventListener("abort", abortAttempt);
+    };
+
     let resp: Response;
     try {
       resp = await client.openSSE(
         `/v1/events/stream?deadline=${encodeURIComponent(deadline)}`,
-        signal,
+        attemptAbort.signal,
       );
     } catch (err) {
+      finishAttempt();
       if (signal.aborted) return;
+      // The server is required to close at this same deadline. Treat our local
+      // enforcement like that planned close: reconnect immediately and do not
+      // claim an outage merely because a half-open transport hid server EOF.
+      if (deadlineReached) continue;
       const fetchRetryInMs = maxRetryInMs;
       if (!disconnected) {
         disconnected = true;
@@ -77,9 +101,8 @@ export async function* streamAgentEvents(
     }
 
     try {
-      const openedAt = Date.now();
       let streamConfirmed = false;
-      for await (const event of parseSSEResponse(resp, signal)) {
+      for await (const event of parseSSEResponse(resp, attemptAbort.signal)) {
         if (!streamConfirmed) {
           streamConfirmed = true;
           retryInMs = 1000;
@@ -94,7 +117,8 @@ export async function* streamAgentEvents(
         }
         yield event;
       }
-      if (!signal.aborted && Date.now() - openedAt < 4 * 60 * 1000) {
+      if (!signal.aborted && !deadlineReached
+        && Date.now() - openedAt < EVENT_STREAM_PLANNED_CLOSE_MS) {
         if (!disconnected) {
           disconnected = true;
           onState({ state: "disconnected", cause: "connection closed", retryInMs });
@@ -104,16 +128,18 @@ export async function* streamAgentEvents(
       }
     } catch (err) {
       if (signal.aborted) return;
+      if (deadlineReached) continue;
       if (!disconnected) {
         disconnected = true;
         onState({ state: "disconnected", cause: streamErrorCause(err), retryInMs });
       }
-      // AbortError is only expected when our signal is aborted (handled above).
-      // A server/proxy termination while still active is a failed stream and
-      // must back off like any other read failure.
+      // AbortError is only expected when our parent signal is aborted (handled
+      // above). A read failure, including heartbeat inactivity, reconnects via
+      // the existing bounded backoff.
       await sleep(retryInMs, signal);
       retryInMs = Math.min(maxRetryInMs, retryInMs * 2);
     } finally {
+      finishAttempt();
       resp.body?.cancel().catch(() => {});
     }
   }
@@ -125,10 +151,6 @@ async function* parseSSEResponse(
 ): AsyncGenerator<AgentEvent> {
   const reader = resp.body?.getReader();
   if (!reader) return;
-  const onAbort = () => {
-    void reader.cancel().catch(() => {});
-  };
-  signal.addEventListener("abort", onAbort, { once: true });
 
   const decoder = new TextDecoder();
   let buffer = "";
@@ -137,7 +159,11 @@ async function* parseSSEResponse(
 
   try {
     while (!signal.aborted) {
-      const { done, value } = await reader.read();
+      // The server emits an idle comment every 30s. Allow two missed beats plus
+      // 15s of scheduling/proxy tolerance, but never wait for the platform's
+      // unbounded transport timeout. Every byte chunk resets this watchdog, so
+      // comments count as liveness even though they are not agent events.
+      const { done, value } = await readWithInactivity(reader, signal);
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
@@ -168,9 +194,53 @@ async function* parseSSEResponse(
       }
     }
   } finally {
-    signal.removeEventListener("abort", onAbort);
     reader.releaseLock();
   }
+}
+
+function readWithInactivity(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): Promise<{ done: boolean; value?: Uint8Array }> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+    };
+    const settle = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      action();
+    };
+    const cancelReader = (reason: unknown) => {
+      void reader.cancel(reason).catch(() => {});
+    };
+    const onAbort = () => {
+      cancelReader(signal.reason);
+      const error = signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException("The operation was aborted", "AbortError");
+      settle(() => reject(error));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    timer = setTimeout(() => {
+      const error = new Error("event stream heartbeat timed out");
+      cancelReader(error);
+      settle(() => reject(error));
+    }, EVENT_STREAM_INACTIVITY_MS);
+    reader.read().then(
+      (result) => settle(() => resolve(result)),
+      (error) => settle(() => reject(error)),
+    );
+  });
 }
 
 const KNOWN_TYPES: Set<string> = new Set([
