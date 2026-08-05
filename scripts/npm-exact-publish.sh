@@ -87,6 +87,21 @@ servers = doc.get("mcpServers")
 if not isinstance(servers, dict) or not servers:
     sys.exit("REFUSE: channel .mcp.json lacks a nonempty mcpServers wrapper")
 PYMCP
+      # The plugin manifest ships in the tgz; the version coherence must
+      # hold in the SHIPPED bytes, not only in the source tree the
+      # check-package-dist script reads.
+      python3 - "$unpack/package" <<'PYPLUGIN'
+import json, os, sys
+root = sys.argv[1]
+try:
+    plugin = json.load(open(os.path.join(root, ".claude-plugin", "plugin.json")))
+except FileNotFoundError:
+    sys.exit("REFUSE: channel tgz lacks .claude-plugin/plugin.json")
+pkg = json.load(open(os.path.join(root, "package.json")))
+if plugin.get("version") != pkg["version"]:
+    sys.exit(f"REFUSE: channel tgz plugin version {plugin.get('version')} "
+             f"does not equal its package version {pkg['version']}")
+PYPLUGIN
       ;;
     pi)
       node "$SOURCE_ROOT/pi-extension/scripts/check-package-dist.mjs" \

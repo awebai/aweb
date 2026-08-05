@@ -97,12 +97,13 @@ SKILLS='aweb-bootstrap aweb-coordination aweb-identity aweb-messaging aweb-team-
 make_profile_fixture() {
   # $1 profile, then flags: --no-sentinel, --drop-skill <name>, --extra-skill <name>
   local profile="$1"; shift
-  local sentinel="$SENTINEL" drop='' extra=''
+  local sentinel="$SENTINEL" drop='' extra='' plugin=coherent
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-sentinel) sentinel=''; shift ;;
       --drop-skill) drop="$2"; shift 2 ;;
       --extra-skill) extra="$2"; shift 2 ;;
+      --plugin) plugin="$2"; shift 2 ;;
     esac
   done
   rm -rf "$tmp/prof"; mkdir -p "$tmp/prof/dist"
@@ -112,6 +113,19 @@ make_profile_fixture() {
       printf '%s\n%s\n' "$CHANNEL_MARKERS" "$sentinel" > "$tmp/prof/dist/index.js"
       printf '{"mcpServers": {"aweb": {"command": "node"}}}\n' > "$tmp/prof/.mcp.json"
       files='"dist", ".mcp.json", "README.md"'
+      case "$plugin" in
+        coherent)
+          mkdir -p "$tmp/prof/.claude-plugin"
+          printf '{"name": "fixture", "version": "1.2.3"}\n' > "$tmp/prof/.claude-plugin/plugin.json"
+          files='"dist", ".mcp.json", ".claude-plugin", "README.md"'
+          ;;
+        mismatched)
+          mkdir -p "$tmp/prof/.claude-plugin"
+          printf '{"name": "fixture", "version": "9.9.9"}\n' > "$tmp/prof/.claude-plugin/plugin.json"
+          files='"dist", ".mcp.json", ".claude-plugin", "README.md"'
+          ;;
+        missing) ;;
+      esac
       ;;
     pi)
       printf '%s\n' "$CHANNEL_MARKERS" > "$tmp/prof/dist/index.js"
@@ -161,6 +175,8 @@ profile_case() {
 
 profile_case "channel profile accepts coherent fixture" channel ok ""
 profile_case "channel profile refuses missing sentinel" channel refuse "sentinel\|contract" --no-sentinel
+profile_case "channel profile refuses missing plugin manifest" channel refuse "plugin" --plugin missing
+profile_case "channel profile refuses mismatched plugin version" channel refuse "plugin" --plugin mismatched
 profile_case "pi profile accepts coherent fixture" pi ok ""
 profile_case "pi profile refuses missing skill dir" pi refuse "aweb-identity" --drop-skill aweb-identity
 profile_case "skills profile accepts exact five" skills ok ""
