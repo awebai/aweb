@@ -12,7 +12,7 @@
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-plan release-run release-receipt test-release-driver test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	release-plan release-run release-receipt test-release-driver test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	release-all-check \
 	publish-skills \
 	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
@@ -626,10 +626,13 @@ test-release-federation-skew:
 measure-release-federation-skew-control:
 	PYTHONPATH=scripts python3 -c 'from release_federation_skew import WheelResolver, prove_route_controls; prove_route_controls(WheelResolver())'
 
-test-release-driver: test-release-federation-skew test-release-channel-pi-skew test-release-persisted-state-skew test-release-skew-cli-server
+test-release-driver: test-release-adopted-preplan test-release-federation-skew test-release-channel-pi-skew test-release-persisted-state-skew test-release-skew-cli-server
 	python3 scripts/e2e/test_release_driver.py
 	python3 scripts/e2e/test_release_driver_cli.py
 	python3 scripts/e2e/test_release_adapter.py
+
+test-release-adopted-preplan:
+	python3 scripts/e2e/test_release_adopted_preplan.py
 
 test-release-channel-pi-skew:
 	python3 scripts/e2e/test_release_channel_pi_skew.py
