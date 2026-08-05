@@ -3,10 +3,11 @@
 #
 #   green: pack-inspect stages one tgz from a coherent package and reports
 #          its digest; verify-published (against a supplied observed file)
-#          adopts byte-identical bytes
+#          adopts byte-identical bytes; publish-exact gives npm an absolute
+#          physical file path without changing the staged bytes
 #   reds:  declared version mismatch, missing declared main entry inside
 #          the tgz, a files[] entry with no content in the tgz, observed
-#          published bytes differing from staged
+#          published bytes differing from staged, and missing/non-file tgz paths
 
 set -euo pipefail
 
@@ -16,6 +17,11 @@ PASS=0
 
 fail() { printf 'SELFTEST FAIL: %s\n' "$1" >&2; exit 1; }
 ok() { printf 'ok   %s\n' "$1"; PASS=$((PASS + 1)); }
+file_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -82,6 +88,62 @@ printf 'x' >> "$tmp/observed.tgz"
 expect_refusal "published bytes differ" "not.*equal\|does not equal" \
   verify-published --tgz "$staged" --observed "$tmp/observed.tgz"
 
+# ── publish-exact: npm receives only an absolute physical file path ─
+mkdir -p "$tmp/fake-bin"
+cat > "$tmp/fake-bin/npm" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${NPM_ARGV_LOG:?}"
+printf '%s\0' "$@" > "$NPM_ARGV_LOG"
+EOF
+chmod +x "$tmp/fake-bin/npm"
+
+assert_published_path() {
+  local label="$1" supplied="$2" expected="$3"
+  local log="$tmp/npm-argv-$PASS"
+  local before after
+  before="$(file_sha256 "$expected")"
+  (
+    cd "$tmp"
+    PATH="$tmp/fake-bin:$PATH" NPM_ARGV_LOG="$log" \
+      bash "$LANE" publish-exact --tgz "$supplied"
+  ) || fail "$label: publish-exact refused a valid tgz"
+  after="$(file_sha256 "$expected")"
+  [[ "$after" == "$before" ]] || fail "$label: publish-exact changed the tgz bytes"
+  python3 - "$log" "$expected" <<'PY'
+import os
+import sys
+
+args = open(sys.argv[1], "rb").read().split(b"\0")
+if args and args[-1] == b"":
+    args.pop()
+args = [arg.decode() for arg in args]
+expected = os.path.realpath(sys.argv[2])
+if args != ["publish", expected, "--access", "public"]:
+    raise SystemExit(f"npm argv {args!r} does not name exact physical tgz {expected!r}")
+if not os.path.isabs(args[1]):
+    raise SystemExit(f"npm tgz argument is not absolute: {args[1]!r}")
+PY
+  ok "$label"
+}
+
+relative_staged="staged/$(basename "$staged")"
+assert_published_path "publish-exact canonicalizes a relative tgz without package-spec interpretation" \
+  "$relative_staged" "$staged"
+assert_published_path "publish-exact preserves an absolute tgz path" "$staged" "$staged"
+mkdir -p "$tmp/staged with spaces"
+spaced="$tmp/staged with spaces/package file.tgz"
+cp "$staged" "$spaced"
+assert_published_path "publish-exact canonicalizes a tgz path with spaces" \
+  "staged with spaces/package file.tgz" "$spaced"
+ln -s "$staged" "$tmp/staged-link.tgz"
+assert_published_path "publish-exact resolves an absolute tgz symlink to its physical file" \
+  "$tmp/staged-link.tgz" "$staged"
+expect_refusal "missing tgz path" "regular file\|existing" \
+  publish-exact --tgz "$tmp/missing.tgz"
+expect_refusal "non-file tgz path" "regular file\|existing" \
+  publish-exact --tgz "$tmp"
+
 # ── package-profile fixtures ────────────────────────────────────────
 CHANNEL_MARKERS='const stableID = certificateStableID || identityStableID
 case "app_event"
@@ -90,27 +152,37 @@ stableIdentityStateHash
 seq>1 requires rotate_key operation
 did:aw not derived from genesis key
 verifyStableIdentityViaFullLog
-pin store is empty or has no document'
+pin store is empty or has no document
+msg.encrypted_envelope != null
+msg.subject = decrypted.subject
+msg.body = decrypted.body
+["--team", options.teamID.trim()]
+selected active team ${config.teamID} is missing certificate signing authentication'
 SENTINEL='aweb-channel-core-security/did-log-genesis-bound-v2+full-log-v1+pinstore-fail-closed-v1'
 SKILLS='aweb-bootstrap aweb-coordination aweb-identity aweb-messaging aweb-team-membership'
 
 make_profile_fixture() {
   # $1 profile, then flags: --no-sentinel, --drop-skill <name>, --extra-skill <name>
   local profile="$1"; shift
-  local sentinel="$SENTINEL" drop='' extra='' plugin=coherent
+  local sentinel="$SENTINEL" drop='' extra='' plugin=coherent markers="$CHANNEL_MARKERS" unsafe_merge=''
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-sentinel) sentinel=''; shift ;;
       --drop-skill) drop="$2"; shift 2 ;;
       --extra-skill) extra="$2"; shift 2 ;;
       --plugin) plugin="$2"; shift 2 ;;
+      --drop-trust-boundary)
+        markers="$(printf '%s\n' "$markers" | grep -v 'msg.encrypted_envelope != null')"
+        shift
+        ;;
+      --unsafe-decrypt-merge) unsafe_merge='Object.assign(msg, decrypted)'; shift ;;
     esac
   done
   rm -rf "$tmp/prof"; mkdir -p "$tmp/prof/dist"
   local files='"dist", "README.md"'
   case "$profile" in
     channel)
-      printf '%s\n%s\n' "$CHANNEL_MARKERS" "$sentinel" > "$tmp/prof/dist/index.js"
+      printf '%s\n%s\n%s\n' "$markers" "$sentinel" "$unsafe_merge" > "$tmp/prof/dist/index.js"
       printf '{"mcpServers": {"aweb": {"command": "node"}}}\n' > "$tmp/prof/.mcp.json"
       files='"dist", ".mcp.json", "README.md"'
       case "$plugin" in
@@ -128,7 +200,7 @@ make_profile_fixture() {
       esac
       ;;
     pi)
-      printf '%s\n' "$CHANNEL_MARKERS" > "$tmp/prof/dist/index.js"
+      printf '%s\n%s\n' "$markers" "$unsafe_merge" > "$tmp/prof/dist/index.js"
       files='"dist", "skills", "README.md"'
       ;;
     skills)
@@ -177,8 +249,12 @@ profile_case "channel profile accepts coherent fixture" channel ok ""
 profile_case "channel profile refuses missing sentinel" channel refuse "sentinel\|contract" --no-sentinel
 profile_case "channel profile refuses missing plugin manifest" channel refuse "plugin" --plugin missing
 profile_case "channel profile refuses mismatched plugin version" channel refuse "plugin" --plugin mismatched
+profile_case "channel profile refuses missing authenticated trust boundary" channel refuse "encrypted_envelope" --drop-trust-boundary
+profile_case "channel profile refuses trust-field overwrite merge" channel refuse "overwrite" --unsafe-decrypt-merge
 profile_case "pi profile accepts coherent fixture" pi ok ""
 profile_case "pi profile refuses missing skill dir" pi refuse "aweb-identity" --drop-skill aweb-identity
+profile_case "pi profile refuses missing authenticated trust boundary" pi refuse "encrypted_envelope" --drop-trust-boundary
+profile_case "pi profile refuses trust-field overwrite merge" pi refuse "overwrite" --unsafe-decrypt-merge
 profile_case "skills profile accepts exact five" skills ok ""
 profile_case "skills profile refuses a sixth skill dir" skills refuse "skill set" --extra-skill extra-skill
 

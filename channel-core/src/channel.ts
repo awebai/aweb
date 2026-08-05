@@ -61,6 +61,7 @@ export interface ChannelLoopOptions {
   undeliveredLog?: UndeliveredLog;
   undeliveredLogPath?: string;
   localDecrypt?: LocalDecryptProvider;
+  teamID?: string;
   workdir?: string;
   awCommand?: string;
   pinStoreWriter?: PinStoreWriter;
@@ -328,16 +329,20 @@ export function createChannelClient(config: {
   teamID: string;
   teamCertificateHeader: string;
 }): APIClient {
-  return new APIClient(config.baseURL, {
+  const client = new APIClient(config.baseURL, {
     did: config.did,
     stableID: config.stableID,
     signingKey: config.signingKey,
     teamID: config.teamID,
     teamCertificateHeader: config.teamCertificateHeader,
   });
+  if (!client.hasTeamCertificateAuth(config.teamID)) {
+    throw new Error(`selected active team ${config.teamID} is missing certificate signing authentication`);
+  }
+  return client;
 }
 
-export async function startChannelLoop(options: ChannelLoopOptions): Promise<void> {
+export async function startChannelLoop(options: ChannelLoopOptions & { teamID: string }): Promise<void> {
   const dispatched = new Set<string>();
   // Per-agent delivery store: one global file shared by every agent on the host
   // let ~95 concurrent agents clobber each other's marks (default-aajy). Scope
@@ -349,7 +354,11 @@ export async function startChannelLoop(options: ChannelLoopOptions): Promise<voi
     || (options.workdir ? join(options.workdir, ".aw", "channel-undelivered.jsonl") : DEFAULT_UNDELIVERED_LOG_PATH);
   const undeliveredLog = options.undeliveredLog || new UndeliveredLog(undeliveredLogPath);
   const localDecrypt = options.localDecrypt || (
-    options.workdir ? createLocalAWDecryptProvider({ workdir: options.workdir, awCommand: options.awCommand }) : undefined
+    options.workdir ? createLocalAWDecryptProvider({
+      workdir: options.workdir,
+      awCommand: options.awCommand,
+      teamID: options.teamID,
+    }) : undefined
   );
   await consumeAgentEvents(
     // UNGUARDED: no test covers this function, so removing any dependency from
@@ -746,7 +755,8 @@ async function resolveMailForDelivery(
     if (!decrypted || typeof decrypted.body !== "string") {
       return { ok: false, error: "local aw did not return decrypted mail body" };
     }
-    Object.assign(msg, decrypted);
+    msg.subject = decrypted.subject;
+    msg.body = decrypted.body;
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -767,7 +777,7 @@ async function resolveChatForDelivery(
     if (!decrypted || typeof decrypted.body !== "string") {
       return { ok: false, error: "local aw did not return decrypted chat body" };
     }
-    Object.assign(msg, decrypted);
+    msg.body = decrypted.body;
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -775,7 +785,7 @@ async function resolveChatForDelivery(
 }
 
 function isEncryptedMessage(msg: Pick<InboxMessage | ChatMessage, "content_mode" | "message_version" | "encrypted_envelope">): boolean {
-  return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope !== undefined;
+  return msg.content_mode === "encrypted_v2" || msg.message_version === 2 || msg.encrypted_envelope != null;
 }
 
 function encryptedDeliveryFailureMeta(

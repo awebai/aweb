@@ -2872,6 +2872,11 @@ def channel_tgz(*, version="1.7.2", plugin_version=None, sentinel=True):
         "did:aw not derived from genesis key",
         "verifyStableIdentityViaFullLog",
         "pin store is empty or has no document",
+        "msg.encrypted_envelope != null",
+        "msg.subject = decrypted.subject",
+        "msg.body = decrypted.body",
+        '["--team", options.teamID.trim()]',
+        "selected active team ${config.teamID} is missing certificate signing authentication",
     ])
     if sentinel:
         markers += ("\naweb-channel-core-security/"

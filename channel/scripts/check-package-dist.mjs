@@ -24,6 +24,14 @@ const certificateFirst = "const stableID = certificateStableID || identityStable
 const staleIdentityFirst = "const stableID = (identity?.stable_id || \"\").trim() || (certificate.member_did_aw || \"\").trim()";
 const appEventConsumer = 'case "app_event"';
 const appAwakeningKind = 'kind: "app"';
+const authenticatedTrustCodeMarkers = [
+  "msg.encrypted_envelope != null",
+  "msg.subject = decrypted.subject",
+  "msg.body = decrypted.body",
+  '["--team", options.teamID.trim()]',
+  "is missing certificate signing authentication",
+];
+const unsafeDecryptMerge = "Object.assign(msg, decrypted)";
 
 // Freshness gate: the plugin bundle inlines channel-core via the file: symlink,
 // so a stale channel-core/dist would silently ship the plugin WITHOUT the
@@ -68,6 +76,16 @@ function validatePackageDist(candidate) {
   }
   if (!candidate.includes(appEventConsumer) || !candidate.includes(appAwakeningKind)) {
     throw new Error("channel dist is missing bundled app_event consumer wake dispatch");
+  }
+  for (const marker of authenticatedTrustCodeMarkers) {
+    if (!candidate.includes(marker)) {
+      throw new Error(
+        `channel dist is missing authenticated trust-boundary behavior (marker: ${JSON.stringify(marker)})`,
+      );
+    }
+  }
+  if (candidate.includes(unsafeDecryptMerge)) {
+    throw new Error("channel dist permits decrypted child output to overwrite trust fields");
   }
   for (const marker of securityCodeMarkers) {
     if (!candidate.includes(marker)) {
