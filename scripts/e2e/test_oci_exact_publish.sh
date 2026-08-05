@@ -16,8 +16,20 @@ ok() { printf 'ok   %s\n' "$1"; PASS=$((PASS + 1)); }
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+expect_refusal() {
+  local label="$1" needle="$2"; shift 2
+  local out
+  if out="$("$@" 2>&1)"; then fail "$label: accepted what it must refuse"; fi
+  grep -qi "$needle" <<<"$out" || fail "$label: refusal does not name ($needle): $out"
+  ok "$label refused, naming: $needle"
+}
+
+
+SRC_SHA="$(printf 'a%.0s' {1..40})"
+
 make_archive() {
   # $1 out.tar; flags: --drop-layer --tamper-index --single-platform
+  #                    --wrong-version-label --wrong-revision-label
   python3 - "$@" <<'PY'
 import hashlib, io, json, sys, tarfile
 
@@ -33,12 +45,21 @@ def add(data: bytes) -> str:
 MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 INDEX = "application/vnd.oci.image.index.v1+json"
 
+version = "9.9.9" if "--wrong-version-label" in flags else "0.5.14"
+revision = ("b" * 40) if "--wrong-revision-label" in flags else ("a" * 40)
+labels = {
+    "org.opencontainers.image.title": "awid",
+    "org.opencontainers.image.version": version,
+    "org.opencontainers.image.revision": revision,
+}
+
 entries = []
 platforms = [("amd64",), ("arm64",)]
 if "--single-platform" in flags:
     platforms = [("amd64",)]
 for (arch,) in platforms:
-    config = add(json.dumps({"architecture": arch, "os": "linux"}).encode())
+    config = add(json.dumps({"architecture": arch, "os": "linux",
+                             "config": {"Labels": labels}}).encode())
     layer = add(f"layer-bytes-{arch}".encode())
     manifest = add(json.dumps({
         "schemaVersion": 2, "mediaType": MANIFEST,
@@ -82,49 +103,79 @@ PY
 }
 
 INDEX_DIGEST="$(make_archive "$tmp/good.tar")"
-out="$(bash "$LANE" inspect-staged --archive "$tmp/good.tar" --version 0.5.14)" \
+out="$(bash "$LANE" inspect-staged --archive "$tmp/good.tar" --version 0.5.14 \
+  --source-sha "$SRC_SHA" --out "$tmp/identities.json")" \
   || fail "coherent archive refused: $out"
 grep -q "STAGED INDEX: $INDEX_DIGEST" <<<"$out" \
   || fail "identity not bound: $out"
-grep -q "linux/arm64" <<<"$out" || fail "platform identities not printed"
-ok "coherent two-platform archive binds its complete identity"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert "linux/arm64" in d["platforms"]' \
+  "$tmp/identities.json" || fail "identities file is not valid JSON with platforms"
+grep -q "{" <<<"$out" && fail "machine JSON leaked onto stdout"
+ok "coherent archive binds identities to the file, diagnostics to stdout"
 
 bash "$LANE" verify-published --archive "$tmp/good.tar" --version 0.5.14 \
+  --source-sha "$SRC_SHA" \
   --repository ghcr.io/awebai/awid \
   --observed-digest "0.5.14=$INDEX_DIGEST" \
   --observed-digest "latest=$INDEX_DIGEST" >/dev/null \
   || fail "matching tag observations refused"
 ok "version and latest resolving to the staged index verify"
 
-expect_refusal() {
-  local label="$1" needle="$2"; shift 2
-  local out
-  if out="$("$@" 2>&1)"; then fail "$label: accepted what it must refuse"; fi
-  grep -qi "$needle" <<<"$out" || fail "$label: refusal does not name ($needle): $out"
-  ok "$label refused, naming: $needle"
-}
+make_archive "$tmp/wrongver.tar" --wrong-version-label >/dev/null
+expect_refusal "wrong version label" "labels version" \
+  bash "$LANE" inspect-staged --archive "$tmp/wrongver.tar" --version 0.5.14 \
+  --source-sha "$SRC_SHA" --out "$tmp/x.json"
+
+make_archive "$tmp/wrongrev.tar" --wrong-revision-label >/dev/null
+expect_refusal "wrong revision label" "labels revision" \
+  bash "$LANE" inspect-staged --archive "$tmp/wrongrev.tar" --version 0.5.14 \
+  --source-sha "$SRC_SHA" --out "$tmp/x.json"
+
+# decide-tag: observation failure is never permission to write
+S="sha256:$(printf '1%.0s' {1..64})"; D="sha256:$(printf '2%.0s' {1..64})"
+[[ "$(bash "$LANE" decide-tag --tag-kind version --staged "$S" \
+  --listing-status ok --present no)" == "COPY" ]] || fail "missing version tag must COPY"
+[[ "$(bash "$LANE" decide-tag --tag-kind version --staged "$S" \
+  --listing-status ok --present yes --remote-digest "$S")" == "ADOPT" ]] \
+  || fail "exact version tag must ADOPT"
+[[ "$(bash "$LANE" decide-tag --tag-kind latest --staged "$S" \
+  --listing-status ok --present yes --remote-digest "$D")" == "COPY" ]] \
+  || fail "different latest must transition (COPY)"
+ok "decide-tag adopts exact, copies missing, transitions latest"
+expect_refusal "version tag mismatch never rewrites" "never rewritten" \
+  bash "$LANE" decide-tag --tag-kind version --staged "$S" \
+  --listing-status ok --present yes --remote-digest "$D"
+expect_refusal "unavailable listing never writes" "never permission" \
+  bash "$LANE" decide-tag --tag-kind version --staged "$S" \
+  --listing-status failed --present no
+expect_refusal "unavailable remote digest never writes" "refusing to write blind" \
+  bash "$LANE" decide-tag --tag-kind latest --staged "$S" \
+  --listing-status ok --present yes --remote-digest unavailable
 
 make_archive "$tmp/nolayer.tar" --drop-layer >/dev/null
 expect_refusal "missing layer blob" "missing" \
-  bash "$LANE" inspect-staged --archive "$tmp/nolayer.tar" --version 0.5.14
+  bash "$LANE" inspect-staged --archive "$tmp/nolayer.tar" --version 0.5.14 \
+  --source-sha "$SRC_SHA" --out "$tmp/x.json"
 
 make_archive "$tmp/tampered.tar" --tamper-index >/dev/null
 expect_refusal "tampered index blob" "hashes to" \
-  bash "$LANE" inspect-staged --archive "$tmp/tampered.tar" --version 0.5.14
+  bash "$LANE" inspect-staged --archive "$tmp/tampered.tar" --version 0.5.14 \
+  --source-sha "$SRC_SHA" --out "$tmp/x.json"
 
 make_archive "$tmp/single.tar" --single-platform >/dev/null
 expect_refusal "single platform" "linux/arm64" \
-  bash "$LANE" inspect-staged --archive "$tmp/single.tar" --version 0.5.14
+  bash "$LANE" inspect-staged --archive "$tmp/single.tar" --version 0.5.14 \
+  --source-sha "$SRC_SHA" --out "$tmp/x.json"
 
 expect_refusal "version tag resolving elsewhere" "resolves to" \
   bash "$LANE" verify-published --archive "$tmp/good.tar" --version 0.5.14 \
-  --repository ghcr.io/awebai/awid \
+  --source-sha "$SRC_SHA" --repository ghcr.io/awebai/awid \
   --observed-digest "0.5.14=sha256:$(printf '0%.0s' {1..64})" \
   --observed-digest "latest=$INDEX_DIGEST"
 
 expect_refusal "latest resolving elsewhere" "latest" \
   bash "$LANE" verify-published --archive "$tmp/good.tar" --version 0.5.14 \
-  --repository ghcr.io/awebai/awid \
+  --source-sha "$SRC_SHA" --repository ghcr.io/awebai/awid \
   --observed-digest "0.5.14=$INDEX_DIGEST" \
   --observed-digest "latest=sha256:$(printf '0%.0s' {1..64})"
 

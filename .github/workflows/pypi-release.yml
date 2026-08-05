@@ -128,9 +128,12 @@ jobs:
           if [[ "$MODE" == "stage-only" ]]; then
             [[ -z "$remote_tag" ]] \
               || { echo "REFUSE: tag ${TAG_PREFIX}${VERSION} already exists remotely at $remote_tag" >&2; exit 1; }
-            if curl -fsS "https://pypi.org/pypi/${PYPI_NAME}/${VERSION}/json" >/dev/null 2>&1; then
-              echo "REFUSE: ${PYPI_NAME} ${VERSION} already exists on PyPI" >&2; exit 1
-            fi
+            code="$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/${PYPI_NAME}/${VERSION}/json")"
+            case "$code" in
+              404) : ;;
+              200) echo "REFUSE: ${PYPI_NAME} ${VERSION} already exists on PyPI" >&2; exit 1 ;;
+              *) echo "REFUSE: PyPI observation returned status ${code}; absence must be proven, not assumed" >&2; exit 1 ;;
+            esac
           else
             deref="$(git rev-parse "${TAG_PREFIX}${VERSION}^{}" 2>/dev/null || true)"
             [[ "$deref" == "$SOURCE_SHA" ]] \
@@ -315,20 +318,28 @@ jobs:
             echo "adopted existing tag $tag"
           fi
 
-      - name: PyPI - publish the exact staged files, or adopt identical
+      - name: PyPI - adopt exact, publish only missing staged files
         env:
           PYPI_NAME: ${{ steps.lane.outputs.pypi_name }}
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: |
           set -euo pipefail
-          if curl -fsS "https://pypi.org/pypi/${PYPI_NAME}/${VERSION}/json" -o observed.json 2>/dev/null; then
-            bash scripts/pypi-exact-publish.sh verify-published \
-              --dist staging/dist --package "$PYPI_NAME" --version "$VERSION" \
-              --observed-json observed.json
-            echo "adopted ${PYPI_NAME} ${VERSION} (byte-identical)"
+          code="$(curl -s -o observed.json -w '%{http_code}' "https://pypi.org/pypi/${PYPI_NAME}/${VERSION}/json")"
+          # plan-publish maps 404 to everything, 200 to exactly the missing
+          # staged filenames (adopting exact, refusing mismatch/extra), and
+          # any other status to an outage refusal.
+          plan="$(bash scripts/pypi-exact-publish.sh plan-publish \
+            --dist staging/dist --package "$PYPI_NAME" --version "$VERSION" \
+            --observed-status "$code" --observed-json observed.json)"
+          if [[ -z "$plan" ]]; then
+            echo "adopted ${PYPI_NAME} ${VERSION} (complete and byte-identical)"
           else
-            uv publish staging/dist/*
-            echo "published ${PYPI_NAME} ${VERSION} from the exact staged files"
+            files=()
+            while IFS= read -r name; do
+              [[ -n "$name" ]] && files+=("staging/dist/$name")
+            done <<<"$plan"
+            uv publish "${files[@]}"
+            echo "published ${#files[@]} missing staged file(s) for ${PYPI_NAME} ${VERSION}"
           fi
 
       - name: Verify published state equals staged bytes

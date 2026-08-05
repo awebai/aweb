@@ -6,12 +6,21 @@
 #       the package at the version, the version inside both artifacts
 #       (PKG-INFO / METADATA) equals the declared one, and prints one
 #       sha256 per file.
+#   plan-publish      --dist <dir> --package <name> --version <X.Y.Z>
+#                     --observed-status <http-code> [--observed-json <file>]
+#       Decides what continuation may publish. 404 means the release is
+#       absent: every staged file publishes. 200 means partial or complete
+#       state: exact existing files adopt, mismatched or extra remote files
+#       refuse permanently, and ONLY the missing staged filenames print
+#       (one per line) for publication. Any other status is an outage and
+#       refuses - unavailability is never permission to publish.
 #   verify-published  --dist <dir> --package <name> --version <X.Y.Z>
 #                     [--observed-json <file>]
 #       Compares PyPI's per-file sha256 (JSON API, or the supplied
-#       observation) against the staged files: every staged file must be
-#       present remotely with identical digest. PyPI can never re-upload,
-#       so any mismatch is permanent and refuses.
+#       observation) against the staged files: the complete remote set must
+#       EXACTLY equal the staged set - a missing, mismatched, or extra
+#       remote file refuses. PyPI can never re-upload, so any mismatch is
+#       permanent.
 
 set -euo pipefail
 
@@ -23,13 +32,14 @@ sha256() {
 }
 
 MODE="${1:-}"; shift || true
-DIST='' PACKAGE='' VERSION='' OBSERVED=''
+DIST='' PACKAGE='' VERSION='' OBSERVED='' STATUS=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dist) DIST="$2"; shift 2 ;;
     --package) PACKAGE="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
     --observed-json) OBSERVED="$2"; shift 2 ;;
+    --observed-status) STATUS="$2"; shift 2 ;;
     *) echo "pypi-exact-publish: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -83,6 +93,43 @@ for name in sdists + wheels:
         print(f"STAGED: {name} sha256 {hashlib.sha256(f.read()).hexdigest()}")
 PY
     ;;
+  plan-publish)
+    [[ -n "$STATUS" ]] || { echo "plan-publish requires --observed-status" >&2; exit 2; }
+    if [[ "$STATUS" == "404" ]]; then
+      ls "$DIST" | grep -E "^${NORMALIZED}-.*(\\.tar\\.gz|\\.whl)$"
+      exit 0
+    fi
+    [[ "$STATUS" == "200" ]] \
+      || fail "PyPI observation returned status ${STATUS}; unavailability is never permission to publish"
+    [[ -n "$OBSERVED" ]] || { echo "plan-publish with status 200 requires --observed-json" >&2; exit 2; }
+    python3 - "$DIST" "$OBSERVED" "$NORMALIZED" "$VERSION" <<'PY'
+import hashlib, json, os, sys
+dist, observed_path, normalized, version = sys.argv[1:5]
+observed = {
+    u["filename"]: u["digests"]["sha256"]
+    for u in json.load(open(observed_path)).get("urls", [])
+}
+staged = {}
+for name in sorted(os.listdir(dist)):
+    if name.startswith(f"{normalized}-") and (
+        name.endswith(".tar.gz") or name.endswith(".whl")
+    ):
+        with open(os.path.join(dist, name), "rb") as f:
+            staged[name] = hashlib.sha256(f.read()).hexdigest()
+extra = sorted(set(observed) - set(staged))
+if extra:
+    sys.exit(f"REFUSE: PyPI serves files not in the staged set: {extra}; "
+             "permanent")
+for name, digest in staged.items():
+    remote = observed.get(name)
+    if remote is not None and remote != digest:
+        sys.exit(f"REFUSE: {name}: PyPI serves sha256 {remote}, staged is "
+                 f"{digest}; PyPI can never re-upload, this is permanent")
+for name in staged:
+    if name not in observed:
+        print(name)
+PY
+    ;;
   verify-published)
     if [[ -z "$OBSERVED" ]]; then
       OBSERVED="$(mktemp)"
@@ -104,6 +151,10 @@ staged = [
 ]
 if not staged:
     sys.exit(f"REFUSE: no staged files for {normalized} {version}")
+extra = sorted(set(observed) - set(staged))
+if extra:
+    sys.exit(f"REFUSE: PyPI serves files not in the staged set: {extra}; "
+             "the complete remote set must exactly equal staged")
 for name in staged:
     with open(os.path.join(dist, name), "rb") as f:
         local = hashlib.sha256(f.read()).hexdigest()
@@ -117,7 +168,7 @@ for name in staged:
 PY
     ;;
   *)
-    echo "pypi-exact-publish: mode must be inspect-staged | verify-published" >&2
+    echo "pypi-exact-publish: mode must be inspect-staged | plan-publish | verify-published" >&2
     exit 2
     ;;
 esac

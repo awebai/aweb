@@ -123,4 +123,60 @@ expect_refusal "staged file absent remotely" "does not serve" bash "$LANE" verif
   --dist "$tmp/dist" --package fixture-pkg --version 1.2.3 \
   --observed-json "$tmp/observed.json"
 
+# ── plan-publish: outage, adoption, partial, extra, mismatch ────────
+make_dist "$tmp/dist" 1.2.3 1.2.3
+expect_refusal "outage is never permission to publish" "unavailab" \
+  bash "$LANE" plan-publish --dist "$tmp/dist" --package fixture-pkg \
+  --version 1.2.3 --observed-status 503
+
+plan="$(bash "$LANE" plan-publish --dist "$tmp/dist" --package fixture-pkg \
+  --version 1.2.3 --observed-status 404)"
+[[ "$(wc -l <<<"$plan" | tr -d ' ')" == "2" ]] \
+  || fail "absent release must publish both staged files: $plan"
+ok "absent release (404) plans both staged files"
+
+observation
+plan="$(bash "$LANE" plan-publish --dist "$tmp/dist" --package fixture-pkg \
+  --version 1.2.3 --observed-status 200 --observed-json "$tmp/observed.json")"
+[[ -z "$plan" ]] || fail "complete exact remote state must plan nothing: $plan"
+ok "complete exact remote state adopts everything, plans nothing"
+
+python3 - "$tmp/observed.json" <<'PYX'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["urls"] = [u for u in d["urls"] if not u["filename"].endswith(".whl")]
+json.dump(d, open(sys.argv[1], "w"))
+PYX
+plan="$(bash "$LANE" plan-publish --dist "$tmp/dist" --package fixture-pkg \
+  --version 1.2.3 --observed-status 200 --observed-json "$tmp/observed.json")"
+[[ "$plan" == *.whl && "$(wc -l <<<"$plan" | tr -d ' ')" == "1" ]] \
+  || fail "partial state must plan exactly the missing wheel: $plan"
+ok "partial remote state plans only the missing staged file"
+
+observation
+python3 - "$tmp/observed.json" <<'PYX'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["urls"].append({"filename": "fixture_pkg-1.2.3-uninvited.whl",
+                  "digests": {"sha256": "0" * 64}})
+json.dump(d, open(sys.argv[1], "w"))
+PYX
+expect_refusal "extra remote file" "not in the staged set" \
+  bash "$LANE" plan-publish --dist "$tmp/dist" --package fixture-pkg \
+  --version 1.2.3 --observed-status 200 --observed-json "$tmp/observed.json"
+expect_refusal "extra remote file at verification" "not in the staged set" \
+  bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
+  --version 1.2.3 --observed-json "$tmp/observed.json"
+
+observation
+python3 - "$tmp/observed.json" <<'PYX'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["urls"][0]["digests"]["sha256"] = "0" * 64
+json.dump(d, open(sys.argv[1], "w"))
+PYX
+expect_refusal "mismatch at planning" "permanent" \
+  bash "$LANE" plan-publish --dist "$tmp/dist" --package fixture-pkg \
+  --version 1.2.3 --observed-status 200 --observed-json "$tmp/observed.json"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

@@ -140,6 +140,12 @@ jobs:
           docker buildx build \
             --file awid/Dockerfile.release \
             --platform linux/amd64,linux/arm64 \
+            --provenance=false \
+            --sbom=false \
+            --label "org.opencontainers.image.title=awid" \
+            --label "org.opencontainers.image.description=Thin awid.ai registry service wrapper around aweb" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
             --output "type=oci,dest=../staging/awid-oci.tar" \
             .
 
@@ -148,8 +154,7 @@ jobs:
           set -euo pipefail
           bash scripts/oci-exact-publish.sh inspect-staged \
             --archive staging/awid-oci.tar --version "$VERSION" \
-            > staging/identities.json
-          tail -1 staging/identities.json
+            --source-sha "$SOURCE_SHA" --out staging/identities.json
           python3 - <<'PY'
           import hashlib, json, os
           files = {}
@@ -265,8 +270,9 @@ jobs:
             --staging staging --manifest staging/manifest.json \
             --sha "$SOURCE_SHA" --version "$VERSION"
           bash scripts/oci-exact-publish.sh inspect-staged \
-            --archive staging/awid-oci.tar --version "$VERSION" > reinspect.json
-          diff <(jq -S . reinspect.json) <(jq -S 'del(._comment?)' staging/identities.json) >/dev/null \
+            --archive staging/awid-oci.tar --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" --out reinspect.json
+          diff <(jq -S . reinspect.json) <(jq -S . staging/identities.json) >/dev/null \
             || { echo "REFUSE: re-inspected identities differ from the staged identities" >&2; exit 1; }
 
       - name: Tag - create at exact source, or adopt identical
@@ -287,21 +293,41 @@ jobs:
             echo "adopted existing tag $tag"
           fi
 
-      - name: GHCR - transfer the exact staged bytes
+      - name: GHCR - adopt exact, transfer missing, refuse mismatch
         run: |
           set -euo pipefail
           echo "${{ secrets.GITHUB_TOKEN }}" | skopeo login ghcr.io \
             --username "${{ github.actor }}" --password-stdin
           staged="$(python3 -c 'import json; print(json.load(open("staging/identities.json"))["index"])')"
+          # Authoritative listing distinguishes missing from unavailable; a
+          # failed observation is never permission to write.
+          listing_status=ok
+          tags_json="$(skopeo list-tags docker://ghcr.io/awebai/awid)" || listing_status=failed
           for tag in "$VERSION" latest; do
-            if remote="$(skopeo inspect --raw "docker://ghcr.io/awebai/awid:${tag}" 2>/dev/null \
-                | sha256sum | awk '{print "sha256:"$1}')" && [[ "$remote" == "$staged" ]]; then
-              echo "adopted ghcr.io/awebai/awid:${tag} (already the staged index)"
-              continue
+            kind=version; [[ "$tag" == "latest" ]] && kind=latest
+            present=no; remote_digest=unavailable
+            if [[ "$listing_status" == "ok" ]]; then
+              if jq -e --arg t "$tag" '.Tags | index($t)' <<<"$tags_json" >/dev/null; then
+                present=yes
+                if raw="$(skopeo inspect --raw "docker://ghcr.io/awebai/awid:${tag}")"; then
+                  remote_digest="sha256:$(sha256sum <<<"$raw" | awk '{print $1}')"
+                fi
+              fi
             fi
-            skopeo copy --all "oci-archive:staging/awid-oci.tar" \
-              "docker://ghcr.io/awebai/awid:${tag}"
-            echo "transferred exact staged bytes to ghcr.io/awebai/awid:${tag}"
+            action="$(bash scripts/oci-exact-publish.sh decide-tag \
+              --tag-kind "$kind" --staged "$staged" \
+              --listing-status "$listing_status" --present "$present" \
+              --remote-digest "$remote_digest")"
+            case "$action" in
+              ADOPT)
+                echo "adopted ghcr.io/awebai/awid:${tag} (already the staged index)" ;;
+              COPY)
+                skopeo copy --all "oci-archive:staging/awid-oci.tar" \
+                  "docker://ghcr.io/awebai/awid:${tag}"
+                echo "transferred exact staged bytes to ghcr.io/awebai/awid:${tag}" ;;
+              *)
+                echo "REFUSE: unexpected decide-tag action ${action}" >&2; exit 1 ;;
+            esac
           done
 
       - name: Verify published state equals the staged index
@@ -309,5 +335,5 @@ jobs:
           set -euo pipefail
           bash scripts/oci-exact-publish.sh verify-published \
             --archive staging/awid-oci.tar --version "$VERSION" \
-            --repository ghcr.io/awebai/awid
+            --source-sha "$SOURCE_SHA" --repository ghcr.io/awebai/awid
           echo "ghcr.io/awebai/awid:${VERSION} and :latest resolve to the staged index" >> "$GITHUB_STEP_SUMMARY"
