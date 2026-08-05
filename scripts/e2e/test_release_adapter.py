@@ -179,10 +179,10 @@ class RegistrationTests(unittest.TestCase):
 def anchor_artifact_zip(logical_id: str, body: bytes) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
-        z.writestr("record.json", json.dumps(
+        zip_member(z, "record.json", json.dumps(
             {"logical_id": logical_id, "digest": sha256(body)}
         ))
-        z.writestr("body", body)
+        zip_member(z, "body", body)
     return buffer.getvalue()
 
 
@@ -416,6 +416,17 @@ def lane_payload_bytes(version="1.34.3"):
     return members
 
 
+ZIP_FIXTURE_STAMP = (2020, 1, 1, 0, 0, 0)
+
+
+def zip_member(archive, name, data):
+    """Deterministic fixture member: zipfile.writestr stamps the current
+    local time into each entry, so two builds of identical content straddling
+    a second boundary produce different bytes and flake any exact-digest
+    comparison."""
+    archive.writestr(zipfile.ZipInfo(name, date_time=ZIP_FIXTURE_STAMP), data)
+
+
 def lane_zip(*, mode="stage-only", source_sha="a" * 40, version="1.34.3",
              tamper_payload=False, drop_payload=False, extra_payload=False,
              break_canonical=False, duplicate_member=False) -> bytes:
@@ -440,17 +451,17 @@ def lane_zip(*, mode="stage-only", source_sha="a" * 40, version="1.34.3",
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
-        z.writestr("manifest.json", json.dumps(manifest))
+        zip_member(z, "manifest.json", json.dumps(manifest))
         for name, data in members.items():
             if drop_payload and name == f"npm/awebai-aw-{version}.tgz":
                 continue
             if tamper_payload and name.endswith("linux_amd64.tar.gz"):
                 data = b"tampered"
-            z.writestr(name, data)
+            zip_member(z, name, data)
         if extra_payload:
-            z.writestr("dist/uninvited.bin", b"extra")
+            zip_member(z, "dist/uninvited.bin", b"extra")
         if duplicate_member:
-            z.writestr("npm/checksums.txt", members["dist/checksums.txt"])
+            zip_member(z, "npm/checksums.txt", members["dist/checksums.txt"])
     return buffer.getvalue()
 
 
@@ -1303,9 +1314,9 @@ def pypi_lane_zip(*, package="server", pypi_name="aweb", version="1.26.36",
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
-        z.writestr("manifest.json", json.dumps(manifest))
+        zip_member(z, "manifest.json", json.dumps(manifest))
         for name, data in members.items():
-            z.writestr(name, data)
+            zip_member(z, name, data)
     return buffer.getvalue()
 
 
@@ -1394,11 +1405,11 @@ def image_lane_zip(*, version="0.5.15", mode="stage-only",
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
-        z.writestr("manifest.json", json.dumps(manifest))
-        z.writestr("awid-oci.tar", archive)
-        z.writestr("identities.json", identities_bytes)
+        zip_member(z, "manifest.json", json.dumps(manifest))
+        zip_member(z, "awid-oci.tar", archive)
+        zip_member(z, "identities.json", identities_bytes)
         if duplicate_member:
-            z.writestr("identities.json", identities_bytes)
+            zip_member(z, "identities.json", identities_bytes)
     return buffer.getvalue()
 
 
@@ -1505,7 +1516,7 @@ class PypiWorkflowLaneTests(unittest.TestCase):
         zip_bytes = pypi_lane_zip()
         buffer = io.BytesIO(zip_bytes)
         with zipfile.ZipFile(buffer, "a") as z:
-            z.writestr("manifest.json", "{}")
+            zip_member(z, "manifest.json", "{}")
         with self.assertRaises(rd.ReceiptError) as caught:
             rd.validate_pypi_lane_artifact(
                 buffer.getvalue(), expected_source_sha="c" * 40,
@@ -2753,13 +2764,18 @@ def channel_tgz(*, version="1.7.2", plugin_version=None, sentinel=True):
         "package/.claude-plugin/plugin.json": json.dumps(
             {"name": "channel", "version": plugin_version or version}),
     }
+    import gzip
+
     buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        for name, content in files.items():
-            data = content.encode()
-            info = tarfile.TarInfo(name)
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
+    # gzip stamps the current time into its header; mtime=0 keeps two
+    # builds of identical content byte-identical.
+    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode="w") as tar:
+            for name, content in files.items():
+                data = content.encode()
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tar.addfile(info, io.BytesIO(data))
     return buffer.getvalue()
 
 
@@ -2776,8 +2792,8 @@ def npm_lane_zip(*, package="channel", version="1.7.2", mode="stage-only",
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
-        z.writestr("manifest.json", json.dumps(manifest))
-        z.writestr(tgz_name, tgz)
+        zip_member(z, "manifest.json", json.dumps(manifest))
+        zip_member(z, tgz_name, tgz)
     return buffer.getvalue()
 
 
@@ -2832,8 +2848,9 @@ class NpmWorkflowLaneTests(unittest.TestCase):
             lane.stage(self.node())
 
     def test_observation_absent_exact_mismatch_outage(self) -> None:
-        zip_bytes = npm_lane_zip()
-        tgz_digest = sha256(channel_tgz())
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        tgz_digest = sha256(tgz)
         node = self.node()
         state = {"value": None}
 
@@ -2858,8 +2875,9 @@ class NpmWorkflowLaneTests(unittest.TestCase):
             lane.observe(node, staged)
 
     def test_publish_dispatches_package_inputs_and_attaches_proof(self) -> None:
-        zip_bytes = npm_lane_zip()
-        tgz_digest = sha256(channel_tgz())
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        tgz_digest = sha256(tgz)
         runs = FakeAwRuns()
         state = {"value": None}
         lane, api = npm_lane(
@@ -2924,10 +2942,11 @@ class NpmWorkflowLaneTests(unittest.TestCase):
             needle="no delivery obligation")
 
     def test_exact_existing_registry_bytes_adopt_without_dispatch(self) -> None:
-        zip_bytes = npm_lane_zip()
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
         runs = FakeAwRuns()
         lane, _ = npm_lane(
-            zip_bytes, observer=lambda p, v: sha256(channel_tgz()),
+            zip_bytes, observer=lambda p, v: sha256(tgz),
             runs=runs, delivery_proofs={"channel": dict(GOOD_PROOF)})
         staged = lane.stage(self.node())
         published = lane.publish(self.node(), staged)
