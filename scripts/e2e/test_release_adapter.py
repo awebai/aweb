@@ -1913,11 +1913,18 @@ def skew_edge(*, a="client", b="server", direction="both",
     )
 
 
-def staged_entry(component, version):
+def staged_entry(component, version, *, lane_ref=True):
     files = {f"{component}.bin": sha256(component.encode())}
+    ref = None
+    if lane_ref:
+        ref = {
+            "artifact": f"gh-artifact:awebai/aweb:31000:{abs(hash(component)) % 9999 + 1}",
+            "aw_source_sha": "e" * 40,
+            "zip_digest": "sha256:" + sha256(component.encode()),
+        }
     return rd.ReceiptEntry(
         version=version, digest=rd.canonical_digest_of_set(files),
-        digest_set=files,
+        digest_set=files, lane_ref=ref,
     )
 
 
@@ -1962,6 +1969,9 @@ class SkewMatrixTests(unittest.TestCase):
         ])
         self.assertTrue(all(c.direction == "a-to-b" for c in cells))
         self.assertEqual(cells[0].a["digest"], staged["client"].digest)
+        self.assertEqual(cells[0].a["lane_ref"], staged["client"].lane_ref,
+                         "the exact staged reference reaches the harness")
+        self.assertEqual(cells[0].b["lane_ref"], staged["server"].lane_ref)
         self.assertEqual(cells[1].b["version"], "3.1.0")
         self.assertEqual(cells[2].b["version"], "3.0.0")
 
@@ -1999,6 +2009,49 @@ class SkewMatrixTests(unittest.TestCase):
             ("candidate", "published-latest"),
             ("published-latest", "candidate"),
         ])
+
+    def test_candidate_without_a_lane_reference_refuses(self) -> None:
+        """A digest-only candidate gives the child harness no way to
+        retrieve and execute the exact staged bytes."""
+        edge = skew_edge(direction="a-to-b")
+        staged = {"client": staged_entry("client", "1.2.0", lane_ref=False),
+                  "server": staged_entry("server", "3.2.0")}
+        with self.assertRaises(rd.ReceiptError) as caught:
+            self.cells(edge, moving={"client", "server"}, staged=staged)
+        self.assertIn("lane", str(caught.exception))
+
+    def test_stale_latest_refuses(self) -> None:
+        """The measured list's last member must equal the authoritative
+        published latest; caller ordering alone must never pick the cell."""
+        edge = skew_edge(direction="a-to-b")
+        staged = {"client": staged_entry("client", "1.2.0"),
+                  "server": staged_entry("server", "3.2.0")}
+        with self.assertRaises(rd.ReceiptError) as caught:
+            self.cells(edge, moving={"client", "server"}, staged=staged,
+                       published={"client": "1.1.0", "server": "3.5.0"})
+        self.assertIn("authoritative", str(caught.exception))
+
+    def test_missing_authoritative_latest_refuses(self) -> None:
+        edge = skew_edge(direction="a-to-b")
+        staged = {"client": staged_entry("client", "1.2.0"),
+                  "server": staged_entry("server", "3.2.0")}
+        with self.assertRaises(rd.ReceiptError):
+            self.cells(edge, moving={"client", "server"}, staged=staged,
+                       published={"client": "1.1.0"})
+
+    def test_duplicate_and_invalid_support_sets_refuse(self) -> None:
+        edge = skew_edge(direction="a-to-b")
+        staged = {"client": staged_entry("client", "1.2.0")}
+        for versions in (["3.0.0", "3.0.0"], ["3.1.0", "3.0.0"],
+                         ["", "3.1.0"], ["not-a-version"]):
+            with self.assertRaises(rd.ReceiptError, msg=str(versions)):
+                self.cells(
+                    edge, moving={"client"}, staged=staged,
+                    support=VersionedSupport({"client": ["1.1.0"],
+                                              "server": versions}),
+                    published={"client": "1.1.0",
+                               "server": versions[-1] if versions else ""},
+                )
 
     def test_missing_staged_identity_refuses(self) -> None:
         edge = skew_edge()

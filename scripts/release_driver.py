@@ -2432,11 +2432,19 @@ def _candidate_side(component: str, staged: dict) -> dict:
             f"skew requires the exact staged identity for touched "
             f"{component}; none is staged"
         )
+    if entry.lane_ref is None:
+        raise ReceiptError(
+            f"skew requires the structured lane reference for touched "
+            f"{component}: a digest-only candidate gives a harness no way "
+            "to retrieve the exact staged bytes"
+        )
+    LaneRef.from_dict(entry.lane_ref)
     return {
         "component": component,
         "version": entry.version,
         "digest": entry.digest,
         "digest_set": entry.digest_set,
+        "lane_ref": dict(entry.lane_ref),
     }
 
 
@@ -2454,12 +2462,46 @@ def compute_skew_cells(
     measured supported published set."""
     supported = (support or {}).get("supported_versions", {})
 
+    def version_key(version):
+        try:
+            return tuple(int(part) for part in version.split("."))
+        except (AttributeError, ValueError):
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: supported set entry "
+                f"{version!r} is not a dotted-numeric version"
+            ) from None
+
     def supported_for(component: str) -> list[str]:
         versions = supported.get(component) or []
         if not versions:
             raise ReceiptError(
                 f"runtime-contract {edge.a}<->{edge.b}: no measured supported "
                 f"set for {component}; a floor is never invented"
+            )
+        if any(not isinstance(v, str) or not v for v in versions):
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: supported set for "
+                f"{component} must be nonempty strings"
+            )
+        keys = [version_key(v) for v in versions]
+        if len(set(versions)) != len(versions) or keys != sorted(keys):
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: supported set for "
+                f"{component} must be strictly ordered and unique, got "
+                f"{versions}"
+            )
+        authoritative = published_versions.get(component)
+        if not authoritative:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: no authoritative "
+                f"published latest for {component}; the measured set cannot "
+                "self-certify"
+            )
+        if versions[-1] != authoritative:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: measured latest "
+                f"{versions[-1]} does not equal the authoritative published "
+                f"latest {authoritative} for {component}; the record is stale"
             )
         return list(versions)
 
@@ -2479,7 +2521,7 @@ def compute_skew_cells(
             (edge.b, cand_a, True), (edge.a, cand_b, False),
         ):
             versions = supported_for(component)
-            latest, floor = versions[-1], versions[0]
+            latest, floor = published_versions[component], versions[0]
             kinds = [("published-latest", latest)]
             if floor != latest:
                 kinds.append(("published-floor", floor))
