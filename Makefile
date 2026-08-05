@@ -12,7 +12,7 @@
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-plan test-release-driver \
+	release-plan release-run release-receipt test-release-driver \
 	release-all-check \
 	publish-skills \
 	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
@@ -603,6 +603,16 @@ release-channel-push:
 # authoritative remote state. Exit 1 when a declared input is unsatisfied.
 release-plan:
 	@python3 scripts/release_driver.py plan
+
+# Executes the plan over available publish lanes; fails closed naming every
+# unavailable lane and every unsatisfied declared input.
+release-run:
+	@python3 scripts/release_driver.py release-run
+
+# Verifies a sealed receipt against this run. RECEIPT and EXPECTED_DIGEST are
+# required; the digest comes from the external authority that recorded it.
+release-receipt:
+	@python3 scripts/release_driver.py release-receipt --receipt "$(RECEIPT)" --expected-digest "$(EXPECTED_DIGEST)"
 
 test-release-driver:
 	python3 scripts/e2e/test_release_driver.py

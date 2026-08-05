@@ -1,40 +1,50 @@
 # The release component graph: every shippable artifact this repository
-# produces, every typed dependency between them, and every declared input a
-# release needs before it starts. scripts/release_driver.py computes the
-# moving set and publication order from this file; nothing about release
-# composition is recalled per-release.
+# produces or forces, every typed dependency between them, and every declared
+# input a release needs before it starts. scripts/release_driver.py computes
+# the moving set and publication order from this file.
 #
 # Edge types: bundled-build-input (a change to the input moves every consumer
-# that embeds it), publication-prerequisite (the dependent publishes only
-# after the prerequisite is published), runtime-contract (a version-skew edge
-# the G5 matrix runner executes for touched components), pointer (declared as
-# pointer_for on the pointing component), sibling-pin and delivery-restart
-# (declared as component fields).
+# that embeds it, measured against each consumer's last published baseline),
+# publication-prerequisite (orders the dependent after the prerequisite when
+# both move), pointer (the target is FORCED to move whenever a source moves -
+# its state is definitionally stale), runtime-contract (a version-skew edge
+# for the G5 matrix runner; support declarations must name a fleet
+# measurement or an approved deprecation, and anything else is
+# declared-incomplete, which blocks release execution until aweb-abbe.7
+# measures - floors are never invented here).
 #
-# aweb-cloud is released from its own repository; it appears here because the
-# graph must order it after its published dependencies and name its declared
-# inputs (production credential path, sibling source pins). Its change
-# detection lives with its own repository, not here.
+# aweb-cloud's lock/pin state (ac-pin) is a forced pointer consumer of server
+# and awid: publishing either makes the pin stale by definition. Its declared
+# inputs are the non-bypass credential path (presence only) and the exact
+# sibling source pin. The AC release itself is cut from its own repository.
 
 [component.server]
 source_paths = ["server/"]
 version_source = { type = "pyproject", path = "server/pyproject.toml" }
 tag_format = "server-v{version}"
+publish_lane = { workflow = ".github/workflows/server-release.yml", registry = { type = "pypi", package = "aweb" } }
+verify = { command = "curl -fsS https://pypi.org/pypi/aweb/{version}/json" }
 
 [component.awid-pypi]
 source_paths = ["awid/"]
 version_source = { type = "pyproject", path = "awid/pyproject.toml" }
 tag_format = "awid-service-v{version}"
+publish_lane = { workflow = ".github/workflows/awid-pypi-release.yml", registry = { type = "pypi", package = "awid-service" } }
+verify = { command = "curl -fsS https://pypi.org/pypi/awid-service/{version}/json" }
 
 [component.awid-image]
 source_paths = ["awid/"]
 version_source = { type = "pyproject", path = "awid/pyproject.toml" }
 tag_format = "awid-v{version}"
+publish_lane = { workflow = ".github/workflows/awid-release.yml", registry = { type = "ghcr", package = "awebai/awid" } }
+verify = { command = "docker manifest inspect ghcr.io/awebai/awid:{version}" }
 
 [component.aw]
 source_paths = ["cli/go/"]
 version_source = { type = "tag-history", script = "scripts/cli-release-version.sh" }
 tag_format = "aw-v{version}"
+publish_lane = { workflow = ".github/workflows/aw-release.yml", registry = { type = "github-release", repo = "awebai/aw" } }
+verify = { command = "scripts/check-cli-release-vcs-stamps.sh" }
 
 [component.channel-core]
 source_paths = ["channel-core/"]
@@ -44,33 +54,48 @@ publishable = false
 source_paths = ["channel/"]
 version_source = { type = "package-json", path = "channel/package.json" }
 tag_format = "channel-v{version}"
+publish_lane = { workflow = ".github/workflows/channel-release.yml", registry = { type = "npm", package = "@awebai/claude-channel" } }
+verify = { command = "npm view @awebai/claude-channel@{version} version" }
+delivery_restart = { proof = "plugin update + Claude Code session restart per installed host", note = "an installed plugin keeps loaded code until restart" }
 
 [component.pi]
 source_paths = ["pi-extension/"]
 version_source = { type = "package-json", path = "pi-extension/package.json" }
 tag_format = "pi-v{version}"
-delivery_restart = { inventory = "pgrep -x pi", update = "pi update npm:@awebai/pi", proof = "resolved cache package.json version + fresh process" }
+publish_lane = { workflow = ".github/workflows/pi-release.yml", registry = { type = "npm", package = "@awebai/pi" } }
+verify = { command = "npm view @awebai/pi@{version} version" }
+delivery_restart = { inventory = "pgrep -x pi", update = "pi update npm:@awebai/pi", proof = "resolved cache package.json version + fresh process per host" }
 
 [component.skills]
 source_paths = ["packages/claude-skills/"]
 version_source = { type = "package-json", path = "packages/claude-skills/package.json" }
 tag_format = "skills-v{version}"
+publish_lane = { workflow = ".github/workflows/skills-release.yml", registry = { type = "npm", package = "@awebai/claude-skills" } }
+verify = { command = "npm view @awebai/claude-skills@{version} version" }
 
 [component.marketplace-pointer]
 publishable = false
-pointer_for = ["channel", "skills"]
-# Explicit bump of awebai/claude-plugins marketplace.json remains the standing
-# behavior; the caret-range experiment is deferred task aweb-abbf.
+# Explicit bump of awebai/claude-plugins marketplace.json; the caret-range
+# experiment is deferred task aweb-abbf.
 
-[component.ac]
+[component.ac-pin]
 publishable = false
 approval_required = true
 credential_paths = [
     { env = "MIGRATION_GATE_ENV_FILE", purpose = "non-bypass production migration immutability" },
 ]
 sibling_pins = [
-    { pin_file = "release-pin.toml", component = "server", checkout = "../aweb" },
+    { pin_file = "release-pin.toml", component = "server", checkout = "../aweb", repository = "github.com/awebai/aweb" },
 ]
+# aweb-cloud's backend/uv.lock and release-pin.toml. The pin file lives in the
+# AC repository; validation binds pin source, parsed SHA, checkout remote
+# identity, and checkout HEAD when the AC context is provided.
+
+[component.sites]
+source_paths = ["docs/", "awid/site/"]
+publishable = false
+# The awid landing site deploys through release-awid-site (deploy-awid-landing
+# branch); doc mirrors are gated by the freshness checks in release-all-check.
 
 [[edge]]
 type = "bundled-build-input"
@@ -81,49 +106,73 @@ to = ["channel", "pi"]
 type = "publication-prerequisite"
 from = "awid-pypi"
 to = ["server"]
-# server/pyproject.toml requires awid-service at a floor; a server release
-# cannot resolve until the awid package is published.
 
 [[edge]]
 type = "publication-prerequisite"
 from = "aw"
 to = ["pi"]
-# pi-extension depends on @awebai/aw on npm.
 
 [[edge]]
-type = "publication-prerequisite"
+type = "pointer"
+from = "channel"
+to = ["marketplace-pointer"]
+
+[[edge]]
+type = "pointer"
+from = "skills"
+to = ["marketplace-pointer"]
+
+[[edge]]
+type = "pointer"
 from = "server"
-to = ["ac"]
+to = ["ac-pin"]
 
 [[edge]]
-type = "publication-prerequisite"
+type = "pointer"
 from = "awid-pypi"
-to = ["ac"]
+to = ["ac-pin"]
 
 [[edge]]
 type = "runtime-contract"
 a = "aw"
 b = "server"
 journey = "make cli-e2e"
-supported = { floor = "1.34.3", policy = "additive-only" }
+artifacts = { a = "github-release:awebai/aw", b = "pypi:aweb" }
+direction = "both"
+supported = { policy = "additive-only" }
 
 [[edge]]
 type = "runtime-contract"
 a = "channel"
 b = "server"
 journey = "channel integration journey (aweb-abbe.7.2)"
-supported = { floor = "1.7.1", policy = "additive-only" }
+artifacts = { a = "npm:@awebai/claude-channel", b = "pypi:aweb" }
+direction = "both"
+supported = { policy = "additive-only" }
 
 [[edge]]
 type = "runtime-contract"
 a = "pi"
 b = "server"
 journey = "pi integration journey (aweb-abbe.7.2)"
-supported = { floor = "0.3.1", policy = "additive-only" }
+artifacts = { a = "npm:@awebai/pi", b = "pypi:aweb" }
+direction = "both"
+supported = { policy = "additive-only" }
 
 [[edge]]
 type = "runtime-contract"
 a = "server"
 b = "server"
 journey = "make test-federation-e2e (both request directions)"
-supported = { floor = "1.26.35", policy = "additive-only" }
+artifacts = { a = "pypi:aweb", b = "pypi:aweb" }
+direction = "both"
+supported = { policy = "additive-only" }
+
+[[edge]]
+type = "runtime-contract"
+a = "server"
+b = "server"
+journey = "persisted-state fixture (aweb-abbe.7.4): migrate a database created by the published release; published server against upgraded schema where rollout is non-atomic"
+artifacts = { a = "pypi:aweb", b = "pypi:aweb" }
+direction = "persisted-state-both"
+supported = { policy = "additive-only" }
