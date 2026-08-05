@@ -86,13 +86,19 @@ class FakeArchiveTransport:
             cursor = self.commits[cursor]["parent"]
         return False
 
+    def parent_of(self, sha: str) -> str | None:
+        commit = self.commits.get(sha)
+        if commit is None:
+            raise rd.ReceiptError(f"archive commit {sha} does not exist")
+        return commit["parent"]
+
     def append(self, parent: str | None, files: dict[str, bytes], subject: str) -> str:
         if parent != self.head:
             raise rd.ReceiptError(
                 "archive append is not fast-forward from the fetched head"
             )
         body = json.dumps(sorted(files), sort_keys=True) + subject + str(parent)
-        sha = hashlib.sha256(body.encode()).hexdigest()[:16]
+        sha = hashlib.sha256(body.encode()).hexdigest()[:40]
         self.commits[sha] = {"parent": parent, "files": dict(files)}
         self.head = sha
         return sha
@@ -213,7 +219,7 @@ class ArchiveWriteTests(unittest.TestCase):
         transport.commits[transport.head]["files"][manifest_path] = (
             json.dumps(broken, sort_keys=True).encode()
         )
-        with self.assertRaisesRegex(rd.ReceiptError, "conflict|rebind"):
+        with self.assertRaisesRegex(rd.ReceiptError, "conflict|rebind|canonical|duplicate"):
             do_archive(store, authority, transport,
                        recorded_head=entry["archive_commit"])
 
@@ -237,14 +243,16 @@ class RestoreTests(unittest.TestCase):
         return transport, entry
 
     def restore(self, transport, entry, *, production=True, validate=None,
-                validated=None):
+                validated=None, index_authority="from-entry"):
         if validate is None:
             def validate(body, manifest):
                 if validated is not None:
                     validated.append((body, manifest))
+        if index_authority == "from-entry":
+            index_authority = FakeIndexAuthority([entry]) if production else None
         return archive.restore_archived(
             entry=entry, transport=transport, production=production,
-            validate=validate,
+            validate=validate, index_authority=index_authority,
         )
 
     def test_restores_exact_bytes_by_recorded_commit_never_head(self):
@@ -264,7 +272,7 @@ class RestoreTests(unittest.TestCase):
 
     def test_missing_commit_or_body_refuses(self):
         transport, entry = self.archived()
-        bad = dict(entry, archive_commit="0" * 16)
+        bad = dict(entry, archive_commit="0" * 40)
         with self.assertRaisesRegex(rd.ReceiptError, "does not exist"):
             self.restore(transport, bad)
 
@@ -290,7 +298,8 @@ class RestoreTests(unittest.TestCase):
         for missing in ("archive_commit", "body_sha256", "manifest_sha256",
                         "logical_id"):
             bad = {k: v for k, v in entry.items() if k != missing}
-            with self.assertRaisesRegex(rd.ReceiptError, "index entry"):
+            with self.assertRaisesRegex(rd.ReceiptError,
+                                        "index entry|reviewed index"):
                 self.restore(transport, bad)
 
     def test_semantic_validator_runs_after_bytes_and_can_refuse(self):
@@ -317,6 +326,343 @@ class RestoreTests(unittest.TestCase):
                 entry=entry, transport=transport, production=True,
                 validate=None,
             )
+
+
+class FakeIndexAuthority:
+    def __init__(self, entries, unavailable=False):
+        self.entries = list(entries)
+        self.unavailable = unavailable
+
+    def lookup(self, logical_id):
+        if self.unavailable:
+            raise RuntimeError("index host unreachable")
+        matches = [e for e in self.entries
+                   if e.get("logical_id") == logical_id]
+        if len(matches) > 1:
+            raise rd.ReceiptError("duplicate index records")
+        return matches[0] if matches else None
+
+
+class ReviewedIndexAuthorityTests(unittest.TestCase):
+    def archived(self):
+        store, authority, transport = fresh_env()
+        entry = do_archive(store, authority, transport)
+        return transport, entry
+
+    def restore(self, transport, entry, authority, logical_id=None):
+        return archive.restore_archived(
+            entry=entry, transport=transport, production=True,
+            validate=lambda body, manifest: None,
+            index_authority=authority, logical_id=logical_id,
+        )
+
+    def test_production_restore_requires_index_authority(self):
+        transport, entry = self.archived()
+        with self.assertRaisesRegex(rd.ReceiptError, "index authority"):
+            self.restore(transport, entry, None)
+
+    def test_entry_loads_from_authority_when_not_supplied(self):
+        transport, entry = self.archived()
+        body = self.restore(
+            transport, None, FakeIndexAuthority([entry]),
+            logical_id=entry["logical_id"],
+        )
+        self.assertEqual(body, BODY)
+
+    def test_missing_index_record_refuses(self):
+        transport, entry = self.archived()
+        with self.assertRaisesRegex(rd.ReceiptError, "not recorded"):
+            self.restore(transport, None, FakeIndexAuthority([]),
+                         logical_id=entry["logical_id"])
+
+    def test_unavailable_authority_refuses(self):
+        transport, entry = self.archived()
+        with self.assertRaisesRegex(rd.ReceiptError, "unavailable"):
+            self.restore(transport, entry,
+                         FakeIndexAuthority([entry], unavailable=True))
+
+    def test_caller_entry_mismatching_index_record_refuses(self):
+        transport, entry = self.archived()
+        drifted = dict(entry, manifest_sha256="0" * 64)
+        with self.assertRaisesRegex(rd.ReceiptError, "mismatch"):
+            self.restore(transport, drifted, FakeIndexAuthority([entry]))
+
+    def test_archive_branch_content_never_substitutes_authority(self):
+        transport, entry = self.archived()
+        forged = dict(entry, logical_id="receipt:forged")
+        files = transport.commits[entry["archive_commit"]]["files"]
+        files["index.json"] = json.dumps({"entries": [forged]}).encode()
+        with self.assertRaisesRegex(rd.ReceiptError, "not recorded"):
+            self.restore(transport, None, FakeIndexAuthority([]),
+                         logical_id="receipt:forged")
+
+    def test_index_file_authority_reads_reviewed_file_only(self):
+        import tempfile
+
+        transport, entry = self.archived()
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.json"
+            index.write_text(json.dumps({"entries": [entry]}))
+            body = self.restore(
+                transport, None, archive.IndexFileAuthority(index),
+                logical_id=entry["logical_id"],
+            )
+            self.assertEqual(body, BODY)
+            with self.assertRaisesRegex(rd.ReceiptError, "not recorded"):
+                self.restore(transport, None,
+                             archive.IndexFileAuthority(index),
+                             logical_id="receipt:absent")
+            missing = Path(tmp) / "absent.json"
+            with self.assertRaisesRegex(rd.ReceiptError, "does not exist"):
+                self.restore(transport, None,
+                             archive.IndexFileAuthority(missing),
+                             logical_id=entry["logical_id"])
+
+
+class StrictSchemaTests(unittest.TestCase):
+    def archived(self):
+        store, authority, transport = fresh_env()
+        entry = do_archive(store, authority, transport)
+        return transport, entry
+
+    def test_extra_entry_field_refuses(self):
+        transport, entry = self.archived()
+        bad = dict(entry, extra="field")
+        with self.assertRaisesRegex(rd.ReceiptError, "extra"):
+            archive.restore_archived(
+                entry=bad, transport=transport, production=False,
+                validate=None,
+            )
+
+    def test_non_hex_digest_and_short_commit_refuse(self):
+        transport, entry = self.archived()
+        for field, value, needle in (
+            ("body_sha256", "zz" * 32, "64-hex"),
+            ("source_digest", "ab" * 31, "64-hex"),
+            ("archive_commit", "abc123", "40-hex"),
+        ):
+            bad = dict(entry, **{field: value})
+            with self.assertRaisesRegex(rd.ReceiptError, needle):
+                archive.restore_archived(
+                    entry=bad, transport=transport, production=False,
+                    validate=None,
+                )
+
+    def test_wrong_kind_source_fields_refuse(self):
+        store, authority, transport = fresh_env()
+        with self.assertRaisesRegex(rd.ReceiptError, "exactly the"):
+            archive.archive_sealed(
+                logical_id="x", kind="workflow-artifact", artifact_ref=REF,
+                source=dict(SOURCE), store=store, authority=authority,
+                transport=transport, recorded_head=None,
+            )
+        with self.assertRaisesRegex(rd.ReceiptError, "unsupported archive kind"):
+            archive.archive_sealed(
+                logical_id="x", kind="mystery", artifact_ref=REF,
+                source=dict(SOURCE), store=store, authority=authority,
+                transport=transport, recorded_head=None,
+            )
+
+    def test_oversized_identity_refuses(self):
+        store, authority, transport = fresh_env()
+        with self.assertRaisesRegex(rd.ReceiptError, "at most"):
+            do_archive(store, authority, transport, logical_id="x" * 201)
+
+    def test_noncanonical_or_malformed_manifest_bytes_refuse(self):
+        transport, entry = self.archived()
+        files = transport.commits[entry["archive_commit"]]["files"]
+        path = f"receipts/{entry['body_sha256']}/manifest.json"
+        manifest = json.loads(files[path])
+        files[path] = json.dumps(manifest, sort_keys=True, indent=2).encode()
+        store, authority, _ = fresh_env()
+        with self.assertRaisesRegex(rd.ReceiptError, "canonical"):
+            do_archive(store, authority, transport,
+                       recorded_head=entry["archive_commit"])
+        files[path] = b"\xff not json"
+        with self.assertRaisesRegex(rd.ReceiptError, "JSON"):
+            do_archive(store, authority, transport,
+                       recorded_head=entry["archive_commit"])
+
+    def test_duplicate_logical_ids_in_tree_refuse(self):
+        transport, entry = self.archived()
+        files = transport.commits[entry["archive_commit"]]["files"]
+        other_body = b"other-bytes"
+        digest = sha256(other_body)
+        manifest = {
+            "schema": archive.MANIFEST_SCHEMA,
+            "logical_id": entry["logical_id"],
+            "kind": entry["kind"],
+            "source": dict(SOURCE),
+            "source_digest": digest,
+            "body_sha256": digest,
+        }
+        files[f"receipts/{digest}/body.zip"] = other_body
+        files[f"receipts/{digest}/manifest.json"] = json.dumps(
+            manifest, sort_keys=True, separators=(",", ":")).encode()
+        store, authority, _ = fresh_env()
+        with self.assertRaisesRegex(rd.ReceiptError, "duplicate logical id"):
+            do_archive(store, authority, transport,
+                       recorded_head=entry["archive_commit"])
+
+    def test_allowed_metadata_path_is_tolerated_when_named(self):
+        store, authority, transport = fresh_env()
+        entry = do_archive(store, authority, transport)
+        transport.commits[entry["archive_commit"]]["files"]["README.md"] = b"docs"
+        with self.assertRaisesRegex(rd.ReceiptError, "unexpected path"):
+            do_archive(store, authority, transport,
+                       recorded_head=entry["archive_commit"])
+        again = archive.archive_sealed(
+            logical_id=entry["logical_id"], kind=entry["kind"],
+            artifact_ref=REF, source=dict(SOURCE), store=store,
+            authority=authority, transport=transport,
+            recorded_head=entry["archive_commit"],
+            allowed_paths=("README.md",),
+        )
+        self.assertEqual(again["archive_commit"], entry["archive_commit"])
+
+
+class GitBranchArchiveTests(unittest.TestCase):
+    """The production transport against a LOCAL bare remote; no real
+    remote write occurs anywhere in this suite."""
+
+    def setUp(self):
+        import subprocess, tempfile
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.remote = str(Path(self.tmp.name) / "remote.git")
+        subprocess.run(["git", "init", "--bare", self.remote],
+                       capture_output=True, check=True)
+
+    def transport(self):
+        t = archive.GitBranchArchive(remote=self.remote,
+                                     branch="release-receipts")
+        self.addCleanup(t.close)
+        return t
+
+    def env(self, body=BODY, ref=REF):
+        return FakeStore({ref: body}), FakeAuthority({ref: sha256(body)})
+
+    def test_orphan_create_append_idempotence_and_historical_restore(self):
+        store, authority = self.env()
+        t1 = self.transport()
+        first = do_archive(store, authority, t1)
+        self.assertTrue(len(first["archive_commit"]) == 40)
+
+        body2 = b"second-sealed-body"
+        store.artifacts["ref2"] = body2
+        authority.digests["ref2"] = sha256(body2)
+        second = do_archive(store, authority, t1, ref="ref2",
+                            logical_id="receipt:plan:2",
+                            recorded_head=first["archive_commit"])
+        self.assertNotEqual(second["archive_commit"], first["archive_commit"])
+
+        t2 = self.transport()
+        again = do_archive(store, authority, t2,
+                           recorded_head=second["archive_commit"])
+        self.assertEqual(again["archive_commit"], first["archive_commit"],
+                         "idempotent re-archive finds the ORIGINAL commit")
+
+        body = archive.restore_archived(
+            entry=None, transport=t2, production=True,
+            validate=lambda b, m: None,
+            index_authority=FakeIndexAuthority([first]),
+            logical_id=first["logical_id"],
+        )
+        self.assertEqual(body, BODY)
+
+    def test_concurrent_append_refuses_compare_and_swap(self):
+        store, authority = self.env()
+        t1 = self.transport()
+        first = do_archive(store, authority, t1)
+        t2 = self.transport()
+        body2 = b"concurrent-two"
+        store.artifacts["ref2"] = body2
+        authority.digests["ref2"] = sha256(body2)
+        do_archive(store, authority, t2, ref="ref2",
+                   logical_id="receipt:plan:2",
+                   recorded_head=first["archive_commit"])
+        head = t1.fetch_head()
+        body3 = b"concurrent-three"
+        files = {f"receipts/{sha256(body3)}/body.zip": body3,
+                 f"receipts/{sha256(body3)}/manifest.json": b"{}"}
+        with self.assertRaisesRegex(rd.ReceiptError, "fast-forward"):
+            t1.append(first["archive_commit"], files, "stale parent")
+
+    def test_moved_ref_refuses_on_real_git(self):
+        import subprocess
+
+        store, authority = self.env()
+        t1 = self.transport()
+        first = do_archive(store, authority, t1)
+        foreign = str(Path(self.tmp.name) / "foreign")
+        subprocess.run(["git", "init", "--initial-branch", "release-receipts",
+                        foreign], capture_output=True, check=True)
+        env_over = {"GIT_AUTHOR_NAME": "x", "GIT_AUTHOR_EMAIL": "x@x",
+                    "GIT_COMMITTER_NAME": "x", "GIT_COMMITTER_EMAIL": "x@x"}
+        import os
+        (Path(foreign) / "divergent.txt").write_text("divergent")
+        subprocess.run(["git", "add", "-A"], cwd=foreign, capture_output=True,
+                       check=True, env={**os.environ, **env_over})
+        subprocess.run(["git", "commit", "-m", "divergent"], cwd=foreign,
+                       capture_output=True, check=True,
+                       env={**os.environ, **env_over})
+        subprocess.run(["git", "push", "--force", self.remote,
+                        "HEAD:refs/heads/release-receipts"], cwd=foreign,
+                       capture_output=True, check=True)
+        t2 = self.transport()
+        body2 = b"post-force"
+        store.artifacts["ref2"] = body2
+        authority.digests["ref2"] = sha256(body2)
+        with self.assertRaisesRegex(rd.ReceiptError, "descend"):
+            do_archive(store, authority, t2, ref="ref2",
+                       logical_id="receipt:plan:2",
+                       recorded_head=first["archive_commit"])
+
+    def test_close_removes_temporary_root(self):
+        t = archive.GitBranchArchive(remote=self.remote,
+                                     branch="release-receipts")
+        root = t._root
+        self.assertTrue(root.exists())
+        t.close()
+        self.assertFalse(root.exists())
+
+
+class OperatorCliTests(unittest.TestCase):
+    def setUp(self):
+        import subprocess, tempfile
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.remote = str(Path(self.tmp.name) / "remote.git")
+        subprocess.run(["git", "init", "--bare", self.remote],
+                       capture_output=True, check=True)
+
+    def test_restore_requires_reviewed_index_file(self):
+        store, authority = FakeStore({REF: BODY}), FakeAuthority(
+            {REF: sha256(BODY)})
+        transport = archive.GitBranchArchive(
+            remote=self.remote, branch="release-receipts")
+        self.addCleanup(transport.close)
+        entry = do_archive(store, authority, transport)
+        index = Path(self.tmp.name) / "index.json"
+        out = Path(self.tmp.name) / "restored.zip"
+        with self.assertRaisesRegex(rd.ReceiptError, "does not exist"):
+            archive.main([
+                "release-restore", "--remote", self.remote,
+                "--branch", "release-receipts",
+                "--logical-id", entry["logical_id"],
+                "--index-file", str(index), "--out", str(out),
+            ])
+        index.write_text(json.dumps({"entries": [entry]}))
+        code = archive.main([
+            "release-restore", "--remote", self.remote,
+            "--branch", "release-receipts",
+            "--logical-id", entry["logical_id"],
+            "--index-file", str(index), "--out", str(out),
+        ])
+        self.assertEqual(code, 0)
+        self.assertEqual(out.read_bytes(), BODY)
 
 
 class IndexEntryTests(unittest.TestCase):
