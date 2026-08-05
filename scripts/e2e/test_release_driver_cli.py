@@ -1426,6 +1426,39 @@ class StructuredProofTests(unittest.TestCase):
                 }
             )
 
+    def test_non_string_proof_fields_refuse(self) -> None:
+        """alice's round-10 reproduction: a numeric evidence identity and a
+        list digest passed publish, sealing, and verification when echoed by
+        the observer. Every proof field is a nonempty string; booleans,
+        numbers, and containers refuse."""
+        for proof in (
+            {"obligation": "delivery-restart-proof", "evidence_id": 7,
+             "digest": ["mutable"]},
+            {"obligation": "delivery-restart-proof", "evidence_id": 7,
+             "digest": "d"},
+            {"obligation": "delivery-restart-proof", "evidence_id": "x",
+             "digest": ["mutable"]},
+            {"obligation": "delivery-restart-proof", "evidence_id": True,
+             "digest": "d"},
+            {"obligation": "delivery-restart-proof", "evidence_id": "x",
+             "digest": {"nested": "d"}},
+        ):
+            with self.assertRaises(rd.ReceiptError, msg=repr(proof)) as caught:
+                self.run_with_proof(proof)
+            self.assertIn("nonempty string", str(caught.exception))
+
+    def test_receipt_entry_declares_the_structured_proof_type(self) -> None:
+        """The publisher interface carries the real contract: delivery_proof
+        is the structured proof record, not free text."""
+        import dataclasses
+
+        field = next(
+            f for f in dataclasses.fields(rd.ReceiptEntry)
+            if f.name == "delivery_proof"
+        )
+        self.assertIn("dict", str(field.type))
+        self.assertNotIn("str", str(field.type))
+
 
 class ManifestSemanticLoadTests(unittest.TestCase):
     def test_hash_valid_noncanonical_manifest_refuses_on_load(self) -> None:
@@ -1512,6 +1545,105 @@ class ManifestSemanticLoadTests(unittest.TestCase):
                 },
                 plan=plan, graph=graph, frozen_plan_id="F", source_sha="s1",
             )
+
+
+class ManifestAnchorOrderTests(unittest.TestCase):
+    """alice's round-10 reproduction: a run staging a forced pointer node
+    without pointer_state refused before publish, but the authority already
+    attested the semantically invalid staged manifest - immutable bad
+    evidence under a valid-looking content-addressed id. The manifest object
+    validates BEFORE serialization, store, or authority.record; a malformed
+    entry on initial staging leaves zero staged-manifest writes anywhere."""
+
+    def run_refusing(self, lanes, graph=None):
+        graph = graph or rd.Graph.from_dict(fixture_graph_dict())
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        lanes.available = {n.component for n in plan.moving}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = rd.FileArtifactStore(root)
+            authority = rd.FileDigestAuthority(root)
+            with self.assertRaises(rd.ReceiptError):
+                rd.run_plan(
+                    plan, graph, lanes,
+                    skew=FixtureSkew(), authority=authority, store=store,
+                    source_sha="s1", approvals={}, state=state,
+                    providers=rd.Providers(
+                        store=store, authority=authority,
+                        measurement=AllRecordsResolve(),
+                    ),
+                )
+            anchored = [
+                i for i in authority.recorded_ids()
+                if i.startswith("staged-manifest:")
+            ]
+            stored = [
+                p.name for p in store.root.iterdir()
+                if p.name.startswith("staged-manifest")
+            ]
+            return anchored, stored, lanes
+
+    def test_missing_pointer_state_is_never_anchored(self) -> None:
+        class NoPointerStateLanes(FixtureLanes):
+            def stage(self, node):
+                entry = super().stage(node)
+                if node.reason.startswith("pointer:"):
+                    return rd.ReceiptEntry(
+                        version=entry.version, digest=entry.digest,
+                        pointer_state=None, delivery_proof=None,
+                    )
+                return entry
+
+        anchored, stored, lanes = self.run_refusing(NoPointerStateLanes(set()))
+        self.assertEqual(
+            anchored, [],
+            "the authority must never attest a schema-invalid manifest",
+        )
+        self.assertEqual(
+            stored, [],
+            "the store must never hold a schema-invalid manifest",
+        )
+        self.assertNotIn("publish", [k for k, _ in lanes.calls])
+
+    def test_wrong_staged_version_is_never_anchored(self) -> None:
+        class WrongVersionLanes(FixtureLanes):
+            def stage(self, node):
+                entry = super().stage(node)
+                if node.component == "client":
+                    return rd.ReceiptEntry(
+                        version="9.9.9", digest=entry.digest,
+                        pointer_state=entry.pointer_state, delivery_proof=None,
+                    )
+                return entry
+
+        anchored, stored, _ = self.run_refusing(WrongVersionLanes(set()))
+        self.assertEqual(anchored, [])
+        self.assertEqual(stored, [])
+
+    def test_malformed_digest_set_is_never_anchored(self) -> None:
+        data = fixture_graph_dict()
+        data["component"]["client"]["publish_lane"] = {
+            "workflow": "wf/client.yml",
+            "registry": {"type": "pypi", "package": "client"},
+        }
+
+        class MalformedSetLanes(FixtureLanes):
+            def stage(self, node):
+                entry = super().stage(node)
+                if node.component == "client":
+                    return rd.ReceiptEntry(
+                        version=entry.version, digest=entry.digest,
+                        pointer_state=entry.pointer_state, delivery_proof=None,
+                        digest_set={"": "sha"},
+                    )
+                return entry
+
+        anchored, stored, _ = self.run_refusing(
+            MalformedSetLanes(set()), graph=rd.Graph.from_dict(data)
+        )
+        self.assertEqual(anchored, [])
+        self.assertEqual(stored, [])
 
 
 class TagDeltaTests(unittest.TestCase):

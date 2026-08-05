@@ -786,7 +786,9 @@ class ReceiptEntry:
     digest: str
     phase: str = "staged"  # staged | published | verified
     pointer_state: str | None = None
-    delivery_proof: str | None = None
+    # The structured delivery proof validate_delivery_proof enforces:
+    # {"obligation": str, "evidence_id": str, "digest": str, ...extensions}.
+    delivery_proof: dict | None = None
     digest_set: dict | None = None  # complete artifact set for registry components
 
 
@@ -1496,16 +1498,18 @@ def run_plan(
             entries=staged,
             graph=graph,
         )
-        manifest_id = f"staged-manifest:{frozen_plan_id}:{manifest_digest}"
-        _put_content_addressed(
-            store, authority, manifest_id, manifest_bytes, manifest_digest
-        )
-        manifest = load_staged_manifest(
-            manifest_bytes, expected_digest=manifest_digest
-        )
+        # The manifest object validates BEFORE serialization reaches the
+        # store or the authority: an authority must never attest bytes the
+        # schema forbids. The exact validated bytes are what anchor;
+        # after-load validation remains the second boundary.
+        manifest = json.loads(manifest_bytes)
         validate_staged_manifest(
             manifest, plan=plan, graph=graph,
             frozen_plan_id=frozen_plan_id, source_sha=source_sha,
+        )
+        manifest_id = f"staged-manifest:{frozen_plan_id}:{manifest_digest}"
+        _put_content_addressed(
+            store, authority, manifest_id, manifest_bytes, manifest_digest
         )
         manifest["_artifact_id"] = manifest_id
 
@@ -1834,11 +1838,13 @@ def validate_delivery_proof(proof, obligation: str, component: str) -> None:
             f"{component}: delivery proof declares obligation "
             f"{proof.get('obligation')!r}, expected {obligation!r}"
         )
-    if not proof.get("evidence_id") or not proof.get("digest"):
-        raise ReceiptError(
-            f"{component}: delivery proof requires a nonempty immutable "
-            "evidence identity and digest"
-        )
+    for field_name in ("obligation", "evidence_id", "digest"):
+        value = proof.get(field_name)
+        if isinstance(value, bool) or not isinstance(value, str) or not value:
+            raise ReceiptError(
+                f"{component}: delivery proof field {field_name} must be a "
+                f"nonempty string, got {type(value).__name__}"
+            )
 
 
 def canonical_digest_of_set(digest_set: dict) -> str:
