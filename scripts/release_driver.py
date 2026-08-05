@@ -2372,20 +2372,44 @@ class NpmWorkflowLane(_WorkflowLaneBase):
     is SEPARATELY SUPPLIED structured proof, validated at the moment of
     effect; publication alone never fabricates delivery."""
 
-    def __init__(self, *, npm_name, npm_observe, delivery_proofs=None,
-                 **kwargs):
+    def __init__(self, *, npm_name, npm_observe, expected_obligation=None,
+                 delivery_proofs=None, **kwargs):
         super().__init__(**kwargs)
         self._npm_name = npm_name
         self._npm_observe = npm_observe  # (package, version) -> sha|None; raises when unavailable
+        self._expected_obligation = expected_obligation
         self._delivery_proofs = dict(delivery_proofs or {})
 
-    def _proof_for(self, component: str):
+    def _require_valid_proof(self, component: str):
+        """The graph-derived obligation gates BEFORE any outward call:
+        missing, malformed, or wrong-obligation proof refuses, and a proof
+        supplied for an unobligated component refuses too."""
         proof = self._delivery_proofs.get(component)
-        if proof is not None:
-            validate_delivery_proof(
-                proof, _delivery_obligation_name(proof), component
+        if self._expected_obligation is None:
+            if proof is not None:
+                raise ReceiptError(
+                    f"{component} carries no delivery obligation; an "
+                    "unexpected supplied proof is refused, never ignored"
+                )
+            return None
+        if proof is None:
+            raise ReceiptError(
+                f"{component}: its declared {self._expected_obligation} "
+                "requires separately supplied delivery evidence BEFORE any "
+                "outward call; none was supplied"
             )
+        validate_delivery_proof(proof, self._expected_obligation, component)
         return proof
+
+    def publish(self, node, staged: "ReceiptEntry") -> "ReceiptEntry":
+        self._require_valid_proof(node.component)
+        # Observe FIRST: exact existing registry bytes adopt with zero
+        # dispatches; mismatch and outage refuse; only proven absence
+        # permits one continuation.
+        observed = self.observe(node, staged)
+        if observed is not None:
+            return observed
+        return super().publish(node, staged)
 
     def stage(self, node) -> "ReceiptEntry":
         ref = self._refs[node.component]
@@ -2431,13 +2455,9 @@ class NpmWorkflowLane(_WorkflowLaneBase):
             digest=staged.digest,
             phase="published",
             digest_set=dict(staged.digest_set),
-            delivery_proof=self._proof_for(node.component),
+            delivery_proof=self._require_valid_proof(node.component),
             lane_ref=staged.lane_ref,
         )
-
-
-def _delivery_obligation_name(proof: dict) -> str:
-    return proof.get("obligation") if isinstance(proof, dict) else ""
 
 
 class WorkflowLanes:
@@ -2519,10 +2539,46 @@ def _observe_ghcr_tag_factory(repository: str):
     return observe
 
 
-def _observe_npm_tarball_digest(package: str, version: str):
-    data = _fetch_npm_tarball(package, version)
-    if data is None:
+def _observe_npm_registry(package: str, version: str, http=None):
+    """Authoritative tri-state registry observation: HTTP 404 alone proves
+    absence; a present version resolves and hashes its exact tarball;
+    transport failure, 5xx, or malformed metadata BLOCKS - an outage is
+    never permission to treat a version as absent."""
+    if http is None:
+        import urllib.error
+        import urllib.request
+
+        def http(url):
+            try:
+                with urllib.request.urlopen(url) as response:
+                    return response.status, response.read()
+            except urllib.error.HTTPError as exc:
+                return exc.code, b""
+            except Exception as exc:
+                raise ReceiptError(
+                    f"npm registry observation failed for {url}: {exc}"
+                ) from exc
+    encoded = package.replace("/", "%2F")
+    status, body = http(f"https://registry.npmjs.org/{encoded}/{version}")
+    if status == 404:
         return None
+    if status != 200:
+        raise ReceiptError(
+            f"{package}@{version}: registry returned status {status}; an "
+            "outage is never proof of absence"
+        )
+    try:
+        tarball = json.loads(body)["dist"]["tarball"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ReceiptError(
+            f"{package}@{version}: malformed registry metadata ({exc}); "
+            "malformed evidence is never an observation"
+        ) from exc
+    status, data = http(tarball)
+    if status != 200:
+        raise ReceiptError(
+            f"{package}@{version}: tarball download returned status {status}"
+        )
     return hashlib.sha256(data).hexdigest()
 
 
@@ -2535,6 +2591,12 @@ def compose_workflow_lanes(
     modes matching LANE_ARTIFACT_SOURCES."""
     lanes: dict = {}
     delivery_proofs = dict(delivery_proofs or {})
+    foreign = sorted(set(delivery_proofs) - set(refs))
+    if foreign:
+        raise ReceiptError(
+            f"--delivery-proof names components not composed in this run: "
+            f"{foreign}"
+        )
     modes = ["stage-only", "publish-continuation", "verify-only"]
     for component, ref in refs.items():
         source = LANE_ARTIFACT_SOURCES.get(component)
@@ -2584,9 +2646,10 @@ def compose_workflow_lanes(
             lanes[component] = NpmWorkflowLane(
                 component=component,
                 npm_name=registry.get("package", component),
+                expected_obligation=_delivery_obligation(graph, component),
                 reader=reader, lane_authority=authority,
                 refs={component: ref}, runs=runs,
-                npm_observe=_observe_npm_tarball_digest,
+                npm_observe=_observe_npm_registry,
                 delivery_proofs=delivery_proofs,
             )
         else:
