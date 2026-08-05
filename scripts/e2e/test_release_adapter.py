@@ -1995,6 +1995,67 @@ class SkewMatrixTests(unittest.TestCase):
         self.assertEqual(
             [c.direction for c in cells[:2]], ["a-to-b", "b-to-a"])
 
+    def test_persisted_same_component_uses_each_measured_version_once(self) -> None:
+        edge = skew_edge(
+            a="server", b="server", direction="persisted-state-both",
+            journey="persisted fixture",
+        )
+        staged = {"server": staged_entry("server", "3.2.0")}
+        cells = self.cells(
+            edge, moving={"server"}, staged=staged,
+            support=VersionedSupport(
+                {"server": ["2.9.0", "3.0.0", "3.1.0"]}),
+            published={"server": "3.1.0"},
+        )
+        self.assertEqual(len(cells), 6)
+        self.assertEqual(
+            [(c.a_kind, c.a["version"], c.b_kind, c.b["version"], c.direction)
+             for c in cells],
+            [
+                ("candidate", "3.2.0", "published-floor", "2.9.0", "a-to-b"),
+                ("candidate", "3.2.0", "published-floor", "2.9.0", "b-to-a"),
+                ("candidate", "3.2.0", "published", "3.0.0", "a-to-b"),
+                ("candidate", "3.2.0", "published", "3.0.0", "b-to-a"),
+                ("candidate", "3.2.0", "published-latest", "3.1.0", "a-to-b"),
+                ("candidate", "3.2.0", "published-latest", "3.1.0", "b-to-a"),
+            ],
+        )
+        self.assertNotIn(
+            ("candidate", "candidate"),
+            [(c.a_kind, c.b_kind) for c in cells],
+        )
+
+    def test_persisted_matrix_document_recomputes_exact_cells_and_identity(self) -> None:
+        edge = skew_edge(
+            a="server", b="server", direction="persisted-state-both",
+            journey="persisted fixture",
+        )
+        staged = {"server": staged_entry("server", "3.2.0")}
+        support = {"supported_versions": {"server": ["3.0.0", "3.1.0"]}}
+        document = rd.freeze_skew_matrix(
+            edge, moving={"server"}, staged=staged, support=support,
+            published_versions={"server": "3.1.0"},
+            staged_manifest_digest="a" * 64,
+        )
+        cells = rd.validate_skew_matrix_document(document)
+        self.assertEqual(
+            document["preimage"]["edge_id"], rd.edge_identity(edge)
+        )
+        self.assertEqual(len(cells), 4)
+        self.assertEqual(
+            [item["cell_id"] for item in document["preimage"]["cells"]],
+            [rd.skew_cell_identity(cell) for cell in cells],
+        )
+        self.assertEqual(
+            document["matrix_id"],
+            rd.canonical_json_digest(document["preimage"]),
+        )
+        tampered = json.loads(json.dumps(document))
+        tampered["preimage"]["support"]["supported_versions"]["server"][0] = "2.0.0"
+        tampered["matrix_id"] = rd.canonical_json_digest(tampered["preimage"])
+        with self.assertRaisesRegex(rd.ReceiptError, "matrix"):
+            rd.validate_skew_matrix_document(tampered)
+
     def test_one_side_touched_runs_candidate_against_the_supported_set(self) -> None:
         edge = skew_edge(direction="a-to-b")
         staged = {"client": staged_entry("client", "1.2.0")}
@@ -2085,14 +2146,59 @@ class RecordingHarness:
         self.journeys = set(journeys)
         self.fail = fail
         self.cells: list = []
+        self.matrices: list = []
+        self.events: list = []
 
     def has_journey(self, edge) -> bool:
         return edge.journey in self.journeys
 
+    def freeze_matrix(self, document) -> None:
+        self.matrices.append(document)
+        self.events.append(("matrix", document["matrix_id"]))
+
     def run(self, cell) -> None:
         self.cells.append(cell)
+        self.events.append(("cell", rd.skew_cell_identity(cell)))
         if self.fail:
             raise rd.ReceiptError(f"skew red: {cell.edge_a}<->{cell.edge_b}")
+
+    def finish_matrix(self, document) -> None:
+        self.events.append(("finish", document["matrix_id"]))
+
+
+class RunOnlyFreezeCompatTests(unittest.TestCase):
+    """Compatibility contract: a run-only harness REFUSES at freeze time
+    rather than silently executing without the frozen matrix."""
+
+    def test_run_only_harness_refuses_at_freeze(self) -> None:
+        class RunOnlyHarness:
+            def __init__(self):
+                self.cells = []
+
+            def has_journey(self, edge) -> bool:
+                return True
+
+            def run(self, cell) -> None:
+                self.cells.append(cell)
+
+        harness = RunOnlyHarness()
+        runner = rd.MatrixSkewRunner(
+            harness=harness,
+            support=VersionedSupport({"client": ["1.0.0"],
+                                      "server": ["3.0.0"]}),
+            published_versions={"client": "1.0.0", "server": "3.0.0"},
+            moving={"client", "server"},
+        )
+        edge = skew_edge(direction="both")
+        staged = {"client": staged_entry("client", "1.2.0"),
+                  "server": staged_entry("server", "3.2.0")}
+        with self.assertRaisesRegex(rd.ReceiptError, "cannot persist"):
+            runner.freeze_matrix(edge, staged,
+                                 staged_manifest_digest="a" * 64)
+        with self.assertRaisesRegex(rd.ReceiptError, "not frozen"):
+            runner.execute(edge, staged)
+        self.assertEqual(harness.cells, [],
+                         "no cell may execute without the frozen matrix")
 
 
 class MatrixSkewRunnerTests(unittest.TestCase):
@@ -2113,10 +2219,20 @@ class MatrixSkewRunnerTests(unittest.TestCase):
         staged = {"client": staged_entry("client", "1.2.0"),
                   "server": staged_entry("server", "3.2.0")}
         self.assertTrue(runner.has_matrix(edge))
+        with self.assertRaisesRegex(rd.ReceiptError, "not frozen"):
+            runner.execute(edge, staged)
+        document = runner.freeze_matrix(
+            edge, staged, staged_manifest_digest="a" * 64
+        )
         runner.execute(edge, staged)
         self.assertEqual(len(harness.cells), 10)
+        self.assertEqual(harness.events[0], ("matrix", document["matrix_id"]))
+        self.assertTrue(all(event[0] == "cell" for event in harness.events[1:-1]))
+        self.assertEqual(harness.events[-1], ("finish", document["matrix_id"]))
         first_pass = [(c.a_kind, c.b_kind, c.direction) for c in harness.cells]
         harness.cells.clear()
+        harness.events.clear()
+        runner.freeze_matrix(edge, staged, staged_manifest_digest="a" * 64)
         runner.execute(edge, staged)
         self.assertEqual(
             first_pass,
@@ -2134,10 +2250,13 @@ class MatrixSkewRunnerTests(unittest.TestCase):
             supported={"policy": "additive-only"},
         )
         runner = self.runner(RecordingHarness())
+        staged = {
+            "client": staged_entry("client", "1.2.0"),
+            "server": staged_entry("server", "3.2.0")}
         with self.assertRaises(rd.ReceiptError) as caught:
-            runner.execute(edge, {
-                "client": staged_entry("client", "1.2.0"),
-                "server": staged_entry("server", "3.2.0")})
+            runner.freeze_matrix(
+                edge, staged, staged_manifest_digest="a" * 64
+            )
         self.assertIn("incomplete", str(caught.exception))
 
     def test_skew_failure_precedes_every_lane_call(self) -> None:
@@ -2506,6 +2625,9 @@ class FrozenTruthSkewTests(unittest.TestCase):
         staged = {"client": staged_entry("client", "1.1.0"),
                   "plugin": staged_entry("plugin", "2.1.0")}
         for edge in frozen.plan.runtime_contract_edges:
+            runner.freeze_matrix(
+                edge, staged, staged_manifest_digest="a" * 64
+            )
             runner.execute(edge, staged)
         self.assertTrue(harness.cells)
         for cell in harness.cells:
@@ -2602,6 +2724,9 @@ class EdgeIdentityTests(unittest.TestCase):
             frozen, state=state, measurement=support, harness=harness)
         staged = {"server": staged_entry("server", "3.1.0")}
         for edge in contracts:
+            runner.freeze_matrix(
+                edge, staged, staged_manifest_digest="a" * 64
+            )
             runner.execute(edge, staged)
         persisted = [c for c in harness.cells
                      if c.journey == "persisted-state fixture"
