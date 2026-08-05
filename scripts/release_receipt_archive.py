@@ -47,6 +47,7 @@ from pathlib import Path
 
 from release_driver import ReceiptError
 
+_DEFAULT_SEMANTIC = object()
 INDEX_ENTRY_SCHEMA = "aweb.release-archive-index-entry.v1"
 MANIFEST_SCHEMA = "aweb.release-archive-manifest.v1"
 PRODUCTION_TRUST_CLASSES = ("durable-byte-store",)
@@ -263,7 +264,11 @@ def archive_sealed(
     store, authority, transport, recorded_head: str | None,
     artifact_ref: str | None = None,
     allowed_paths: tuple[str, ...] = (),
+    semantic=_DEFAULT_SEMANTIC,
 ) -> dict:
+    """``semantic`` defaults to the real production validator; a caller must
+    pass an explicit permissive callable to skip it, so production can never
+    silently append an artifact whose semantics were never checked."""
     _bounded_identity(logical_id, "logical id")
     source = _validate_source(source, _bounded_identity(kind, "kind"))
     derived_ref = _fetch_ref_for_source(source)
@@ -319,6 +324,13 @@ def archive_sealed(
         "source_digest": expected,
         "body_sha256": body_sha,
     }
+    # Semantics are validated BEFORE any durable mutation: a digest-authorized
+    # but malformed or semantically invalid artifact must never reach the
+    # branch and then wait for index review to catch it.
+    validator = semantic_validator() if semantic is _DEFAULT_SEMANTIC else semantic
+    if validator is not None:
+        validator(body, manifest_doc)
+
     existing = manifests.get(body_sha)
     if existing is not None:
         if existing != manifest_doc:
@@ -1004,6 +1016,151 @@ def semantic_validator(providers=None):
             )
 
     return validate
+
+
+RELEASE_SET_KEYS = {"frozen_plan_id", "plan", "staged_manifest", "transitions",
+                    "receipt"}
+
+
+def validate_release_set_inventory(inventory, *, frozen_plan_id: str) -> dict:
+    """The reviewed index's canonical inventory of ONE release set: which exact
+    logical ids constitute the complete plan/manifest/transitions/receipt for a
+    frozen plan. Without this, a restore of a single logical id can never know
+    what else was supposed to exist."""
+    if not isinstance(inventory, dict) or set(inventory) != RELEASE_SET_KEYS:
+        present = set(inventory) if isinstance(inventory, dict) else set()
+        raise ReceiptError(
+            "release-set inventory keys are not exactly "
+            f"{sorted(RELEASE_SET_KEYS)} (missing "
+            f"{sorted(RELEASE_SET_KEYS - present)}, unexpected "
+            f"{sorted(present - RELEASE_SET_KEYS)})"
+        )
+    if inventory["frozen_plan_id"] != frozen_plan_id:
+        raise ReceiptError(
+            "release-set inventory binds a different frozen plan than requested"
+        )
+    for field in ("plan", "staged_manifest", "receipt"):
+        _bounded_identity(inventory[field], f"release-set {field} logical id")
+    transitions = inventory["transitions"]
+    if not isinstance(transitions, list) or not transitions:
+        raise ReceiptError(
+            "release-set inventory carries no transitions; an empty ordered "
+            "set cannot be complete"
+        )
+    for logical in transitions:
+        _bounded_identity(logical, "release-set transition logical id")
+    if len(set(transitions)) != len(transitions):
+        raise ReceiptError(
+            "release-set inventory repeats a transition logical id"
+        )
+    return inventory
+
+
+def restore_release_set(
+    *, frozen_plan_id: str, transport, index_authority, production: bool = True,
+) -> dict:
+    """Production restore of a COMPLETE release set.
+
+    Restoring one logical id proves only that one artifact is intact. This
+    loads the exact plan, staged manifest, every ordered transition, and the
+    receipt named by the reviewed index inventory, validates each through the
+    normal production path, and then enforces the relationships BETWEEN them -
+    including validate_transition_set, which is otherwise unreachable from
+    production and therefore not a control at all.
+    """
+    import release_driver as rd
+
+    if not _GIT_SHA.fullmatch(frozen_plan_id or "") and not _HEX64.fullmatch(
+        frozen_plan_id or ""
+    ):
+        raise ReceiptError(
+            "release-set restore requires an exact frozen plan identity"
+        )
+    lookup = getattr(index_authority, "release_set", None)
+    if lookup is None:
+        raise ReceiptError(
+            "reviewed index authority exposes no release-set inventory; a "
+            "single-artifact index cannot prove set completeness"
+        )
+    inventory = validate_release_set_inventory(
+        lookup(frozen_plan_id), frozen_plan_id=frozen_plan_id)
+
+    validate = semantic_validator()
+    bodies: dict[str, bytes] = {}
+    for logical in (
+        [inventory["plan"], inventory["staged_manifest"], inventory["receipt"]]
+        + list(inventory["transitions"])
+    ):
+        bodies[logical] = restore_archived(
+            entry=None, transport=transport, production=production,
+            validate=validate, index_authority=index_authority,
+            logical_id=logical,
+        )
+
+    # Cross-document relationships. Each logical id already had to agree with
+    # its own document; now the SET has to agree with itself.
+    def inner(logical: str) -> bytes:
+        import io
+        import zipfile
+
+        with zipfile.ZipFile(io.BytesIO(bodies[logical])) as archive_zip:
+            return archive_zip.read("body")
+
+    plan_id = inventory["plan"].split(":")
+    manifest_id = inventory["staged_manifest"].split(":")
+    receipt_id = inventory["receipt"].split(":")
+    if plan_id[0] != "plan" or plan_id[2] != frozen_plan_id:
+        raise ReceiptError("release-set plan id does not bind the frozen plan")
+    if manifest_id[0] != "staged-manifest" or manifest_id[1] != frozen_plan_id:
+        raise ReceiptError(
+            "release-set staged manifest does not bind the frozen plan")
+    if receipt_id[0] != "receipt" or receipt_id[1] != frozen_plan_id:
+        raise ReceiptError("release-set receipt does not bind the frozen plan")
+    staged_manifest_id = inventory["staged_manifest"]
+
+    documents = []
+    for logical in inventory["transitions"]:
+        parts = logical.split(":")
+        if parts[0] != "transition" or parts[1] != frozen_plan_id:
+            raise ReceiptError(
+                f"release-set transition {logical} does not bind the frozen plan"
+            )
+        document = json.loads(inner(logical))
+        rd.validate_transition_document(document)
+        if document["staged_manifest_id"] != staged_manifest_id:
+            raise ReceiptError(
+                f"transition {logical} binds staged manifest "
+                f"{document['staged_manifest_id']!r}, not the release set's "
+                f"{staged_manifest_id!r}"
+            )
+        documents.append(document)
+    # The control that was previously unreachable from production.
+    validate_transition_set(documents)
+
+    receipt = rd.load_sealed_receipt(
+        inner(inventory["receipt"]),
+        expected_digest=receipt_id[2])
+    if getattr(receipt, "staged_manifest_id", None) not in (
+        None, "", staged_manifest_id
+    ):
+        raise ReceiptError(
+            "restored receipt binds a staged manifest outside this release set"
+        )
+    components = {d["component"] for d in documents}
+    receipt_entries = set(getattr(receipt, "entries", {}) or {})
+    unexplained = receipt_entries - components
+    if receipt_entries and unexplained:
+        raise ReceiptError(
+            f"receipt names components with no transition in the set: "
+            f"{sorted(unexplained)}"
+        )
+    return {
+        "frozen_plan_id": frozen_plan_id,
+        "plan": bodies[inventory["plan"]],
+        "staged_manifest": bodies[inventory["staged_manifest"]],
+        "transitions": documents,
+        "receipt": bodies[inventory["receipt"]],
+    }
 
 
 def validate_transition_set(documents: list) -> None:

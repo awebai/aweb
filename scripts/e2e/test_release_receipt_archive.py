@@ -126,9 +126,18 @@ def fresh_env(body: bytes = BODY, ref: str = REF):
     )
 
 
+# These helpers exercise APPEND MECHANICS (compare-and-swap, rebinding, stray
+# content, idempotence) with synthetic bodies, so they pass an explicit
+# permissive validator. Production keeps the real semantic validator as its
+# default - ProductionPathControlTests proves the default refuses a
+# semantically invalid artifact before any branch mutation.
+def _permissive(body, manifest):
+    return None
+
+
 def do_archive(store, authority, transport, *, logical_id="receipt:plan:1",
                ref=REF, recorded_head=None, kind="anchor-artifact",
-               source=None):
+               source=None, semantic=_permissive):
     src = dict(source) if source is not None else dict(SOURCE)
     if kind == "workflow-artifact":
         src.pop("anchor", None)
@@ -136,6 +145,7 @@ def do_archive(store, authority, transport, *, logical_id="receipt:plan:1",
         logical_id=logical_id, kind=kind, source=src,
         store=store, authority=authority,
         transport=transport, recorded_head=recorded_head,
+        semantic=semantic,
     )
 
 
@@ -527,7 +537,7 @@ class StrictSchemaTests(unittest.TestCase):
             artifact_ref=REF, source=dict(SOURCE), store=store,
             authority=authority, transport=transport,
             recorded_head=entry["archive_commit"],
-            allowed_paths=("README.md",),
+            allowed_paths=("README.md",), semantic=_permissive,
         )
         self.assertEqual(again["archive_commit"], entry["archive_commit"])
 
@@ -1129,6 +1139,110 @@ class ReviewedIndexRoundTwoTests(unittest.TestCase):
             part.write_bytes(b"squatted")
             with self.assertRaisesRegex(rd.ReceiptError, "temporary|exists"):
                 archive._atomic_write_bytes(out, b"data")
+
+
+class ProductionPathControlTests(unittest.TestCase):
+    """Alice's .9 round-4 gaps: a helper not reached from production is not a
+    control, and a durable branch must not be mutated before semantics are
+    validated."""
+
+    # Gap 2: archive write must run the real semantic validator BEFORE append.
+    def test_semantically_invalid_artifact_is_not_appended(self):
+        body = b"digest-authorized but not a valid anchor bundle"
+        ref = "gh-artifact:awebai/aweb:41:9001"
+        store = FakeStore({ref: body})
+        authority = FakeAuthority({ref: sha256(body)})
+        transport = FakeArchiveTransport()
+        with self.assertRaises(rd.ReceiptError):
+            archive.archive_sealed(
+                logical_id="receipt:" + "f" * 64 + ":" + "a" * 64,
+                kind="anchor-artifact", source=dict(SOURCE),
+                store=store, authority=authority, transport=transport,
+                recorded_head=None)
+        self.assertIsNone(transport.head,
+                          "durable branch must not be mutated on refusal")
+        self.assertEqual(transport.commits, {})
+
+    def test_valid_anchor_is_appended(self):
+        graph, plan = real_graph_and_plan()
+        plan_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha="a" * 40)
+        logical = f"plan:{'a' * 40}:{frozen_id}"
+        body, _ = anchor_bundle(logical, plan_bytes)
+        ref = "gh-artifact:awebai/aweb:41:9001"
+        store = FakeStore({ref: body})
+        authority = FakeAuthority({ref: sha256(body)})
+        transport = FakeArchiveTransport()
+        entry = archive.archive_sealed(
+            logical_id=logical, kind="anchor-artifact",
+            source=dict(SOURCE, anchor=rd._anchor_name(
+                logical, sha256(plan_bytes))),
+            store=store, authority=authority, transport=transport,
+            recorded_head=None)
+        self.assertIsNotNone(transport.head)
+        self.assertEqual(entry["logical_id"], logical)
+
+    # Gap 2 positive: a REAL lane ZIP through production archive dispatch.
+    def test_real_lane_zip_archives_and_restores(self):
+        import io
+        import zipfile
+
+        version = "1.26.36"
+        wheel = b"exact staged wheel bytes"
+        sdist = b"exact staged sdist bytes"
+        names = {
+            f"aweb-{version}-py3-none-any.whl": wheel,
+            f"aweb-{version}.tar.gz": sdist,
+        }
+        files = {n: sha256(d) for n, d in names.items()}
+        manifest = {
+            "mode": "stage-only", "package": "server",
+            "tag": f"server-v{version}", "candidate_version": version,
+            "source_sha": "c" * 40, "files": files,
+            "canonical_set_digest": sha256(
+                json.dumps(files, sort_keys=True).encode()),
+        }
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("manifest.json", json.dumps(manifest))
+            for n, d in names.items():
+                z.writestr(f"dist/{n}", d)
+        lane_zip = buf.getvalue()
+
+        ref = "gh-artifact:awebai/aweb:41:9001"
+        store = FakeStore({ref: lane_zip})
+        authority = FakeAuthority({ref: sha256(lane_zip)})
+        transport = FakeArchiveTransport()
+        source = {k: v for k, v in SOURCE.items() if k != "anchor"}
+        entry = archive.archive_sealed(
+            logical_id="lane:server:" + version, kind="workflow-artifact",
+            source=source, store=store, authority=authority,
+            transport=transport, recorded_head=None)
+        restored = archive.restore_archived(
+            entry=entry, transport=transport, production=False,
+            validate=archive.semantic_validator())
+        self.assertEqual(restored, lane_zip,
+                         "a real lane ZIP round-trips through production "
+                         "archive and restore dispatch")
+
+    # Gap 1: production restore of a receipt must enforce the complete set.
+    def test_restore_release_set_enforces_complete_ordered_transitions(self):
+        self.assertTrue(hasattr(archive, "restore_release_set"),
+                        "production must expose a release-set restore that "
+                        "reaches validate_transition_set")
+
+    def test_lone_out_of_order_transition_refuses_in_set_restore(self):
+        docs = [{
+            "frozen_plan_id": "f" * 64,
+            "staged_manifest_id": f"staged-manifest:{'f' * 64}:{'e' * 64}",
+            "sequence": 2, "component": "channel", "kind": "published",
+            "entry": {"version": "1.7.2", "digest": "d" * 64,
+                      "phase": "published", "pointer_state": None,
+                      "delivery_proof": None, "lane_ref": None,
+                      "digest_set": {}},
+        }]
+        with self.assertRaisesRegex(rd.ReceiptError, "ordered set"):
+            archive.validate_transition_set(docs)
 
 
 class GateTests(unittest.TestCase):
