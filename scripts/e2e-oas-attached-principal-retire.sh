@@ -33,13 +33,21 @@ CLI_DIR="$REPO_ROOT/cli/go"
 AW_BIN="$CLI_DIR/aw"
 PROOF_HELPER="$REPO_ROOT/scripts/e2e/oas_principal_proof.py"
 CAPABILITY_SOURCE="$REPO_ROOT/oas/.agents/capabilities/owned/aweb-identity-attach"
-PI_EXTENSION_DIR="$REPO_ROOT/pi-extension"
+PI_PACKAGE_ROOT="${OAS_PROOF_PI_PACKAGE_ROOT:-}"
+PI_EXTENSION_DIR="${PI_PACKAGE_ROOT:-$REPO_ROOT/pi-extension}"
+EXACT_SERVER_WHEEL="${AWEB_SKEW_SERVER_WHEEL:-}"
+EXACT_SERVER_SHA256="${AWEB_SKEW_SERVER_SHA256:-}"
 COMPOSE_FILE="$REPO_ROOT/docker-compose.e2e.yml"
 TMUX_GUARD_DIR="$REPO_ROOT/scripts/guard-bin"
 MODE="${OAS_PROOF_MODE:-lifecycle}"
 case "$MODE" in
   lifecycle|resident-pi) ;;
   *) echo "FAIL: OAS_PROOF_MODE must be lifecycle or resident-pi (got $MODE)" >&2; exit 2 ;;
+esac
+SKEW_DIRECTION="${AWEB_SKEW_DIRECTION:-}"
+case "$SKEW_DIRECTION" in
+  ""|a-to-b|b-to-a) ;;
+  *) echo "FAIL: AWEB_SKEW_DIRECTION must be a-to-b or b-to-a (got $SKEW_DIRECTION)" >&2; exit 2 ;;
 esac
 HOST_PI_AUTH="${OAS_PROOF_PI_AUTH:-${PI_CODING_AGENT_DIR:-${HOME:-}/.pi/agent}/auth.json}"
 
@@ -65,12 +73,29 @@ preflight() {
     return 1
   }
   [[ -f "$PI_EXTENSION_DIR/package.json" ]] || {
-    echo "FAIL: Pi extension source not found at $PI_EXTENSION_DIR" >&2
+    echo "FAIL: Pi extension package not found at $PI_EXTENSION_DIR" >&2
     return 1
   }
+  if [[ -n "$PI_PACKAGE_ROOT" && ! -f "$PI_EXTENSION_DIR/dist/index.js" ]]; then
+    echo "FAIL: exact installed Pi package lacks dist/index.js: $PI_EXTENSION_DIR" >&2
+    return 1
+  fi
+  if [[ -n "$EXACT_SERVER_WHEEL" || -n "$EXACT_SERVER_SHA256" ]]; then
+    [[ -n "$EXACT_SERVER_WHEEL" && -n "$EXACT_SERVER_SHA256" ]] || {
+      echo "FAIL: set both AWEB_SKEW_SERVER_WHEEL and AWEB_SKEW_SERVER_SHA256" >&2
+      return 1
+    }
+    [[ -f "$EXACT_SERVER_WHEEL" ]] || {
+      echo "FAIL: exact server wheel not found at $EXACT_SERVER_WHEEL" >&2
+      return 1
+    }
+  fi
 }
 
 preflight
+if [[ -n "$PI_PACKAGE_ROOT" ]]; then
+  PI_EXTENSION_DIR="$(canonical_dir "$PI_PACKAGE_ROOT")"
+fi
 if [[ "${1:-}" == "--preflight" ]]; then
   exit
 fi
@@ -905,7 +930,11 @@ PI_VERSION=""
 PI_EXTENSION_SHA=""
 
 if [[ "$MODE" == "resident-pi" ]]; then
-  echo "=== Prepare the source Pi extension and isolated model session ==="
+  if [[ -n "$PI_PACKAGE_ROOT" ]]; then
+    echo "=== Prepare the exact installed Pi package and isolated model session ==="
+  else
+    echo "=== Prepare the source Pi extension and isolated model session ==="
+  fi
   snapshot_default_tmux_topology "$EVIDENCE/tmux-topology-before.txt" \
     || fail "could not snapshot pre-existing tmux session/window/pane topology"
   [[ -f "$HOST_PI_AUTH" ]] || fail "Pi model authentication not found at $HOST_PI_AUTH"
@@ -913,8 +942,12 @@ if [[ "$MODE" == "resident-pi" ]]; then
   [[ -n "$PI_LAUNCH_PATH" && -x "$PI_LAUNCH_PATH" ]] || fail "real Pi runtime not found on PATH"
   PI_BIN_SHA="$(file_sha256 "$PI_LAUNCH_PATH")"
   PI_VERSION="$(pi --version)"
-  npm --prefix "$PI_EXTENSION_DIR" ci > "$EVIDENCE/pi-extension-install.txt"
-  npm --prefix "$PI_EXTENSION_DIR" run build > "$EVIDENCE/pi-extension-build.txt"
+  if [[ -z "$PI_PACKAGE_ROOT" ]]; then
+    npm --prefix "$PI_EXTENSION_DIR" ci > "$EVIDENCE/pi-extension-install.txt"
+    npm --prefix "$PI_EXTENSION_DIR" run build > "$EVIDENCE/pi-extension-build.txt"
+  else
+    printf '%s\n' "$PI_EXTENSION_DIR" > "$EVIDENCE/pi-extension-exact-package-root.txt"
+  fi
   PI_EXTENSION_SHA="$(file_sha256 "$PI_EXTENSION_DIR/dist/index.js")"
   mkdir -p "$PROOF_HOME/.pi/agent/sessions"
   install -m 600 "$HOST_PI_AUTH" "$PROOF_HOME/.pi/agent/auth.json"
@@ -931,6 +964,35 @@ if [[ "$MODE" == "resident-pi" ]]; then
 else
   printf '#!/bin/sh\nexit 0\n' > "$PROOF_BIN/pi"
   chmod +x "$PROOF_BIN/pi"
+fi
+
+if [[ -n "$EXACT_SERVER_WHEEL" ]]; then
+  echo "=== Bind the exact server wheel into the disposable aweb service ==="
+  OBSERVED_SERVER_SHA256="$(file_sha256 "$EXACT_SERVER_WHEEL")"
+  [[ "$OBSERVED_SERVER_SHA256" == "$EXACT_SERVER_SHA256" ]] \
+    || fail "exact server wheel sha256 $OBSERVED_SERVER_SHA256 does not equal $EXACT_SERVER_SHA256"
+  EXACT_SERVER_BUILD="$PROOF_ROOT/exact-server-wheel"
+  EXACT_SERVER_NAME="$(basename "$EXACT_SERVER_WHEEL")"
+  [[ "$EXACT_SERVER_NAME" =~ ^[A-Za-z0-9_.-]+\.whl$ ]] \
+    || fail "exact server wheel basename is not safe: $EXACT_SERVER_NAME"
+  mkdir -p "$EXACT_SERVER_BUILD"
+  cp "$EXACT_SERVER_WHEEL" "$EXACT_SERVER_BUILD/$EXACT_SERVER_NAME"
+  cat > "$EXACT_SERVER_BUILD/Dockerfile" <<EOF
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+COPY $EXACT_SERVER_NAME /tmp/$EXACT_SERVER_NAME
+RUN python -m pip install --no-cache-dir /tmp/$EXACT_SERVER_NAME
+CMD ["aweb", "serve", "--host", "0.0.0.0", "--port", "8000"]
+EOF
+  EXACT_SERVER_OVERRIDE="$PROOF_ROOT/exact-server-compose.yml"
+  cat > "$EXACT_SERVER_OVERRIDE" <<EOF
+services:
+  aweb:
+    build:
+      context: $EXACT_SERVER_BUILD
+      dockerfile: Dockerfile
+EOF
+  COMPOSE+=(-f "$EXACT_SERVER_OVERRIDE")
 fi
 
 echo "=== Start a fresh loopback tmpfs-backed AWID + aweb stack ==="
@@ -1280,6 +1342,9 @@ PY
     fail "resident session did not contain identity, wake, and successful reply evidence"
   }
   cp "$SESSION_FILE" "$EVIDENCE/resident-session.jsonl"
+  if [[ "$SKEW_DIRECTION" == "b-to-a" ]]; then
+    printf '%s\n' 'AWEB_SKEW_OBSERVATION {"direction":"b-to-a","assertion":"mail wake presented to resident Pi before acknowledgement"}'
+  fi
 
   REPLY_OBSERVED=0
   for _ in $(seq 1 90); do
@@ -1310,6 +1375,9 @@ PY
     sleep 2
   done
   [[ "$REPLY_OBSERVED" == "1" ]] || fail "observer did not receive the resident's exact verified reply"
+  if [[ "$SKEW_DIRECTION" == "a-to-b" ]]; then
+    printf '%s\n' 'AWEB_SKEW_OBSERVATION {"direction":"a-to-b","assertion":"resident Pi reply request accepted and verified by observer"}'
+  fi
   env -u TMUX TMUX_TMPDIR="$PROOF_TMUX_DIR" PATH="$TMUX_GUARD_DIR:$PATH" \
     tmux list-panes -t "=$PROOF_TMUX_SESSION:=$INSTANCE_NAME" \
       -F '#{pane_pid}|#{pane_current_command}|#{pane_dead}' > "$EVIDENCE/resident-pane.txt"

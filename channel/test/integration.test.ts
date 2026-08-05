@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { createServer } from "node:net";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -18,6 +19,16 @@ const repoRoot = resolve(channelDir, "..");
 const serverDir = join(repoRoot, "server");
 const cliDir = join(repoRoot, "cli", "go");
 const awBinary = join(cliDir, "aw");
+const skewDirection = process.env.AWEB_SKEW_DIRECTION;
+if (skewDirection && skewDirection !== "a-to-b" && skewDirection !== "b-to-a") {
+  throw new Error(`AWEB_SKEW_DIRECTION must be a-to-b or b-to-a, got ${skewDirection}`);
+}
+
+function emitSkewObservation(direction: "a-to-b" | "b-to-a", assertion: string): void {
+  if (skewDirection === direction) {
+    console.log(`AWEB_SKEW_OBSERVATION ${JSON.stringify({ direction, assertion })}`);
+  }
+}
 
 const ChannelNotificationSchema = NotificationSchema.extend({
   method: z.literal("notifications/claude/channel"),
@@ -206,6 +217,14 @@ describe.sequential("channel integration", () => {
     expect(chatNotification.meta.from).toBe(alice.address);
     expect(chatNotification.meta.conversation_id).toBeTruthy();
     expect(chatNotification.meta.verified).toBe("true");
+    emitSkewObservation("b-to-a", "SSE chat event presented before acknowledgement");
+
+    if (skewDirection === "a-to-b") {
+      await delay(750);
+      const pending = await runAw(homeDir, bobDir, server.awidURL, ["chat", "pending"]);
+      expect(pending.stdout).not.toContain(chatBody);
+      emitSkewObservation("a-to-b", "mark-read request accepted and removed chat from pending");
+    }
 
     expect(channelStderr).not.toContain("fatal:");
   }, 120_000);
@@ -213,12 +232,17 @@ describe.sequential("channel integration", () => {
   async function startChannelIfNeeded(): Promise<void> {
     if (mcpClient) return;
 
+    const exactPackageRoot = process.env.AWEB_CHANNEL_PACKAGE_ROOT;
+    const command = process.execPath;
+    const args = exactPackageRoot
+      ? [join(resolve(exactPackageRoot), "dist", "index.js")]
+      : [
+          join(channelDir, "node_modules", "tsx", "dist", "cli.mjs"),
+          join(channelDir, "src", "index.ts"),
+        ];
     transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [
-        join(channelDir, "node_modules", "tsx", "dist", "cli.mjs"),
-        join(channelDir, "src", "index.ts"),
-      ],
+      command,
+      args,
       cwd: bobDir,
       env: {
         ...stringEnv(process.env),
@@ -288,7 +312,7 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     "AWID_SKIP_DNS_VERIFY=1",
   ].join("\n"));
 
-  await writeFile(overrideFilePath, [
+  const overrideLines = [
     "services:",
     "  redis:",
     "    ports:",
@@ -296,7 +320,37 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     "  postgres:",
     "    ports:",
     '      - "${POSTGRES_PORT}:5432"',
-  ].join("\n"));
+  ];
+  const exactServerWheel = process.env.AWEB_SKEW_SERVER_WHEEL;
+  const exactServerSHA = process.env.AWEB_SKEW_SERVER_SHA256;
+  if (exactServerWheel || exactServerSHA) {
+    if (!exactServerWheel || !exactServerSHA) {
+      throw new Error("set both AWEB_SKEW_SERVER_WHEEL and AWEB_SKEW_SERVER_SHA256, or neither");
+    }
+    const wheel = await readFile(resolve(exactServerWheel));
+    const digest = createHash("sha256").update(wheel).digest("hex");
+    if (digest !== exactServerSHA) {
+      throw new Error(`exact server wheel sha256 ${digest} does not equal ${exactServerSHA}`);
+    }
+    const buildRoot = join(tempRoot, "exact-server-wheel");
+    const wheelName = basename(exactServerWheel);
+    await mkdir(buildRoot, { recursive: true });
+    await writeFile(join(buildRoot, wheelName), wheel);
+    await writeFile(join(buildRoot, "Dockerfile"), [
+      "FROM python:3.12-slim",
+      "RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*",
+      `COPY ${JSON.stringify(wheelName)} /tmp/${wheelName}`,
+      `RUN python -m pip install --no-cache-dir /tmp/${wheelName}`,
+      'CMD ["aweb", "serve", "--host", "0.0.0.0", "--port", "8000"]',
+    ].join("\n"));
+    overrideLines.push(
+      "  aweb:",
+      "    build:",
+      `      context: ${JSON.stringify(buildRoot)}`,
+      '      dockerfile: "Dockerfile"',
+    );
+  }
+  await writeFile(overrideFilePath, overrideLines.join("\n"));
 
   await runCommand("docker", [
     "compose",

@@ -42,3 +42,14 @@ def register(journey: str, factory) -> None:
             "owns each journey"
         )
     REGISTRY[journey] = factory
+
+
+from release_channel_pi_skew import (  # noqa: E402
+    CHANNEL_JOURNEY,
+    PI_JOURNEY,
+    channel_factory,
+    pi_factory,
+)
+
+register(CHANNEL_JOURNEY, channel_factory)
+register(PI_JOURNEY, pi_factory)

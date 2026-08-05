@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,20 @@ import release_channel_pi_skew as skew  # noqa: E402
 
 def sha(body: bytes) -> str:
     return hashlib.sha256(body).hexdigest()
+
+
+def npm_tgz(package: str, version: str) -> bytes:
+    import gzip
+    import tarfile
+
+    output = io.BytesIO()
+    with gzip.GzipFile(fileobj=output, mode="wb", mtime=0) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w") as archive:
+            body = json.dumps({"name": package, "version": version}).encode()
+            info = tarfile.TarInfo("package/package.json")
+            info.size = len(body)
+            archive.addfile(info, io.BytesIO(body))
+    return output.getvalue()
 
 
 def lane_zip(component: str, version: str = "1.2.3"):
@@ -160,8 +175,8 @@ class CandidateArtifactTests(unittest.TestCase):
 
 class PublishedArtifactTests(unittest.TestCase):
     def test_published_npm_reuses_404_outage_classifier_and_exact_profile(self):
-        tgz = b"published channel tgz"
-        metadata_url = "https://registry.npmjs.org/%40awebai%2Fclaude-channel/1.7.1"
+        tgz = npm_tgz("@awebai/claude-channel", "1.7.1")
+        metadata_url = "https://registry.npmjs.org/@awebai%2Fclaude-channel/1.7.1"
         tarball_url = "https://registry.example/channel.tgz"
         metadata = json.dumps({"dist": {"tarball": tarball_url}}).encode()
         responses = {
@@ -346,6 +361,80 @@ class ChildHarnessTests(unittest.TestCase):
             self.run_cell(wrong)
 
 
+class MatrixCoverageTests(unittest.TestCase):
+    @staticmethod
+    def staged(component, version):
+        files = {f"{component}.artifact": sha(component.encode())}
+        return rd.ReceiptEntry(
+            version=version,
+            digest=rd.canonical_digest_of_set(files),
+            digest_set=files,
+            lane_ref={
+                "artifact": "gh-artifact:awebai/aweb:17:23",
+                "aw_source_sha": "a" * 40,
+                "zip_digest": "sha256:" + "1" * 64,
+            },
+        )
+
+    def matrix(self, client, moving):
+        edge = rd.RuntimeContractEdge(
+            a=client, b="server",
+            journey=(skew.CHANNEL_JOURNEY if client == "channel" else skew.PI_JOURNEY),
+            artifacts={"a": skew.CLIENT_ARTIFACTS[client], "b": "pypi:aweb"},
+            direction="both", supported={"policy": "additive-only"},
+        )
+        staged = {}
+        if client in moving:
+            staged[client] = self.staged(client, "1.2.3")
+        if "server" in moving:
+            staged["server"] = self.staged("server", "1.26.35")
+        return rd.compute_skew_cells(
+            edge,
+            moving=set(moving),
+            staged=staged,
+            support={"supported_versions": {
+                client: ["1.2.1", "1.2.2"],
+                "server": ["1.26.33", "1.26.34"],
+            }},
+            published_versions={client: "1.2.2", "server": "1.26.34"},
+        )
+
+    def test_both_clients_evidence_the_full_both_side_matrix_per_exact_cell(self):
+        for client in ("channel", "pi"):
+            cells = self.matrix(client, {client, "server"})
+            self.assertEqual(len(cells), 10)
+            reports = Reports()
+            for value in cells:
+                skew.ChannelPiHarness(
+                    resolver=FakeResolver(), journey=FakeJourney(), evidence=reports,
+                ).run(value)
+            self.assertEqual(len({item["cell_id"] for item in reports.items}), 10)
+            self.assertEqual(
+                {item["cell_direction"] for item in reports.items},
+                {"a-to-b", "b-to-a"},
+            )
+            for report in reports.items:
+                expected = "request" if report["cell_direction"] == "a-to-b" else "event"
+                self.assertEqual(set(report["observation"]), {expected})
+            skew.aggregate_support(
+                reports.items,
+                expected_cell_ids=[skew.cell_identity(value) for value in cells],
+            )
+
+    def test_one_moving_side_evidences_every_measured_published_version(self):
+        cells = self.matrix("channel", {"channel"})
+        self.assertEqual(len(cells), 4)
+        self.assertEqual(
+            {value.b["version"] for value in cells}, {"1.26.33", "1.26.34"}
+        )
+        reports = Reports()
+        for value in cells:
+            skew.ChannelPiHarness(
+                resolver=FakeResolver(), journey=FakeJourney(), evidence=reports,
+            ).run(value)
+        self.assertEqual(len(reports.items), 4)
+
+
 class MeasurementCompletenessTests(unittest.TestCase):
     def report(self, value):
         _, report = ChildHarnessTests().run_cell(value)
@@ -378,6 +467,23 @@ class MeasurementCompletenessTests(unittest.TestCase):
 
 
 class RegistrationAndJourneyParameterTests(unittest.TestCase):
+    def test_real_journey_output_requires_one_matching_direction_observation(self):
+        body = (
+            b"runner noise\nAWEB_SKEW_OBSERVATION "
+            b'{"direction":"a-to-b","assertion":"mark-read request accepted"}\n'
+        )
+        self.assertEqual(
+            skew.parse_observation(body, "a-to-b"),
+            {"direction": "a-to-b", "assertion": "mark-read request accepted"},
+        )
+        for output, needle in (
+            (b"runner noise", "exactly one"),
+            (body + body, "exactly one"),
+            (body.replace(b"a-to-b", b"b-to-a"), "does not match"),
+        ):
+            with self.assertRaisesRegex(rd.ReceiptError, needle):
+                skew.parse_observation(output, "a-to-b")
+
     def test_both_exact_journeys_are_registered_once(self):
         import release_skew_harnesses as registry
 
@@ -391,17 +497,44 @@ class RegistrationAndJourneyParameterTests(unittest.TestCase):
         release = makefile.split("test-release-driver:", 1)[1].split("\n\n", 1)[0]
         self.assertIn("test-release-channel-pi-skew", release)
 
-    def test_existing_real_journeys_accept_exact_installed_package_roots(self):
+    def test_existing_real_journeys_accept_exact_client_and_server_artifacts(self):
         channel = (SCRIPTS.parent / "channel/test/integration.test.ts").read_text()
         resident = (SCRIPTS.parent / "scripts/e2e-oas-attached-principal-retire.sh").read_text()
         self.assertIn("AWEB_CHANNEL_PACKAGE_ROOT", channel)
         self.assertIn("OAS_PROOF_PI_PACKAGE_ROOT", resident)
         self.assertIn("exact installed Pi package", resident)
+        for subject in (channel, resident):
+            self.assertIn("AWEB_SKEW_SERVER_WHEEL", subject)
+            self.assertIn("AWEB_SKEW_SERVER_SHA256", subject)
+            self.assertIn("exact server wheel", subject)
+            self.assertIn("AWEB_SKEW_DIRECTION", subject)
+            self.assertIn("AWEB_SKEW_OBSERVATION", subject)
+
+    def test_disposable_mark_read_control_uses_the_exact_legacy_request(self):
+        result = subprocess.run(
+            [
+                "uv", "run", "--project", str(SCRIPTS.parent / "server"),
+                "--frozen", "--quiet", "python",
+                str(SCRIPTS / "e2e/mark_read_skew_control.py"),
+                "--message-id", skew.LEGACY_MESSAGE_ID,
+            ],
+            capture_output=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        report = json.loads(result.stdout)
+        self.assertEqual(report["request"], {
+            "up_to_message_id": skew.LEGACY_MESSAGE_ID,
+        })
+        self.assertEqual(report["unmutated_status"], 200)
+        self.assertEqual(report["mutated_status"], 422)
+        self.assertEqual(
+            report["mutation_subject"], "disposable required-field server"
+        )
 
     def test_graph_support_records_remain_explicitly_incomplete(self):
         graph = rd.Graph.load(rd.GRAPH_PATH)
         for journey in (skew.CHANNEL_JOURNEY, skew.PI_JOURNEY):
-            edge = next(edge for edge in graph.runtime_edges if edge.journey == journey)
+            edge = next(edge for edge in graph.runtime_contracts if edge.journey == journey)
             self.assertTrue(edge.declared_incomplete)
             self.assertEqual(edge.supported, {"policy": "additive-only"})
 
