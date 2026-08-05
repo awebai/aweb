@@ -2963,6 +2963,59 @@ class NpmRegistryClassifierTests(unittest.TestCase):
                 self.classify(list(responses))
 
 
+class ComposedProofConsumptionTests(unittest.TestCase):
+    """Every supplied proof key is validated centrally at composition: it
+    must name a composed component whose graph-derived delivery obligation
+    is nonempty AND whose composed lane consumes delivery evidence. No
+    caller-supplied proof may be accepted and ignored."""
+
+    @staticmethod
+    def ref():
+        return rd.LaneRef(
+            artifact="gh-artifact:awebai/aweb:1:2",
+            aw_source_sha="f" * 40,
+            zip_digest="sha256:" + "6" * 64)
+
+    def refuse(self, component, proof, needle, graph=None):
+        graph = graph or rd.Graph.load(rd.GRAPH_PATH)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.compose_workflow_lanes(
+                graph, {component: self.ref()},
+                delivery_proofs={component: proof})
+        self.assertIn(component, str(caught.exception))
+        self.assertIn(needle, str(caught.exception))
+
+    def test_unobligated_composed_components_refuse_a_proof(self) -> None:
+        for component in ("server", "awid-image", "skills"):
+            self.refuse(component, dict(GOOD_PROOF),
+                        "no delivery obligation")
+
+    def test_obligated_component_on_nonconsuming_lane_refuses(self) -> None:
+        graph = rd.Graph.load(rd.GRAPH_PATH)
+        raw = dict(graph.canonical)
+        raw["component"] = dict(raw["component"])
+        raw["component"]["server"] = dict(raw["component"]["server"])
+        raw["component"]["server"]["delivery_restart"] = {
+            "proof": "restart per host"}
+        self.refuse("server", dict(GOOD_PROOF),
+                    "does not consume delivery evidence",
+                    graph=rd.Graph.from_dict(raw))
+
+    def test_malformed_proof_refuses_at_composition(self) -> None:
+        bad = dict(GOOD_PROOF)
+        bad["obligation"] = "delivery-lane-proof"
+        self.refuse("channel", bad, "obligation")
+
+    def test_valid_channel_and_pi_proofs_compose(self) -> None:
+        graph = rd.Graph.load(rd.GRAPH_PATH)
+        lanes = rd.compose_workflow_lanes(
+            graph, {"channel": self.ref(), "pi": self.ref()},
+            delivery_proofs={"channel": dict(GOOD_PROOF),
+                             "pi": dict(GOOD_PROOF)})
+        self.assertTrue(lanes.has_lane("channel"))
+        self.assertTrue(lanes.has_lane("pi"))
+
+
 class ForeignProofKeyTests(unittest.TestCase):
     def test_proofs_for_uncomposed_components_refuse(self) -> None:
         graph = rd.Graph.load(rd.GRAPH_PATH)

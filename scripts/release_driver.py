@@ -1081,6 +1081,11 @@ LANE_ARTIFACT_SOURCES = {
 GITHUB_ARTIFACT_REPO_ALLOWLIST = tuple(sorted(
     {repo for repo, _ in LANE_ARTIFACT_SOURCES.values()}
 ))
+NPM_LANE_COMPONENTS = ("channel", "pi", "skills")
+# The npm lane is the only composed lane that consumes delivery evidence;
+# composition refuses a proof for any component outside this set so no
+# caller-supplied proof is ever accepted and ignored.
+DELIVERY_PROOF_CONSUMERS = NPM_LANE_COMPONENTS
 ANCHOR_REPO = "awebai/aweb"
 ANCHOR_WORKFLOW_PATH = ".github/workflows/release-anchor.yml"
 ANCHOR_WORKFLOW_FILE = "release-anchor.yml"
@@ -2597,6 +2602,19 @@ def compose_workflow_lanes(
             f"--delivery-proof names components not composed in this run: "
             f"{foreign}"
         )
+    for component, proof in delivery_proofs.items():
+        obligation = _delivery_obligation(graph, component)
+        if obligation is None:
+            raise ReceiptError(
+                f"{component} has no delivery obligation in the graph; a "
+                "supplied delivery proof is refused, never ignored"
+            )
+        if component not in DELIVERY_PROOF_CONSUMERS:
+            raise ReceiptError(
+                f"{component}'s composed lane does not consume delivery "
+                "evidence; a supplied delivery proof is refused, never ignored"
+            )
+        validate_delivery_proof(proof, obligation, component)
     modes = ["stage-only", "publish-continuation", "verify-only"]
     for component, ref in refs.items():
         source = LANE_ARTIFACT_SOURCES.get(component)
@@ -2641,7 +2659,7 @@ def compose_workflow_lanes(
                 refs={component: ref}, runs=runs,
                 pypi_observe=_observe_pypi,
             )
-        elif component in ("channel", "pi", "skills"):
+        elif component in NPM_LANE_COMPONENTS:
             registry = (declared.get("registry") or {})
             lanes[component] = NpmWorkflowLane(
                 component=component,
