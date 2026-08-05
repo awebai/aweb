@@ -41,11 +41,20 @@ jobs:
           fi
           echo "Version: $PKG_VERSION"
 
-      - name: Publish @awebai/claude-skills to npm
-        working-directory: packages/claude-skills
-        run: npm publish --access public
+      - name: Pack and inspect the exact artifact
+        run: |
+          bash scripts/npm-exact-publish.sh pack-inspect \
+            --dir packages/claude-skills --version "${GITHUB_REF_NAME#skills-v}" --out staged
+
+      - name: Publish the exact staged bytes
+        run: bash scripts/npm-exact-publish.sh publish-exact --tgz staged/*.tgz
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify published equals staged
+        run: |
+          bash scripts/npm-exact-publish.sh verify-published --tgz staged/*.tgz \
+            --package @awebai/claude-skills --version "${GITHUB_REF_NAME#skills-v}"
 
       - name: Build Claude.ai Skills ZIPs
         working-directory: packages/claude-ai-skills

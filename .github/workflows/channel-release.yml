@@ -47,8 +47,17 @@ jobs:
           fi
           echo "Version: $PKG_VERSION"
 
-      - name: Publish to npm
-        working-directory: channel
-        run: npm publish --access public
+      - name: Pack and inspect the exact artifact
+        run: |
+          bash scripts/npm-exact-publish.sh pack-inspect \
+            --dir channel --version "${GITHUB_REF_NAME#channel-v}" --out staged
+
+      - name: Publish the exact staged bytes
+        run: bash scripts/npm-exact-publish.sh publish-exact --tgz staged/*.tgz
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify published equals staged
+        run: |
+          bash scripts/npm-exact-publish.sh verify-published --tgz staged/*.tgz \
+            --package @awebai/claude-channel --version "${GITHUB_REF_NAME#channel-v}"
