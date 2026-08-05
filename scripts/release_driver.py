@@ -874,6 +874,7 @@ def seal_receipt(
                 name: {
                     "version": e.version,
                     "digest": e.digest,
+                    "digest_set": e.digest_set,
                     "phase": e.phase,
                     "pointer_state": e.pointer_state,
                     "delivery_proof": e.delivery_proof,
@@ -916,6 +917,7 @@ def load_sealed_receipt(data: bytes, *, expected_digest: str) -> Receipt:
                 phase=e.get("phase", "staged"),
                 pointer_state=e.get("pointer_state"),
                 delivery_proof=e.get("delivery_proof"),
+                digest_set=e.get("digest_set"),
             )
             for name, e in parsed["entries"].items()
         },
@@ -1043,6 +1045,14 @@ class AuthorityRegistration:
     factory: object  # digest-authority factory
     store_factory: object = None
 
+    def __post_init__(self):
+        if self.trust_class == "external-immutable" and self.store_factory is None:
+            raise ReceiptError(
+                f"registration {self.kind!r}: external-immutable trust requires "
+                "an independent external store capability; a caller-local store "
+                "can only ever be an evidence copy"
+            )
+
 
 AUTHORITY_ALLOWLIST: dict[str, AuthorityRegistration] = {}
 
@@ -1063,7 +1073,14 @@ def build_providers(
     source_sha: str | None = None,
     measurement=None,
 ) -> Providers:
-    if authority_registration.store_factory is not None:
+    if authority_registration.trust_class == "external-immutable":
+        if authority_registration.store_factory is None:
+            raise ReceiptError(
+                "external-immutable composition requires the registration's own "
+                "store capability"
+            )
+        store = authority_registration.store_factory()
+    elif authority_registration.store_factory is not None:
         store = authority_registration.store_factory()
     return Providers(
         store=store,
@@ -1107,6 +1124,7 @@ def seal_staged_manifest(
                 name: {
                     "version": e.version,
                     "digest": e.digest,
+                    "digest_set": e.digest_set,
                     "pointer_state": e.pointer_state,
                     # A delivery proof cannot exist before publication; the
                     # manifest declares the OBLIGATION and the receipt carries
@@ -1152,7 +1170,10 @@ def adopt_observed(manifest: dict, component: str, observed: ReceiptEntry) -> No
 
 
 def _frozen_drift(
-    frozen_resolved: dict, current: dict, skip_components: set
+    frozen_resolved: dict,
+    current: dict,
+    skip_components: set,
+    allowed_tag_transitions: dict | None = None,
 ) -> list[str]:
     """Named differences between the frozen snapshot and the currently
     resolved execution inputs. Components already published in a resume are
@@ -1163,14 +1184,23 @@ def _frozen_drift(
     frozen_resolved = canon(frozen_resolved)
     current = canon(current)
     drift: list[str] = []
+    allowed_tags = allowed_tag_transitions or {}
     for section in ("pins", "baselines", "tags", "measurements"):
         frozen_section = frozen_resolved.get(section, {}) or {}
         current_section = current.get(section, {}) or {}
         for key in sorted(set(frozen_section) | set(current_section)):
-            # Only the adopted candidate's OWN registry/tag identity is an
-            # expected transition; its pins, baselines and measurements are
-            # not exempt.
             if section == "tags" and key in skip_components:
+                # The allowed delta is EXACTLY the frozen map plus the one
+                # planned candidate tag bound to the frozen source object.
+                # Missing, rewritten, additional, or wrong-SHA tags are drift.
+                expected = dict(frozen_section.get(key) or {})
+                expected.update(allowed_tags.get(key, {}))
+                observed = current_section.get(key) or {}
+                if observed != expected:
+                    drift.append(
+                        f"tags[{key}]: allowed exactly {expected!r}, "
+                        f"observed {observed!r}"
+                    )
                 continue
             if frozen_section.get(key) != current_section.get(key):
                 drift.append(
@@ -1270,7 +1300,18 @@ def run_plan(
                 for e in complete
             }
         skip_components = set(_resume_published or {})
-        drift = _frozen_drift(frozen.resolved, current, skip_components)
+        allowed_tags = {}
+        for name in skip_components:
+            component = graph.components.get(name)
+            node = next((n for n in plan.moving if n.component == name), None)
+            if component and component.tag_format and node and node.version:
+                allowed_tags[name] = {
+                    component.tag_format.format(version=node.version): source_sha
+                }
+        drift = _frozen_drift(
+            frozen.resolved, current, skip_components,
+            allowed_tag_transitions=allowed_tags,
+        )
         if drift:
             raise ReceiptError(
                 "declared execution inputs drifted from the frozen snapshot: "
@@ -1339,6 +1380,7 @@ def run_plan(
                 digest=e["digest"],
                 phase="staged",
                 pointer_state=e.get("pointer_state"),
+                digest_set=e.get("digest_set"),
             )
             for name, e in manifest["entries"].items()
         }
@@ -1355,6 +1397,20 @@ def run_plan(
                     f"{node.component}: staged version {entry.version} does not "
                     f"equal the frozen candidate {node.version}"
                 )
+            if (graph.components[node.component].publish_lane or {}).get("registry"):
+                if not entry.digest_set or not all(
+                    isinstance(k, str) and k and isinstance(v, str) and v
+                    for k, v in entry.digest_set.items()
+                ):
+                    raise ReceiptError(
+                        f"{node.component}: a registry component stages a "
+                        "schema-valid complete digest_set, never an opaque scalar"
+                    )
+                if entry.digest != canonical_digest_of_set(entry.digest_set):
+                    raise ReceiptError(
+                        f"{node.component}: staged digest is not the canonical "
+                        "digest of its complete set"
+                    )
             staged[node.component] = entry
 
         manifest_bytes, manifest_digest = seal_staged_manifest(
@@ -1410,22 +1466,36 @@ def run_plan(
             continue
         staged_entry = staged[node.component]
         result = lanes.publish(node, staged_entry)
-        if result.digest != manifest["entries"][node.component]["digest"]:
+        manifest_entry = manifest["entries"][node.component]
+        if result.digest != manifest_entry["digest"]:
             raise ReceiptError(
                 f"{node.component}: published digest {result.digest} does not "
                 f"equal the anchored staged manifest digest"
             )
-        if result.version != manifest["entries"][node.component]["version"]:
+        if result.version != manifest_entry["version"]:
             raise ReceiptError(
                 f"{node.component}: published version {result.version} does not "
                 f"equal the anchored staged manifest version"
             )
+        if result.pointer_state != manifest_entry.get("pointer_state"):
+            raise ReceiptError(
+                f"{node.component}: published pointer state "
+                f"{result.pointer_state!r} does not equal the staged "
+                f"{manifest_entry.get('pointer_state')!r}"
+            )
+        if manifest_entry.get("digest_set") is not None:
+            if result.digest_set != manifest_entry["digest_set"]:
+                raise ReceiptError(
+                    f"{node.component}: published digest set does not equal the "
+                    "anchored staged manifest set"
+                )
         entry = ReceiptEntry(
             version=result.version,
             digest=result.digest,
             phase="published",
             pointer_state=result.pointer_state,
             delivery_proof=result.delivery_proof,
+            digest_set=result.digest_set,
         )
         published[node.component] = entry
         sequence += 1
@@ -1447,6 +1517,7 @@ def run_plan(
             phase="verified",
             pointer_state=published[node.component].pointer_state,
             delivery_proof=published[node.component].delivery_proof,
+            digest_set=published[node.component].digest_set,
         )
         verified[node.component] = entry
 
@@ -1565,13 +1636,43 @@ def resume_plan(
             continue
         adopt_observed(manifest, node.component, observed)
         manifest_entry = manifest["entries"][node.component]
+        if manifest_entry.get("pointer_state") is not None:
+            if observed.pointer_state is None:
+                raise ReceiptError(
+                    f"{node.component}: the observer cannot produce the "
+                    "required pointer state; missing evidence is never filled "
+                    "from the expected value"
+                )
+            if observed.pointer_state != manifest_entry["pointer_state"]:
+                raise ReceiptError(
+                    f"{node.component}: observed pointer state "
+                    f"{observed.pointer_state!r} does not equal the staged "
+                    f"{manifest_entry['pointer_state']!r}"
+                )
+        if manifest_entry.get("digest_set") is not None:
+            if observed.digest_set is None:
+                raise ReceiptError(
+                    f"{node.component}: the observer cannot produce the "
+                    "complete registry artifact digest set required for "
+                    "adoption"
+                )
+            if observed.digest_set != manifest_entry["digest_set"]:
+                raise ReceiptError(
+                    f"{node.component}: observed digest set does not equal the "
+                    "anchored staged manifest set"
+                )
+        if manifest_entry.get("delivery_obligation") and not observed.delivery_proof:
+            raise ReceiptError(
+                f"{node.component}: adoption requires observed delivery "
+                f"evidence for its declared {manifest_entry['delivery_obligation']}"
+            )
         published[node.component] = ReceiptEntry(
             version=observed.version,
             digest=observed.digest,
             phase="published",
-            pointer_state=observed.pointer_state
-            or manifest_entry.get("pointer_state"),
+            pointer_state=observed.pointer_state,
             delivery_proof=observed.delivery_proof,
+            digest_set=observed.digest_set,
         )
     return run_plan(
         plan,
@@ -2058,12 +2159,13 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             authority = FileDigestAuthority(root)
             store = FileArtifactStore(root)
         else:
+            if registration.store_factory is None:
+                raise SystemExit(
+                    f"authority kind {registration.kind!r} is externally trusted "
+                    "but supplies no store capability; refusing a local fallback"
+                )
             authority = registration.factory()
-            store = (
-                registration.store_factory()
-                if registration.store_factory is not None
-                else FileArtifactStore(root)
-            )
+            store = registration.store_factory()
         providers = Providers(
             store=store,
             authority=authority,
@@ -2383,6 +2485,13 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     )
                     return 1
             if (component.publish_lane or {}).get("registry"):
+                manifest_set = manifest_entry.get("digest_set")
+                if manifest_set is not None and entry.digest_set != manifest_set:
+                    print(
+                        f"MISMATCH: {node.component}: receipt digest set does "
+                        "not equal the anchored staged manifest set"
+                    )
+                    return 1
                 if observed.digest_set is None:
                     print(
                         f"BLOCKED: {node.component}: the observer cannot "
@@ -2394,6 +2503,12 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                         f"MISMATCH: {node.component}: the canonical digest of "
                         "the observed complete artifact set does not equal the "
                         "receipt digest"
+                    )
+                    return 1
+                if manifest_set is not None and observed.digest_set != manifest_set:
+                    print(
+                        f"MISMATCH: {node.component}: the observed digest set "
+                        "does not equal the anchored staged manifest set"
                     )
                     return 1
             if manifest_entry.get("delivery_obligation"):

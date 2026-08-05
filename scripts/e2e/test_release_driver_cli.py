@@ -1175,6 +1175,7 @@ class RegistryDigestSetObservationTests(unittest.TestCase):
                             digest=canonical,
                             phase=entry.phase,
                             pointer_state=entry.pointer_state,
+                            digest_set=digest_set,
                         )
                     return entry
 
@@ -1298,6 +1299,202 @@ class SplitProviderTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("RESOLVED s1", result.stdout)
+
+
+class TagDeltaTests(unittest.TestCase):
+    def frozen_and_current(self, current_tags: dict):
+        frozen_resolved = {
+            "tags": {"client": {"client-v1.0.0": "sha-old"}},
+            "components": {}, "pins": {}, "baselines": {},
+        }
+        current = {
+            "tags": {"client": current_tags},
+            "components": {}, "pins": {}, "baselines": {},
+        }
+        return frozen_resolved, current
+
+    def test_expected_candidate_tag_alone_is_allowed(self) -> None:
+        frozen_resolved, current = self.frozen_and_current(
+            {"client-v1.0.0": "sha-old", "client-v1.1.0": "s1"}
+        )
+        drift = rd._frozen_drift(
+            frozen_resolved, current, {"client"},
+            allowed_tag_transitions={"client": {"client-v1.1.0": "s1"}},
+        )
+        self.assertEqual(drift, [])
+
+    def test_unrelated_same_component_tag_is_drift(self) -> None:
+        """alice's reproduction: candidate movement plus client-v999.0.0
+        produced empty drift under the adopted skip."""
+        frozen_resolved, current = self.frozen_and_current(
+            {
+                "client-v1.0.0": "sha-old",
+                "client-v1.1.0": "s1",
+                "client-v999.0.0": "sha-evil",
+            }
+        )
+        drift = rd._frozen_drift(
+            frozen_resolved, current, {"client"},
+            allowed_tag_transitions={"client": {"client-v1.1.0": "s1"}},
+        )
+        self.assertTrue(any("999" in d for d in drift), drift)
+
+    def test_wrong_tag_object_sha_is_drift(self) -> None:
+        frozen_resolved, current = self.frozen_and_current(
+            {"client-v1.0.0": "sha-old", "client-v1.1.0": "sha-not-the-source"}
+        )
+        drift = rd._frozen_drift(
+            frozen_resolved, current, {"client"},
+            allowed_tag_transitions={"client": {"client-v1.1.0": "s1"}},
+        )
+        self.assertTrue(drift)
+
+
+class StageBoundaryTests(unittest.TestCase):
+    def registry_graph(self):
+        data = fixture_graph_dict()
+        data["component"]["client"]["publish_lane"] = {
+            "workflow": "wf/client.yml",
+            "registry": {"type": "pypi", "package": "client"},
+        }
+        return rd.Graph.from_dict(data)
+
+    def test_scalar_only_registry_stage_refuses(self) -> None:
+        """alice's reproduction: a registry component staged, published and
+        verified with digest_set=None."""
+        graph = self.registry_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        lanes = FixtureLanes({n.component for n in plan.moving})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(rd.ReceiptError) as caught:
+                rd.run_plan(
+                    plan, graph, lanes,
+                    skew=FixtureSkew(),
+                    authority=rd.FileDigestAuthority(root),
+                    store=rd.FileArtifactStore(root),
+                    source_sha="s1", approvals={}, state=state,
+                    providers=rd.Providers(
+                        store=rd.FileArtifactStore(root),
+                        authority=rd.FileDigestAuthority(root),
+                        measurement=AllRecordsResolve(),
+                    ),
+                )
+            self.assertIn("digest_set", str(caught.exception))
+
+    def test_scalar_only_registry_resume_adoption_refuses(self) -> None:
+        """Zero-outward-call red: adoption of a registry publication without
+        the complete observed set refuses before any skew or publish."""
+        graph = self.registry_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        digest_set = {"client-1.1.0.tar.gz": "sha-aaa"}
+        canonical = rd.canonical_digest_of_set(digest_set)
+
+        class RegistryLanes(FixtureLanes):
+            def stage(self, node):
+                entry = super().stage(node)
+                if node.component == "client":
+                    return rd.ReceiptEntry(
+                        version=entry.version, digest=canonical,
+                        phase=entry.phase, pointer_state=entry.pointer_state,
+                        digest_set=digest_set,
+                    )
+                return entry
+
+            def publish(self, node, staged):
+                if node.component == "plugin":
+                    raise KeyboardInterrupt
+                self.calls.append(("publish", node.component))
+                return staged
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = rd.FileArtifactStore(root)
+            authority = rd.FileDigestAuthority(root)
+            frozen_bytes, frozen_id = rd.freeze_plan(
+                plan, graph, source_sha="s1", state=state,
+                measurement=AllRecordsResolve(),
+            )
+            store.put(f"plan:s1:{frozen_id}", frozen_bytes)
+            authority.record(f"plan:s1:{frozen_id}", frozen_id)
+            frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+            crash = RegistryLanes({n.component for n in plan.moving})
+            with self.assertRaises(KeyboardInterrupt):
+                rd.run_plan(
+                    plan, graph, crash,
+                    skew=FixtureSkew(), authority=authority, store=store,
+                    source_sha="s1", approvals={}, state=state, frozen=frozen,
+                    providers=rd.Providers(
+                        store=store, authority=authority,
+                        measurement=AllRecordsResolve(),
+                    ),
+                )
+
+            class ScalarObserver(FixtureLanes):
+                def stage(self, node):
+                    raise AssertionError("resume must never stage")
+
+                def observe(self, node):
+                    if node.component == "client":
+                        return rd.ReceiptEntry(
+                            version="1.1.0", digest=canonical, phase="published"
+                        )
+                    return None
+
+            after = orchestration_state(
+                published_versions={"client": "1.1.0", "plugin": "2.0.0"},
+            )
+            resume_lanes = ScalarObserver({n.component for n in plan.moving})
+            with self.assertRaises(rd.ReceiptError) as caught:
+                rd.resume_plan(
+                    plan, graph,
+                    lanes=resume_lanes, skew=FixtureSkew(),
+                    store=store, authority=authority,
+                    source_sha="s1", approvals={}, state=after,
+                    frozen=frozen, measurement=AllRecordsResolve(),
+                )
+            self.assertIn("digest set", str(caught.exception))
+            publishes = [c for k, c in resume_lanes.calls if k == "publish"]
+            self.assertEqual(publishes, [], "zero outward calls on refusal")
+
+
+class PublishStateTests(unittest.TestCase):
+    def test_wrong_pointer_state_at_publish_refuses(self) -> None:
+        """alice's reproduction: staged PLANNED, published WRONG with the same
+        version/digest, run completed."""
+
+        class WrongPointerPublish(FixtureLanes):
+            def publish(self, node, staged):
+                self.calls.append(("publish", node.component))
+                if node.reason.startswith("pointer:"):
+                    return rd.ReceiptEntry(
+                        version=staged.version, digest=staged.digest,
+                        phase=staged.phase, pointer_state="WRONG",
+                    )
+                return staged
+
+        graph = fixture_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        lanes = WrongPointerPublish({n.component for n in plan.moving})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(rd.ReceiptError) as caught:
+                rd.run_plan(
+                    plan, graph, lanes,
+                    skew=FixtureSkew(),
+                    authority=rd.FileDigestAuthority(root),
+                    store=rd.FileArtifactStore(root),
+                    source_sha="s1", approvals={}, state=state,
+                    providers=rd.Providers(
+                        store=rd.FileArtifactStore(root),
+                        authority=rd.FileDigestAuthority(root),
+                        measurement=AllRecordsResolve(),
+                    ),
+                )
+            self.assertIn("pointer state", str(caught.exception))
 
 
 class ResumeAmbiguityTests(unittest.TestCase):
@@ -1536,24 +1733,36 @@ class TrustedCompositionTests(unittest.TestCase):
                 )
             self.assertEqual(lanes.calls, [])
 
-    def test_registered_external_authority_passes_through_composition(self) -> None:
+    def test_external_registration_requires_its_own_store_capability(self) -> None:
+        """alice's finding: external-immutable trust with a caller-local store
+        fallback is not external artifact storage. The registration itself
+        refuses without its own store factory."""
+
         class LaneSuppliedAuthority(rd.FileDigestAuthority):
             pass
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            with self.assertRaises(rd.ReceiptError):
+                rd.AuthorityRegistration(
+                    kind="fixture-external-no-store",
+                    trust_class="external-immutable",
+                    factory=lambda: LaneSuppliedAuthority(root),
+                )
             registration = rd.AuthorityRegistration(
                 kind="fixture-external",
                 trust_class="external-immutable",
-                factory=lambda: LaneSuppliedAuthority(root),
+                factory=lambda: LaneSuppliedAuthority(root / "authority"),
+                store_factory=lambda: rd.FileArtifactStore(root / "store"),
             )
             providers = rd.build_providers(
-                store=rd.FileArtifactStore(root),
+                store=None,
                 authority_registration=registration,
                 lanes=None,
                 skew=FixtureSkew(),
             )
             self.assertEqual(providers.authority_trust, "external-immutable")
+            self.assertIsInstance(providers.store, rd.FileArtifactStore)
 
 
 class FrozenTruthTests(unittest.TestCase):
