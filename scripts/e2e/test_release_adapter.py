@@ -18,6 +18,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import release_driver as rd
+from test_release_driver import (
+    FixtureAuthority,
+    FixtureLanes,
+    fixture_graph_dict,
+    orchestration_state,
+)
+from test_release_driver import AllRecordsResolve
 
 
 def sha256(data: bytes) -> str:
@@ -1888,6 +1895,212 @@ class PypiOciEndToEndTests(unittest.TestCase):
         )
         self.assertEqual(resume_lane.stage_calls, 0)
         self.assertEqual(entries["awid-image"].phase, "verified")
+
+
+def skew_edge(*, a="client", b="server", direction="both",
+              journey="make fixture-journey"):
+    return rd.RuntimeContractEdge(
+        a=a, b=b, journey=journey,
+        artifacts={"a": f"registry:{a}", "b": f"registry:{b}"},
+        direction=direction,
+        supported={
+            "set": "measured:fixture-fleet",
+            "record": {"authority": "workflow-artifacts",
+                       "artifact_id": "measurement:fixture-fleet",
+                       "digest": "fixture-digest"},
+            "policy": "additive-only",
+        },
+    )
+
+
+def staged_entry(component, version):
+    files = {f"{component}.bin": sha256(component.encode())}
+    return rd.ReceiptEntry(
+        version=version, digest=rd.canonical_digest_of_set(files),
+        digest_set=files,
+    )
+
+
+class VersionedSupport:
+    """The measured support resolution the runner consumes: an ordered
+    supported published set per edge side."""
+
+    def __init__(self, versions):
+        self.versions = versions  # component -> ordered [floor, ..., latest]
+
+    def resolve(self, record, edge):
+        return {"digest": record.get("digest"),
+                "supported_versions": {
+                    edge.a: list(self.versions.get(edge.a, [])),
+                    edge.b: list(self.versions.get(edge.b, [])),
+                }}
+
+
+class SkewMatrixTests(unittest.TestCase):
+    def cells(self, edge, *, moving, staged, support=None, published=None):
+        support = support or VersionedSupport(
+            {"client": ["1.0.0", "1.1.0"], "server": ["3.0.0", "3.1.0"]})
+        published = published or {"client": "1.1.0", "server": "3.1.0"}
+        return rd.compute_skew_cells(
+            edge, moving=moving, staged=staged,
+            support=support.resolve(edge.supported["record"], edge),
+            published_versions=published,
+        )
+
+    def test_both_sides_touched_produces_the_joint_spec_cells(self) -> None:
+        edge = skew_edge(direction="a-to-b")
+        staged = {"client": staged_entry("client", "1.2.0"),
+                  "server": staged_entry("server", "3.2.0")}
+        cells = self.cells(edge, moving={"client", "server"}, staged=staged)
+        kinds = [(c.a_kind, c.b_kind) for c in cells]
+        self.assertEqual(kinds, [
+            ("candidate", "candidate"),
+            ("candidate", "published-latest"),
+            ("candidate", "published-floor"),
+            ("published-latest", "candidate"),
+            ("published-floor", "candidate"),
+        ])
+        self.assertTrue(all(c.direction == "a-to-b" for c in cells))
+        self.assertEqual(cells[0].a["digest"], staged["client"].digest)
+        self.assertEqual(cells[1].b["version"], "3.1.0")
+        self.assertEqual(cells[2].b["version"], "3.0.0")
+
+    def test_both_directions_double_every_cell(self) -> None:
+        edge = skew_edge(direction="both")
+        staged = {"client": staged_entry("client", "1.2.0"),
+                  "server": staged_entry("server", "3.2.0")}
+        cells = self.cells(edge, moving={"client", "server"}, staged=staged)
+        self.assertEqual(len(cells), 10)
+        self.assertEqual(
+            [c.direction for c in cells[:2]], ["a-to-b", "b-to-a"])
+
+    def test_one_side_touched_runs_candidate_against_the_supported_set(self) -> None:
+        edge = skew_edge(direction="a-to-b")
+        staged = {"client": staged_entry("client", "1.2.0")}
+        cells = self.cells(edge, moving={"client"}, staged=staged)
+        self.assertEqual(
+            [(c.a_kind, c.b["version"]) for c in cells],
+            [("candidate", "3.0.0"), ("candidate", "3.1.0")],
+        )
+        self.assertEqual(cells[0].a["digest"], staged["client"].digest)
+
+    def test_single_supported_version_deduplicates_floor_and_latest(self) -> None:
+        edge = skew_edge(direction="a-to-b")
+        staged = {"client": staged_entry("client", "1.2.0"),
+                  "server": staged_entry("server", "3.2.0")}
+        cells = self.cells(
+            edge, moving={"client", "server"}, staged=staged,
+            support=VersionedSupport(
+                {"client": ["1.1.0"], "server": ["3.1.0"]}),
+        )
+        kinds = [(c.a_kind, c.b_kind) for c in cells]
+        self.assertEqual(kinds, [
+            ("candidate", "candidate"),
+            ("candidate", "published-latest"),
+            ("published-latest", "candidate"),
+        ])
+
+    def test_missing_staged_identity_refuses(self) -> None:
+        edge = skew_edge()
+        with self.assertRaises(rd.ReceiptError):
+            self.cells(edge, moving={"client", "server"},
+                       staged={"client": staged_entry("client", "1.2.0")})
+
+    def test_empty_support_refuses_rather_than_inventing_floors(self) -> None:
+        edge = skew_edge(direction="a-to-b")
+        staged = {"client": staged_entry("client", "1.2.0")}
+        with self.assertRaises(rd.ReceiptError) as caught:
+            self.cells(edge, moving={"client"}, staged=staged,
+                       support=VersionedSupport({"client": ["1.1.0"],
+                                                 "server": []}))
+        self.assertIn("floor", str(caught.exception))
+
+
+class RecordingHarness:
+    def __init__(self, journeys=("make fixture-journey",), fail=False):
+        self.journeys = set(journeys)
+        self.fail = fail
+        self.cells: list = []
+
+    def has_journey(self, edge) -> bool:
+        return edge.journey in self.journeys
+
+    def run(self, cell) -> None:
+        self.cells.append(cell)
+        if self.fail:
+            raise rd.ReceiptError(f"skew red: {cell.edge_a}<->{cell.edge_b}")
+
+
+class MatrixSkewRunnerTests(unittest.TestCase):
+    def runner(self, harness, *, versions=None):
+        return rd.MatrixSkewRunner(
+            harness=harness,
+            support=VersionedSupport(
+                versions or {"client": ["1.0.0", "1.1.0"],
+                             "server": ["3.0.0", "3.1.0"]}),
+            published_versions={"client": "1.1.0", "server": "3.1.0"},
+            moving={"client", "server"},
+        )
+
+    def test_ordered_cells_are_invoked_deterministically(self) -> None:
+        harness = RecordingHarness()
+        runner = self.runner(harness)
+        edge = skew_edge(direction="both")
+        staged = {"client": staged_entry("client", "1.2.0"),
+                  "server": staged_entry("server", "3.2.0")}
+        self.assertTrue(runner.has_matrix(edge))
+        runner.execute(edge, staged)
+        self.assertEqual(len(harness.cells), 10)
+        first_pass = [(c.a_kind, c.b_kind, c.direction) for c in harness.cells]
+        harness.cells.clear()
+        runner.execute(edge, staged)
+        self.assertEqual(
+            first_pass,
+            [(c.a_kind, c.b_kind, c.direction) for c in harness.cells],
+        )
+
+    def test_missing_journey_capability_is_not_a_matrix(self) -> None:
+        runner = self.runner(RecordingHarness(journeys=()))
+        self.assertFalse(runner.has_matrix(skew_edge()))
+
+    def test_declared_incomplete_edge_refuses_at_the_runner(self) -> None:
+        edge = rd.RuntimeContractEdge(
+            a="client", b="server", journey="make fixture-journey",
+            artifacts={"a": "x", "b": "y"}, direction="both",
+            supported={"policy": "additive-only"},
+        )
+        runner = self.runner(RecordingHarness())
+        with self.assertRaises(rd.ReceiptError) as caught:
+            runner.execute(edge, {
+                "client": staged_entry("client", "1.2.0"),
+                "server": staged_entry("server", "3.2.0")})
+        self.assertIn("incomplete", str(caught.exception))
+
+    def test_skew_failure_precedes_every_lane_call(self) -> None:
+        graph = rd.Graph.from_dict(fixture_graph_dict())
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        lanes = FixtureLanes(available={n.component for n in plan.moving})
+        harness = RecordingHarness(fail=True)
+        runner = rd.MatrixSkewRunner(
+            harness=harness,
+            support=VersionedSupport(
+                {"client": ["1.0.0"], "server": ["3.0.0"]}),
+            published_versions={"client": "1.0.0", "server": "3.0.0"},
+            moving={n.component for n in plan.moving},
+        )
+        with self.assertRaises(rd.ReceiptError):
+            rd.run_plan(
+                plan, graph, lanes,
+                skew=runner, authority=FixtureAuthority(),
+                providers=rd.Providers(
+                    store=rd._MemoryStore(), authority=FixtureAuthority(),
+                    measurement=AllRecordsResolve()),
+                source_sha="s1", approvals={}, state=state,
+            )
+        publishes = [c for k, c in lanes.calls if k == "publish"]
+        self.assertEqual(publishes, [],
+                         "skew failure precedes every continuation dispatch")
 
 
 if __name__ == "__main__":

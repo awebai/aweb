@@ -2398,6 +2398,154 @@ def compose_workflow_lanes(graph: "Graph", refs: dict) -> WorkflowLanes:
     return WorkflowLanes(lanes)
 
 
+# ── G5 skew matrix runner (aweb-abbe.7 runner slice) ─────────────────
+#
+# The runner computes deterministic skew cells for every runtime-contract
+# edge the plan touches and invokes a child harness per cell; the four
+# journey harnesses (.7.1-.7.4) implement the SMALL invocation contract
+# below without changing runner semantics:
+#
+#   harness.has_journey(edge) -> bool
+#   harness.run(cell)         -> None on green; raise on red
+#
+# A cell binds the exact staged identities on candidate sides and the
+# measured supported published versions on the other; declared-incomplete
+# or unmeasured support refuses - floors are never invented.
+
+
+@dataclass(frozen=True)
+class SkewCell:
+    edge_a: str
+    edge_b: str
+    journey: str
+    direction: str  # a-to-b | b-to-a
+    a_kind: str  # candidate | published-latest | published-floor | published
+    b_kind: str
+    a: dict  # {component, version, digest?, digest_set?}
+    b: dict
+
+
+def _candidate_side(component: str, staged: dict) -> dict:
+    entry = staged.get(component)
+    if entry is None or not entry.digest:
+        raise ReceiptError(
+            f"skew requires the exact staged identity for touched "
+            f"{component}; none is staged"
+        )
+    return {
+        "component": component,
+        "version": entry.version,
+        "digest": entry.digest,
+        "digest_set": entry.digest_set,
+    }
+
+
+def _published_side(component: str, version: str, kind: str) -> dict:
+    return {"component": component, "version": version, "kind": kind}
+
+
+def compute_skew_cells(
+    edge: "RuntimeContractEdge", *, moving: set, staged: dict,
+    support: dict, published_versions: dict,
+) -> list[SkewCell]:
+    """The joint-spec matrix, deterministically ordered. Both-sides-touched:
+    candidate x candidate, candidate x published latest/floor, published
+    latest/floor x candidate. One-side-touched: candidate x the complete
+    measured supported published set."""
+    supported = (support or {}).get("supported_versions", {})
+
+    def supported_for(component: str) -> list[str]:
+        versions = supported.get(component) or []
+        if not versions:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: no measured supported "
+                f"set for {component}; a floor is never invented"
+            )
+        return list(versions)
+
+    directions = (
+        ["a-to-b", "b-to-a"]
+        if edge.direction in ("both", "persisted-state-both")
+        else [edge.direction]
+    )
+    a_touched = edge.a in moving
+    b_touched = edge.b in moving
+    pairs: list[tuple[str, dict, str, dict]] = []
+    if a_touched and b_touched:
+        cand_a = _candidate_side(edge.a, staged)
+        cand_b = _candidate_side(edge.b, staged)
+        pairs.append(("candidate", cand_a, "candidate", cand_b))
+        for component, cand, cand_first in (
+            (edge.b, cand_a, True), (edge.a, cand_b, False),
+        ):
+            versions = supported_for(component)
+            latest, floor = versions[-1], versions[0]
+            kinds = [("published-latest", latest)]
+            if floor != latest:
+                kinds.append(("published-floor", floor))
+            for kind, version in kinds:
+                pub = _published_side(component, version, kind)
+                if cand_first:
+                    pairs.append(("candidate", cand, kind, pub))
+                else:
+                    pairs.append((kind, pub, "candidate", cand))
+    elif a_touched or b_touched:
+        touched, other = (edge.a, edge.b) if a_touched else (edge.b, edge.a)
+        cand = _candidate_side(touched, staged)
+        for version in supported_for(other):
+            pub = _published_side(other, version, "published")
+            if a_touched:
+                pairs.append(("candidate", cand, "published", pub))
+            else:
+                pairs.append(("published", pub, "candidate", cand))
+    cells: list[SkewCell] = []
+    for a_kind, a_side, b_kind, b_side in pairs:
+        for direction in directions:
+            cells.append(SkewCell(
+                edge_a=edge.a, edge_b=edge.b, journey=edge.journey,
+                direction=direction, a_kind=a_kind, b_kind=b_kind,
+                a=dict(a_side), b=dict(b_side),
+            ))
+    return cells
+
+
+class MatrixSkewRunner:
+    """The skew provider run_plan executes between staging and the first
+    publish: every accepted edge is ordered and invoked cell by cell, and
+    any red raises before a single continuation dispatch."""
+
+    def __init__(self, *, harness, support, published_versions, moving):
+        self._harness = harness
+        self._support = support
+        self._published = dict(published_versions)
+        self._moving = set(moving)
+
+    def has_matrix(self, edge) -> bool:
+        return self._harness.has_journey(edge)
+
+    def execute(self, edge, staged: dict) -> None:
+        if edge.declared_incomplete:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b} is declared-incomplete;"
+                " skew never runs on unmeasured support"
+            )
+        support = self._support.resolve(edge.supported.get("record", {}), edge)
+        cells = compute_skew_cells(
+            edge, moving=self._moving, staged=staged,
+            support=support, published_versions=self._published,
+        )
+        for cell in cells:
+            try:
+                self._harness.run(cell)
+            except ReceiptError:
+                raise
+            except Exception as exc:
+                raise ReceiptError(
+                    f"skew red on {cell.edge_a}<->{cell.edge_b} "
+                    f"[{cell.a_kind} x {cell.b_kind}, {cell.direction}]: {exc}"
+                ) from exc
+
+
 # ── lane observers: one SHA-256 per published item ───────────────────
 
 
