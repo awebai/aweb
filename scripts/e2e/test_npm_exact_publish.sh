@@ -3,10 +3,11 @@
 #
 #   green: pack-inspect stages one tgz from a coherent package and reports
 #          its digest; verify-published (against a supplied observed file)
-#          adopts byte-identical bytes
+#          adopts byte-identical bytes; publish-exact gives npm an absolute
+#          physical file path without changing the staged bytes
 #   reds:  declared version mismatch, missing declared main entry inside
 #          the tgz, a files[] entry with no content in the tgz, observed
-#          published bytes differing from staged
+#          published bytes differing from staged, and missing/non-file tgz paths
 
 set -euo pipefail
 
@@ -16,6 +17,11 @@ PASS=0
 
 fail() { printf 'SELFTEST FAIL: %s\n' "$1" >&2; exit 1; }
 ok() { printf 'ok   %s\n' "$1"; PASS=$((PASS + 1)); }
+file_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -81,6 +87,62 @@ ok "verify-published adopts byte-identical observed bytes"
 printf 'x' >> "$tmp/observed.tgz"
 expect_refusal "published bytes differ" "not.*equal\|does not equal" \
   verify-published --tgz "$staged" --observed "$tmp/observed.tgz"
+
+# ── publish-exact: npm receives only an absolute physical file path ─
+mkdir -p "$tmp/fake-bin"
+cat > "$tmp/fake-bin/npm" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${NPM_ARGV_LOG:?}"
+printf '%s\0' "$@" > "$NPM_ARGV_LOG"
+EOF
+chmod +x "$tmp/fake-bin/npm"
+
+assert_published_path() {
+  local label="$1" supplied="$2" expected="$3"
+  local log="$tmp/npm-argv-$PASS"
+  local before after
+  before="$(file_sha256 "$expected")"
+  (
+    cd "$tmp"
+    PATH="$tmp/fake-bin:$PATH" NPM_ARGV_LOG="$log" \
+      bash "$LANE" publish-exact --tgz "$supplied"
+  ) || fail "$label: publish-exact refused a valid tgz"
+  after="$(file_sha256 "$expected")"
+  [[ "$after" == "$before" ]] || fail "$label: publish-exact changed the tgz bytes"
+  python3 - "$log" "$expected" <<'PY'
+import os
+import sys
+
+args = open(sys.argv[1], "rb").read().split(b"\0")
+if args and args[-1] == b"":
+    args.pop()
+args = [arg.decode() for arg in args]
+expected = os.path.realpath(sys.argv[2])
+if args != ["publish", expected, "--access", "public"]:
+    raise SystemExit(f"npm argv {args!r} does not name exact physical tgz {expected!r}")
+if not os.path.isabs(args[1]):
+    raise SystemExit(f"npm tgz argument is not absolute: {args[1]!r}")
+PY
+  ok "$label"
+}
+
+relative_staged="staged/$(basename "$staged")"
+assert_published_path "publish-exact canonicalizes a relative tgz without package-spec interpretation" \
+  "$relative_staged" "$staged"
+assert_published_path "publish-exact preserves an absolute tgz path" "$staged" "$staged"
+mkdir -p "$tmp/staged with spaces"
+spaced="$tmp/staged with spaces/package file.tgz"
+cp "$staged" "$spaced"
+assert_published_path "publish-exact canonicalizes a tgz path with spaces" \
+  "staged with spaces/package file.tgz" "$spaced"
+ln -s "$staged" "$tmp/staged-link.tgz"
+assert_published_path "publish-exact resolves an absolute tgz symlink to its physical file" \
+  "$tmp/staged-link.tgz" "$staged"
+expect_refusal "missing tgz path" "regular file\|existing" \
+  publish-exact --tgz "$tmp/missing.tgz"
+expect_refusal "non-file tgz path" "regular file\|existing" \
+  publish-exact --tgz "$tmp"
 
 # ── package-profile fixtures ────────────────────────────────────────
 CHANNEL_MARKERS='const stableID = certificateStableID || identityStableID
