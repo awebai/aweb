@@ -2166,6 +2166,41 @@ class RecordingHarness:
         self.events.append(("finish", document["matrix_id"]))
 
 
+class RunOnlyFreezeCompatTests(unittest.TestCase):
+    """Compatibility contract: a run-only harness REFUSES at freeze time
+    rather than silently executing without the frozen matrix."""
+
+    def test_run_only_harness_refuses_at_freeze(self) -> None:
+        class RunOnlyHarness:
+            def __init__(self):
+                self.cells = []
+
+            def has_journey(self, edge) -> bool:
+                return True
+
+            def run(self, cell) -> None:
+                self.cells.append(cell)
+
+        harness = RunOnlyHarness()
+        runner = rd.MatrixSkewRunner(
+            harness=harness,
+            support=VersionedSupport({"client": ["1.0.0"],
+                                      "server": ["3.0.0"]}),
+            published_versions={"client": "1.0.0", "server": "3.0.0"},
+            moving={"client", "server"},
+        )
+        edge = skew_edge(direction="both")
+        staged = {"client": staged_entry("client", "1.2.0"),
+                  "server": staged_entry("server", "3.2.0")}
+        with self.assertRaisesRegex(rd.ReceiptError, "cannot persist"):
+            runner.freeze_matrix(edge, staged,
+                                 staged_manifest_digest="a" * 64)
+        with self.assertRaisesRegex(rd.ReceiptError, "not frozen"):
+            runner.execute(edge, staged)
+        self.assertEqual(harness.cells, [],
+                         "no cell may execute without the frozen matrix")
+
+
 class MatrixSkewRunnerTests(unittest.TestCase):
     def runner(self, harness, *, versions=None):
         return rd.MatrixSkewRunner(

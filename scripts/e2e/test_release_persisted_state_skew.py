@@ -148,17 +148,30 @@ class PersistedArtifactTests(unittest.TestCase):
             ).resolve("candidate", side, "pypi:aweb")
         self.assertEqual(store.requests, [])
 
-    def test_published_wheel_comes_from_pypi_metadata_and_digest(self):
-        wheel = b"published wheel"
-        wheel_sha = hashlib.sha256(wheel).hexdigest()
-        metadata = json.dumps({
-            "urls": [{
-                "filename": "aweb-1.2.2-py3-none-any.whl",
-                "packagetype": "bdist_wheel",
-                "url": "https://files.example/aweb.whl",
-                "digests": {"sha256": wheel_sha},
-            }]
+    @staticmethod
+    def published_metadata(version="1.2.2", *, wheel=b"published wheel",
+                           sdist=b"published sdist", info_version=None,
+                           host="https://files.pythonhosted.org",
+                           include_sdist=True):
+        urls = [{
+            "filename": f"aweb-{version}-py3-none-any.whl",
+            "packagetype": "bdist_wheel",
+            "url": f"{host}/packages/aweb-{version}-py3-none-any.whl",
+            "digests": {"sha256": hashlib.sha256(wheel).hexdigest()},
+        }]
+        if include_sdist:
+            urls.append({
+                "filename": f"aweb-{version}.tar.gz",
+                "packagetype": "sdist",
+                "url": f"{host}/packages/aweb-{version}.tar.gz",
+                "digests": {"sha256": hashlib.sha256(sdist).hexdigest()},
+            })
+        return json.dumps({
+            "info": {"version": info_version or version},
+            "urls": urls,
         }).encode()
+
+    def resolve_published(self, metadata, *, wheel=b"published wheel"):
         requests = []
 
         def fetch(url):
@@ -170,33 +183,60 @@ class PersistedArtifactTests(unittest.TestCase):
             {"component": "server", "version": "1.2.2"},
             "pypi:aweb",
         )
-        self.assertEqual(requests, [
-            "https://pypi.org/pypi/aweb/1.2.2/json",
-            "https://files.example/aweb.whl",
-        ])
-        self.assertEqual(identity.sha256, wheel_sha)
-        self.assertEqual(identity.source["registry"], "pypi:aweb")
+        return identity, requests
+
+    def test_published_binds_complete_release_set_and_exact_wheel(self):
+        wheel = b"published wheel"
+        metadata = self.published_metadata(wheel=wheel)
+        identity, requests = self.resolve_published(metadata, wheel=wheel)
+        self.assertEqual(requests[0], "https://pypi.org/pypi/aweb/1.2.2/json")
+        self.assertEqual(identity.sha256, hashlib.sha256(wheel).hexdigest())
+        digest_set = identity.source["digest_set"]
+        self.assertEqual(len(digest_set), 2, "wheel AND sdist bound")
+        self.assertEqual(
+            identity.source["canonical_set_digest"],
+            rd.canonical_digest_of_set(digest_set),
+        )
+
+    def test_published_wrong_info_version_refuses(self):
+        metadata = self.published_metadata(info_version="9.9.9")
+        with self.assertRaisesRegex(rd.ReceiptError, "info.version"):
+            self.resolve_published(metadata)
+
+    def test_published_missing_sdist_refuses(self):
+        metadata = self.published_metadata(include_sdist=False)
+        with self.assertRaisesRegex(rd.ReceiptError, "sdist"):
+            self.resolve_published(metadata)
+
+    def test_published_untrusted_url_refuses(self):
+        metadata = self.published_metadata(host="https://evil.example")
+        with self.assertRaisesRegex(rd.ReceiptError, "trusted"):
+            self.resolve_published(metadata)
 
     def test_published_wheel_digest_mismatch_refuses(self):
-        expected = hashlib.sha256(b"expected").hexdigest()
-        metadata = json.dumps({
-            "urls": [{
-                "filename": "aweb-1.2.2-py3-none-any.whl",
-                "packagetype": "bdist_wheel",
-                "url": "https://files.example/aweb.whl",
-                "digests": {"sha256": expected},
-            }]
-        }).encode()
+        metadata = self.published_metadata(wheel=b"published wheel")
+        with self.assertRaisesRegex(rd.ReceiptError, "does not equal"):
+            self.resolve_published(metadata, wheel=b"different bytes")
 
-        def fetch(url):
-            return metadata if url.endswith("/json") else b"changed"
 
-        with self.assertRaisesRegex(rd.ReceiptError, "does not equal PyPI"):
-            skew.WheelResolver(pypi_fetch=fetch).resolve(
-                "published-latest",
-                {"component": "server", "version": "1.2.2"},
-                "pypi:aweb",
-            )
+
+def valid_runtime_inventory(aweb_version, extra_locked=()):
+    import release_channel_pi_skew as channel_pi
+
+    _, digest, constraints = channel_pi.server_runtime_constraints()
+    rows = [{"name": "aweb", "version": aweb_version},
+            {"name": "mcp", "version": constraints["mcp"]}]
+    for name in extra_locked:
+        rows.append({"name": name, "version": constraints[name]})
+    distributions = sorted(rows, key=lambda row: row["name"])
+    preimage = {
+        "constraints_sha256": digest,
+        "python_version": "3.12.9",
+        "distributions": distributions,
+    }
+    body = json.dumps(preimage, sort_keys=True, separators=(",", ":")).encode()
+    return {"schema": "aweb.server-runtime-inventory.v1", **preimage,
+            "sha256": hashlib.sha256(body).hexdigest()}
 
 
 class FakeResolver:
@@ -280,6 +320,9 @@ class FakeJourney:
                 'PostgreSQL 42703 UndefinedColumn: column "messages.subject" does not exist'
             )
         raise RuntimeError("unrelated connection failure")
+
+    def runtime_inventory(self, wheel):
+        return valid_runtime_inventory(wheel.version)
 
     def assert_causal_mail_failure(self, error):
         text = str(error)
@@ -464,6 +507,155 @@ class PersistedJourneyTests(unittest.TestCase):
                 with self.assertRaises(rd.ReceiptError):
                     harness.run_negative_control()
                 self.assertEqual(list(Path(tmp).glob("control-*.json")), [])
+
+
+class RealCausalMatcherTests(unittest.TestCase):
+    """The PRODUCTION matcher, never the FakeJourney flag: one exact
+    diagnostic entry must bind the HTTP-500 failure to SQLSTATE 42703
+    AND messages.subject; JSON logging must not make a conjunct vacuous;
+    recorded values are extracted from the entry, never constants."""
+
+    def journey_with_log(self, log_text: str):
+        journey = skew.SubprocessPersistedStateJourney()
+        self.addCleanup(journey.close)
+        log_path = journey._root / "server.log"
+        log_path.write_text(log_text)
+        journey._current_server_log = log_path
+        return journey
+
+    ERROR = RuntimeError("aw: mail send failed: http 500 from server")
+
+    def test_genuine_same_entry_diagnostic_accepts_and_extracts(self):
+        log = "\n".join([
+            json.dumps({"level": "info", "msg": "mail send",
+                        "subject": "skew-marker-1"}),
+            json.dumps({"level": "error", "msg": "insert failed",
+                        "exc": 'asyncpg.exceptions.UndefinedColumnError: '
+                               'column "subject" of relation "messages" '
+                               'does not exist', "pgcode": "42703"}),
+        ])
+        journey = self.journey_with_log(log)
+        causal = journey.assert_causal_mail_failure(self.ERROR)
+        self.assertEqual(causal["sqlstate"], "42703")
+        self.assertEqual(causal["column"], "messages.subject")
+        self.assertTrue(causal["entry_sha256"])
+        self.assertIn("does not exist", causal["matched_entry"])
+
+    def test_wrong_cause_with_json_subject_keys_refuses(self):
+        log = "\n".join([
+            json.dumps({"level": "info", "msg": "mail send",
+                        "subject": "skew-marker-1"}),
+            json.dumps({"level": "error", "msg": "read failed",
+                        "exc": 'relation "aweb.conversations" does not '
+                               'exist'}),
+        ])
+        journey = self.journey_with_log(log)
+        with self.assertRaisesRegex(rd.ReceiptError, "42703"):
+            journey.assert_causal_mail_failure(self.ERROR)
+
+    def test_split_entries_do_not_bind_causally(self):
+        log = "\n".join([
+            json.dumps({"level": "error", "msg": "other failure",
+                        "pgcode": "42703",
+                        "exc": 'column "widget" of relation "gadgets" '
+                               'does not exist'}),
+            json.dumps({"level": "info", "msg": "mail subject noted",
+                        "subject": "messages subject text"}),
+        ])
+        journey = self.journey_with_log(log)
+        with self.assertRaisesRegex(rd.ReceiptError, "42703"):
+            journey.assert_causal_mail_failure(self.ERROR)
+
+    def test_non_500_client_error_refuses(self):
+        log = json.dumps({"level": "error", "pgcode": "42703",
+                          "exc": 'column "subject" of relation "messages"'})
+        journey = self.journey_with_log(log)
+        with self.assertRaisesRegex(rd.ReceiptError, "500"):
+            journey.assert_causal_mail_failure(RuntimeError("timeout"))
+
+
+class RuntimePostureTests(unittest.TestCase):
+    """Cells and control bind canonical in-venv distribution inventories;
+    only the aweb wheel may differ across compared runtimes."""
+
+    def measured(self, tamper=None):
+        document, cells = matrix_document(("1.2.1", "1.2.2"))
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+
+        class InventoryJourney(FakeJourney):
+            def runtime_inventory(self, wheel):
+                inventory = valid_runtime_inventory(wheel.version)
+                if tamper is not None:
+                    inventory = tamper(wheel, inventory)
+                return inventory
+
+        harness = skew.PersistedStateHarness(
+            resolver=FakeResolver(), journey_factory=InventoryJourney,
+            evidence_dir=Path(temporary.name),
+        )
+        matrix_path = harness.freeze_matrix(document)
+        for cell in cells:
+            harness.run(cell)
+        return matrix_path
+
+    def test_cell_reports_bind_validated_runtimes(self):
+        matrix_path = self.measured()
+        reports = sorted(matrix_path.parent.glob("cell-*.json"))
+        report = json.loads(reports[0].read_text())
+        self.assertIn("server_runtimes", report)
+        self.assertEqual(
+            report["server_runtimes"]["candidate"]["distributions"][0]["name"],
+            "aweb")
+
+    def test_journey_without_inventory_refuses(self):
+        class NoInventoryJourney(FakeJourney):
+            runtime_inventory = None
+
+        document, cells = matrix_document()
+        with tempfile.TemporaryDirectory() as tmp:
+            harness = skew.PersistedStateHarness(
+                resolver=FakeResolver(), journey_factory=NoInventoryJourney,
+                evidence_dir=Path(tmp),
+            )
+            harness.freeze_matrix(document)
+            with self.assertRaisesRegex(rd.ReceiptError, "inventory"):
+                harness.run(cells[0])
+
+    def test_unlocked_distribution_refuses_at_cell_time(self):
+        def tamper(wheel, inventory):
+            rows = [dict(r) for r in inventory["distributions"]]
+            for row in rows:
+                if row["name"] == "mcp":
+                    row["version"] = "0.0.1"
+            preimage = {
+                "constraints_sha256": inventory["constraints_sha256"],
+                "python_version": inventory["python_version"],
+                "distributions": rows,
+            }
+            body = json.dumps(preimage, sort_keys=True,
+                              separators=(",", ":")).encode()
+            return {"schema": inventory["schema"], **preimage,
+                    "sha256": hashlib.sha256(body).hexdigest()}
+
+        with self.assertRaisesRegex(rd.ReceiptError, "unlocked"):
+            self.measured(tamper=tamper)
+
+    def test_aggregate_refuses_dependency_drift(self):
+        import release_channel_pi_skew as channel_pi
+
+        _, _, constraints = channel_pi.server_runtime_constraints()
+        extra = sorted(n for n in constraints if n != "mcp")[0]
+
+        def tamper(wheel, inventory):
+            if wheel.version == "1.2.1":
+                return valid_runtime_inventory(
+                    wheel.version, extra_locked=(extra,))
+            return inventory
+
+        matrix_path = self.measured(tamper=tamper)
+        with self.assertRaisesRegex(rd.ReceiptError, "drift"):
+            skew.aggregate_support(matrix_path)
 
 
 class SupportMeasurementTests(unittest.TestCase):
