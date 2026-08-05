@@ -30,6 +30,8 @@ FEDERATION_SCRIPT = REPO_ROOT / "scripts/e2e-oss-federation.sh"
 PYPI_WORKFLOW = ".github/workflows/pypi-release.yml"
 OBSERVATION_PREFIX = "AWEB_FEDERATION_SKEW_OBSERVATION="
 OBSERVATION_SCHEMA = "aweb.release.federation-skew-observation.v1"
+CONTROL_RUNTIME_PREFIX = "AWEB_FEDERATION_SKEW_CONTROL_RUNTIME="
+CONTROL_RUNTIME_SCHEMA = "aweb.release.federation-skew-control-runtime.v1"
 CELL_REPORT_SCHEMA = "aweb.release.federation-skew-cell-report.v1"
 AGGREGATE_SCHEMA = "aweb.release.federation-skew-aggregate.v1"
 CONTROL_SCHEMA = "aweb.release.federation-skew-control.v1"
@@ -50,6 +52,9 @@ class WheelArtifact:
     version: str
     bytes: bytes
     sha256: str
+    release_digest_set: dict[str, str]
+    release_set_digest: str
+    info_version: str
 
     def __post_init__(self) -> None:
         if Path(self.name).name != self.name or not self.name.endswith(".whl"):
@@ -64,6 +69,27 @@ class WheelArtifact:
         if actual != self.sha256:
             raise release_driver.ReceiptError(
                 f"{self.name}: wheel bytes hash {actual}, declared {self.sha256}"
+            )
+        valid_set = (
+            isinstance(self.release_digest_set, dict)
+            and bool(self.release_digest_set)
+            and all(
+                isinstance(name, str)
+                and Path(name).name == name
+                and isinstance(digest, str)
+                and bool(re.fullmatch(r"[0-9a-f]{64}", digest))
+                for name, digest in self.release_digest_set.items()
+            )
+        )
+        if (
+            not valid_set
+            or self.release_digest_set.get(self.name) != self.sha256
+            or self.release_set_digest
+            != release_driver.canonical_digest_of_set(self.release_digest_set)
+            or self.info_version != self.version
+        ):
+            raise release_driver.ReceiptError(
+                f"{self.name}: release identity is incomplete or inconsistent"
             )
 
 
@@ -131,7 +157,15 @@ class WheelResolver:
             raise release_driver.ReceiptError(
                 f"{name}: extracted wheel hash {digest}, manifest {files[name]}"
             )
-        return WheelArtifact(name, version, wheel_bytes, digest)
+        return WheelArtifact(
+            name,
+            version,
+            wheel_bytes,
+            digest,
+            dict(files),
+            canonical,
+            version,
+        )
 
     def published(self, version: str) -> WheelArtifact:
         metadata_url = PYPI_METADATA.format(version=version)
@@ -141,38 +175,61 @@ class WheelResolver:
                 f"PyPI aweb {version} metadata binds version "
                 f"{metadata.get('info', {}).get('version')!r}"
             )
-        wheels = [
-            item for item in metadata.get("urls", [])
-            if isinstance(item, dict) and item.get("packagetype") == "bdist_wheel"
-        ]
-        if len(wheels) != 1:
+        records = metadata.get("urls")
+        if not isinstance(records, list) or not records:
             raise release_driver.ReceiptError(
-                f"PyPI aweb {version} metadata must bind exactly one wheel, "
-                f"found {len(wheels)}"
+                f"PyPI aweb {version} release file set is empty"
+            )
+        release_set = {}
+        by_type = {}
+        for record in records:
+            if not isinstance(record, dict):
+                raise release_driver.ReceiptError(
+                    f"PyPI aweb {version} has malformed release file metadata"
+                )
+            name = record.get("filename")
+            package_type = record.get("packagetype")
+            digest = (record.get("digests") or {}).get("sha256")
+            url = record.get("url")
+            parsed = urllib.parse.urlparse(url or "")
+            if (
+                not isinstance(name, str)
+                or Path(name).name != name
+                or package_type not in {"bdist_wheel", "sdist"}
+                or record.get("yanked") not in (None, False)
+                or not isinstance(digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or parsed.scheme != "https"
+                or parsed.hostname != "files.pythonhosted.org"
+                or Path(urllib.parse.unquote(parsed.path)).name != name
+            ):
+                raise release_driver.ReceiptError(
+                    f"PyPI aweb {version} has invalid release record {record!r}"
+                )
+            if name in release_set:
+                raise release_driver.ReceiptError(
+                    f"PyPI aweb {version} repeats release filename {name}"
+                )
+            release_set[name] = digest
+            by_type.setdefault(package_type, []).append(record)
+        expected_names = {
+            f"aweb-{version}-py3-none-any.whl",
+            f"aweb-{version}.tar.gz",
+        }
+        if set(release_set) != expected_names or set(by_type) != {"bdist_wheel", "sdist"}:
+            raise release_driver.ReceiptError(
+                f"PyPI aweb {version} release file set is not exact: "
+                f"got {sorted(release_set)}, expected {sorted(expected_names)}"
+            )
+        wheels = by_type["bdist_wheel"]
+        if len(wheels) != 1 or len(by_type["sdist"]) != 1:
+            raise release_driver.ReceiptError(
+                f"PyPI aweb {version} metadata must bind one wheel and one sdist"
             )
         wheel = wheels[0]
-        name = wheel.get("filename")
-        expected_name_prefix = f"aweb-{version}-"
-        if (
-            not isinstance(name, str)
-            or not name.startswith(expected_name_prefix)
-            or not name.endswith(".whl")
-            or Path(name).name != name
-        ):
-            raise release_driver.ReceiptError(
-                f"PyPI aweb {version} metadata names invalid wheel {name!r}"
-            )
-        digest = (wheel.get("digests") or {}).get("sha256")
-        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise release_driver.ReceiptError(
-                f"PyPI aweb {version} wheel has invalid sha256 {digest!r}"
-            )
-        url = wheel.get("url")
-        parsed = urllib.parse.urlparse(url or "")
-        if parsed.scheme != "https" or parsed.hostname != "files.pythonhosted.org":
-            raise release_driver.ReceiptError(
-                f"PyPI aweb {version} metadata names unexpected wheel URL {url!r}"
-            )
+        name = wheel["filename"]
+        digest = release_set[name]
+        url = wheel["url"]
         request = urllib.request.Request(url, headers={"Accept-Encoding": "identity"})
         try:
             with self._urlopen(request, timeout=30) as response:
@@ -191,7 +248,15 @@ class WheelResolver:
             raise release_driver.ReceiptError(
                 f"PyPI aweb {version} wheel hashes to {actual}, metadata {digest}"
             )
-        return WheelArtifact(name, version, wheel_bytes, digest)
+        return WheelArtifact(
+            name,
+            version,
+            wheel_bytes,
+            digest,
+            release_set,
+            release_driver.canonical_digest_of_set(release_set),
+            metadata["info"]["version"],
+        )
 
     def _read_metadata(self, url: str, version: str) -> dict:
         request = urllib.request.Request(url, headers={"Accept-Encoding": "identity"})
@@ -390,6 +455,7 @@ def _journey_environment(
         "AWEB_FED_E2E_DIRECTION": direction,
         "AWEB_FED_E2E_CELL_ID": cell_id,
         "AWEB_FED_E2E_ROUTE_PROBE_ONLY": "1" if route_probe_only else "0",
+        "AWEB_FED_E2E_KEEP": "0",
         "AWEB_FED_E2E_MCP_VERSION": locked_mcp_version(),
         "AWEB_FED_E2E_PROJECT": invocation.project,
         "AWID_FED_E2E_PORT": str(awid_port),
@@ -401,6 +467,9 @@ def _journey_environment(
 def run_federation_journey(environment: dict[str, str]):
     env = dict(os.environ)
     env.update(environment)
+    # A release cell can never inherit the source harness's debugging escape
+    # hatch: subprocess success must mean targeted cleanup actually ran.
+    env["AWEB_FED_E2E_KEEP"] = "0"
     return subprocess.run(
         [str(FEDERATION_SCRIPT)],
         cwd=REPO_ROOT,
@@ -444,7 +513,59 @@ def _run_reserved_journey(
 def _wheel_identity(wheel: WheelArtifact) -> dict:
     return {
         "filename": wheel.name,
+        "info_version": wheel.info_version,
+        "registry_digest_set": dict(wheel.release_digest_set),
+        "registry_set_digest": wheel.release_set_digest,
         "sha256": wheel.sha256,
+        "version": wheel.version,
+    }
+
+
+def _resolved_identity(wheel: WheelArtifact, side: dict, kind: str) -> dict:
+    selected = {"filename": wheel.name, "sha256": wheel.sha256}
+    if kind == "candidate":
+        expected_fields = {
+            "component", "digest", "digest_set", "lane_ref", "version"
+        }
+        if (
+            set(side) != expected_fields
+            or side.get("component") != "server"
+            or side.get("version") != wheel.version
+            or side.get("digest_set") != wheel.release_digest_set
+            or side.get("digest") != wheel.release_set_digest
+        ):
+            raise release_driver.ReceiptError(
+                "federation candidate resolved identity does not equal its frozen side"
+            )
+        release_driver.LaneRef.from_dict(side.get("lane_ref"))
+        return {
+            "component": "server",
+            "digest": side["digest"],
+            "digest_set": dict(side["digest_set"]),
+            "kind": "candidate",
+            "lane_ref": dict(side["lane_ref"]),
+            "selected_wheel": selected,
+            "version": wheel.version,
+        }
+    expected_side = {"component", "kind", "version"}
+    if (
+        kind not in {"published", "published-floor", "published-latest"}
+        or set(side) != expected_side
+        or side.get("component") != "server"
+        or side.get("kind") != kind
+        or side.get("version") != wheel.version
+    ):
+        raise release_driver.ReceiptError(
+            "federation published resolved identity does not equal its frozen side"
+        )
+    return {
+        "component": "server",
+        "info_version": wheel.info_version,
+        "kind": kind,
+        "registry": "pypi:aweb",
+        "registry_digest_set": dict(wheel.release_digest_set),
+        "registry_set_digest": wheel.release_set_digest,
+        "selected_wheel": selected,
         "version": wheel.version,
     }
 
@@ -478,6 +599,7 @@ def prove_route_controls(
             f"marker {marker!r}: exit={negative.returncode}, "
             f"output={negative_output[-1000:]}"
         )
+    negative_runtime = _parse_control_runtime(negative_output, negative_env)
 
     with tempfile.TemporaryDirectory(prefix="aweb-fed-skew-positive-") as tmp:
         positive_env, positive = _run_reserved_journey(
@@ -489,11 +611,21 @@ def prove_route_controls(
             journey=journey,
             route_probe_only=True,
         )
+    positive_output = (positive.stdout or "") + (positive.stderr or "")
     if positive.returncode != 0:
-        output = (positive.stdout or "") + (positive.stderr or "")
         raise release_driver.ReceiptError(
             f"federation first-containing release route probe red: "
-            f"exit={positive.returncode}, output={output[-1000:]}"
+            f"exit={positive.returncode}, output={positive_output[-1000:]}"
+        )
+    positive_runtime = _parse_control_runtime(positive_output, positive_env)
+    dependency_inventories = {
+        _identity(_dependency_inventory(runtime))
+        for record in (negative_runtime, positive_runtime)
+        for runtime in (record["alpha"], record["beta"])
+    }
+    if len(dependency_inventories) != 1:
+        raise release_driver.ReceiptError(
+            "federation control dependency-only inventories differ across runs"
         )
 
     def invocation(environment: dict[str, str]) -> dict:
@@ -514,12 +646,16 @@ def prove_route_controls(
                 "missing_route_wheel": _wheel_identity(missing),
                 "observed_exit": negative.returncode,
                 "route_present_wheel": _wheel_identity(first),
+                "runtime": negative_runtime,
+                "runtime_sha256": _identity(negative_runtime),
             },
             "positive": {
                 "expected_exit": 0,
                 "invocation": invocation(positive_env),
                 "observed_exit": positive.returncode,
                 "route_present_wheel": _wheel_identity(first),
+                "runtime": positive_runtime,
+                "runtime_sha256": _identity(positive_runtime),
             },
         },
         "mcp_version": locked_mcp_version(),
@@ -549,23 +685,87 @@ def _expected_observation(environment: dict[str, str]) -> dict:
     }
 
 
-def _parse_observation(output: str, environment: dict[str, str]) -> dict:
-    lines = [line for line in output.splitlines() if line.startswith(OBSERVATION_PREFIX)]
+def _decode_structured_line(output: str, prefix: str, label: str) -> dict:
+    lines = [line for line in output.splitlines() if line.startswith(prefix)]
     if len(lines) != 1:
         raise release_driver.ReceiptError(
-            f"federation journey emitted {len(lines)} structured observations, expected one"
+            f"federation {label} emitted {len(lines)} structured records, expected one"
         )
-    encoded = lines[0][len(OBSERVATION_PREFIX):]
+    encoded = lines[0][len(prefix):]
     try:
-        observation = json.loads(encoded)
+        value = json.loads(encoded)
     except json.JSONDecodeError as exc:
         raise release_driver.ReceiptError(
-            f"federation journey observation is malformed: {exc}"
+            f"federation {label} is malformed: {exc}"
         ) from exc
-    if encoded != _canonical_bytes(observation).decode().rstrip("\n"):
+    if encoded != _canonical_bytes(value).decode().rstrip("\n"):
         raise release_driver.ReceiptError(
-            "federation journey observation is not canonical JSON"
+            f"federation {label} is not canonical JSON"
         )
+    return value
+
+
+def _validate_runtime(runtime: dict, expected: dict, label: str) -> dict:
+    fields = {
+        "installed_distributions",
+        "installed_distributions_sha256",
+        "mcp_version",
+        "version",
+        "wheel_sha256",
+    }
+    if not isinstance(runtime, dict) or set(runtime) != fields:
+        raise release_driver.ReceiptError(
+            f"federation {label} runtime fields are not exact"
+        )
+    inventory = runtime["installed_distributions"]
+    valid_inventory = (
+        isinstance(inventory, dict)
+        and bool(inventory)
+        and all(
+            isinstance(name, str)
+            and bool(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name))
+            and isinstance(version, str)
+            and bool(version)
+            for name, version in inventory.items()
+        )
+    )
+    inventory_digest = _identity(inventory) if valid_inventory else ""
+    if (
+        runtime["mcp_version"] != expected["mcp_version"]
+        or runtime["version"] != expected["version"]
+        or runtime["wheel_sha256"] != expected["wheel_sha256"]
+        or not valid_inventory
+        or inventory.get("aweb") != runtime["version"]
+        or inventory.get("mcp") != runtime["mcp_version"]
+        or runtime["installed_distributions_sha256"] != inventory_digest
+    ):
+        raise release_driver.ReceiptError(
+            f"federation {label} runtime does not bind exact wheel/dependencies"
+        )
+    return runtime
+
+
+def _dependency_inventory(runtime: dict) -> dict:
+    return {
+        name: version
+        for name, version in runtime["installed_distributions"].items()
+        if name != "aweb"
+    }
+
+
+def _validate_invocation(value: dict, expected: dict, label: str) -> None:
+    for field in ("cell_id", "ports", "project"):
+        if value.get(field) != expected[field]:
+            raise release_driver.ReceiptError(
+                f"federation {label} {field} {value.get(field)!r} does not "
+                f"equal invocation {expected[field]!r}"
+            )
+
+
+def _parse_observation(output: str, environment: dict[str, str]) -> dict:
+    observation = _decode_structured_line(
+        output, OBSERVATION_PREFIX, "journey observation"
+    )
     expected_keys = {
         "alpha", "beta", "cell_id", "initiated_side", "outcomes",
         "ports", "project", "schema",
@@ -575,12 +775,11 @@ def _parse_observation(output: str, environment: dict[str, str]) -> dict:
             f"federation journey observation fields are not exact: {observation!r}"
         )
     expected = _expected_observation(environment)
-    for field in ("cell_id", "initiated_side", "ports", "project"):
-        if observation[field] != expected[field]:
-            raise release_driver.ReceiptError(
-                f"federation observation {field} {observation[field]!r} does not "
-                f"equal invocation {expected[field]!r}"
-            )
+    _validate_invocation(observation, expected, "observation")
+    if observation["initiated_side"] != expected["initiated_side"]:
+        raise release_driver.ReceiptError(
+            "federation observation initiated side does not equal cell direction"
+        )
     if observation["schema"] != OBSERVATION_SCHEMA:
         raise release_driver.ReceiptError(
             f"federation observation schema {observation['schema']!r} is not supported"
@@ -589,25 +788,46 @@ def _parse_observation(output: str, environment: dict[str, str]) -> dict:
         raise release_driver.ReceiptError(
             f"federation observation outcomes are incomplete: {observation['outcomes']!r}"
         )
-    for name in ("alpha", "beta"):
-        runtime = observation[name]
-        if not isinstance(runtime, dict) or set(runtime) != {
-            "inventory_sha256", "mcp_version", "version", "wheel_sha256"
-        }:
-            raise release_driver.ReceiptError(
-                f"federation observation {name} runtime fields are not exact"
-            )
-        for field in ("mcp_version", "version", "wheel_sha256"):
-            if runtime[field] != expected["runtime"][name][field]:
-                raise release_driver.ReceiptError(
-                    f"federation observation {name} {field} {runtime[field]!r} "
-                    f"does not equal selected {expected['runtime'][name][field]!r}"
-                )
-        if not re.fullmatch(r"[0-9a-f]{64}", runtime["inventory_sha256"] or ""):
-            raise release_driver.ReceiptError(
-                f"federation observation {name} inventory digest is invalid"
-            )
+    alpha = _validate_runtime(
+        observation["alpha"], expected["runtime"]["alpha"], "alpha"
+    )
+    beta = _validate_runtime(
+        observation["beta"], expected["runtime"]["beta"], "beta"
+    )
+    if _dependency_inventory(alpha) != _dependency_inventory(beta):
+        raise release_driver.ReceiptError(
+            "federation cell dependency-only inventories differ between runtimes"
+        )
     return observation
+
+
+def _parse_control_runtime(output: str, environment: dict[str, str]) -> dict:
+    runtime = _decode_structured_line(
+        output, CONTROL_RUNTIME_PREFIX, "control runtime"
+    )
+    if not isinstance(runtime, dict) or set(runtime) != {
+        "alpha", "beta", "cell_id", "ports", "project", "schema"
+    }:
+        raise release_driver.ReceiptError(
+            f"federation control runtime fields are not exact: {runtime!r}"
+        )
+    expected = _expected_observation(environment)
+    _validate_invocation(runtime, expected, "control runtime")
+    if runtime["schema"] != CONTROL_RUNTIME_SCHEMA:
+        raise release_driver.ReceiptError(
+            f"federation control runtime schema {runtime['schema']!r} is unsupported"
+        )
+    alpha = _validate_runtime(
+        runtime["alpha"], expected["runtime"]["alpha"], "control alpha"
+    )
+    beta = _validate_runtime(
+        runtime["beta"], expected["runtime"]["beta"], "control beta"
+    )
+    if _dependency_inventory(alpha) != _dependency_inventory(beta):
+        raise release_driver.ReceiptError(
+            "federation control dependency-only inventories differ between runtimes"
+        )
+    return runtime
 
 
 def _read_canonical_report(path: Path) -> tuple[dict, bytes]:
@@ -625,10 +845,182 @@ def _read_canonical_report(path: Path) -> tuple[dict, bytes]:
     return value, body
 
 
-def aggregate_cell_reports(expected_cells, report_dir: Path = DEFAULT_REPORT_DIR) -> dict:
-    """Bind a complete expected frozen matrix to exact cell-report digests.
-    The aggregate remains deliberately unanchored and cannot complete support."""
+def _validate_resolved_identity(
+    value: dict, side: dict, kind: str, runtime: dict, label: str
+) -> dict:
+    selected = value.get("selected_wheel") if isinstance(value, dict) else None
+    digest_set = side.get("digest_set") if kind == "candidate" else value.get(
+        "registry_digest_set", {}
+    ) if isinstance(value, dict) else {}
+    wheels = [name for name in digest_set if name.endswith(".whl")]
+    valid_selected = (
+        isinstance(selected, dict)
+        and set(selected) == {"filename", "sha256"}
+        and len(wheels) == 1
+        and selected.get("filename") == wheels[0]
+        and selected.get("sha256") == digest_set.get(wheels[0])
+        and selected.get("sha256") == runtime.get("wheel_sha256")
+    )
+    if kind == "candidate":
+        expected = {
+            "component": side.get("component"),
+            "digest": side.get("digest"),
+            "digest_set": side.get("digest_set"),
+            "kind": "candidate",
+            "lane_ref": side.get("lane_ref"),
+            "selected_wheel": selected,
+            "version": side.get("version"),
+        }
+        valid = (
+            isinstance(value, dict)
+            and value == expected
+            and set(side) == {
+                "component", "digest", "digest_set", "lane_ref", "version"
+            }
+            and side.get("component") == "server"
+            and side.get("digest")
+            == release_driver.canonical_digest_of_set(side.get("digest_set", {}))
+        )
+        if valid:
+            release_driver.LaneRef.from_dict(side.get("lane_ref"))
+    else:
+        version = side.get("version")
+        expected_names = {
+            f"aweb-{version}-py3-none-any.whl",
+            f"aweb-{version}.tar.gz",
+        }
+        valid = (
+            isinstance(value, dict)
+            and set(value) == {
+                "component", "info_version", "kind", "registry",
+                "registry_digest_set", "registry_set_digest",
+                "selected_wheel", "version",
+            }
+            and set(side) == {"component", "kind", "version"}
+            and side.get("component") == "server"
+            and side.get("kind") == kind
+            and value.get("component") == "server"
+            and value.get("kind") == kind
+            and value.get("registry") == "pypi:aweb"
+            and value.get("version") == version
+            and value.get("info_version") == version
+            and set(digest_set) == expected_names
+            and value.get("registry_set_digest")
+            == release_driver.canonical_digest_of_set(digest_set)
+        )
+    if (
+        not valid
+        or not valid_selected
+        or runtime.get("version") != value.get("version")
+    ):
+        raise release_driver.ReceiptError(
+            f"federation cell report {label} resolved artifact identity is invalid"
+        )
+    return value
 
+
+def _ports_match_project(project: str, ports: dict) -> bool:
+    match = re.fullmatch(r"aweb-fed-e2e-([0-9a-f]{32})", project or "")
+    if not match:
+        return False
+    token = match.group(1)
+    counters = []
+    for port in (ports.get("awid"), ports.get("alpha"), ports.get("beta")):
+        found = next(
+            (counter for counter in range((counters[-1] + 1) if counters else 0, 1000)
+             if _token_port(token, counter) == port),
+            None,
+        )
+        if found is None:
+            return False
+        counters.append(found)
+    return True
+
+
+def _reload_cell_report(cell, path: Path) -> tuple[dict, bytes, list[dict]]:
+    identity = cell_identity(cell)
+    report, body = _read_canonical_report(path)
+    if not isinstance(report, dict) or set(report) != {
+        "cell", "cell_id", "observation", "observation_sha256", "resolved",
+        "schema", "status",
+    }:
+        raise release_driver.ReceiptError(
+            f"federation cell report {identity} fields are not exact"
+        )
+    observation = report["observation"]
+    resolved = report["resolved"]
+    initiated = "a" if cell.direction == "a-to-b" else "b"
+    valid_ports = (
+        isinstance(observation, dict)
+        and isinstance(observation.get("ports"), dict)
+        and set(observation["ports"]) == {"alpha", "awid", "beta"}
+        and all(
+            isinstance(port, int) and not isinstance(port, bool) and 1024 <= port <= 65535
+            for port in observation["ports"].values()
+        )
+        and len(set(observation["ports"].values())) == 3
+    )
+    if (
+        report["schema"] != CELL_REPORT_SCHEMA
+        or report["cell_id"] != identity
+        or report["cell"] != cell_preimage(cell)
+        or report["status"] != "green"
+        or not isinstance(observation, dict)
+        or set(observation) != {
+            "alpha", "beta", "cell_id", "initiated_side", "outcomes",
+            "ports", "project", "schema",
+        }
+        or report["observation_sha256"] != _identity(observation)
+        or observation.get("schema") != OBSERVATION_SCHEMA
+        or observation.get("cell_id") != identity
+        or observation.get("initiated_side") != initiated
+        or observation.get("outcomes") != REQUIRED_OUTCOMES
+        or not valid_ports
+        or not _ports_match_project(
+            observation.get("project", ""), observation.get("ports", {})
+        )
+        or not isinstance(resolved, dict)
+        or set(resolved) != {"alpha", "beta"}
+        or not all(isinstance(value, dict) for value in resolved.values())
+    ):
+        raise release_driver.ReceiptError(
+            f"federation cell report {identity} does not bind its expected frozen cell"
+        )
+    alpha_expected_side, alpha_kind, beta_expected_side, beta_kind = (
+        (cell.a, cell.a_kind, cell.b, cell.b_kind)
+        if cell.direction == "a-to-b"
+        else (cell.b, cell.b_kind, cell.a, cell.a_kind)
+    )
+    alpha_expected = {
+        "mcp_version": locked_mcp_version(),
+        "version": resolved["alpha"].get("version"),
+        "wheel_sha256": (resolved["alpha"].get("selected_wheel") or {}).get("sha256"),
+    }
+    beta_expected = {
+        "mcp_version": locked_mcp_version(),
+        "version": resolved["beta"].get("version"),
+        "wheel_sha256": (resolved["beta"].get("selected_wheel") or {}).get("sha256"),
+    }
+    alpha = _validate_runtime(observation["alpha"], alpha_expected, "reloaded alpha")
+    beta = _validate_runtime(observation["beta"], beta_expected, "reloaded beta")
+    alpha_identity = _validate_resolved_identity(
+        resolved["alpha"], alpha_expected_side, alpha_kind, alpha, "alpha"
+    )
+    beta_identity = _validate_resolved_identity(
+        resolved["beta"], beta_expected_side, beta_kind, beta, "beta"
+    )
+    if _dependency_inventory(alpha) != _dependency_inventory(beta):
+        raise release_driver.ReceiptError(
+            f"federation cell report {identity} dependency inventories differ"
+        )
+    candidates = [
+        value for value in (alpha_identity, beta_identity)
+        if value["kind"] == "candidate"
+    ]
+    return report, body, candidates
+
+
+def _matrix_aggregate(expected_cells, report_dir: Path) -> dict:
     cells = list(expected_cells)
     if not cells:
         raise release_driver.ReceiptError("federation aggregate requires expected cells")
@@ -637,64 +1029,87 @@ def aggregate_cell_reports(expected_cells, report_dir: Path = DEFAULT_REPORT_DIR
         raise release_driver.ReceiptError(
             "federation aggregate expected matrix contains duplicate full-cell identities"
         )
+    cell_dir = Path(report_dir) / "cells"
+    expected_files = {f"{identity}.json" for identity in identities}
+    try:
+        actual_entries = list(cell_dir.iterdir())
+    except OSError as exc:
+        raise release_driver.ReceiptError(
+            f"federation aggregate cell report directory is unreadable: {exc}"
+        ) from exc
+    actual_files = {
+        entry.name for entry in actual_entries
+        if entry.is_file() and not entry.is_symlink()
+    }
+    if actual_files != expected_files or len(actual_entries) != len(expected_files):
+        raise release_driver.ReceiptError(
+            f"federation aggregate cell file set {sorted(actual_files)} does not "
+            f"equal expected {sorted(expected_files)}"
+        )
+
+    reports = []
     candidates = []
-    for cell in cells:
-        if cell.a_kind == "candidate":
-            candidates.append(dict(cell.a))
-        if cell.b_kind == "candidate":
-            candidates.append(dict(cell.b))
+    dependency_digests = set()
+    for identity, cell in zip(identities, cells):
+        path = cell_dir / f"{identity}.json"
+        report, body, cell_candidates = _reload_cell_report(cell, path)
+        reports.append({
+            "cell_id": identity,
+            "sha256": hashlib.sha256(body).hexdigest(),
+        })
+        candidates.extend(cell_candidates)
+        for runtime in report["observation"]["alpha"], report["observation"]["beta"]:
+            dependency_digests.add(_identity(_dependency_inventory(runtime)))
     candidate_by_identity = {_identity(value): value for value in candidates}
     if len(candidate_by_identity) != 1:
         raise release_driver.ReceiptError(
             f"federation aggregate must bind one exact candidate identity, "
             f"found {sorted(candidate_by_identity)}"
         )
+    if len(dependency_digests) != 1:
+        raise release_driver.ReceiptError(
+            "federation aggregate dependency-only inventories differ across cells"
+        )
     candidate_id, candidate = next(iter(candidate_by_identity.items()))
-
-    reports = []
-    for identity, cell in sorted(zip(identities, cells), key=lambda item: item[0]):
-        path = Path(report_dir) / "cells" / f"{identity}.json"
-        report, body = _read_canonical_report(path)
-        observation = report.get("observation")
-        initiated = "a" if cell.direction == "a-to-b" else "b"
-        if (
-            report.get("schema") != CELL_REPORT_SCHEMA
-            or report.get("cell_id") != identity
-            or report.get("cell") != cell_preimage(cell)
-            or report.get("status") != "green"
-            or not isinstance(observation, dict)
-            or report.get("observation_sha256") != _identity(observation)
-            or observation.get("cell_id") != identity
-            or observation.get("initiated_side") != initiated
-            or observation.get("outcomes") != REQUIRED_OUTCOMES
-        ):
-            raise release_driver.ReceiptError(
-                f"federation cell report {identity} does not bind its expected frozen cell"
-            )
-        reports.append({
-            "cell_id": identity,
-            "sha256": hashlib.sha256(body).hexdigest(),
-        })
-
-    matrix_preimage = {
+    aggregate_preimage = {
+        "candidate": candidate,
         "candidate_id": candidate_id,
-        "cell_ids": sorted(identities),
+        "expected_cell_ids": identities,
+        "reports": reports,
     }
-    matrix_id = _identity(matrix_preimage)
-    aggregate = {
+    aggregate_id = _identity(aggregate_preimage)
+    return {
+        "aggregate_id": aggregate_id,
         "anchor": None,
-        "candidate": {
-            "id": candidate_id,
-            "side": candidate,
-        },
-        "expected_cell_ids": sorted(identities),
-        "matrix_id": matrix_id,
+        "candidate": candidate,
+        "candidate_id": candidate_id,
+        "expected_cell_ids": identities,
         "reports": reports,
         "schema": AGGREGATE_SCHEMA,
         "status": "incomplete-unanchored",
         "support_complete": False,
     }
-    _atomic_report(Path(report_dir) / "aggregates" / f"{matrix_id}.json", aggregate)
+
+
+def aggregate_cell_reports(expected_cells, report_dir: Path = DEFAULT_REPORT_DIR) -> dict:
+    """Write an unanchored aggregate from the ordered frozen matrix authority."""
+
+    aggregate = _matrix_aggregate(expected_cells, Path(report_dir))
+    path = Path(report_dir) / "aggregates" / f"{aggregate['aggregate_id']}.json"
+    _atomic_report(path, aggregate)
+    return load_aggregate(expected_cells, report_dir)
+
+
+def load_aggregate(expected_cells, report_dir: Path = DEFAULT_REPORT_DIR) -> dict:
+    """Reload every report and recompute the aggregate identity from scratch."""
+
+    expected = _matrix_aggregate(expected_cells, Path(report_dir))
+    path = Path(report_dir) / "aggregates" / f"{expected['aggregate_id']}.json"
+    aggregate, _ = _read_canonical_report(path)
+    if aggregate != expected:
+        raise release_driver.ReceiptError(
+            "federation aggregate identity or canonical content does not match reports"
+        )
     return aggregate
 
 
@@ -730,11 +1145,14 @@ class FederationSkewHarness:
         # The reused journey's alpha identity initiates its first-contact
         # checks. Swap runtime placement for b-to-a so every request in this
         # exact runner cell starts on the declared side, not a global union.
-        alpha, beta = (
-            (side_a, side_b)
-            if cell.direction == "a-to-b"
-            else (side_b, side_a)
-        )
+        if cell.direction == "a-to-b":
+            alpha, beta = side_a, side_b
+            alpha_identity = _resolved_identity(side_a, cell.a, cell.a_kind)
+            beta_identity = _resolved_identity(side_b, cell.b, cell.b_kind)
+        else:
+            alpha, beta = side_b, side_a
+            alpha_identity = _resolved_identity(side_b, cell.b, cell.b_kind)
+            beta_identity = _resolved_identity(side_a, cell.a, cell.a_kind)
         identity = cell_identity(cell)
         with tempfile.TemporaryDirectory(prefix="aweb-fed-skew-cell-") as tmp:
             environment, result = _run_reserved_journey(
@@ -757,6 +1175,10 @@ class FederationSkewHarness:
             "cell_id": identity,
             "observation": observation,
             "observation_sha256": _identity(observation),
+            "resolved": {
+                "alpha": alpha_identity,
+                "beta": beta_identity,
+            },
             "schema": CELL_REPORT_SCHEMA,
             "status": "green",
         }

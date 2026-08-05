@@ -256,18 +256,22 @@ container_wheel_sha256() {
     'set -- /opt/aweb-wheel/*.whl; [ "$#" -eq 1 ] && sha256sum "$1" | cut -d" " -f1'
 }
 
-container_inventory_sha256() {
+container_inventory_json() {
   local service="$1"
   compose exec -T "$service" python -c '
-import hashlib, importlib.metadata, json, re
-items = [
-    {"name": re.sub(r"[-_.]+", "-", item.metadata["Name"]).lower(), "version": item.version}
-    for item in importlib.metadata.distributions()
-]
-items.sort(key=lambda item: (item["name"], item["version"]))
-body = json.dumps(items, sort_keys=True, separators=(",", ":")).encode()
-print(hashlib.sha256(body).hexdigest())
+import importlib.metadata, json, re
+inventory = {}
+for distribution in importlib.metadata.distributions():
+    name = re.sub(r"[-_.]+", "-", distribution.metadata["Name"]).lower()
+    if name in inventory:
+        raise SystemExit(f"duplicate normalized distribution {name}")
+    inventory[name] = distribution.version
+print(json.dumps(inventory, sort_keys=True, separators=(",", ":")))
 '
+}
+
+canonical_json_sha256() {
+  python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 }
 
 run_aw_in() {
@@ -467,6 +471,8 @@ case "$SERVER_MODE" in
     BETA_SERVER_BUILD="$ALPHA_SERVER_BUILD"
     ;;
   wheel)
+    [[ "${AWEB_FED_E2E_KEEP:-0}" == "0" ]] \
+      || { echo "AWEB_FED_E2E_KEEP must be 0 in wheel mode" >&2; exit 1; }
     for variable in \
       AWEB_ALPHA_WHEEL AWEB_ALPHA_WHEEL_SHA256 AWEB_ALPHA_VERSION \
       AWEB_BETA_WHEEL AWEB_BETA_WHEEL_SHA256 AWEB_BETA_VERSION \
@@ -718,8 +724,10 @@ if [[ "$SERVER_MODE" == "wheel" ]]; then
   beta_retained_wheel_sha256="$(container_wheel_sha256 aweb-beta)"
   alpha_installed_mcp="$(container_package_version aweb-alpha mcp)"
   beta_installed_mcp="$(container_package_version aweb-beta mcp)"
-  alpha_inventory_sha256="$(container_inventory_sha256 aweb-alpha)"
-  beta_inventory_sha256="$(container_inventory_sha256 aweb-beta)"
+  alpha_installed_distributions="$(container_inventory_json aweb-alpha)"
+  beta_installed_distributions="$(container_inventory_json aweb-beta)"
+  alpha_inventory_sha256="$(printf '%s' "$alpha_installed_distributions" | canonical_json_sha256)"
+  beta_inventory_sha256="$(printf '%s' "$beta_installed_distributions" | canonical_json_sha256)"
   assert_eq "alpha installs selected aweb version" "$AWEB_ALPHA_VERSION" "$alpha_installed_version"
   assert_eq "beta installs selected aweb version" "$AWEB_BETA_VERSION" "$beta_installed_version"
   assert_eq "alpha retains selected wheel sha256" "$AWEB_ALPHA_WHEEL_SHA256" "$alpha_retained_wheel_sha256"
@@ -750,6 +758,52 @@ probe_federation_route() {
   fi
   assert_eq "$label federation route probe validates an empty envelope" "422" "$status"
 }
+
+if [[ "$SERVER_MODE" == "wheel" && "$ROUTE_PROBE_ONLY" == "1" ]]; then
+  python3 - \
+    "$CELL_ID" "$PROJECT" "$AWID_PORT" "$ALPHA_PORT" "$BETA_PORT" \
+    "$alpha_installed_version" "$alpha_retained_wheel_sha256" \
+    "$alpha_installed_mcp" "$alpha_installed_distributions" "$alpha_inventory_sha256" \
+    "$beta_installed_version" "$beta_retained_wheel_sha256" \
+    "$beta_installed_mcp" "$beta_installed_distributions" "$beta_inventory_sha256" <<'PY'
+import json
+import sys
+
+(
+    cell_id, project, awid_port, alpha_port, beta_port,
+    alpha_version, alpha_wheel, alpha_mcp, alpha_inventory, alpha_inventory_digest,
+    beta_version, beta_wheel, beta_mcp, beta_inventory, beta_inventory_digest,
+) = sys.argv[1:]
+record = {
+    "alpha": {
+        "installed_distributions": json.loads(alpha_inventory),
+        "installed_distributions_sha256": alpha_inventory_digest,
+        "mcp_version": alpha_mcp,
+        "version": alpha_version,
+        "wheel_sha256": alpha_wheel,
+    },
+    "beta": {
+        "installed_distributions": json.loads(beta_inventory),
+        "installed_distributions_sha256": beta_inventory_digest,
+        "mcp_version": beta_mcp,
+        "version": beta_version,
+        "wheel_sha256": beta_wheel,
+    },
+    "cell_id": cell_id,
+    "ports": {
+        "alpha": int(alpha_port),
+        "awid": int(awid_port),
+        "beta": int(beta_port),
+    },
+    "project": project,
+    "schema": "aweb.release.federation-skew-control-runtime.v1",
+}
+print(
+    "AWEB_FEDERATION_SKEW_CONTROL_RUNTIME="
+    + json.dumps(record, sort_keys=True, separators=(",", ":"))
+)
+PY
+fi
 
 probe_federation_route alpha "$ALPHA_URL"
 probe_federation_route beta "$BETA_URL"
@@ -1175,27 +1229,29 @@ if [[ "$SERVER_MODE" == "wheel" && "$fail" == "0" ]]; then
     "$CELL_ID" "$initiated_side" "$PROJECT" \
     "$AWID_PORT" "$ALPHA_PORT" "$BETA_PORT" \
     "$alpha_installed_version" "$alpha_retained_wheel_sha256" \
-    "$alpha_installed_mcp" "$alpha_inventory_sha256" \
+    "$alpha_installed_mcp" "$alpha_installed_distributions" "$alpha_inventory_sha256" \
     "$beta_installed_version" "$beta_retained_wheel_sha256" \
-    "$beta_installed_mcp" "$beta_inventory_sha256" <<'PY'
+    "$beta_installed_mcp" "$beta_installed_distributions" "$beta_inventory_sha256" <<'PY'
 import json
 import sys
 
 (
     cell_id, initiated_side, project,
     awid_port, alpha_port, beta_port,
-    alpha_version, alpha_wheel, alpha_mcp, alpha_inventory,
-    beta_version, beta_wheel, beta_mcp, beta_inventory,
+    alpha_version, alpha_wheel, alpha_mcp, alpha_inventory, alpha_inventory_digest,
+    beta_version, beta_wheel, beta_mcp, beta_inventory, beta_inventory_digest,
 ) = sys.argv[1:]
 observation = {
     "alpha": {
-        "inventory_sha256": alpha_inventory,
+        "installed_distributions": json.loads(alpha_inventory),
+        "installed_distributions_sha256": alpha_inventory_digest,
         "mcp_version": alpha_mcp,
         "version": alpha_version,
         "wheel_sha256": alpha_wheel,
     },
     "beta": {
-        "inventory_sha256": beta_inventory,
+        "installed_distributions": json.loads(beta_inventory),
+        "installed_distributions_sha256": beta_inventory_digest,
         "mcp_version": beta_mcp,
         "version": beta_version,
         "wheel_sha256": beta_wheel,

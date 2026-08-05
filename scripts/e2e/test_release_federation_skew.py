@@ -13,6 +13,7 @@ import urllib.error
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -27,6 +28,23 @@ except ModuleNotFoundError:
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def wheel_artifact(version: str, body: bytes, name: str | None = None):
+    name = name or f"aweb-{version}-py3-none-any.whl"
+    digest_set = {
+        name: sha256(body),
+        f"aweb-{version}.tar.gz": sha256(f"sdist-{version}".encode()),
+    }
+    return federation.WheelArtifact(
+        name,
+        version,
+        body,
+        sha256(body),
+        digest_set,
+        rd.canonical_digest_of_set(digest_set),
+        version,
+    )
 
 
 def candidate_zip(version="1.26.36", source_sha="c" * 40):
@@ -137,7 +155,8 @@ class CandidateWheelTests(unittest.TestCase):
 class PublishedWheelTests(unittest.TestCase):
     def test_published_wheel_is_metadata_bound_and_digest_checked(self):
         wheel = b"published-wheel"
-        wheel_url = "https://files.pythonhosted.org/packages/aweb.whl"
+        wheel_url = "https://files.pythonhosted.org/packages/aweb-1.26.35-py3-none-any.whl"
+        sdist = b"published-sdist"
         metadata = {
             "info": {"version": "1.26.35"},
             "urls": [{
@@ -145,6 +164,13 @@ class PublishedWheelTests(unittest.TestCase):
                 "packagetype": "bdist_wheel",
                 "url": wheel_url,
                 "digests": {"sha256": sha256(wheel)},
+                "yanked": False,
+            }, {
+                "filename": "aweb-1.26.35.tar.gz",
+                "packagetype": "sdist",
+                "url": "https://files.pythonhosted.org/packages/aweb-1.26.35.tar.gz",
+                "digests": {"sha256": sha256(sdist)},
+                "yanked": False,
             }],
         }
         calls = []
@@ -161,9 +187,47 @@ class PublishedWheelTests(unittest.TestCase):
         resolved = federation.WheelResolver(urlopen=opener).published("1.26.35")
         self.assertEqual(resolved.bytes, wheel)
         self.assertEqual(resolved.sha256, sha256(wheel))
+        self.assertEqual(resolved.release_digest_set, {
+            "aweb-1.26.35-py3-none-any.whl": sha256(wheel),
+            "aweb-1.26.35.tar.gz": sha256(sdist),
+        })
+        self.assertEqual(
+            resolved.release_set_digest,
+            rd.canonical_digest_of_set(resolved.release_digest_set),
+        )
+        self.assertEqual(resolved.info_version, "1.26.35")
         self.assertEqual(calls, [
             "https://pypi.org/pypi/aweb/1.26.35/json", wheel_url
         ])
+
+    def test_published_release_set_must_be_complete_nonempty_and_exact(self):
+        wheel = b"wheel"
+        valid_records = [{
+            "filename": "aweb-1.26.35-py3-none-any.whl",
+            "packagetype": "bdist_wheel",
+            "url": "https://files.pythonhosted.org/aweb-1.26.35-py3-none-any.whl",
+            "digests": {"sha256": sha256(wheel)},
+            "yanked": False,
+        }, {
+            "filename": "aweb-1.26.35.tar.gz",
+            "packagetype": "sdist",
+            "url": "https://files.pythonhosted.org/aweb-1.26.35.tar.gz",
+            "digests": {"sha256": "d" * 64},
+            "yanked": False,
+        }]
+        mutations = (
+            [],
+            valid_records[:1],
+            valid_records + [{**valid_records[1], "filename": "extra.tar.gz"}],
+            [valid_records[0], valid_records[0]],
+        )
+        for records in mutations:
+            metadata = {"info": {"version": "1.26.35"}, "urls": records}
+            with self.subTest(records=records), self.assertRaises(rd.ReceiptError):
+                federation.WheelResolver(
+                    urlopen=lambda request, timeout=0, value=metadata:
+                    Response(json.dumps(value).encode())
+                ).published("1.26.35")
 
     def test_only_metadata_404_is_classified_as_absence(self):
         def metadata_404(request, timeout=0):
@@ -192,8 +256,15 @@ class PublishedWheelTests(unittest.TestCase):
             "urls": [{
                 "filename": "aweb-1.26.35-py3-none-any.whl",
                 "packagetype": "bdist_wheel",
-                "url": "https://files.pythonhosted.org/aweb.whl",
+                "url": "https://files.pythonhosted.org/aweb-1.26.35-py3-none-any.whl",
                 "digests": {"sha256": "0" * 64},
+                "yanked": False,
+            }, {
+                "filename": "aweb-1.26.35.tar.gz",
+                "packagetype": "sdist",
+                "url": "https://files.pythonhosted.org/aweb-1.26.35.tar.gz",
+                "digests": {"sha256": "1" * 64},
+                "yanked": False,
             }],
         }
 
@@ -209,11 +280,15 @@ class PublishedWheelTests(unittest.TestCase):
 @unittest.skipIf(federation is None, "release_federation_skew is not implemented")
 class FederationHarnessTests(unittest.TestCase):
     def cell(self, direction="a-to-b"):
+        candidate_set = {
+            "aweb-1.26.36-py3-none-any.whl": sha256(b"candidate"),
+            "aweb-1.26.36.tar.gz": sha256(b"sdist-1.26.36"),
+        }
         candidate = {
             "component": "server",
             "version": "1.26.36",
-            "digest": "sha256:candidate-set",
-            "digest_set": {"aweb-1.26.36.whl": "c" * 64},
+            "digest": rd.canonical_digest_of_set(candidate_set),
+            "digest_set": candidate_set,
             "lane_ref": {
                 "artifact": "gh-artifact:awebai/aweb:41:42",
                 "aw_source_sha": "d" * 40,
@@ -236,11 +311,26 @@ class FederationHarnessTests(unittest.TestCase):
 
     def wheels(self):
         return {
-            "1.26.36": federation.WheelArtifact(
-                "aweb-1.26.36.whl", "1.26.36", b"candidate", sha256(b"candidate")
-            ),
-            "1.26.35": federation.WheelArtifact(
-                "aweb-1.26.35.whl", "1.26.35", b"published", sha256(b"published")
+            "1.26.36": wheel_artifact("1.26.36", b"candidate"),
+            "1.26.35": wheel_artifact("1.26.35", b"published"),
+        }
+
+    def inventory(self, version, mcp, *, dependency="0.37.2"):
+        return {"aweb": version, "mcp": mcp, "starlette": dependency}
+
+    def runtime(self, env, prefix, *, dependency="0.37.2"):
+        inventory = self.inventory(
+            env[f"AWEB_{prefix}_VERSION"],
+            env["AWEB_FED_E2E_MCP_VERSION"],
+            dependency=dependency,
+        )
+        return {
+            "version": env[f"AWEB_{prefix}_VERSION"],
+            "wheel_sha256": env[f"AWEB_{prefix}_WHEEL_SHA256"],
+            "mcp_version": env["AWEB_FED_E2E_MCP_VERSION"],
+            "installed_distributions": inventory,
+            "installed_distributions_sha256": sha256(
+                json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
             ),
         }
 
@@ -255,22 +345,29 @@ class FederationHarnessTests(unittest.TestCase):
                 "alpha": int(env["AWEB_ALPHA_E2E_PORT"]),
                 "beta": int(env["AWEB_BETA_E2E_PORT"]),
             },
-            "alpha": {
-                "version": env["AWEB_ALPHA_VERSION"],
-                "wheel_sha256": env["AWEB_ALPHA_WHEEL_SHA256"],
-                "mcp_version": env["AWEB_FED_E2E_MCP_VERSION"],
-                "inventory_sha256": "a" * 64,
-            },
-            "beta": {
-                "version": env["AWEB_BETA_VERSION"],
-                "wheel_sha256": env["AWEB_BETA_WHEEL_SHA256"],
-                "mcp_version": env["AWEB_FED_E2E_MCP_VERSION"],
-                "inventory_sha256": "b" * 64,
-            },
+            "alpha": self.runtime(env, "ALPHA"),
+            "beta": self.runtime(env, "BETA"),
             "outcomes": dict(federation.REQUIRED_OUTCOMES),
         }
         value.update(changes)
         return federation.OBSERVATION_PREFIX + json.dumps(
+            value, sort_keys=True, separators=(",", ":")
+        )
+
+    def control_runtime(self, env, *, beta_dependency="0.37.2"):
+        value = {
+            "alpha": self.runtime(env, "ALPHA"),
+            "beta": self.runtime(env, "BETA", dependency=beta_dependency),
+            "cell_id": env["AWEB_FED_E2E_CELL_ID"],
+            "ports": {
+                "awid": int(env["AWID_FED_E2E_PORT"]),
+                "alpha": int(env["AWEB_ALPHA_E2E_PORT"]),
+                "beta": int(env["AWEB_BETA_E2E_PORT"]),
+            },
+            "project": env["AWEB_FED_E2E_PROJECT"],
+            "schema": federation.CONTROL_RUNTIME_SCHEMA,
+        }
+        return federation.CONTROL_RUNTIME_PREFIX + json.dumps(
             value, sort_keys=True, separators=(",", ":")
         )
 
@@ -340,6 +437,29 @@ class FederationHarnessTests(unittest.TestCase):
                     harness.run(self.cell())
                 self.assertFalse((Path(tmp) / "cells").exists())
 
+    def test_dependency_only_inventory_mismatch_is_red(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            def journey(env):
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=self.observation(
+                        env,
+                        beta=self.runtime(env, "BETA", dependency="9.9.9"),
+                    ),
+                    stderr="",
+                )
+
+            with self.assertRaisesRegex(rd.ReceiptError, "dependency"):
+                self.harness(tmp, journey).run(self.cell())
+            self.assertFalse((Path(tmp) / "cells").exists())
+
+    def test_child_forces_keep_off_despite_ambient_debug_setting(self):
+        completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+        with mock.patch.dict("os.environ", {"AWEB_FED_E2E_KEEP": "1"}):
+            with mock.patch.object(federation.subprocess, "run", return_value=completed) as run:
+                federation.run_federation_journey({"EXACT": "value"})
+        self.assertEqual(run.call_args.kwargs["env"]["AWEB_FED_E2E_KEEP"], "0")
+
     def test_nonzero_cell_journey_is_red_and_writes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
             harness = self.harness(
@@ -362,13 +482,49 @@ class FederationHarnessTests(unittest.TestCase):
             aggregate = federation.aggregate_cell_reports(cells, Path(tmp))
             self.assertEqual(aggregate["status"], "incomplete-unanchored")
             self.assertEqual(len(aggregate["reports"]), 2)
-            self.assertEqual(aggregate["candidate"]["side"], cells[0].a)
+            self.assertEqual(aggregate["candidate"]["component"], "server")
+            self.assertEqual(aggregate["candidate"]["lane_ref"], cells[0].a["lane_ref"])
             self.assertIsNone(aggregate["anchor"])
+            self.assertEqual(
+                federation.load_aggregate(cells, Path(tmp)), aggregate
+            )
 
+            extra = Path(tmp) / "cells" / "extra.json"
+            extra.write_text("{}\n")
+            with self.assertRaisesRegex(rd.ReceiptError, "file set"):
+                federation.load_aggregate(cells, Path(tmp))
+            extra.unlink()
+
+            aggregate_path = Path(tmp) / "aggregates" / f"{aggregate['aggregate_id']}.json"
+            rewritten = dict(aggregate)
+            rewritten["aggregate_id"] = "0" * 64
+            aggregate_path.write_text(json.dumps(
+                rewritten, sort_keys=True, separators=(",", ":")
+            ) + "\n")
+            with self.assertRaisesRegex(rd.ReceiptError, "aggregate"):
+                federation.load_aggregate(cells, Path(tmp))
+
+    def test_reload_revalidates_cell_report_instead_of_trusting_write_time(self):
+        def journey(env):
+            return SimpleNamespace(returncode=0, stdout=self.observation(env), stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cells = [self.cell("a-to-b"), self.cell("b-to-a")]
+            harness = self.harness(tmp, journey)
+            for cell in cells:
+                harness.run(cell)
+            federation.aggregate_cell_reports(cells, Path(tmp))
             report_path = Path(tmp) / "cells" / f"{federation.cell_identity(cells[0])}.json"
-            report_path.write_text(report_path.read_text().replace("1.26.36", "9.9.9"))
-            with self.assertRaisesRegex(rd.ReceiptError, "report"):
-                federation.aggregate_cell_reports(cells, Path(tmp))
+            report = json.loads(report_path.read_text())
+            report["observation"]["alpha"]["installed_distributions"]["mcp"] = "0.0.0"
+            report["observation_sha256"] = sha256(json.dumps(
+                report["observation"], sort_keys=True, separators=(",", ":")
+            ).encode())
+            report_path.write_text(json.dumps(
+                report, sort_keys=True, separators=(",", ":")
+            ) + "\n")
+            with self.assertRaisesRegex(rd.ReceiptError, "runtime|report"):
+                federation.load_aggregate(cells, Path(tmp))
 
     def test_invocations_reserve_distinct_token_derived_loopback_ports(self):
         first = federation.reserve_invocation(token="0" * 32)
@@ -391,9 +547,7 @@ class FederationHarnessTests(unittest.TestCase):
         class Resolver:
             def published(self, version):
                 versions.append(version)
-                return federation.WheelArtifact(
-                    f"aweb-{version}.whl", version, version.encode(), sha256(version.encode())
-                )
+                return wheel_artifact(version, version.encode())
 
         calls = []
 
@@ -402,16 +556,24 @@ class FederationHarnessTests(unittest.TestCase):
             if env["AWEB_BETA_VERSION"] == "1.22.1":
                 return SimpleNamespace(
                     returncode=1,
-                    stdout="beta federation route probe returned 404",
+                    stdout=(
+                        self.control_runtime(env)
+                        + "\nbeta federation route probe returned 404"
+                    ),
                     stderr="",
                 )
-            return SimpleNamespace(returncode=0, stdout="route probe green", stderr="")
+            return SimpleNamespace(
+                returncode=0,
+                stdout=self.control_runtime(env) + "\nroute probe green",
+                stderr="",
+            )
 
         with tempfile.TemporaryDirectory() as tmp:
             report = federation.prove_route_controls(
                 Resolver(), control_journey, report_dir=Path(tmp)
             )
             self.assertEqual(report["schema"], federation.CONTROL_SCHEMA)
+            self.assertIn("installed_distributions", report["controls"]["negative"]["runtime"]["alpha"])
             self.assertTrue((Path(tmp) / "control.json").is_file())
         self.assertEqual(versions, ["1.23.0", "1.22.1"])
         self.assertEqual(len(calls), 2)
@@ -428,12 +590,35 @@ class FederationHarnessTests(unittest.TestCase):
             harness.run(self.cell("b-to-a"))
         self.assertEqual(len(cell_calls), 2, "ordinary cells must run no historical controls")
 
+    def test_control_dependency_inventories_must_match_across_runtimes_and_runs(self):
+        class Resolver:
+            def published(self, version):
+                return wheel_artifact(version, version.encode())
+
+        def journey(env):
+            mismatched = env["AWEB_BETA_VERSION"] == "1.23.0"
+            output = self.control_runtime(
+                env, beta_dependency="9.9.9" if mismatched else "0.37.2"
+            )
+            if env["AWEB_BETA_VERSION"] == "1.22.1":
+                return SimpleNamespace(
+                    returncode=1,
+                    stdout=output + "\nbeta federation route probe returned 404",
+                    stderr="",
+                )
+            return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(rd.ReceiptError, "dependency"):
+                federation.prove_route_controls(
+                    Resolver(), journey, report_dir=Path(tmp)
+                )
+            self.assertFalse((Path(tmp) / "control.json").exists())
+
     def test_negative_control_must_fail_for_the_exact_missing_route(self):
         class Resolver:
             def published(self, version):
-                return federation.WheelArtifact(
-                    f"aweb-{version}.whl", version, b"x", sha256(b"x")
-                )
+                return wheel_artifact(version, b"x")
 
         with self.assertRaises(rd.ReceiptError):
             federation.prove_route_controls(
@@ -462,7 +647,9 @@ class ParameterizedJourneyContractTests(unittest.TestCase):
         self.assertNotIn("mcp<2", dockerfile)
         self.assertIn("alpha installs exact locked mcp", script)
         self.assertIn("beta installs exact locked mcp", script)
-        self.assertIn("inventory_sha256", script)
+        self.assertIn("installed_distributions", script)
+        self.assertIn("installed_distributions_sha256", script)
+        self.assertIn("AWEB_FED_E2E_KEEP", script)
         self.assertNotIn("COPY server/src", dockerfile)
 
     def test_route_probe_precedes_setup_and_direction_is_evidenced(self):
