@@ -166,6 +166,30 @@ PY
     [[ -z "$PROFILE" ]] || profile_inspect "$tgz"
     printf 'STAGED: %s sha256 %s\n' "$(basename "$tgz")" "$(sha256 "$tgz")"
     ;;
+  inspect-tgz)
+    [[ -n "$TGZ" && -f "$TGZ" && -n "$VERSION" ]] \
+      || { echo "inspect-tgz requires --tgz --version" >&2; exit 2; }
+    python3 - "$TGZ" "$VERSION" <<'PY'
+import json, sys, tarfile
+path, version = sys.argv[1], sys.argv[2]
+with tarfile.open(path) as t:
+    names = t.getnames()
+    pkg = json.load(t.extractfile("package/package.json"))
+if pkg["version"] != version:
+    sys.exit(f"REFUSE: tgz declares version {pkg['version']}, expected {version}")
+main = pkg.get("main")
+if main:
+    entry = "package/" + main.lstrip("./")
+    if entry not in names:
+        sys.exit(f"REFUSE: declared main {main.lstrip('./')} is missing from the tgz")
+for spec in pkg.get("files", []):
+    prefix = "package/" + spec.rstrip("/")
+    if not any(n == prefix or n.startswith(prefix + "/") for n in names):
+        sys.exit(f"REFUSE: files entry {spec} contributed nothing to the tgz")
+PY
+    [[ -z "$PROFILE" ]] || profile_inspect "$TGZ"
+    printf 'INSPECTED: %s sha256 %s\n' "$(basename "$TGZ")" "$(sha256 "$TGZ")"
+    ;;
   publish-exact)
     [[ -n "$TGZ" && -f "$TGZ" ]] || fail "publish-exact requires an existing --tgz"
     npm publish "$TGZ" --access public

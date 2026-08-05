@@ -2724,5 +2724,330 @@ class CellIdentityTests(unittest.TestCase):
                 self.assertEqual(cell.declared_direction, edge.direction)
 
 
+def channel_tgz(*, version="1.7.2", plugin_version=None, sentinel=True):
+    """A tgz satisfying the reviewed .3 channel profile."""
+    import tarfile
+
+    markers = "\n".join([
+        "const stableID = certificateStableID || identityStableID",
+        'case "app_event"', 'kind: "app"',
+        "stableIdentityStateHash",
+        "seq>1 requires rotate_key operation",
+        "did:aw not derived from genesis key",
+        "verifyStableIdentityViaFullLog",
+        "pin store is empty or has no document",
+    ])
+    if sentinel:
+        markers += ("\naweb-channel-core-security/"
+                    "did-log-genesis-bound-v2+full-log-v1+"
+                    "pinstore-fail-closed-v1")
+    files = {
+        "package/package.json": json.dumps({
+            "name": "@awebai/claude-channel", "version": version,
+            "main": "./dist/index.js",
+            "files": ["dist", ".mcp.json", ".claude-plugin"],
+        }),
+        "package/dist/index.js": markers,
+        "package/.mcp.json": json.dumps(
+            {"mcpServers": {"aweb": {"command": "node"}}}),
+        "package/.claude-plugin/plugin.json": json.dumps(
+            {"name": "channel", "version": plugin_version or version}),
+    }
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for name, content in files.items():
+            data = content.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+def npm_lane_zip(*, package="channel", version="1.7.2", mode="stage-only",
+                 source_sha="f" * 40, tgz=None):
+    tgz = tgz if tgz is not None else channel_tgz(version=version)
+    tgz_name = f"awebai-claude-channel-{version}.tgz"
+    files = {tgz_name: sha256(tgz)}
+    canonical = sha256(json.dumps(files, sort_keys=True).encode())
+    manifest = {
+        "mode": mode, "package": package, "tag": f"channel-v{version}",
+        "candidate_version": version, "source_sha": source_sha,
+        "files": files, "canonical_set_digest": canonical,
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as z:
+        z.writestr("manifest.json", json.dumps(manifest))
+        z.writestr(tgz_name, tgz)
+    return buffer.getvalue()
+
+
+GOOD_PROOF = {"obligation": "delivery-restart-proof",
+              "evidence_id": "restart:host-1:pid-9", "digest": "sha-evidence"}
+
+
+def npm_lane(zip_bytes, *, observer, runs=None, source_sha="f" * 40,
+             delivery_proofs=None):
+    api = FakeGithubApi(repo="awebai/aweb", zip_bytes=zip_bytes,
+                        workflow_path=".github/workflows/npm-release.yml")
+    return rd.NpmWorkflowLane(
+        component="channel",
+        npm_name="@awebai/claude-channel",
+        reader=rd.GithubArtifactStore(
+            api=api, repo="awebai/aweb",
+            workflow_path=".github/workflows/npm-release.yml"),
+        lane_authority=rd.GithubArtifactDigestAuthority(
+            api=api, repo="awebai/aweb",
+            workflow_path=".github/workflows/npm-release.yml"),
+        refs={"channel": lane_ref_for(api, zip_bytes, source_sha)},
+        npm_observe=observer,
+        runs=runs if runs is not None else FakeAwRuns(),
+        delivery_proofs=delivery_proofs or {},
+        waiter=lambda: None,
+    ), api
+
+
+class NpmWorkflowLaneTests(unittest.TestCase):
+    def node(self):
+        return rd.PlanNode(component="channel", reason="changed",
+                           version="1.7.2")
+
+    def test_stage_validates_the_lane_and_channel_profile(self) -> None:
+        zip_bytes = npm_lane_zip()
+        lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
+        entry = lane.stage(self.node())
+        self.assertEqual(list(entry.digest_set),
+                         ["awebai-claude-channel-1.7.2.tgz"])
+        self.assertEqual(entry.digest,
+                         rd.canonical_digest_of_set(entry.digest_set))
+
+    def test_stage_refuses_a_profile_violation_in_the_tgz(self) -> None:
+        zip_bytes = npm_lane_zip(tgz=channel_tgz(sentinel=False))
+        lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
+        with self.assertRaises(rd.ReceiptError):
+            lane.stage(self.node())
+        zip_bytes = npm_lane_zip(tgz=channel_tgz(plugin_version="9.9.9"))
+        lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
+        with self.assertRaises(rd.ReceiptError):
+            lane.stage(self.node())
+
+    def test_observation_absent_exact_mismatch_outage(self) -> None:
+        zip_bytes = npm_lane_zip()
+        tgz_digest = sha256(channel_tgz())
+        node = self.node()
+        state = {"value": None}
+
+        def observer(package, version):
+            if state["value"] == "outage":
+                raise rd.ReceiptError("registry unavailable")
+            return state["value"]
+
+        lane, _ = npm_lane(zip_bytes, observer=observer,
+                           delivery_proofs={"channel": dict(GOOD_PROOF)})
+        staged = lane.stage(node)
+        self.assertIsNone(lane.observe(node, staged), "absent continues")
+        state["value"] = tgz_digest
+        observed = lane.observe(node, staged)
+        self.assertEqual(observed.digest_set, staged.digest_set)
+        self.assertEqual(observed.delivery_proof, GOOD_PROOF)
+        state["value"] = "0" * 64
+        with self.assertRaises(rd.ReceiptError):
+            lane.observe(node, staged)
+        state["value"] = "outage"
+        with self.assertRaises(rd.ReceiptError):
+            lane.observe(node, staged)
+
+    def test_publish_dispatches_package_inputs_and_attaches_proof(self) -> None:
+        zip_bytes = npm_lane_zip()
+        tgz_digest = sha256(channel_tgz())
+        runs = FakeAwRuns()
+        state = {"value": None}
+        lane, api = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        staged = lane.stage(self.node())
+        original = runs.dispatch
+
+        def dispatch(inputs):
+            original(inputs)
+            state["value"] = tgz_digest
+        runs.dispatch = dispatch
+        published = lane.publish(self.node(), staged)
+        self.assertEqual(published.delivery_proof, GOOD_PROOF)
+        self.assertEqual(runs.dispatched[0]["package"], "channel")
+        self.assertEqual(runs.dispatched[0]["mode"], "publish-continuation")
+        self.assertEqual(runs.dispatched[0]["stage_run_id"], str(api.run_id))
+
+    def test_publication_never_fabricates_delivery(self) -> None:
+        zip_bytes = npm_lane_zip()
+        tgz_digest = sha256(channel_tgz())
+        runs = FakeAwRuns()
+        state = {"value": None}
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs)
+        staged = lane.stage(self.node())
+        original = runs.dispatch
+
+        def dispatch(inputs):
+            original(inputs)
+            state["value"] = tgz_digest
+        runs.dispatch = dispatch
+        published = lane.publish(self.node(), staged)
+        self.assertIsNone(
+            published.delivery_proof,
+            "no separately supplied proof: none is fabricated",
+        )
+
+    def test_malformed_supplied_proof_refuses_at_publish(self) -> None:
+        zip_bytes = npm_lane_zip()
+        tgz_digest = sha256(channel_tgz())
+        runs = FakeAwRuns()
+        state = {"value": None}
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": {"obligation":
+                                         "delivery-restart-proof",
+                                         "evidence_id": 7, "digest": "d"}})
+        staged = lane.stage(self.node())
+        original = runs.dispatch
+
+        def dispatch(inputs):
+            original(inputs)
+            state["value"] = tgz_digest
+        runs.dispatch = dispatch
+        with self.assertRaises(rd.ReceiptError):
+            lane.publish(self.node(), staged)
+
+
+class DeliveryProofArgumentTests(unittest.TestCase):
+    def test_well_formed_proof_parses_and_malformed_refuses(self) -> None:
+        proofs = rd.parse_delivery_proof_arguments([
+            "component=channel,obligation=delivery-restart-proof,"
+            "evidence_id=restart:h1:p9,digest=sha-evidence",
+        ])
+        self.assertEqual(proofs["channel"]["obligation"],
+                         "delivery-restart-proof")
+        for bad in ("component=channel,obligation=,evidence_id=e,digest=d",
+                    "component=channel",
+                    "component=channel,obligation=o,evidence_id=e,digest=d,"
+                    "component=again"):
+            with self.assertRaises(rd.ReceiptError, msg=bad):
+                rd.parse_delivery_proof_arguments([bad])
+        with self.assertRaises(rd.ReceiptError):
+            rd.parse_delivery_proof_arguments([
+                "component=channel,obligation=o,evidence_id=e,digest=d",
+                "component=channel,obligation=o,evidence_id=e,digest=d",
+            ])
+
+
+class NpmLaneEndToEndTests(unittest.TestCase):
+    def test_channel_crash_resume_zero_restage_with_proof(self) -> None:
+        transport = FakeAnchorTransport()
+        version = "1.7.2"
+        graph = rd.Graph.from_dict({
+            "component": {
+                "channel": {
+                    "source_paths": ["x/"],
+                    "version_source": {"type": "manifest", "path": "x/v"},
+                    "tag_format": "channel-v{version}",
+                    "publish_lane": {
+                        "workflow": ".github/workflows/npm-release.yml",
+                        "repository": "awebai/aweb",
+                        "provider": "github-workflow-artifacts",
+                        "modes": ["stage-only", "publish-continuation",
+                                  "verify-only"],
+                        "registry": {"type": "npm",
+                                     "package": "@awebai/claude-channel"},
+                    },
+                    "verify": {"command": "true"},
+                    "delivery_restart": {"proof": "restart per host"},
+                },
+            },
+            "edge": [],
+        })
+        state = rd.FixtureState(
+            changed_components={"channel": True},
+            versions={"channel": version},
+            published_versions={"channel": "1.7.1"},
+        )
+        tgz = channel_tgz(version=version)
+        registry = {"value": None}
+
+        def lane_factory(*, publish_ok):
+            zip_bytes = npm_lane_zip(version=version, tgz=tgz)
+            runs = FakeAwRuns(
+                conclusion="success" if publish_ok else "failure")
+            if publish_ok:
+                original = runs.dispatch
+
+                def dispatch(inputs):
+                    original(inputs)
+                    registry["value"] = sha256(tgz)
+                runs.dispatch = dispatch
+            lane, _ = npm_lane(
+                zip_bytes, observer=lambda p, v: registry["value"],
+                runs=runs,
+                delivery_proofs={"channel": dict(GOOD_PROOF)})
+            lane.stage_calls = 0
+            original_stage = lane.stage
+
+            def counted(node):
+                lane.stage_calls += 1
+                return original_stage(node)
+            lane.stage = counted
+            return lane
+
+        store = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
+        authority = rd.GithubAnchorDigestAuthority(transport=transport)
+        plan = rd.compute_plan(graph, state)
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        rd._put_content_addressed(
+            store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
+        frozen = rd.load_frozen_plan(
+            store.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+        with self.assertRaises(rd.ReceiptError):
+            rd.run_plan(
+                plan, graph, lane_factory(publish_ok=False),
+                skew=NoRuntimeSkew(), authority=authority, store=store,
+                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                providers=rd.Providers(store=store, authority=authority),
+            )
+        store2 = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
+        authority2 = rd.GithubAnchorDigestAuthority(transport=transport)
+        resume_lane = lane_factory(publish_ok=True)
+        frozen2 = rd.load_frozen_plan(
+            store2.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+        entries = rd.resume_plan(
+            rd.compute_plan(graph, state), graph,
+            lanes=resume_lane, skew=NoRuntimeSkew(),
+            store=store2, authority=authority2,
+            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            require_external_authority=True,
+            authority_trust="external-immutable",
+        )
+        self.assertEqual(resume_lane.stage_calls, 0, "zero restage")
+        self.assertEqual(entries["channel"].phase, "verified")
+        self.assertEqual(entries["channel"].delivery_proof, GOOD_PROOF)
+
+
+class NpmLaneCompositionTests(unittest.TestCase):
+    def test_graph_declares_the_npm_lane_surface(self) -> None:
+        graph = rd.Graph.load(rd.GRAPH_PATH)
+        for name in ("channel", "pi", "skills"):
+            lane = graph.components[name].publish_lane
+            self.assertEqual(lane.get("provider"),
+                             "github-workflow-artifacts", name)
+            self.assertEqual(lane.get("repository"), "awebai/aweb", name)
+            self.assertEqual(
+                rd.LANE_ARTIFACT_SOURCES[name],
+                ("awebai/aweb", ".github/workflows/npm-release.yml"),
+            )
+        refs = {"channel": rd.LaneRef(
+            artifact="gh-artifact:awebai/aweb:1:2",
+            aw_source_sha="f" * 40,
+            zip_digest="sha256:" + "6" * 64)}
+        lanes = rd.compose_workflow_lanes(graph, refs)
+        self.assertTrue(lanes.has_lane("channel"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
