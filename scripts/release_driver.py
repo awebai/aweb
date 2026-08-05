@@ -2754,13 +2754,21 @@ def build_production_skew(frozen: "FrozenPlan", *, state, measurement,
                 f"runtime-contract {key}: the live measurement no longer "
                 "equals the frozen sealed record; refusing drifted support"
             )
+        candidates = {
+            n.component: n.version for n in plan.moving if n.version
+        }
         for name in (edge.a, edge.b):
             component = graph.components.get(name)
             current = (
                 state.published_version(component)
                 if component is not None else None
             )
-            if current != frozen_published.get(name):
+            allowed = {frozen_published.get(name)}
+            if name in candidates:
+                # A moving endpoint may already have published its exact
+                # candidate (crash-resume); anything else is drift.
+                allowed.add(candidates[name])
+            if current not in allowed:
                 raise ReceiptError(
                     f"runtime-contract {key}: published {name} is now "
                     f"{current!r}, the frozen plan sealed "
@@ -3067,6 +3075,7 @@ def _frozen_drift(
     current: dict,
     skip_components: set,
     allowed_tag_transitions: dict | None = None,
+    allowed_published_transitions: dict | None = None,
 ) -> list[str]:
     """Named differences between the frozen snapshot and the currently
     resolved execution inputs. Components already published in a resume are
@@ -3078,6 +3087,7 @@ def _frozen_drift(
     current = canon(current)
     drift: list[str] = []
     allowed_tags = allowed_tag_transitions or {}
+    allowed_published = allowed_published_transitions or {}
     for section in ("pins", "baselines", "tags", "measurements",
                     "runtime_published"):
         frozen_section = frozen_resolved.get(section, {}) or {}
@@ -3095,6 +3105,14 @@ def _frozen_drift(
                         f"tags[{key}]: allowed exactly {expected!r}, "
                         f"observed {observed!r}"
                     )
+                continue
+            if (
+                section == "runtime_published"
+                and key in skip_components
+                and current_section.get(key) == allowed_published.get(key)
+            ):
+                # A resumed-published endpoint transitions to EXACTLY its
+                # plan candidate version; anything else is drift.
                 continue
             if frozen_section.get(key) != current_section.get(key):
                 drift.append(
@@ -3212,9 +3230,15 @@ def run_plan(
                 allowed_tags[name] = {
                     component.tag_format.format(version=node.version): source_sha
                 }
+        allowed_published = {
+            n.component: n.version
+            for n in plan.moving
+            if n.component in skip_components and n.version is not None
+        }
         drift = _frozen_drift(
             frozen.resolved, current, skip_components,
             allowed_tag_transitions=allowed_tags,
+            allowed_published_transitions=allowed_published,
         )
         if drift:
             raise ReceiptError(
