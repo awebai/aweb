@@ -73,6 +73,27 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# npm treats a relative path containing a slash as a package/git spec in some
+# call contexts. Resolve every caller-supplied tgz once, before mode dispatch,
+# so all npm operations receive the exact existing file by physical absolute
+# path. realpath resolves directory and final-component symlinks without
+# reading or rewriting the artifact bytes.
+if [[ -n "$TGZ" ]]; then
+  supplied_tgz="$TGZ"
+  if ! TGZ="$(python3 - "$supplied_tgz" <<'PYTGZ'
+import os
+import sys
+
+path = os.path.realpath(sys.argv[1])
+if not os.path.isfile(path):
+    raise SystemExit(1)
+print(path)
+PYTGZ
+  )"; then
+    fail "--tgz must name an existing regular file: $supplied_tgz"
+  fi
+fi
+
 EXPECTED_SKILLS="aweb-bootstrap aweb-coordination aweb-identity aweb-messaging aweb-team-membership"
 
 profile_inspect() {
