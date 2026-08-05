@@ -2967,6 +2967,69 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         self.assertEqual(entry.digest,
                          rd.canonical_digest_of_set(entry.digest_set))
 
+    def test_adopt_preplan_revalidates_without_calling_stage(self) -> None:
+        zip_bytes = npm_lane_zip()
+        lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
+        lane.stage = lambda node: self.fail("adoption called normal stage()")
+        adopted = lane.adopt_preplan(self.node())
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            expected_manifest = "sha256:" + sha256(archive.read("manifest.json"))
+        self.assertEqual(adopted.manifest_digest, expected_manifest)
+        self.assertEqual(adopted.entry.lane_ref,
+                         lane._refs["channel"].to_dict())
+
+    def test_adopt_preplan_requires_independent_zip_authority(self) -> None:
+        zip_bytes = npm_lane_zip()
+        lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
+
+        class WrongAuthority:
+            def expected_digest(self, artifact):
+                return "0" * 64
+
+        lane._lane_authority = WrongAuthority()
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.adopt_preplan(self.node())
+        self.assertIn("independent", str(caught.exception))
+
+    def test_recovery_continuation_uses_persisted_snapshot_and_returns_run(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": None}
+        runs = FakeAwRuns()
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        before = lane.continuation_snapshot(self.node())
+        original = runs.dispatch
+
+        def dispatch(inputs):
+            original(inputs)
+            state["value"] = sha256(tgz)
+        runs.dispatch = dispatch
+        result = lane.publish_recovery(
+            self.node(), adopted.entry, before_run_ids=before)
+        self.assertEqual(result.continuation_run_id, str(runs.run_ids[-1]))
+        self.assertEqual(result.entry.digest_set, adopted.entry.digest_set)
+
+    def test_recovery_attempt_correlates_one_exact_success_without_dispatch(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": None}
+        runs = FakeAwRuns()
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        before = lane.continuation_snapshot(self.node())
+        runs.run_ids.append(777)
+        runs.conclusion = "success"
+        state["value"] = sha256(tgz)
+        recovered = lane.recover_recovery_attempt(
+            self.node(), adopted.entry, before_run_ids=before)
+        self.assertEqual(recovered.continuation_run_id, "777")
+        self.assertEqual(runs.dispatched, [])
+
     def test_stage_refuses_a_profile_violation_in_the_tgz(self) -> None:
         zip_bytes = npm_lane_zip(tgz=channel_tgz(sentinel=False))
         lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
@@ -3083,6 +3146,40 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         self.assertEqual(published.phase, "published")
         self.assertEqual(runs.dispatched, [],
                          "exact adoption dispatches zero runs")
+
+
+class WorkflowRecoveryObservationTests(unittest.TestCase):
+    def test_combines_exact_tag_and_registry_observations_without_expectations(self):
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        registry = {"value": None}
+        tag = {"value": None}
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: registry["value"],
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        lanes = rd.WorkflowLanes(
+            {"channel": lane},
+            recovery_tag_names={"channel": "channel-v1.7.2"},
+            recovery_tag_observe=lambda name: tag["value"],
+        )
+        node = rd.PlanNode(component="channel", reason="adopted-preplan",
+                           version="1.7.2")
+        staged = lane.adopt_preplan(node).entry
+        absent = lanes.observe_recovery(node, staged)
+        self.assertEqual(absent.public, {
+            "tag": {"name": "channel-v1.7.2", "status": "absent",
+                    "source_sha": None},
+            "registry": {"status": "absent", "digest_set": None},
+        })
+        self.assertIsNone(absent.entry)
+
+        tag["value"] = "f" * 40
+        registry["value"] = sha256(tgz)
+        exact = lanes.observe_recovery(node, staged)
+        self.assertEqual(exact.public["tag"]["source_sha"], "f" * 40)
+        self.assertEqual(exact.public["registry"]["digest_set"],
+                         staged.digest_set)
+        self.assertEqual(exact.entry.digest, staged.digest)
 
 
 class NpmRegistryClassifierTests(unittest.TestCase):

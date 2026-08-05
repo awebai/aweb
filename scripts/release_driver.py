@@ -2123,12 +2123,22 @@ class _WorkflowLaneBase:
             "stage_zip_digest": ref.zip_digest,
         }
 
-    def _dispatch_and_wait(self, inputs: dict) -> None:
-        before = set(self._runs.list_run_ids())
-        self._runs.dispatch(inputs)
-        new_runs: list = []
+    def continuation_snapshot(self, node) -> list[str]:
+        """Stable pre-attempt run identities persisted before dispatch."""
+        return sorted(str(run_id) for run_id in self._runs.list_run_ids())
+
+    def _new_continuation_runs(self, before_run_ids) -> list[tuple[str, object]]:
+        before = {str(run_id) for run_id in before_run_ids}
+        return [
+            (str(run_id), run_id)
+            for run_id in self._runs.list_run_ids()
+            if str(run_id) not in before
+        ]
+
+    def _wait_for_continuation(self, before_run_ids) -> str:
+        new_runs: list[tuple[str, object]] = []
         for _ in range(self.POLL_ATTEMPTS):
-            new_runs = [r for r in self._runs.list_run_ids() if r not in before]
+            new_runs = self._new_continuation_runs(before_run_ids)
             if new_runs:
                 break
             self._waiter()
@@ -2137,17 +2147,79 @@ class _WorkflowLaneBase:
                 f"{self.component}: expected exactly one new continuation "
                 f"run, identified {len(new_runs)}; refusing"
             )
+        run_id, native_run_id = new_runs[0]
         conclusion = None
         for _ in range(self.POLL_ATTEMPTS):
-            conclusion = self._runs.run_conclusion(new_runs[0])
+            conclusion = self._runs.run_conclusion(native_run_id)
             if conclusion is not None:
                 break
             self._waiter()
         if conclusion != "success":
             raise ReceiptError(
-                f"{self.component}: continuation run {new_runs[0]} concluded "
+                f"{self.component}: continuation run {run_id} concluded "
                 f"{conclusion!r}, not success"
             )
+        return run_id
+
+    def _dispatch_and_wait(self, inputs: dict, *, before_run_ids=None) -> str:
+        before = (
+            list(before_run_ids)
+            if before_run_ids is not None
+            else self.continuation_snapshot(None)
+        )
+        if set(before) != set(self.continuation_snapshot(None)):
+            raise ReceiptError(
+                f"{self.component}: continuation run set drifted before dispatch"
+            )
+        self._runs.dispatch(inputs)
+        return self._wait_for_continuation(before)
+
+    def publish_recovery(
+        self, node, staged: "ReceiptEntry", *, before_run_ids
+    ) -> "RecoveryContinuation":
+        if self.observe(node, staged) is not None:
+            raise ReceiptError(
+                f"{node.component}: recovery action is no longer unused; "
+                "exact existing state must be adopted before an attempt"
+            )
+        run_id = self._dispatch_and_wait(
+            self._continuation_inputs(staged), before_run_ids=before_run_ids
+        )
+        observed = self.observe(node, staged)
+        if observed is None:
+            raise ReceiptError(
+                f"{node.component}: successful continuation left no exact state"
+            )
+        return RecoveryContinuation(
+            entry=observed, continuation_run_id=run_id
+        )
+
+    def recover_recovery_attempt(
+        self, node, staged: "ReceiptEntry", *, before_run_ids
+    ) -> "RecoveryContinuation | None":
+        new_runs = self._new_continuation_runs(before_run_ids)
+        if not new_runs:
+            return None
+        if len(new_runs) != 1:
+            raise ReceiptError(
+                f"{node.component}: attempted continuation correlates to "
+                f"{len(new_runs)} runs, not exactly one"
+            )
+        run_id, native_run_id = new_runs[0]
+        conclusion = self._runs.run_conclusion(native_run_id)
+        if conclusion != "success":
+            raise ReceiptError(
+                f"{node.component}: attempted continuation run {run_id} "
+                f"concluded {conclusion!r}, not success"
+            )
+        observed = self.observe(node, staged)
+        if observed is None:
+            raise ReceiptError(
+                f"{node.component}: successful attempted run has no exact effect"
+            )
+        return RecoveryContinuation(
+            entry=observed, continuation_run_id=run_id
+        )
 
     def publish(self, node, staged: "ReceiptEntry") -> "ReceiptEntry":
         self._dispatch_and_wait(self._continuation_inputs(staged))
@@ -2416,7 +2488,16 @@ class NpmWorkflowLane(_WorkflowLaneBase):
             return observed
         return super().publish(node, staged)
 
-    def stage(self, node) -> "ReceiptEntry":
+    def publish_recovery(self, node, staged, *, before_run_ids):
+        # Delivery remains a pre-effect gate on the dedicated recovery path.
+        self._require_valid_proof(node.component)
+        return super().publish_recovery(
+            node, staged, before_run_ids=before_run_ids
+        )
+
+    def _read_adoptable_stage(self, node) -> "AdoptedStageEntry":
+        import zipfile
+
         ref = self._refs[node.component]
         data = self._fetch_staged(ref)
         manifest, _, _ = validate_npm_lane_artifact(
@@ -2426,13 +2507,30 @@ class NpmWorkflowLane(_WorkflowLaneBase):
             package=node.component,
             profile=node.component,
         )
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            manifest_digest = (
+                "sha256:" + hashlib.sha256(
+                    archive.read("manifest.json")
+                ).hexdigest()
+            )
         files = manifest["files"]
-        return ReceiptEntry(
-            version=node.version,
-            digest=canonical_digest_of_set(files),
-            digest_set=files,
-            lane_ref=ref.to_dict(),
+        return AdoptedStageEntry(
+            entry=ReceiptEntry(
+                version=node.version,
+                digest=canonical_digest_of_set(files),
+                digest_set=files,
+                lane_ref=ref.to_dict(),
+            ),
+            manifest_digest=manifest_digest,
         )
+
+    def adopt_preplan(self, node) -> "AdoptedStageEntry":
+        return self._read_adoptable_stage(node)
+
+    def stage(self, node) -> "ReceiptEntry":
+        # Ordinary Plan -> Stage keeps its own phase semantics even though the
+        # read-only semantic validator is shared with adopted evidence.
+        return self._read_adoptable_stage(node).entry
 
     def _continuation_inputs(self, staged):
         inputs = super()._continuation_inputs(staged)
@@ -2468,8 +2566,11 @@ class NpmWorkflowLane(_WorkflowLaneBase):
 class WorkflowLanes:
     """Per-component delegation over the composed lane objects."""
 
-    def __init__(self, lanes: dict):
+    def __init__(self, lanes: dict, *, recovery_tag_names=None,
+                 recovery_tag_observe=None):
         self._lanes = lanes
+        self._recovery_tag_names = dict(recovery_tag_names or {})
+        self._recovery_tag_observe = recovery_tag_observe
 
     def has_lane(self, component: str) -> bool:
         return component in self._lanes
@@ -2486,6 +2587,59 @@ class WorkflowLanes:
     def observe(self, node, staged=None):
         lane = self._lanes.get(node.component)
         return lane.observe(node, staged) if lane is not None else None
+
+    def observe_recovery(self, node, staged):
+        if (
+            node.component not in self._recovery_tag_names
+            or self._recovery_tag_observe is None
+        ):
+            raise ReceiptError(
+                f"{node.component}: no authoritative recovery tag observer "
+                "is composed"
+            )
+        template = self._recovery_tag_names[node.component]
+        tag_name = template.format(version=node.version)
+        tag_sha = self._recovery_tag_observe(tag_name)
+        lane_entry = self.observe(node, staged)
+        return ObservedRecoveryState(
+            public={
+                "tag": {
+                    "name": tag_name,
+                    "status": "present" if tag_sha is not None else "absent",
+                    "source_sha": tag_sha,
+                },
+                "registry": {
+                    "status": "exact" if lane_entry is not None else "absent",
+                    "digest_set": (
+                        dict(lane_entry.digest_set)
+                        if lane_entry is not None else None
+                    ),
+                },
+            },
+            entry=lane_entry,
+        )
+
+    def adopt_preplan(self, node):
+        lane = self._lanes[node.component]
+        adopt = getattr(lane, "adopt_preplan", None)
+        if adopt is None:
+            raise ReceiptError(
+                f"{node.component}: lane has no adopted-preplan semantic loader"
+            )
+        return adopt(node)
+
+    def continuation_snapshot(self, node):
+        return self._lanes[node.component].continuation_snapshot(node)
+
+    def publish_recovery(self, node, staged, *, before_run_ids):
+        return self._lanes[node.component].publish_recovery(
+            node, staged, before_run_ids=before_run_ids
+        )
+
+    def recover_recovery_attempt(self, node, staged, *, before_run_ids):
+        return self._lanes[node.component].recover_recovery_attempt(
+            node, staged, before_run_ids=before_run_ids
+        )
 
 
 def _observe_pypi(package: str, version: str):
@@ -2587,6 +2741,41 @@ def _observe_npm_registry(package: str, version: str, http=None):
     return hashlib.sha256(data).hexdigest()
 
 
+def _observe_git_version_tag(tag: str) -> str | None:
+    """Authoritative exact-tag observation from origin.
+
+    A nonzero ls-remote is unavailable, never absence. Annotated tags bind the
+    peeled commit; lightweight tags bind their direct object.
+    """
+    result = subprocess.run(
+        [
+            "git", "-C", str(REPO_ROOT), "ls-remote", "--tags", "origin",
+            f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise ReceiptError(
+            f"tag {tag}: remote observation unavailable: "
+            f"{result.stderr.strip()}"
+        )
+    direct = None
+    peeled = None
+    for line in result.stdout.splitlines():
+        sha, _, ref = line.partition("\t")
+        if ref == f"refs/tags/{tag}":
+            direct = sha
+        elif ref == f"refs/tags/{tag}^{{}}":
+            peeled = sha
+        else:
+            raise ReceiptError(f"tag {tag}: unexpected remote ref {ref!r}")
+    observed = peeled or direct
+    if observed is not None and not re.fullmatch(r"[0-9a-f]{40}", observed):
+        raise ReceiptError(f"tag {tag}: remote returned invalid SHA {observed!r}")
+    return observed
+
+
 def compose_workflow_lanes(
     graph: "Graph", refs: dict, delivery_proofs: dict | None = None
 ) -> WorkflowLanes:
@@ -2680,7 +2869,15 @@ def compose_workflow_lanes(
                 refs={component: ref}, runs=runs,
                 tag_observe=_observe_ghcr_tag_factory(repository),
             )
-    return WorkflowLanes(lanes)
+    return WorkflowLanes(
+        lanes,
+        recovery_tag_names={
+            component: graph.components[component].tag_format
+            for component in refs
+            if graph.components[component].tag_format
+        },
+        recovery_tag_observe=_observe_git_version_tag,
+    )
 
 
 # ── G5 skew matrix runner (aweb-abbe.7 runner slice) ─────────────────
@@ -2730,10 +2927,19 @@ class SkewCell:
     b: dict
 
 
+def canonical_json_bytes(value) -> bytes:
+    """The one byte representation used by typed release evidence.
+
+    Documents which authorize or receipt effects must not have a second
+    whitespace/key-order identity beside the bytes an authority records.
+    """
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+
+
 def canonical_json_digest(value) -> str:
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
 def skew_cell_preimage(cell: SkewCell) -> dict:
@@ -3482,6 +3688,1476 @@ def build_providers(
         measurement=measurement,
         authority_trust=authority_registration.trust_class,
     )
+
+
+# ── adopted-preplan recovery ─────────────────────────────────────────
+
+ADOPTED_PREPLAN_EXCEPTION_SCHEMA = (
+    "aweb.release.adopted-preplan-exception.v1"
+)
+ADOPTED_PREPLAN_AUTHORIZATION_SCHEMA = (
+    "aweb.release.adopted-preplan-authorization.v1"
+)
+ADOPTED_PREPLAN_PLAN_SCHEMA = "aweb.release.adopted-preplan-plan.v1"
+ADOPTED_PREPLAN_MANIFEST_SCHEMA = "aweb.release.adopted-preplan-manifest.v1"
+ADOPTED_PREPLAN_RECEIPT_SCHEMA = "aweb.release.adopted-preplan-receipt.v1"
+
+
+def _exact_keys(value, expected: set[str], label: str) -> None:
+    if not isinstance(value, dict) or set(value) != expected:
+        actual = sorted(value) if isinstance(value, dict) else value
+        raise ReceiptError(
+            f"{label} must carry exactly {sorted(expected)}, got {actual!r}"
+        )
+
+
+def _nonempty_text(value, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ReceiptError(f"{label} must be a nonempty string")
+    return value
+
+
+def _sha256_identity(value, label: str, *, prefix: bool = True) -> str:
+    pattern = r"sha256:[0-9a-f]{64}" if prefix else r"[0-9a-f]{64}"
+    if not isinstance(value, str) or not re.fullmatch(pattern, value):
+        form = "sha256:<64 lowercase hex>" if prefix else "64 lowercase hex"
+        raise ReceiptError(f"{label} must be {form}, got {value!r}")
+    return value
+
+
+def runtime_edge_document(edge: RuntimeContractEdge) -> dict:
+    """The complete graph-owned edge preimage plus its canonical identity."""
+    return {
+        "edge_id": edge_identity(edge),
+        "a": edge.a,
+        "b": edge.b,
+        "journey": edge.journey,
+        "artifacts": dict(edge.artifacts),
+        "direction": edge.direction,
+    }
+
+
+@dataclass(frozen=True)
+class AdoptedPreplanException:
+    canonical: dict
+    canonical_bytes: bytes
+    digest: str
+
+    @property
+    def source_sha(self) -> str:
+        return self.canonical["source_sha"]
+
+    @property
+    def components(self) -> dict:
+        return self.canonical["components"]
+
+    @property
+    def runtime_edges(self) -> list:
+        return self.canonical["runtime_edges"]
+
+    @property
+    def history(self) -> list:
+        return self.canonical["history"]
+
+
+@dataclass(frozen=True)
+class AdoptedStageEntry:
+    """Read-only semantic revalidation of an already-created stage.
+
+    It deliberately is not a ReceiptEntry phase: the stage predates this plan
+    and may never be represented as if the driver's normal Plan -> Stage
+    lifecycle created it.
+    """
+
+    entry: ReceiptEntry
+    manifest_digest: str
+
+
+@dataclass(frozen=True)
+class ObservedRecoveryState:
+    public: dict
+    entry: ReceiptEntry | None
+
+
+@dataclass(frozen=True)
+class RecoveryContinuation:
+    entry: ReceiptEntry
+    continuation_run_id: str
+
+
+@dataclass
+class AdoptedPreplanHandle:
+    exception: AdoptedPreplanException
+    exception_artifact_id: str
+    plan: dict
+    plan_id: str
+    plan_artifact_id: str
+    manifest: dict
+    manifest_id: str
+    manifest_artifact_id: str
+    staged: dict[str, ReceiptEntry]
+
+
+@dataclass(frozen=True)
+class AdoptedPreplanReceipt:
+    document: dict
+    digest: str
+    artifact_id: str
+
+
+def _validate_digest_set(value, label: str) -> dict:
+    if not isinstance(value, dict) or not value:
+        raise ReceiptError(f"{label} must be a nonempty digest map")
+    for name, digest in value.items():
+        _nonempty_text(name, f"{label} filename")
+        _sha256_identity(digest, f"{label}[{name}]", prefix=False)
+    return value
+
+
+def _validate_public_state(value, *, component: str, version: str,
+                           source_sha: str, graph: Graph,
+                           payload_digests: dict) -> None:
+    _exact_keys(value, {"tag", "registry"}, f"{component} public state")
+    tag = value["tag"]
+    _exact_keys(tag, {"name", "status", "source_sha"}, f"{component} tag")
+    declared = graph.components[component]
+    if not declared.tag_format:
+        raise ReceiptError(
+            f"{component}: adopted-preplan recovery requires an immutable "
+            "version tag declared by the graph"
+        )
+    expected_tag = declared.tag_format.format(version=version)
+    if tag["name"] != expected_tag:
+        raise ReceiptError(
+            f"{component}: state names tag {tag['name']!r}, expected "
+            f"{expected_tag!r} from the graph and version"
+        )
+    if tag["status"] not in ("present", "absent"):
+        raise ReceiptError(f"{component}: tag status must be present or absent")
+    expected_source = source_sha if tag["status"] == "present" else None
+    if tag["source_sha"] != expected_source:
+        raise ReceiptError(
+            f"{component}: {tag['status']} tag must bind source "
+            f"{expected_source!r}, got {tag['source_sha']!r}"
+        )
+    registry = value["registry"]
+    _exact_keys(
+        registry, {"status", "digest_set"}, f"{component} registry state"
+    )
+    if registry["status"] == "absent":
+        if registry["digest_set"] is not None:
+            raise ReceiptError(
+                f"{component}: absent registry state cannot carry digests"
+            )
+    elif registry["status"] == "exact":
+        _validate_digest_set(
+            registry["digest_set"], f"{component} observed registry digests"
+        )
+        if registry["digest_set"] != payload_digests:
+            raise ReceiptError(
+                f"{component}: exact registry state does not equal the "
+                "exception's preserved payload identity"
+            )
+        if tag["status"] != "present":
+            raise ReceiptError(
+                f"{component}: exact registry bytes without the exact version "
+                "tag cannot be adopted from the reviewed continuation lane"
+            )
+    else:
+        raise ReceiptError(
+            f"{component}: registry status must be absent or exact"
+        )
+
+
+def load_adopted_preplan_exception(
+    data: bytes, *, graph: Graph
+) -> AdoptedPreplanException:
+    """Load the dedicated recovery exception without weakening normal runs.
+
+    Canonical bytes, a strict closed schema, the checked-in graph, and every
+    LaneRef are all validated before the document can reach an authority.
+    """
+    try:
+        document = json.loads(data)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ReceiptError(f"adopted-preplan exception is not JSON: {exc}") from exc
+    if canonical_json_bytes(document) != data:
+        raise ReceiptError(
+            "adopted-preplan exception is not in canonical JSON byte form"
+        )
+    _exact_keys(
+        document,
+        {
+            "schema", "exception_authorization", "source_sha", "reason",
+            "one_shot", "components", "runtime_edges",
+            "observed_partial_state", "history",
+        },
+        "adopted-preplan exception",
+    )
+    if document["schema"] != ADOPTED_PREPLAN_EXCEPTION_SCHEMA:
+        raise ReceiptError(
+            f"adopted-preplan exception schema is {document['schema']!r}"
+        )
+    if document["one_shot"] is not True:
+        raise ReceiptError("adopted-preplan exception scope must be one-shot")
+    source_sha = document["source_sha"]
+    if not isinstance(source_sha, str) or not re.fullmatch(
+        r"[0-9a-f]{40}", source_sha
+    ):
+        raise ReceiptError(
+            "adopted-preplan exception source must be exactly 40 lowercase hex"
+        )
+    _nonempty_text(document["reason"], "adopted-preplan reason")
+    exception_auth = document["exception_authorization"]
+    _exact_keys(
+        exception_auth, {"authorization_id", "authorized_by"},
+        "exception authorization",
+    )
+    _nonempty_text(exception_auth["authorization_id"], "exception authorization id")
+    _nonempty_text(exception_auth["authorized_by"], "exception authorized_by")
+
+    components = document["components"]
+    if not isinstance(components, dict) or len(components) != 2:
+        raise ReceiptError(
+            "adopted-preplan recovery requires exactly two component lanes"
+        )
+    if list(components) != sorted(components):
+        raise ReceiptError("adopted-preplan components must be canonically ordered")
+    lane_artifacts: set[str] = set()
+    lane_zip_digests: set[str] = set()
+    for name, component in components.items():
+        _nonempty_text(name, "component name")
+        if name not in graph.components:
+            raise ReceiptError(f"adopted-preplan component {name!r} is not in graph")
+        if graph.components[name].publish_lane is None:
+            raise ReceiptError(f"{name}: graph declares no publish lane")
+        _exact_keys(
+            component,
+            {
+                "version", "lane_ref", "manifest_digest", "payload_digests",
+            },
+            f"{name} adopted stage",
+        )
+        version = _nonempty_text(component["version"], f"{name} version")
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+            raise ReceiptError(f"{name}: version must be dotted numeric")
+        ref = LaneRef.from_dict(component["lane_ref"])
+        if ref.aw_source_sha != source_sha:
+            raise ReceiptError(
+                f"{name}: lane source {ref.aw_source_sha} does not equal "
+                f"exception source {source_sha}"
+            )
+        if ref.artifact in lane_artifacts or ref.zip_digest in lane_zip_digests:
+            raise ReceiptError(
+                f"{name}: one lane's artifact/digest evidence is reused by "
+                "another component"
+            )
+        lane_artifacts.add(ref.artifact)
+        lane_zip_digests.add(ref.zip_digest)
+        _sha256_identity(component["manifest_digest"], f"{name} manifest digest")
+        _validate_digest_set(component["payload_digests"], f"{name} payload digests")
+
+    expected_edges = sorted(
+        (
+            runtime_edge_document(edge)
+            for edge in graph.runtime_contracts
+            if edge.a in components or edge.b in components
+        ),
+        key=lambda item: item["edge_id"],
+    )
+    if not expected_edges:
+        raise ReceiptError(
+            "adopted-preplan components touch no runtime-contract edge"
+        )
+    if any(
+        not edge.declared_incomplete
+        for edge in graph.runtime_contracts
+        if edge.a in components or edge.b in components
+    ):
+        raise ReceiptError(
+            "adopted-preplan exception is only an incomplete/unmeasured G5 "
+            "exception; measured and approved-deprecation edges use normal release-run"
+        )
+    runtime_edges = document["runtime_edges"]
+    if runtime_edges != expected_edges:
+        raise ReceiptError(
+            "adopted-preplan runtime edge preimages/identities do not equal "
+            "the exact touched edges in the checked-in graph"
+        )
+
+    partial = document["observed_partial_state"]
+    if not isinstance(partial, dict) or set(partial) != set(components):
+        raise ReceiptError(
+            "observed partial state must cover exactly both recovery components"
+        )
+    for name, state in partial.items():
+        _validate_public_state(
+            state,
+            component=name,
+            version=components[name]["version"],
+            source_sha=source_sha,
+            graph=graph,
+            payload_digests=components[name]["payload_digests"],
+        )
+
+    history = document["history"]
+    if not isinstance(history, list) or not history:
+        raise ReceiptError(
+            "adopted-preplan exception requires nonempty non-authorizing history"
+        )
+    for index, event in enumerate(history):
+        _exact_keys(
+            event,
+            {
+                "component", "kind", "run_id", "outcome",
+                "authorization_id", "authorizing",
+            },
+            f"history[{index}]",
+        )
+        if event["component"] not in components:
+            raise ReceiptError(f"history[{index}] names an unrelated component")
+        if event["kind"] != "publish-continuation":
+            raise ReceiptError(f"history[{index}] is not a continuation run")
+        _nonempty_text(event["run_id"], f"history[{index}] run id")
+        _nonempty_text(event["outcome"], f"history[{index}] outcome")
+        _nonempty_text(
+            event["authorization_id"], f"history[{index}] authorization id"
+        )
+        if event["authorizing"] is not False:
+            raise ReceiptError(
+                f"history[{index}] must be explicitly non-authorizing"
+            )
+
+    return AdoptedPreplanException(
+        canonical=document,
+        canonical_bytes=data,
+        digest=hashlib.sha256(data).hexdigest(),
+    )
+
+
+def _entry_document(entry: ReceiptEntry) -> dict:
+    return {
+        "version": entry.version,
+        "digest": entry.digest,
+        "digest_set": entry.digest_set,
+        "phase": entry.phase,
+        "pointer_state": entry.pointer_state,
+        "delivery_proof": entry.delivery_proof,
+        "lane_ref": entry.lane_ref,
+    }
+
+
+def _entry_from_document(value: dict) -> ReceiptEntry:
+    _exact_keys(
+        value,
+        {
+            "version", "digest", "digest_set", "phase", "pointer_state",
+            "delivery_proof", "lane_ref",
+        },
+        "recovery receipt entry",
+    )
+    return ReceiptEntry(
+        version=value["version"],
+        digest=value["digest"],
+        digest_set=value["digest_set"],
+        phase=value["phase"],
+        pointer_state=value["pointer_state"],
+        delivery_proof=value["delivery_proof"],
+        lane_ref=value["lane_ref"],
+    )
+
+
+def _observe_recovery_component(lanes, node: PlanNode, staged: ReceiptEntry,
+                                exception: AdoptedPreplanException,
+                                graph: Graph) -> ObservedRecoveryState:
+    observed = lanes.observe_recovery(node, staged)
+    if not isinstance(observed, ObservedRecoveryState):
+        raise ReceiptError(
+            f"{node.component}: recovery observer returned no typed observation"
+        )
+    component = exception.components[node.component]
+    _validate_public_state(
+        observed.public,
+        component=node.component,
+        version=component["version"],
+        source_sha=exception.source_sha,
+        graph=graph,
+        payload_digests=component["payload_digests"],
+    )
+    if observed.public["registry"]["status"] == "exact":
+        if observed.entry is None:
+            raise ReceiptError(
+                f"{node.component}: exact public registry state lacks an "
+                "authoritative receipt entry"
+            )
+        if (
+            observed.entry.version != component["version"]
+            or observed.entry.digest_set != component["payload_digests"]
+            or observed.entry.digest
+            != canonical_digest_of_set(component["payload_digests"])
+            or observed.entry.lane_ref != component["lane_ref"]
+        ):
+            raise ReceiptError(
+                f"{node.component}: observed exact entry does not equal the "
+                "adopted stage identity"
+            )
+    elif observed.entry is not None:
+        raise ReceiptError(
+            f"{node.component}: absent public registry state carries an entry"
+        )
+    return observed
+
+
+def _expected_final_public(exception: AdoptedPreplanException,
+                           component: str) -> dict:
+    spec = exception.components[component]
+    initial = exception.canonical["observed_partial_state"][component]
+    return {
+        "tag": {
+            "name": initial["tag"]["name"],
+            "status": "present",
+            "source_sha": exception.source_sha,
+        },
+        "registry": {
+            "status": "exact",
+            "digest_set": dict(spec["payload_digests"]),
+        },
+    }
+
+
+def prepare_adopted_preplan_recovery(
+    exception: AdoptedPreplanException,
+    *,
+    graph: Graph,
+    lanes,
+    store,
+    authority,
+    authority_trust: str,
+) -> AdoptedPreplanHandle:
+    """Freeze exception/plan, jointly revalidate both preserved stages, then
+    anchor an honestly labelled adopted-preplan manifest.
+
+    No continuation adapter is reachable before every read-only and public
+    state barrier has passed. Normal run_plan is deliberately not called.
+    """
+    if authority_trust != "external-immutable":
+        raise ReceiptError(
+            "adopted-preplan recovery requires an external-immutable digest "
+            "authority established by trusted composition"
+        )
+    validated_exception = load_adopted_preplan_exception(
+        exception.canonical_bytes, graph=graph
+    )
+    if (
+        validated_exception.digest != exception.digest
+        or validated_exception.canonical != exception.canonical
+    ):
+        raise ReceiptError(
+            "adopted-preplan exception object differs from its validated bytes"
+        )
+    missing = [name for name in exception.components if not lanes.has_lane(name)]
+    if missing:
+        raise LaneUnavailable(
+            "no adopted-preplan lane available for: " + ", ".join(missing)
+        )
+
+    exception_artifact_id = f"adopted-preplan-exception:{exception.digest}"
+    _put_content_addressed(
+        store, authority, exception_artifact_id,
+        exception.canonical_bytes, exception.digest,
+    )
+    plan = {
+        "schema": ADOPTED_PREPLAN_PLAN_SCHEMA,
+        "provenance": "adopted-preplan",
+        "exception_artifact_id": exception_artifact_id,
+        "exception_digest": exception.digest,
+        "source_sha": exception.source_sha,
+        "graph": graph.canonical,
+        "components": {
+            name: {"version": spec["version"], "reason": "adopted-preplan"}
+            for name, spec in exception.components.items()
+        },
+        "runtime_edges": list(exception.runtime_edges),
+        "support": {
+            "status": "incomplete-unmeasured",
+            "runtime_edge_ids": [
+                edge["edge_id"] for edge in exception.runtime_edges
+            ],
+        },
+    }
+    plan_bytes = canonical_json_bytes(plan)
+    plan_id = hashlib.sha256(plan_bytes).hexdigest()
+    plan_artifact_id = f"adopted-preplan-plan:{plan_id}"
+    _put_content_addressed(
+        store, authority, plan_artifact_id, plan_bytes, plan_id
+    )
+
+    adopted: dict[str, AdoptedStageEntry] = {}
+    for name, spec in exception.components.items():
+        node = PlanNode(
+            component=name, reason="adopted-preplan", version=spec["version"]
+        )
+        result = lanes.adopt_preplan(node)
+        if not isinstance(result, AdoptedStageEntry):
+            raise ReceiptError(
+                f"{name}: lane returned no typed adopted stage evidence"
+            )
+        entry = result.entry
+        _sha256_identity(result.manifest_digest, f"{name} manifest digest")
+        if result.manifest_digest != spec["manifest_digest"]:
+            raise ReceiptError(
+                f"{name}: semantic manifest digest {result.manifest_digest} "
+                f"does not equal exception {spec['manifest_digest']}"
+            )
+        if (
+            entry.version != spec["version"]
+            or entry.lane_ref != spec["lane_ref"]
+            or entry.digest_set != spec["payload_digests"]
+            or entry.digest != canonical_digest_of_set(spec["payload_digests"])
+        ):
+            raise ReceiptError(
+                f"{name}: adopted stage does not equal the exception's exact "
+                "version/LaneRef/payload identity"
+            )
+        adopted[name] = result
+
+    manifest = {
+        "schema": ADOPTED_PREPLAN_MANIFEST_SCHEMA,
+        "provenance": "adopted-preplan",
+        "exception_artifact_id": exception_artifact_id,
+        "exception_digest": exception.digest,
+        "recovery_plan_id": plan_id,
+        "recovery_plan_artifact_id": plan_artifact_id,
+        "source_sha": exception.source_sha,
+        "entries": {
+            name: {
+                "provenance": "adopted-preplan",
+                "version": adopted[name].entry.version,
+                "lane_ref": adopted[name].entry.lane_ref,
+                "manifest_digest": adopted[name].manifest_digest,
+                "payload_digests": adopted[name].entry.digest_set,
+                "digest": adopted[name].entry.digest,
+                "delivery_obligation": _delivery_obligation(graph, name),
+            }
+            for name in exception.components
+        },
+    }
+    manifest_bytes = canonical_json_bytes(manifest)
+    manifest_id = hashlib.sha256(manifest_bytes).hexdigest()
+    manifest_artifact_id = f"adopted-preplan-manifest:{plan_id}:{manifest_id}"
+    _put_content_addressed(
+        store, authority, manifest_artifact_id, manifest_bytes, manifest_id
+    )
+    staged = {name: adopted[name].entry for name in exception.components}
+
+    handle = AdoptedPreplanHandle(
+        exception=exception,
+        exception_artifact_id=exception_artifact_id,
+        plan=plan,
+        plan_id=plan_id,
+        plan_artifact_id=plan_artifact_id,
+        manifest=manifest,
+        manifest_id=manifest_id,
+        manifest_artifact_id=manifest_artifact_id,
+        staged=staged,
+    )
+
+    # The frozen state is checked only after both artifacts crossed the joint
+    # semantic barrier. On a fresh preparation it must equal the exception.
+    # A restarted process may also see one exact final component, but only when
+    # a unique pre-effect attempt is already authority-recorded for it. This
+    # admits the crash window without admitting a retrospective receipt for an
+    # unrelated/direct publication.
+    for name, expected in exception.canonical["observed_partial_state"].items():
+        observed = _observe_recovery_component(
+            lanes,
+            PlanNode(
+                component=name, reason="adopted-preplan",
+                version=exception.components[name]["version"],
+            ),
+            staged[name], exception, graph,
+        )
+        if observed.public == expected:
+            continue
+        attempts = _attempts(handle, store, authority, name)
+        if (
+            observed.public == _expected_final_public(exception, name)
+            and len(attempts) == 1
+        ):
+            continue
+        raise ReceiptError(
+            f"{name}: public state drifted from the exception's exact "
+            f"partial-state preimage without one persisted attempt: expected "
+            f"{expected!r}, observed {observed.public!r}"
+        )
+
+    return handle
+
+
+def _load_canonical_authority_document(store, authority, artifact_id: str) -> dict:
+    expected = authority.expected_digest(artifact_id)
+    if expected is None:
+        raise ReceiptError(f"{artifact_id}: no digest-authority record")
+    if artifact_id.rsplit(":", 1)[-1] != expected:
+        raise ReceiptError(
+            f"{artifact_id}: content-addressed id does not end in its "
+            "authority digest"
+        )
+    data = store.get(artifact_id)
+    if hashlib.sha256(data).hexdigest() != expected:
+        raise ReceiptError(f"{artifact_id}: bytes do not match authority digest")
+    try:
+        document = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise ReceiptError(f"{artifact_id}: invalid JSON ({exc})") from exc
+    if canonical_json_bytes(document) != data:
+        raise ReceiptError(f"{artifact_id}: evidence bytes are not canonical JSON")
+    return document
+
+
+def _load_adopted_authorization(
+    data: bytes, *, handle: AdoptedPreplanHandle
+) -> tuple[dict, str]:
+    try:
+        document = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise ReceiptError(f"adopted-preplan authorization is not JSON: {exc}") from exc
+    if canonical_json_bytes(document) != data:
+        raise ReceiptError(
+            "adopted-preplan authorization is not canonical JSON"
+        )
+    _exact_keys(
+        document,
+        {
+            "schema", "authorization_id", "authorized_by", "issued_at",
+            "one_shot", "exception_digest", "recovery_plan_id", "actions",
+        },
+        "adopted-preplan authorization",
+    )
+    if document["schema"] != ADOPTED_PREPLAN_AUTHORIZATION_SCHEMA:
+        raise ReceiptError("wrong adopted-preplan authorization schema")
+    authorization_id = _nonempty_text(
+        document["authorization_id"], "authorization id"
+    )
+    subject = _nonempty_text(document["authorized_by"], "authorized_by")
+    expected_subject = handle.exception.canonical[
+        "exception_authorization"
+    ]["authorized_by"]
+    if subject != expected_subject:
+        raise ReceiptError(
+            f"authorization subject {subject!r} is not exception authority "
+            f"{expected_subject!r}"
+        )
+    spent_ids = {
+        event["authorization_id"] for event in handle.exception.history
+    }
+    if authorization_id in spent_ids:
+        raise ReceiptError(
+            f"authorization {authorization_id!r} appears in non-authorizing "
+            "history and cannot be reused"
+        )
+    issued = _nonempty_text(document["issued_at"], "authorization issued_at")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", issued):
+        raise ReceiptError("authorization issued_at must be whole-second UTC")
+    if document["one_shot"] is not True:
+        raise ReceiptError("recovery authorization must be one-shot")
+    if document["exception_digest"] != handle.exception.digest:
+        raise ReceiptError("authorization does not bind this exception")
+    if document["recovery_plan_id"] != handle.plan_id:
+        raise ReceiptError("authorization does not bind this recovery plan")
+    actions = document["actions"]
+    if not isinstance(actions, list) or not actions:
+        raise ReceiptError("authorization actions must be a nonempty list")
+    seen: set[str] = set()
+    for index, action in enumerate(actions):
+        _exact_keys(
+            action, {"component", "kind", "version", "lane_ref"},
+            f"authorization action[{index}]",
+        )
+        component = action["component"]
+        if component in seen:
+            raise ReceiptError(f"authorization repeats action for {component}")
+        seen.add(component)
+        if component not in handle.exception.components:
+            raise ReceiptError(f"authorization action names {component!r} outside plan")
+        spec = handle.exception.components[component]
+        if (
+            action["kind"] != "publish-continuation"
+            or action["version"] != spec["version"]
+            or action["lane_ref"] != spec["lane_ref"]
+        ):
+            raise ReceiptError(
+                f"authorization action for {component} does not exactly bind "
+                "the remaining continuation/version/LaneRef"
+            )
+        LaneRef.from_dict(action["lane_ref"])
+    return document, hashlib.sha256(data).hexdigest()
+
+
+def _record_prefix(kind: str, handle: AdoptedPreplanHandle,
+                   component: str) -> str:
+    return f"adopted-preplan-{kind}:{handle.plan_id}:{component}:"
+
+
+def _records_with_prefix(store, authority, prefix: str) -> list[tuple[str, dict]]:
+    records = []
+    for artifact_id in authority.recorded_ids():
+        if artifact_id.startswith(prefix):
+            records.append(
+                (artifact_id, _load_canonical_authority_document(
+                    store, authority, artifact_id
+                ))
+            )
+    return records
+
+
+def _validate_attempt_record(handle, artifact_id, document, store, authority):
+    _exact_keys(
+        document,
+        {
+            "schema", "provenance", "exception_digest", "recovery_plan_id",
+            "adopted_manifest_id", "component", "authorization_id",
+            "authorization_artifact_id", "authorization_digest", "action",
+            "continuation_run_ids_before", "public_state_before",
+        },
+        f"attempt {artifact_id}",
+    )
+    component = document["component"]
+    if (
+        document["schema"] != "aweb.release.adopted-preplan-attempt.v1"
+        or document["provenance"] != "adopted-preplan"
+        or document["exception_digest"] != handle.exception.digest
+        or document["recovery_plan_id"] != handle.plan_id
+        or document["adopted_manifest_id"] != handle.manifest_id
+        or component not in handle.exception.components
+    ):
+        raise ReceiptError(f"{artifact_id}: attempt binding mismatch")
+    authorization_digest = document["authorization_digest"]
+    _sha256_identity(
+        authorization_digest, f"{artifact_id} authorization digest", prefix=False
+    )
+    expected_authorization_id = (
+        f"adopted-preplan-authorization:{handle.plan_id}:"
+        f"{authorization_digest}"
+    )
+    if document["authorization_artifact_id"] != expected_authorization_id:
+        raise ReceiptError(f"{artifact_id}: attempt authorization id mismatch")
+    authorization = _load_canonical_authority_document(
+        store, authority, expected_authorization_id
+    )
+    if (
+        authorization.get("authorization_id") != document["authorization_id"]
+        or document["action"] not in authorization.get("actions", [])
+    ):
+        raise ReceiptError(
+            f"{artifact_id}: attempt action is not in its anchored authorization"
+        )
+    spec = handle.exception.components[component]
+    expected_action = {
+        "component": component,
+        "kind": "publish-continuation",
+        "version": spec["version"],
+        "lane_ref": spec["lane_ref"],
+    }
+    if document["action"] != expected_action:
+        raise ReceiptError(f"{artifact_id}: attempt action identity differs")
+    before = document["continuation_run_ids_before"]
+    if (
+        not isinstance(before, list)
+        or len(before) != len(set(before))
+        or not all(isinstance(item, str) and item for item in before)
+    ):
+        raise ReceiptError(f"{artifact_id}: invalid pre-attempt run snapshot")
+    if document["public_state_before"] != handle.exception.canonical[
+        "observed_partial_state"
+    ][component]:
+        raise ReceiptError(f"{artifact_id}: attempt pre-state differs")
+
+
+def _validate_transition_record(handle, artifact_id, document, store, authority):
+    _exact_keys(
+        document,
+        {
+            "schema", "provenance", "exception_digest", "recovery_plan_id",
+            "adopted_manifest_id", "component", "attempt_artifact_id",
+            "authorization_id", "authorization_artifact_id",
+            "authorization_digest", "continuation_run_id", "published",
+            "public_state",
+        },
+        f"transition {artifact_id}",
+    )
+    component = document["component"]
+    if (
+        document["schema"] != "aweb.release.adopted-preplan-transition.v1"
+        or document["provenance"] != "adopted-preplan"
+        or document["exception_digest"] != handle.exception.digest
+        or document["recovery_plan_id"] != handle.plan_id
+        or document["adopted_manifest_id"] != handle.manifest_id
+        or component not in handle.exception.components
+    ):
+        raise ReceiptError(f"{artifact_id}: transition binding mismatch")
+    attempt_id = document["attempt_artifact_id"]
+    if not isinstance(attempt_id, str) or not attempt_id.startswith(
+        _record_prefix("attempt", handle, component)
+    ):
+        raise ReceiptError(f"{artifact_id}: transition attempt id mismatch")
+    attempt = _load_canonical_authority_document(
+        store, authority, attempt_id
+    )
+    _validate_attempt_record(handle, attempt_id, attempt, store, authority)
+    for field_name in (
+        "authorization_id", "authorization_artifact_id",
+        "authorization_digest",
+    ):
+        if document[field_name] != attempt[field_name]:
+            raise ReceiptError(
+                f"{artifact_id}: transition {field_name} differs from attempt"
+            )
+    _nonempty_text(
+        document["continuation_run_id"],
+        f"{artifact_id} continuation run id",
+    )
+    if document["public_state"] != _expected_final_public(
+        handle.exception, component
+    ):
+        raise ReceiptError(f"{artifact_id}: transition public state is not exact")
+    published = _entry_from_document(document["published"])
+    spec = handle.exception.components[component]
+    if (
+        published.version != spec["version"]
+        or published.digest_set != spec["payload_digests"]
+        or published.digest != canonical_digest_of_set(spec["payload_digests"])
+        or published.lane_ref != spec["lane_ref"]
+    ):
+        raise ReceiptError(f"{artifact_id}: transition entry differs from stage")
+
+
+def _successful_transitions(handle, store, authority) -> dict[str, tuple[str, dict]]:
+    found = {}
+    for component in handle.exception.components:
+        records = _records_with_prefix(
+            store, authority, _record_prefix("transition", handle, component)
+        )
+        if len(records) > 1:
+            raise ReceiptError(
+                f"{component}: multiple successful recovery transitions exist"
+            )
+        if records:
+            artifact_id, document = records[0]
+            _validate_transition_record(
+                handle, artifact_id, document, store, authority
+            )
+            found[component] = records[0]
+    return found
+
+
+def _attempts(handle, store, authority, component: str,
+              authorization_digest: str | None = None) -> list[tuple[str, dict]]:
+    records = _records_with_prefix(
+        store, authority, _record_prefix("attempt", handle, component)
+    )
+    for artifact_id, document in records:
+        _validate_attempt_record(
+            handle, artifact_id, document, store, authority
+        )
+    if authorization_digest is not None:
+        records = [
+            item for item in records
+            if item[1].get("authorization_digest") == authorization_digest
+        ]
+    return records
+
+
+def _anchor_recovery_transition(
+    *, handle, component, continuation, attempt_id, authorization,
+    authorization_digest, public, store, authority,
+) -> tuple[str, dict]:
+    document = {
+        "schema": "aweb.release.adopted-preplan-transition.v1",
+        "provenance": "adopted-preplan",
+        "exception_digest": handle.exception.digest,
+        "recovery_plan_id": handle.plan_id,
+        "adopted_manifest_id": handle.manifest_id,
+        "component": component,
+        "attempt_artifact_id": attempt_id,
+        "authorization_id": authorization["authorization_id"],
+        "authorization_artifact_id": (
+            f"adopted-preplan-authorization:{handle.plan_id}:"
+            f"{authorization_digest}"
+        ),
+        "authorization_digest": authorization_digest,
+        "continuation_run_id": continuation.continuation_run_id,
+        "published": _entry_document(continuation.entry),
+        "public_state": public,
+    }
+    data = canonical_json_bytes(document)
+    digest = hashlib.sha256(data).hexdigest()
+    artifact_id = (
+        _record_prefix("transition", handle, component) + digest
+    )
+    _put_content_addressed(store, authority, artifact_id, data, digest)
+    return artifact_id, document
+
+
+def _recover_existing_attempt(
+    *, handle, component, attempt_id, attempt, lanes, graph, store, authority,
+) -> tuple[str, dict]:
+    node = PlanNode(
+        component=component, reason="adopted-preplan",
+        version=handle.exception.components[component]["version"],
+    )
+    observed = _observe_recovery_component(
+        lanes, node, handle.staged[component], handle.exception, graph
+    )
+    initial = handle.exception.canonical["observed_partial_state"][component]
+    final = _expected_final_public(handle.exception, component)
+    try:
+        continuation = lanes.recover_recovery_attempt(
+            node, handle.staged[component],
+            before_run_ids=attempt["continuation_run_ids_before"],
+        )
+    except ReceiptError as exc:
+        raise ReceiptError(
+            f"{component}: authorization action is spent; its prior attempt "
+            f"cannot be inherited ({exc})"
+        ) from exc
+    if observed.public == initial and continuation is None:
+        raise ReceiptError(
+            f"{component}: authorization action is spent by an anchored "
+            "attempt with no exact completed effect"
+        )
+    if observed.public != final or continuation is None:
+        raise ReceiptError(
+            f"{component}: attempted action left unrelated/partial drift; "
+            "same authorization cannot dispatch again"
+        )
+    if not isinstance(continuation, RecoveryContinuation):
+        raise ReceiptError(f"{component}: recovery adapter returned no run identity")
+    if continuation.entry != observed.entry:
+        raise ReceiptError(
+            f"{component}: recovered run entry differs from public observation"
+        )
+    return _anchor_recovery_transition(
+        handle=handle, component=component, continuation=continuation,
+        attempt_id=attempt_id,
+        authorization={
+            "authorization_id": attempt["authorization_id"]
+        },
+        authorization_digest=attempt["authorization_digest"],
+        public=observed.public, store=store, authority=authority,
+    )
+
+
+def execute_adopted_preplan_recovery(
+    handle: AdoptedPreplanHandle,
+    authorization_bytes: bytes,
+    *,
+    graph: Graph,
+    lanes,
+    store,
+    authority,
+    authority_trust: str,
+    approvals: dict[str, Approval],
+) -> AdoptedPreplanReceipt:
+    """Run only unused authorized actions, persisting intent first.
+
+    A crash can adopt one exact successful run. An anchored attempt with no
+    exact success spends that authorization action and is never redispatched.
+    """
+    if authority_trust != "external-immutable":
+        raise ReceiptError(
+            "adopted-preplan execution requires external-immutable authority"
+        )
+    anchored_exception = _load_canonical_authority_document(
+        store, authority, handle.exception_artifact_id
+    )
+    anchored_plan = _load_canonical_authority_document(
+        store, authority, handle.plan_artifact_id
+    )
+    anchored_manifest = _load_canonical_authority_document(
+        store, authority, handle.manifest_artifact_id
+    )
+    if anchored_exception != handle.exception.canonical:
+        raise ReceiptError("recovery handle exception differs from authority")
+    if anchored_plan != handle.plan:
+        raise ReceiptError("recovery handle plan differs from authority")
+    if anchored_manifest != handle.manifest:
+        raise ReceiptError("recovery handle adopted manifest differs from authority")
+    if (
+        anchored_plan.get("schema") != ADOPTED_PREPLAN_PLAN_SCHEMA
+        or anchored_plan.get("provenance") != "adopted-preplan"
+        or anchored_manifest.get("schema") != ADOPTED_PREPLAN_MANIFEST_SCHEMA
+        or anchored_manifest.get("provenance") != "adopted-preplan"
+    ):
+        raise ReceiptError("anchored recovery plan/manifest provenance is invalid")
+    authorization, authorization_digest = _load_adopted_authorization(
+        authorization_bytes, handle=handle
+    )
+    authorization_artifact_id = (
+        f"adopted-preplan-authorization:{handle.plan_id}:"
+        f"{authorization_digest}"
+    )
+    actions = {item["component"]: item for item in authorization["actions"]}
+
+    # First recover any exact effect whose transition anchor was the crash
+    # window. Prefer the current authorization but do not strand an exact
+    # effect made by an older one-shot attempt.
+    transitions = _successful_transitions(handle, store, authority)
+    for component in handle.exception.components:
+        if component in transitions:
+            continue
+        observed = _observe_recovery_component(
+            lanes,
+            PlanNode(
+                component=component, reason="adopted-preplan",
+                version=handle.exception.components[component]["version"],
+            ),
+            handle.staged[component], handle.exception, graph,
+        )
+        initial = handle.exception.canonical[
+            "observed_partial_state"
+        ][component]
+        if initial["registry"]["status"] == "exact":
+            if observed.public != initial:
+                raise ReceiptError(f"{component}: adopted exact state drifted")
+            continue
+        attempts = _attempts(handle, store, authority, component)
+        current = [
+            item for item in attempts
+            if item[1].get("authorization_digest") == authorization_digest
+        ]
+        if len(current) > 1:
+            raise ReceiptError(
+                f"{component}: authorization has multiple attempt records"
+            )
+        if observed.public == _expected_final_public(handle.exception, component):
+            if len(attempts) != 1:
+                raise ReceiptError(
+                    f"{component}: exact effect has no unique persisted attempt"
+                )
+            transitions[component] = _recover_existing_attempt(
+                handle=handle, component=component,
+                attempt_id=attempts[0][0], attempt=attempts[0][1],
+                lanes=lanes, graph=graph, store=store, authority=authority,
+            )
+        elif current:
+            # Even a known failed run is not permission to dispatch again.
+            _recover_existing_attempt(
+                handle=handle, component=component,
+                attempt_id=current[0][0], attempt=current[0][1],
+                lanes=lanes, graph=graph, store=store, authority=authority,
+            )
+        elif observed.public != initial:
+            raise ReceiptError(
+                f"{component}: public state drifted outside initial/final states"
+            )
+
+    transitions = _successful_transitions(handle, store, authority)
+    required = {
+        component
+        for component, state in handle.exception.canonical[
+            "observed_partial_state"
+        ].items()
+        if state["registry"]["status"] == "absent"
+        and component not in transitions
+    }
+    for component in required:
+        if component not in actions:
+            raise ReceiptError(
+                f"authorization omits still-permitted action {component}"
+            )
+    for component in actions:
+        if component in required:
+            continue
+        transition = transitions.get(component)
+        if (
+            transition is None
+            or transition[1].get("authorization_digest") != authorization_digest
+        ):
+            raise ReceiptError(
+                f"authorization names action {component} which is not remaining "
+                "or already completed by this same one-shot authorization"
+            )
+
+    for component in handle.exception.components:
+        if graph.components[component].approval_required:
+            require_approval(
+                PlanNode(component=component, reason="adopted-preplan"),
+                approval=approvals.get(component),
+            )
+
+    # The complete action set and every graph approval are valid and exact.
+    # Anchor these authorization bytes before the first attempt or effect.
+    _put_content_addressed(
+        store, authority, authorization_artifact_id,
+        authorization_bytes, authorization_digest,
+    )
+
+    for component in handle.exception.components:
+        if component not in required:
+            continue
+        node = PlanNode(
+            component=component, reason="adopted-preplan",
+            version=handle.exception.components[component]["version"],
+        )
+        # Recheck the whole targeted state before each outward call. A prior
+        # completed component may move only to its exact final identity; every
+        # untouched component remains exactly as frozen.
+        for other in handle.exception.components:
+            other_observed = _observe_recovery_component(
+                lanes,
+                PlanNode(
+                    component=other, reason="adopted-preplan",
+                    version=handle.exception.components[other]["version"],
+                ),
+                handle.staged[other], handle.exception, graph,
+            )
+            expected = (
+                _expected_final_public(handle.exception, other)
+                if other in transitions
+                else handle.exception.canonical[
+                    "observed_partial_state"
+                ][other]
+            )
+            if other_observed.public != expected:
+                raise ReceiptError(
+                    f"{other}: public state drifted before {component} effect"
+                )
+
+        before = lanes.continuation_snapshot(node)
+        if (
+            not isinstance(before, list)
+            or len(set(before)) != len(before)
+            or not all(isinstance(item, str) and item for item in before)
+        ):
+            raise ReceiptError(
+                f"{component}: continuation snapshot is not a unique run-id list"
+            )
+        attempt = {
+            "schema": "aweb.release.adopted-preplan-attempt.v1",
+            "provenance": "adopted-preplan",
+            "exception_digest": handle.exception.digest,
+            "recovery_plan_id": handle.plan_id,
+            "adopted_manifest_id": handle.manifest_id,
+            "component": component,
+            "authorization_id": authorization["authorization_id"],
+            "authorization_artifact_id": authorization_artifact_id,
+            "authorization_digest": authorization_digest,
+            "action": actions[component],
+            "continuation_run_ids_before": list(before),
+            "public_state_before": handle.exception.canonical[
+                "observed_partial_state"
+            ][component],
+        }
+        attempt_data = canonical_json_bytes(attempt)
+        attempt_digest = hashlib.sha256(attempt_data).hexdigest()
+        attempt_id = _record_prefix("attempt", handle, component) + attempt_digest
+        _put_content_addressed(
+            store, authority, attempt_id, attempt_data, attempt_digest
+        )
+
+        # This is the sole outward continuation call. The authority already
+        # contains exact intent and the pre-dispatch run snapshot.
+        continuation = lanes.publish_recovery(
+            node, handle.staged[component], before_run_ids=before
+        )
+        if not isinstance(continuation, RecoveryContinuation):
+            raise ReceiptError(
+                f"{component}: continuation returned no typed run receipt"
+            )
+        _nonempty_text(
+            continuation.continuation_run_id,
+            f"{component} continuation run id",
+        )
+        observed = _observe_recovery_component(
+            lanes, node, handle.staged[component], handle.exception, graph
+        )
+        if observed.public != _expected_final_public(
+            handle.exception, component
+        ) or observed.entry != continuation.entry:
+            raise ReceiptError(
+                f"{component}: continuation did not leave the exact staged "
+                "bytes and tag"
+            )
+        transitions[component] = _anchor_recovery_transition(
+            handle=handle, component=component, continuation=continuation,
+            attempt_id=attempt_id, authorization=authorization,
+            authorization_digest=authorization_digest,
+            public=observed.public, store=store, authority=authority,
+        )
+
+    transitions = _successful_transitions(handle, store, authority)
+    component_receipts = {}
+    for component, spec in handle.exception.components.items():
+        node = PlanNode(
+            component=component, reason="adopted-preplan", version=spec["version"]
+        )
+        initial = handle.exception.canonical[
+            "observed_partial_state"
+        ][component]
+        transition = transitions.get(component)
+        if initial["registry"]["status"] == "exact":
+            observed = _observe_recovery_component(
+                lanes, node, handle.staged[component], handle.exception, graph
+            )
+            if observed.public != initial or observed.entry is None:
+                raise ReceiptError(f"{component}: adopted exact state no longer matches")
+            published = observed.entry
+            attempt_id = None
+            run_id = None
+            component_authorization_id = None
+            component_authorization_digest = None
+        else:
+            if transition is None:
+                raise ReceiptError(f"{component}: no successful transition receipt")
+            attempt_id, transition_document = (
+                transition[1]["attempt_artifact_id"], transition[1]
+            )
+            run_id = transition_document["continuation_run_id"]
+            component_authorization_id = transition_document["authorization_id"]
+            component_authorization_digest = transition_document[
+                "authorization_digest"
+            ]
+            published = _entry_from_document(transition_document["published"])
+        lanes.verify(node, published)
+        final = _observe_recovery_component(
+            lanes, node, handle.staged[component], handle.exception, graph
+        )
+        if final.public != _expected_final_public(handle.exception, component):
+            raise ReceiptError(f"{component}: final state is not exact")
+        component_receipts[component] = {
+            "stage": {
+                "provenance": "adopted-preplan",
+                "lane_ref": spec["lane_ref"],
+                "manifest_digest": spec["manifest_digest"],
+                "payload_digests": spec["payload_digests"],
+            },
+            "initial_state": initial,
+            "attempt_artifact_id": attempt_id,
+            "authorization_id": component_authorization_id,
+            "authorization_digest": component_authorization_digest,
+            "continuation_run_id": run_id,
+            "published": _entry_document(published),
+            "final_state": final.public,
+        }
+
+    # One last joint observation closes races between per-component verifies.
+    # The receipt is not sealed from two observations made at different final
+    # states.
+    for component, spec in handle.exception.components.items():
+        final = _observe_recovery_component(
+            lanes,
+            PlanNode(
+                component=component, reason="adopted-preplan",
+                version=spec["version"],
+            ),
+            handle.staged[component], handle.exception, graph,
+        )
+        if (
+            final.public != _expected_final_public(handle.exception, component)
+            or _entry_document(final.entry)
+            != component_receipts[component]["published"]
+        ):
+            raise ReceiptError(
+                f"{component}: final joint observation drifted before receipt"
+            )
+
+    receipt = {
+        "schema": ADOPTED_PREPLAN_RECEIPT_SCHEMA,
+        "provenance": "adopted-preplan",
+        "exception_artifact_id": handle.exception_artifact_id,
+        "exception_digest": handle.exception.digest,
+        "recovery_plan_artifact_id": handle.plan_artifact_id,
+        "recovery_plan_id": handle.plan_id,
+        "adopted_manifest_artifact_id": handle.manifest_artifact_id,
+        "adopted_manifest_id": handle.manifest_id,
+        "authorization_id": authorization["authorization_id"],
+        "authorization_artifact_id": authorization_artifact_id,
+        "authorization_digest": authorization_digest,
+        "source_sha": handle.exception.source_sha,
+        "history": handle.exception.history,
+        "attempt_history": {
+            component: [artifact_id for artifact_id, _ in _attempts(
+                handle, store, authority, component
+            )]
+            for component in handle.exception.components
+        },
+        "components": component_receipts,
+        "support": {
+            "status": "incomplete-unmeasured",
+            "runtime_edge_ids": [
+                edge["edge_id"] for edge in handle.exception.runtime_edges
+            ],
+        },
+    }
+    receipt_data = canonical_json_bytes(receipt)
+    digest = hashlib.sha256(receipt_data).hexdigest()
+    artifact_id = f"adopted-preplan-receipt:{handle.plan_id}:{digest}"
+    _put_content_addressed(
+        store, authority, artifact_id, receipt_data, digest
+    )
+    return AdoptedPreplanReceipt(
+        document=receipt, digest=digest, artifact_id=artifact_id
+    )
+
+
+def load_adopted_preplan_receipt(
+    data: bytes, *, expected_digest: str, handle: AdoptedPreplanHandle
+) -> dict:
+    if hashlib.sha256(data).hexdigest() != expected_digest:
+        raise ReceiptError(
+            "adopted-preplan receipt bytes do not match authority digest"
+        )
+    try:
+        receipt = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise ReceiptError(f"adopted-preplan receipt is not JSON: {exc}") from exc
+    if canonical_json_bytes(receipt) != data:
+        raise ReceiptError("adopted-preplan receipt is not canonical JSON")
+    _exact_keys(
+        receipt,
+        {
+            "schema", "provenance", "exception_artifact_id",
+            "exception_digest", "recovery_plan_artifact_id",
+            "recovery_plan_id", "adopted_manifest_artifact_id",
+            "adopted_manifest_id", "authorization_id",
+            "authorization_artifact_id", "authorization_digest",
+            "source_sha", "history", "attempt_history", "components",
+            "support",
+        },
+        "adopted-preplan receipt",
+    )
+    if receipt.get("schema") != ADOPTED_PREPLAN_RECEIPT_SCHEMA:
+        raise ReceiptError("wrong adopted-preplan receipt schema")
+    if (
+        receipt.get("provenance") != "adopted-preplan"
+        or receipt.get("exception_digest") != handle.exception.digest
+        or receipt.get("recovery_plan_id") != handle.plan_id
+        or receipt.get("adopted_manifest_id") != handle.manifest_id
+        or receipt.get("source_sha") != handle.exception.source_sha
+    ):
+        raise ReceiptError("adopted-preplan receipt binding mismatch")
+    support = receipt.get("support")
+    if not isinstance(support, dict) or set(support) != {
+        "status", "runtime_edge_ids"
+    }:
+        raise ReceiptError("adopted-preplan receipt support shape is not closed")
+    if support["status"] != "incomplete-unmeasured":
+        raise ReceiptError(
+            "adopted-preplan receipt may never claim measured support"
+        )
+    if support["runtime_edge_ids"] != [
+        edge["edge_id"] for edge in handle.exception.runtime_edges
+    ]:
+        raise ReceiptError("adopted-preplan receipt edge identities differ")
+    if receipt["history"] != handle.exception.history:
+        raise ReceiptError("adopted-preplan receipt rewrites exception history")
+    attempt_history = receipt["attempt_history"]
+    if not isinstance(attempt_history, dict) or set(attempt_history) != set(
+        handle.exception.components
+    ):
+        raise ReceiptError("adopted-preplan receipt attempt history differs")
+    for component, artifact_ids in attempt_history.items():
+        if (
+            not isinstance(artifact_ids, list)
+            or len(artifact_ids) != len(set(artifact_ids))
+            or not all(
+                isinstance(item, str) and item.startswith(
+                    _record_prefix("attempt", handle, component)
+                )
+                for item in artifact_ids
+            )
+        ):
+            raise ReceiptError(
+                f"{component}: receipt attempt history is not exact identities"
+            )
+    if set(receipt.get("components", {})) != set(handle.exception.components):
+        raise ReceiptError("adopted-preplan receipt component set differs")
+    graph = Graph.from_dict(handle.plan["graph"])
+    for component, spec in handle.exception.components.items():
+        record = receipt["components"][component]
+        _exact_keys(
+            record,
+            {
+                "stage", "initial_state", "attempt_artifact_id",
+                "authorization_id", "authorization_digest",
+                "continuation_run_id", "published", "final_state",
+            },
+            f"{component} recovery receipt",
+        )
+        stage = record["stage"]
+        _exact_keys(
+            stage,
+            {
+                "provenance", "lane_ref", "manifest_digest",
+                "payload_digests",
+            },
+            f"{component} receipt stage",
+        )
+        if stage != {
+            "provenance": "adopted-preplan",
+            "lane_ref": spec["lane_ref"],
+            "manifest_digest": spec["manifest_digest"],
+            "payload_digests": spec["payload_digests"],
+        }:
+            raise ReceiptError(
+                f"{component}: receipt stage is not the exact adopted-preplan "
+                "exception evidence"
+            )
+        initial = handle.exception.canonical[
+            "observed_partial_state"
+        ][component]
+        if record["initial_state"] != initial:
+            raise ReceiptError(f"{component}: receipt initial state changed")
+        if record["final_state"] != _expected_final_public(
+            handle.exception, component
+        ):
+            raise ReceiptError(f"{component}: receipt final state is not exact")
+        published = _entry_from_document(record["published"])
+        if (
+            published.version != spec["version"]
+            or published.digest_set != spec["payload_digests"]
+            or published.digest != canonical_digest_of_set(
+                spec["payload_digests"]
+            )
+            or published.lane_ref != spec["lane_ref"]
+        ):
+            raise ReceiptError(
+                f"{component}: receipt published entry differs from adopted stage"
+            )
+        if initial["registry"]["status"] == "absent":
+            _nonempty_text(
+                record["attempt_artifact_id"],
+                f"{component} attempt artifact id",
+            )
+            _nonempty_text(
+                record["authorization_id"],
+                f"{component} authorization id",
+            )
+            _sha256_identity(
+                record["authorization_digest"],
+                f"{component} authorization digest", prefix=False,
+            )
+            _nonempty_text(
+                record["continuation_run_id"],
+                f"{component} continuation run id",
+            )
+        elif any(
+            record[field] is not None
+            for field in (
+                "attempt_artifact_id", "authorization_id",
+                "authorization_digest", "continuation_run_id",
+            )
+        ):
+            raise ReceiptError(
+                f"{component}: already-exact adoption cannot claim a continuation"
+            )
+        obligation = _delivery_obligation(graph, component)
+        if obligation is not None:
+            validate_delivery_proof(
+                published.delivery_proof, obligation, component
+            )
+    return receipt
 
 
 # ── staged manifest ──────────────────────────────────────────────────
@@ -4782,6 +6458,20 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         help="component=<name>,ref=gh-artifact:<repo>:<run>:<artifact>,"
         "source=<lane source sha>,digest=sha256:<artifact zip digest>",
     )
+    recovery_parser = sub.add_parser(
+        "adopted-preplan-recovery",
+        help="recover exactly two preserved pre-plan stages through the "
+        "dedicated one-shot state machine (never ordinary release-run)",
+    )
+    recovery_parser.add_argument("--exception-file", required=True)
+    recovery_parser.add_argument("--authorization-file", required=True)
+    recovery_parser.add_argument("--approval", action="append", default=[])
+    recovery_parser.add_argument(
+        "--delivery-proof",
+        action="append",
+        default=[],
+        help="component=<name>,obligation=<type>,evidence_id=<id>,digest=<digest>",
+    )
     matrix_parser = sub.add_parser(
         "skew-matrix",
         help="compute (and with --execute run) the frozen plan's "
@@ -4798,6 +6488,15 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
     args = parser.parse_args(argv)
 
     graph = Graph.load(Path(args.graph))
+    recovery_exception = None
+    if args.verb == "adopted-preplan-recovery":
+        try:
+            recovery_exception = load_adopted_preplan_exception(
+                Path(args.exception_file).read_bytes(), graph=graph
+            )
+        except (OSError, ReceiptError) as exc:
+            print(f"BLOCKED: {exc}")
+            return 1
     if (
         providers is not None
         and providers.measurement is None
@@ -4823,8 +6522,15 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             store = registration.store_factory()
         lanes = None
         if registration.kind == "github-workflow-artifacts":
-            refs = parse_stage_artifact_arguments(
-                getattr(args, "stage_artifact", [])
+            refs = (
+                {
+                    name: LaneRef.from_dict(spec["lane_ref"])
+                    for name, spec in recovery_exception.components.items()
+                }
+                if recovery_exception is not None
+                else parse_stage_artifact_arguments(
+                    getattr(args, "stage_artifact", [])
+                )
             )
             if refs:
                 lanes = compose_workflow_lanes(
@@ -4903,6 +6609,41 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             ).stdout.strip()
     state = providers.state
     source_sha = providers.source_sha or "unknown"
+
+    if args.verb == "adopted-preplan-recovery":
+        if recovery_exception is None:
+            print("BLOCKED: adopted-preplan exception did not load")
+            return 1
+        if providers.lanes is None:
+            print("BLOCKED: adopted-preplan recovery has no composed lanes")
+            return 1
+        try:
+            authorization_bytes = Path(args.authorization_file).read_bytes()
+            handle = prepare_adopted_preplan_recovery(
+                recovery_exception,
+                graph=graph,
+                lanes=providers.lanes,
+                store=providers.store,
+                authority=providers.authority,
+                authority_trust=providers.authority_trust,
+            )
+            receipt = execute_adopted_preplan_recovery(
+                handle,
+                authorization_bytes,
+                graph=graph,
+                lanes=providers.lanes,
+                store=providers.store,
+                authority=providers.authority,
+                authority_trust=providers.authority_trust,
+                approvals=_parse_approvals(args.approval),
+            )
+        except (
+            OSError, LaneUnavailable, ApprovalRequired, ReceiptError
+        ) as exc:
+            print(f"BLOCKED: {exc}")
+            return 1
+        print(json.dumps(receipt.document, indent=2, sort_keys=True))
+        return 0
 
     if args.verb == "plan":
         plan = compute_plan(graph, state)
