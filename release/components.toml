@@ -23,21 +23,21 @@
 source_paths = ["server/"]
 version_source = { type = "pyproject", path = "server/pyproject.toml" }
 tag_format = "server-v{version}"
-publish_lane = { workflow = ".github/workflows/pypi-release.yml", modes = ["stage-only", "publish-continuation", "verify-only"], registry = { type = "pypi", package = "aweb" } }
+publish_lane = { workflow = ".github/workflows/pypi-release.yml", repository = "awebai/aweb", provider = "github-workflow-artifacts", modes = ["stage-only", "publish-continuation", "verify-only"], registry = { type = "pypi", package = "aweb" } }
 verify = { command = "curl -fsS https://pypi.org/pypi/aweb/{version}/json" }
 
 [component.awid-pypi]
 source_paths = ["awid/"]
 version_source = { type = "pyproject", path = "awid/pyproject.toml" }
 tag_format = "awid-service-v{version}"
-publish_lane = { workflow = ".github/workflows/pypi-release.yml", modes = ["stage-only", "publish-continuation", "verify-only"], registry = { type = "pypi", package = "awid-service" } }
+publish_lane = { workflow = ".github/workflows/pypi-release.yml", repository = "awebai/aweb", provider = "github-workflow-artifacts", modes = ["stage-only", "publish-continuation", "verify-only"], registry = { type = "pypi", package = "awid-service" } }
 verify = { command = "curl -fsS https://pypi.org/pypi/awid-service/{version}/json" }
 
 [component.awid-image]
 source_paths = ["awid/"]
 version_source = { type = "pyproject", path = "awid/pyproject.toml" }
 tag_format = "awid-v{version}"
-publish_lane = { workflow = ".github/workflows/awid-image-release.yml", modes = ["stage-only", "publish-continuation", "verify-only"], registry = { type = "ghcr", package = "awebai/awid" } }
+publish_lane = { workflow = ".github/workflows/awid-image-release.yml", repository = "awebai/aweb", provider = "github-workflow-artifacts", modes = ["stage-only", "publish-continuation", "verify-only"], registry = { type = "ghcr", package = "awebai/awid" } }
 verify = { command = "docker manifest inspect ghcr.io/awebai/awid:{version}" }
 
 [component.aw]

@@ -1277,5 +1277,475 @@ class MakeReleaseSurfaceTests(unittest.TestCase):
         self.assertIn("aw", str(caught.exception))
 
 
+def pypi_lane_zip(*, package="server", pypi_name="aweb", version="1.26.36",
+                  mode="stage-only", source_sha="c" * 40,
+                  drop_wheel=False) -> bytes:
+    normalized = pypi_name.replace("-", "_")
+    members = {
+        f"dist/{normalized}-{version}.tar.gz": b"sdist-bytes",
+        f"dist/{normalized}-{version}-py3-none-any.whl": b"wheel-bytes",
+    }
+    if drop_wheel:
+        members = {k: v for k, v in members.items() if not k.endswith(".whl")}
+    files = {k.rsplit("/", 1)[-1]: sha256(v) for k, v in members.items()}
+    canonical = sha256(json.dumps(files, sort_keys=True).encode())
+    manifest = {
+        "mode": mode, "package": package, "tag": f"server-v{version}",
+        "candidate_version": version, "source_sha": source_sha,
+        "files": files, "canonical_set_digest": canonical,
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as z:
+        z.writestr("manifest.json", json.dumps(manifest))
+        for name, data in members.items():
+            z.writestr(name, data)
+    return buffer.getvalue()
+
+
+def image_lane_zip(*, version="0.5.15", mode="stage-only",
+                   source_sha="d" * 40, index="sha256:" + "9" * 64) -> bytes:
+    identities = json.dumps({"index": index, "platforms": {}}).encode()
+    archive = b"oci-archive-bytes"
+    files = {"awid-oci.tar": sha256(archive),
+             "identities.json": sha256(identities)}
+    canonical = sha256(json.dumps(files, sort_keys=True).encode())
+    manifest = {
+        "mode": mode, "package": "awid-image", "tag": f"awid-v{version}",
+        "candidate_version": version, "source_sha": source_sha,
+        "files": files, "canonical_set_digest": canonical,
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as z:
+        z.writestr("manifest.json", json.dumps(manifest))
+        z.writestr("awid-oci.tar", archive)
+        z.writestr("identities.json", identities)
+    return buffer.getvalue()
+
+
+def lane_ref_for(api, zip_bytes, source_sha) -> "rd.LaneRef":
+    return rd.LaneRef(
+        artifact=f"gh-artifact:{api.repo}:{api.run_id}:{api.artifact_id}",
+        aw_source_sha=source_sha,
+        zip_digest=f"sha256:{sha256(zip_bytes)}",
+    )
+
+
+class LaneSourceTests(unittest.TestCase):
+    def test_each_lane_binds_its_exact_repository_and_workflow(self) -> None:
+        self.assertEqual(
+            rd.LANE_ARTIFACT_SOURCES["aw"],
+            ("awebai/aw", ".github/workflows/aw-release.yml"),
+        )
+        self.assertEqual(
+            rd.LANE_ARTIFACT_SOURCES["server"],
+            ("awebai/aweb", ".github/workflows/pypi-release.yml"),
+        )
+        self.assertEqual(
+            rd.LANE_ARTIFACT_SOURCES["awid-pypi"],
+            ("awebai/aweb", ".github/workflows/pypi-release.yml"),
+        )
+        self.assertEqual(
+            rd.LANE_ARTIFACT_SOURCES["awid-image"],
+            ("awebai/aweb", ".github/workflows/awid-image-release.yml"),
+        )
+
+    def test_reader_refuses_the_wrong_workflow_for_its_lane(self) -> None:
+        zip_bytes = pypi_lane_zip()
+        api = FakeGithubApi(repo="awebai/aweb", zip_bytes=zip_bytes,
+                            workflow_path=".github/workflows/aw-release.yml")
+        reader = rd.GithubArtifactStore(
+            api=api, repo="awebai/aweb",
+            workflow_path=".github/workflows/pypi-release.yml",
+        )
+        with self.assertRaises(rd.ReceiptError) as caught:
+            reader.get(f"gh-artifact:awebai/aweb:{api.run_id}:{api.artifact_id}")
+        self.assertIn("pypi-release.yml", str(caught.exception))
+
+    def test_reader_refuses_a_repo_outside_its_lane(self) -> None:
+        api = FakeGithubApi()  # serves an awebai/aw artifact
+        reader = rd.GithubArtifactStore(
+            api=api, repo="awebai/aweb",
+            workflow_path=".github/workflows/pypi-release.yml",
+        )
+        with self.assertRaises(rd.ReceiptError) as caught:
+            reader.get(artifact_id_for(api))
+        self.assertIn("not this lane's source", str(caught.exception))
+
+
+def pypi_lane(zip_bytes, *, observer, runs=None, source_sha="c" * 40,
+              version="1.26.36"):
+    api = FakeGithubApi(repo="awebai/aweb", zip_bytes=zip_bytes,
+                        workflow_path=".github/workflows/pypi-release.yml")
+    return rd.PypiWorkflowLane(
+        component="server",
+        pypi_name="aweb",
+        reader=rd.GithubArtifactStore(
+            api=api, repo="awebai/aweb",
+            workflow_path=".github/workflows/pypi-release.yml"),
+        lane_authority=rd.GithubArtifactDigestAuthority(
+            api=api, repo="awebai/aweb",
+            workflow_path=".github/workflows/pypi-release.yml"),
+        refs={"server": lane_ref_for(api, zip_bytes, source_sha)},
+        pypi_observe=observer,
+        runs=runs if runs is not None else FakeAwRuns(),
+        waiter=lambda: None,
+    ), api
+
+
+class PypiWorkflowLaneTests(unittest.TestCase):
+    def coherent(self):
+        zip_bytes = pypi_lane_zip()
+        files = {
+            "aweb-1.26.36.tar.gz": sha256(b"sdist-bytes"),
+            "aweb-1.26.36-py3-none-any.whl": sha256(b"wheel-bytes"),
+        }
+        return zip_bytes, files
+
+    def test_stage_validates_the_pypi_payload_protocol(self) -> None:
+        zip_bytes, files = self.coherent()
+        lane, _ = pypi_lane(zip_bytes, observer=lambda p, v: (404, {}))
+        entry = lane.stage(rd.PlanNode(
+            component="server", reason="changed", version="1.26.36"))
+        self.assertEqual(entry.digest_set, files)
+        self.assertEqual(entry.digest, rd.canonical_digest_of_set(files))
+
+    def test_stage_refuses_a_missing_wheel(self) -> None:
+        zip_bytes = pypi_lane_zip(drop_wheel=True)
+        lane, _ = pypi_lane(zip_bytes, observer=lambda p, v: (404, {}))
+        with self.assertRaises(rd.ReceiptError):
+            lane.stage(rd.PlanNode(
+                component="server", reason="changed", version="1.26.36"))
+
+    def test_observe_semantics_absent_partial_exact_extra_outage(self) -> None:
+        zip_bytes, files = self.coherent()
+        node = rd.PlanNode(component="server", reason="changed",
+                           version="1.26.36")
+        state = {}
+
+        def observer(package, version):
+            return state["response"]
+
+        lane, _ = pypi_lane(zip_bytes, observer=observer)
+        staged = lane.stage(node)
+        state["response"] = (404, {})
+        self.assertIsNone(lane.observe(node, staged))
+        state["response"] = (200, {k: files[k] for k in list(files)[:1]})
+        self.assertIsNone(lane.observe(node, staged), "partial continues")
+        state["response"] = (200, dict(files))
+        observed = lane.observe(node, staged)
+        self.assertEqual(observed.digest_set, files)
+        state["response"] = (200, {**files, "extra.whl": "0" * 64})
+        with self.assertRaises(rd.ReceiptError):
+            lane.observe(node, staged)
+        bad = dict(files)
+        bad[next(iter(bad))] = "0" * 64
+        state["response"] = (200, bad)
+        with self.assertRaises(rd.ReceiptError):
+            lane.observe(node, staged)
+        state["response"] = (503, {})
+        with self.assertRaises(rd.ReceiptError):
+            lane.observe(node, staged)
+
+    def test_publish_dispatches_exact_continuation_inputs(self) -> None:
+        zip_bytes, files = self.coherent()
+        node = rd.PlanNode(component="server", reason="changed",
+                           version="1.26.36")
+        state = {"response": (404, {})}
+        runs = FakeAwRuns()
+        lane, api = pypi_lane(zip_bytes, observer=lambda p, v: state["response"],
+                              runs=runs)
+        staged = lane.stage(node)
+        original = runs.dispatch
+
+        def dispatch(inputs):
+            original(inputs)
+            state["response"] = (200, dict(files))
+        runs.dispatch = dispatch
+        published = lane.publish(node, staged)
+        self.assertEqual(published.phase, "published")
+        self.assertEqual(runs.dispatched, [{
+            "package": "server",
+            "mode": "publish-continuation",
+            "version": "1.26.36",
+            "source_sha": "c" * 40,
+            "stage_run_id": str(api.run_id),
+            "stage_artifact_id": str(api.artifact_id),
+            "stage_zip_digest": f"sha256:{sha256(zip_bytes)}",
+        }])
+
+
+def image_lane(zip_bytes, *, tag_observe, runs=None, source_sha="d" * 40):
+    api = FakeGithubApi(repo="awebai/aweb", zip_bytes=zip_bytes,
+                        workflow_path=".github/workflows/awid-image-release.yml")
+    return rd.AwidImageWorkflowLane(
+        component="awid-image",
+        repository="ghcr.io/awebai/awid",
+        reader=rd.GithubArtifactStore(
+            api=api, repo="awebai/aweb",
+            workflow_path=".github/workflows/awid-image-release.yml"),
+        lane_authority=rd.GithubArtifactDigestAuthority(
+            api=api, repo="awebai/aweb",
+            workflow_path=".github/workflows/awid-image-release.yml"),
+        refs={"awid-image": lane_ref_for(api, zip_bytes, source_sha)},
+        tag_observe=tag_observe,
+        runs=runs if runs is not None else FakeAwRuns(),
+        waiter=lambda: None,
+    ), api
+
+
+class AwidImageWorkflowLaneTests(unittest.TestCase):
+    INDEX = "sha256:" + "9" * 64
+
+    def test_stage_validates_the_image_payload_protocol(self) -> None:
+        zip_bytes = image_lane_zip()
+        lane, _ = image_lane(zip_bytes, tag_observe=lambda tag: None)
+        entry = lane.stage(rd.PlanNode(
+            component="awid-image", reason="changed", version="0.5.15"))
+        self.assertEqual(set(entry.digest_set),
+                         {"awid-oci.tar", "identities.json"})
+
+    def test_observe_binds_version_immutably_and_latest_as_pointer(self) -> None:
+        zip_bytes = image_lane_zip()
+        node = rd.PlanNode(component="awid-image", reason="changed",
+                           version="0.5.15")
+        tags = {}
+        lane, _ = image_lane(zip_bytes, tag_observe=lambda tag: tags.get(tag))
+        staged = lane.stage(node)
+        self.assertIsNone(lane.observe(node, staged), "nothing published yet")
+        tags["0.5.15"] = self.INDEX
+        self.assertIsNone(lane.observe(node, staged),
+                          "latest not yet transitioned continues")
+        tags["latest"] = self.INDEX
+        observed = lane.observe(node, staged)
+        self.assertEqual(observed.digest_set, staged.digest_set)
+        tags["latest"] = "sha256:" + "1" * 64
+        self.assertIsNone(lane.observe(node, staged),
+                          "latest is the planned mutable pointer")
+        tags["0.5.15"] = "sha256:" + "1" * 64
+        with self.assertRaises(rd.ReceiptError):
+            lane.observe(node, staged)
+
+    def test_unavailable_tag_observation_refuses(self) -> None:
+        zip_bytes = image_lane_zip()
+        node = rd.PlanNode(component="awid-image", reason="changed",
+                           version="0.5.15")
+
+        def unavailable(tag):
+            raise rd.ReceiptError("listing unavailable")
+        lane, _ = image_lane(zip_bytes, tag_observe=unavailable)
+        staged = lane.stage(node)
+        with self.assertRaises(rd.ReceiptError):
+            lane.observe(node, staged)
+
+
+class LaneCompositionTests(unittest.TestCase):
+    def test_graph_declaration_gates_lane_composition(self) -> None:
+        graph = rd.Graph.load(rd.GRAPH_PATH)
+        for name in ("server", "awid-pypi", "awid-image"):
+            lane = graph.components[name].publish_lane
+            self.assertEqual(lane.get("provider"), "github-workflow-artifacts",
+                             name)
+            self.assertEqual(lane.get("repository"), "awebai/aweb", name)
+        refs = {
+            "server": rd.LaneRef(
+                artifact="gh-artifact:awebai/aweb:1:2",
+                aw_source_sha="c" * 40,
+                zip_digest="sha256:" + "5" * 64),
+        }
+        lanes = rd.compose_workflow_lanes(graph, refs)
+        self.assertTrue(lanes.has_lane("server"))
+        self.assertFalse(lanes.has_lane("awid-image"))
+        self.assertFalse(lanes.has_lane("sites"))
+
+    def test_undeclared_component_reference_refuses(self) -> None:
+        graph = rd.Graph.load(rd.GRAPH_PATH)
+        refs = {"sites": rd.LaneRef(
+            artifact="gh-artifact:awebai/aweb:1:2",
+            aw_source_sha="c" * 40,
+            zip_digest="sha256:" + "5" * 64)}
+        with self.assertRaises(rd.ReceiptError):
+            rd.compose_workflow_lanes(graph, refs)
+
+
+class PypiOciEndToEndTests(unittest.TestCase):
+    """The .10 acceptance: external-anchor run/crash/resume for one PyPI
+    lane and the OCI lane across reconstructed compositions."""
+
+    def graph_for(self, name, registry):
+        return rd.Graph.from_dict({
+            "component": {
+                name: {
+                    "source_paths": ["x/"],
+                    "version_source": {"type": "manifest", "path": "x/v"},
+                    "tag_format": name + "-v{version}",
+                    "publish_lane": {
+                        "workflow": ".github/workflows/x.yml",
+                        "repository": "awebai/aweb",
+                        "provider": "github-workflow-artifacts",
+                        "modes": ["stage-only", "publish-continuation",
+                                  "verify-only"],
+                        "registry": registry,
+                    },
+                    "verify": {"command": "true"},
+                },
+            },
+            "edge": [],
+        })
+
+    def run_crash_resume(self, *, name, version, lane_factory):
+        transport = FakeAnchorTransport()
+        graph = self.graph_for(
+            name, {"type": "pypi", "package": name}
+        )
+        state = rd.FixtureState(
+            changed_components={name: True},
+            versions={name: version},
+            published_versions={name: "0.0.1"},
+        )
+
+        def compose():
+            store = rd.GithubAnchorStore(transport=transport,
+                                         waiter=lambda: None)
+            authority = rd.GithubAnchorDigestAuthority(transport=transport)
+            return store, authority
+
+        store, authority = compose()
+        plan = rd.compute_plan(graph, state)
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        rd._put_content_addressed(
+            store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
+        frozen = rd.load_frozen_plan(
+            store.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+
+        crash_lane = lane_factory(publish_ok=False)
+        with self.assertRaises(rd.ReceiptError):
+            rd.run_plan(
+                plan, graph, crash_lane,
+                skew=NoRuntimeSkew(), authority=authority, store=store,
+                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                providers=rd.Providers(store=store, authority=authority),
+            )
+
+        store2, authority2 = compose()
+        resume_lane = lane_factory(publish_ok=True)
+        plan2 = rd.compute_plan(graph, state)
+        frozen2 = rd.load_frozen_plan(
+            store2.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+        entries = rd.resume_plan(
+            plan2, graph,
+            lanes=resume_lane, skew=NoRuntimeSkew(),
+            store=store2, authority=authority2,
+            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            require_external_authority=True,
+            authority_trust="external-immutable",
+        )
+        self.assertEqual(resume_lane.stage_calls, 0, "zero restage on resume")
+        self.assertEqual(entries[name].phase, "verified")
+
+    def test_pypi_lane_crash_resume(self) -> None:
+        version = "1.26.36"
+        files = {
+            "aweb-1.26.36.tar.gz": sha256(b"sdist-bytes"),
+            "aweb-1.26.36-py3-none-any.whl": sha256(b"wheel-bytes"),
+        }
+
+        def lane_factory(*, publish_ok):
+            zip_bytes = pypi_lane_zip(package="server", version=version)
+            state = {"response": (404, {})}
+            runs = FakeAwRuns(
+                conclusion="success" if publish_ok else "failure")
+            if publish_ok:
+                original = runs.dispatch
+
+                def dispatch(inputs):
+                    original(inputs)
+                    state["response"] = (200, dict(files))
+                runs.dispatch = dispatch
+            lane, _ = pypi_lane(
+                zip_bytes, observer=lambda p, v: state["response"], runs=runs)
+
+            class Counting(type(lane)):
+                pass
+            lane.stage_calls = 0
+            original_stage = lane.stage
+
+            def counted_stage(node):
+                lane.stage_calls += 1
+                return original_stage(node)
+            lane.stage = counted_stage
+            return lane
+        self.run_crash_resume(name="server", version=version,
+                              lane_factory=lane_factory)
+
+    def test_image_lane_crash_resume(self) -> None:
+        version = "0.5.15"
+        INDEX = "sha256:" + "9" * 64
+
+        def lane_factory(*, publish_ok):
+            zip_bytes = image_lane_zip(version=version)
+            tags = {}
+            runs = FakeAwRuns(
+                conclusion="success" if publish_ok else "failure")
+            if publish_ok:
+                original = runs.dispatch
+
+                def dispatch(inputs):
+                    original(inputs)
+                    tags["0.5.15"] = INDEX
+                    tags["latest"] = INDEX
+                runs.dispatch = dispatch
+            lane, _ = image_lane(
+                zip_bytes, tag_observe=lambda tag: tags.get(tag), runs=runs)
+            lane.component = "awid-image"
+            lane.stage_calls = 0
+            original_stage = lane.stage
+
+            def counted_stage(node):
+                lane.stage_calls += 1
+                return original_stage(node)
+            lane.stage = counted_stage
+            return lane
+
+        # awid-image is a registry(ghcr) component in the fixture graph
+        transport = FakeAnchorTransport()
+        graph = self.graph_for(
+            "awid-image", {"type": "ghcr", "package": "awebai/awid"})
+        state = rd.FixtureState(
+            changed_components={"awid-image": True},
+            versions={"awid-image": version},
+            published_versions={"awid-image": "0.5.14"},
+        )
+        store = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
+        authority = rd.GithubAnchorDigestAuthority(transport=transport)
+        plan = rd.compute_plan(graph, state)
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        rd._put_content_addressed(
+            store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
+        frozen = rd.load_frozen_plan(
+            store.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+        with self.assertRaises(rd.ReceiptError):
+            rd.run_plan(
+                plan, graph, lane_factory(publish_ok=False),
+                skew=NoRuntimeSkew(), authority=authority, store=store,
+                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                providers=rd.Providers(store=store, authority=authority),
+            )
+        store2 = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
+        authority2 = rd.GithubAnchorDigestAuthority(transport=transport)
+        resume_lane = lane_factory(publish_ok=True)
+        frozen2 = rd.load_frozen_plan(
+            store2.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+        entries = rd.resume_plan(
+            rd.compute_plan(graph, state), graph,
+            lanes=resume_lane, skew=NoRuntimeSkew(),
+            store=store2, authority=authority2,
+            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            require_external_authority=True,
+            authority_trust="external-immutable",
+        )
+        self.assertEqual(resume_lane.stage_calls, 0)
+        self.assertEqual(entries["awid-image"].phase, "verified")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

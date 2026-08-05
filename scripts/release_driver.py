@@ -1040,8 +1040,19 @@ class FileDigestAuthority:
 # writes the digest at upload and no caller can rewrite it afterwards.
 # Neither capability is writable from here.
 
-GITHUB_ARTIFACT_REPO_ALLOWLIST = ("awebai/aw",)
 AW_LANE_WORKFLOW_PATH = ".github/workflows/aw-release.yml"
+# Each lane binds its exact artifact source: the repository whose reviewed
+# dispatch workflow stages it, and that workflow's exact path. This is the
+# whole allowlist - no other repository or workflow is a lane source.
+LANE_ARTIFACT_SOURCES = {
+    "aw": ("awebai/aw", AW_LANE_WORKFLOW_PATH),
+    "server": ("awebai/aweb", ".github/workflows/pypi-release.yml"),
+    "awid-pypi": ("awebai/aweb", ".github/workflows/pypi-release.yml"),
+    "awid-image": ("awebai/aweb", ".github/workflows/awid-image-release.yml"),
+}
+GITHUB_ARTIFACT_REPO_ALLOWLIST = tuple(sorted(
+    {repo for repo, _ in LANE_ARTIFACT_SOURCES.values()}
+))
 ANCHOR_REPO = "awebai/aweb"
 ANCHOR_WORKFLOW_PATH = ".github/workflows/release-anchor.yml"
 ANCHOR_WORKFLOW_FILE = "release-anchor.yml"
@@ -1098,16 +1109,24 @@ def _gh_artifact_metadata(api, artifact_id: str) -> tuple[dict, str, str, str]:
     return meta, repo, run_id, gh_artifact_id
 
 
-def _validated_aw_artifact_meta(api, artifact_id: str):
-    """Metadata plus producing-run validation shared by the aw lane's
-    store and digest authority: exact reviewed workflow path, successful
-    non-fork run, unexpired artifact."""
+def _validated_aw_artifact_meta(
+    api, artifact_id: str, *, expected_repo: str = "awebai/aw",
+    workflow_path: str = AW_LANE_WORKFLOW_PATH,
+):
+    """Metadata plus producing-run validation shared by every lane's store
+    and digest authority: the lane's exact repository and reviewed workflow
+    path, successful non-fork run, unexpired artifact."""
     meta, repo, run_id, gh_artifact_id = _gh_artifact_metadata(api, artifact_id)
+    if repo != expected_repo:
+        raise ReceiptError(
+            f"{artifact_id}: repository {repo} is not this lane's source "
+            f"{expected_repo}"
+        )
     run = json.loads(api(f"repos/{repo}/actions/runs/{run_id}"))
-    if run.get("path") != AW_LANE_WORKFLOW_PATH:
+    if run.get("path") != workflow_path:
         raise ReceiptError(
             f"{artifact_id}: staging run used workflow "
-            f"{run.get('path')!r}, not the reviewed {AW_LANE_WORKFLOW_PATH}"
+            f"{run.get('path')!r}, not the reviewed {workflow_path}"
         )
     if run.get("conclusion") != "success":
         raise ReceiptError(
@@ -1123,14 +1142,19 @@ def _validated_aw_artifact_meta(api, artifact_id: str):
 
 
 class GithubArtifactStore:
-    """Read-only exact-bytes retrieval of a staged workflow artifact."""
+    """Read-only exact-bytes retrieval of a staged workflow artifact,
+    bound to one lane's exact repository and workflow."""
 
-    def __init__(self, api=None):
+    def __init__(self, api=None, *, repo: str = "awebai/aw",
+                 workflow_path: str = AW_LANE_WORKFLOW_PATH):
         self._api = api or _run_gh_api
+        self._repo = repo
+        self._workflow_path = workflow_path
 
     def get(self, artifact_id: str) -> bytes:
         meta, repo, run_id, gh_artifact_id = _validated_aw_artifact_meta(
-            self._api, artifact_id
+            self._api, artifact_id,
+            expected_repo=self._repo, workflow_path=self._workflow_path,
         )
         data = self._api(
             f"repos/{repo}/actions/artifacts/{gh_artifact_id}/zip"
@@ -1156,11 +1180,17 @@ class GithubArtifactDigestAuthority:
 
     trust_class = "external-immutable"
 
-    def __init__(self, api=None):
+    def __init__(self, api=None, *, repo: str = "awebai/aw",
+                 workflow_path: str = AW_LANE_WORKFLOW_PATH):
         self._api = api or _run_gh_api
+        self._repo = repo
+        self._workflow_path = workflow_path
 
     def expected_digest(self, artifact_id: str) -> str:
-        meta, _, _, _ = _validated_aw_artifact_meta(self._api, artifact_id)
+        meta, _, _, _ = _validated_aw_artifact_meta(
+            self._api, artifact_id,
+            expected_repo=self._repo, workflow_path=self._workflow_path,
+        )
         return meta["digest"].removeprefix("sha256:")
 
     def record(self, artifact_id: str, digest: str) -> None:
@@ -1627,13 +1657,15 @@ class AwLaneRuns:
     exactly-one-new-run check operates over; the reviewed workflow's
     non-cancelling concurrency group serializes runs."""
 
-    def __init__(self, api=None):
+    def __init__(self, api=None, *, repo: str = "awebai/aw",
+                 workflow_file: str = "aw-release.yml"):
         self._api = api or _run_gh_api
-        self.repo = GITHUB_ARTIFACT_REPO_ALLOWLIST[0]
+        self.repo = repo
+        self.workflow_file = workflow_file
 
     def list_run_ids(self) -> list[int]:
         body = json.loads(self._api(
-            f"repos/{self.repo}/actions/workflows/aw-release.yml/runs"
+            f"repos/{self.repo}/actions/workflows/{self.workflow_file}/runs"
             "?per_page=100"
         ))
         return [run["id"] for run in body.get("workflow_runs", [])]
@@ -1641,7 +1673,7 @@ class AwLaneRuns:
     def dispatch(self, inputs: dict) -> None:
         import subprocess
 
-        command = ["gh", "workflow", "run", "aw-release.yml",
+        command = ["gh", "workflow", "run", self.workflow_file,
                    "--repo", self.repo]
         for key, value in sorted(inputs.items()):
             command += ["-f", f"{key}={value}"]
@@ -1807,6 +1839,511 @@ class AwWorkflowLane:
                 f"{node.component}: verification observes an incomplete "
                 "published set"
             )
+
+
+def _lane_manifest_common(
+    archive, *, expected_source_sha: str, expected_version: str,
+    expected_package: str | None = None,
+) -> dict:
+    names = [n for n in archive.namelist() if not n.endswith("/")]
+    if "manifest.json" not in names:
+        raise ReceiptError("staged artifact carries no manifest.json")
+    manifest = json.loads(archive.read("manifest.json"))
+    if manifest.get("mode") != "stage-only":
+        raise ReceiptError(
+            f"staged artifact mode is {manifest.get('mode')!r}; only "
+            "stage-only artifacts continue to publication"
+        )
+    if manifest.get("source_sha") != expected_source_sha:
+        raise ReceiptError(
+            f"staged manifest binds source {manifest.get('source_sha')}, "
+            f"expected {expected_source_sha}"
+        )
+    if manifest.get("candidate_version") != expected_version:
+        raise ReceiptError(
+            f"staged manifest binds version "
+            f"{manifest.get('candidate_version')}, expected {expected_version}"
+        )
+    if expected_package is not None and manifest.get("package") != expected_package:
+        raise ReceiptError(
+            f"staged manifest is for package {manifest.get('package')!r}, "
+            f"not {expected_package!r}"
+        )
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ReceiptError("staged manifest has no files map")
+    recomputed = hashlib.sha256(
+        json.dumps(files, sort_keys=True).encode()
+    ).hexdigest()
+    if manifest.get("canonical_set_digest") != recomputed:
+        raise ReceiptError(
+            "staged manifest canonical set digest does not recompute from "
+            "its files map"
+        )
+    return manifest
+
+
+def _validate_lane_members(
+    archive, files: dict, member_for_base: dict[str, str]
+) -> None:
+    """Exact member placement and digests: every manifest basename present
+    exactly once at its protocol location, no extras."""
+    names = [n for n in archive.namelist() if not n.endswith("/")]
+    payload_names = [n for n in names if n != "manifest.json"]
+    expected_members = set(member_for_base.values())
+    for member in payload_names:
+        if member not in expected_members:
+            raise ReceiptError(
+                f"staged artifact carries {member}, which the protocol "
+                "does not place"
+            )
+    for base, member in member_for_base.items():
+        if member not in payload_names:
+            raise ReceiptError(
+                f"staged manifest binds {base}, missing from the artifact"
+            )
+        actual = hashlib.sha256(archive.read(member)).hexdigest()
+        if actual != files[base]:
+            raise ReceiptError(
+                f"{base}: payload digest {actual} does not equal the "
+                f"manifest's {files[base]}"
+            )
+
+
+def validate_pypi_lane_artifact(
+    zip_bytes: bytes, *, expected_source_sha: str, expected_version: str,
+    package: str, pypi_name: str,
+) -> dict:
+    """The PyPI lane protocol: exactly one sdist and one wheel for the
+    version, members under dist/, manifest keys the two basenames."""
+    import zipfile
+
+    normalized = pypi_name.replace("-", "_")
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+        manifest = _lane_manifest_common(
+            archive, expected_source_sha=expected_source_sha,
+            expected_version=expected_version, expected_package=package,
+        )
+        files = manifest["files"]
+        sdists = [b for b in files
+                  if b == f"{normalized}-{expected_version}.tar.gz"]
+        wheels = [b for b in files
+                  if b.startswith(f"{normalized}-{expected_version}-")
+                  and b.endswith(".whl")]
+        if len(sdists) != 1 or len(wheels) != 1 or len(files) != 2:
+            raise ReceiptError(
+                f"staged manifest must bind exactly one sdist and one wheel "
+                f"for {normalized} {expected_version}; bound {sorted(files)}"
+            )
+        _validate_lane_members(
+            archive, files, {b: f"dist/{b}" for b in files}
+        )
+    return manifest
+
+
+def validate_image_lane_artifact(
+    zip_bytes: bytes, *, expected_source_sha: str, expected_version: str,
+) -> tuple[dict, str]:
+    """The awid-image lane protocol: exactly the OCI archive and its
+    identities file at the artifact root. Returns (manifest, index digest
+    read from the digest-proven identities)."""
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+        manifest = _lane_manifest_common(
+            archive, expected_source_sha=expected_source_sha,
+            expected_version=expected_version, expected_package="awid-image",
+        )
+        files = manifest["files"]
+        if set(files) != {"awid-oci.tar", "identities.json"}:
+            raise ReceiptError(
+                f"staged manifest must bind exactly the OCI archive and its "
+                f"identities; bound {sorted(files)}"
+            )
+        _validate_lane_members(archive, files, {b: b for b in files})
+        identities = json.loads(archive.read("identities.json"))
+        index = identities.get("index")
+        if not isinstance(index, str) or not index.startswith("sha256:"):
+            raise ReceiptError(
+                f"staged identities carry no usable index digest: {index!r}"
+            )
+    return manifest, index
+
+
+class _WorkflowLaneBase:
+    """Shared lane lifecycle over a reviewed three-mode dispatch workflow:
+    independent-authority-gated staging, exactly-one-run continuation
+    correlation, and observation from the anchored staged entry."""
+
+    POLL_ATTEMPTS = 240
+
+    def __init__(self, *, component, reader, lane_authority, refs, runs,
+                 waiter=None):
+        self.component = component
+        self._reader = reader
+        self._lane_authority = lane_authority
+        self._refs = refs
+        self._runs = runs
+        self._waiter = waiter if waiter is not None else (
+            lambda: __import__("time").sleep(15)
+        )
+
+    def has_lane(self, component: str) -> bool:
+        return component in self._refs
+
+    def _fetch_staged(self, ref: "LaneRef") -> bytes:
+        independent = self._lane_authority.expected_digest(ref.artifact)
+        if f"sha256:{independent}" != ref.zip_digest:
+            raise ReceiptError(
+                f"{self.component}: independent authority records "
+                f"sha256:{independent}, not the caller-bound {ref.zip_digest}"
+            )
+        data = self._reader.get(ref.artifact)
+        actual = f"sha256:{hashlib.sha256(data).hexdigest()}"
+        if actual != ref.zip_digest:
+            raise ReceiptError(
+                f"{self.component}: staged bytes hash {actual}, not the "
+                f"caller-bound {ref.zip_digest}"
+            )
+        return data
+
+    def _continuation_inputs(self, staged: "ReceiptEntry") -> dict:
+        ref = LaneRef.from_dict(staged.lane_ref)
+        _, run_id, gh_artifact_id = _parse_gh_artifact_id(ref.artifact)
+        return {
+            "mode": "publish-continuation",
+            "version": staged.version,
+            "source_sha": ref.aw_source_sha,
+            "stage_run_id": run_id,
+            "stage_artifact_id": gh_artifact_id,
+            "stage_zip_digest": ref.zip_digest,
+        }
+
+    def _dispatch_and_wait(self, inputs: dict) -> None:
+        before = set(self._runs.list_run_ids())
+        self._runs.dispatch(inputs)
+        new_runs: list = []
+        for _ in range(self.POLL_ATTEMPTS):
+            new_runs = [r for r in self._runs.list_run_ids() if r not in before]
+            if new_runs:
+                break
+            self._waiter()
+        if len(new_runs) != 1:
+            raise ReceiptError(
+                f"{self.component}: expected exactly one new continuation "
+                f"run, identified {len(new_runs)}; refusing"
+            )
+        conclusion = None
+        for _ in range(self.POLL_ATTEMPTS):
+            conclusion = self._runs.run_conclusion(new_runs[0])
+            if conclusion is not None:
+                break
+            self._waiter()
+        if conclusion != "success":
+            raise ReceiptError(
+                f"{self.component}: continuation run {new_runs[0]} concluded "
+                f"{conclusion!r}, not success"
+            )
+
+    def publish(self, node, staged: "ReceiptEntry") -> "ReceiptEntry":
+        self._dispatch_and_wait(self._continuation_inputs(staged))
+        observed = self.observe(node, staged)
+        if observed is None:
+            raise ReceiptError(
+                f"{node.component}: items missing after publication; a "
+                "successful continuation must leave the complete exact set"
+            )
+        return observed
+
+    def verify(self, node, published: "ReceiptEntry") -> None:
+        observed = self.observe(node, published)
+        if observed is None:
+            raise ReceiptError(
+                f"{node.component}: verification observes an incomplete "
+                "published set"
+            )
+
+
+class PypiWorkflowLane(_WorkflowLaneBase):
+    """server / awid-pypi over pypi-release.yml. Observation is PyPI's
+    per-file JSON truth: 404 is absence, exact adopts, missing continues,
+    extra or mismatched files refuse permanently, outages refuse."""
+
+    def __init__(self, *, pypi_name, pypi_observe, **kwargs):
+        super().__init__(**kwargs)
+        self._pypi_name = pypi_name
+        self._pypi_observe = pypi_observe  # (package, version) -> (status, {file: sha})
+
+    def stage(self, node) -> "ReceiptEntry":
+        ref = self._refs[node.component]
+        data = self._fetch_staged(ref)
+        manifest = validate_pypi_lane_artifact(
+            data,
+            expected_source_sha=ref.aw_source_sha,
+            expected_version=node.version,
+            package=node.component,
+            pypi_name=self._pypi_name,
+        )
+        files = manifest["files"]
+        return ReceiptEntry(
+            version=node.version,
+            digest=canonical_digest_of_set(files),
+            digest_set=files,
+            lane_ref=ref.to_dict(),
+        )
+
+    def _continuation_inputs(self, staged):
+        inputs = super()._continuation_inputs(staged)
+        return {"package": self.component, **inputs}
+
+    def observe(self, node, staged: "ReceiptEntry | None" = None):
+        if staged is None or staged.digest_set is None:
+            raise ReceiptError(
+                f"{node.component}: observation requires the anchored staged "
+                "entry; expected values are never re-derived"
+            )
+        status, observed = self._pypi_observe(self._pypi_name, staged.version)
+        if status == 404:
+            return None
+        if status != 200:
+            raise ReceiptError(
+                f"{node.component}: PyPI observation returned status "
+                f"{status}; unavailability is never an observation"
+            )
+        extra = sorted(set(observed) - set(staged.digest_set))
+        if extra:
+            raise ReceiptError(
+                f"{node.component}: PyPI serves files not in the staged set: "
+                f"{extra}; permanent"
+            )
+        missing = False
+        for name, digest in staged.digest_set.items():
+            remote = observed.get(name)
+            if remote is None:
+                missing = True
+            elif remote != digest:
+                raise ReceiptError(
+                    f"{node.component}: {name}: PyPI serves sha256 {remote}, "
+                    f"staged is {digest}; permanent"
+                )
+        if missing:
+            return None
+        observed_set = {name: observed[name] for name in staged.digest_set}
+        return ReceiptEntry(
+            version=staged.version,
+            digest=canonical_digest_of_set(observed_set),
+            phase="published",
+            digest_set=observed_set,
+            lane_ref=staged.lane_ref,
+        )
+
+
+class AwidImageWorkflowLane(_WorkflowLaneBase):
+    """awid-image over awid-image-release.yml. Observation binds the
+    immutable version tag to the staged index digest (mismatch refuses)
+    and treats latest as the one planned mutable pointer (not yet
+    transitioned continues); an unavailable observation refuses."""
+
+    def __init__(self, *, repository, tag_observe, **kwargs):
+        super().__init__(**kwargs)
+        self.repository = repository
+        self._tag_observe = tag_observe  # (tag) -> index digest | None; raises when unavailable
+
+    def stage(self, node) -> "ReceiptEntry":
+        ref = self._refs[node.component]
+        data = self._fetch_staged(ref)
+        manifest, _ = validate_image_lane_artifact(
+            data,
+            expected_source_sha=ref.aw_source_sha,
+            expected_version=node.version,
+        )
+        files = manifest["files"]
+        return ReceiptEntry(
+            version=node.version,
+            digest=canonical_digest_of_set(files),
+            digest_set=files,
+            lane_ref=ref.to_dict(),
+        )
+
+    def _staged_index(self, staged: "ReceiptEntry") -> str:
+        ref = LaneRef.from_dict(staged.lane_ref)
+        data = self._fetch_staged(ref)
+        _, index = validate_image_lane_artifact(
+            data,
+            expected_source_sha=ref.aw_source_sha,
+            expected_version=staged.version,
+        )
+        return index
+
+    def observe(self, node, staged: "ReceiptEntry | None" = None):
+        if staged is None or staged.digest_set is None:
+            raise ReceiptError(
+                f"{node.component}: observation requires the anchored staged "
+                "entry; expected values are never re-derived"
+            )
+        index = self._staged_index(staged)
+        version_digest = self._tag_observe(staged.version)
+        if version_digest is None:
+            return None
+        if version_digest != index:
+            raise ReceiptError(
+                f"{node.component}: {self.repository}:{staged.version} "
+                f"resolves to {version_digest}, staged index is {index}; an "
+                "immutable version tag is never rewritten"
+            )
+        latest_digest = self._tag_observe("latest")
+        if latest_digest != index:
+            # latest is the planned mutable pointer; continuation transitions it.
+            return None
+        return ReceiptEntry(
+            version=staged.version,
+            digest=staged.digest,
+            phase="published",
+            digest_set=dict(staged.digest_set),
+            lane_ref=staged.lane_ref,
+        )
+
+
+class WorkflowLanes:
+    """Per-component delegation over the composed lane objects."""
+
+    def __init__(self, lanes: dict):
+        self._lanes = lanes
+
+    def has_lane(self, component: str) -> bool:
+        return component in self._lanes
+
+    def stage(self, node):
+        return self._lanes[node.component].stage(node)
+
+    def publish(self, node, staged):
+        return self._lanes[node.component].publish(node, staged)
+
+    def verify(self, node, published):
+        return self._lanes[node.component].verify(node, published)
+
+    def observe(self, node, staged=None):
+        lane = self._lanes.get(node.component)
+        return lane.observe(node, staged) if lane is not None else None
+
+
+def _observe_pypi(package: str, version: str):
+    import urllib.error
+    import urllib.request
+
+    url = f"https://pypi.org/pypi/{package}/{version}/json"
+    try:
+        with urllib.request.urlopen(url) as response:
+            body = json.load(response)
+            status = response.status
+    except urllib.error.HTTPError as exc:
+        return exc.code, {}
+    except Exception as exc:
+        raise ReceiptError(f"PyPI observation failed: {exc}") from exc
+    return status, {
+        u["filename"]: u["digests"]["sha256"] for u in body.get("urls", [])
+    }
+
+
+def _observe_ghcr_tag_factory(repository: str):
+    import subprocess
+
+    def observe(tag: str):
+        listing = subprocess.run(
+            ["skopeo", "list-tags", f"docker://{repository}"],
+            capture_output=True,
+        )
+        if listing.returncode != 0:
+            raise ReceiptError(
+                f"{repository}: tag listing unavailable; observation failure "
+                "is never an observation"
+            )
+        classify = subprocess.run(
+            ["bash", str(REPO_ROOT / "scripts/oci-exact-publish.sh"),
+             "classify-listing", "--tag", tag],
+            input=listing.stdout, capture_output=True,
+        )
+        if classify.returncode != 0:
+            raise ReceiptError(
+                f"{repository}: "
+                + classify.stderr.decode(errors="replace").strip()
+            )
+        if classify.stdout.decode().strip() != "yes":
+            return None
+        raw = subprocess.run(
+            ["skopeo", "inspect", "--raw", f"docker://{repository}:{tag}"],
+            capture_output=True,
+        )
+        if raw.returncode != 0:
+            raise ReceiptError(
+                f"{repository}:{tag}: digest unavailable for a present tag"
+            )
+        return "sha256:" + hashlib.sha256(raw.stdout).hexdigest()
+
+    return observe
+
+
+def compose_workflow_lanes(graph: "Graph", refs: dict) -> WorkflowLanes:
+    """Fresh-process lane composition, gated by the typed graph: a lane
+    composes only for a component whose publish_lane declares the exact
+    allowlisted provider, repository, workflow, and the three reviewed
+    modes matching LANE_ARTIFACT_SOURCES."""
+    lanes: dict = {}
+    modes = ["stage-only", "publish-continuation", "verify-only"]
+    for component, ref in refs.items():
+        source = LANE_ARTIFACT_SOURCES.get(component)
+        declared = (
+            graph.components[component].publish_lane or {}
+            if component in graph.components else {}
+        )
+        if (
+            source is None
+            or declared.get("provider") != "github-workflow-artifacts"
+            or declared.get("repository") != source[0]
+            or declared.get("workflow") != source[1]
+            or declared.get("modes") != modes
+        ):
+            raise ReceiptError(
+                f"--stage-artifact names {component}, whose graph lane does "
+                "not declare the allowlisted provider/repository/workflow/"
+                "modes surface"
+            )
+        repo, workflow_path = source
+        reader = GithubArtifactStore(repo=repo, workflow_path=workflow_path)
+        authority = GithubArtifactDigestAuthority(
+            repo=repo, workflow_path=workflow_path
+        )
+        runs = AwLaneRuns(
+            repo=repo, workflow_file=workflow_path.rsplit("/", 1)[-1]
+        )
+        if component == "aw":
+            lanes[component] = AwWorkflowLane(
+                reader=reader, lane_authority=authority,
+                refs={component: ref},
+                release_fetch=_fetch_aw_release_asset,
+                npm_fetch=_fetch_npm_tarball,
+                runs=runs,
+            )
+        elif component in ("server", "awid-pypi"):
+            registry = (declared.get("registry") or {})
+            lanes[component] = PypiWorkflowLane(
+                component=component,
+                pypi_name=registry.get("package", component),
+                reader=reader, lane_authority=authority,
+                refs={component: ref}, runs=runs,
+                pypi_observe=_observe_pypi,
+            )
+        else:
+            registry = (declared.get("registry") or {})
+            repository = f"ghcr.io/{registry.get('package', 'awebai/awid')}"
+            lanes[component] = AwidImageWorkflowLane(
+                component=component,
+                repository=repository,
+                reader=reader, lane_authority=authority,
+                refs={component: ref}, runs=runs,
+                tag_observe=_observe_ghcr_tag_factory(repository),
+            )
+    return WorkflowLanes(lanes)
 
 
 # ── lane observers: one SHA-256 per published item ───────────────────
@@ -3224,14 +3761,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 getattr(args, "stage_artifact", [])
             )
             if refs:
-                lanes = AwWorkflowLane(
-                    reader=GithubArtifactStore(),
-                    lane_authority=GithubArtifactDigestAuthority(),
-                    refs=refs,
-                    release_fetch=_fetch_aw_release_asset,
-                    npm_fetch=_fetch_npm_tarball,
-                    runs=AwLaneRuns(),
-                )
+                lanes = compose_workflow_lanes(graph, refs)
         providers = Providers(
             store=store,
             authority=authority,
