@@ -74,6 +74,9 @@ main() {
 
   echo "=== Bring up + seed the stack ==="
   "$STACK" up
+  if [[ -n "${AWEB_SKEW_RUNTIME_PROOF_PATH:-}" ]]; then
+    "$STACK" server-proof
+  fi
   AW_BIN="$AW_BIN" "$STACK" seed
 
   echo "=== Run the real-stack Go e2e suite (AW_E2E=1, -tags e2e) ==="

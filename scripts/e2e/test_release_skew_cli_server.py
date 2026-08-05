@@ -351,6 +351,12 @@ class HarnessTests(unittest.TestCase):
 
         def journey(aw, server, direction):
             calls.append((aw.path.name, server.path.name, direction))
+            return {
+                "server_version": server.version,
+                "wheel_sha256": server.evidence["payload_sha256"],
+                "container_id": "a" * 64,
+                "image_id": "sha256:" + "b" * 64,
+            }
 
         harness = subject.CliServerSkewHarness(
             resolver=Resolver(), journey=journey, evidence_root=None
@@ -363,7 +369,28 @@ class HarnessTests(unittest.TestCase):
             ))
             self.assertEqual(evidence["cell"]["direction"], direction)
             self.assertEqual(evidence["outcome"], "green")
+            self.assertEqual(evidence["runtime"]["server_version"], "1.26.36")
+            self.assertEqual(evidence["runtime"]["wheel_sha256"], sha(b"server"))
         self.assertEqual(calls, [("aw", "server", "a-to-b"), ("aw", "server", "b-to-a")])
+
+    def test_runtime_server_proof_refuses_version_or_wheel_mismatch(self):
+        import release_skew_cli_server as subject
+
+        artifact = subject.ResolvedArtifact(
+            component="server", version="1.26.35", path=Path("server.whl"),
+            evidence={"payload_sha256": "a" * 64},
+        )
+        base = {
+            "server_version": "1.26.35",
+            "wheel_sha256": "a" * 64,
+            "container_id": "b" * 64,
+            "image_id": "sha256:" + "c" * 64,
+        }
+        self.assertEqual(subject.validate_runtime_proof(base, artifact), base)
+        for field, value in (("server_version", "1.26.31"), ("wheel_sha256", "d" * 64)):
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(rd.ReceiptError, "runtime server proof"):
+                    subject.validate_runtime_proof({**base, field: value}, artifact)
 
     def test_wrong_edge_preimage_refuses_before_artifact_resolution(self):
         import release_skew_cli_server as subject
@@ -395,8 +422,16 @@ class HarnessTests(unittest.TestCase):
                     {"component": side["component"], "outer_sha256": "1" * 64, "payload_sha256": "2" * 64},
                 )
 
-        def red(*args):
-            raise RuntimeError("required agent_id absent")
+        def red(aw, server, direction):
+            raise subject.JourneyExecutionFailure(
+                "required agent_id absent",
+                {
+                    "server_version": server.version,
+                    "wheel_sha256": server.evidence["payload_sha256"],
+                    "container_id": "a" * 64,
+                    "image_id": "sha256:" + "b" * 64,
+                },
+            )
 
         harness = subject.CliServerSkewHarness(
             resolver=Resolver(), journey=red, evidence_root=None
@@ -410,6 +445,8 @@ class HarnessTests(unittest.TestCase):
         evidence = caught.exception.evidence
         self.assertEqual(evidence["outcome"], "red")
         self.assertEqual(evidence["artifacts"][0]["outer_sha256"], "1" * 64)
+        self.assertEqual(evidence["runtime"]["server_version"], "1.26.31")
+        self.assertEqual(evidence["runtime"]["wheel_sha256"], "2" * 64)
         self.assertIn("agent_id absent", evidence["error"])
 
 

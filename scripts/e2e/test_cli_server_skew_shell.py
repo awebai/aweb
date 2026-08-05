@@ -83,6 +83,59 @@ class CliE2EScriptTests(unittest.TestCase):
             self.assertEqual(lines[1], str(ROOT / "scripts/e2e-library-stack.sh"))
             self.assertEqual(lines[-2:], ["-run", "^TestOne$"])
 
+    def test_stack_server_proof_binds_runtime_version_wheel_and_container(self):
+        stack = ROOT / "scripts/e2e-library-stack.sh"
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            bin_dir = tmp / "bin"
+            bin_dir.mkdir()
+            proof = tmp / "proof.json"
+            docker = executable(
+                bin_dir / "docker",
+                """#!/bin/sh
+case " $* " in
+  *" ps -q aweb "*) printf '%064d\\n' 0 | tr '0' 'a' ;;
+  *" inspect --format "*) printf 'sha256:%064d\\n' 0 | tr '0' 'b' ;;
+  *"importlib.metadata.version"*) printf '%s\\n' "$FAKE_SERVER_VERSION" ;;
+  *"/opt/aweb-artifact"*) printf '%s\\n' "$FAKE_WHEEL_SHA256" ;;
+  *) echo "unexpected docker call: $*" >&2; exit 90 ;;
+esac
+""",
+            )
+            del docker
+            wheel_sha = hashlib.sha256(b"wheel").hexdigest()
+            env = os.environ.copy()
+            env.update({
+                "PATH": f"{bin_dir}:{env['PATH']}",
+                "AWEB_SKEW_RUNTIME_PROOF_PATH": str(proof),
+                "AWEB_SKEW_EXPECTED_SERVER_VERSION": "1.26.35",
+                "AWEB_SKEW_EXPECTED_SERVER_WHEEL_SHA256": wheel_sha,
+                "FAKE_SERVER_VERSION": "1.26.35",
+                "FAKE_WHEEL_SHA256": wheel_sha,
+            })
+            result = subprocess.run(
+                ["bash", str(stack), "server-proof"], cwd=ROOT, env=env,
+                text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            import json
+            self.assertEqual(json.loads(proof.read_text()), {
+                "container_id": "a" * 64,
+                "image_id": "sha256:" + "b" * 64,
+                "server_version": "1.26.35",
+                "wheel_sha256": wheel_sha,
+            })
+
+            proof.unlink()
+            env["FAKE_SERVER_VERSION"] = "1.26.31"
+            result = subprocess.run(
+                ["bash", str(stack), "server-proof"], cwd=ROOT, env=env,
+                text=True, capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("running aweb 1.26.31, expected 1.26.35", result.stderr)
+            self.assertFalse(proof.exists())
+
     def test_wheel_cell_prepares_fixed_journey_around_exact_wheel(self):
         wrapper = ROOT / "scripts/e2e/run_cli_server_skew_cell.sh"
         with tempfile.TemporaryDirectory() as raw:
@@ -95,6 +148,9 @@ class CliE2EScriptTests(unittest.TestCase):
                 "AW_BIN": str(aw),
                 "AWEB_E2E_SERVER_WHEEL": str(wheel),
                 "AW_SKEW_DIRECTION": "a-to-b",
+                "AWEB_SKEW_RUNTIME_PROOF_PATH": str(tmp / "proof.json"),
+                "AWEB_SKEW_EXPECTED_SERVER_VERSION": "1.26.35",
+                "AWEB_SKEW_EXPECTED_SERVER_WHEEL_SHA256": hashlib.sha256(b"exact-wheel").hexdigest(),
                 "CLI_SERVER_SKEW_E2E_SCRIPT": str(tmp / "fake-e2e"),
             })
             result = subprocess.run(

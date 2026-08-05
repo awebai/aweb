@@ -178,7 +178,11 @@ journey. For `a-to-b`, CLI connect/heartbeat/lock mutations are checked in raw
 authenticated server state: the lock holder must be the roster agent ID and not
 the workspace ID. For `b-to-a`, the selected CLI must decode the server status
 and roster response into distinct IDs, an attributed lock, and active presence.
-Neither release artifact is rebuilt.
+Neither release artifact is rebuilt. Before seeding or running either direction,
+the controlled stack executes `importlib.metadata.version("aweb")` inside the
+exact aweb container and hashes its retained wheel. The cell refuses unless
+both equal the resolved server artifact, then records those values with the
+full container and image IDs; the public `/health` contract is unchanged.
 
 `make test-release-skew-cli-server` is the focused, non-Docker contract suite.
 Once exact candidate LaneRefs exist, `make measure-release-skew-cli-server`

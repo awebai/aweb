@@ -16,6 +16,9 @@ validate_inputs() {
   : "${AW_BIN:?AW_BIN must name the exact resolved aw binary}"
   : "${AWEB_E2E_SERVER_WHEEL:?AWEB_E2E_SERVER_WHEEL must name the exact resolved server wheel}"
   : "${AW_SKEW_DIRECTION:?AW_SKEW_DIRECTION must name the requested SkewCell direction}"
+  : "${AWEB_SKEW_RUNTIME_PROOF_PATH:?runtime proof path is required}"
+  : "${AWEB_SKEW_EXPECTED_SERVER_VERSION:?expected server version is required}"
+  : "${AWEB_SKEW_EXPECTED_SERVER_WHEEL_SHA256:?expected server wheel SHA-256 is required}"
   [[ -x "$AW_BIN" ]] || {
     echo "FATAL: AW_BIN is not executable: $AW_BIN" >&2
     return 1

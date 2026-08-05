@@ -4,9 +4,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY *.whl /tmp/dist/
-RUN python -m pip install --no-cache-dir /tmp/dist/*.whl \
-    && rm -rf /tmp/dist
+COPY *.whl /opt/aweb-artifact/
+RUN python -m pip install --no-cache-dir /opt/aweb-artifact/*.whl
 
 RUN groupadd --system --gid 1001 aweb \
     && useradd --system --uid 1001 --gid 1001 aweb

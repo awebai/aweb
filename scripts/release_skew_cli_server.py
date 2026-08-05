@@ -412,6 +412,12 @@ def cell_document(cell: rd.SkewCell) -> dict:
     }
 
 
+class JourneyExecutionFailure(RuntimeError):
+    def __init__(self, message: str, runtime_proof: dict):
+        super().__init__(message)
+        self.runtime_proof = runtime_proof
+
+
 class SkewJourneyFailure(Exception):
     def __init__(self, message: str, evidence: dict):
         super().__init__(message)
@@ -455,8 +461,13 @@ class CliServerSkewHarness:
                 "artifacts": [aw.evidence, server.evidence],
             }
             try:
-                self._journey(aw, server, cell.direction)
+                runtime = self._journey(aw, server, cell.direction)
+                evidence["runtime"] = validate_runtime_proof(runtime, server)
             except Exception as exc:
+                if isinstance(exc, JourneyExecutionFailure):
+                    evidence["runtime"] = validate_runtime_proof(
+                        exc.runtime_proof, server
+                    )
                 evidence["outcome"] = "red"
                 evidence["error"] = str(exc)
                 self._write_evidence(evidence)
@@ -498,10 +509,15 @@ def _run_real_stack_journey(
     aw: ResolvedArtifact, server: ResolvedArtifact, direction: str
 ) -> None:
     env = os.environ.copy()
+    proof_path = server.path.parent / "server-runtime-proof.json"
+    proof_path.unlink(missing_ok=True)
     env.update({
         "AW_BIN": str(aw.path),
         "AWEB_E2E_SERVER_WHEEL": str(server.path),
         "AW_SKEW_DIRECTION": direction,
+        "AWEB_SKEW_RUNTIME_PROOF_PATH": str(proof_path),
+        "AWEB_SKEW_EXPECTED_SERVER_VERSION": server.version,
+        "AWEB_SKEW_EXPECTED_SERVER_WHEEL_SHA256": server.evidence["payload_sha256"],
     })
     result = subprocess.run(
         ["make", "cli-server-skew-cell"],
@@ -510,12 +526,47 @@ def _run_real_stack_journey(
         text=True,
         capture_output=True,
     )
+    proof = _read_runtime_proof(proof_path)
     if result.returncode != 0:
-        raise RuntimeError(
+        raise JourneyExecutionFailure(
             _summarize_journey_failure(
                 result.returncode, result.stdout, result.stderr
-            )
+            ),
+            proof,
         )
+    return proof
+
+
+def _read_runtime_proof(proof_path: Path) -> dict:
+    if not proof_path.is_file():
+        raise rd.ReceiptError(
+            "real-stack journey produced no controlled-runtime server proof"
+        )
+    try:
+        return json.loads(proof_path.read_bytes())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise rd.ReceiptError(
+            f"controlled-runtime server proof is unreadable: {exc}"
+        ) from exc
+
+
+def validate_runtime_proof(proof: dict, server: ResolvedArtifact) -> dict:
+    expected_keys = {"server_version", "wheel_sha256", "container_id", "image_id"}
+    if not isinstance(proof, dict) or set(proof) != expected_keys:
+        raise rd.ReceiptError(
+            f"runtime server proof must carry exactly {sorted(expected_keys)}, got {proof!r}"
+        )
+    if (
+        proof["server_version"] != server.version
+        or proof["wheel_sha256"] != server.evidence.get("payload_sha256")
+        or not re.fullmatch(r"[0-9a-f]{64}", proof["wheel_sha256"])
+        or not re.fullmatch(r"[0-9a-f]{64}", proof["container_id"])
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", proof["image_id"])
+    ):
+        raise rd.ReceiptError(
+            f"runtime server proof does not bind exact wheel/version/container: {proof!r}"
+        )
+    return dict(proof)
 
 
 def _summarize_journey_failure(returncode: int, stdout: str, stderr: str) -> str:
