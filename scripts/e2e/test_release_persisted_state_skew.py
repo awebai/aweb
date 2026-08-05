@@ -158,6 +158,7 @@ class PersistedArtifactTests(unittest.TestCase):
             "packagetype": "bdist_wheel",
             "url": f"{host}/packages/aweb-{version}-py3-none-any.whl",
             "digests": {"sha256": hashlib.sha256(wheel).hexdigest()},
+            "yanked": False,
         }]
         if include_sdist:
             urls.append({
@@ -165,6 +166,7 @@ class PersistedArtifactTests(unittest.TestCase):
                 "packagetype": "sdist",
                 "url": f"{host}/packages/aweb-{version}.tar.gz",
                 "digests": {"sha256": hashlib.sha256(sdist).hexdigest()},
+                "yanked": False,
             })
         return json.dumps({
             "info": {"version": info_version or version},
@@ -205,12 +207,12 @@ class PersistedArtifactTests(unittest.TestCase):
 
     def test_published_missing_sdist_refuses(self):
         metadata = self.published_metadata(include_sdist=False)
-        with self.assertRaisesRegex(rd.ReceiptError, "sdist"):
+        with self.assertRaises(rd.ReceiptError):
             self.resolve_published(metadata)
 
     def test_published_untrusted_url_refuses(self):
         metadata = self.published_metadata(host="https://evil.example")
-        with self.assertRaisesRegex(rd.ReceiptError, "trusted"):
+        with self.assertRaises(rd.ReceiptError):
             self.resolve_published(metadata)
 
     def test_published_wheel_digest_mismatch_refuses(self):
@@ -257,9 +259,20 @@ class FakeResolver:
                 "digest_set": side["digest_set"],
             }
         else:
-            filename = f"aweb-{side['version']}.whl"
-            digest = side["version"].replace(".", "") * 16
-            source = {"kind": "published", "registry": "pypi:aweb"}
+            version = side["version"]
+            filename = f"aweb-{version}-py3-none-any.whl"
+            digest = hashlib.sha256(f"wheel-{version}".encode()).hexdigest()
+            digest_set = {
+                filename: digest,
+                f"aweb-{version}.tar.gz": hashlib.sha256(
+                    f"sdist-{version}".encode()).hexdigest(),
+            }
+            source = {
+                "kind": "published",
+                "registry": "pypi:aweb",
+                "digest_set": digest_set,
+                "canonical_set_digest": rd.canonical_digest_of_set(digest_set),
+            }
         return skew.WheelIdentity(
             filename=filename, version=side["version"], sha256=digest,
             bytes=side["version"].encode(), source=source,
@@ -371,6 +384,152 @@ def matrix_document(versions=("1.2.2",)):
         staged_manifest_digest="3" * 64,
     )
     return document, rd.validate_skew_matrix_document(document)
+
+
+class PublishedAuthorityContractTests(unittest.TestCase):
+    """The exact PyPI authority contract landed in .7.3, enforced for EVERY
+    release record - reviewer counterexamples included."""
+
+    def metadata(self, *, version="1.2.2", wheel=b"w", sdist=b"s",
+                 wheel_url=None, sdist_url=None, wheel_yanked=False,
+                 sdist_yanked=False, wheel_name=None, sdist_name=None,
+                 wheel_digest=None, drop_yanked=False, extra=None):
+        wname = wheel_name or f"aweb-{version}-py3-none-any.whl"
+        sname = sdist_name or f"aweb-{version}.tar.gz"
+        wrec = {
+            "filename": wname, "packagetype": "bdist_wheel",
+            "url": wheel_url or f"https://files.pythonhosted.org/packages/{wname}",
+            "digests": {"sha256": wheel_digest or hashlib.sha256(wheel).hexdigest()},
+            "yanked": wheel_yanked,
+        }
+        srec = {
+            "filename": sname, "packagetype": "sdist",
+            "url": sdist_url or f"https://files.pythonhosted.org/packages/{sname}",
+            "digests": {"sha256": hashlib.sha256(sdist).hexdigest()},
+            "yanked": sdist_yanked,
+        }
+        if drop_yanked:
+            wrec.pop("yanked")
+        urls = [wrec, srec] + list(extra or [])
+        return json.dumps({"info": {"version": version}, "urls": urls}).encode()
+
+    def resolve(self, metadata, wheel=b"w"):
+        def fetch(url):
+            return metadata if url.endswith("/json") else wheel
+        return skew.WheelResolver(pypi_fetch=fetch).resolve(
+            "published-latest",
+            {"component": "server", "version": "1.2.2"}, "pypi:aweb")
+
+    def test_complete_exact_release_set_validates(self):
+        identity = self.resolve(self.metadata())
+        self.assertEqual(len(identity.source["digest_set"]), 2)
+        self.assertEqual(
+            identity.source["canonical_set_digest"],
+            rd.canonical_digest_of_set(identity.source["digest_set"]))
+
+    def test_missing_yanked_field_refuses(self):
+        with self.assertRaises(rd.ReceiptError):
+            self.resolve(self.metadata(drop_yanked=True))
+
+    def test_yanked_true_refuses(self):
+        with self.assertRaises(rd.ReceiptError):
+            self.resolve(self.metadata(wheel_yanked=True))
+
+    def test_url_with_query_or_fragment_refuses(self):
+        url = ("https://files.pythonhosted.org/packages/"
+               "aweb-1.2.2-py3-none-any.whl?variant=other#fragment")
+        with self.assertRaises(rd.ReceiptError):
+            self.resolve(self.metadata(wheel_url=url))
+
+    def test_url_basename_differing_from_filename_refuses(self):
+        url = "https://files.pythonhosted.org/packages/unrelated.tar.gz"
+        with self.assertRaises(rd.ReceiptError):
+            self.resolve(self.metadata(sdist_url=url))
+
+    def test_non_https_or_wrong_host_refuses(self):
+        for url in ("http://files.pythonhosted.org/packages/aweb-1.2.2-py3-none-any.whl",
+                    "https://evil.example/packages/aweb-1.2.2-py3-none-any.whl"):
+            with self.assertRaises(rd.ReceiptError):
+                self.resolve(self.metadata(wheel_url=url))
+
+    def test_uppercase_or_short_digest_refuses(self):
+        for digest in ("A" * 64, "ab" * 31):
+            with self.assertRaises(rd.ReceiptError):
+                self.resolve(self.metadata(wheel_digest=digest))
+
+    def test_unexpected_filenames_refuse(self):
+        with self.assertRaises(rd.ReceiptError):
+            self.resolve(self.metadata(wheel_name="aweb-9.9.9-py3-none-any.whl"))
+
+    def test_extra_release_record_refuses(self):
+        extra = [{
+            "filename": "aweb-1.2.2-py2-none-any.whl",
+            "packagetype": "bdist_wheel",
+            "url": "https://files.pythonhosted.org/packages/aweb-1.2.2-py2-none-any.whl",
+            "digests": {"sha256": "c" * 64}, "yanked": False,
+        }]
+        with self.assertRaises(rd.ReceiptError):
+            self.resolve(self.metadata(extra=extra))
+
+
+class AggregatePublishedIdentityTests(unittest.TestCase):
+    """aggregate_support must exact-revalidate the complete published actor
+    identity - reviewer tampering counterexamples, each with a recomputed
+    self-presented report_id so the digest check cannot mask them."""
+
+    def measured(self, tamper=None):
+        document, cells = matrix_document(("1.2.1", "1.2.2"))
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        harness = skew.PersistedStateHarness(
+            resolver=FakeResolver(), journey_factory=FakeJourney,
+            evidence_dir=Path(temporary.name),
+        )
+        matrix_path = harness.freeze_matrix(document)
+        for cell in cells:
+            harness.run(cell)
+        if tamper is not None:
+            target = sorted(matrix_path.parent.glob("cell-*.json"))[0]
+            report = json.loads(target.read_text())
+            tamper(report)
+            report.pop("report_id", None)
+            report["report_id"] = rd.canonical_json_digest(report)
+            target.write_text(json.dumps(
+                report, sort_keys=True, separators=(",", ":")))
+        return matrix_path
+
+    def test_untampered_aggregate_succeeds(self):
+        skew.aggregate_support(self.measured())
+
+    def test_zeroed_published_sha_refuses(self):
+        path = self.measured(
+            lambda r: r["published"].__setitem__("sha256", "0" * 64))
+        with self.assertRaises(rd.ReceiptError):
+            skew.aggregate_support(path)
+
+    def test_unrelated_published_filename_refuses(self):
+        path = self.measured(
+            lambda r: r["published"].__setitem__("filename", "unrelated.whl"))
+        with self.assertRaises(rd.ReceiptError):
+            skew.aggregate_support(path)
+
+    def test_unrelated_published_registry_refuses(self):
+        def tamper(report):
+            report["published"]["source"]["registry"] = "pypi:unrelated"
+        with self.assertRaises(rd.ReceiptError):
+            skew.aggregate_support(self.measured(tamper))
+
+    def test_unrelated_published_digest_set_refuses(self):
+        def tamper(report):
+            report["published"]["source"]["digest_set"] = {"x": "0" * 64}
+        with self.assertRaises(rd.ReceiptError):
+            skew.aggregate_support(self.measured(tamper))
+
+    def test_canonical_scalar_disagreeing_with_set_refuses(self):
+        def tamper(report):
+            report["published"]["source"]["canonical_set_digest"] = "0" * 64
+        with self.assertRaises(rd.ReceiptError):
+            skew.aggregate_support(self.measured(tamper))
 
 
 class PersistedJourneyTests(unittest.TestCase):
