@@ -614,6 +614,7 @@ class CliServerSkewHarness:
         resolver=None,
         journey=None,
         evidence_root=_DEFAULT_EVIDENCE,
+        temporary_directory=tempfile.TemporaryDirectory,
     ):
         self._resolver = resolver or CliServerArtifactResolver()
         self._journey = journey or _run_real_stack_journey
@@ -623,37 +624,62 @@ class CliServerSkewHarness:
                 str(REPO_ROOT / ".release-runs" / "skew-cli-server"),
             )
         self._evidence_root = Path(evidence_root) if evidence_root is not None else None
+        self._temporary_directory = temporary_directory
 
     def run(self, cell: rd.SkewCell) -> None:
         self.run_evidenced(cell)
 
     def run_evidenced(self, cell: rd.SkewCell) -> dict:
         _validate_cell(cell)
-        with tempfile.TemporaryDirectory(prefix="aweb-skew-cli-server-") as tmp:
-            root = Path(tmp)
-            aw = self._resolver.resolve(cell.a, cell.a_kind, cell.artifacts["a"], root)
-            server = self._resolver.resolve(cell.b, cell.b_kind, cell.artifacts["b"], root)
-            evidence = {
-                "schema": "aweb.release.skew-cell-evidence.v1",
-                "cell": cell_document(cell),
-                "artifacts": [aw.evidence, server.evidence],
-            }
-            identity = cell_document(cell)
-            try:
-                runtime = self._journey(aw, server, cell.direction, identity)
-                evidence["runtime"] = validate_runtime_proof(runtime, server, identity)
-            except Exception as exc:
-                if isinstance(exc, JourneyExecutionFailure):
+        evidence = None
+        journey_error = None
+        try:
+            with self._temporary_directory(prefix="aweb-skew-cli-server-") as tmp:
+                root = Path(tmp)
+                aw = self._resolver.resolve(
+                    cell.a, cell.a_kind, cell.artifacts["a"], root
+                )
+                server = self._resolver.resolve(
+                    cell.b, cell.b_kind, cell.artifacts["b"], root
+                )
+                identity = cell_document(cell)
+                evidence = {
+                    "schema": "aweb.release.skew-cell-evidence.v1",
+                    "cell": identity,
+                    "artifacts": [aw.evidence, server.evidence],
+                }
+                try:
+                    runtime = self._journey(aw, server, cell.direction, identity)
                     evidence["runtime"] = validate_runtime_proof(
-                        exc.runtime_proof, server, identity
+                        runtime, server, identity
                     )
-                evidence["outcome"] = "red"
-                evidence["error"] = str(exc)
-                self._write_evidence(evidence)
-                raise SkewJourneyFailure(str(exc), evidence) from exc
-            evidence["outcome"] = "green"
+                    evidence["outcome"] = "green"
+                except Exception as exc:
+                    journey_error = exc
+                    if isinstance(exc, JourneyExecutionFailure):
+                        try:
+                            evidence["runtime"] = validate_runtime_proof(
+                                exc.runtime_proof, server, identity
+                            )
+                        except Exception as proof_exc:
+                            journey_error = proof_exc
+                    evidence["outcome"] = "red"
+                    evidence["error"] = str(journey_error)
+        except Exception as exc:
+            if evidence is None:
+                raise
+            evidence["outcome"] = "red"
+            evidence["error"] = f"artifact temporary-directory cleanup failed: {exc}"
             self._write_evidence(evidence)
-            return evidence
+            raise SkewJourneyFailure(evidence["error"], evidence) from exc
+
+        if journey_error is not None:
+            self._write_evidence(evidence)
+            raise SkewJourneyFailure(str(journey_error), evidence) from journey_error
+        # Green publication is deliberately outside the artifact/proof temporary
+        # context: visible green evidence means its exact outer cleanup succeeded.
+        self._write_evidence(evidence)
+        return evidence
 
     def _write_evidence(self, evidence: dict) -> None:
         if self._evidence_root is None:
@@ -747,6 +773,7 @@ def validate_runtime_proof(
         "installed_distributions",
         "installed_distributions_sha256",
         "mcp_version",
+        "ports",
         "project",
         "server_version",
         "wheel_sha256",
@@ -769,6 +796,19 @@ def validate_runtime_proof(
     )
     inventory_digest = _sha256(_canonical_json(inventory)) if valid_inventory else ""
     identity_digest = _sha256(_canonical_json(identity))
+    ports = proof["ports"]
+    valid_ports = (
+        isinstance(ports, dict)
+        and set(ports) == {"aweb", "awid", "library", "postgres"}
+        and all(
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and 1 <= value <= 65535
+            for value in ports.values()
+        )
+        and len(set(ports.values())) == 4
+    )
+    project_pattern = rf"aweb-skew-{identity_digest[:20]}-[0-9a-f]{{16}}"
     if (
         proof["server_version"] != server.version
         or proof["wheel_sha256"] != server.evidence.get("payload_sha256")
@@ -778,10 +818,11 @@ def validate_runtime_proof(
         or inventory.get("mcp") != proof["mcp_version"]
         or proof["installed_distributions_sha256"] != inventory_digest
         or proof["cell_identity_sha256"] != identity_digest
+        or not valid_ports
         or not re.fullmatch(r"[0-9a-f]{64}", proof["wheel_sha256"])
         or not re.fullmatch(r"[0-9a-f]{64}", proof["container_id"])
         or not re.fullmatch(r"sha256:[0-9a-f]{64}", proof["image_id"])
-        or not re.fullmatch(r"aweb-skew-[0-9a-f]{20}-[0-9a-f]{16}", proof["project"])
+        or not re.fullmatch(project_pattern, proof["project"])
     ):
         raise rd.ReceiptError(
             f"runtime server proof does not bind exact cell/wheel/dependencies/container: {proof!r}"

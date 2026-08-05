@@ -197,8 +197,11 @@ full installed-distribution inventory and digest, and requires the published
 positive and negative controls to have identical dependency posture except for
 the server distribution. The cell refuses unless all runtime values match the
 resolved artifacts and cell identity, then records those values with the exact
-project and full container and image IDs. Green evidence is written only after
-exact-project stack cleanup and temporary-context cleanup both succeed; the
+project, the four distinct allocated host ports (aweb, awid, Library, and
+postgres), and full container and image IDs. The project prefix must equal the
+full-cell identity digest prefix. Green evidence is written only after
+exact-project stack cleanup, shell context cleanup, and the outer Python
+artifact/proof temporary-directory cleanup all succeed; the
 public `/health` contract is unchanged.
 
 `make test-release-skew-cli-server` is the focused, non-Docker contract suite.

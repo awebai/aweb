@@ -133,6 +133,10 @@ def runtime_proof(server_version, wheel_sha, identity, *, aweb_override=None):
         "installed_distributions": inventory,
         "installed_distributions_sha256": sha(subject._canonical_json(inventory)),
         "mcp_version": subject.locked_mcp_version(),
+        "ports": {
+            "aweb": 38000, "awid": 38010,
+            "library": 38765, "postgres": 35432,
+        },
         "project": f"aweb-skew-{sha(subject._canonical_json(identity))[:20]}-{'c' * 16}",
         "server_version": server_version,
         "wheel_sha256": wheel_sha,
@@ -529,6 +533,76 @@ class HarnessTests(unittest.TestCase):
                     subject.validate_runtime_proof(
                         {**base, field: value}, artifact, identity
                     )
+
+        wrong_project = {
+            **base,
+            "project": f"aweb-skew-{'f' * 20}-{'e' * 16}",
+        }
+        with self.assertRaisesRegex(rd.ReceiptError, "runtime server proof"):
+            subject.validate_runtime_proof(wrong_project, artifact, identity)
+
+        port_mutations = {
+            "wrong": {**base["ports"], "aweb": 70000},
+            "duplicate": {**base["ports"], "aweb": base["ports"]["awid"]},
+            "missing": {
+                name: value for name, value in base["ports"].items()
+                if name != "postgres"
+            },
+        }
+        for label, ports in port_mutations.items():
+            with self.subTest(ports=label):
+                with self.assertRaisesRegex(rd.ReceiptError, "runtime server proof"):
+                    subject.validate_runtime_proof(
+                        {**base, "ports": ports}, artifact, identity
+                    )
+
+    def test_outer_artifact_cleanup_failure_cannot_publish_green(self):
+        import release_skew_cli_server as subject
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            artifact_root = root / "artifacts"
+            artifact_root.mkdir()
+            evidence_root = root / "evidence"
+
+            class CleanupFails:
+                def __init__(self, **kwargs):
+                    pass
+
+                def __enter__(self):
+                    return str(artifact_root)
+
+                def __exit__(self, exc_type, exc, traceback):
+                    raise OSError("controlled outer cleanup failure")
+
+            class Resolver:
+                def resolve(self, side, kind, locator, output_root):
+                    path = output_root / side["component"]
+                    path.write_bytes(b"bytes")
+                    return subject.ResolvedArtifact(
+                        side["component"], side["version"], path,
+                        {"component": side["component"], "payload_sha256": "a" * 64},
+                    )
+
+            def journey(aw, server, direction, identity):
+                return runtime_proof(server.version, "a" * 64, identity)
+
+            harness = subject.CliServerSkewHarness(
+                resolver=Resolver(), journey=journey,
+                evidence_root=evidence_root,
+                temporary_directory=CleanupFails,
+            )
+            with self.assertRaisesRegex(
+                subject.SkewJourneyFailure, "outer cleanup failure"
+            ) as caught:
+                harness.run_evidenced(cell(
+                    {"component": "aw", "version": "1.35.0"},
+                    {"component": "server", "version": "1.26.36"},
+                ))
+            self.assertEqual(caught.exception.evidence["outcome"], "red")
+            reports = [json.loads(path.read_text()) for path in evidence_root.glob("*.json")]
+            self.assertEqual(len(reports), 1)
+            self.assertEqual({report["outcome"] for report in reports}, {"red"})
 
     def test_wrong_edge_preimage_refuses_before_artifact_resolution(self):
         import release_skew_cli_server as subject

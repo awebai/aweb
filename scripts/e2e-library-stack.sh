@@ -218,6 +218,10 @@ print(json.dumps({
   PROOF_RUNTIME_JSON="$runtime_json" \
   PROOF_PROJECT="$PROJECT" \
   PROOF_CELL_IDENTITY_SHA256="$AW_SKEW_CELL_IDENTITY_SHA256" \
+  PROOF_AWEB_PORT="$AWEB_PORT" \
+  PROOF_AWID_PORT="$AWID_PORT" \
+  PROOF_LIBRARY_PORT="$LIBRARY_PORT" \
+  PROOF_POSTGRES_PORT="$LIBRARY_E2E_POSTGRES_PORT" \
   python3 - "$AWEB_SKEW_RUNTIME_PROOF_PATH" <<'PY'
 import json
 import os
@@ -234,6 +238,12 @@ runtime.update({
     "cell_identity_sha256": os.environ["PROOF_CELL_IDENTITY_SHA256"],
     "container_id": os.environ["PROOF_CONTAINER_ID"],
     "image_id": os.environ["PROOF_IMAGE_ID"],
+    "ports": {
+        "aweb": int(os.environ["PROOF_AWEB_PORT"]),
+        "awid": int(os.environ["PROOF_AWID_PORT"]),
+        "library": int(os.environ["PROOF_LIBRARY_PORT"]),
+        "postgres": int(os.environ["PROOF_POSTGRES_PORT"]),
+    },
     "project": os.environ["PROOF_PROJECT"],
 })
 path = Path(sys.argv[1])

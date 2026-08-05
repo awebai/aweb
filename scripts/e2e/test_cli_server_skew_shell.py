@@ -208,6 +208,10 @@ esac
                 "installed_distributions": inventory,
                 "installed_distributions_sha256": inventory_sha,
                 "mcp_version": "1.26.0",
+                "ports": {
+                    "aweb": 18000, "awid": 18010,
+                    "library": 18765, "postgres": 55432,
+                },
                 "project": project,
                 "server_version": "1.26.35",
                 "wheel_sha256": wheel_sha,
