@@ -293,7 +293,10 @@ class PlanDigestTests(unittest.TestCase):
         mutated = fixture_graph_dict()
         for edge in mutated["edge"]:
             if edge["type"] == "runtime-contract":
-                edge["supported"] = {"set": "measured:other", "policy": "breaking"}
+                edge["supported"] = {
+                    "set": "measured:other",
+                    "policy": "breaking-with-approved-deprecation",
+                }
         graph_b = rd.Graph.from_dict(mutated)
         digest_b = rd.plan_digest(rd.compute_plan(graph_b, state), graph_b)
         self.assertNotEqual(digest_a, digest_b)
@@ -397,7 +400,7 @@ class ReceiptTests(unittest.TestCase):
             n.component: rd.ReceiptEntry(
                 version=n.version or "0.0.0",
                 digest=f"d-{n.component}",
-                pointer_state=None,
+                pointer_state="ok" if n.reason.startswith("pointer:") else None,
                 delivery_proof=None,
             )
             for n in plan.moving
@@ -446,52 +449,433 @@ class ReceiptTests(unittest.TestCase):
         self.assertIn("source", why)
 
 
-class LaneOrchestrationTests(unittest.TestCase):
-    class RecordingLanes:
-        def __init__(self, available: set[str]):
-            self.available = available
-            self.calls: list[tuple[str, str]] = []
+class FixtureLanes:
+    """Records every call. Stages produce digests; publish returns what it is
+    given so digest identity can be asserted by the driver."""
 
-        def has_lane(self, component: str) -> bool:
-            return component in self.available
+    def __init__(self, available: set[str]):
+        self.available = available
+        self.calls: list[tuple[str, str]] = []
 
-        def stage(self, node: rd.PlanNode) -> rd.ReceiptEntry:
-            self.calls.append(("stage", node.component))
-            return rd.ReceiptEntry(
-                version=node.version or "0.0.0",
-                digest=f"staged-{node.component}",
+    def has_lane(self, component: str) -> bool:
+        return component in self.available
+
+    def stage(self, node: rd.PlanNode) -> rd.ReceiptEntry:
+        self.calls.append(("stage", node.component))
+        return rd.ReceiptEntry(
+            version=node.version or "0.0.0",
+            digest=f"staged-{node.component}",
+            pointer_state="pointer-ok" if node.reason.startswith("pointer:") else None,
+            delivery_proof=None,
+        )
+
+    def publish(self, node: rd.PlanNode, staged: rd.ReceiptEntry) -> rd.ReceiptEntry:
+        self.calls.append(("publish", node.component))
+        return staged
+
+    def verify(self, node: rd.PlanNode, published: rd.ReceiptEntry) -> None:
+        self.calls.append(("verify", node.component))
+
+
+class FixtureSkew:
+    def __init__(self, available: bool = True):
+        self.available = available
+        self.executed: list[tuple[str, str]] = []
+
+    def has_matrix(self, edge) -> bool:
+        return self.available
+
+    def execute(self, edge, staged: dict) -> None:
+        self.executed.append((edge.a, edge.b))
+
+
+class FixtureAuthority:
+    """External authority: records digests by artifact identity at seal time
+    and resolves them independently of anything the caller presents."""
+
+    def __init__(self):
+        self.recorded: dict[str, str] = {}
+
+    def record(self, artifact_id: str, digest: str) -> None:
+        self.recorded[artifact_id] = digest
+
+    def expected_digest(self, artifact_id: str) -> str | None:
+        return self.recorded.get(artifact_id)
+
+
+def complete_fixture_graph() -> rd.Graph:
+    """Fixture graph whose runtime contract is measured, so orchestration can
+    proceed to publish in tests that are not about G5 blocking."""
+    return rd.Graph.from_dict(fixture_graph_dict())
+
+
+def orchestration_state(**kwargs) -> rd.FixtureState:
+    defaults = dict(
+        changed_components={"client": True, "plugin": True},
+        versions={"client": "1.1.0", "plugin": "2.1.0"},
+        published_versions={"client": "1.0.0", "plugin": "2.0.0"},
+    )
+    defaults.update(kwargs)
+    return rd.FixtureState(**defaults)
+
+
+class FourPhaseProtocolTests(unittest.TestCase):
+    def run_fixture(self, lanes=None, skew=None, state=None, approvals=None):
+        graph = complete_fixture_graph()
+        state = state or orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        lanes = lanes or FixtureLanes(
+            available={n.component for n in plan.moving}
+        )
+        skew = skew or FixtureSkew()
+        authority = FixtureAuthority()
+        entries = rd.run_plan(
+            plan,
+            graph,
+            lanes,
+            skew=skew,
+            authority=authority,
+            source_sha="s1",
+            approvals=approvals or {},
+            state=state,
+        )
+        return graph, plan, lanes, skew, authority, entries
+
+    def test_every_stage_and_skew_precedes_the_first_publish(self) -> None:
+        """alice's interleaving counterexample: stage a, publish a, stage b is
+        forbidden. All stages bind digests, all touched skew matrices run
+        against those bytes, and only then does the first publish happen."""
+        graph, plan, lanes, skew, _, _ = self.run_fixture()
+        kinds = [kind for kind, _ in lanes.calls]
+        first_publish = kinds.index("publish")
+        self.assertEqual(
+            set(kinds[:first_publish]) & {"stage"},
+            {"stage"},
+        )
+        self.assertNotIn("publish", kinds[:first_publish])
+        stage_count = kinds[:first_publish].count("stage")
+        self.assertEqual(
+            stage_count,
+            len(plan.moving),
+            f"all {len(plan.moving)} stages must precede the first publish; calls={lanes.calls}",
+        )
+        self.assertTrue(skew.executed, "touched matrices must run before publish")
+
+    def test_publishes_follow_plan_order_and_verify_follows_publish(self) -> None:
+        _, plan, lanes, _, _, _ = self.run_fixture()
+        publishes = [c for kind, c in lanes.calls if kind == "publish"]
+        self.assertLess(publishes.index("client"), publishes.index("plugin"))
+        kinds = [kind for kind, _ in lanes.calls]
+        self.assertLess(kinds.index("publish"), kinds.index("verify"))
+
+    def test_missing_skew_provider_blocks_before_any_lane_call(self) -> None:
+        graph = complete_fixture_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        lanes = FixtureLanes(available={n.component for n in plan.moving})
+        with self.assertRaises(rd.SkewUnavailable):
+            rd.run_plan(
+                plan, graph, lanes,
+                skew=FixtureSkew(available=False),
+                authority=FixtureAuthority(),
+                source_sha="s1", approvals={}, state=state,
+            )
+        self.assertEqual(lanes.calls, [])
+
+    def test_missing_approval_refuses_before_any_lane_call(self) -> None:
+        """alice's counterexample: with the approval-required node last, the
+        first node was already published before refusal. Approvals preflight."""
+        graph = complete_fixture_graph()
+        state = orchestration_state(
+            changed_components={"server": True, "client": True},
+            versions={"server": "3.1.0", "client": "1.1.0"},
+            published_versions={"server": "3.0.0", "client": "1.0.0"},
+            env={"FIXTURE_GATE_ENV_FILE": "/private/creds"},
+            existing_paths={"/private/creds", "../server-src"},
+            pin_values={"release-pin.toml": "feedface"},
+            checkout_heads={"../server-src": "feedface"},
+            checkout_remotes={"../server-src": "github.com/example/server"},
+        )
+        plan = rd.compute_plan(graph, state)
+        lanes = FixtureLanes(available={n.component for n in plan.moving})
+        with self.assertRaises(rd.ApprovalRequired):
+            rd.run_plan(
+                plan, graph, lanes,
+                skew=FixtureSkew(), authority=FixtureAuthority(),
+                source_sha="s1", approvals={}, state=state,
+            )
+        self.assertEqual(lanes.calls, [], "nothing may run before approvals check out")
+
+    def test_published_digest_must_equal_staged_digest(self) -> None:
+        class TamperingLanes(FixtureLanes):
+            def publish(self, node, staged):
+                self.calls.append(("publish", node.component))
+                return rd.ReceiptEntry(
+                    version=staged.version,
+                    digest="something-else",
+                    pointer_state=staged.pointer_state,
+                    delivery_proof=staged.delivery_proof,
+                )
+
+        graph = complete_fixture_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        lanes = TamperingLanes(available={n.component for n in plan.moving})
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.run_plan(
+                plan, graph, lanes,
+                skew=FixtureSkew(), authority=FixtureAuthority(),
+                source_sha="s1", approvals={}, state=state,
+            )
+        self.assertIn("digest", str(caught.exception))
+
+    def test_run_seals_receipt_and_records_digest_with_authority(self) -> None:
+        graph, plan, lanes, _, authority, entries = self.run_fixture()
+        self.assertEqual(set(entries), {n.component for n in plan.moving})
+        kinds = {k.split(":")[0] for k in authority.recorded}
+        self.assertEqual(
+            kinds,
+            {"plan", "receipt"},
+            "the frozen plan and the final receipt must both be anchored",
+        )
+        receipt_id = next(k for k in authority.recorded if k.startswith("receipt:"))
+        receipt = rd.load_sealed_receipt(
+            rd.read_receipt_bytes(receipt_id),
+            expected_digest=authority.recorded[receipt_id],
+        )
+        ok, why = rd.receipt_matches_run(receipt, plan, graph, source_sha="s1")
+        self.assertTrue(ok, why)
+        plan_id = next(k for k in authority.recorded if k.startswith("plan:"))
+        self.assertEqual(
+            receipt.frozen_plan_id,
+            authority.recorded[plan_id],
+            "every receipt binds the frozen plan id it executed",
+        )
+
+    def test_publish_failure_anchors_a_partial_receipt(self) -> None:
+        class FailingSecondPublish(FixtureLanes):
+            def publish(self, node, staged):
+                if len([c for k, c in self.calls if k == "publish"]) == 1:
+                    raise RuntimeError("registry outage mid-run")
+                return super().publish(node, staged)
+
+        graph = complete_fixture_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        lanes = FailingSecondPublish(available={n.component for n in plan.moving})
+        authority = FixtureAuthority()
+        with self.assertRaises(RuntimeError):
+            rd.run_plan(
+                plan, graph, lanes,
+                skew=FixtureSkew(), authority=authority,
+                source_sha="s1", approvals={}, state=state,
+            )
+        partial_id = next(
+            (k for k in authority.recorded if k.startswith("receipt-partial:")), None
+        )
+        self.assertIsNotNone(
+            partial_id, "the partial state at failure must be externally anchored"
+        )
+        receipt = rd.load_sealed_receipt(
+            rd.read_receipt_bytes(partial_id),
+            expected_digest=authority.recorded[partial_id],
+        )
+        self.assertTrue(receipt.partial)
+        self.assertEqual(len(receipt.entries), 1)
+
+
+class ResumeTests(unittest.TestCase):
+    def test_frozen_plan_resumes_without_replanning(self) -> None:
+        """G4: after a partial publish, live registry state has moved; a rerun
+        takes the frozen plan artifact and never recomputes from live state."""
+        graph = complete_fixture_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        moved_state = orchestration_state(
+            changed_components={"plugin": True},
+        )
+        restored = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+        self.assertEqual(
+            [n.component for n in restored.moving],
+            [n.component for n in plan.moving],
+            "the frozen plan is the plan; live drift must not rewrite it",
+        )
+
+    def test_tampered_frozen_plan_is_refused(self) -> None:
+        graph = complete_fixture_graph()
+        plan = rd.compute_plan(graph, orchestration_state())
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        with self.assertRaises(rd.ReceiptError):
+            rd.load_frozen_plan(frozen_bytes.replace(b"s1", b"s2"), expected_id=frozen_id)
+
+    def test_partial_receipt_resume_skips_exact_matches_only(self) -> None:
+        graph = complete_fixture_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+        done = rd.ReceiptEntry(version="1.1.0", digest="staged-client")
+        partial = {"client": done}
+        remaining = rd.resume_remaining(plan, partial, observed={"client": done})
+        self.assertEqual([n.component for n in remaining], ["plugin", "pointer"])
+        drifted = rd.ReceiptEntry(version="1.1.0", digest="other")
+        with self.assertRaises(rd.ReceiptError):
+            rd.resume_remaining(plan, partial, observed={"client": drifted})
+
+
+class SealValidationTests(unittest.TestCase):
+    def test_seal_refuses_pointer_node_without_pointer_state(self) -> None:
+        graph = complete_fixture_graph()
+        plan = rd.compute_plan(graph, orchestration_state())
+        entries = {
+            n.component: rd.ReceiptEntry(
+                version="1.0.0",
+                digest=f"d-{n.component}",
                 pointer_state=None,
                 delivery_proof=None,
             )
+            for n in plan.moving
+        }
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.seal_receipt(plan, graph, source_sha="s1", entries=entries, approvals=())
+        self.assertIn("pointer_state", str(caught.exception))
 
-        def publish(self, node: rd.PlanNode, staged: rd.ReceiptEntry) -> rd.ReceiptEntry:
-            self.calls.append(("publish", node.component))
-            return staged
-
-    def test_run_fails_closed_naming_every_unavailable_lane(self) -> None:
-        graph = fixture_graph()
-        plan = rd.compute_plan(
-            graph, rd.FixtureState(changed_components={"client": True})
+    def test_seal_refuses_approval_required_node_without_approvals(self) -> None:
+        graph = complete_fixture_graph()
+        state = orchestration_state(
+            changed_components={"server": True},
+            versions={"server": "3.1.0"},
+            published_versions={"server": "3.0.0"},
         )
-        lanes = self.RecordingLanes(available=set())
-        with self.assertRaises(rd.LaneUnavailable) as caught:
-            rd.run_plan(plan, graph, lanes, source_sha="s1", approvals={})
-        self.assertIn("client", str(caught.exception))
-        self.assertEqual(lanes.calls, [], "nothing may execute when a lane is missing")
+        plan = rd.compute_plan(graph, state)
+        entries = {
+            n.component: rd.ReceiptEntry(
+                version="1.0.0",
+                digest=f"d-{n.component}",
+                pointer_state="ok" if n.reason.startswith("pointer:") else None,
+                delivery_proof=None,
+            )
+            for n in plan.moving
+        }
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.seal_receipt(plan, graph, source_sha="s1", entries=entries, approvals=())
+        self.assertIn("approval", str(caught.exception))
 
-    def test_run_orchestrates_stage_then_publish_in_plan_order(self) -> None:
-        graph = fixture_graph()
-        plan = rd.compute_plan(
-            graph,
-            rd.FixtureState(
-                changed_components={"client": True, "plugin": True},
-            ),
+
+class G5SchemaTests(unittest.TestCase):
+    def test_garbage_completion_is_refused_at_load(self) -> None:
+        """alice's one-counterexample-proves-all: empty measurement id, missing
+        policy, empty locators, nonsense direction must refuse to load."""
+        data = fixture_graph_dict()
+        data["edge"].append(
+            {
+                "type": "runtime-contract",
+                "a": "plugin",
+                "b": "server",
+                "journey": "j",
+                "artifacts": {"a": "", "b": ""},
+                "direction": "nonsense",
+                "supported": {"set": "measured:"},
+            }
         )
-        lanes = self.RecordingLanes(available={"client", "plugin", "pointer"})
-        entries = rd.run_plan(plan, graph, lanes, source_sha="s1", approvals={})
-        self.assertEqual(set(entries), {n.component for n in plan.moving})
-        publishes = [c for kind, c in lanes.calls if kind == "publish"]
-        self.assertLess(publishes.index("client"), publishes.index("plugin"))
+        with self.assertRaises(rd.GraphError):
+            rd.Graph.from_dict(data)
+
+    def test_measured_set_requires_nonempty_identity_and_policy(self) -> None:
+        data = fixture_graph_dict()
+        for edge in data["edge"]:
+            if edge["type"] == "runtime-contract":
+                edge["supported"] = {"set": "measured:", "policy": "additive-only"}
+        with self.assertRaises(rd.GraphError):
+            rd.Graph.from_dict(data)
+
+    def test_direction_must_be_a_known_enum_value(self) -> None:
+        data = fixture_graph_dict()
+        for edge in data["edge"]:
+            if edge["type"] == "runtime-contract":
+                edge["direction"] = "sideways"
+        with self.assertRaises(rd.GraphError):
+            rd.Graph.from_dict(data)
+
+
+class PointerClosureTests(unittest.TestCase):
+    def chain_graph(self) -> rd.Graph:
+        return rd.Graph.from_dict(
+            {
+                "component": {
+                    "a": {
+                        "source_paths": ["a/"],
+                        "version_source": {"type": "manifest", "path": "a/v"},
+                        "tag_format": "a-v{version}",
+                        "publish_lane": {"workflow": "wf/a.yml"},
+                        "verify": {"command": "true"},
+                    },
+                    "b": {"publishable": False},
+                    "c": {"publishable": False},
+                },
+                "edge": [
+                    {"type": "pointer", "from": "a", "to": ["b"]},
+                    {"type": "pointer", "from": "b", "to": ["c"]},
+                ],
+            }
+        )
+
+    def test_pointer_closure_is_transitive(self) -> None:
+        """alice's counterexample: a->b->c must move a, b AND c."""
+        plan = rd.compute_plan(
+            self.chain_graph(), rd.FixtureState(changed_components={"a": True})
+        )
+        order = [n.component for n in plan.moving]
+        self.assertEqual(order, ["a", "b", "c"])
+
+    def test_pointer_cycle_is_refused(self) -> None:
+        with self.assertRaises(rd.GraphError) as caught:
+            rd.Graph.from_dict(
+                {
+                    "component": {
+                        "a": {"publishable": False},
+                        "b": {"publishable": False},
+                    },
+                    "edge": [
+                        {"type": "pointer", "from": "a", "to": ["b"]},
+                        {"type": "pointer", "from": "b", "to": ["a"]},
+                    ],
+                }
+            )
+        self.assertIn("cycle", str(caught.exception).lower())
+
+
+class RegistryTruthTests(unittest.TestCase):
+    def test_unknown_published_version_blocks_by_name(self) -> None:
+        """alice's counterexample: published None must mean UNAVAILABLE and
+        block, never read as no-published-version."""
+        graph = fixture_graph()
+        state = rd.FixtureState(
+            changed_components={"client": True},
+            versions={"client": "1.1.0"},
+            published_versions={},
+            registry_unavailable={"client": "fixture registry has no reader"},
+        )
+        plan = rd.compute_plan(graph, state)
+        problems = rd.check_declared_inputs(graph, plan, state)
+        self.assertTrue(
+            any("registry" in p and "unavailable" in p and "client" in p for p in problems),
+            f"unknown registry truth must be a named blocker, got {problems}",
+        )
+
+
+class RemoteIdentityTests(unittest.TestCase):
+    def test_remote_forms_normalize_to_one_canonical_identity(self) -> None:
+        for url in (
+            "https://github.com/awebai/aweb.git",
+            "https://github.com/awebai/aweb",
+            "git@github.com:awebai/aweb.git",
+            "ssh://git@github.com/awebai/aweb.git",
+        ):
+            self.assertEqual(
+                rd.canonical_remote(url),
+                "github.com/awebai/aweb",
+                url,
+            )
 
 
 class GraphContractTests(unittest.TestCase):
@@ -551,6 +935,25 @@ class GraphContractTests(unittest.TestCase):
             else:
                 self.fail(f"{component.name}: unknown version_source type {kind!r}")
 
+    def test_sites_only_change_plans_sites(self) -> None:
+        """alice's counterexample: a sites-only change planned nothing."""
+        state = rd.FixtureState(changed_components={"sites": True})
+        plan = rd.compute_plan(self.graph, state)
+        self.assertIn("sites", {n.component for n in plan.moving})
+
+    def test_ac_gate_carries_approval_and_credentials_ac_pin_does_not(self) -> None:
+        """The source pointer update (ac-pin) must not demand production
+        credentials; the downstream gate boundary (ac-gate) does."""
+        ac_pin = self.graph.components["ac-pin"]
+        self.assertFalse(ac_pin.approval_required)
+        self.assertFalse(ac_pin.credential_paths)
+        self.assertEqual(len(ac_pin.sibling_pins), 2, "server AND awid pins declared")
+        ac_gate = self.graph.components["ac-gate"]
+        self.assertTrue(ac_gate.approval_required)
+        self.assertTrue(
+            any(c["env"] == "MIGRATION_GATE_ENV_FILE" for c in ac_gate.credential_paths)
+        )
+
     def test_ac_pin_is_a_forced_pointer_consumer_of_server_and_awid(self) -> None:
         """alice's counterexample: awid moving without ac-pin in the plan is
         the missed-consumer failure the graph exists to prevent."""
@@ -571,13 +974,10 @@ class GraphContractTests(unittest.TestCase):
             set(self.graph.pointer_targets.get("channel", ())), {"marketplace-pointer"}
         )
         ac_pin = self.graph.components["ac-pin"]
-        self.assertTrue(ac_pin.approval_required)
-        self.assertTrue(
-            any(c["env"] == "MIGRATION_GATE_ENV_FILE" for c in ac_pin.credential_paths)
-        )
-        self.assertTrue(
-            any(p["pin_file"] == "release-pin.toml" for p in ac_pin.sibling_pins)
-        )
+        pins = {p["component"]: p for p in ac_pin.sibling_pins}
+        self.assertEqual(set(pins), {"server", "awid-pypi"})
+        self.assertEqual(pins["server"]["field"], "git_sha")
+        self.assertEqual(pins["server"]["section"], "aweb")
 
     def test_committed_runtime_contracts_are_honestly_incomplete(self) -> None:
         """No fleet measurement exists yet, so every committed edge must carry
@@ -597,9 +997,14 @@ class GraphContractTests(unittest.TestCase):
         self.assertTrue(plan.moving, "diagnostic plan still computes")
         problems = rd.check_declared_inputs(self.graph, plan, state)
         self.assertTrue(any("declared-incomplete" in p for p in problems))
-        lanes = LaneOrchestrationTests.RecordingLanes(available={"aw"})
-        with self.assertRaises((rd.LaneUnavailable, rd.ReceiptError, rd.GraphError, rd.BlockedByDeclaredInputs)):
-            rd.run_plan(plan, self.graph, lanes, source_sha="s1", approvals={}, state=state)
+        lanes = FixtureLanes(available={"aw"})
+        with self.assertRaises(rd.BlockedByDeclaredInputs):
+            rd.run_plan(
+                plan, self.graph, lanes,
+                skew=FixtureSkew(), authority=FixtureAuthority(),
+                source_sha="s1", approvals={}, state=state,
+            )
+        self.assertEqual(lanes.calls, [])
 
 
 if __name__ == "__main__":

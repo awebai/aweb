@@ -1,14 +1,17 @@
-"""Release driver: computes what must ship and in what order from the declared
-component graph, resolves source/published/candidate versions, checks every
-declared input before anything runs, orchestrates publish lanes through
-injectable interfaces that fail closed when a lane is unavailable, and seals
-receipts whose expected digest lives with an external authority.
+"""Release driver: computes what must ship from the declared component graph,
+freezes that plan into an immutable artifact before any outward effect, and
+executes it as a four-phase barrier protocol - preflight everything, stage
+every candidate and bind exact digests, run every touched version-skew matrix
+against those bytes, then publish topologically from those same digests and
+verify against authoritative registry state. Receipts seal to an external
+authority; reruns resume from the frozen plan, never from re-planned live
+state.
 
 The graph is release/components.toml. Every edge type is parsed, validated,
-and acted on; an unknown type or component reference refuses to load. Lane
-internals belong to aweb-abbe.2 through .4 and skew execution to .7; this
-module owns the orchestration contracts and refuses, by name, anything those
-tasks have not yet provided.
+and acted on; unknown types, unknown references, cycles, and spoofable
+support declarations refuse to load. Lane internals belong to aweb-abbe.2-.4
+and skew journeys to .7; their interfaces are mandatory here and their
+absence blocks by name before anything runs.
 """
 
 from __future__ import annotations
@@ -33,6 +36,8 @@ EDGE_TYPES = frozenset(
         "runtime-contract",
     }
 )
+CONTRACT_DIRECTIONS = frozenset({"both", "a-to-b", "b-to-a", "persisted-state-both"})
+CONTRACT_POLICIES = frozenset({"additive-only", "breaking-with-approved-deprecation"})
 
 
 class GraphError(Exception):
@@ -51,6 +56,10 @@ class LaneUnavailable(Exception):
     pass
 
 
+class SkewUnavailable(Exception):
+    pass
+
+
 class BlockedByDeclaredInputs(Exception):
     pass
 
@@ -66,6 +75,7 @@ class Component:
     credential_paths: tuple[dict, ...] = ()
     sibling_pins: tuple[dict, ...] = ()
     publish_lane: dict | None = None
+    lane: dict | None = None  # delivery lane for non-registry nodes (sites)
     verify: dict | None = None
     delivery_restart: dict | None = None
 
@@ -81,15 +91,59 @@ class RuntimeContractEdge:
 
     @property
     def declared_incomplete(self) -> bool:
-        """Support is complete only when it names a fleet measurement or an
-        explicitly approved deprecation. Anything else — including an absent
-        set — is declared-incomplete and blocks execution when touched.
+        """Complete support names a measurement or an approved deprecation
+        with a nonempty identity. Anything else blocks execution when touched.
         Floors are never invented here (G5)."""
         declared = self.supported.get("set", "")
         return not (
-            declared.startswith("measured:")
-            or declared.startswith("approved-deprecation:")
+            (declared.startswith("measured:") and len(declared) > len("measured:"))
+            or (
+                declared.startswith("approved-deprecation:")
+                and len(declared) > len("approved-deprecation:")
+            )
         )
+
+
+def _validate_contract(edge: dict) -> None:
+    for required in ("journey", "artifacts", "direction"):
+        if required not in edge:
+            raise GraphError(
+                f"runtime-contract {edge.get('a')}<->{edge.get('b')} lacks "
+                f"required field {required!r}"
+            )
+    if edge["direction"] not in CONTRACT_DIRECTIONS:
+        raise GraphError(
+            f"runtime-contract direction {edge['direction']!r} is not one of "
+            f"{sorted(CONTRACT_DIRECTIONS)}"
+        )
+    artifacts = edge["artifacts"]
+    for side in ("a", "b"):
+        if not artifacts.get(side):
+            raise GraphError(
+                f"runtime-contract {edge['a']}<->{edge['b']}: empty artifact "
+                f"locator for side {side!r}"
+            )
+    supported = edge.get("supported", {})
+    policy = supported.get("policy", "")
+    if policy not in CONTRACT_POLICIES:
+        raise GraphError(
+            f"runtime-contract {edge['a']}<->{edge['b']}: policy {policy!r} is "
+            f"not one of {sorted(CONTRACT_POLICIES)}"
+        )
+    declared = supported.get("set")
+    if declared is not None:
+        valid = (
+            declared.startswith("measured:") and len(declared) > len("measured:")
+        ) or (
+            declared.startswith("approved-deprecation:")
+            and len(declared) > len("approved-deprecation:")
+        )
+        if not valid:
+            raise GraphError(
+                f"runtime-contract {edge['a']}<->{edge['b']}: supported.set "
+                f"{declared!r} is neither measured:<id> nor "
+                "approved-deprecation:<id> with a nonempty identity"
+            )
 
 
 @dataclass
@@ -97,9 +151,9 @@ class Graph:
     components: dict[str, Component]
     bundled_into: dict[str, tuple[str, ...]]
     prerequisites: dict[str, tuple[str, ...]]
-    pointer_targets: dict[str, tuple[str, ...]]  # source -> pointer consumers
+    pointer_targets: dict[str, tuple[str, ...]]
     runtime_contracts: tuple[RuntimeContractEdge, ...]
-    canonical: dict  # the validated raw declaration, digest-bound into plans
+    canonical: dict
 
     @classmethod
     def from_dict(cls, data: dict) -> "Graph":
@@ -118,6 +172,7 @@ class Graph:
                 credential_paths=tuple(spec.get("credential_paths", ())),
                 sibling_pins=tuple(spec.get("sibling_pins", ())),
                 publish_lane=spec.get("publish_lane"),
+                lane=spec.get("lane"),
                 verify=spec.get("verify"),
                 delivery_restart=spec.get("delivery_restart"),
             )
@@ -156,16 +211,14 @@ class Graph:
                 targets = tuple(known(c, "pointer") for c in edge["to"])
                 pointer_targets[source] = pointer_targets.get(source, ()) + targets
             elif edge_type == "runtime-contract":
-                for required in ("journey", "artifacts", "direction"):
-                    if required not in edge:
-                        raise GraphError(
-                            f"runtime-contract {edge.get('a')}<->{edge.get('b')} "
-                            f"lacks required field {required!r}"
-                        )
+                _validate_contract(
+                    {**edge, "a": known(edge["a"], "runtime-contract"),
+                     "b": known(edge["b"], "runtime-contract")}
+                )
                 contracts.append(
                     RuntimeContractEdge(
-                        a=known(edge["a"], "runtime-contract"),
-                        b=known(edge["b"], "runtime-contract"),
+                        a=edge["a"],
+                        b=edge["b"],
                         journey=edge["journey"],
                         artifacts=edge["artifacts"],
                         direction=edge["direction"],
@@ -181,10 +234,14 @@ class Graph:
             runtime_contracts=tuple(contracts),
             canonical=data,
         )
-        graph._refuse_cycles()
+        graph._refuse_cycles("publication-prerequisite", graph.prerequisites)
+        pointer_adjacency = {
+            source: targets for source, targets in pointer_targets.items()
+        }
+        graph._refuse_cycles("pointer", pointer_adjacency)
         return graph
 
-    def _refuse_cycles(self) -> None:
+    def _refuse_cycles(self, kind: str, adjacency: dict[str, tuple[str, ...]]) -> None:
         seen: dict[str, int] = {}
 
         def visit(name: str, chain: tuple[str, ...]) -> None:
@@ -192,12 +249,10 @@ class Graph:
             if state == 1:
                 return
             if state == 0:
-                raise GraphError(
-                    "publication-prerequisite cycle: " + " -> ".join(chain + (name,))
-                )
+                raise GraphError(f"{kind} cycle: " + " -> ".join(chain + (name,)))
             seen[name] = 0
-            for prerequisite in self.prerequisites.get(name, ()):
-                visit(prerequisite, chain + (name,))
+            for neighbor in adjacency.get(name, ()):
+                visit(neighbor, chain + (name,))
             seen[name] = 1
 
         for name in self.components:
@@ -211,16 +266,12 @@ class Graph:
 
 @dataclass
 class FixtureState:
-    """Test provider. versions = current source versions; published_versions =
-    latest registry-visible; tag_versions = versions whose release tag exists;
-    pin_values = parsed pin-file SHAs; checkout_heads/checkout_remotes =
-    sibling checkout identity."""
-
     changed_components: dict[str, bool] = field(default_factory=dict)
     bundled_changed_for: dict[tuple[str, str], bool] = field(default_factory=dict)
     versions: dict[str, str] = field(default_factory=dict)
     published_versions: dict[str, str] = field(default_factory=dict)
     tag_versions: dict[str, str] = field(default_factory=dict)
+    registry_unavailable: dict[str, str] = field(default_factory=dict)
     env: dict[str, str] = field(default_factory=dict)
     existing_paths: set[str] = field(default_factory=set)
     pin_values: dict[str, str] = field(default_factory=dict)
@@ -230,9 +281,7 @@ class FixtureState:
     def component_changed(self, component: Component) -> bool:
         return self.changed_components.get(component.name, False)
 
-    def bundled_input_changed_for(
-        self, bundled: Component, consumer: Component
-    ) -> bool:
+    def bundled_input_changed_for(self, bundled, consumer) -> bool:
         key = (bundled.name, consumer.name)
         if key in self.bundled_changed_for:
             return self.bundled_changed_for[key]
@@ -244,6 +293,9 @@ class FixtureState:
     def published_version(self, component: Component) -> str | None:
         return self.published_versions.get(component.name)
 
+    def registry_unavailable_reason(self, component: Component) -> str | None:
+        return self.registry_unavailable.get(component.name)
+
     def tag_version(self, component: Component) -> str | None:
         return self.tag_versions.get(component.name)
 
@@ -253,8 +305,8 @@ class FixtureState:
     def path_exists(self, path: str) -> bool:
         return path in self.existing_paths
 
-    def pin_sha(self, pin_file: str) -> str | None:
-        return self.pin_values.get(pin_file)
+    def pin_sha(self, pin: dict) -> str | None:
+        return self.pin_values.get(pin["pin_file"])
 
     def checkout_head(self, path: str) -> str | None:
         return self.checkout_heads.get(path)
@@ -267,7 +319,7 @@ class FixtureState:
 class PlanNode:
     component: str
     reason: str
-    version: str | None = None  # proposed candidate
+    version: str | None = None
     published_version: str | None = None
 
 
@@ -280,10 +332,11 @@ class Plan:
 def compute_plan(graph: Graph, state) -> Plan:
     reasons: dict[str, str] = {}
     for name, component in graph.components.items():
-        if component.publishable and state.component_changed(component):
+        moves_on_change = component.publishable or component.lane is not None
+        if moves_on_change and component.source_paths and state.component_changed(
+            component
+        ):
             reasons[name] = "changed"
-    # A bundled input's change is asked per consumer, against that consumer's
-    # last published baseline: the input ships inside the consumer.
     for source, consumers in graph.bundled_into.items():
         for consumer in consumers:
             if state.bundled_input_changed_for(
@@ -306,16 +359,19 @@ def compute_plan(graph: Graph, state) -> Plan:
     for name in sorted(reasons):
         place(name)
 
-    # Pointer consumers are FORCED: their sources moving is what makes their
-    # state stale, so they join the plan after every moving source, always.
-    pointer_reasons: dict[str, str] = {}
-    for source, targets in graph.pointer_targets.items():
-        if source in placed:
-            for target in targets:
+    # Pointer consumers are FORCED, transitively: a source moving makes its
+    # pointer state stale, and a pointer node moving makes ITS pointers stale.
+    frontier = list(ordered)
+    while frontier:
+        next_frontier: list[str] = []
+        for source in frontier:
+            for target in graph.pointer_targets.get(source, ()):
                 if target not in placed:
-                    pointer_reasons.setdefault(target, f"pointer:{source}")
-    ordered.extend(sorted(pointer_reasons))
-    reasons.update(pointer_reasons)
+                    placed.add(target)
+                    reasons[target] = f"pointer:{source}"
+                    ordered.append(target)
+                    next_frontier.append(target)
+        frontier = next_frontier
 
     moving = []
     for name in ordered:
@@ -331,38 +387,41 @@ def compute_plan(graph: Graph, state) -> Plan:
 
     moving_names = set(reasons)
     contracts = [
-        e
-        for e in graph.runtime_contracts
-        if e.a in moving_names or e.b in moving_names
+        e for e in graph.runtime_contracts if e.a in moving_names or e.b in moving_names
     ]
     return Plan(moving=moving, runtime_contract_edges=contracts)
 
 
 def check_declared_inputs(graph: Graph, plan: Plan, state) -> list[str]:
     """Everything a release needs, checked BEFORE anything runs, each failure
-    named. Credential paths are presence-only: contents are never read."""
+    named. Credential paths are presence-only: contents are never read.
+    Unknown registry truth is unavailable, and unavailable blocks."""
     problems: list[str] = []
     for node in plan.moving:
         component = graph.components[node.component]
 
-        source_version = state.source_version(component)
-        published = state.published_version(component)
-        if component.version_source and source_version is not None:
-            if published is not None and source_version == published:
+        if component.publishable and component.version_source:
+            unavailable = state.registry_unavailable_reason(component)
+            if unavailable is not None:
                 problems.append(
-                    f"{component.name}: version not advanced - source version "
-                    f"{source_version} is already published"
+                    f"{component.name}: registry truth unavailable - {unavailable}"
                 )
-            tag_version = state.tag_version(component)
-            if (
-                tag_version is not None
-                and published is not None
-                and tag_version != published
-            ):
-                problems.append(
-                    f"{component.name}: tag {tag_version} disagrees with "
-                    f"registry-visible {published}; a tag is not a published artifact"
-                )
+            else:
+                source_version = state.source_version(component)
+                published = state.published_version(component)
+                if source_version is not None and published is not None:
+                    if source_version == published:
+                        problems.append(
+                            f"{component.name}: version not advanced - source "
+                            f"version {source_version} is already published"
+                        )
+                    tag_version = state.tag_version(component)
+                    if tag_version is not None and tag_version != published:
+                        problems.append(
+                            f"{component.name}: tag {tag_version} disagrees with "
+                            f"registry-visible {published}; a tag is not a "
+                            "published artifact"
+                        )
 
         for credential in component.credential_paths:
             env_name = credential["env"]
@@ -370,7 +429,8 @@ def check_declared_inputs(graph: Graph, plan: Plan, state) -> list[str]:
             if not value:
                 problems.append(
                     f"{component.name}: required credential path variable "
-                    f"{env_name} is unset ({credential.get('purpose', 'declared input')})"
+                    f"{env_name} is unset "
+                    f"({credential.get('purpose', 'declared input')})"
                 )
             elif not state.path_exists(value):
                 problems.append(
@@ -385,11 +445,13 @@ def check_declared_inputs(graph: Graph, plan: Plan, state) -> list[str]:
                     f"{pin['pin_file']}, component {pin['component']}) is absent"
                 )
                 continue
-            pinned = state.pin_sha(pin["pin_file"])
+            pinned = state.pin_sha(pin)
             head = state.checkout_head(checkout)
             if pinned is None:
                 problems.append(
-                    f"{component.name}: pin file {pin['pin_file']} is unreadable"
+                    f"{component.name}: pin {pin['pin_file']} "
+                    f"[{pin.get('section', '?')}].{pin.get('field', '?')} is "
+                    "unreadable in its declared repository context"
                 )
             elif head != pinned:
                 problems.append(
@@ -401,8 +463,8 @@ def check_declared_inputs(graph: Graph, plan: Plan, state) -> list[str]:
                 remote = state.checkout_remote(checkout)
                 if remote != declared_repo:
                     problems.append(
-                        f"{component.name}: checkout {checkout} remote {remote} is "
-                        f"not the declared repository {declared_repo}"
+                        f"{component.name}: checkout {checkout} remote {remote} "
+                        f"is not the declared repository {declared_repo}"
                     )
 
     for edge in plan.runtime_contract_edges:
@@ -416,9 +478,6 @@ def check_declared_inputs(graph: Graph, plan: Plan, state) -> list[str]:
 
 
 def plan_digest(plan: Plan, graph: Graph) -> str:
-    """Binds the moving set AND the full canonical graph declaration, so any
-    change to an edge's floor, policy, journey, or artifact locator changes
-    the digest."""
     canonical = json.dumps(
         {
             "graph": graph.canonical,
@@ -431,6 +490,97 @@ def plan_digest(plan: Plan, graph: Graph) -> str:
         default=str,
     )
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+# ── frozen plan artifact (G4) ────────────────────────────────────────
+
+
+def freeze_plan(plan: Plan, graph: Graph, *, source_sha: str) -> tuple[bytes, str]:
+    """The plan that will execute, sealed BEFORE any outward effect. Reruns
+    take this artifact's ID; live registry drift cannot rewrite a release in
+    flight. Binds resolved versions and the full canonical graph; no secret
+    contents."""
+    body = json.dumps(
+        {
+            "source_sha": source_sha,
+            "plan_digest": plan_digest(plan, graph),
+            "moving": [
+                {
+                    "component": n.component,
+                    "reason": n.reason,
+                    "version": n.version,
+                    "published_version": n.published_version,
+                }
+                for n in plan.moving
+            ],
+            "contracts": [
+                {
+                    "a": e.a,
+                    "b": e.b,
+                    "journey": e.journey,
+                    "artifacts": e.artifacts,
+                    "direction": e.direction,
+                    "supported": e.supported,
+                }
+                for e in plan.runtime_contract_edges
+            ],
+        },
+        sort_keys=True,
+    ).encode()
+    return body, hashlib.sha256(body).hexdigest()
+
+
+def load_frozen_plan(data: bytes, *, expected_id: str) -> Plan:
+    if hashlib.sha256(data).hexdigest() != expected_id:
+        raise ReceiptError("frozen plan bytes do not match the recorded plan id")
+    parsed = json.loads(data)
+    return Plan(
+        moving=[
+            PlanNode(
+                component=n["component"],
+                reason=n["reason"],
+                version=n["version"],
+                published_version=n["published_version"],
+            )
+            for n in parsed["moving"]
+        ],
+        runtime_contract_edges=[
+            RuntimeContractEdge(
+                a=c["a"],
+                b=c["b"],
+                journey=c["journey"],
+                artifacts=c["artifacts"],
+                direction=c["direction"],
+                supported=c["supported"],
+            )
+            for c in parsed["contracts"]
+        ],
+    )
+
+
+def resume_remaining(
+    plan: Plan,
+    partial: dict[str, "ReceiptEntry"],
+    *,
+    observed: dict[str, "ReceiptEntry"],
+) -> list[PlanNode]:
+    """Nodes still to run. A partial entry is accepted only when the observed
+    authoritative state matches it exactly; drift fails closed."""
+    for component, entry in partial.items():
+        seen = observed.get(component)
+        if seen is None:
+            raise ReceiptError(
+                f"partial receipt claims {component} published but nothing is observed"
+            )
+        if seen.version != entry.version or seen.digest != entry.digest:
+            raise ReceiptError(
+                f"{component}: observed state {seen.version}/{seen.digest} does "
+                f"not match the partial receipt {entry.version}/{entry.digest}"
+            )
+    return [n for n in plan.moving if n.component not in partial]
+
+
+# ── approvals and receipts ───────────────────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -461,6 +611,8 @@ class Receipt:
     source_sha: str
     entries: dict[str, ReceiptEntry]
     approvals: tuple[dict, ...] = ()
+    frozen_plan_id: str = ""
+    partial: bool = False
 
 
 def seal_receipt(
@@ -470,22 +622,54 @@ def seal_receipt(
     source_sha: str,
     entries: dict[str, ReceiptEntry],
     approvals: tuple[Approval, ...],
+    frozen_plan_id: str = "",
+    partial: bool = False,
 ) -> tuple[bytes, str]:
     """Returns (sealed bytes, digest). The digest MUST be recorded with an
-    external authority (workflow artifact metadata, the task record); a digest
-    stored beside the receipt is a recomputable checksum, not tamper evidence.
-    The entry set must equal the planned set exactly."""
+    external authority; beside the receipt it is only a checksum. The entry
+    set must equal the planned set; pointer nodes must carry pointer state;
+    delivery nodes must carry their proof; approval-required nodes must be
+    covered by structured approvals."""
     planned = {n.component for n in plan.moving}
-    if set(entries) != planned:
+    extra = set(entries) - planned
+    if extra:
+        raise ReceiptError(f"receipt entries outside the planned set: {sorted(extra)}")
+    if not partial and set(entries) != planned:
         missing = planned - set(entries)
-        extra = set(entries) - planned
         raise ReceiptError(
             f"receipt entries must equal the planned set; missing={sorted(missing)}"
-            f" extra={sorted(extra)}"
+            f" extra=[]"
         )
+    if partial and not entries:
+        raise ReceiptError("a partial receipt with no entries records nothing")
+    for node in plan.moving:
+        if node.component not in entries:
+            continue
+        entry = entries[node.component]
+        if node.reason.startswith("pointer:") and not entry.pointer_state:
+            raise ReceiptError(
+                f"{node.component}: pointer node sealed without pointer_state"
+            )
+        component = graph.components.get(node.component)
+        if (
+            component is not None
+            and component.delivery_restart is not None
+            and not entry.delivery_proof
+        ):
+            raise ReceiptError(
+                f"{node.component}: delivery node sealed without delivery_proof"
+            )
+        if component is not None and component.approval_required:
+            if not approvals or not all(a.who and a.when for a in approvals):
+                raise ReceiptError(
+                    f"{node.component}: approval-required node sealed without a "
+                    "structured approval record"
+                )
     body = json.dumps(
         {
             "plan_digest": plan_digest(plan, graph),
+            "frozen_plan_id": frozen_plan_id,
+            "partial": partial,
             "source_sha": source_sha,
             "entries": {
                 name: {
@@ -496,9 +680,7 @@ def seal_receipt(
                 }
                 for name, e in sorted(entries.items())
             },
-            "approvals": [
-                {"who": a.who, "when": a.when} for a in approvals
-            ],
+            "approvals": [{"who": a.who, "when": a.when} for a in approvals],
         },
         sort_keys=True,
     )
@@ -508,13 +690,8 @@ def seal_receipt(
 
 
 def load_sealed_receipt(data: bytes, *, expected_digest: str) -> Receipt:
-    """expected_digest comes from the external authority that recorded it at
-    seal time. Without it, any locally-presented receipt+checksum pair is
-    trivially forgeable."""
     if hashlib.sha256(data).hexdigest() != expected_digest:
-        raise ReceiptError(
-            "receipt bytes do not match the externally recorded digest"
-        )
+        raise ReceiptError("receipt bytes do not match the externally recorded digest")
     try:
         outer = json.loads(data)
         body, seal = outer["body"], outer["seal"]
@@ -526,6 +703,8 @@ def load_sealed_receipt(data: bytes, *, expected_digest: str) -> Receipt:
     return Receipt(
         plan_digest=parsed["plan_digest"],
         source_sha=parsed["source_sha"],
+        frozen_plan_id=parsed.get("frozen_plan_id", ""),
+        partial=parsed.get("partial", False),
         entries={
             name: ReceiptEntry(
                 version=e["version"],
@@ -543,12 +722,12 @@ def receipt_matches_run(
     receipt: Receipt, plan: Plan, graph: Graph, *, source_sha: str
 ) -> tuple[bool, str]:
     if receipt.source_sha != source_sha:
-        return False, (
-            f"source mismatch: receipt {receipt.source_sha}, run {source_sha}"
-        )
+        return False, f"source mismatch: receipt {receipt.source_sha}, run {source_sha}"
     current = plan_digest(plan, graph)
     if receipt.plan_digest != current:
-        return False, f"plan digest mismatch: receipt {receipt.plan_digest}, run {current}"
+        return False, (
+            f"plan digest mismatch: receipt {receipt.plan_digest}, run {current}"
+        )
     planned = {n.component for n in plan.moving}
     if set(receipt.entries) != planned:
         return False, "receipt entry set does not equal the planned set"
@@ -568,62 +747,154 @@ def receipt_accepts(
     return True, "exact match"
 
 
+# The .5 receipt store: sealed bytes by artifact identity, readable by the
+# verification verb. Lane tasks replace this with workflow-artifact storage.
+_RECEIPT_STORE: dict[str, bytes] = {}
+
+
+def read_receipt_bytes(artifact_id: str) -> bytes:
+    if artifact_id not in _RECEIPT_STORE:
+        raise ReceiptError(f"no receipt stored under {artifact_id}")
+    return _RECEIPT_STORE[artifact_id]
+
+
+# ── four-phase execution ─────────────────────────────────────────────
+
+
 def run_plan(
     plan: Plan,
     graph: Graph,
     lanes,
     *,
+    skew,
+    authority,
     source_sha: str,
     approvals: dict[str, Approval],
     state=None,
 ) -> dict[str, ReceiptEntry]:
-    """Orchestrates stage-then-publish over the injectable lane provider in
-    plan order. Fails closed BEFORE anything executes: every unavailable lane
-    is named, and unsatisfied declared inputs block the run."""
+    """PREFLIGHT everything -> STAGE every candidate (bind digests) -> run
+    every touched SKEW matrix against those bytes -> PUBLISH topologically
+    from those same digests, verifying published == staged -> VERIFY, then
+    seal the receipt and record its digest with the external authority.
+    Nothing executes until every gap is named and absent."""
     if state is not None:
         problems = check_declared_inputs(graph, plan, state)
         if problems:
             raise BlockedByDeclaredInputs("; ".join(problems))
-    missing = [n.component for n in plan.moving if not lanes.has_lane(n.component)]
-    if missing:
+    missing_lanes = [
+        n.component for n in plan.moving if not lanes.has_lane(n.component)
+    ]
+    if missing_lanes:
         raise LaneUnavailable(
             "no publish lane available for: "
-            + ", ".join(missing)
+            + ", ".join(missing_lanes)
             + " (lanes arrive with aweb-abbe.2-.4)"
         )
-    entries: dict[str, ReceiptEntry] = {}
+    missing_skew = [
+        f"{e.a}<->{e.b}"
+        for e in plan.runtime_contract_edges
+        if not skew.has_matrix(e)
+    ]
+    if missing_skew:
+        raise SkewUnavailable(
+            "no skew matrix available for: "
+            + ", ".join(missing_skew)
+            + " (journeys arrive with aweb-abbe.7)"
+        )
     for node in plan.moving:
-        component = graph.components[node.component]
-        if component.approval_required:
+        if graph.components[node.component].approval_required:
             require_approval(node, approval=approvals.get(node.component))
-        staged = lanes.stage(node)
-        entries[node.component] = lanes.publish(node, staged)
-    return entries
+
+    # The frozen plan, anchored through the authority, is the deliberate
+    # pre-effect boundary: everything after this line is an outward effect
+    # executed against this exact immutable plan.
+    frozen_bytes, frozen_id = freeze_plan(plan, graph, source_sha=source_sha)
+    plan_artifact_id = f"plan:{source_sha}:{frozen_id[:12]}"
+    _RECEIPT_STORE[plan_artifact_id] = frozen_bytes
+    authority.record(plan_artifact_id, frozen_id)
+
+    def anchor(entries: dict[str, ReceiptEntry], *, partial: bool) -> None:
+        sealed, digest = seal_receipt(
+            plan,
+            graph,
+            source_sha=source_sha,
+            entries=entries,
+            approvals=tuple(approvals.values()),
+            frozen_plan_id=frozen_id,
+            partial=partial,
+        )
+        kind = "receipt-partial" if partial else "receipt"
+        artifact_id = f"{kind}:{source_sha}:{frozen_id[:12]}"
+        _RECEIPT_STORE[artifact_id] = sealed
+        authority.record(artifact_id, digest)
+
+    staged: dict[str, ReceiptEntry] = {}
+    for node in plan.moving:
+        staged[node.component] = lanes.stage(node)
+
+    for edge in plan.runtime_contract_edges:
+        skew.execute(edge, staged)
+
+    published: dict[str, ReceiptEntry] = {}
+    try:
+        for node in plan.moving:
+            result = lanes.publish(node, staged[node.component])
+            if result.digest != staged[node.component].digest:
+                raise ReceiptError(
+                    f"{node.component}: published digest {result.digest} does "
+                    f"not equal staged digest {staged[node.component].digest}"
+                )
+            published[node.component] = result
+    except Exception:
+        # Every receipt transition is externally anchored before a later
+        # rerun may trust it - including the partial state at failure.
+        if published:
+            anchor(published, partial=True)
+        raise
+
+    for node in plan.moving:
+        lanes.verify(node, published[node.component])
+
+    anchor(published, partial=False)
+    return published
 
 
 class NoLanes:
-    """The .5 state of the world: no lane implementations exist, so release
-    execution refuses by name. .2-.4 replace this with real lanes."""
-
     def has_lane(self, component: str) -> bool:
         return False
 
-    def stage(self, node: PlanNode) -> ReceiptEntry:  # pragma: no cover
-        raise LaneUnavailable(node.component)
 
-    def publish(self, node, staged):  # pragma: no cover
-        raise LaneUnavailable(node.component)
+class NoSkew:
+    def has_matrix(self, edge) -> bool:
+        return False
+
+
+def canonical_remote(url: str) -> str:
+    """One identity for HTTPS/SCP/SSH remote spellings."""
+    canonical = url.strip()
+    for prefix in ("ssh://git@", "ssh://", "https://", "http://", "git@"):
+        if canonical.startswith(prefix):
+            canonical = canonical[len(prefix) :]
+            break
+    canonical = canonical.replace(":", "/", 1) if ":" in canonical.split("/")[0] else canonical
+    return canonical.removesuffix(".git")
 
 
 class GitRepositoryState:
-    """Authoritative-state provider for the real repository. Change detection
-    diffs against the remote tag OBJECT SHA from ls-remote (never a local tag
-    ref), version resolution reads the declared source, and registry truth
-    comes through the injectable registry provider."""
+    """Authoritative-state provider for the real repository: remote tag object
+    SHAs from ls-remote, registry truth through the injectable provider (an
+    unreadable registry is UNAVAILABLE, which blocks), pins resolved from
+    declared external-repo contexts."""
 
-    def __init__(self, repo_root: Path = REPO_ROOT, registry=None):
+    def __init__(
+        self,
+        repo_root: Path = REPO_ROOT,
+        registry=None,
+        external_contexts: dict[str, str] | None = None,
+    ):
         self.repo_root = repo_root
         self.registry = registry
+        self.external_contexts = external_contexts or {}
         self._remote_tag_shas: dict[str, str] | None = None
 
     def _git(self, *args: str) -> str:
@@ -635,8 +906,6 @@ class GitRepositoryState:
         ).stdout
 
     def remote_tag_shas(self) -> dict[str, str]:
-        """Tag name -> commit SHA from ls-remote; peeled entries (^{}) give
-        the commit an annotated tag points at and win over the tag object."""
         if self._remote_tag_shas is None:
             shas: dict[str, str] = {}
             for line in self._git("ls-remote", "--tags", "origin").splitlines():
@@ -651,7 +920,6 @@ class GitRepositoryState:
         return self._remote_tag_shas
 
     def _last_published(self, component: Component) -> tuple[str, str] | None:
-        """(tag, remote commit SHA) of the highest published version tag."""
         if not component.tag_format:
             return None
         prefix = component.tag_format.split("{version}", 1)[0]
@@ -674,14 +942,28 @@ class GitRepositoryState:
     def component_changed(self, component: Component) -> bool:
         if not component.source_paths:
             return False
+        if component.tag_format is None:
+            # Delivery nodes: their baseline is the declared delivered ref
+            # (for sites, the deploy branch), not a version tag.
+            baseline = (component.lane or {}).get("baseline_ref")
+            if baseline is None:
+                return True
+            try:
+                out = self._git(
+                    "diff", "--name-only", f"{baseline}..origin/main", "--",
+                    *component.source_paths,
+                )
+            except subprocess.CalledProcessError:
+                # An unresolvable baseline plans the node conservatively; its
+                # lane will name the misconfiguration loudly if it is real.
+                return True
+            return bool(out.strip())
         published = self._last_published(component)
         if published is None:
             return True
         return self._changed_since(published[1], component.source_paths)
 
-    def bundled_input_changed_for(
-        self, bundled: Component, consumer: Component
-    ) -> bool:
+    def bundled_input_changed_for(self, bundled, consumer) -> bool:
         if not bundled.source_paths:
             return False
         published = self._last_published(consumer)
@@ -724,9 +1006,39 @@ class GitRepositoryState:
         return published[0][len(prefix) :]
 
     def published_version(self, component: Component) -> str | None:
+        result = self._registry_result(component)
+        return result[0] if isinstance(result, tuple) else None
+
+    def registry_unavailable_reason(self, component: Component) -> str | None:
+        lane = component.publish_lane or {}
+        if "registry" not in lane:
+            return None
         if self.registry is None:
-            return self.tag_version(component)
-        return self.registry.published_version(component)
+            return "no registry provider configured"
+        result = self._registry_result(component)
+        if isinstance(result, str):
+            return result
+        if result[0] is None:
+            return "registry returned no version"
+        return None
+
+    def _registry_result(self, component: Component):
+        """Cached (version, digest) tuple, or the unavailability reason as a
+        string; never raises into planning."""
+        if not hasattr(self, "_registry_cache"):
+            self._registry_cache = {}
+        if component.name not in self._registry_cache:
+            lane = component.publish_lane or {}
+            if "registry" not in lane or self.registry is None:
+                self._registry_cache[component.name] = (None, None)
+            else:
+                try:
+                    self._registry_cache[component.name] = self.registry.published(
+                        component
+                    )
+                except RegistryUnavailable as exc:
+                    self._registry_cache[component.name] = str(exc)
+        return self._registry_cache[component.name]
 
     def env_value(self, name: str) -> str | None:
         import os
@@ -739,18 +1051,22 @@ class GitRepositoryState:
             candidate = self.repo_root / path
         return candidate.exists()
 
-    def pin_sha(self, pin_file: str) -> str | None:
-        candidate = Path(pin_file)
-        if not candidate.is_absolute():
-            candidate = self.repo_root / pin_file
+    def pin_sha(self, pin: dict) -> str | None:
+        """Reads the named section/field of the pin file, resolved inside the
+        pin's declared repository context. No context, no read: environment-
+        relative guessing produced unsatisfiable checks."""
+        repo = pin.get("pin_repository")
+        root = self.external_contexts.get(repo) if repo else str(self.repo_root)
+        if root is None:
+            return None
+        candidate = Path(root) / pin["pin_file"]
         if not candidate.is_file():
             return None
         with open(candidate, "rb") as handle:
             data = tomllib.load(handle)
-        for section in data.values():
-            if isinstance(section, dict) and "git_sha" in section:
-                return section["git_sha"]
-        return None
+        section = data.get(pin.get("section", ""), {})
+        value = section.get(pin.get("field", ""))
+        return value if isinstance(value, str) else None
 
     def checkout_head(self, path: str) -> str | None:
         try:
@@ -773,20 +1089,18 @@ class GitRepositoryState:
             ).stdout.strip()
         except (subprocess.CalledProcessError, FileNotFoundError):
             return None
-        return (
-            url.removeprefix("https://")
-            .removeprefix("git@")
-            .replace(".com:", ".com/")
-            .removesuffix(".git")
-        )
+        return canonical_remote(url)
+
+
+class RegistryUnavailable(Exception):
+    pass
 
 
 class RegistryProviders:
-    """Latest registry-visible version per component, from the registry its
-    publish lane declares. A tag is not a published artifact; these are the
-    calls that tell them apart."""
+    """(version, digest) of the latest registry-visible artifact, or a named
+    RegistryUnavailable. None is never an answer: unknown blocks."""
 
-    def published_version(self, component: Component) -> str | None:
+    def published(self, component: Component) -> tuple[str, str | None]:
         import urllib.request
 
         lane = component.publish_lane or {}
@@ -797,25 +1111,33 @@ class RegistryProviders:
                 with urllib.request.urlopen(
                     f"https://pypi.org/pypi/{registry['package']}/json", timeout=30
                 ) as response:
-                    return json.load(response)["info"]["version"]
+                    info = json.load(response)
+                    version = info["info"]["version"]
+                    files = info["releases"].get(version, [])
+                    digest = files[0]["digests"]["sha256"] if files else None
+                    return version, digest
             if kind == "npm":
                 with urllib.request.urlopen(
                     f"https://registry.npmjs.org/{registry['package']}/latest",
                     timeout=30,
                 ) as response:
-                    return json.load(response)["version"]
+                    data = json.load(response)
+                    return data["version"], data.get("dist", {}).get("integrity")
             if kind == "github-release":
                 with urllib.request.urlopen(
                     f"https://api.github.com/repos/{registry['repo']}/releases/latest",
                     timeout=30,
                 ) as response:
-                    tag = json.load(response)["tag_name"]
-                    return tag.removeprefix("v")
-        except Exception as exc:  # noqa: BLE001 - fail closed with the cause
-            raise GraphError(
-                f"registry read failed for {component.name}: {exc}"
+                    data = json.load(response)
+                    return data["tag_name"].removeprefix("v"), data.get("target_commitish")
+        except Exception as exc:  # noqa: BLE001 - named unavailability
+            raise RegistryUnavailable(
+                f"{kind} read failed for {component.name}: {exc}"
             ) from exc
-        return None
+        raise RegistryUnavailable(
+            f"no registry reader for kind {kind!r} ({component.name}); "
+            "aweb-abbe.4 provides the image lane's digest authority"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -824,7 +1146,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("plan", help="diagnostic plan from authoritative remote state")
     sub.add_parser(
         "release-run",
-        help="execute the plan over available lanes; fails closed on any gap",
+        help="freeze the plan and execute the four-phase protocol; fails closed",
     )
     receipt_parser = sub.add_parser(
         "release-receipt", help="verify a sealed receipt against this run"
@@ -839,7 +1161,11 @@ def main(argv: list[str] | None = None) -> int:
 
     graph = Graph.load()
     subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "fetch", "origin", "--quiet"], check=True
+        [
+            "git", "-C", str(REPO_ROOT), "fetch", "origin", "--quiet",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+        check=True,
     )
     state = GitRepositoryState(registry=RegistryProviders())
     plan = compute_plan(graph, state)
@@ -852,10 +1178,12 @@ def main(argv: list[str] | None = None) -> int:
     ).stdout.strip()
 
     if args.verb == "plan":
+        frozen_bytes, frozen_id = freeze_plan(plan, graph, source_sha=source_sha)
         print(
             json.dumps(
                 {
                     "source_sha": source_sha,
+                    "frozen_plan_id": frozen_id,
                     "moving": [
                         {
                             "component": n.component,
@@ -883,11 +1211,30 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if problems else 0
 
     if args.verb == "release-run":
+        class RefusingAuthority:
+            def record(self, artifact_id: str, digest: str) -> None:
+                raise ReceiptError(
+                    "no external receipt authority is configured; lanes provide one"
+                )
+
         try:
             run_plan(
-                plan, graph, NoLanes(), source_sha=source_sha, approvals={}, state=state
+                plan,
+                graph,
+                NoLanes(),
+                skew=NoSkew(),
+                authority=RefusingAuthority(),
+                source_sha=source_sha,
+                approvals={},
+                state=state,
             )
-        except (LaneUnavailable, BlockedByDeclaredInputs, ApprovalRequired) as exc:
+        except (
+            LaneUnavailable,
+            SkewUnavailable,
+            BlockedByDeclaredInputs,
+            ApprovalRequired,
+            ReceiptError,
+        ) as exc:
             print(f"BLOCKED: {exc}")
             return 1
         print("release-run completed")
