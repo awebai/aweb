@@ -12,7 +12,7 @@
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-plan release-run release-receipt test-release-driver test-release-channel-pi-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	release-plan release-run release-receipt test-release-driver test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	release-all-check \
 	publish-skills \
 	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
@@ -620,7 +620,7 @@ release-run:
 release-receipt:
 	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") release-receipt --artifact-id "$(ARTIFACT_ID)" --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)"
 
-test-release-driver: test-release-channel-pi-skew test-release-skew-cli-server test-release-receipt-archive
+test-release-driver: test-release-channel-pi-skew test-release-skew-cli-server test-release-receipt-archive test-release-persisted-state-skew
 	python3 scripts/e2e/test_release_driver.py
 	python3 scripts/e2e/test_release_driver_cli.py
 	python3 scripts/e2e/test_release_adapter.py
@@ -657,6 +657,9 @@ measure-release-skew-cli-server:
 		--published-server-latest "$(PUBLISHED_SERVER_LATEST)" \
 		--negative-server "$(or $(NEGATIVE_SERVER),1.26.31)" \
 		--output "$(OUTPUT)"
+
+test-release-persisted-state-skew:
+	python3 scripts/e2e/test_release_persisted_state_skew.py
 
 test-npm-exact-publish:
 	bash scripts/e2e/test_npm_exact_publish.sh

@@ -8,12 +8,15 @@ small invocation contract - runner semantics never change:
 
     register("<journey string from components.toml>", factory)
 
-where factory() returns an object with
+where factory() returns one matrix-scoped object with
 
-    run(cell) -> None      green
-    run(cell) -> raise     red (any exception; the runner wraps it with
-                           the cell identity and fails the release before
-                           any continuation dispatch)
+    freeze_matrix(document) -> persist the exact coordinator matrix
+    run(cell) -> None             green
+    run(cell) -> raise            red (fails before continuation dispatch)
+    finish_matrix(document)       optional once-per-matrix control
+
+The router reuses that object for the frozen document and all ordered cells;
+a child never infers completeness from files left by earlier calls.
 
 A cell is a release_driver.SkewCell: frozen, carrying the edge identity,
 journey, request direction, per-side kind (candidate | published-latest |
@@ -54,6 +57,12 @@ from release_channel_pi_skew import (  # noqa: E402
     pi_factory,
 )
 
+from release_persisted_state_skew import (  # noqa: E402
+    JOURNEY as PERSISTED_STATE_JOURNEY,
+    factory as persisted_state_factory,
+)
+
 register("make cli-e2e", CliServerSkewHarness)
 register(CHANNEL_JOURNEY, channel_factory)
 register(PI_JOURNEY, pi_factory)
+register(PERSISTED_STATE_JOURNEY, persisted_state_factory)
