@@ -108,9 +108,17 @@ jobs:
           if [[ "$MODE" == "stage-only" ]]; then
             [[ -z "$remote_tag" ]] \
               || { echo "REFUSE: tag awid-v${VERSION} already exists remotely at $remote_tag" >&2; exit 1; }
-            if docker manifest inspect "ghcr.io/awebai/awid:${VERSION}" >/dev/null 2>&1; then
-              echo "REFUSE: ghcr.io/awebai/awid:${VERSION} already exists" >&2; exit 1
+            # Absence must be proven by an authoritative listing; an outage
+            # or auth failure is never proof the tag is missing.
+            listing_status=ok
+            tags_json="$(skopeo list-tags docker://ghcr.io/awebai/awid)" || listing_status=failed
+            present=no
+            if [[ "$listing_status" == "ok" ]] && \
+               jq -e --arg t "$VERSION" '.Tags | index($t)' <<<"$tags_json" >/dev/null; then
+              present=yes
             fi
+            bash "$GITHUB_WORKSPACE/scripts/oci-exact-publish.sh" require-absent \
+              --listing-status "$listing_status" --present "$present"
           else
             deref="$(git rev-parse "awid-v${VERSION}^{}" 2>/dev/null || true)"
             [[ "$deref" == "$SOURCE_SHA" ]] \
@@ -309,8 +317,12 @@ jobs:
             if [[ "$listing_status" == "ok" ]]; then
               if jq -e --arg t "$tag" '.Tags | index($t)' <<<"$tags_json" >/dev/null; then
                 present=yes
-                if raw="$(skopeo inspect --raw "docker://ghcr.io/awebai/awid:${tag}")"; then
-                  remote_digest="sha256:$(sha256sum <<<"$raw" | awk '{print $1}')"
+                # Hash the direct byte stream: variable capture strips the
+                # trailing newline and a here-string appends one, so either
+                # would hash bytes skopeo never returned.
+                if observed="$(skopeo inspect --raw "docker://ghcr.io/awebai/awid:${tag}" \
+                    | bash scripts/oci-exact-publish.sh observe-digest)"; then
+                  remote_digest="$observed"
                 fi
               fi
             fi

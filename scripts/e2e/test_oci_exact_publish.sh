@@ -179,4 +179,25 @@ expect_refusal "latest resolving elsewhere" "latest" \
   --observed-digest "0.5.14=$INDEX_DIGEST" \
   --observed-digest "latest=sha256:$(printf '0%.0s' {1..64})"
 
+# ── stage-only absence proof ────────────────────────────────────────
+[[ "$(bash "$LANE" require-absent --listing-status ok --present no)" == ABSENT* ]] \
+  || fail "proven absence must continue"
+ok "proven absence continues staging"
+expect_refusal "outage is never proof of absence" "never proof" \
+  bash "$LANE" require-absent --listing-status failed --present no
+expect_refusal "listed candidate version refuses staging" "already exists" \
+  bash "$LANE" require-absent --listing-status ok --present yes
+
+# ── observation hashes the exact byte stream ────────────────────────
+# A raw manifest WITHOUT a trailing newline: variable capture strips and a
+# here-string re-appends, so only a direct pipe hashes the true bytes.
+expected="sha256:$(printf '{"raw":"manifest"}' | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
+observed="$(printf '{"raw":"manifest"}' | bash "$LANE" observe-digest)"
+[[ "$observed" == "$expected" ]] \
+  || fail "observe-digest altered the byte stream: $observed != $expected"
+corrupted="$(raw="$(printf '{"raw":"manifest"}')"; sha256sum <<<"$raw" | awk '{print "sha256:"$1}')"
+[[ "$corrupted" != "$expected" ]] \
+  || fail "the regression control failed: here-string hashing did not corrupt"
+ok "observe-digest hashes exact bytes; the here-string form provably corrupts"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"
