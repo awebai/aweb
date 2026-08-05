@@ -29,6 +29,7 @@
 #   AWEB_SKEW_RUNTIME_PROOF_PATH              server-proof output JSON
 #   AWEB_SKEW_EXPECTED_SERVER_VERSION         required installed aweb version
 #   AWEB_SKEW_EXPECTED_SERVER_WHEEL_SHA256    required retained wheel SHA-256
+#   AWEB_SKEW_EXPECTED_MCP_VERSION             required installed MCP version
 #   KEEP_UP=1                  with `all`, skip teardown on success
 
 set -euo pipefail
@@ -112,6 +113,23 @@ wait_health() {
   return 1
 }
 
+assert_project_absent() {
+  local containers networks volumes
+  containers="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")"
+  networks="$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT")"
+  volumes="$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")"
+  if [[ -n "$containers$networks$volumes" ]]; then
+    echo "FATAL: Compose project $PROJECT left container/network/volume residue" >&2
+    echo "  containers=${containers:-none} networks=${networks:-none} volumes=${volumes:-none}" >&2
+    return 1
+  fi
+}
+
+remove_stack() {
+  "${COMPOSE[@]}" down -v --remove-orphans
+  assert_project_absent
+}
+
 stack_up() {
   if [[ ! -d "$LIBRARY_E2E_LIBRARY_CONTEXT" ]]; then
     echo "FATAL: library source not found at $LIBRARY_E2E_LIBRARY_CONTEXT" >&2
@@ -121,10 +139,9 @@ stack_up() {
   echo "=== Building and starting the stack ==="
   echo "  library context: $LIBRARY_E2E_LIBRARY_CONTEXT"
   echo "  blueprint src:   $LIBRARY_E2E_BLUEPRINT_SRC"
-  # Reset any prior stack for this project first, so every `up` is a clean slate
-  # (a reused stack keeps awid state like the shared `local` namespace, which
-  # breaks tests that create a local team).
-  "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  # Reset this exact project first and prove it has no residue. A failed reset
+  # must not silently reuse state or redirect cleanup to another invocation.
+  remove_stack
   "${COMPOSE[@]}" up --build -d
   wait_health awid "$AWID_URL/health"
   wait_health aweb "$AWEB_URL/health"
@@ -145,50 +162,92 @@ stack_server_proof() {
   : "${AWEB_SKEW_RUNTIME_PROOF_PATH:?server-proof requires its output path}"
   : "${AWEB_SKEW_EXPECTED_SERVER_VERSION:?server-proof requires expected version}"
   : "${AWEB_SKEW_EXPECTED_SERVER_WHEEL_SHA256:?server-proof requires expected wheel SHA-256}"
+  : "${AWEB_SKEW_EXPECTED_MCP_VERSION:?server-proof requires expected MCP version}"
+  : "${AW_SKEW_CELL_IDENTITY_SHA256:?server-proof requires cell identity SHA-256}"
   [[ "$AWEB_SKEW_RUNTIME_PROOF_PATH" = /* ]] \
     || { echo "FATAL: server-proof output path must be absolute" >&2; return 1; }
 
-  local container_id image_id server_version wheel_sha256
+  local container_id image_id runtime_json
   container_id="$("${COMPOSE[@]}" ps -q aweb)"
   [[ "$container_id" =~ ^[0-9a-f]{64}$ ]] \
     || { echo "FATAL: aweb container identity is not a full Docker ID" >&2; return 1; }
   image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
   [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] \
     || { echo "FATAL: aweb image identity is not a sha256 ID" >&2; return 1; }
-  server_version="$("${COMPOSE[@]}" exec -T aweb python -c \
-    'import importlib.metadata; print(importlib.metadata.version("aweb"))')"
-  wheel_sha256="$("${COMPOSE[@]}" exec -T aweb python -c \
-    'import glob,hashlib; p=glob.glob("/opt/aweb-artifact/*.whl"); assert len(p)==1, p; print(hashlib.sha256(open(p[0],"rb").read()).hexdigest())')"
-  [[ "$server_version" == "$AWEB_SKEW_EXPECTED_SERVER_VERSION" ]] \
-    || { echo "FATAL: running aweb $server_version, expected $AWEB_SKEW_EXPECTED_SERVER_VERSION" >&2; return 1; }
-  [[ "$wheel_sha256" == "$AWEB_SKEW_EXPECTED_SERVER_WHEEL_SHA256" ]] \
-    || { echo "FATAL: running wheel hashes $wheel_sha256, expected $AWEB_SKEW_EXPECTED_SERVER_WHEEL_SHA256" >&2; return 1; }
+  runtime_json="$("${COMPOSE[@]}" exec -T \
+    -e EXPECTED_SERVER_VERSION="$AWEB_SKEW_EXPECTED_SERVER_VERSION" \
+    -e EXPECTED_WHEEL_SHA256="$AWEB_SKEW_EXPECTED_SERVER_WHEEL_SHA256" \
+    -e EXPECTED_MCP_VERSION="$AWEB_SKEW_EXPECTED_MCP_VERSION" \
+    aweb python -c '
+import glob
+import hashlib
+import importlib.metadata
+import json
+import os
+import re
+
+def normalized(name):
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+inventory = {}
+for distribution in importlib.metadata.distributions():
+    name = normalized(distribution.metadata["Name"])
+    assert name not in inventory, name
+    inventory[name] = distribution.version
+inventory = dict(sorted(inventory.items()))
+server = importlib.metadata.version("aweb")
+mcp = importlib.metadata.version("mcp")
+wheels = glob.glob("/opt/aweb-artifact/*.whl")
+assert len(wheels) == 1, wheels
+wheel = hashlib.sha256(open(wheels[0], "rb").read()).hexdigest()
+assert server == os.environ["EXPECTED_SERVER_VERSION"], (server, os.environ["EXPECTED_SERVER_VERSION"])
+assert wheel == os.environ["EXPECTED_WHEEL_SHA256"], (wheel, os.environ["EXPECTED_WHEEL_SHA256"])
+assert mcp == os.environ["EXPECTED_MCP_VERSION"], (mcp, os.environ["EXPECTED_MCP_VERSION"])
+canonical = json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
+print(json.dumps({
+    "installed_distributions": inventory,
+    "installed_distributions_sha256": hashlib.sha256(canonical).hexdigest(),
+    "mcp_version": mcp,
+    "server_version": server,
+    "wheel_sha256": wheel,
+}, sort_keys=True, separators=(",", ":")))
+')"
 
   PROOF_CONTAINER_ID="$container_id" \
   PROOF_IMAGE_ID="$image_id" \
-  PROOF_SERVER_VERSION="$server_version" \
-  PROOF_WHEEL_SHA256="$wheel_sha256" \
+  PROOF_RUNTIME_JSON="$runtime_json" \
+  PROOF_PROJECT="$PROJECT" \
+  PROOF_CELL_IDENTITY_SHA256="$AW_SKEW_CELL_IDENTITY_SHA256" \
   python3 - "$AWEB_SKEW_RUNTIME_PROOF_PATH" <<'PY'
 import json
 import os
 from pathlib import Path
 import sys
 
-path = Path(sys.argv[1])
-path.parent.mkdir(parents=True, exist_ok=True)
-path.write_text(json.dumps({
+runtime = json.loads(os.environ["PROOF_RUNTIME_JSON"])
+expected = {
+    "installed_distributions", "installed_distributions_sha256", "mcp_version",
+    "server_version", "wheel_sha256",
+}
+assert set(runtime) == expected, runtime
+runtime.update({
+    "cell_identity_sha256": os.environ["PROOF_CELL_IDENTITY_SHA256"],
     "container_id": os.environ["PROOF_CONTAINER_ID"],
     "image_id": os.environ["PROOF_IMAGE_ID"],
-    "server_version": os.environ["PROOF_SERVER_VERSION"],
-    "wheel_sha256": os.environ["PROOF_WHEEL_SHA256"],
-}, sort_keys=True) + "\n")
+    "project": os.environ["PROOF_PROJECT"],
+})
+path = Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+temporary = path.with_suffix(".tmp")
+temporary.write_text(json.dumps(runtime, sort_keys=True, separators=(",", ":")) + "\n")
+temporary.replace(path)
 PY
-  echo "  exact server runtime proven: aweb=$server_version image=$image_id"
+  echo "  exact server runtime proven: aweb=$AWEB_SKEW_EXPECTED_SERVER_VERSION image=$image_id"
 }
 
 stack_down() {
   echo "=== Tearing down the stack (removing all state) ==="
-  "${COMPOSE[@]}" down -v --remove-orphans
+  remove_stack
 }
 
 case "$ACTION" in
@@ -205,7 +264,7 @@ case "$ACTION" in
     stack_down
     ;;
   all)
-    trap 'status=$?; if [[ "${KEEP_UP:-}" != "1" || $status -ne 0 ]]; then stack_down || true; fi; exit $status' EXIT
+    trap 'status=$?; trap - EXIT; cleanup=0; if [[ "${KEEP_UP:-}" != "1" || $status -ne 0 ]]; then stack_down || cleanup=$?; fi; if (( status != 0 )); then exit "$status"; fi; exit "$cleanup"' EXIT
     stack_up
     stack_seed
     echo ""

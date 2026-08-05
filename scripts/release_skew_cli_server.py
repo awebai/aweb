@@ -20,6 +20,8 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import tomllib
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -85,21 +87,15 @@ def _github_release_fetch(version: str, name: str) -> bytes | None:
     return rd._fetch_aw_release_asset(name, version)
 
 
-def _github_release_digest(version: str, name: str) -> str:
-    release = json.loads(
-        rd._run_gh_api(f"repos/awebai/aw/releases/tags/v{version}")
-    )
-    matches = [asset for asset in release.get("assets", []) if asset.get("name") == name]
-    if len(matches) != 1:
-        raise rd.ReceiptError(
-            f"GitHub release v{version} carries {len(matches)} assets named {name}, expected one"
+def _github_release_metadata_fetch(version: str) -> dict:
+    try:
+        return json.loads(
+            rd._run_gh_api(f"repos/awebai/aw/releases/tags/v{version}")
         )
-    digest = str(matches[0].get("digest") or "").removeprefix("sha256:")
-    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+    except (json.JSONDecodeError, rd.ReceiptError) as exc:
         raise rd.ReceiptError(
-            f"GitHub API records no sha256 digest for v{version}/{name}"
-        )
-    return digest
+            f"GitHub release metadata read failed for aw {version}: {exc}"
+        ) from exc
 
 
 def _pypi_metadata_fetch(version: str) -> dict | None:
@@ -122,6 +118,47 @@ def _url_fetch(url: str) -> bytes:
         raise rd.ReceiptError(f"artifact download failed for {url}: {exc}") from exc
 
 
+def _probe_aw_version(path: Path) -> dict:
+    env = os.environ.copy()
+    env["AW_NO_UPDATE_CHECK"] = "1"
+    result = subprocess.run(
+        [str(path), "version"], env=env, text=True, capture_output=True
+    )
+    if result.returncode != 0:
+        raise rd.ReceiptError(
+            f"selected published aw version command exited {result.returncode}: "
+            f"{(result.stderr or result.stdout)[:500]}"
+        )
+    build = subprocess.run(
+        ["go", "version", "-m", str(path)], text=True, capture_output=True
+    )
+    if build.returncode != 0:
+        raise rd.ReceiptError(
+            f"cannot read selected published aw module provenance: {build.stderr[:500]}"
+        )
+    modules = []
+    for line in build.stdout.splitlines():
+        fields = line.strip().split("\t")
+        if len(fields) >= 3 and fields[0] == "mod" and fields[1] == "github.com/awebai/aw":
+            modules.append(fields[2])
+    if len(modules) != 1:
+        raise rd.ReceiptError(
+            f"selected published aw carries {len(modules)} main module versions"
+        )
+    return {"version_output": result.stdout, "module_version": modules[0]}
+
+
+def locked_mcp_version() -> str:
+    with (REPO_ROOT / "server/uv.lock").open("rb") as stream:
+        packages = tomllib.load(stream).get("package", [])
+    versions = [item.get("version") for item in packages if item.get("name") == "mcp"]
+    if len(versions) != 1 or not isinstance(versions[0], str) or not versions[0]:
+        raise rd.ReceiptError(
+            f"server/uv.lock must bind exactly one mcp version, found {versions!r}"
+        )
+    return versions[0]
+
+
 @dataclass(frozen=True)
 class ResolvedArtifact:
     component: str
@@ -138,17 +175,19 @@ class CliServerArtifactResolver:
         *,
         staged_capabilities=_default_staged_capabilities,
         github_release_fetch=_github_release_fetch,
-        github_release_digest=_github_release_digest,
+        github_release_metadata_fetch=_github_release_metadata_fetch,
         pypi_metadata_fetch=_pypi_metadata_fetch,
         url_fetch=_url_fetch,
         platform_name=_default_platform_name,
+        aw_version_probe=_probe_aw_version,
     ):
         self._staged_capabilities = staged_capabilities
         self._release_fetch = github_release_fetch
-        self._release_digest = github_release_digest
+        self._release_metadata = github_release_metadata_fetch
         self._pypi = pypi_metadata_fetch
         self._url = url_fetch
         self._platform = platform_name
+        self._aw_version_probe = aw_version_probe
 
     def resolve(self, side: dict, kind: str, locator: str, root: Path) -> ResolvedArtifact:
         component = side.get("component")
@@ -250,8 +289,14 @@ class CliServerArtifactResolver:
     def _published_aw(self, side: dict, kind: str, root: Path) -> ResolvedArtifact:
         version = side.get("version") or ""
         archive_name = f"aw_{version}_{self._platform()}.tar.gz"
-        checksums_registry = self._release_digest(version, "checksums.txt")
-        archive_registry = self._release_digest(version, archive_name)
+        metadata = self._release_metadata(version)
+        registry_set = _github_release_digest_set(metadata, version)
+        expected_names = set(rd.expected_lane_payload_names(version)[0])
+        if set(registry_set) != expected_names:
+            raise rd.ReceiptError(
+                f"GitHub release v{version} asset set is not exact: "
+                f"got {sorted(registry_set)}, expected {sorted(expected_names)}"
+            )
         checksums = self._release_fetch(version, "checksums.txt")
         archive = self._release_fetch(version, archive_name)
         if checksums is None or archive is None:
@@ -259,40 +304,50 @@ class CliServerArtifactResolver:
                 f"GitHub release v{version} lacks checksums.txt or {archive_name}"
             )
         actual_checksums = _sha256(checksums)
-        if actual_checksums != checksums_registry:
+        if actual_checksums != registry_set["checksums.txt"]:
             raise rd.ReceiptError(
                 f"downloaded checksums.txt hashes {actual_checksums}, GitHub API "
-                f"records {checksums_registry}"
+                f"records {registry_set['checksums.txt']}"
             )
-        checksums_recorded = _checksum_for(checksums, archive_name)
+        checksums_set = _checksum_set(checksums)
+        expected_checksums = {
+            name: digest for name, digest in registry_set.items()
+            if name != "checksums.txt"
+        }
+        if checksums_set != expected_checksums:
+            raise rd.ReceiptError(
+                f"checksums.txt set does not equal the complete GitHub asset digest set"
+            )
         actual = _sha256(archive)
+        archive_registry = registry_set[archive_name]
         if actual != archive_registry:
             raise rd.ReceiptError(
                 f"GitHub release {archive_name} hashes {actual}, GitHub API "
                 f"records {archive_registry}"
             )
-        if actual != checksums_recorded:
-            raise rd.ReceiptError(
-                f"GitHub release {archive_name} hashes {actual}, checksums.txt "
-                f"records {checksums_recorded}"
-            )
         executable = _aw_from_archive(archive, archive_name)
         output = root / "aw"
         output.write_bytes(executable)
         output.chmod(output.stat().st_mode | stat.S_IXUSR)
+        version_proof = _validate_aw_version_proof(
+            self._aw_version_probe(output), version
+        )
         evidence = {
             "component": "aw",
             "version": version,
             "kind": kind,
             "registry": "github-release:awebai/aw",
             "tag": f"v{version}",
+            "registry_digest_set": registry_set,
+            "registry_set_digest": rd.canonical_digest_of_set(registry_set),
             "checksums_sha256": actual_checksums,
-            "checksums_registry_sha256": checksums_registry,
+            "checksums_registry_sha256": registry_set["checksums.txt"],
             "payload_name": archive_name,
             "outer_sha256": actual,
             "registry_sha256": archive_registry,
-            "checksums_recorded_sha256": checksums_recorded,
+            "checksums_recorded_sha256": checksums_set[archive_name],
             "payload_sha256": _sha256(executable),
+            **version_proof,
         }
         if version == DIRTY_FLEET_AW_VERSION:
             evidence.update({
@@ -308,22 +363,40 @@ class CliServerArtifactResolver:
         metadata = self._pypi(version)
         if not isinstance(metadata, dict):
             raise rd.ReceiptError(f"PyPI has no metadata for aweb {version}")
-        wheels = [
-            item for item in metadata.get("urls", [])
-            if item.get("packagetype") == "bdist_wheel"
-            and item.get("yanked") is not True
-            and str(item.get("filename", "")).endswith(".whl")
-        ]
+        info_version = (metadata.get("info") or {}).get("version")
+        if info_version != version:
+            raise rd.ReceiptError(
+                f"PyPI metadata info.version {info_version!r} is not requested {version!r}"
+            )
+        records = metadata.get("urls")
+        if not isinstance(records, list) or not records:
+            raise rd.ReceiptError(f"PyPI aweb {version} release file set is empty")
+        registry_set = {}
+        by_type = {}
+        for record in records:
+            filename, digest = _validate_pypi_record(record, version)
+            if filename in registry_set:
+                raise rd.ReceiptError(
+                    f"PyPI aweb {version} repeats release filename {filename}"
+                )
+            registry_set[filename] = digest
+            by_type.setdefault(record["packagetype"], []).append(record)
+        expected_names = {
+            f"aweb-{version}-py3-none-any.whl",
+            f"aweb-{version}.tar.gz",
+        }
+        if set(registry_set) != expected_names or set(by_type) != {"bdist_wheel", "sdist"}:
+            raise rd.ReceiptError(
+                f"PyPI aweb {version} release file set is not exact: "
+                f"got {sorted(registry_set)}, expected {sorted(expected_names)}"
+            )
+        wheels = by_type["bdist_wheel"]
         if len(wheels) != 1:
             raise rd.ReceiptError(
-                f"PyPI aweb {version} exposes {len(wheels)} usable wheels, expected exactly one"
+                f"PyPI aweb {version} exposes {len(wheels)} wheels, expected exactly one"
             )
         record = wheels[0]
-        expected = (record.get("digests") or {}).get("sha256") or ""
-        if not re.fullmatch(r"[0-9a-f]{64}", expected):
-            raise rd.ReceiptError(
-                f"PyPI aweb {version} wheel has no sha256 digest"
-            )
+        expected = registry_set[record["filename"]]
         body = self._url(record["url"])
         actual = _sha256(body)
         if actual != expected:
@@ -341,6 +414,8 @@ class CliServerArtifactResolver:
                 "version": version,
                 "kind": kind,
                 "registry": "pypi:aweb",
+                "registry_digest_set": registry_set,
+                "registry_set_digest": rd.canonical_digest_of_set(registry_set),
                 "url": record["url"],
                 "payload_name": record["filename"],
                 "outer_sha256": actual,
@@ -386,17 +461,120 @@ def _aw_from_archive(body: bytes, name: str) -> bytes:
     raise rd.ReceiptError(f"unsupported aw release archive {name}")
 
 
-def _checksum_for(body: bytes, filename: str) -> str:
-    matches = []
-    for raw in body.decode("utf-8").splitlines():
-        parts = raw.split()
-        if len(parts) == 2 and parts[1].lstrip("*") == filename:
-            matches.append(parts[0])
-    if len(matches) != 1 or not re.fullmatch(r"[0-9a-f]{64}", matches[0]):
+def _safe_artifact_name(name: object, *, authority: str) -> str:
+    if (
+        not isinstance(name, str)
+        or not name
+        or Path(name).name != name
+        or "/" in name
+        or "\\" in name
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", name)
+    ):
+        raise rd.ReceiptError(f"{authority} carries unsafe artifact filename {name!r}")
+    return name
+
+
+def _github_release_digest_set(metadata: dict, version: str) -> dict[str, str]:
+    if not isinstance(metadata, dict) or metadata.get("tag_name") != f"v{version}":
         raise rd.ReceiptError(
-            f"checksums.txt carries {len(matches)} valid entries for {filename}, expected one"
+            f"GitHub release metadata does not bind exact tag v{version}"
         )
-    return matches[0]
+    assets = metadata.get("assets")
+    if not isinstance(assets, list) or not assets:
+        raise rd.ReceiptError(f"GitHub release v{version} asset set is empty")
+    result = {}
+    for asset in assets:
+        if not isinstance(asset, dict):
+            raise rd.ReceiptError(f"GitHub release v{version} has malformed asset metadata")
+        name = _safe_artifact_name(asset.get("name"), authority="GitHub release")
+        digest = str(asset.get("digest") or "").removeprefix("sha256:")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise rd.ReceiptError(
+                f"GitHub API records no sha256 digest for v{version}/{name}"
+            )
+        if name in result:
+            raise rd.ReceiptError(f"GitHub release v{version} repeats asset {name}")
+        result[name] = digest
+    return dict(sorted(result.items()))
+
+
+def _checksum_set(body: bytes) -> dict[str, str]:
+    try:
+        lines = body.decode("utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise rd.ReceiptError(f"checksums.txt is not UTF-8: {exc}") from exc
+    result = {}
+    for raw in lines:
+        parts = raw.split()
+        if len(parts) != 2:
+            raise rd.ReceiptError(f"checksums.txt carries malformed line {raw!r}")
+        digest, raw_name = parts
+        name = _safe_artifact_name(raw_name.lstrip("*"), authority="checksums.txt")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise rd.ReceiptError(f"checksums.txt carries invalid digest for {name}")
+        if name in result:
+            raise rd.ReceiptError(f"checksums.txt repeats {name}")
+        result[name] = digest
+    if not result:
+        raise rd.ReceiptError("checksums.txt digest set is empty")
+    return dict(sorted(result.items()))
+
+
+def _validate_pypi_record(record: object, version: str) -> tuple[str, str]:
+    if not isinstance(record, dict):
+        raise rd.ReceiptError(f"PyPI aweb {version} has malformed release file metadata")
+    filename = _safe_artifact_name(record.get("filename"), authority="PyPI")
+    if record.get("packagetype") not in {"bdist_wheel", "sdist"}:
+        raise rd.ReceiptError(
+            f"PyPI aweb {version}/{filename} has unsupported package type "
+            f"{record.get('packagetype')!r}"
+        )
+    if record.get("yanked") is not False:
+        raise rd.ReceiptError(f"PyPI aweb {version}/{filename} is yanked or ambiguous")
+    digest = (record.get("digests") or {}).get("sha256") or ""
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise rd.ReceiptError(f"PyPI aweb {version}/{filename} has no sha256 digest")
+    url = record.get("url")
+    parsed = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+    if (
+        parsed is None
+        or parsed.scheme != "https"
+        or parsed.netloc != "files.pythonhosted.org"
+        or parsed.query
+        or parsed.fragment
+        or Path(urllib.parse.unquote(parsed.path)).name != filename
+    ):
+        raise rd.ReceiptError(
+            f"PyPI aweb {version}/{filename} has unsafe or mismatched URL {url!r}"
+        )
+    return filename, digest
+
+
+def _validate_aw_version_proof(proof: object, version: str) -> dict:
+    if not isinstance(proof, dict) or set(proof) != {"version_output", "module_version"}:
+        raise rd.ReceiptError(f"published aw version proof has wrong fields: {proof!r}")
+    output = proof["version_output"]
+    module = proof["module_version"]
+    lines = output.splitlines() if isinstance(output, str) else []
+    if (
+        len(lines) != 3
+        or lines[0] != f"aw {version}"
+        or not re.fullmatch(
+            r"  commit: [0-9a-f]{40} \(github\.com/awebai/aw\)", lines[1]
+        )
+        or not re.fullmatch(r"  built:  \S+", lines[2])
+    ):
+        raise rd.ReceiptError(
+            f"published aw version output does not bind expected version/provenance: {output!r}"
+        )
+    expected_module = (
+        f"v{version}+dirty" if version == DIRTY_FLEET_AW_VERSION else f"v{version}"
+    )
+    if module != expected_module:
+        raise rd.ReceiptError(
+            f"published aw module version {module!r} is not expected {expected_module!r}"
+        )
+    return {"version_output": output, "module_version": module}
 
 
 def cell_document(cell: rd.SkewCell) -> dict:
@@ -460,13 +638,14 @@ class CliServerSkewHarness:
                 "cell": cell_document(cell),
                 "artifacts": [aw.evidence, server.evidence],
             }
+            identity = cell_document(cell)
             try:
-                runtime = self._journey(aw, server, cell.direction)
-                evidence["runtime"] = validate_runtime_proof(runtime, server)
+                runtime = self._journey(aw, server, cell.direction, identity)
+                evidence["runtime"] = validate_runtime_proof(runtime, server, identity)
             except Exception as exc:
                 if isinstance(exc, JourneyExecutionFailure):
                     evidence["runtime"] = validate_runtime_proof(
-                        exc.runtime_proof, server
+                        exc.runtime_proof, server, identity
                     )
                 evidence["outcome"] = "red"
                 evidence["error"] = str(exc)
@@ -505,19 +684,27 @@ def _validate_cell(cell: rd.SkewCell) -> None:
         )
 
 
+def _canonical_json(value: object) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
 def _run_real_stack_journey(
-    aw: ResolvedArtifact, server: ResolvedArtifact, direction: str
+    aw: ResolvedArtifact, server: ResolvedArtifact, direction: str, identity: dict
 ) -> None:
     env = os.environ.copy()
     proof_path = server.path.parent / "server-runtime-proof.json"
     proof_path.unlink(missing_ok=True)
+    identity_json = _canonical_json(identity)
     env.update({
         "AW_BIN": str(aw.path),
         "AWEB_E2E_SERVER_WHEEL": str(server.path),
         "AW_SKEW_DIRECTION": direction,
+        "AW_SKEW_CELL_IDENTITY_JSON": identity_json.decode(),
+        "AW_SKEW_CELL_IDENTITY_SHA256": _sha256(identity_json),
         "AWEB_SKEW_RUNTIME_PROOF_PATH": str(proof_path),
         "AWEB_SKEW_EXPECTED_SERVER_VERSION": server.version,
         "AWEB_SKEW_EXPECTED_SERVER_WHEEL_SHA256": server.evidence["payload_sha256"],
+        "AWEB_SKEW_EXPECTED_MCP_VERSION": locked_mcp_version(),
     })
     result = subprocess.run(
         ["make", "cli-server-skew-cell"],
@@ -550,21 +737,54 @@ def _read_runtime_proof(proof_path: Path) -> dict:
         ) from exc
 
 
-def validate_runtime_proof(proof: dict, server: ResolvedArtifact) -> dict:
-    expected_keys = {"server_version", "wheel_sha256", "container_id", "image_id"}
+def validate_runtime_proof(
+    proof: dict, server: ResolvedArtifact, identity: dict
+) -> dict:
+    expected_keys = {
+        "cell_identity_sha256",
+        "container_id",
+        "image_id",
+        "installed_distributions",
+        "installed_distributions_sha256",
+        "mcp_version",
+        "project",
+        "server_version",
+        "wheel_sha256",
+    }
     if not isinstance(proof, dict) or set(proof) != expected_keys:
         raise rd.ReceiptError(
             f"runtime server proof must carry exactly {sorted(expected_keys)}, got {proof!r}"
         )
+    inventory = proof["installed_distributions"]
+    valid_inventory = (
+        isinstance(inventory, dict)
+        and bool(inventory)
+        and all(
+            isinstance(name, str)
+            and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name)
+            and isinstance(version, str)
+            and bool(version)
+            for name, version in inventory.items()
+        )
+    )
+    inventory_digest = _sha256(_canonical_json(inventory)) if valid_inventory else ""
+    identity_digest = _sha256(_canonical_json(identity))
     if (
         proof["server_version"] != server.version
         or proof["wheel_sha256"] != server.evidence.get("payload_sha256")
+        or proof["mcp_version"] != locked_mcp_version()
+        or not valid_inventory
+        or inventory.get("aweb") != server.version
+        or inventory.get("mcp") != proof["mcp_version"]
+        or proof["installed_distributions_sha256"] != inventory_digest
+        or proof["cell_identity_sha256"] != identity_digest
         or not re.fullmatch(r"[0-9a-f]{64}", proof["wheel_sha256"])
         or not re.fullmatch(r"[0-9a-f]{64}", proof["container_id"])
         or not re.fullmatch(r"sha256:[0-9a-f]{64}", proof["image_id"])
+        or not re.fullmatch(r"aweb-skew-[0-9a-f]{20}-[0-9a-f]{16}", proof["project"])
     ):
         raise rd.ReceiptError(
-            f"runtime server proof does not bind exact wheel/version/container: {proof!r}"
+            f"runtime server proof does not bind exact cell/wheel/dependencies/container: {proof!r}"
         )
     return dict(proof)
 
@@ -643,6 +863,18 @@ def measure_support(
         published_versions=published_versions,
     )
     evidence = [harness.run_evidenced(item) for item in supported_cells]
+    first_supported_controls = [
+        row for row in evidence
+        if (row.get("runtime") or {}).get("server_version")
+        == FIRST_SUPPORTED_SERVER_VERSION
+    ]
+    if not first_supported_controls:
+        raise rd.ReceiptError(
+            f"support measurement lacks positive server {FIRST_SUPPORTED_SERVER_VERSION} controls"
+        )
+    _require_uniform_dependency_posture(
+        negative_evidence + first_supported_controls
+    )
     if DIRTY_FLEET_AW_VERSION in (supported_versions.get("aw") or []):
         _require_dirty_fleet_evidence(evidence)
     return {
@@ -675,6 +907,27 @@ def measure_support(
     }
 
 
+def _require_uniform_dependency_posture(evidence: list[dict]) -> None:
+    postures = {}
+    for row in evidence:
+        runtime = row.get("runtime") or {}
+        inventory = runtime.get("installed_distributions")
+        if not isinstance(inventory, dict) or "aweb" not in inventory:
+            raise rd.ReceiptError(
+                "CLI/server skew evidence lacks the full installed-distribution inventory"
+            )
+        dependencies = {name: version for name, version in inventory.items() if name != "aweb"}
+        digest = _sha256(_canonical_json(dependencies))
+        postures.setdefault(digest, []).append({
+            "cell": row.get("cell"),
+            "server_version": inventory["aweb"],
+        })
+    if len(postures) != 1:
+        raise rd.ReceiptError(
+            f"CLI/server controls differ in dependency resolution beyond the server wheel: {postures!r}"
+        )
+
+
 def _require_dirty_fleet_evidence(evidence: list[dict]) -> None:
     observed = [
         artifact
@@ -689,6 +942,18 @@ def _require_dirty_fleet_evidence(evidence: list[dict]) -> None:
             "installed-fleet artifact evidence"
         )
     for artifact in observed:
+        try:
+            _validate_aw_version_proof(
+                {
+                    "version_output": artifact.get("version_output"),
+                    "module_version": artifact.get("module_version"),
+                },
+                DIRTY_FLEET_AW_VERSION,
+            )
+        except rd.ReceiptError as exc:
+            raise rd.ReceiptError(
+                f"aw {DIRTY_FLEET_AW_VERSION} evidence lacks exact binary version proof: {exc}"
+            ) from exc
         if (
             artifact.get("kind") == "candidate"
             or artifact.get("provenance_status") != "rejected-dirty"
@@ -697,6 +962,11 @@ def _require_dirty_fleet_evidence(evidence: list[dict]) -> None:
             or artifact.get("outer_sha256") != artifact.get("checksums_recorded_sha256")
             or artifact.get("checksums_sha256")
             != artifact.get("checksums_registry_sha256")
+            or artifact.get("module_version") != f"v{DIRTY_FLEET_AW_VERSION}+dirty"
+            or not isinstance(artifact.get("registry_digest_set"), dict)
+            or not artifact.get("registry_digest_set")
+            or artifact.get("registry_set_digest")
+            != rd.canonical_digest_of_set(artifact.get("registry_digest_set", {}))
             or not re.fullmatch(r"[0-9a-f]{64}", artifact.get("payload_sha256", ""))
         ):
             raise rd.ReceiptError(

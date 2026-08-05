@@ -97,8 +97,11 @@ curl -s http://127.0.0.1:18765/v1/blueprints | python3 -m json.tool   # after se
 
 Postgres data lives on tmpfs and the stack defines no named volumes, so
 `down -v` (what `e2e-library-stack-down` and the `all` trap run) removes every
-container and all state. The next `up` is a clean slate, which is why the
-`library` database is (re)created by `scripts/e2e/initdb/` on every boot.
+container and all state. Teardown also queries Docker for container, network,
+and volume labels belonging to the exact Compose project and fails if residue
+remains; a successful test cannot hide a cleanup failure. The next `up` is a
+clean slate, which is why the `library` database is (re)created by
+`scripts/e2e/initdb/` on every boot.
 
 ## How the seed authenticates
 
@@ -169,8 +172,13 @@ deleted and the suite installs the manifest the real way.
 `scripts/release_skew_cli_server.py` registers this journey as the
 `make cli-e2e` runtime-contract child. Candidate sides are downloaded from the
 exact `LaneRef` and validated against the GitHub Actions outer-ZIP digest and
-staged digest set. Published sides are downloaded from the exact GitHub Release
-or PyPI version and checked against `checksums.txt` or PyPI's file SHA-256.
+staged digest set. Published sides bind the complete, nonempty registry file
+set and its canonical digest before selecting the runtime payload. GitHub's
+exact seven-asset set must equal the complete `checksums.txt`; PyPI's exact
+wheel-plus-sdist set must carry the requested `info.version`, safe matching
+URLs, and file SHA-256 values. The selected published `aw` also has its real
+`aw version` output and Go main-module version checked and recorded; only the
+known 1.34.2 artifact may carry `v1.34.2+dirty`.
 `make cli-server-skew-cell` requires both the resolved `AW_BIN` and server
 wheel and refuses when either is absent; there is no varied-side source-build
 fallback. It runs only the distinct workspace/agent-ID presence-and-lock
@@ -178,11 +186,20 @@ journey. For `a-to-b`, CLI connect/heartbeat/lock mutations are checked in raw
 authenticated server state: the lock holder must be the roster agent ID and not
 the workspace ID. For `b-to-a`, the selected CLI must decode the server status
 and roster response into distinct IDs, an attributed lock, and active presence.
-Neither release artifact is rebuilt. Before seeding or running either direction,
-the controlled stack executes `importlib.metadata.version("aweb")` inside the
-exact aweb container and hashes its retained wheel. The cell refuses unless
-both equal the resolved server artifact, then records those values with the
-full container and image IDs; the public `/health` contract is unchanged.
+Neither release artifact is rebuilt. Every invocation ignores ambient
+`KEEP_UP`, project, port, and public-origin overrides; it derives a fresh
+collision-resistant project from the full canonical cell identity plus a run
+token and allocates four loopback ports. Before seeding or running either
+direction, the controlled stack executes `importlib.metadata.version("aweb")`
+inside the exact aweb container and hashes its retained wheel. It installs and
+asserts the exact `mcp` version from `server/uv.lock`, records the canonical
+full installed-distribution inventory and digest, and requires the published
+positive and negative controls to have identical dependency posture except for
+the server distribution. The cell refuses unless all runtime values match the
+resolved artifacts and cell identity, then records those values with the exact
+project and full container and image IDs. Green evidence is written only after
+exact-project stack cleanup and temporary-context cleanup both succeed; the
+public `/health` contract is unchanged.
 
 `make test-release-skew-cli-server` is the focused, non-Docker contract suite.
 Once exact candidate LaneRefs exist, `make measure-release-skew-cli-server`

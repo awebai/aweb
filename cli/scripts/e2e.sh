@@ -37,11 +37,15 @@ AWID_URL="http://127.0.0.1:$AWID_PORT"
 LIBRARY_URL="http://127.0.0.1:$LIBRARY_PORT"
 
 teardown() {
-  local status=$?
+  local status=$? cleanup_status=0
+  trap - EXIT
   if [[ "${KEEP_UP:-}" != "1" || $status -ne 0 ]]; then
-    "$STACK" down || true
+    "$STACK" down || cleanup_status=$?
   fi
-  exit $status
+  if (( status != 0 )); then
+    exit "$status"
+  fi
+  exit "$cleanup_status"
 }
 
 select_aw_binary() {

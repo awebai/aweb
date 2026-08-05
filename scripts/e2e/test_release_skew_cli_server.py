@@ -62,6 +62,83 @@ def staged_aw_zip(version="1.35.0", source="a" * 40):
     return body.getvalue(), manifest
 
 
+def aw_version_proof(version: str, *, module_version: str | None = None):
+    return {
+        "version_output": (
+            f"aw {version}\n"
+            f"  commit: {'c' * 40} (github.com/awebai/aw)\n"
+            "  built:  2026-08-04T00:00:00Z\n"
+        ),
+        "module_version": module_version or f"v{version}",
+    }
+
+
+def github_release_fixture(version: str, selected_archive: bytes):
+    platform_name = f"aw_{version}_darwin_arm64.tar.gz"
+    names = rd.expected_lane_payload_names(version)[0]
+    bodies = {
+        name: (selected_archive if name == platform_name else name.encode())
+        for name in names if name != "checksums.txt"
+    }
+    checksums = "".join(
+        f"{sha(body)}  {name}\n" for name, body in sorted(bodies.items())
+    ).encode()
+    bodies["checksums.txt"] = checksums
+    metadata = {
+        "tag_name": f"v{version}",
+        "assets": [
+            {"name": name, "digest": f"sha256:{sha(body)}"}
+            for name, body in sorted(bodies.items())
+        ],
+    }
+    return bodies, metadata
+
+
+def pypi_fixture(version: str, wheel: bytes, sdist: bytes = b"sdist"):
+    wheel_name = f"aweb-{version}-py3-none-any.whl"
+    sdist_name = f"aweb-{version}.tar.gz"
+    return {
+        "info": {"version": version},
+        "urls": [
+            {
+                "filename": wheel_name,
+                "packagetype": "bdist_wheel",
+                "yanked": False,
+                "url": f"https://files.pythonhosted.org/{wheel_name}",
+                "digests": {"sha256": sha(wheel)},
+            },
+            {
+                "filename": sdist_name,
+                "packagetype": "sdist",
+                "yanked": False,
+                "url": f"https://files.pythonhosted.org/{sdist_name}",
+                "digests": {"sha256": sha(sdist)},
+            },
+        ],
+    }
+
+
+def runtime_proof(server_version, wheel_sha, identity, *, aweb_override=None):
+    import release_skew_cli_server as subject
+
+    inventory = {
+        "aweb": aweb_override or server_version,
+        "mcp": subject.locked_mcp_version(),
+        "starlette": "0.52.1",
+    }
+    return {
+        "cell_identity_sha256": sha(subject._canonical_json(identity)),
+        "container_id": "a" * 64,
+        "image_id": "sha256:" + "b" * 64,
+        "installed_distributions": inventory,
+        "installed_distributions_sha256": sha(subject._canonical_json(inventory)),
+        "mcp_version": subject.locked_mcp_version(),
+        "project": f"aweb-skew-{sha(subject._canonical_json(identity))[:20]}-{'c' * 16}",
+        "server_version": server_version,
+        "wheel_sha256": wheel_sha,
+    }
+
+
 def staged_server_zip(version="1.26.36", source="b" * 40):
     wheel = f"aweb-{version}-py3-none-any.whl"
     sdist = f"aweb-{version}.tar.gz"
@@ -150,7 +227,10 @@ def cell(a, b, *, a_kind="candidate", b_kind="candidate", direction="a-to-b"):
 
 
 class ArtifactResolutionTests(unittest.TestCase):
-    def resolver(self, *, staged=None, release=None, release_digest=None, pypi=None, url=None):
+    def resolver(
+        self, *, staged=None, release=None, release_metadata=None, pypi=None,
+        url=None, aw_probe=None,
+    ):
         import release_skew_cli_server as subject
 
         def staged_capabilities(component):
@@ -160,10 +240,13 @@ class ArtifactResolutionTests(unittest.TestCase):
         return subject.CliServerArtifactResolver(
             staged_capabilities=staged_capabilities,
             github_release_fetch=release or (lambda version, name: None),
-            github_release_digest=release_digest or (lambda version, name: None),
+            github_release_metadata_fetch=(
+                release_metadata or (lambda version: None)
+            ),
             pypi_metadata_fetch=pypi or (lambda version: None),
             url_fetch=url or (lambda value: b""),
             platform_name=lambda: "darwin_arm64",
+            aw_version_probe=aw_probe or (lambda path: aw_version_proof("1.35.0")),
         )
 
     def test_candidate_lane_refs_resolve_exact_staged_binary_and_wheel(self):
@@ -205,10 +288,11 @@ class ArtifactResolutionTests(unittest.TestCase):
                 FakeStore(aw_zip), FakeAuthority(sha(aw_zip))
             ),
             github_release_fetch=lambda version, name: None,
-            github_release_digest=lambda version, name: None,
+            github_release_metadata_fetch=lambda version: None,
             pypi_metadata_fetch=lambda version: None,
             url_fetch=lambda value: b"",
             platform_name=lambda: "darwin_arm64",
+            aw_version_probe=lambda path: aw_version_proof("1.35.0"),
         )
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(rd.ReceiptError, "independent authority"):
@@ -217,18 +301,17 @@ class ArtifactResolutionTests(unittest.TestCase):
 
     def test_published_dirty_aw_floor_is_digest_bound_compatibility_only(self):
         archive = archive_with_aw(b"published-aw")
+        bodies, metadata = github_release_fixture("1.34.2", archive)
         calls = []
 
         def fetch(version, name):
             calls.append((version, name))
-            if name == "checksums.txt":
-                return f"{sha(archive)}  aw_1.34.2_darwin_arm64.tar.gz\n".encode()
-            return archive
+            return bodies.get(name)
 
         resolver = self.resolver(
-            staged={}, release=fetch,
-            release_digest=lambda version, name: sha(
-                fetch(version, name)
+            staged={}, release=fetch, release_metadata=lambda version: metadata,
+            aw_probe=lambda path: aw_version_proof(
+                "1.34.2", module_version="v1.34.2+dirty"
             ),
         )
         side = {"component": "aw", "version": "1.34.2", "kind": "published-floor"}
@@ -242,28 +325,30 @@ class ArtifactResolutionTests(unittest.TestCase):
             [
                 ("1.34.2", "checksums.txt"),
                 ("1.34.2", "aw_1.34.2_darwin_arm64.tar.gz"),
-                ("1.34.2", "checksums.txt"),
-                ("1.34.2", "aw_1.34.2_darwin_arm64.tar.gz"),
             ],
         )
         self.assertEqual(result.evidence["outer_sha256"], sha(archive))
         self.assertEqual(result.evidence["registry_sha256"], sha(archive))
         self.assertEqual(result.evidence["checksums_recorded_sha256"], sha(archive))
         self.assertEqual(result.evidence["payload_sha256"], sha(b"published-aw"))
+        self.assertEqual(
+            result.evidence["registry_set_digest"],
+            rd.canonical_digest_of_set(result.evidence["registry_digest_set"]),
+        )
+        self.assertEqual(result.evidence["module_version"], "v1.34.2+dirty")
         self.assertEqual(result.evidence["provenance_status"], "rejected-dirty")
         self.assertEqual(result.evidence["use"], "installed-fleet-compatibility-only")
 
     def test_published_aw_api_digest_mismatch_refuses(self):
         archive = archive_with_aw(b"published-aw")
-
-        def fetch(version, name):
-            if name == "checksums.txt":
-                return f"{sha(archive)}  aw_1.34.3_darwin_arm64.tar.gz\n".encode()
-            return archive
-
+        bodies, metadata = github_release_fixture("1.34.3", archive)
+        for asset in metadata["assets"]:
+            if asset["name"] == "checksums.txt":
+                asset["digest"] = "sha256:" + "0" * 64
         resolver = self.resolver(
-            staged={}, release=fetch,
-            release_digest=lambda version, name: "0" * 64,
+            staged={}, release=lambda version, name: bodies.get(name),
+            release_metadata=lambda version: metadata,
+            aw_probe=lambda path: aw_version_proof("1.34.3"),
         )
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(rd.ReceiptError, "GitHub API records"):
@@ -276,15 +361,7 @@ class ArtifactResolutionTests(unittest.TestCase):
 
     def test_published_pypi_wheel_uses_registry_digest(self):
         wheel = b"published-wheel"
-        metadata = {
-            "urls": [{
-                "filename": "aweb-1.26.35-py3-none-any.whl",
-                "packagetype": "bdist_wheel",
-                "yanked": False,
-                "url": "https://files.example/aweb.whl",
-                "digests": {"sha256": sha(wheel)},
-            }]
-        }
+        metadata = pypi_fixture("1.26.35", wheel)
         resolver = self.resolver(
             staged={}, pypi=lambda version: metadata, url=lambda value: wheel
         )
@@ -294,17 +371,74 @@ class ArtifactResolutionTests(unittest.TestCase):
             self.assertEqual(result.path.read_bytes(), wheel)
         self.assertEqual(result.evidence["outer_sha256"], sha(wheel))
         self.assertEqual(result.evidence["registry_sha256"], sha(wheel))
+        self.assertEqual(len(result.evidence["registry_digest_set"]), 2)
+        self.assertEqual(
+            result.evidence["registry_set_digest"],
+            rd.canonical_digest_of_set(result.evidence["registry_digest_set"]),
+        )
+
+    def test_published_aw_complete_asset_set_and_binary_version_are_required(self):
+        archive = archive_with_aw(b"published-aw")
+        bodies, clean = github_release_fixture("1.34.3", archive)
+        mutations = []
+        missing = json.loads(json.dumps(clean))
+        missing["assets"].pop()
+        mutations.append((missing, aw_version_proof("1.34.3"), "asset set is not exact"))
+        extra = json.loads(json.dumps(clean))
+        extra["assets"].append({"name": "extra.txt", "digest": "sha256:" + "d" * 64})
+        mutations.append((extra, aw_version_proof("1.34.3"), "asset set is not exact"))
+        mutations.append((clean, aw_version_proof("9.9.9"), "version output"))
+        mutations.append((clean, aw_version_proof("1.34.3", module_version="v1.34.3+dirty"), "module version"))
+        for metadata, proof, marker in mutations:
+            with self.subTest(marker=marker):
+                resolver = self.resolver(
+                    staged={}, release=lambda version, name: bodies.get(name),
+                    release_metadata=lambda version, value=metadata: value,
+                    aw_probe=lambda path, value=proof: value,
+                )
+                with tempfile.TemporaryDirectory() as tmp:
+                    with self.assertRaisesRegex(rd.ReceiptError, marker):
+                        resolver.resolve(
+                            {"component": "aw", "version": "1.34.3"},
+                            "published", "github-release:awebai/aw", Path(tmp),
+                        )
+
+    def test_published_pypi_metadata_version_and_complete_set_are_required(self):
+        wheel = b"published-wheel"
+        valid = pypi_fixture("1.26.35", wheel)
+        mutations = []
+        wrong_version = json.loads(json.dumps(valid))
+        wrong_version["info"]["version"] = "1.26.31"
+        mutations.append((wrong_version, "info.version"))
+        unsafe_url = json.loads(json.dumps(valid))
+        unsafe_url["urls"][0]["url"] = "https://attacker.example/aweb-1.26.35-py3-none-any.whl"
+        mutations.append((unsafe_url, "unsafe or mismatched URL"))
+        missing = json.loads(json.dumps(valid))
+        missing["urls"].pop()
+        mutations.append((missing, "release file set is not exact"))
+        extra = json.loads(json.dumps(valid))
+        extra["urls"].append({
+            "filename": "extra-1.26.35.tar.gz", "packagetype": "sdist",
+            "yanked": False, "url": "https://files.pythonhosted.org/extra-1.26.35.tar.gz",
+            "digests": {"sha256": "e" * 64},
+        })
+        mutations.append((extra, "release file set is not exact"))
+        for metadata, marker in mutations:
+            with self.subTest(marker=marker):
+                resolver = self.resolver(
+                    staged={}, pypi=lambda version, value=metadata: value,
+                    url=lambda value: wheel,
+                )
+                with tempfile.TemporaryDirectory() as tmp:
+                    with self.assertRaisesRegex(rd.ReceiptError, marker):
+                        resolver.resolve(
+                            {"component": "server", "version": "1.26.35"},
+                            "published", "pypi:aweb", Path(tmp),
+                        )
 
     def test_published_pypi_digest_mismatch_refuses(self):
-        metadata = {
-            "urls": [{
-                "filename": "aweb-1.26.35-py3-none-any.whl",
-                "packagetype": "bdist_wheel",
-                "yanked": False,
-                "url": "https://files.example/aweb.whl",
-                "digests": {"sha256": "0" * 64},
-            }]
-        }
+        metadata = pypi_fixture("1.26.35", b"expected")
+        metadata["urls"][0]["digests"]["sha256"] = "0" * 64
         resolver = self.resolver(
             staged={}, pypi=lambda version: metadata, url=lambda value: b"wrong"
         )
@@ -349,14 +483,11 @@ class HarnessTests(unittest.TestCase):
                     evidence={"component": side["component"], "payload_sha256": sha(path.read_bytes())},
                 )
 
-        def journey(aw, server, direction):
-            calls.append((aw.path.name, server.path.name, direction))
-            return {
-                "server_version": server.version,
-                "wheel_sha256": server.evidence["payload_sha256"],
-                "container_id": "a" * 64,
-                "image_id": "sha256:" + "b" * 64,
-            }
+        def journey(aw, server, direction, identity):
+            calls.append((aw.path.name, server.path.name, direction, identity))
+            return runtime_proof(
+                server.version, server.evidence["payload_sha256"], identity
+            )
 
         harness = subject.CliServerSkewHarness(
             resolver=Resolver(), journey=journey, evidence_root=None
@@ -371,7 +502,12 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(evidence["outcome"], "green")
             self.assertEqual(evidence["runtime"]["server_version"], "1.26.36")
             self.assertEqual(evidence["runtime"]["wheel_sha256"], sha(b"server"))
-        self.assertEqual(calls, [("aw", "server", "a-to-b"), ("aw", "server", "b-to-a")])
+        self.assertEqual(
+            [(left, right, direction) for left, right, direction, _ in calls],
+            [("aw", "server", "a-to-b"), ("aw", "server", "b-to-a")],
+        )
+        self.assertEqual(calls[0][3]["direction"], "a-to-b")
+        self.assertEqual(calls[1][3]["direction"], "b-to-a")
 
     def test_runtime_server_proof_refuses_version_or_wheel_mismatch(self):
         import release_skew_cli_server as subject
@@ -380,17 +516,19 @@ class HarnessTests(unittest.TestCase):
             component="server", version="1.26.35", path=Path("server.whl"),
             evidence={"payload_sha256": "a" * 64},
         )
-        base = {
-            "server_version": "1.26.35",
-            "wheel_sha256": "a" * 64,
-            "container_id": "b" * 64,
-            "image_id": "sha256:" + "c" * 64,
-        }
-        self.assertEqual(subject.validate_runtime_proof(base, artifact), base)
+        identity = subject.cell_document(cell(
+            {"component": "aw", "version": "1.34.3"},
+            {"component": "server", "version": "1.26.35"},
+            a_kind="published", b_kind="published",
+        ))
+        base = runtime_proof("1.26.35", "a" * 64, identity)
+        self.assertEqual(subject.validate_runtime_proof(base, artifact, identity), base)
         for field, value in (("server_version", "1.26.31"), ("wheel_sha256", "d" * 64)):
             with self.subTest(field=field):
                 with self.assertRaisesRegex(rd.ReceiptError, "runtime server proof"):
-                    subject.validate_runtime_proof({**base, field: value}, artifact)
+                    subject.validate_runtime_proof(
+                        {**base, field: value}, artifact, identity
+                    )
 
     def test_wrong_edge_preimage_refuses_before_artifact_resolution(self):
         import release_skew_cli_server as subject
@@ -422,15 +560,12 @@ class HarnessTests(unittest.TestCase):
                     {"component": side["component"], "outer_sha256": "1" * 64, "payload_sha256": "2" * 64},
                 )
 
-        def red(aw, server, direction):
+        def red(aw, server, direction, identity):
             raise subject.JourneyExecutionFailure(
                 "required agent_id absent",
-                {
-                    "server_version": server.version,
-                    "wheel_sha256": server.evidence["payload_sha256"],
-                    "container_id": "a" * 64,
-                    "image_id": "sha256:" + "b" * 64,
-                },
+                runtime_proof(
+                    server.version, server.evidence["payload_sha256"], identity
+                ),
             )
 
         harness = subject.CliServerSkewHarness(
@@ -471,8 +606,16 @@ class MeasurementTests(unittest.TestCase):
 
         class Harness:
             def run_evidenced(self, value):
+                identity = subject.cell_document(value)
+                runtime = runtime_proof(
+                    value.b["version"], "a" * 64, identity
+                )
                 if value.b.get("version") == "1.26.31":
-                    evidence = {"outcome": "red", "cell": subject.cell_document(value), "artifacts": [{"payload_sha256": "a" * 64}]}
+                    evidence = {
+                        "outcome": "red", "cell": identity,
+                        "artifacts": [{"payload_sha256": "a" * 64}],
+                        "runtime": runtime,
+                    }
                     evidence["error"] = "server status locks = [], want one lock"
                     raise subject.SkewJourneyFailure(evidence["error"], evidence)
                 artifacts = [{"payload_sha256": "b" * 64}]
@@ -488,10 +631,18 @@ class MeasurementTests(unittest.TestCase):
                             "checksums_sha256": "e" * 64,
                             "checksums_registry_sha256": "e" * 64,
                             "payload_sha256": "d" * 64,
+                            "registry_digest_set": {"asset": "f" * 64},
+                            "registry_set_digest": rd.canonical_digest_of_set({"asset": "f" * 64}),
+                            **aw_version_proof(
+                                "1.34.2", module_version="v1.34.2+dirty"
+                            ),
                             "provenance_status": "rejected-dirty",
                             "use": "installed-fleet-compatibility-only",
                         })
-                return {"outcome": "green", "cell": subject.cell_document(value), "artifacts": artifacts}
+                return {
+                    "outcome": "green", "cell": identity,
+                    "artifacts": artifacts, "runtime": runtime,
+                }
 
         document = subject.measure_support(
             staged=staged,
@@ -516,6 +667,26 @@ class MeasurementTests(unittest.TestCase):
             {row["cell"]["direction"] for row in document["evidence"]},
             {"a-to-b", "b-to-a"},
         )
+
+    def test_controls_refuse_dependency_resolution_drift_beyond_server_wheel(self):
+        import release_skew_cli_server as subject
+
+        base = {
+            "cell": {"direction": "a-to-b"},
+            "runtime": {"installed_distributions": {
+                "aweb": "1.26.31", "mcp": subject.locked_mcp_version(),
+                "starlette": "0.52.1",
+            }},
+        }
+        changed = {
+            "cell": {"direction": "b-to-a"},
+            "runtime": {"installed_distributions": {
+                "aweb": "1.26.35", "mcp": subject.locked_mcp_version(),
+                "starlette": "0.53.0",
+            }},
+        }
+        with self.assertRaisesRegex(rd.ReceiptError, "differ in dependency resolution"):
+            subject._require_uniform_dependency_posture([base, changed])
 
     def test_negative_server_version_cannot_enter_supported_versions(self):
         import release_skew_cli_server as subject
