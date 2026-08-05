@@ -42,3 +42,8 @@ def register(journey: str, factory) -> None:
             "owns each journey"
         )
     REGISTRY[journey] = factory
+
+
+from release_persisted_state_skew import JOURNEY, factory  # noqa: E402
+
+register(JOURNEY, factory)
