@@ -2351,6 +2351,8 @@ def anchor_measurement(transport, edge, *, supported=None, journey=None,
     doc = {
         "edge": edge_binding or {"a": edge.a, "b": edge.b},
         "journey": journey or edge.journey,
+        "artifacts": dict(edge.artifacts),
+        "direction": edge.direction,
         "supported_versions": supported or {
             "client": ["1.0.0"], "server": ["3.0.0"]},
     }
@@ -2495,6 +2497,158 @@ class FrozenTruthSkewTests(unittest.TestCase):
             if cell.b_kind == "published":
                 self.assertEqual(cell.b["version"], "3.0.0",
                                  "frozen support, not the mutated live set")
+
+
+def two_edge_graph_dict():
+    """Two DISTINCT server<->server runtime edges - federation and
+    persisted-state - mirroring the checked-in graph's pair."""
+    data = fixture_graph_dict()
+    data["edge"] = [e for e in data["edge"]
+                    if e.get("type") != "runtime-contract"]
+    for journey, direction, artifact_id in (
+        ("make federation-journey", "both", "measurement:federation"),
+        ("persisted-state fixture", "persisted-state-both",
+         "measurement:persisted"),
+    ):
+        data["edge"].append({
+            "type": "runtime-contract",
+            "a": "server", "b": "server",
+            "journey": journey,
+            "artifacts": {"a": "pypi:server", "b": "pypi:server"},
+            "direction": direction,
+            "supported": {
+                "set": "measured:fixture-fleet",
+                "record": {"authority": "workflow-artifacts",
+                           "artifact_id": artifact_id,
+                           "digest": "d"},
+                "policy": "additive-only",
+            },
+        })
+    return data
+
+
+class EdgeIdentityTests(unittest.TestCase):
+    def edges(self):
+        graph = rd.Graph.from_dict(two_edge_graph_dict())
+        state = orchestration_state(
+            changed_components={"server": True},
+            versions={"server": "3.1.0"},
+            published_versions={"server": "3.0.0"},
+        )
+        plan = rd.compute_plan(graph, state)
+        contracts = plan.runtime_contract_edges
+        self.assertEqual(len(contracts), 2)
+        return graph, state, plan, contracts
+
+    def support_for(self, versions_by_journey):
+        class Support:
+            def resolve(self, record, edge):
+                return {
+                    "journey": edge.journey,
+                    "supported_versions":
+                        dict(versions_by_journey[edge.journey]),
+                }
+        return Support()
+
+    def test_identities_are_distinct_and_content_bound(self) -> None:
+        _, _, _, contracts = self.edges()
+        a, b = contracts
+        self.assertNotEqual(rd.edge_identity(a), rd.edge_identity(b))
+        self.assertEqual(rd.edge_identity(a), rd.edge_identity(a))
+
+    def test_freeze_retains_one_record_per_edge(self) -> None:
+        graph, state, plan, contracts = self.edges()
+        support = self.support_for({
+            "make federation-journey": {"server": ["3.0.0"]},
+            "persisted-state fixture": {"server": ["2.9.0", "3.0.0"]},
+        })
+        frozen_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha="s1", state=state, measurement=support)
+        frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+        sealed = frozen.resolved["measurements"]
+        self.assertEqual(len(sealed), 2, "one sealed record per edge")
+        for edge in contracts:
+            self.assertEqual(
+                sealed[rd.edge_identity(edge)]["journey"], edge.journey)
+
+    def test_each_edge_compares_and_renders_its_own_record(self) -> None:
+        graph, state, plan, contracts = self.edges()
+        versions = {
+            "make federation-journey": {"server": ["3.0.0"]},
+            "persisted-state fixture": {"server": ["2.9.0", "3.0.0"]},
+        }
+        support = self.support_for(versions)
+        frozen_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha="s1", state=state, measurement=support)
+        frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+        harness = RecordingHarness(
+            journeys=("make federation-journey", "persisted-state fixture"))
+        runner = rd.build_production_skew(
+            frozen, state=state, measurement=support, harness=harness)
+        staged = {"server": staged_entry("server", "3.1.0")}
+        for edge in contracts:
+            runner.execute(edge, staged)
+        persisted = [c for c in harness.cells
+                     if c.journey == "persisted-state fixture"
+                     and c.b_kind == "published-floor"]
+        self.assertTrue(persisted, "the persisted edge used ITS OWN floor")
+        self.assertTrue(all(c.b["version"] == "2.9.0" for c in persisted))
+        federation = [c for c in harness.cells
+                      if c.journey == "make federation-journey"]
+        self.assertTrue(all(
+            c.b_kind != "published-floor" for c in federation
+        ), "the federation edge's single-version set has no separate floor")
+
+    def test_mutating_one_edge_refuses_without_aliasing_the_other(self) -> None:
+        graph, state, plan, contracts = self.edges()
+        versions = {
+            "make federation-journey": {"server": ["3.0.0"]},
+            "persisted-state fixture": {"server": ["2.9.0", "3.0.0"]},
+        }
+        support = self.support_for(versions)
+        frozen_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha="s1", state=state, measurement=support)
+        frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+        versions["make federation-journey"] = {"server": ["9.9.9"]}
+        harness = RecordingHarness(
+            journeys=("make federation-journey", "persisted-state fixture"))
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.build_production_skew(
+                frozen, state=state, measurement=support, harness=harness)
+        self.assertIn("federation", str(caught.exception))
+        self.assertNotIn("persisted", str(caught.exception))
+
+    def test_duplicate_exact_edge_refuses_at_the_graph(self) -> None:
+        data = two_edge_graph_dict()
+        data["edge"].append(dict(data["edge"][-1]))
+        with self.assertRaises(rd.GraphError):
+            rd.Graph.from_dict(data)
+
+    def test_measurement_binds_artifacts_and_direction(self) -> None:
+        edge = skew_edge()
+        for override in (
+            {"artifacts": {"a": "other:client", "b": "registry:server"}},
+            {"direction": "a-to-b"},
+        ):
+            doc = {
+                "edge": {"a": edge.a, "b": edge.b},
+                "journey": edge.journey,
+                "artifacts": override.get("artifacts", dict(edge.artifacts)),
+                "direction": override.get("direction", edge.direction),
+                "supported_versions": {"client": ["1.0.0"]},
+            }
+            payload = json.dumps(doc, sort_keys=True).encode()
+            fresh = FakeAnchorTransport()
+            store = rd.GithubAnchorStore(transport=fresh, waiter=lambda: None)
+            store.put("measurement:fixture-fleet", payload)
+            adapter = rd.AnchoredMeasurementAuthority(
+                store=rd.GithubAnchorStore(transport=fresh,
+                                           waiter=lambda: None),
+                authority=rd.GithubAnchorDigestAuthority(transport=fresh),
+            )
+            record = {**measurement_record(), "digest": sha256(payload)}
+            with self.assertRaises(rd.ReceiptError, msg=str(override)):
+                adapter.resolve(record, edge)
 
 
 if __name__ == "__main__":

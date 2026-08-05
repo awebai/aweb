@@ -244,6 +244,17 @@ class Graph:
                     )
                 )
 
+        seen_identities: dict[str, str] = {}
+        for contract in contracts:
+            identity = edge_identity(contract)
+            label = f"{contract.a}<->{contract.b} ({contract.journey})"
+            if identity in seen_identities:
+                raise GraphError(
+                    f"duplicate runtime-contract edge: {label} declares the "
+                    f"same identity as {seen_identities[identity]}"
+                )
+            seen_identities[identity] = label
+
         graph = cls(
             components=components,
             bundled_into=bundled_into,
@@ -633,7 +644,9 @@ def freeze_plan(
         if record_problems:
             raise BlockedByDeclaredInputs("; ".join(record_problems))
         resolved["measurements"] = {
-            f"{e.a}<->{e.b}": measurement.resolve(e.supported.get("record", {}), e)
+            edge_identity(e): measurement.resolve(
+                e.supported.get("record", {}), e
+            )
             for e in complete_edges
         }
     if plan.runtime_contract_edges and state is not None:
@@ -2425,6 +2438,19 @@ def compose_workflow_lanes(graph: "Graph", refs: dict) -> WorkflowLanes:
 # or unmeasured support refuses - floors are never invented.
 
 
+def edge_identity(edge: "RuntimeContractEdge") -> str:
+    """The canonical content identity of a runtime-contract edge: the
+    sha256 of its structured preimage (endpoints, journey, artifacts,
+    direction). Two edges between the same endpoints - the checked-in
+    federation and persisted-state server<->server pair - have distinct
+    identities; a display string would alias them."""
+    preimage = json.dumps({
+        "a": edge.a, "b": edge.b, "journey": edge.journey,
+        "artifacts": edge.artifacts, "direction": edge.direction,
+    }, sort_keys=True)
+    return hashlib.sha256(preimage.encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class SkewCell:
     edge_a: str
@@ -2657,6 +2683,18 @@ class AnchoredMeasurementAuthority:
                 f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
                 f"journey {doc.get('journey')!r}, not {edge.journey!r}"
             )
+        if doc.get("artifacts") != edge.artifacts:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
+                f"artifacts {doc.get('artifacts')!r}, not this edge's "
+                f"{edge.artifacts!r}"
+            )
+        if doc.get("direction") != edge.direction:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
+                f"direction {doc.get('direction')!r}, not "
+                f"{edge.direction!r}"
+            )
         supported = doc.get("supported_versions")
         if not isinstance(supported, dict) or not supported or not all(
             isinstance(k, str) and isinstance(v, list)
@@ -2678,12 +2716,12 @@ class _FrozenSupport:
         self._measurements = measurements
 
     def resolve(self, record, edge):
-        key = f"{edge.a}<->{edge.b}"
-        sealed = self._measurements.get(key)
+        sealed = self._measurements.get(edge_identity(edge))
         if sealed is None:
             raise ReceiptError(
-                f"runtime-contract {key}: no measurement is sealed in the "
-                "frozen plan; execution never resolves support live"
+                f"runtime-contract {edge.a}<->{edge.b} "
+                f"({edge.journey}): no measurement is sealed in the frozen "
+                "plan; execution never resolves support live"
             )
         return sealed
 
@@ -2747,11 +2785,11 @@ def build_production_skew(frozen: "FrozenPlan", *, state, measurement,
     for edge in plan.runtime_contract_edges:
         if edge.declared_incomplete:
             continue
-        key = f"{edge.a}<->{edge.b}"
+        label = f"{edge.a}<->{edge.b} ({edge.journey})"
         live = measurement.resolve(edge.supported.get("record", {}), edge)
-        if canon(live) != canon(frozen_measurements.get(key)):
+        if canon(live) != canon(frozen_measurements.get(edge_identity(edge))):
             raise ReceiptError(
-                f"runtime-contract {key}: the live measurement no longer "
+                f"runtime-contract {label}: the live measurement no longer "
                 "equals the frozen sealed record; refusing drifted support"
             )
         candidates = {
@@ -2770,7 +2808,7 @@ def build_production_skew(frozen: "FrozenPlan", *, state, measurement,
                 allowed.add(candidates[name])
             if current not in allowed:
                 raise ReceiptError(
-                    f"runtime-contract {key}: published {name} is now "
+                    f"runtime-contract {label}: published {name} is now "
                     f"{current!r}, the frozen plan sealed "
                     f"{frozen_published.get(name)!r}; refusing drift"
                 )
@@ -3216,7 +3254,7 @@ def run_plan(
                     for name in endpoints
                 }
             current["measurements"] = {
-                f"{e.a}<->{e.b}": measurement.resolve(
+                edge_identity(e): measurement.resolve(
                     e.supported.get("record", {}), e
                 )
                 for e in complete
@@ -4417,7 +4455,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     edge,
                     moving={n.component for n in plan.moving},
                     staged=staged,
-                    support=frozen_measurements.get(f"{edge.a}<->{edge.b}"),
+                    support=frozen_measurements.get(edge_identity(edge)),
                     published_versions=frozen_published,
                 )
                 for cell in cells:
