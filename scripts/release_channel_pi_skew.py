@@ -12,9 +12,11 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
 import tarfile
 import tempfile
+import tomllib
 import urllib.error
 import urllib.request
 import zipfile
@@ -41,9 +43,116 @@ OBSERVATION_CONTRACTS = {
     ("pi", "a-to-b"): ("resident-mail-reply", "observer-verified"),
     ("pi", "b-to-a"): ("resident-mail-wake", "session-observed"),
 }
+RUNTIME_INVENTORY_SCHEMA = "aweb.server-runtime-inventory.v1"
+CLOSED_AMBIENT_ENV = {
+    "KEEP_UP",
+    "OAS_PROOF_AWID_PORT",
+    "OAS_PROOF_AWEB_PORT",
+    "OAS_PROOF_POSTGRES_PORT",
+    "LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL",
+    "LIBRARY_E2E_AWEB_PUBLIC_ORIGIN",
+    "LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN",
+    "AWEB_PUBLIC_ORIGIN",
+    "AWID_PUBLIC_REGISTRY_URL",
+    "AWEB_TEST_URL",
+    "AWID_TEST_URL",
+    "OAS_PROOF_REPORT",
+}
 
 
-def validate_observation(observation: dict, component: str, direction: str) -> None:
+def _canonical_package_name(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", value).lower()
+
+
+def server_runtime_constraints() -> tuple[bytes, str, dict[str, str]]:
+    """Derive canonical exact constraints from the reviewed server lock."""
+    lock = Path(__file__).resolve().parents[1] / "server" / "uv.lock"
+    document = tomllib.loads(lock.read_text())
+    constraints: dict[str, str] = {}
+    for package in document.get("package", []):
+        name = _canonical_package_name(package.get("name", ""))
+        version = package.get("version")
+        if not name or not isinstance(version, str) or not version:
+            raise rd.ReceiptError("server lock contains an unversioned package")
+        if name == "aweb":
+            continue
+        prior = constraints.setdefault(name, version)
+        if prior != version:
+            raise rd.ReceiptError(
+                f"server lock resolves multiple versions for {name}: {prior}, {version}"
+            )
+    if "mcp" not in constraints:
+        raise rd.ReceiptError("server lock does not pin the moving mcp dependency")
+    body = "".join(
+        f"{name}=={version}\n" for name, version in sorted(constraints.items())
+    ).encode()
+    return body, hashlib.sha256(body).hexdigest(), constraints
+
+
+def validate_server_runtime(runtime: dict, server_version: str | None = None) -> None:
+    body, constraints_digest, constraints = server_runtime_constraints()
+    del body
+    if not isinstance(runtime, dict) or runtime.get("schema") != RUNTIME_INVENTORY_SCHEMA:
+        raise rd.ReceiptError("server runtime inventory has the wrong schema")
+    distributions = runtime.get("distributions")
+    preimage = {
+        "constraints_sha256": runtime.get("constraints_sha256"),
+        "python_version": runtime.get("python_version"),
+        "distributions": distributions,
+    }
+    if (
+        runtime.get("constraints_sha256") != constraints_digest
+        or not isinstance(runtime.get("python_version"), str)
+        or not runtime["python_version"]
+        or not isinstance(distributions, list)
+        or runtime.get("sha256") != hashlib.sha256(
+            json.dumps(preimage, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    ):
+        raise rd.ReceiptError(
+            "server runtime inventory does not bind its canonical lock-derived preimage"
+        )
+    observed: dict[str, str] = {}
+    for row in distributions:
+        if not isinstance(row, dict) or set(row) != {"name", "version"}:
+            raise rd.ReceiptError("server runtime inventory has a malformed distribution")
+        name = row.get("name")
+        version = row.get("version")
+        if (
+            not isinstance(name, str) or name != _canonical_package_name(name)
+            or not isinstance(version, str) or not version
+            or name in observed
+        ):
+            raise rd.ReceiptError("server runtime inventory is not canonical and unique")
+        observed[name] = version
+    expected_rows = [
+        {"name": name, "version": version}
+        for name, version in sorted(observed.items())
+    ]
+    if distributions != expected_rows:
+        raise rd.ReceiptError("server runtime inventory is not canonically ordered")
+    for name, version in observed.items():
+        if name == "aweb":
+            if server_version is not None and version != server_version:
+                raise rd.ReceiptError(
+                    f"server runtime inventory has aweb {version}, expected {server_version}"
+                )
+        elif name in {"pip", "setuptools", "wheel"}:
+            continue
+        elif constraints.get(name) != version:
+            raise rd.ReceiptError(
+                f"server runtime inventory contains unlocked distribution {name}=={version}"
+            )
+    if "aweb" not in observed or observed.get("mcp") != constraints["mcp"]:
+        raise rd.ReceiptError(
+            "server runtime inventory lacks the exact aweb or locked mcp distribution"
+        )
+
+
+def validate_observation(
+    observation: dict, component: str, direction: str,
+    server_version: str | None = None,
+) -> None:
     operation, result = OBSERVATION_CONTRACTS[(component, direction)]
     expected = {
         "schema": OBSERVATION_SCHEMA,
@@ -64,9 +173,13 @@ def validate_observation(observation: dict, component: str, direction: str) -> N
             raise rd.ReceiptError(
                 f"{component} {direction} observation lacks concrete {key}"
             )
+    validate_server_runtime(observation.get("server_runtime"), server_version)
 
 
-def parse_observation(output: bytes, component: str, direction: str) -> dict:
+def parse_observation(
+    output: bytes, component: str, direction: str,
+    server_version: str | None = None,
+) -> dict:
     observations = []
     for line in output.decode(errors="replace").splitlines():
         if line.startswith(OBSERVATION_PREFIX):
@@ -80,7 +193,7 @@ def parse_observation(output: bytes, component: str, direction: str) -> dict:
             f"{len(observations)}"
         )
     observation = observations[0]
-    validate_observation(observation, component, direction)
+    validate_observation(observation, component, direction, server_version)
     return observation
 
 
@@ -497,7 +610,9 @@ class ChannelPiHarness:
                     client, server, cell
                 )}
             observed = next(iter(observation.values()))
-            validate_observation(observed, client_component, cell.direction)
+            validate_observation(
+                observed, client_component, cell.direction, server.version
+            )
             if cell.a_kind in PUBLISHED_KINDS and cell.b_kind == "candidate":
                 measured = self._journey.run_mark_read_control(
                     dict(LEGACY_MARK_READ_REQUEST)
@@ -532,6 +647,7 @@ class ChannelPiHarness:
                 "server_kind": cell.b_kind,
                 "client_artifact": self._artifact_report(client),
                 "server_artifact": self._artifact_report(server),
+                "server_runtime": observed["server_runtime"],
                 "observation": observation,
                 "negative_control": negative,
             }
@@ -607,14 +723,24 @@ class SubprocessChannelPiJourney:
         return package_root
 
     def _run(self, command: list[str], env: dict, direction: str) -> dict:
-        result = subprocess.run(command, cwd=self.repo, env={**os.environ, **env},
-                                capture_output=True)
+        child_env = dict(os.environ)
+        for key in CLOSED_AMBIENT_ENV:
+            child_env.pop(key, None)
+        child_env.update(env)
+        child_env["KEEP_OAS_PROOF"] = "0"
+        child_env["OAS_PROOF_REPORT"] = str(self.root / "oas-proof-report.json")
+        result = subprocess.run(
+            command, cwd=self.repo, env=child_env, capture_output=True
+        )
         if result.returncode != 0:
             raise rd.ReceiptError(
                 f"skew journey command failed ({' '.join(command)}): "
                 + result.stderr.decode(errors="replace")[-4000:]
             )
-        observation = parse_observation(result.stdout, self.component, direction)
+        observation = parse_observation(
+            result.stdout, self.component, direction,
+            env.get("AWEB_SKEW_SERVER_VERSION"),
+        )
         return {
             **observation,
             "command": command,
@@ -624,12 +750,20 @@ class SubprocessChannelPiJourney:
     def _journey(self, client, server, cell) -> dict:
         client_root = self._client_root(client)
         server_wheel = self._materialize(server)
+        constraints_body, constraints_digest, _ = server_runtime_constraints()
+        constraints_path = self.root / "server-runtime-constraints.txt"
+        constraints_path.write_bytes(constraints_body)
+        if hashlib.sha256(constraints_path.read_bytes()).hexdigest() != constraints_digest:
+            raise rd.ReceiptError("server runtime constraints changed while materializing")
         project = compose_project_name(self.root, cell)
         common = {
             "AWEB_SKEW_SERVER_WHEEL": str(server_wheel),
             "AWEB_SKEW_PROJECT_TOKEN": project,
             "OAS_PROOF_PROJECT": project,
             "AWEB_SKEW_SERVER_SHA256": server.sha256,
+            "AWEB_SKEW_SERVER_VERSION": server.version,
+            "AWEB_SKEW_SERVER_CONSTRAINTS": str(constraints_path),
+            "AWEB_SKEW_SERVER_CONSTRAINTS_SHA256": constraints_digest,
             "AWEB_SKEW_CELL_ID": cell_identity(cell),
             "AWEB_SKEW_DIRECTION": cell.direction,
         }
@@ -789,6 +923,7 @@ def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
     clients: set[str] = set()
     servers: set[str] = set()
     candidate_identities: dict[str, dict] = {}
+    server_runtime_identities: dict[tuple[str, str], dict] = {}
     evidence = []
     for report in reports:
         identity = report["cell_id"]
@@ -820,8 +955,14 @@ def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
                 f"cell {identity} lacks its {expected_key} assertion"
             )
         validate_observation(
-            observation[expected_key], preimage["edge"]["a"], direction
+            observation[expected_key], preimage["edge"]["a"], direction,
+            preimage["b"]["version"],
         )
+        runtime = report.get("server_runtime")
+        if runtime != observation[expected_key].get("server_runtime"):
+            raise rd.ReceiptError(
+                f"cell {identity} runtime inventory differs from its observation"
+            )
         if report.get("result") != "green":
             raise rd.ReceiptError(f"cell {identity} is not green")
         if (
@@ -846,6 +987,12 @@ def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
         _validate_artifact_against_side(
             server, preimage["b"], preimage["artifacts"]["b"]
         )
+        runtime_key = (server["version"], server["sha256"])
+        prior_runtime = server_runtime_identities.setdefault(runtime_key, runtime)
+        if prior_runtime != runtime:
+            raise rd.ReceiptError(
+                f"server runtime inventory differs for exact artifact {runtime_key}"
+            )
         for side, artifact in ((preimage["a"], client), (preimage["b"], server)):
             if side["kind"] == "candidate":
                 component = side["component"]
@@ -864,6 +1011,7 @@ def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
             "report_sha256": _canonical_json_digest(report),
             "client_artifact": client,
             "server_artifact": server,
+            "server_runtime": runtime,
         })
 
     first = expected_preimages[0]

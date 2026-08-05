@@ -37,6 +37,11 @@ PI_PACKAGE_ROOT="${OAS_PROOF_PI_PACKAGE_ROOT:-}"
 PI_EXTENSION_DIR="${PI_PACKAGE_ROOT:-$REPO_ROOT/pi-extension}"
 EXACT_SERVER_WHEEL="${AWEB_SKEW_SERVER_WHEEL:-}"
 EXACT_SERVER_SHA256="${AWEB_SKEW_SERVER_SHA256:-}"
+EXACT_SERVER_VERSION="${AWEB_SKEW_SERVER_VERSION:-}"
+EXACT_SERVER_CONSTRAINTS="${AWEB_SKEW_SERVER_CONSTRAINTS:-}"
+EXACT_SERVER_CONSTRAINTS_SHA256="${AWEB_SKEW_SERVER_CONSTRAINTS_SHA256:-}"
+SERVER_RUNTIME_INVENTORY="$REPO_ROOT/scripts/e2e/server_runtime_inventory.py"
+SERVER_RUNTIME_EVIDENCE=""
 COMPOSE_FILE="$REPO_ROOT/docker-compose.e2e.yml"
 TMUX_GUARD_DIR="$REPO_ROOT/scripts/guard-bin"
 MODE="${OAS_PROOF_MODE:-lifecycle}"
@@ -80,13 +85,25 @@ preflight() {
     echo "FAIL: exact installed Pi package lacks dist/index.js: $PI_EXTENSION_DIR" >&2
     return 1
   fi
-  if [[ -n "$EXACT_SERVER_WHEEL" || -n "$EXACT_SERVER_SHA256" ]]; then
-    [[ -n "$EXACT_SERVER_WHEEL" && -n "$EXACT_SERVER_SHA256" ]] || {
-      echo "FAIL: set both AWEB_SKEW_SERVER_WHEEL and AWEB_SKEW_SERVER_SHA256" >&2
+  if [[ -n "$EXACT_SERVER_WHEEL" || -n "$EXACT_SERVER_SHA256" || \
+        -n "$EXACT_SERVER_VERSION" || -n "$EXACT_SERVER_CONSTRAINTS" || \
+        -n "$EXACT_SERVER_CONSTRAINTS_SHA256" ]]; then
+    [[ -n "$EXACT_SERVER_WHEEL" && -n "$EXACT_SERVER_SHA256" && \
+       -n "$EXACT_SERVER_VERSION" && -n "$EXACT_SERVER_CONSTRAINTS" && \
+       -n "$EXACT_SERVER_CONSTRAINTS_SHA256" ]] || {
+      echo "FAIL: set the exact server wheel, version, constraints, and both SHA-256 values together" >&2
       return 1
     }
     [[ -f "$EXACT_SERVER_WHEEL" ]] || {
       echo "FAIL: exact server wheel not found at $EXACT_SERVER_WHEEL" >&2
+      return 1
+    }
+    [[ -f "$EXACT_SERVER_CONSTRAINTS" ]] || {
+      echo "FAIL: exact server constraints not found at $EXACT_SERVER_CONSTRAINTS" >&2
+      return 1
+    }
+    [[ -f "$SERVER_RUNTIME_INVENTORY" ]] || {
+      echo "FAIL: server runtime inventory helper not found at $SERVER_RUNTIME_INVENTORY" >&2
       return 1
     }
   fi
@@ -382,9 +399,11 @@ PY
 }
 
 emit_skew_observation() {
-  python3 - "$@" <<'PY'
+  [[ -f "$SERVER_RUNTIME_EVIDENCE" ]] \
+    || fail "skew observation lacks in-service server runtime inventory"
+  python3 - "$SERVER_RUNTIME_EVIDENCE" "$@" <<'PY'
 import json, sys
-component, direction, operation, result, message_id, conversation_id = sys.argv[1:]
+runtime_path, component, direction, operation, result, message_id, conversation_id = sys.argv[1:]
 print("AWEB_SKEW_OBSERVATION " + json.dumps({
     "schema": "aweb.channel-pi-skew-observation.v1",
     "component": component,
@@ -393,6 +412,7 @@ print("AWEB_SKEW_OBSERVATION " + json.dumps({
     "result": result,
     "message_id": message_id,
     "conversation_id": conversation_id,
+    "server_runtime": json.load(open(runtime_path, encoding="utf-8")),
 }, sort_keys=True, separators=(",", ":")))
 PY
 }
@@ -1036,17 +1056,25 @@ if [[ -n "$EXACT_SERVER_WHEEL" ]]; then
   OBSERVED_SERVER_SHA256="$(file_sha256 "$EXACT_SERVER_WHEEL")"
   [[ "$OBSERVED_SERVER_SHA256" == "$EXACT_SERVER_SHA256" ]] \
     || fail "exact server wheel sha256 $OBSERVED_SERVER_SHA256 does not equal $EXACT_SERVER_SHA256"
+  OBSERVED_CONSTRAINTS_SHA256="$(file_sha256 "$EXACT_SERVER_CONSTRAINTS")"
+  [[ "$OBSERVED_CONSTRAINTS_SHA256" == "$EXACT_SERVER_CONSTRAINTS_SHA256" ]] \
+    || fail "server constraints sha256 $OBSERVED_CONSTRAINTS_SHA256 does not equal $EXACT_SERVER_CONSTRAINTS_SHA256"
   EXACT_SERVER_BUILD="$PROOF_ROOT/exact-server-wheel"
   EXACT_SERVER_NAME="$(basename "$EXACT_SERVER_WHEEL")"
   [[ "$EXACT_SERVER_NAME" =~ ^[A-Za-z0-9_.-]+\.whl$ ]] \
     || fail "exact server wheel basename is not safe: $EXACT_SERVER_NAME"
   mkdir -p "$EXACT_SERVER_BUILD"
   cp "$EXACT_SERVER_WHEEL" "$EXACT_SERVER_BUILD/$EXACT_SERVER_NAME"
+  cp "$EXACT_SERVER_CONSTRAINTS" "$EXACT_SERVER_BUILD/server-runtime-constraints.txt"
+  cp "$SERVER_RUNTIME_INVENTORY" "$EXACT_SERVER_BUILD/server_runtime_inventory.py"
   cat > "$EXACT_SERVER_BUILD/Dockerfile" <<EOF
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 COPY $EXACT_SERVER_NAME /tmp/$EXACT_SERVER_NAME
-RUN python -m pip install --no-cache-dir /tmp/$EXACT_SERVER_NAME
+COPY server-runtime-constraints.txt /tmp/server-runtime-constraints.txt
+COPY server_runtime_inventory.py /usr/local/bin/aweb-skew-runtime-inventory
+ENV AWEB_SKEW_SERVER_CONSTRAINTS_SHA256=$EXACT_SERVER_CONSTRAINTS_SHA256
+RUN python -m pip install --no-cache-dir --constraint /tmp/server-runtime-constraints.txt /tmp/$EXACT_SERVER_NAME
 CMD ["aweb", "serve", "--host", "0.0.0.0", "--port", "8000"]
 EOF
   EXACT_SERVER_OVERRIDE="$PROOF_ROOT/exact-server-compose.yml"
@@ -1069,6 +1097,22 @@ export LIBRARY_E2E_AWEB_PUBLIC_ORIGIN="$AWEB_URL"
 "${COMPOSE[@]}" up --build -d awid aweb
 wait_health awid "$AWID_URL/health"
 wait_health aweb "$AWEB_URL/health"
+if [[ -n "$EXACT_SERVER_WHEEL" ]]; then
+  SERVER_RUNTIME_EVIDENCE="$EVIDENCE/server-runtime.json"
+  "${COMPOSE[@]}" exec -T aweb python /usr/local/bin/aweb-skew-runtime-inventory \
+    > "$SERVER_RUNTIME_EVIDENCE"
+  python3 - "$SERVER_RUNTIME_EVIDENCE" "$EXACT_SERVER_CONSTRAINTS_SHA256" \
+    "$EXACT_SERVER_VERSION" <<'PY'
+import json, re, sys
+path, constraints_digest, server_version = sys.argv[1:]
+report = json.load(open(path, encoding="utf-8"))
+assert report.get("schema") == "aweb.server-runtime-inventory.v1", report
+assert report.get("constraints_sha256") == constraints_digest, report
+assert re.fullmatch(r"[0-9a-f]{64}", report.get("sha256", "")), report
+versions = {row["name"]: row["version"] for row in report.get("distributions", [])}
+assert versions.get("aweb") == server_version, versions
+PY
+fi
 POSTGRES_CONTAINER="$("${COMPOSE[@]}" ps -q postgres)"
 REDIS_CONTAINER="$("${COMPOSE[@]}" ps -q redis)"
 [[ -n "$POSTGRES_CONTAINER" ]] || fail "proof postgres container is missing"

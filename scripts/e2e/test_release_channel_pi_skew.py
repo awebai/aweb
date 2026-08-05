@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -275,6 +276,30 @@ class FakeResolver:
         )
 
 
+def runtime_proof(server_version="1.26.34", *, extra=None):
+    _, constraints_digest, constraints = skew.server_runtime_constraints()
+    distributions = [
+        {"name": "aweb", "version": server_version},
+        {"name": "mcp", "version": constraints["mcp"]},
+        {"name": "pip", "version": "25.0"},
+    ]
+    if extra:
+        distributions.extend(extra)
+    distributions.sort(key=lambda item: (item["name"], item["version"]))
+    preimage = {
+        "constraints_sha256": constraints_digest,
+        "python_version": "3.12.12",
+        "distributions": distributions,
+    }
+    return {
+        "schema": "aweb.server-runtime-inventory.v1",
+        **preimage,
+        "sha256": sha(json.dumps(
+            preimage, sort_keys=True, separators=(",", ":")
+        ).encode()),
+    }
+
+
 class FakeJourney:
     def __init__(self, control=(200, 422), close_error=None):
         self.events = []
@@ -299,15 +324,35 @@ class FakeJourney:
             "result": result,
             "message_id": "message-1",
             "conversation_id": "conversation-1",
+            "server_runtime": runtime_proof(),
         }
+
+    @staticmethod
+    def bind_server_version(observation, server_version):
+        runtime = observation["server_runtime"]
+        next(row for row in runtime["distributions"] if row["name"] == "aweb")[
+            "version"
+        ] = server_version
+        preimage = {
+            key: runtime[key]
+            for key in ("constraints_sha256", "python_version", "distributions")
+        }
+        runtime["sha256"] = sha(json.dumps(
+            preimage, sort_keys=True, separators=(",", ":")
+        ).encode())
+        return observation
 
     def run_client_request(self, client, server, cell):
         self.events.append(("request", client.component, server.component, cell.direction))
-        return self.observation(client.component, cell.direction)
+        return self.bind_server_version(
+            self.observation(client.component, cell.direction), server.version
+        )
 
     def run_server_event(self, client, server, cell):
         self.events.append(("event", server.component, client.component, cell.direction))
-        return self.observation(client.component, cell.direction)
+        return self.bind_server_version(
+            self.observation(client.component, cell.direction), server.version
+        )
 
     def run_mark_read_control(self, payload):
         self.events.append(("control", payload))
@@ -381,6 +426,7 @@ class ChildHarnessTests(unittest.TestCase):
         self.assertEqual(event["observation"]["event"]["operation"], "sse-chat-presentation")
         self.assertNotEqual(request["cell_id"], event["cell_id"])
         self.assertEqual(request["edge_id"], "edge-channel")
+        self.assertEqual(request["server_runtime"], runtime_proof())
         self.assertEqual(request["artifacts"], {
             "a": "npm:@awebai/claude-channel", "b": "pypi:aweb",
         })
@@ -439,6 +485,29 @@ class ChildHarnessTests(unittest.TestCase):
                 evidence=reports,
             ).run(cell())
         self.assertEqual(reports.items, [])
+
+    def test_runtime_inventory_must_bind_lock_and_exact_server(self):
+        reports = Reports()
+        journey = FakeJourney()
+        original = journey.observation
+
+        def wrong_runtime(component, direction):
+            observed = original(component, direction)
+            observed["server_runtime"]["constraints_sha256"] = "0" * 64
+            return observed
+
+        journey.observation = wrong_runtime
+        with self.assertRaisesRegex(rd.ReceiptError, "runtime inventory"):
+            skew.ChannelPiHarness(
+                resolver=FakeResolver(), journey=journey, evidence=reports,
+            ).run(cell())
+        self.assertEqual(reports.items, [])
+
+        with self.assertRaisesRegex(rd.ReceiptError, "unlocked distribution"):
+            skew.validate_server_runtime(
+                runtime_proof(extra=[{"name": "surprise", "version": "9.9"}]),
+                "1.26.34",
+            )
 
     def test_other_edges_and_labels_refuse(self):
         wrong = cell()
@@ -562,6 +631,21 @@ class MeasurementCompletenessTests(unittest.TestCase):
         with self.assertRaisesRegex(rd.ReceiptError, "cell preimage"):
             skew.aggregate_support([report], expected_cells=[value])
 
+    def test_aggregate_refuses_runtime_drift_for_one_exact_server_artifact(self):
+        cells = [cell(direction="a-to-b"), cell(direction="b-to-a")]
+        reports = [self.report(value) for value in cells]
+        runtime = reports[1]["server_runtime"]
+        runtime["python_version"] = "3.12.13"
+        preimage = {
+            key: runtime[key]
+            for key in ("constraints_sha256", "python_version", "distributions")
+        }
+        runtime["sha256"] = sha(json.dumps(
+            preimage, sort_keys=True, separators=(",", ":")
+        ).encode())
+        with self.assertRaisesRegex(rd.ReceiptError, "runtime inventory differs"):
+            skew.aggregate_support(reports, expected_cells=cells)
+
     def test_aggregate_refuses_mixed_edges_or_missing_required_control(self):
         channel_cell = cell()
         pi_cell = cell(client="pi")
@@ -588,6 +672,84 @@ class MeasurementCompletenessTests(unittest.TestCase):
         report["cell"]["a"]["version"] = "9.9.9"
         with self.assertRaisesRegex(rd.ReceiptError, "cell preimage"):
             skew.aggregate_support([report], expected_cells=[value])
+
+        report = self.report(value)
+        report["server_runtime"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(rd.ReceiptError, "runtime inventory"):
+            skew.aggregate_support([report], expected_cells=[value])
+
+
+class ClosedRuntimeTests(unittest.TestCase):
+    def test_lock_derived_constraints_pin_mcp_and_are_canonical(self):
+        body, digest, constraints = skew.server_runtime_constraints()
+        self.assertEqual(digest, sha(body))
+        self.assertEqual(constraints["mcp"], "1.26.0")
+        self.assertIn(b"mcp==1.26.0\n", body)
+        self.assertNotIn(b"aweb==", body)
+        names = [line.split("==", 1)[0] for line in body.decode().splitlines()]
+        self.assertEqual(names, sorted(names))
+
+    def test_pi_child_forces_cleanup_and_clears_ambient_ports_and_origins(self):
+        journey = skew.SubprocessChannelPiJourney("pi")
+        capture = journey.root / "captured-environment.json"
+        residue = journey.root / "ambient-retained-residue"
+        observation = FakeJourney.observation("pi", "a-to-b")
+        script = """
+import json, os, pathlib, sys
+capture, residue, observation = sys.argv[1:]
+keys = [
+    "KEEP_OAS_PROOF", "KEEP_UP", "OAS_PROOF_AWID_PORT",
+    "OAS_PROOF_AWEB_PORT", "OAS_PROOF_POSTGRES_PORT",
+    "LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL",
+    "LIBRARY_E2E_AWEB_PUBLIC_ORIGIN", "LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN",
+    "AWEB_PUBLIC_ORIGIN", "AWID_PUBLIC_REGISTRY_URL",
+    "AWEB_TEST_URL", "AWID_TEST_URL", "OAS_PROOF_REPORT",
+]
+pathlib.Path(capture).write_text(json.dumps({key: os.environ.get(key) for key in keys}))
+if os.environ.get("KEEP_OAS_PROOF") == "1":
+    pathlib.Path(residue).mkdir()
+print("AWEB_SKEW_OBSERVATION " + observation)
+"""
+        ambient = {
+            "KEEP_OAS_PROOF": "1",
+            "KEEP_UP": "1",
+            "OAS_PROOF_AWID_PORT": "18101",
+            "OAS_PROOF_AWEB_PORT": "18100",
+            "OAS_PROOF_POSTGRES_PORT": "18102",
+            "LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL": "https://ambient.invalid",
+            "LIBRARY_E2E_AWEB_PUBLIC_ORIGIN": "https://ambient.invalid",
+            "LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN": "https://ambient.invalid",
+            "AWEB_PUBLIC_ORIGIN": "https://ambient.invalid",
+            "AWID_PUBLIC_REGISTRY_URL": "https://ambient.invalid",
+            "AWEB_TEST_URL": "https://ambient.invalid",
+            "AWID_TEST_URL": "https://ambient.invalid",
+        }
+        saved = {key: os.environ.get(key) for key in ambient}
+        os.environ.update(ambient)
+        try:
+            result = journey._run(
+                [sys.executable, "-c", script, str(capture), str(residue),
+                 json.dumps(observation, sort_keys=True)],
+                {}, "a-to-b",
+            )
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        captured = json.loads(capture.read_text())
+        self.assertEqual(captured["KEEP_OAS_PROOF"], "0")
+        self.assertFalse(residue.exists())
+        for key in ambient:
+            if key != "KEEP_OAS_PROOF":
+                self.assertIsNone(captured[key], key)
+        self.assertEqual(
+            captured["OAS_PROOF_REPORT"],
+            str(journey.root / "oas-proof-report.json"),
+        )
+        self.assertEqual(result["operation"], "resident-mail-reply")
+        journey.close()
 
 
 class RegistrationAndJourneyParameterTests(unittest.TestCase):
@@ -629,6 +791,12 @@ class RegistrationAndJourneyParameterTests(unittest.TestCase):
         self.assertIn("OAS_PROOF_PI_PACKAGE_ROOT", resident)
         self.assertIn("exact installed Pi package", resident)
         self.assertIn("reserveLoopbackPorts(4)", channel)
+        self.assertIn("AWEB_SKEW_SERVER_CONSTRAINTS", channel)
+        self.assertIn("AWEB_SKEW_SERVER_CONSTRAINTS", resident)
+        self.assertIn("server_runtime_inventory.py", channel)
+        self.assertIn("server_runtime_inventory.py", resident)
+        self.assertIn("--constraint", channel)
+        self.assertIn("--constraint", resident)
         self.assertIn("Compose project ${server.projectName} still owns resources", channel)
         self.assertIn('for (const resource of ["container", "volume", "network"])', channel)
         self.assertIn("for resource in container volume network", resident)

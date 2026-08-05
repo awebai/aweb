@@ -30,8 +30,10 @@ function emitSkewObservation(
   result: string,
   messageID: string,
   conversationID: string,
+  serverRuntime: ServerRuntimeProof | undefined,
 ): void {
   if (skewDirection === direction) {
+    if (!serverRuntime) throw new Error("skew observation lacks server runtime inventory");
     console.log(`AWEB_SKEW_OBSERVATION ${JSON.stringify({
       schema: "aweb.channel-pi-skew-observation.v1",
       component: "channel",
@@ -40,6 +42,7 @@ function emitSkewObservation(
       result,
       message_id: messageID,
       conversation_id: conversationID,
+      server_runtime: serverRuntime,
     })}`);
   }
 }
@@ -73,6 +76,14 @@ interface MailSendInfo {
   conversation_id?: string;
 }
 
+interface ServerRuntimeProof {
+  schema: string;
+  constraints_sha256: string;
+  python_version: string;
+  distributions: Array<{ name: string; version: string }>;
+  sha256: string;
+}
+
 interface ServerHandle {
   awebURL: string;
   awidURL: string;
@@ -80,6 +91,7 @@ interface ServerHandle {
   projectName?: string;
   envFilePath?: string;
   overrideFilePath?: string;
+  serverRuntime?: ServerRuntimeProof;
 }
 
 class NotificationQueue {
@@ -252,6 +264,7 @@ describe.sequential("channel integration", () => {
     emitSkewObservation(
       "b-to-a", "sse-chat-presentation", "presented",
       chatNotification.meta.message_id, chatNotification.meta.conversation_id,
+      server.serverRuntime,
     );
 
     if (skewDirection === "a-to-b") {
@@ -261,6 +274,7 @@ describe.sequential("channel integration", () => {
       emitSkewObservation(
         "a-to-b", "chat-mark-read", "removed-from-pending",
         chatNotification.meta.message_id, chatNotification.meta.conversation_id,
+        server.serverRuntime,
       );
     }
 
@@ -364,24 +378,46 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
   ];
   const exactServerWheel = process.env.AWEB_SKEW_SERVER_WHEEL;
   const exactServerSHA = process.env.AWEB_SKEW_SERVER_SHA256;
-  if (exactServerWheel || exactServerSHA) {
-    if (!exactServerWheel || !exactServerSHA) {
-      throw new Error("set both AWEB_SKEW_SERVER_WHEEL and AWEB_SKEW_SERVER_SHA256, or neither");
+  const exactServerVersion = process.env.AWEB_SKEW_SERVER_VERSION;
+  const exactServerConstraints = process.env.AWEB_SKEW_SERVER_CONSTRAINTS;
+  const exactServerConstraintsSHA = process.env.AWEB_SKEW_SERVER_CONSTRAINTS_SHA256;
+  const exactInputs = [
+    exactServerWheel, exactServerSHA, exactServerVersion,
+    exactServerConstraints, exactServerConstraintsSHA,
+  ];
+  if (exactInputs.some(Boolean)) {
+    if (exactInputs.some((value) => !value)) {
+      throw new Error("set the exact server wheel, version, constraints, and both SHA-256 values together");
     }
-    const wheel = await readFile(resolve(exactServerWheel));
+    const wheel = await readFile(resolve(exactServerWheel!));
     const digest = createHash("sha256").update(wheel).digest("hex");
     if (digest !== exactServerSHA) {
       throw new Error(`exact server wheel sha256 ${digest} does not equal ${exactServerSHA}`);
     }
+    const constraints = await readFile(resolve(exactServerConstraints!));
+    const constraintsDigest = createHash("sha256").update(constraints).digest("hex");
+    if (constraintsDigest !== exactServerConstraintsSHA) {
+      throw new Error(
+        `server constraints sha256 ${constraintsDigest} does not equal ${exactServerConstraintsSHA}`,
+      );
+    }
     const buildRoot = join(tempRoot, "exact-server-wheel");
-    const wheelName = basename(exactServerWheel);
+    const wheelName = basename(exactServerWheel!);
     await mkdir(buildRoot, { recursive: true });
     await writeFile(join(buildRoot, wheelName), wheel);
+    await writeFile(join(buildRoot, "server-runtime-constraints.txt"), constraints);
+    await writeFile(
+      join(buildRoot, "server_runtime_inventory.py"),
+      await readFile(join(repoRoot, "scripts", "e2e", "server_runtime_inventory.py")),
+    );
     await writeFile(join(buildRoot, "Dockerfile"), [
       "FROM python:3.12-slim",
       "RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*",
       `COPY ${JSON.stringify(wheelName)} /tmp/${wheelName}`,
-      `RUN python -m pip install --no-cache-dir /tmp/${wheelName}`,
+      "COPY server-runtime-constraints.txt /tmp/server-runtime-constraints.txt",
+      "COPY server_runtime_inventory.py /usr/local/bin/aweb-skew-runtime-inventory",
+      `ENV AWEB_SKEW_SERVER_CONSTRAINTS_SHA256=${exactServerConstraintsSHA}`,
+      `RUN python -m pip install --no-cache-dir --constraint /tmp/server-runtime-constraints.txt /tmp/${wheelName}`,
       'CMD ["aweb", "serve", "--host", "0.0.0.0", "--port", "8000"]',
     ].join("\n"));
     overrideLines.push(
@@ -395,7 +431,7 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
 
   const awidURL = `http://127.0.0.1:${awidPort}`;
   const awebURL = `http://127.0.0.1:${awebPort}`;
-  const handle = {
+  const handle: ServerHandle = {
     awebURL,
     awidURL,
     managed: true,
@@ -416,11 +452,42 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     ], { cwd: serverDir, timeoutMs: 300_000 });
     await waitForHealthyServer(awidURL);
     await waitForHealthyServer(awebURL);
+    if (exactServerWheel) {
+      handle.serverRuntime = await captureServerRuntime(
+        handle, exactServerConstraintsSHA!, exactServerVersion!,
+      );
+    }
     return handle;
   } catch (error) {
     await stopServer(handle);
     throw error;
   }
+}
+
+async function captureServerRuntime(
+  server: ServerHandle,
+  expectedConstraintsSHA: string,
+  expectedVersion: string,
+): Promise<ServerRuntimeProof> {
+  const result = await runCommand("docker", [
+    "compose",
+    "-p", server.projectName!,
+    "-f", join(serverDir, "docker-compose.yml"),
+    "-f", server.overrideFilePath!,
+    "--env-file", server.envFilePath!,
+    "exec", "-T", "aweb", "python", "/usr/local/bin/aweb-skew-runtime-inventory",
+  ], { cwd: serverDir, timeoutMs: 30_000 });
+  const runtime = JSON.parse(result.stdout) as ServerRuntimeProof;
+  const aweb = runtime.distributions?.find((item) => item.name === "aweb");
+  if (
+    runtime.schema !== "aweb.server-runtime-inventory.v1"
+    || runtime.constraints_sha256 !== expectedConstraintsSHA
+    || !/^[0-9a-f]{64}$/.test(runtime.sha256)
+    || aweb?.version !== expectedVersion
+  ) {
+    throw new Error("exact service returned an invalid server runtime inventory");
+  }
+  return runtime;
 }
 
 async function composeAwebService(server: ServerHandle, action: "start" | "stop"): Promise<void> {
