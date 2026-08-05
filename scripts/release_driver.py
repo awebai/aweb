@@ -372,34 +372,43 @@ def compute_plan(graph: Graph, state) -> Plan:
             ):
                 reasons.setdefault(consumer, f"bundled-input:{source}")
 
-    ordered: list[str] = []
-    placed: set[str] = set()
-
-    def place(name: str) -> None:
-        if name in placed or name not in reasons:
-            return
-        for prerequisite in graph.prerequisites.get(name, ()):
-            if prerequisite in reasons:
-                place(prerequisite)
-        placed.add(name)
-        ordered.append(name)
-
-    for name in sorted(reasons):
-        place(name)
-
-    # Pointer consumers are FORCED, transitively: a source moving makes its
-    # pointer state stale, and a pointer node moving makes ITS pointers stale.
-    frontier = list(ordered)
+    # Closure FIRST: pointer targets are forced transitively into the moving
+    # set. Ordering happens after, over the complete set.
+    frontier = list(reasons)
     while frontier:
         next_frontier: list[str] = []
         for source in frontier:
             for target in graph.pointer_targets.get(source, ()):
-                if target not in placed:
-                    placed.add(target)
+                if target not in reasons:
                     reasons[target] = f"pointer:{source}"
-                    ordered.append(target)
                     next_frontier.append(target)
         frontier = next_frontier
+
+    # Topo-sort of the union ordering DAG (prerequisite AND pointer edges)
+    # restricted to the moving set; load-time validation guarantees acyclicity.
+    after: dict[str, set[str]] = {name: set() for name in reasons}
+    for dependent, prereqs in graph.prerequisites.items():
+        if dependent in reasons:
+            after[dependent].update(p for p in prereqs if p in reasons)
+    for source, targets in graph.pointer_targets.items():
+        if source in reasons:
+            for target in targets:
+                if target in reasons:
+                    after[target].add(source)
+
+    ordered: list[str] = []
+    placed: set[str] = set()
+
+    def place(name: str) -> None:
+        if name in placed:
+            return
+        placed.add(name)
+        for earlier in sorted(after[name]):
+            place(earlier)
+        ordered.append(name)
+
+    for name in sorted(reasons):
+        place(name)
 
     moving = []
     for name in ordered:
@@ -477,14 +486,15 @@ def check_declared_inputs(graph: Graph, plan: Plan, state) -> list[str]:
             if kind == "lock-version":
                 # A lock pin records a VERSION of the pinned component; it can
                 # never be compared with a git HEAD. Satisfied when it names
-                # the currently published version.
+                # the CANDIDATE this plan will publish - a stale lock fails
+                # and a correctly advanced one passes before publication.
                 target = graph.components[pin["component"]]
-                published = state.published_version(target)
-                if published is not None and pinned != published:
+                candidate = state.source_version(target)
+                if candidate is not None and pinned != candidate:
                     problems.append(
                         f"{component.name}: lock {pin['pin_file']} records "
                         f"{pin.get('package', target.name)} {pinned} but the "
-                        f"published version is {published}"
+                        f"candidate version is {candidate}"
                     )
                 continue
             checkout = pin["checkout"]
@@ -558,7 +568,16 @@ def _resolved_snapshot(plan: Plan, graph: Graph, state) -> dict:
     public metadata, credential contents never flow through state."""
     if state is None:
         return {}
-    snapshot: dict = {"components": {}, "pins": {}, "baselines": {}}
+    snapshot: dict = {"components": {}, "pins": {}, "baselines": {}, "tags": {}}
+    if hasattr(state, "remote_tag_shas"):
+        tags = state.remote_tag_shas()
+        for node in plan.moving:
+            component = graph.components[node.component]
+            if component.tag_format:
+                prefix = component.tag_format.split("{version}", 1)[0]
+                snapshot["tags"].update(
+                    {t: s for t, s in tags.items() if t.startswith(prefix)}
+                )
     for node in plan.moving:
         component = graph.components[node.component]
         entry: dict = {}
@@ -591,6 +610,7 @@ def freeze_plan(
     content = {
         "source_sha": source_sha,
         "plan_digest": plan_digest(plan, graph),
+        "graph": graph.canonical,
         "resolved": _resolved_snapshot(plan, graph, state),
         "moving": [
             {
@@ -622,10 +642,27 @@ def freeze_plan(
     return body, hashlib.sha256(body).hexdigest()
 
 
-def load_frozen_plan(data: bytes, *, expected_id: str) -> Plan:
-    """Validates the outer id AND the internal content digest: a body edited
-    and re-anchored under a fresh id still refuses, because the content
-    binding is part of the artifact itself."""
+@dataclass
+class FrozenPlan:
+    """The typed frozen truth a release executes against: never substituted
+    by current resolved state."""
+
+    plan: Plan
+    source_sha: str
+    plan_digest: str
+    resolved: dict
+    graph_canonical: dict
+    frozen_id: str
+
+    @property
+    def graph(self) -> Graph:
+        return Graph.from_dict(self.graph_canonical)
+
+
+def load_frozen_plan(data: bytes, *, expected_id: str) -> FrozenPlan:
+    """Two independent defenses: semantic recomputation catches an edited
+    digest even when every wrapper hash is recomputed, and a consistently
+    rewritten plan carries a NEW id the trusted authority never recorded."""
     if hashlib.sha256(data).hexdigest() != expected_id:
         raise ReceiptError("frozen plan bytes do not match the recorded plan id")
     parsed = json.loads(data)
@@ -638,7 +675,7 @@ def load_frozen_plan(data: bytes, *, expected_id: str) -> Plan:
     ).hexdigest()
     if actual != declared:
         raise ReceiptError("frozen plan content does not match its content digest")
-    return Plan(
+    plan = Plan(
         moving=[
             PlanNode(
                 component=n["component"],
@@ -659,6 +696,21 @@ def load_frozen_plan(data: bytes, *, expected_id: str) -> Plan:
             )
             for c in content["contracts"]
         ],
+    )
+    frozen_graph = Graph.from_dict(content["graph"])
+    recomputed = plan_digest(plan, frozen_graph)
+    if recomputed != content["plan_digest"]:
+        raise ReceiptError(
+            "frozen plan digest does not recompute from its own canonical "
+            "graph and moving set; the content is semantically inconsistent"
+        )
+    return FrozenPlan(
+        plan=plan,
+        source_sha=content["source_sha"],
+        plan_digest=content["plan_digest"],
+        resolved=content.get("resolved", {}),
+        graph_canonical=content["graph"],
+        frozen_id=expected_id,
     )
 
 
@@ -749,6 +801,13 @@ def seal_receipt(
         )
     if partial and not entries:
         raise ReceiptError("a partial receipt with no entries records nothing")
+    if not partial:
+        unverified = [n for n, e in entries.items() if e.phase != "verified"]
+        if unverified:
+            raise ReceiptError(
+                f"a final receipt requires every entry verified; not verified: "
+                f"{sorted(unverified)}"
+            )
     for node in plan.moving:
         if node.component not in entries:
             continue
@@ -936,6 +995,51 @@ class Providers:
     state: object = None
     source_sha: str | None = None
     measurement: object = None
+    # Established by trusted composition (build_providers with an allowlisted
+    # registration), never by an attribute a caller-writable implementation
+    # asserts about itself.
+    authority_trust: str = "local-development"
+
+
+@dataclass(frozen=True)
+class AuthorityRegistration:
+    """An allowlisted authority kind: configuration selects one of these by
+    name; arbitrary import-by-path composition does not exist."""
+
+    kind: str
+    trust_class: str
+    factory: object
+
+
+AUTHORITY_ALLOWLIST: dict[str, AuthorityRegistration] = {}
+
+
+def register_authority(registration: AuthorityRegistration) -> None:
+    if registration.kind in AUTHORITY_ALLOWLIST:
+        raise ReceiptError(f"authority kind {registration.kind} already registered")
+    AUTHORITY_ALLOWLIST[registration.kind] = registration
+
+
+def build_providers(
+    *,
+    store,
+    authority_registration: AuthorityRegistration,
+    lanes=None,
+    skew=None,
+    state=None,
+    source_sha: str | None = None,
+    measurement=None,
+) -> Providers:
+    return Providers(
+        store=store,
+        authority=authority_registration.factory(),
+        lanes=lanes,
+        skew=skew,
+        state=state,
+        source_sha=source_sha,
+        measurement=measurement,
+        authority_trust=authority_registration.trust_class,
+    )
 
 
 # ── staged manifest ──────────────────────────────────────────────────
@@ -964,7 +1068,12 @@ def seal_staged_manifest(
             "frozen_plan_id": frozen_plan_id,
             "source_sha": source_sha,
             "entries": {
-                name: {"version": e.version, "digest": e.digest}
+                name: {
+                    "version": e.version,
+                    "digest": e.digest,
+                    "pointer_state": e.pointer_state,
+                    "delivery_proof": e.delivery_proof,
+                }
                 for name, e in sorted(entries.items())
             },
         },
@@ -1025,36 +1134,56 @@ def run_plan(
     approvals: dict[str, Approval],
     state=None,
     require_external_authority: bool = False,
-    frozen_plan_id: str | None = None,
-    prior_receipt: Receipt | None = None,
+    frozen: "FrozenPlan | None" = None,
+    _resume_manifest: dict | None = None,
+    _resume_published: dict | None = None,
 ) -> dict[str, ReceiptEntry]:
     """PREFLIGHT everything (zero lane or outward-authority calls before it
     passes) -> anchor the frozen plan (the pre-effect boundary) -> STAGE all
     candidates -> anchor the staged manifest -> run every touched SKEW matrix
     against those staged bytes -> PUBLISH topologically, anchoring each
-    transition immediately under a unique immutable id -> VERIFY (a red is
-    anchored) -> seal and anchor the final receipt."""
+    transition immediately -> VERIFY (a red is anchored) -> seal and anchor
+    the final receipt."""
+    authority_trust = "local-development"
+    measurement = None
     if providers is not None:
         lanes = lanes or providers.lanes
         skew = skew or providers.skew
         authority = authority or providers.authority
         store = store or providers.store
         state = state if state is not None else providers.state
+        authority_trust = providers.authority_trust
+        measurement = providers.measurement
     if store is None:
         store = _MemoryStore()
 
-    if require_external_authority and getattr(
-        authority, "trust_class", "local-development"
-    ) != "external-immutable":
+    if require_external_authority and authority_trust != "external-immutable":
         raise ReceiptError(
-            "the release path requires an external-immutable digest authority; "
-            f"the configured authority's trust class is "
-            f"{getattr(authority, 'trust_class', 'unknown')!r}"
+            "the release path requires an external-immutable digest authority "
+            "established by trusted composition; the configured trust class is "
+            f"{authority_trust!r}"
+        )
+    if frozen is not None and frozen.source_sha != source_sha:
+        raise ReceiptError(
+            f"frozen plan source {frozen.source_sha} does not equal the "
+            f"execution source {source_sha}; frozen truth is never substituted"
         )
     if state is not None:
         problems = check_declared_inputs(graph, plan, state)
         if problems:
             raise BlockedByDeclaredInputs("; ".join(problems))
+    complete_edges = [
+        e for e in plan.runtime_contract_edges if not e.declared_incomplete
+    ]
+    if complete_edges:
+        if measurement is None:
+            raise BlockedByDeclaredInputs(
+                "runtime-contract support records are declared complete but no "
+                "measurement authority is configured to resolve them"
+            )
+        record_problems = check_measurement_records(complete_edges, measurement)
+        if record_problems:
+            raise BlockedByDeclaredInputs("; ".join(record_problems))
     missing_lanes = [
         n.component for n in plan.moving if not lanes.has_lane(n.component)
     ]
@@ -1079,51 +1208,66 @@ def run_plan(
         if graph.components[node.component].approval_required:
             require_approval(node, approval=approvals.get(node.component))
 
-    if frozen_plan_id is None:
+    if frozen is not None:
+        frozen_plan_id = frozen.frozen_id
+    else:
         frozen_bytes, frozen_plan_id = freeze_plan(
             plan, graph, source_sha=source_sha, state=state
         )
-        plan_artifact_id = f"plan:{source_sha}:{frozen_plan_id[:12]}"
-        store.put(plan_artifact_id, frozen_bytes)
-        authority.record(plan_artifact_id, frozen_plan_id)
+        plan_artifact_id = f"plan:{source_sha}:{frozen_plan_id}"
+        _put_content_addressed(
+            store, authority, plan_artifact_id, frozen_bytes, frozen_plan_id
+        )
 
-    already: dict[str, ReceiptEntry] = {}
-    if prior_receipt is not None:
-        already = dict(prior_receipt.entries)
-
-    staged: dict[str, ReceiptEntry] = {}
-    for node in plan.moving:
-        if node.component in already:
-            prior = already[node.component]
-            staged[node.component] = ReceiptEntry(
-                version=prior.version,
-                digest=prior.digest,
+    if _resume_manifest is not None:
+        manifest = _resume_manifest
+        manifest_id = manifest["_artifact_id"]
+        staged = {
+            name: ReceiptEntry(
+                version=e["version"],
+                digest=e["digest"],
                 phase="staged",
-                pointer_state=prior.pointer_state,
-                delivery_proof=prior.delivery_proof,
+                pointer_state=e.get("pointer_state"),
+                delivery_proof=e.get("delivery_proof"),
             )
-        else:
+            for name, e in manifest["entries"].items()
+        }
+    else:
+        staged = {}
+        for node in plan.moving:
             entry = lanes.stage(node)
             if not entry.digest or not entry.version:
                 raise ReceiptError(
                     f"{node.component}: staged entry needs digest and version"
                 )
+            if node.version is not None and entry.version != node.version:
+                raise ReceiptError(
+                    f"{node.component}: staged version {entry.version} does not "
+                    f"equal the frozen candidate {node.version}"
+                )
             staged[node.component] = entry
 
-    manifest_bytes, manifest_digest = seal_staged_manifest(
-        plan,
-        frozen_plan_id=frozen_plan_id,
-        source_sha=source_sha,
-        entries=staged,
-    )
-    manifest_id = f"staged-manifest:{frozen_plan_id[:12]}:{manifest_digest[:8]}"
-    _put_content_addressed(store, authority, manifest_id, manifest_bytes, manifest_digest)
-    manifest = load_staged_manifest(manifest_bytes, expected_digest=manifest_digest)
+        manifest_bytes, manifest_digest = seal_staged_manifest(
+            plan,
+            frozen_plan_id=frozen_plan_id,
+            source_sha=source_sha,
+            entries=staged,
+        )
+        manifest_id = f"staged-manifest:{frozen_plan_id}:{manifest_digest}"
+        _put_content_addressed(
+            store, authority, manifest_id, manifest_bytes, manifest_digest
+        )
+        manifest = load_staged_manifest(
+            manifest_bytes, expected_digest=manifest_digest
+        )
+        manifest["_artifact_id"] = manifest_id
 
     for edge in plan.runtime_contract_edges:
         skew.execute(edge, staged)
 
-    def anchor_transition(component: str, entry: ReceiptEntry, sequence: int, kind: str) -> None:
+    def anchor_transition(
+        component: str, entry: ReceiptEntry, sequence: int, kind: str
+    ) -> None:
         body = json.dumps(
             {
                 "frozen_plan_id": frozen_plan_id,
@@ -1143,24 +1287,27 @@ def run_plan(
         ).encode()
         digest = hashlib.sha256(body).hexdigest()
         artifact_id = (
-            f"transition:{frozen_plan_id[:12]}:{sequence:03d}:{kind}:"
-            f"{component}:{digest[:8]}"
+            f"transition:{frozen_plan_id}:{sequence:03d}:{kind}:"
+            f"{component}:{digest}"
         )
-        store.put(artifact_id, body)
-        authority.record(artifact_id, digest)
+        _put_content_addressed(store, authority, artifact_id, body, digest)
 
-    published: dict[str, ReceiptEntry] = {}
-    sequence = 0
+    published: dict[str, ReceiptEntry] = dict(_resume_published or {})
+    sequence = len(published)
     for node in plan.moving:
-        if node.component in already:
-            adopt_observed(manifest, node.component, already[node.component])
-            published[node.component] = already[node.component]
+        if node.component in published:
             continue
-        result = lanes.publish(node, staged[node.component])
+        staged_entry = staged[node.component]
+        result = lanes.publish(node, staged_entry)
         if result.digest != manifest["entries"][node.component]["digest"]:
             raise ReceiptError(
                 f"{node.component}: published digest {result.digest} does not "
                 f"equal the anchored staged manifest digest"
+            )
+        if result.version != manifest["entries"][node.component]["version"]:
+            raise ReceiptError(
+                f"{node.component}: published version {result.version} does not "
+                f"equal the anchored staged manifest version"
             )
         entry = ReceiptEntry(
             version=result.version,
@@ -1201,16 +1348,109 @@ def run_plan(
         frozen_plan_id=frozen_plan_id,
         staged_manifest_id=manifest_id,
     )
-    receipt_id = f"receipt:{frozen_plan_id[:12]}:{digest[:8]}"
-    store.put(receipt_id, sealed)
-    authority.record(receipt_id, digest)
+    receipt_id = f"receipt:{frozen_plan_id}:{digest}"
+    _put_content_addressed(store, authority, receipt_id, sealed, digest)
     return verified
 
 
+def resume_plan(
+    plan: Plan,
+    graph: Graph,
+    *,
+    lanes,
+    skew,
+    store,
+    authority,
+    source_sha: str,
+    approvals: dict[str, Approval],
+    state=None,
+    frozen: "FrozenPlan | None" = None,
+    measurement=None,
+) -> dict[str, ReceiptEntry]:
+    """Resume from the ORIGINAL anchored staged manifest: fetch it by id,
+    verify it through the authority, stage NOTHING, observe every claimed
+    publication against authoritative lane state, and adopt only on exact
+    manifest match. Skew re-runs against the manifest bytes (a crash may
+    have interrupted it), then the remainder publishes from those digests."""
+    planned = {n.component for n in plan.moving}
+    manifest = None
+    for artifact_id in authority.recorded_ids():
+        if not artifact_id.startswith("staged-manifest:"):
+            continue
+        candidate = load_staged_manifest(
+            store.get(artifact_id),
+            expected_digest=authority.expected_digest(artifact_id),
+        )
+        if (
+            candidate["source_sha"] == source_sha
+            and set(candidate["entries"]) == planned
+        ):
+            manifest = candidate
+            manifest["_artifact_id"] = artifact_id
+            break
+    if manifest is None:
+        raise ReceiptError(
+            "no anchored staged manifest matches this plan; resume is only "
+            "possible from the original anchored staging"
+        )
+    published: dict[str, ReceiptEntry] = {}
+    claimed: set[str] = set()
+    for artifact_id in authority.recorded_ids():
+        prefix = f"transition:{manifest['frozen_plan_id']}:"
+        if artifact_id.startswith(prefix):
+            body = store.get(artifact_id)
+            expected = authority.expected_digest(artifact_id)
+            if hashlib.sha256(body).hexdigest() != expected:
+                raise ReceiptError(
+                    f"transition {artifact_id} does not match its anchored digest"
+                )
+            record = json.loads(body)
+            if record["kind"] == "published":
+                claimed.add(record["component"])
+    for node in plan.moving:
+        observed = lanes.observe(node) if hasattr(lanes, "observe") else None
+        if observed is None:
+            if node.component in claimed:
+                raise ReceiptError(
+                    f"{node.component}: a transition claims publication but the "
+                    "lane observes nothing; refusing to adopt"
+                )
+            continue
+        adopt_observed(manifest, node.component, observed)
+        manifest_entry = manifest["entries"][node.component]
+        published[node.component] = ReceiptEntry(
+            version=observed.version,
+            digest=observed.digest,
+            phase="published",
+            pointer_state=observed.pointer_state
+            or manifest_entry.get("pointer_state"),
+            delivery_proof=observed.delivery_proof
+            or manifest_entry.get("delivery_proof"),
+        )
+    return run_plan(
+        plan,
+        graph,
+        lanes,
+        skew=skew,
+        authority=authority,
+        store=store,
+        source_sha=source_sha,
+        approvals=approvals,
+        state=state,
+        frozen=frozen,
+        providers=Providers(
+            store=store, authority=authority, measurement=measurement
+        ),
+        _resume_manifest=manifest,
+        _resume_published=published,
+    )
+
+
 def _put_content_addressed(store, authority, artifact_id, data, digest) -> None:
-    """Content-addressed ids are idempotent: byte-identical re-anchoring (a
-    resume regenerating the same manifest) reuses the artifact; different
-    bytes under an existing id fail closed."""
+    """Content-addressed ids are idempotent, and store-then-authority crash
+    windows RECONCILE explicitly: identical bytes with a missing authority
+    record completes the record; a recorded digest must match; different
+    bytes under an existing id fail closed. Nothing is silently skipped."""
     try:
         store.put(artifact_id, data)
     except ReceiptError:
@@ -1218,8 +1458,13 @@ def _put_content_addressed(store, authority, artifact_id, data, digest) -> None:
             raise ReceiptError(
                 f"{artifact_id} exists with DIFFERENT bytes; refusing"
             ) from None
-        return
-    authority.record(artifact_id, digest)
+    recorded = authority.expected_digest(artifact_id)
+    if recorded is None:
+        authority.record(artifact_id, digest)
+    elif recorded != digest:
+        raise ReceiptError(
+            f"{artifact_id}: authority records digest {recorded}, computed {digest}"
+        )
 
 
 class _MemoryStore:
@@ -1398,6 +1643,10 @@ class GitRepositoryState:
         result = self._registry_result(component)
         return result[0] if isinstance(result, tuple) else None
 
+    def registry_digests(self, component: Component) -> dict | None:
+        result = self._registry_result(component)
+        return result[1] if isinstance(result, tuple) else None
+
     def registry_unavailable_reason(self, component: Component) -> str | None:
         lane = component.publish_lane or {}
         if "registry" not in lane:
@@ -1504,10 +1753,13 @@ class RegistryUnavailable(Exception):
 
 
 class RegistryProviders:
-    """(version, digest) of the latest registry-visible artifact, or a named
-    RegistryUnavailable. None is never an answer: unknown blocks."""
+    """(version, digest_set) of the latest registry-visible artifact, or a
+    named RegistryUnavailable. digest_set maps every file/asset name to its
+    immutable digest; a version without a complete digest set is UNAVAILABLE,
+    never quietly acceptable. GHCR/image digests belong to the .4 image lane
+    and remain a named blocker here."""
 
-    def published(self, component: Component) -> tuple[str, str | None]:
+    def published(self, component: Component) -> tuple[str, dict]:
         import urllib.request
 
         lane = component.publish_lane or {}
@@ -1521,22 +1773,49 @@ class RegistryProviders:
                     info = json.load(response)
                     version = info["info"]["version"]
                     files = info["releases"].get(version, [])
-                    digest = files[0]["digests"]["sha256"] if files else None
-                    return version, digest
+                    digests = {
+                        f["filename"]: f["digests"]["sha256"] for f in files
+                    }
+                    if not digests:
+                        raise RegistryUnavailable(
+                            f"pypi lists no files for {registry['package']} {version}"
+                        )
+                    return version, digests
             if kind == "npm":
                 with urllib.request.urlopen(
                     f"https://registry.npmjs.org/{registry['package']}/latest",
                     timeout=30,
                 ) as response:
                     data = json.load(response)
-                    return data["version"], data.get("dist", {}).get("integrity")
+                    dist = data.get("dist", {})
+                    integrity = dist.get("integrity") or dist.get("shasum")
+                    if not integrity:
+                        raise RegistryUnavailable(
+                            f"npm reports no integrity for {registry['package']}"
+                        )
+                    return data["version"], {data.get("dist", {}).get("tarball", "tarball"): integrity}
             if kind == "github-release":
                 with urllib.request.urlopen(
                     f"https://api.github.com/repos/{registry['repo']}/releases/latest",
                     timeout=30,
                 ) as response:
                     data = json.load(response)
-                    return data["tag_name"].removeprefix("v"), data.get("target_commitish")
+                    digests = {}
+                    for asset in data.get("assets", []):
+                        digest = asset.get("digest")
+                        if not digest:
+                            raise RegistryUnavailable(
+                                f"github release asset {asset.get('name')} has no "
+                                "digest; artifact truth is incomplete"
+                            )
+                        digests[asset["name"]] = digest
+                    if not digests:
+                        raise RegistryUnavailable(
+                            f"github release for {registry['repo']} has no assets"
+                        )
+                    return data["tag_name"].removeprefix("v"), digests
+        except RegistryUnavailable:
+            raise
         except Exception as exc:  # noqa: BLE001 - named unavailability
             raise RegistryUnavailable(
                 f"{kind} read failed for {component.name}: {exc}"
@@ -1552,46 +1831,40 @@ def _parse_approvals(raw: list[str]) -> dict[str, Approval]:
     for item in raw:
         parts = item.split(":", 2)
         if len(parts) != 3 or not all(parts):
-            raise SystemExit(
-                f"--approval must be component:who:when, got {item!r}"
-            )
+            raise SystemExit(f"--approval must be component:who:when, got {item!r}")
         approvals[parts[0]] = Approval(who=parts[1], when=parts[2])
     return approvals
+
+
+register_authority(
+    AuthorityRegistration(
+        kind="local-development",
+        trust_class="local-development",
+        factory=None,  # constructed with the store root at build time
+    )
+)
 
 
 def main(argv: list[str] | None = None, providers: Providers | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--graph", default=str(GRAPH_PATH))
+    parser.add_argument("--store-root", default=str(REPO_ROOT / ".release-runs"))
     parser.add_argument(
-        "--store-root",
-        default=str(REPO_ROOT / ".release-runs"),
-        help="durable artifact store root (used when no providers are injected)",
+        "--authority",
+        default="local-development",
+        choices=sorted(AUTHORITY_ALLOWLIST),
+        help="allowlisted authority kind; external kinds are registered by "
+        "lane tasks and are the only production-acceptable ones",
     )
     sub = parser.add_subparsers(dest="verb", required=True)
     sub.add_parser("plan", help="freeze and anchor a diagnostic plan")
-    run_parser = sub.add_parser(
-        "release-run",
-        help="execute an anchored frozen plan; fails closed on any gap",
-    )
-    run_parser.add_argument("--plan-id", help="frozen plan digest id")
-    run_parser.add_argument("--plan-artifact-id", help="frozen plan artifact id")
+    run_parser = sub.add_parser("release-run")
+    run_parser.add_argument("--plan-id")
+    run_parser.add_argument("--plan-artifact-id")
     run_parser.add_argument("--resume", action="store_true")
-    run_parser.add_argument(
-        "--approval",
-        action="append",
-        default=[],
-        help="structured approval component:who:when (repeatable)",
-    )
-    run_parser.add_argument(
-        "--allow-local-authority",
-        action="store_true",
-        help="EXPLICIT development downgrade: accept a local-development "
-        "trust-class digest authority",
-    )
-    receipt_parser = sub.add_parser(
-        "release-receipt",
-        help="verify an anchored receipt against its anchored frozen plan",
-    )
+    run_parser.add_argument("--approval", action="append", default=[])
+    run_parser.add_argument("--allow-local-authority", action="store_true")
+    receipt_parser = sub.add_parser("release-receipt")
     receipt_parser.add_argument("--artifact-id", required=True)
     receipt_parser.add_argument("--plan-id", required=True)
     receipt_parser.add_argument("--plan-artifact-id", required=True)
@@ -1599,26 +1872,34 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
 
     graph = Graph.load(Path(args.graph))
     if providers is None:
-        subprocess.run(
-            [
-                "git", "-C", str(REPO_ROOT), "fetch", "origin", "--quiet",
-                "+refs/heads/*:refs/remotes/origin/*",
-            ],
-            check=True,
-        )
         root = Path(args.store_root)
         root.mkdir(parents=True, exist_ok=True)
+        registration = AUTHORITY_ALLOWLIST[args.authority]
+        authority = (
+            FileDigestAuthority(root)
+            if registration.kind == "local-development"
+            else registration.factory()
+        )
         providers = Providers(
             store=FileArtifactStore(root),
-            authority=FileDigestAuthority(root),
-            state=GitRepositoryState(registry=RegistryProviders()),
-            source_sha=subprocess.run(
+            authority=authority,
+            authority_trust=registration.trust_class,
+        )
+        if args.verb in ("plan", "release-run"):
+            subprocess.run(
+                [
+                    "git", "-C", str(REPO_ROOT), "fetch", "origin", "--quiet",
+                    "+refs/heads/*:refs/remotes/origin/*",
+                ],
+                check=True,
+            )
+            providers.state = GitRepositoryState(registry=RegistryProviders())
+            providers.source_sha = subprocess.run(
                 ["git", "-C", str(REPO_ROOT), "rev-parse", "origin/main"],
                 check=True,
                 capture_output=True,
                 text=True,
-            ).stdout.strip(),
-        )
+            ).stdout.strip()
     state = providers.state
     source_sha = providers.source_sha or "unknown"
 
@@ -1628,12 +1909,11 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         frozen_bytes, frozen_id = freeze_plan(
             plan, graph, source_sha=source_sha, state=state
         )
-        plan_artifact_id = f"plan:{source_sha}:{frozen_id[:12]}"
-        try:
-            providers.store.put(plan_artifact_id, frozen_bytes)
-            providers.authority.record(plan_artifact_id, frozen_id)
-        except ReceiptError:
-            pass  # identical plan already anchored; ids are content-derived
+        plan_artifact_id = f"plan:{source_sha}:{frozen_id}"
+        _put_content_addressed(
+            providers.store, providers.authority, plan_artifact_id,
+            frozen_bytes, frozen_id,
+        )
         print(
             json.dumps(
                 {
@@ -1680,57 +1960,50 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 f"{args.plan_artifact_id} does not match --plan-id"
             )
             return 1
-        plan = load_frozen_plan(
+        frozen = load_frozen_plan(
             providers.store.get(args.plan_artifact_id), expected_id=args.plan_id
         )
-        prior_receipt = None
-        if args.resume:
-            transition_entries: dict[str, ReceiptEntry] = {}
-            for artifact_id in providers.authority.recorded_ids():
-                if artifact_id.startswith(f"transition:{args.plan_id[:12]}:"):
-                    record = json.loads(providers.store.get(artifact_id))
-                    if record["kind"] == "published":
-                        entry = record["entry"]
-                        transition_entries[record["component"]] = ReceiptEntry(
-                            version=entry["version"],
-                            digest=entry["digest"],
-                            phase=entry["phase"],
-                            pointer_state=entry.get("pointer_state"),
-                            delivery_proof=entry.get("delivery_proof"),
-                        )
-            observed: dict[str, ReceiptEntry] = dict(transition_entries)
-            if hasattr(providers.lanes, "observe"):
-                for node in plan.moving:
-                    if node.component not in observed:
-                        seen = providers.lanes.observe(node)
-                        if seen is not None:
-                            observed[node.component] = seen
-            if observed:
-                prior_receipt = Receipt(
-                    plan_digest="",
-                    source_sha=source_sha,
-                    entries=observed,
-                )
+        # Frozen truth executes; current providers are declared execution
+        # inputs compared against it, never substitutes for it.
+        plan = frozen.plan
+        frozen_graph = frozen.graph
         lanes = providers.lanes if providers.lanes is not None else NoLanes()
         skew = providers.skew if providers.skew is not None else NoSkew()
+        run_providers = Providers(
+            store=providers.store,
+            authority=providers.authority,
+            lanes=lanes,
+            skew=skew,
+            state=state,
+            measurement=providers.measurement,
+            authority_trust=providers.authority_trust,
+        )
         try:
-            run_plan(
-                plan,
-                graph,
-                providers=Providers(
-                    store=providers.store,
-                    authority=providers.authority,
+            if args.resume:
+                resume_plan(
+                    plan,
+                    frozen_graph,
                     lanes=lanes,
                     skew=skew,
+                    store=providers.store,
+                    authority=providers.authority,
+                    source_sha=frozen.source_sha,
+                    approvals=_parse_approvals(args.approval),
                     state=state,
-                ),
-                source_sha=source_sha,
-                approvals=_parse_approvals(args.approval),
-                state=state,
-                require_external_authority=not args.allow_local_authority,
-                frozen_plan_id=args.plan_id,
-                prior_receipt=prior_receipt,
-            )
+                    frozen=frozen,
+                    measurement=providers.measurement,
+                )
+            else:
+                run_plan(
+                    plan,
+                    frozen_graph,
+                    providers=run_providers,
+                    source_sha=source_sha,
+                    approvals=_parse_approvals(args.approval),
+                    state=state,
+                    require_external_authority=not args.allow_local_authority,
+                    frozen=frozen,
+                )
         except (
             LaneUnavailable,
             SkewUnavailable,
@@ -1766,13 +2039,51 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         if receipt.frozen_plan_id != args.plan_id:
             print("MISMATCH: receipt does not bind this frozen plan")
             return 1
-        if receipt.source_sha != source_sha and receipt.source_sha:
-            pass  # receipts verify against their own frozen source below
-        planned = {n.component for n in frozen.moving}
+        if receipt.source_sha != frozen.source_sha:
+            print(
+                f"MISMATCH: receipt source {receipt.source_sha} does not equal "
+                f"the frozen plan source {frozen.source_sha}"
+            )
+            return 1
+        if receipt.plan_digest != frozen.plan_digest:
+            print("MISMATCH: receipt plan digest does not equal the frozen plan")
+            return 1
+        planned = {n.component for n in frozen.plan.moving}
         if set(receipt.entries) != planned:
             print("MISMATCH: receipt entry set does not equal the frozen plan")
             return 1
-        print("MATCH: receipt is anchored, bound to its frozen plan, and complete")
+        unverified = [
+            name for name, e in receipt.entries.items() if e.phase != "verified"
+        ]
+        if unverified:
+            print(f"MISMATCH: entries not verified: {sorted(unverified)}")
+            return 1
+        manifest_digest = providers.authority.expected_digest(
+            receipt.staged_manifest_id
+        )
+        if manifest_digest is None:
+            print("MISMATCH: the receipt's staged manifest is not anchored")
+            return 1
+        frozen_components = frozen.graph.components
+        approvals = dict(receipt.approvals)
+        for node in frozen.plan.moving:
+            component = frozen_components[node.component]
+            entry = receipt.entries[node.component]
+            if node.reason.startswith("pointer:") and not entry.pointer_state:
+                print(f"MISMATCH: {node.component} lacks pointer_state")
+                return 1
+            if (
+                component.delivery_restart is not None or component.lane is not None
+            ) and not entry.delivery_proof:
+                print(f"MISMATCH: {node.component} lacks delivery_proof")
+                return 1
+            if component.approval_required and node.component not in approvals:
+                print(f"MISMATCH: {node.component} lacks its approval record")
+                return 1
+        print(
+            "MATCH: receipt is anchored, bound to its frozen plan and staged "
+            "manifest, all entries verified with required proofs and approvals"
+        )
         return 0
     return 2
 

@@ -604,15 +604,16 @@ release-channel-push:
 release-plan:
 	@python3 scripts/release_driver.py plan
 
-# Executes the plan over available publish lanes; fails closed naming every
-# unavailable lane and every unsatisfied declared input.
+# Executes an anchored frozen plan over available publish lanes; fails closed
+# naming every gap. PLAN_ID and PLAN_ARTIFACT_ID are required.
 release-run:
-	@python3 scripts/release_driver.py release-run
+	@python3 scripts/release_driver.py release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(foreach a,$(APPROVAL),--approval "$(a)")
 
-# Verifies a sealed receipt against this run. RECEIPT and EXPECTED_DIGEST are
-# required; the digest comes from the external authority that recorded it.
+# Verifies an anchored receipt against its anchored frozen plan. ARTIFACT_ID,
+# PLAN_ID and PLAN_ARTIFACT_ID are required; digests resolve through the
+# configured authority, never from caller-presented values.
 release-receipt:
-	@python3 scripts/release_driver.py release-receipt --receipt "$(RECEIPT)" --expected-digest "$(EXPECTED_DIGEST)"
+	@python3 scripts/release_driver.py release-receipt --artifact-id "$(ARTIFACT_ID)" --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)"
 
 test-release-driver:
 	python3 scripts/e2e/test_release_driver.py

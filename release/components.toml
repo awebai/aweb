@@ -83,7 +83,7 @@ publishable = false
 publishable = false
 sibling_pins = [
     { pin_file = "release-pin.toml", section = "aweb", field = "git_sha", component = "server", checkout = "../aweb", repository = "github.com/awebai/aweb", pin_repository = "github.com/awebai/ac" },
-    { pin_file = "backend/uv.lock", section = "package", field = "awid-service", kind = "lock-version", component = "awid-pypi", checkout = "../aweb", repository = "github.com/awebai/aweb", pin_repository = "github.com/awebai/ac" },
+    { pin_file = "backend/uv.lock", kind = "lock-version", package = "awid-service", component = "awid-pypi", pin_repository = "github.com/awebai/ac" },
 ]
 # aweb-cloud's source pointer state: backend/uv.lock and release-pin.toml,
 # both living in the AC repository (pin_repository) and resolved only from a

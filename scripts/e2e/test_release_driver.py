@@ -410,6 +410,7 @@ class ReceiptTests(unittest.TestCase):
             n.component: rd.ReceiptEntry(
                 version=n.version or "0.0.0",
                 digest=f"d-{n.component}",
+                phase="verified",
                 pointer_state="ok" if n.reason.startswith("pointer:") else None,
                 delivery_proof=None,
             )
@@ -487,6 +488,13 @@ class FixtureLanes:
         self.calls.append(("verify", node.component))
 
 
+class AllRecordsResolve:
+    """Fixture measurement authority: every structured record resolves."""
+
+    def resolve(self, record, edge):
+        return {"digest": record.get("digest"), "edge": (edge.a, edge.b)}
+
+
 class FixtureSkew:
     def __init__(self, available: bool = True):
         self.available = available
@@ -548,6 +556,11 @@ class FourPhaseProtocolTests(unittest.TestCase):
             source_sha="s1",
             approvals=approvals or {},
             state=state,
+            providers=rd.Providers(
+                store=rd._MemoryStore(),
+                authority=authority,
+                measurement=AllRecordsResolve(),
+            ),
         )
         return graph, plan, lanes, skew, authority, entries
 
@@ -588,6 +601,7 @@ class FourPhaseProtocolTests(unittest.TestCase):
                 plan, graph, lanes,
                 skew=FixtureSkew(available=False),
                 authority=FixtureAuthority(),
+                providers=rd.Providers(store=rd._MemoryStore(), authority=FixtureAuthority(), measurement=AllRecordsResolve()),
                 source_sha="s1", approvals={}, state=state,
             )
         self.assertEqual(lanes.calls, [])
@@ -611,7 +625,7 @@ class FourPhaseProtocolTests(unittest.TestCase):
         with self.assertRaises(rd.ApprovalRequired):
             rd.run_plan(
                 plan, graph, lanes,
-                skew=FixtureSkew(), authority=FixtureAuthority(),
+                skew=FixtureSkew(), authority=FixtureAuthority(), providers=rd.Providers(store=rd._MemoryStore(), authority=FixtureAuthority(), measurement=AllRecordsResolve()),
                 source_sha="s1", approvals={}, state=state,
             )
         self.assertEqual(lanes.calls, [], "nothing may run before approvals check out")
@@ -634,7 +648,7 @@ class FourPhaseProtocolTests(unittest.TestCase):
         with self.assertRaises(rd.ReceiptError) as caught:
             rd.run_plan(
                 plan, graph, lanes,
-                skew=FixtureSkew(), authority=FixtureAuthority(),
+                skew=FixtureSkew(), authority=FixtureAuthority(), providers=rd.Providers(store=rd._MemoryStore(), authority=FixtureAuthority(), measurement=AllRecordsResolve()),
                 source_sha="s1", approvals={}, state=state,
             )
         self.assertIn("digest", str(caught.exception))
@@ -654,6 +668,7 @@ class FourPhaseProtocolTests(unittest.TestCase):
                 plan, graph, lanes,
                 skew=FixtureSkew(), authority=authority, store=store,
                 source_sha="s1", approvals={}, state=state,
+                providers=rd.Providers(store=store, authority=authority, measurement=AllRecordsResolve()),
             )
             self.assertEqual(set(entries), {n.component for n in plan.moving})
             kinds = {k.split(":")[0] for k in authority.recorded_ids()}
@@ -705,6 +720,10 @@ class FourPhaseProtocolTests(unittest.TestCase):
                     plan, graph, lanes,
                     skew=FixtureSkew(), authority=authority, store=store,
                     source_sha="s1", approvals={}, state=state,
+                    providers=rd.Providers(
+                        store=store, authority=authority,
+                        measurement=AllRecordsResolve(),
+                    ),
                 )
             transitions = [
                 k
@@ -731,7 +750,7 @@ class ResumeTests(unittest.TestCase):
         )
         restored = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
         self.assertEqual(
-            [n.component for n in restored.moving],
+            [n.component for n in restored.plan.moving],
             [n.component for n in plan.moving],
             "the frozen plan is the plan; live drift must not rewrite it",
         )
@@ -764,6 +783,7 @@ class SealValidationTests(unittest.TestCase):
             n.component: rd.ReceiptEntry(
                 version="1.0.0",
                 digest=f"d-{n.component}",
+                phase="verified",
                 pointer_state=None,
                 delivery_proof=None,
             )
@@ -785,6 +805,7 @@ class SealValidationTests(unittest.TestCase):
             n.component: rd.ReceiptEntry(
                 version="1.0.0",
                 digest=f"d-{n.component}",
+                phase="verified",
                 pointer_state="ok" if n.reason.startswith("pointer:") else None,
                 delivery_proof=None,
             )
@@ -1035,7 +1056,7 @@ class GraphContractTests(unittest.TestCase):
         with self.assertRaises(rd.BlockedByDeclaredInputs):
             rd.run_plan(
                 plan, self.graph, lanes,
-                skew=FixtureSkew(), authority=FixtureAuthority(),
+                skew=FixtureSkew(), authority=FixtureAuthority(), providers=rd.Providers(store=rd._MemoryStore(), authority=FixtureAuthority(), measurement=AllRecordsResolve()),
                 source_sha="s1", approvals={}, state=state,
             )
         self.assertEqual(lanes.calls, [])
