@@ -47,6 +47,18 @@ def register(journey: str, factory) -> None:
     REGISTRY[journey] = factory
 
 
+# Child registration: CLI/server exact-artifact real-stack journey (.7.1).
+from release_skew_cli_server import CliServerSkewHarness
+
+from release_channel_pi_skew import (  # noqa: E402
+    CHANNEL_JOURNEY,
+    PI_JOURNEY,
+    channel_factory,
+    pi_factory,
+)
 from release_persisted_state_skew import JOURNEY, factory  # noqa: E402
 
+register("make cli-e2e", CliServerSkewHarness)
+register(CHANNEL_JOURNEY, channel_factory)
+register(PI_JOURNEY, pi_factory)
 register(JOURNEY, factory)
