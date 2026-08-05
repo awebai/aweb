@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# Build-once, inspect, publish-exact-bytes for the PyPI lanes (server, awid).
+#
+#   inspect-staged    --dist <dir> --package <name> --version <X.Y.Z>
+#       Refuses unless the dist holds EXACTLY one sdist and one wheel for
+#       the package at the version, the version inside both artifacts
+#       (PKG-INFO / METADATA) equals the declared one, and prints one
+#       sha256 per file.
+#   verify-published  --dist <dir> --package <name> --version <X.Y.Z>
+#                     [--observed-json <file>]
+#       Compares PyPI's per-file sha256 (JSON API, or the supplied
+#       observation) against the staged files: every staged file must be
+#       present remotely with identical digest. PyPI can never re-upload,
+#       so any mismatch is permanent and refuses.
+
+set -euo pipefail
+
+fail() { printf 'REFUSE: %s\n' "$1" >&2; exit 1; }
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
+  else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+
+MODE="${1:-}"; shift || true
+DIST='' PACKAGE='' VERSION='' OBSERVED=''
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dist) DIST="$2"; shift 2 ;;
+    --package) PACKAGE="$2"; shift 2 ;;
+    --version) VERSION="$2"; shift 2 ;;
+    --observed-json) OBSERVED="$2"; shift 2 ;;
+    *) echo "pypi-exact-publish: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+[[ -n "$DIST" && -n "$PACKAGE" && -n "$VERSION" ]] \
+  || { echo "pypi-exact-publish: --dist --package --version are required" >&2; exit 2; }
+
+# PEP 625: distribution filenames normalize dashes to underscores.
+NORMALIZED="${PACKAGE//-/_}"
+
+case "$MODE" in
+  inspect-staged)
+    python3 - "$DIST" "$NORMALIZED" "$VERSION" <<'PY'
+import hashlib, os, re, sys, tarfile, zipfile
+dist, normalized, version = sys.argv[1:4]
+files = sorted(os.listdir(dist))
+sdists = [f for f in files if f == f"{normalized}-{version}.tar.gz"]
+wheels = [f for f in files if re.fullmatch(
+    re.escape(normalized) + "-" + re.escape(version) + r"-[^-]+-[^-]+-[^-]+\.whl", f)]
+extras = [f for f in files if f not in sdists + wheels]
+if len(sdists) != 1 or len(wheels) != 1 or extras:
+    sys.exit(f"REFUSE: dist must hold exactly one sdist and one wheel for "
+             f"{normalized} {version}; found sdists={sdists} wheels={wheels} "
+             f"extras={extras}")
+
+def meta_version(text):
+    for line in text.splitlines():
+        if line.startswith("Version:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+with tarfile.open(os.path.join(dist, sdists[0])) as t:
+    member = f"{normalized}-{version}/PKG-INFO"
+    try:
+        inside = meta_version(t.extractfile(member).read().decode())
+    except KeyError:
+        sys.exit(f"REFUSE: sdist lacks {member}")
+if inside != version:
+    sys.exit(f"REFUSE: sdist PKG-INFO declares version {inside}, expected {version}")
+
+with zipfile.ZipFile(os.path.join(dist, wheels[0])) as z:
+    meta = [n for n in z.namelist()
+            if n == f"{normalized}-{version}.dist-info/METADATA"]
+    if not meta:
+        sys.exit(f"REFUSE: wheel lacks {normalized}-{version}.dist-info/METADATA")
+    inside = meta_version(z.read(meta[0]).decode())
+if inside != version:
+    sys.exit(f"REFUSE: wheel METADATA declares version {inside}, expected {version}")
+
+for name in sdists + wheels:
+    with open(os.path.join(dist, name), "rb") as f:
+        print(f"STAGED: {name} sha256 {hashlib.sha256(f.read()).hexdigest()}")
+PY
+    ;;
+  verify-published)
+    if [[ -z "$OBSERVED" ]]; then
+      OBSERVED="$(mktemp)"
+      curl -fsSL -o "$OBSERVED" \
+        "https://pypi.org/pypi/${PACKAGE}/${VERSION}/json" \
+        || fail "PyPI has no release ${PACKAGE} ${VERSION}"
+    fi
+    python3 - "$DIST" "$OBSERVED" "$NORMALIZED" "$VERSION" <<'PY'
+import hashlib, json, os, re, sys
+dist, observed_path, normalized, version = sys.argv[1:5]
+observed = {
+    u["filename"]: u["digests"]["sha256"]
+    for u in json.load(open(observed_path)).get("urls", [])
+}
+staged = [
+    f for f in sorted(os.listdir(dist))
+    if f.startswith(f"{normalized}-{version}") and
+    (f.endswith(".tar.gz") or f.endswith(".whl"))
+]
+if not staged:
+    sys.exit(f"REFUSE: no staged files for {normalized} {version}")
+for name in staged:
+    with open(os.path.join(dist, name), "rb") as f:
+        local = hashlib.sha256(f.read()).hexdigest()
+    remote = observed.get(name)
+    if remote is None:
+        sys.exit(f"REFUSE: {name} is staged but PyPI does not serve it")
+    if remote != local:
+        sys.exit(f"REFUSE: {name}: PyPI serves sha256 {remote}, staged is "
+                 f"{local}; PyPI can never re-upload, this is permanent")
+    print(f"VERIFIED: {name} published equals staged ({local})")
+PY
+    ;;
+  *)
+    echo "pypi-exact-publish: mode must be inspect-staged | verify-published" >&2
+    exit 2
+    ;;
+esac

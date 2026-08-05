@@ -1023,6 +1023,24 @@ class GraphContractTests(unittest.TestCase):
         )
         self.assertEqual(lane.get("workflow"), ".github/workflows/aw-release.yml")
 
+    def test_pypi_and_oci_lanes_declare_the_dispatch_surface(self) -> None:
+        """aweb-abbe.4: server, awid-pypi, and awid-image lanes point at the
+        dispatch-only three-mode workflows; no tag-triggered publisher
+        remains a lane."""
+        graph = rd.Graph.load(rd.GRAPH_PATH)
+        modes = ["stage-only", "publish-continuation", "verify-only"]
+        for name, workflow in (
+            ("server", ".github/workflows/pypi-release.yml"),
+            ("awid-pypi", ".github/workflows/pypi-release.yml"),
+            ("awid-image", ".github/workflows/awid-image-release.yml"),
+        ):
+            lane = graph.components[name].publish_lane
+            self.assertEqual(lane.get("workflow"), workflow, name)
+            self.assertEqual(lane.get("modes"), modes, name)
+            self.assertTrue(
+                (rd.REPO_ROOT / workflow).exists(), f"{workflow} must exist"
+            )
+
     def test_ac_pin_is_a_forced_pointer_consumer_of_server_and_awid(self) -> None:
         """alice's counterexample: awid moving without ac-pin in the plan is
         the missed-consumer failure the graph exists to prevent."""
