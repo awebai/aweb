@@ -85,6 +85,23 @@ def _github_release_fetch(version: str, name: str) -> bytes | None:
     return rd._fetch_aw_release_asset(name, version)
 
 
+def _github_release_digest(version: str, name: str) -> str:
+    release = json.loads(
+        rd._run_gh_api(f"repos/awebai/aw/releases/tags/v{version}")
+    )
+    matches = [asset for asset in release.get("assets", []) if asset.get("name") == name]
+    if len(matches) != 1:
+        raise rd.ReceiptError(
+            f"GitHub release v{version} carries {len(matches)} assets named {name}, expected one"
+        )
+    digest = str(matches[0].get("digest") or "").removeprefix("sha256:")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise rd.ReceiptError(
+            f"GitHub API records no sha256 digest for v{version}/{name}"
+        )
+    return digest
+
+
 def _pypi_metadata_fetch(version: str) -> dict | None:
     try:
         with urllib.request.urlopen(
@@ -121,12 +138,14 @@ class CliServerArtifactResolver:
         *,
         staged_capabilities=_default_staged_capabilities,
         github_release_fetch=_github_release_fetch,
+        github_release_digest=_github_release_digest,
         pypi_metadata_fetch=_pypi_metadata_fetch,
         url_fetch=_url_fetch,
         platform_name=_default_platform_name,
     ):
         self._staged_capabilities = staged_capabilities
         self._release_fetch = github_release_fetch
+        self._release_digest = github_release_digest
         self._pypi = pypi_metadata_fetch
         self._url = url_fetch
         self._platform = platform_name
@@ -231,17 +250,31 @@ class CliServerArtifactResolver:
     def _published_aw(self, side: dict, kind: str, root: Path) -> ResolvedArtifact:
         version = side.get("version") or ""
         archive_name = f"aw_{version}_{self._platform()}.tar.gz"
+        checksums_registry = self._release_digest(version, "checksums.txt")
+        archive_registry = self._release_digest(version, archive_name)
         checksums = self._release_fetch(version, "checksums.txt")
         archive = self._release_fetch(version, archive_name)
         if checksums is None or archive is None:
             raise rd.ReceiptError(
                 f"GitHub release v{version} lacks checksums.txt or {archive_name}"
             )
-        expected = _checksum_for(checksums, archive_name)
-        actual = _sha256(archive)
-        if actual != expected:
+        actual_checksums = _sha256(checksums)
+        if actual_checksums != checksums_registry:
             raise rd.ReceiptError(
-                f"GitHub release {archive_name} hashes {actual}, checksums.txt records {expected}"
+                f"downloaded checksums.txt hashes {actual_checksums}, GitHub API "
+                f"records {checksums_registry}"
+            )
+        checksums_recorded = _checksum_for(checksums, archive_name)
+        actual = _sha256(archive)
+        if actual != archive_registry:
+            raise rd.ReceiptError(
+                f"GitHub release {archive_name} hashes {actual}, GitHub API "
+                f"records {archive_registry}"
+            )
+        if actual != checksums_recorded:
+            raise rd.ReceiptError(
+                f"GitHub release {archive_name} hashes {actual}, checksums.txt "
+                f"records {checksums_recorded}"
             )
         executable = _aw_from_archive(archive, archive_name)
         output = root / "aw"
@@ -253,10 +286,12 @@ class CliServerArtifactResolver:
             "kind": kind,
             "registry": "github-release:awebai/aw",
             "tag": f"v{version}",
-            "checksums_sha256": _sha256(checksums),
+            "checksums_sha256": actual_checksums,
+            "checksums_registry_sha256": checksums_registry,
             "payload_name": archive_name,
             "outer_sha256": actual,
-            "registry_sha256": expected,
+            "registry_sha256": archive_registry,
+            "checksums_recorded_sha256": checksums_recorded,
             "payload_sha256": _sha256(executable),
         }
         if version == DIRTY_FLEET_AW_VERSION:
@@ -608,6 +643,9 @@ def _require_dirty_fleet_evidence(evidence: list[dict]) -> None:
             or artifact.get("provenance_status") != "rejected-dirty"
             or artifact.get("use") != "installed-fleet-compatibility-only"
             or artifact.get("outer_sha256") != artifact.get("registry_sha256")
+            or artifact.get("outer_sha256") != artifact.get("checksums_recorded_sha256")
+            or artifact.get("checksums_sha256")
+            != artifact.get("checksums_registry_sha256")
             or not re.fullmatch(r"[0-9a-f]{64}", artifact.get("payload_sha256", ""))
         ):
             raise rd.ReceiptError(
