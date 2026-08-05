@@ -90,27 +90,37 @@ stableIdentityStateHash
 seq>1 requires rotate_key operation
 did:aw not derived from genesis key
 verifyStableIdentityViaFullLog
-pin store is empty or has no document'
+pin store is empty or has no document
+msg.encrypted_envelope != null
+msg.subject = decrypted.subject
+msg.body = decrypted.body
+["--team", options.teamID.trim()]
+selected active team ${config.teamID} is missing certificate signing authentication'
 SENTINEL='aweb-channel-core-security/did-log-genesis-bound-v2+full-log-v1+pinstore-fail-closed-v1'
 SKILLS='aweb-bootstrap aweb-coordination aweb-identity aweb-messaging aweb-team-membership'
 
 make_profile_fixture() {
   # $1 profile, then flags: --no-sentinel, --drop-skill <name>, --extra-skill <name>
   local profile="$1"; shift
-  local sentinel="$SENTINEL" drop='' extra='' plugin=coherent
+  local sentinel="$SENTINEL" drop='' extra='' plugin=coherent markers="$CHANNEL_MARKERS" unsafe_merge=''
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --no-sentinel) sentinel=''; shift ;;
       --drop-skill) drop="$2"; shift 2 ;;
       --extra-skill) extra="$2"; shift 2 ;;
       --plugin) plugin="$2"; shift 2 ;;
+      --drop-trust-boundary)
+        markers="$(printf '%s\n' "$markers" | grep -v 'msg.encrypted_envelope != null')"
+        shift
+        ;;
+      --unsafe-decrypt-merge) unsafe_merge='Object.assign(msg, decrypted)'; shift ;;
     esac
   done
   rm -rf "$tmp/prof"; mkdir -p "$tmp/prof/dist"
   local files='"dist", "README.md"'
   case "$profile" in
     channel)
-      printf '%s\n%s\n' "$CHANNEL_MARKERS" "$sentinel" > "$tmp/prof/dist/index.js"
+      printf '%s\n%s\n%s\n' "$markers" "$sentinel" "$unsafe_merge" > "$tmp/prof/dist/index.js"
       printf '{"mcpServers": {"aweb": {"command": "node"}}}\n' > "$tmp/prof/.mcp.json"
       files='"dist", ".mcp.json", "README.md"'
       case "$plugin" in
@@ -128,7 +138,7 @@ make_profile_fixture() {
       esac
       ;;
     pi)
-      printf '%s\n' "$CHANNEL_MARKERS" > "$tmp/prof/dist/index.js"
+      printf '%s\n%s\n' "$markers" "$unsafe_merge" > "$tmp/prof/dist/index.js"
       files='"dist", "skills", "README.md"'
       ;;
     skills)
@@ -177,8 +187,12 @@ profile_case "channel profile accepts coherent fixture" channel ok ""
 profile_case "channel profile refuses missing sentinel" channel refuse "sentinel\|contract" --no-sentinel
 profile_case "channel profile refuses missing plugin manifest" channel refuse "plugin" --plugin missing
 profile_case "channel profile refuses mismatched plugin version" channel refuse "plugin" --plugin mismatched
+profile_case "channel profile refuses missing authenticated trust boundary" channel refuse "encrypted_envelope" --drop-trust-boundary
+profile_case "channel profile refuses trust-field overwrite merge" channel refuse "overwrite" --unsafe-decrypt-merge
 profile_case "pi profile accepts coherent fixture" pi ok ""
 profile_case "pi profile refuses missing skill dir" pi refuse "aweb-identity" --drop-skill aweb-identity
+profile_case "pi profile refuses missing authenticated trust boundary" pi refuse "encrypted_envelope" --drop-trust-boundary
+profile_case "pi profile refuses trust-field overwrite merge" pi refuse "overwrite" --unsafe-decrypt-merge
 profile_case "skills profile accepts exact five" skills ok ""
 profile_case "skills profile refuses a sixth skill dir" skills refuse "skill set" --extra-skill extra-skill
 
