@@ -200,4 +200,19 @@ corrupted="$(raw="$(printf '{"raw":"manifest"}')"; sha256sum <<<"$raw" | awk '{p
   || fail "the regression control failed: here-string hashing did not corrupt"
 ok "observe-digest hashes exact bytes; the here-string form provably corrupts"
 
+# ── listing evidence must be schema-valid before it counts ──────────
+[[ "$(printf '{"Tags":["0.5.14","latest"]}' | bash "$LANE" classify-listing --tag 0.5.14)" == "yes" ]] \
+  || fail "listed tag must classify yes"
+[[ "$(printf '{"Tags":["latest"]}' | bash "$LANE" classify-listing --tag 0.5.14)" == "no" ]] \
+  || fail "unlisted tag must classify no"
+ok "schema-valid listings classify presence correctly"
+for doc in '{}' '{"Tags":null}' '{"Tags":"not-an-array"}' 'not json at all'; do
+  if out="$(printf '%s' "$doc" | bash "$LANE" classify-listing --tag 0.5.14 2>&1)"; then
+    fail "malformed listing accepted as observation: $doc -> $out"
+  fi
+  grep -q "never an observation" <<<"$out" \
+    || fail "malformed-listing refusal does not say so: $out"
+done
+ok "malformed, null, and non-array listings refuse (4 shapes) - never absence"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

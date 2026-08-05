@@ -21,6 +21,13 @@
 #       A version tag with a different digest refuses permanently; latest is
 #       the one planned mutable pointer and may transition to the staged
 #       digest.
+#   classify-listing  --tag <name>
+#       Reads a tag-listing JSON document on stdin and prints yes or no for
+#       the tag's presence. Refuses unless the document is a JSON object
+#       whose .Tags is an array of strings: a successful listing command
+#       with malformed, truncated, or unexpected evidence is not an
+#       observation, and callers must map that refusal to an unavailable
+#       listing - never to absence.
 #   require-absent    --listing-status ok|failed --present yes|no
 #       Stage-only absence proof: a failed listing blocks (outage is never
 #       proof of absence), a listed version refuses, and only a proven
@@ -41,7 +48,7 @@ fail() { printf 'REFUSE: %s\n' "$1" >&2; exit 1; }
 
 MODE="${1:-}"; shift || true
 ARCHIVE='' VERSION='' REPOSITORY='' SOURCE_SHA='' OUT=''
-TAG_KIND='' STAGED='' LISTING_STATUS='' PRESENT='' REMOTE_DIGEST=''
+TAG_KIND='' STAGED='' LISTING_STATUS='' PRESENT='' REMOTE_DIGEST='' TAG_NAME=''
 OBSERVED=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -51,6 +58,7 @@ while [[ $# -gt 0 ]]; do
     --source-sha) SOURCE_SHA="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
     --tag-kind) TAG_KIND="$2"; shift 2 ;;
+    --tag) TAG_NAME="$2"; shift 2 ;;
     --staged) STAGED="$2"; shift 2 ;;
     --listing-status) LISTING_STATUS="$2"; shift 2 ;;
     --present) PRESENT="$2"; shift 2 ;;
@@ -171,6 +179,25 @@ case "$MODE" in
       fail "version tag resolves to $REMOTE_DIGEST, staged index is $STAGED; an immutable version tag is never rewritten"
     fi
     ;;
+  classify-listing)
+    [[ -n "$TAG_NAME" ]] \
+      || { echo "classify-listing requires --tag" >&2; exit 2; }
+    # -c keeps the script's stdin (the piped listing) as python's stdin; a
+    # heredoc would displace it.
+    python3 -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception as exc:
+    sys.exit(f"REFUSE: tag listing is not valid JSON ({exc}); malformed "
+             "evidence is never an observation")
+tags = doc.get("Tags") if isinstance(doc, dict) else None
+if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+    sys.exit("REFUSE: tag listing .Tags is not an array of strings; "
+             "malformed evidence is never an observation")
+print("yes" if sys.argv[1] in tags else "no")
+' "$TAG_NAME"
+    ;;
   require-absent)
     [[ -n "$LISTING_STATUS" && -n "$PRESENT" ]] \
       || { echo "require-absent requires --listing-status --present" >&2; exit 2; }
@@ -208,7 +235,7 @@ case "$MODE" in
     done
     ;;
   *)
-    echo "oci-exact-publish: mode must be inspect-staged | decide-tag | require-absent | observe-digest | verify-published" >&2
+    echo "oci-exact-publish: mode must be inspect-staged | classify-listing | decide-tag | require-absent | observe-digest | verify-published" >&2
     exit 2
     ;;
 esac

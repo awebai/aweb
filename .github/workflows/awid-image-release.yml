@@ -110,12 +110,20 @@ jobs:
               || { echo "REFUSE: tag awid-v${VERSION} already exists remotely at $remote_tag" >&2; exit 1; }
             # Absence must be proven by an authoritative listing; an outage
             # or auth failure is never proof the tag is missing.
+            # The listing only counts as an observation when it is
+            # schema-valid; classify-listing refuses malformed evidence and
+            # that refusal maps to an UNAVAILABLE listing, never to absence.
             listing_status=ok
-            tags_json="$(skopeo list-tags docker://ghcr.io/awebai/awid)" || listing_status=failed
             present=no
-            if [[ "$listing_status" == "ok" ]] && \
-               jq -e --arg t "$VERSION" '.Tags | index($t)' <<<"$tags_json" >/dev/null; then
-              present=yes
+            if tags_json="$(skopeo list-tags docker://ghcr.io/awebai/awid)"; then
+              if presence="$(printf '%s' "$tags_json" \
+                  | bash "$GITHUB_WORKSPACE/scripts/oci-exact-publish.sh" classify-listing --tag "$VERSION")"; then
+                present="$presence"
+              else
+                listing_status=failed
+              fi
+            else
+              listing_status=failed
             fi
             bash "$GITHUB_WORKSPACE/scripts/oci-exact-publish.sh" require-absent \
               --listing-status "$listing_status" --present "$present"
@@ -315,15 +323,21 @@ jobs:
             kind=version; [[ "$tag" == "latest" ]] && kind=latest
             present=no; remote_digest=unavailable
             if [[ "$listing_status" == "ok" ]]; then
-              if jq -e --arg t "$tag" '.Tags | index($t)' <<<"$tags_json" >/dev/null; then
-                present=yes
-                # Hash the direct byte stream: variable capture strips the
-                # trailing newline and a here-string appends one, so either
-                # would hash bytes skopeo never returned.
-                if observed="$(skopeo inspect --raw "docker://ghcr.io/awebai/awid:${tag}" \
-                    | bash scripts/oci-exact-publish.sh observe-digest)"; then
-                  remote_digest="$observed"
-                fi
+              # Schema-invalid evidence is an unavailable listing, not absence.
+              if presence="$(printf '%s' "$tags_json" \
+                  | bash scripts/oci-exact-publish.sh classify-listing --tag "$tag")"; then
+                present="$presence"
+              else
+                listing_status=failed
+              fi
+            fi
+            if [[ "$present" == "yes" ]]; then
+              # Hash the direct byte stream: variable capture strips the
+              # trailing newline and a here-string appends one, so either
+              # would hash bytes skopeo never returned.
+              if observed="$(skopeo inspect --raw "docker://ghcr.io/awebai/awid:${tag}" \
+                  | bash scripts/oci-exact-publish.sh observe-digest)"; then
+                remote_digest="$observed"
               fi
             fi
             action="$(bash scripts/oci-exact-publish.sh decide-tag \
