@@ -2588,6 +2588,65 @@ class MatrixSkewRunner:
                 ) from exc
 
 
+class SkewHarnessRouter:
+    """Routes each cell to the checked-in harness registered for its exact
+    journey string (scripts/release_skew_harnesses.py). An unregistered
+    journey has no matrix, which the release path refuses - never skips."""
+
+    def has_journey(self, edge) -> bool:
+        import release_skew_harnesses
+
+        return edge.journey in release_skew_harnesses.REGISTRY
+
+    def run(self, cell) -> None:
+        import release_skew_harnesses
+
+        factory = release_skew_harnesses.REGISTRY.get(cell.journey)
+        if factory is None:
+            raise ReceiptError(
+                f"no skew harness is registered for journey "
+                f"{cell.journey!r}"
+            )
+        factory().run(cell)
+
+
+def build_production_skew(frozen: "FrozenPlan", *, state, measurement):
+    """The skew provider ordinary release-run composes in a fresh process:
+    measured support through the configured measurement authority,
+    authoritative published versions from repository state, and the
+    checked-in child-harness router. A plan touching no runtime edge needs
+    no matrix; a touched edge with missing state or measurement refuses."""
+    plan = frozen.plan
+    if not plan.runtime_contract_edges:
+        return NoSkew()
+    if measurement is None:
+        raise ReceiptError(
+            "the plan touches runtime-contract edges but no measurement "
+            "authority is configured; skew never runs on unmeasured support"
+        )
+    if state is None:
+        raise ReceiptError(
+            "the plan touches runtime-contract edges but no repository state "
+            "is configured to supply authoritative published versions"
+        )
+    graph = frozen.graph
+    published: dict = {}
+    for edge in plan.runtime_contract_edges:
+        for name in (edge.a, edge.b):
+            if name not in published:
+                component = graph.components.get(name)
+                published[name] = (
+                    state.published_version(component)
+                    if component is not None else None
+                )
+    return MatrixSkewRunner(
+        harness=SkewHarnessRouter(),
+        support=measurement,
+        published_versions=published,
+        moving={n.component for n in plan.moving},
+    )
+
+
 # ── lane observers: one SHA-256 per published item ───────────────────
 
 
@@ -3975,6 +4034,15 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         help="component=<name>,ref=gh-artifact:<repo>:<run>:<artifact>,"
         "source=<lane source sha>,digest=sha256:<artifact zip digest>",
     )
+    matrix_parser = sub.add_parser(
+        "skew-matrix",
+        help="compute (and with --execute run) the frozen plan's "
+        "touched-edge skew matrix",
+    )
+    matrix_parser.add_argument("--plan-id", required=True)
+    matrix_parser.add_argument("--plan-artifact-id", required=True)
+    matrix_parser.add_argument("--manifest-id")
+    matrix_parser.add_argument("--execute", action="store_true")
     receipt_parser = sub.add_parser("release-receipt")
     receipt_parser.add_argument("--artifact-id", required=True)
     receipt_parser.add_argument("--plan-id", required=True)
@@ -4010,7 +4078,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             lanes=lanes,
             authority_trust=registration.trust_class,
         )
-        if args.verb in ("plan", "release-run"):
+        if args.verb in ("plan", "release-run", "skew-matrix"):
             declared_repos = {
                 pin.get("pin_repository")
                 for component in graph.components.values()
@@ -4111,6 +4179,91 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         )
         return 1 if problems else 0
 
+    if args.verb == "skew-matrix":
+        expected = providers.authority.expected_digest(args.plan_artifact_id)
+        if expected != args.plan_id:
+            print(
+                "BLOCKED: the authority's recorded digest for "
+                f"{args.plan_artifact_id} does not match --plan-id"
+            )
+            return 1
+        frozen = load_frozen_plan(
+            providers.store.get(args.plan_artifact_id), expected_id=args.plan_id
+        )
+        plan, frozen_graph = frozen.plan, frozen.graph
+        try:
+            candidate_ids = (
+                [args.manifest_id] if args.manifest_id else [
+                    a for a in providers.authority.recorded_ids()
+                    if a.startswith(f"staged-manifest:{frozen.frozen_id}:")
+                ]
+            )
+            if len(candidate_ids) != 1:
+                raise ReceiptError(
+                    f"{len(candidate_ids)} staged manifests are anchored for "
+                    "this frozen plan; pass the explicit --manifest-id"
+                )
+            manifest = load_staged_manifest(
+                providers.store.get(candidate_ids[0]),
+                expected_digest=providers.authority.expected_digest(
+                    candidate_ids[0]
+                ),
+            )
+            validate_staged_manifest(
+                manifest, plan=plan, graph=frozen_graph,
+                frozen_plan_id=frozen.frozen_id, source_sha=frozen.source_sha,
+            )
+            staged = {
+                name: ReceiptEntry(
+                    version=e["version"], digest=e["digest"], phase="staged",
+                    pointer_state=e.get("pointer_state"),
+                    digest_set=e.get("digest_set"),
+                    lane_ref=e.get("lane_ref"),
+                )
+                for name, e in manifest["entries"].items()
+            }
+            runner = build_production_skew(
+                frozen, state=state, measurement=providers.measurement
+            )
+            rows = []
+            for edge in plan.runtime_contract_edges:
+                if edge.declared_incomplete:
+                    raise ReceiptError(
+                        f"runtime-contract {edge.a}<->{edge.b} is "
+                        "declared-incomplete; the matrix never runs on "
+                        "unmeasured support"
+                    )
+                support = providers.measurement.resolve(
+                    edge.supported.get("record", {}), edge
+                )
+                cells = compute_skew_cells(
+                    edge,
+                    moving={n.component for n in plan.moving},
+                    staged=staged, support=support,
+                    published_versions={
+                        name: state.published_version(
+                            frozen_graph.components[name]
+                        ) if state is not None
+                        and name in frozen_graph.components else None
+                        for name in (edge.a, edge.b)
+                    },
+                )
+                for cell in cells:
+                    rows.append({
+                        "edge": f"{cell.edge_a}<->{cell.edge_b}",
+                        "journey": cell.journey,
+                        "direction": cell.direction,
+                        "a": {"kind": cell.a_kind, **cell.a},
+                        "b": {"kind": cell.b_kind, **cell.b},
+                    })
+                if args.execute:
+                    runner.execute(edge, staged)
+            print(json.dumps({"cells": rows}, indent=2, sort_keys=True))
+            return 0
+        except (ReceiptError, SkewUnavailable) as exc:
+            print(f"BLOCKED: {exc}")
+            return 1
+
     if args.verb == "release-run":
         if not args.plan_id or not args.plan_artifact_id:
             print(
@@ -4133,7 +4286,19 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         plan = frozen.plan
         frozen_graph = frozen.graph
         lanes = providers.lanes if providers.lanes is not None else NoLanes()
-        skew = providers.skew if providers.skew is not None else NoSkew()
+        # Ordinary production release-run composes the G5 matrix runner; a
+        # touched runtime edge with no registered harness or measured
+        # support REFUSES rather than silently selecting NoSkew.
+        if providers.skew is not None:
+            skew = providers.skew
+        else:
+            try:
+                skew = build_production_skew(
+                    frozen, state=state, measurement=providers.measurement
+                )
+            except ReceiptError as exc:
+                print(f"BLOCKED: {exc}")
+                return 1
         run_providers = Providers(
             store=providers.store,
             authority=providers.authority,

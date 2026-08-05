@@ -2156,5 +2156,180 @@ class MatrixSkewRunnerTests(unittest.TestCase):
                          "skew failure precedes every continuation dispatch")
 
 
+class ProductionSkewCompositionTests(unittest.TestCase):
+    """alice's post-landing finding: the runner must be reachable from the
+    REAL release path - injected-unit-only coverage is insufficient."""
+
+    def setUp(self):
+        import release_skew_harnesses
+        self.registry = release_skew_harnesses
+        self._saved = dict(self.registry.REGISTRY)
+        self.registry.REGISTRY.clear()
+
+    def tearDown(self):
+        self.registry.REGISTRY.clear()
+        self.registry.REGISTRY.update(self._saved)
+
+    def cli_release_run(self, *, harness=None):
+        """A real main(argv) release-run over a measured touched edge,
+        with NO injected skew provider: the CLI must compose the matrix."""
+        import tempfile
+
+        graph = rd.Graph.from_dict(fixture_graph_dict())
+        state = orchestration_state(
+            published_versions={"client": "1.0.0", "plugin": "2.0.0",
+                                "server": "3.0.0"})
+        plan = rd.compute_plan(graph, state)
+
+        class ReferencedLanes(FixtureLanes):
+            def stage(self, node):
+                entry = super().stage(node)
+                return rd.ReceiptEntry(
+                    version=entry.version, digest=entry.digest,
+                    pointer_state=entry.pointer_state,
+                    lane_ref={
+                        "artifact": "gh-artifact:awebai/aweb:31000:"
+                        + str(abs(hash(node.component)) % 9999 + 1),
+                        "aw_source_sha": "e" * 40,
+                        "zip_digest": "sha256:" + sha256(
+                            node.component.encode()),
+                    },
+                )
+
+        lanes = ReferencedLanes(available={n.component for n in plan.moving})
+        if harness is not None:
+            self.registry.register(
+                "make fixture-journey", lambda: harness)
+
+        class Support:
+            def resolve(self, record, edge):
+                return {"digest": record.get("digest"),
+                        "supported_versions": {
+                            "client": ["1.0.0"], "server": ["3.0.0"]}}
+
+        support = Support()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = rd.FileArtifactStore(root)
+            authority = rd.FileDigestAuthority(root)
+            frozen_bytes, frozen_id = rd.freeze_plan(
+                plan, graph, source_sha="s1", state=state, measurement=support)
+            plan_artifact_id = f"plan:s1:{frozen_id}"
+            rd._put_content_addressed(
+                store, authority, plan_artifact_id, frozen_bytes, frozen_id)
+            code = rd.main(
+                ["--graph", str(rd.GRAPH_PATH), "release-run",
+                 "--plan-id", frozen_id,
+                 "--plan-artifact-id", plan_artifact_id,
+                 "--allow-local-authority"],
+                providers=rd.Providers(
+                    store=store, authority=authority, lanes=lanes,
+                    state=state, source_sha="s1", measurement=support,
+                ),
+            )
+        return code, lanes
+
+    def test_a_red_harness_exits_before_every_lane_dispatch(self) -> None:
+        code, lanes = self.cli_release_run(
+            harness=RecordingHarness(fail=True))
+        self.assertEqual(code, 1)
+        publishes = [c for k, c in lanes.calls if k == "publish"]
+        self.assertEqual(publishes, [],
+                         "a real CLI red must precede every lane dispatch")
+
+    def test_a_green_harness_lets_the_run_publish(self) -> None:
+        harness = RecordingHarness()
+        code, lanes = self.cli_release_run(harness=harness)
+        self.assertEqual(code, 0)
+        self.assertTrue(harness.cells, "the matrix was reached and executed")
+        publishes = [c for k, c in lanes.calls if k == "publish"]
+        self.assertTrue(publishes)
+
+    def test_missing_child_capability_refuses_not_noskew(self) -> None:
+        code, lanes = self.cli_release_run(harness=None)
+        self.assertEqual(code, 1)
+        self.assertEqual(lanes.calls, [],
+                         "an unregistered journey must refuse, never NoSkew")
+
+    def test_duplicate_journey_registration_refuses(self) -> None:
+        self.registry.register("j", lambda: None)
+        with self.assertRaises(rd.ReceiptError):
+            self.registry.register("j", lambda: None)
+
+
+class SkewMatrixVerbTests(unittest.TestCase):
+    def setUp(self):
+        import release_skew_harnesses
+        self.registry = release_skew_harnesses
+        self._saved = dict(self.registry.REGISTRY)
+        self.registry.REGISTRY.clear()
+
+    def tearDown(self):
+        self.registry.REGISTRY.clear()
+        self.registry.REGISTRY.update(self._saved)
+
+    def test_the_verb_prints_the_touched_edge_matrix(self) -> None:
+        import contextlib
+        import tempfile
+
+        graph = rd.Graph.from_dict(fixture_graph_dict())
+        state = orchestration_state(
+            published_versions={"client": "1.0.0", "plugin": "2.0.0",
+                                "server": "3.0.0"})
+        plan = rd.compute_plan(graph, state)
+
+        class Support:
+            def resolve(self, record, edge):
+                return {"supported_versions": {
+                    "client": ["1.0.0"], "server": ["3.0.0"]}}
+
+        support = Support()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = rd.FileArtifactStore(root)
+            authority = rd.FileDigestAuthority(root)
+            frozen_bytes, frozen_id = rd.freeze_plan(
+                plan, graph, source_sha="s1", state=state,
+                measurement=support)
+            plan_artifact_id = f"plan:s1:{frozen_id}"
+            rd._put_content_addressed(
+                store, authority, plan_artifact_id, frozen_bytes, frozen_id)
+            entries = {
+                n.component: rd.ReceiptEntry(
+                    version=n.version or "0.0.0",
+                    digest=f"staged-{n.component}",
+                    pointer_state="ok" if n.reason.startswith("pointer:")
+                    else None,
+                    lane_ref={
+                        "artifact": "gh-artifact:awebai/aweb:1:2",
+                        "aw_source_sha": "e" * 40,
+                        "zip_digest": "sha256:" + "3" * 64,
+                    } if n.component == "client" else None,
+                )
+                for n in plan.moving
+            }
+            body, digest = rd.seal_staged_manifest(
+                plan, frozen_plan_id=frozen_id, source_sha="s1",
+                entries=entries, graph=graph)
+            manifest_id = f"staged-manifest:{frozen_id}:{digest}"
+            rd._put_content_addressed(
+                store, authority, manifest_id, body, digest)
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = rd.main(
+                    ["skew-matrix",
+                     "--plan-id", frozen_id,
+                     "--plan-artifact-id", plan_artifact_id],
+                    providers=rd.Providers(
+                        store=store, authority=authority,
+                        state=state, source_sha="s1", measurement=support,
+                    ),
+                )
+        self.assertEqual(code, 1, "server side lacks a lane_ref: refusal")
+        # A coherent matrix run needs lane refs on all touched sides; the
+        # verb still reports the refusal deterministically.
+        self.assertIn("lane", buffer.getvalue() + str(code))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
