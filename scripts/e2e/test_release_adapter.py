@@ -1162,6 +1162,65 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             )
         self.assertIn("transition", str(caught.exception))
 
+    def test_resume_refuses_exact_entry_with_wrong_manifest_identity(self) -> None:
+        """A transition whose ENTRY fields are exact but whose
+        staged-manifest identity is wrong must refuse: prefix filtering is
+        not semantic validation of the body."""
+        transport = FakeAnchorTransport()
+        store, authority, lane = self.compose(
+            transport, runs=FakeAwRuns(conclusion="failure"), remote={}
+        )
+        graph, plan, frozen = self.frozen_fixture(store, authority)
+        with self.assertRaises(rd.ReceiptError):
+            rd.run_plan(
+                plan, graph, lane,
+                skew=NoRuntimeSkew(), authority=authority, store=store,
+                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                providers=rd.Providers(store=store, authority=authority),
+            )
+        manifest_id = next(
+            i for i in authority.recorded_ids()
+            if i.startswith("staged-manifest:")
+        )
+        manifest = json.loads(store.get(manifest_id))
+        exact = dict(manifest["entries"]["aw"])
+        forged = json.dumps({
+            "frozen_plan_id": frozen.frozen_id,
+            "staged_manifest_id": "staged-manifest:FORGED:" + "0" * 64,
+            "sequence": 98,
+            "component": "aw",
+            "kind": "published",
+            "entry": {
+                "version": exact["version"],
+                "digest": exact["digest"],
+                "phase": "published",
+                "pointer_state": exact.get("pointer_state"),
+                "delivery_proof": None,
+                "lane_ref": exact.get("lane_ref"),
+                "digest_set": exact.get("digest_set"),
+            },
+        }, sort_keys=True).encode()
+        forged_digest = sha256(forged)
+        forged_id = (
+            f"transition:{frozen.frozen_id}:098:published:aw:{forged_digest}"
+        )
+        rd._put_content_addressed(store, authority, forged_id, forged, forged_digest)
+        remote = remote_state()
+        store2, authority2, lane2 = self.compose(
+            transport, runs=FakeAwRuns(), remote=remote
+        )
+        graph2, plan2, frozen2 = self.frozen_fixture(store2, authority2)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.resume_plan(
+                plan2, graph2,
+                lanes=lane2, skew=NoRuntimeSkew(),
+                store=store2, authority=authority2,
+                source_sha="s1", approvals={}, state=None, frozen=frozen2,
+                require_external_authority=True,
+                authority_trust="external-immutable",
+            )
+        self.assertIn("manifest", str(caught.exception))
+
     def test_resume_refuses_mismatched_remote_state(self) -> None:
         transport = FakeAnchorTransport()
         store, authority, lane = self.compose(
@@ -1190,6 +1249,32 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
                 require_external_authority=True,
                 authority_trust="external-immutable",
             )
+
+
+class MakeReleaseSurfaceTests(unittest.TestCase):
+    def test_release_run_threads_stage_artifact_to_the_cli(self) -> None:
+        """The repository's release target must pass every structured
+        --stage-artifact value through to the Python CLI; a dry run proves
+        the exact value reaches it."""
+        import subprocess as sp
+
+        value = ("component=aw,ref=gh-artifact:awebai/aw:1:2,"
+                 "source=" + "a" * 40 + ",digest=sha256:" + "b" * 64)
+        result = sp.run(
+            ["make", "-n", "release-run",
+             f"STAGE_ARTIFACT={value}",
+             "PLAN_ID=p", "PLAN_ARTIFACT_ID=pa"],
+            capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f'--stage-artifact "{value}"', result.stdout)
+
+    def test_duplicate_component_references_refuse(self) -> None:
+        good = ("component=aw,ref=gh-artifact:awebai/aw:1:2,"
+                "source=" + "a" * 40 + ",digest=sha256:" + "b" * 64)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.parse_stage_artifact_arguments([good, good])
+        self.assertIn("aw", str(caught.exception))
 
 
 if __name__ == "__main__":

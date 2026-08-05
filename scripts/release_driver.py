@@ -1492,6 +1492,18 @@ def expected_lane_payload_names(version: str) -> tuple[list[str], list[str]]:
     return dist, npm
 
 
+def parse_stage_artifact_arguments(values: list[str]) -> dict[str, LaneRef]:
+    refs: dict[str, LaneRef] = {}
+    for value in values:
+        component, ref = parse_stage_artifact_argument(value)
+        if component in refs:
+            raise ReceiptError(
+                f"--stage-artifact names component {component} more than once"
+            )
+        refs[component] = ref
+    return refs
+
+
 def validate_lane_staged_artifact(
     zip_bytes: bytes, *, expected_source_sha: str, expected_version: str
 ) -> dict:
@@ -2569,6 +2581,23 @@ def resume_plan(
                 )
             record = json.loads(body)
             if record["kind"] == "published":
+                if record.get("frozen_plan_id") != manifest["frozen_plan_id"]:
+                    raise ReceiptError(
+                        f"transition {artifact_id} binds frozen plan "
+                        f"{record.get('frozen_plan_id')!r}, not the loaded "
+                        "manifest's plan"
+                    )
+                if record.get("staged_manifest_id") != manifest["_artifact_id"]:
+                    raise ReceiptError(
+                        f"transition {artifact_id} binds staged manifest "
+                        f"{record.get('staged_manifest_id')!r}, not the loaded "
+                        f"manifest {manifest['_artifact_id']!r}"
+                    )
+                if record.get("entry", {}).get("phase") != "published":
+                    raise ReceiptError(
+                        f"transition {artifact_id} claims publication with "
+                        f"entry phase {record.get('entry', {}).get('phase')!r}"
+                    )
                 component = record["component"]
                 manifest_entry = manifest["entries"].get(component)
                 if manifest_entry is None:
@@ -3191,9 +3220,8 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             store = registration.store_factory()
         lanes = None
         if registration.kind == "github-workflow-artifacts":
-            refs = dict(
-                parse_stage_artifact_argument(item)
-                for item in getattr(args, "stage_artifact", [])
+            refs = parse_stage_artifact_arguments(
+                getattr(args, "stage_artifact", [])
             )
             if refs:
                 lanes = AwWorkflowLane(

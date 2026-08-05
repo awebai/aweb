@@ -609,8 +609,10 @@ release-plan:
 
 # Executes an anchored frozen plan over available publish lanes; fails closed
 # naming every gap. PLAN_ID and PLAN_ARTIFACT_ID are required.
+# STAGE_ARTIFACT (repeatable, space-separated) binds lane stage references:
+#   STAGE_ARTIFACT='component=aw,ref=gh-artifact:awebai/aw:<run>:<artifact>,source=<lane sha>,digest=sha256:<zip digest>'
 release-run:
-	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(if $(MANIFEST_ID),--manifest-id "$(MANIFEST_ID)") $(if $(ALLOW_LOCAL_AUTHORITY),--allow-local-authority) $(foreach a,$(APPROVAL),--approval "$(a)")
+	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(if $(MANIFEST_ID),--manifest-id "$(MANIFEST_ID)") $(if $(ALLOW_LOCAL_AUTHORITY),--allow-local-authority) $(foreach a,$(APPROVAL),--approval "$(a)") $(foreach s,$(STAGE_ARTIFACT),--stage-artifact "$(s)")
 
 # Verifies an anchored receipt against its anchored frozen plan. ARTIFACT_ID,
 # PLAN_ID and PLAN_ARTIFACT_ID are required; digests resolve through the
