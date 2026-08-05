@@ -270,6 +270,9 @@ class FakeResolver:
             source = {
                 "kind": "published",
                 "registry": "pypi:aweb",
+                "metadata_url": skew.PYPI_METADATA_URL.format(version=version),
+                "download_url": (
+                    "https://files.pythonhosted.org/packages/" + filename),
                 "digest_set": digest_set,
                 "canonical_set_digest": rd.canonical_digest_of_set(digest_set),
             }
@@ -472,6 +475,54 @@ class PublishedAuthorityContractTests(unittest.TestCase):
             self.resolve(self.metadata(extra=extra))
 
 
+class PublishedTypeBindingTests(unittest.TestCase):
+    """Reviewer counterexample: swapping ONLY the two packagetype values must
+    not let the sdist be selected and fetched as the wheel."""
+
+    def metadata(self, *, swap_types=False, version="1.2.2",
+                 wheel=b"w", sdist=b"s"):
+        wname = f"aweb-{version}-py3-none-any.whl"
+        sname = f"aweb-{version}.tar.gz"
+        wtype, stype = ("sdist", "bdist_wheel") if swap_types else (
+            "bdist_wheel", "sdist")
+        urls = [
+            {"filename": wname, "packagetype": wtype,
+             "url": f"https://files.pythonhosted.org/packages/{wname}",
+             "digests": {"sha256": hashlib.sha256(wheel).hexdigest()},
+             "yanked": False},
+            {"filename": sname, "packagetype": stype,
+             "url": f"https://files.pythonhosted.org/packages/{sname}",
+             "digests": {"sha256": hashlib.sha256(sdist).hexdigest()},
+             "yanked": False},
+        ]
+        return json.dumps({"info": {"version": version}, "urls": urls}).encode()
+
+    def resolve(self, metadata):
+        fetched = []
+
+        def fetch(url):
+            # Serve the CORRECT bytes for each URL, so a digest mismatch can
+            # never be what catches the swap: only binding filename to package
+            # type can.
+            fetched.append(url)
+            if url.endswith("/json"):
+                return metadata
+            return b"s" if url.endswith(".tar.gz") else b"w"
+        identity = skew.WheelResolver(pypi_fetch=fetch).resolve(
+            "published-latest",
+            {"component": "server", "version": "1.2.2"}, "pypi:aweb")
+        return identity, fetched
+
+    def test_correct_types_select_the_wheel(self):
+        identity, fetched = self.resolve(self.metadata())
+        self.assertTrue(identity.filename.endswith(".whl"))
+        self.assertTrue(fetched[-1].endswith(".whl"))
+
+    def test_swapped_packagetypes_refuse(self):
+        with self.assertRaises(rd.ReceiptError):
+            self.resolve(self.metadata(swap_types=True))
+
+
 class AggregatePublishedIdentityTests(unittest.TestCase):
     """aggregate_support must exact-revalidate the complete published actor
     identity - reviewer tampering counterexamples, each with a recomputed
@@ -524,6 +575,35 @@ class AggregatePublishedIdentityTests(unittest.TestCase):
             report["published"]["source"]["digest_set"] = {"x": "0" * 64}
         with self.assertRaises(rd.ReceiptError):
             skew.aggregate_support(self.measured(tamper))
+
+    def test_coherent_multifield_tamper_still_refuses(self):
+        """Reviewer's coherent tamper: change the published wheel sha AND its
+        digest-set entry, recompute the canonical scalar (and the report id),
+        so nothing is internally inconsistent - it must still refuse because
+        the frozen published VERSION already has a different exact identity."""
+        def tamper(report):
+            published = report["published"]
+            zeros = "0" * 64
+            published["sha256"] = zeros
+            published["source"]["digest_set"][published["filename"]] = zeros
+            published["source"]["canonical_set_digest"] = (
+                rd.canonical_digest_of_set(published["source"]["digest_set"]))
+        with self.assertRaises(rd.ReceiptError):
+            skew.aggregate_support(self.measured(tamper))
+
+    def test_measurement_binds_published_identities(self):
+        measurement = skew.aggregate_support(self.measured())
+        self.assertIn("published_identities", measurement)
+        identities = measurement["published_identities"]
+        self.assertEqual(
+            [entry["version"] for entry in identities],
+            sorted(entry["version"] for entry in identities),
+            "published identities are canonically ordered")
+        preimage = {k: v for k, v in measurement.items()
+                    if k != "measurement_id"}
+        self.assertEqual(measurement["measurement_id"],
+                         rd.canonical_json_digest(preimage),
+                         "measurement_id binds the published identity bytes")
 
     def test_canonical_scalar_disagreeing_with_set_refuses(self):
         def tamper(report):
