@@ -97,8 +97,11 @@ curl -s http://127.0.0.1:18765/v1/blueprints | python3 -m json.tool   # after se
 
 Postgres data lives on tmpfs and the stack defines no named volumes, so
 `down -v` (what `e2e-library-stack-down` and the `all` trap run) removes every
-container and all state. The next `up` is a clean slate, which is why the
-`library` database is (re)created by `scripts/e2e/initdb/` on every boot.
+container and all state. Teardown also queries Docker for container, network,
+and volume labels belonging to the exact Compose project and fails if residue
+remains; a successful test cannot hide a cleanup failure. The next `up` is a
+clean slate, which is why the `library` database is (re)created by
+`scripts/e2e/initdb/` on every boot.
 
 ## How the seed authenticates
 
@@ -113,8 +116,10 @@ origin the seed posts to; if you change the library port, both move together.
 ## CLI real-stack e2e suite (`AW_E2E`)
 
 On top of the stack above, the CLI ships a Go e2e suite that drives the
-**actually-built `aw` binary** against the live services over `os/exec` — no
-`httptest` servers, no injected mocks. It lives in `cli/go/e2e/` and is the
+selected exact `aw` binary against the live services over `os/exec` — no
+`httptest` servers, no injected mocks. The ordinary target builds that binary
+from the checkout; the release-skew child supplies an already-staged or
+published binary through `AW_BIN`. It lives in `cli/go/e2e/` and is the
 regression net for the real signed-request and team-certificate paths.
 
 One command brings up the stack, builds `aw`, runs the suite, and tears down:
@@ -162,6 +167,57 @@ only* by writing the served manifest with its origin rewritten to the stack URL.
 When that bug is fixed (Library serves its own public origin), the fixture is
 deleted and the suite installs the manifest the real way.
 
+### CLI/server release-skew child
+
+`scripts/release_skew_cli_server.py` registers this journey as the
+`make cli-e2e` runtime-contract child. Candidate sides are downloaded from the
+exact `LaneRef` and validated against the GitHub Actions outer-ZIP digest and
+staged digest set. Published sides bind the complete, nonempty registry file
+set and its canonical digest before selecting the runtime payload. GitHub's
+exact seven-asset set must equal the complete `checksums.txt`; PyPI's exact
+wheel-plus-sdist set must carry the requested `info.version`, safe matching
+URLs, and file SHA-256 values. The selected published `aw` also has its real
+`aw version` output and Go main-module version checked and recorded; only the
+known 1.34.2 artifact may carry `v1.34.2+dirty`.
+`make cli-server-skew-cell` requires both the resolved `AW_BIN` and server
+wheel and refuses when either is absent; there is no varied-side source-build
+fallback. It runs only the distinct workspace/agent-ID presence-and-lock
+journey. For `a-to-b`, CLI connect/heartbeat/lock mutations are checked in raw
+authenticated server state: the lock holder must be the roster agent ID and not
+the workspace ID. For `b-to-a`, the selected CLI must decode the server status
+and roster response into distinct IDs, an attributed lock, and active presence.
+Neither release artifact is rebuilt. Every invocation ignores ambient
+`KEEP_UP`, project, port, and public-origin overrides; it derives a fresh
+collision-resistant project from the full canonical cell identity plus a run
+token and allocates four loopback ports. Before seeding or running either
+direction, the controlled stack executes `importlib.metadata.version("aweb")`
+inside the exact aweb container and hashes its retained wheel. It installs and
+asserts the exact `mcp` version from `server/uv.lock`, records the canonical
+full installed-distribution inventory and digest, and requires the published
+positive and negative controls to have identical dependency posture except for
+the server distribution. The cell refuses unless all runtime values match the
+resolved artifacts and cell identity, then records those values with the exact
+project, the four distinct allocated host ports (aweb, awid, Library, and
+postgres), and full container and image IDs. The project prefix must equal the
+full-cell identity digest prefix. Green evidence is written only after
+exact-project stack cleanup, shell context cleanup, and the outer Python
+artifact/proof temporary-directory cleanup all succeed; the
+public `/health` contract is unchanged.
+
+`make test-release-skew-cli-server` is the focused, non-Docker contract suite.
+Once exact candidate LaneRefs exist, `make measure-release-skew-cli-server`
+runs the known-red server 1.26.31 control and the runner-defined supported
+matrix and writes a digest-bearing JSON support document. Server 1.26.31 is
+negative-only: it filters lock-holder agent IDs as workspace IDs. Server
+1.26.35 is the first published fix and the initial measured floor. Published aw
+1.34.2 is measured only as installed-fleet compatibility and is explicitly
+recorded as rejected dirty provenance; its independently checked public bytes
+cannot be candidate or release-provenance evidence. That document does
+not become release authority merely by existing locally: it must later be
+independently anchored as a workflow artifact, reviewed, and referenced by the
+`aw`↔`server` edge in `release/components.toml`. The measurement target does
+not dispatch that anchor or any release workflow.
+
 To iterate against an already-running stack without the up/down cycle:
 
 ```bash
@@ -185,8 +241,9 @@ make -C cli e2e-down                      # remove all state
 | `LIBRARY_E2E_LIBRARY_CONTEXT` | `../library` | Library build context |
 | `LIBRARY_E2E_BLUEPRINT_SRC` | `../blueprints/team` | catalog blueprint source |
 | `LIBRARY_E2E_LIBRARY_URL` | `http://127.0.0.1:18765` | Library base URL the Go e2e suite drives |
-| `AW_BIN` | `aw` | aw binary used to drive the seed / Go suite |
+| `AW_BIN` | `aw` | exact aw binary used to drive the seed / Go suite; `cli/scripts/e2e.sh` builds only when it is unset |
 | `AW_E2E` | (unset) | set to `1` to run the `cli/go/e2e` suite (else it skips) |
+| `AW_E2E_TEST_RUN` | (unset) | optional exact Go `-run` selector used by the skew child |
 | `LIBRARY_E2E_PROJECT` | `aweb-e2e-stack-<hash>` | compose project name; defaults to a per-checkout value so concurrent runs don't collide |
 | `KEEP_UP` | (unset) | leave the stack up on success (`all` / `cli e2e`) |
 

@@ -1,7 +1,8 @@
 //go:build e2e
 
-// Real-stack end-to-end tests: they drive the actually-built `aw` binary via
+// Real-stack end-to-end tests: they drive the exact selected `aw` binary via
 // os/exec against the live awid + aweb + Library stack (docker-compose.e2e.yml).
+// The ordinary target builds it; release-skew cells supply staged/published bytes.
 // There are no httptest servers and no injected mocks here - that is the whole
 // point of this suite. It exercises the same code paths a human's `aw` runs.
 //
@@ -24,6 +25,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awconfig"
 )
 
 // envOr returns the environment value for key, or fallback if unset/empty.
@@ -41,8 +44,8 @@ func libraryURL() string { return envOr("LIBRARY_E2E_LIBRARY_URL", "http://127.0
 
 const seededBlueprintRef = "aweb.team"
 
-// awBinary resolves the built aw binary: AW_BIN if set, else cli/go/aw (one
-// directory up from this package).
+// awBinary resolves the selected aw binary: AW_BIN if set, else cli/go/aw
+// (one directory up from this package).
 func awBinary(t *testing.T) string {
 	t.Helper()
 	if bin := strings.TrimSpace(os.Getenv("AW_BIN")); bin != "" {
@@ -67,6 +70,22 @@ func requireE2E(t *testing.T) {
 	t.Helper()
 	if os.Getenv("AW_E2E") != "1" {
 		t.Skip("set AW_E2E=1 and bring up the stack (make -C cli e2e) to run real-stack e2e")
+	}
+}
+
+// requestedSkewDirection binds a release-driver cell to this invocation. The
+// CLI/server journey is request/response shaped, so both matrix directions run
+// the complete mutation + readback contract rather than silently deduplicating
+// one direction.
+func requestedSkewDirection(t *testing.T) string {
+	t.Helper()
+	direction := strings.TrimSpace(os.Getenv("AW_SKEW_DIRECTION"))
+	switch direction {
+	case "", "a-to-b", "b-to-a":
+		return direction
+	default:
+		t.Fatalf("unsupported AW_SKEW_DIRECTION %q", direction)
+		return ""
 	}
 }
 
@@ -248,6 +267,10 @@ func TestRealStackSeededBlueprintVisible(t *testing.T) {
 
 func TestRealStackWorkspacePresenceAndLocksUseDistinctIdentifiers(t *testing.T) {
 	requireE2E(t)
+	direction := requestedSkewDirection(t)
+	if direction != "" {
+		t.Logf("release skew cell direction: %s", direction)
+	}
 	tm := newThrowawayTeam(t)
 
 	if err := os.Remove(filepath.Join(tm.workspace, ".aw", "workspace.yaml")); err != nil {
@@ -259,59 +282,86 @@ func TestRealStackWorkspacePresenceAndLocksUseDistinctIdentifiers(t *testing.T) 
 	resourceKey := "e2e-status-" + randSuffix(t)
 	tm.run(t, "lock", "acquire", "--resource-key", resourceKey, "--ttl-seconds", "60")
 
-	status := tm.runJSON(t, "workspace", "status")
-	workspace, ok := status["workspace"].(map[string]any)
-	if !ok {
-		t.Fatalf("workspace status omitted its workspace object: %v", status)
-	}
-	workspaceID, _ := workspace["workspace_id"].(string)
-	agentID, _ := workspace["agent_id"].(string)
-	if workspaceID == "" || agentID == "" || workspaceID == agentID {
-		t.Fatalf("workspace and agent identifiers were not distinct: workspace=%v", workspace)
-	}
-	if got, _ := workspace["status"].(string); got != "active" {
-		t.Fatalf("workspace status = %q, want active: %v", got, workspace)
-	}
-	locks, _ := status["locks"].([]any)
-	if len(locks) != 1 {
-		t.Fatalf("workspace status locks = %v, want one lock", locks)
-	}
-	lock, ok := locks[0].(map[string]any)
-	if !ok || lock["resource_key"] != resourceKey {
-		t.Fatalf("workspace status lock = %v, want %q", locks[0], resourceKey)
-	}
-
-	body, stderr, err := tm.idRequest("GET", awebURL()+"/v1/status?workspace_id="+workspaceID)
-	if err != nil {
-		t.Fatalf("GET /v1/status failed: %v\nstdout:\n%s\nstderr:\n%s", err, body, stderr)
-	}
-	var serverStatus map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &serverStatus); err != nil {
-		t.Fatalf("GET /v1/status did not return an object: %v\noutput:\n%s", err, body)
-	}
-	serverLocks, _ := serverStatus["locks"].([]any)
-	if len(serverLocks) != 1 {
-		t.Fatalf("server status locks = %v, want one lock", serverLocks)
-	}
-	serverLock, ok := serverLocks[0].(map[string]any)
-	if !ok || serverLock["holder_agent_id"] != agentID {
-		t.Fatalf("server status lock = %v, want holder agent %s", serverLocks[0], agentID)
+	if direction == "" || direction == "b-to-a" {
+		// Server -> CLI: the selected CLI must decode the server response into
+		// distinct identities, attributed locks, and active presence.
+		status := tm.runJSON(t, "workspace", "status")
+		workspace, ok := status["workspace"].(map[string]any)
+		if !ok {
+			t.Fatalf("workspace status omitted its workspace object: %v", status)
+		}
+		workspaceID, _ := workspace["workspace_id"].(string)
+		agentID, _ := workspace["agent_id"].(string)
+		if workspaceID == "" || agentID == "" || workspaceID == agentID {
+			t.Fatalf("workspace and agent identifiers were not distinct: workspace=%v", workspace)
+		}
+		if got, _ := workspace["status"].(string); got != "active" {
+			t.Fatalf("workspace status = %q, want active: %v", got, workspace)
+		}
+		locks, _ := status["locks"].([]any)
+		if len(locks) != 1 {
+			t.Fatalf("workspace status locks = %v, want one lock", locks)
+		}
+		lock, ok := locks[0].(map[string]any)
+		if !ok || lock["resource_key"] != resourceKey {
+			t.Fatalf("workspace status lock = %v, want %q", locks[0], resourceKey)
+		}
 	}
 
-	body, stderr, err = tm.idRequest("GET", awebURL()+"/v1/agents")
-	if err != nil {
-		t.Fatalf("GET /v1/agents failed: %v\nstdout:\n%s\nstderr:\n%s", err, body, stderr)
-	}
-	var agents map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &agents); err != nil {
-		t.Fatalf("GET /v1/agents did not return an object: %v\noutput:\n%s", err, body)
-	}
-	listed, _ := agents["agents"].([]any)
-	if len(listed) != 1 {
-		t.Fatalf("agent roster = %v, want one agent", listed)
-	}
-	listedAgent, ok := listed[0].(map[string]any)
-	if !ok || listedAgent["online"] != true {
-		t.Fatalf("agent roster did not report the connected workspace online: %v", listed[0])
+	if direction == "" || direction == "a-to-b" {
+		// CLI -> server: read the workspace identity from the local binding,
+		// then inspect raw authenticated server state. This proves the selected
+		// CLI's mutation reached the distinct agent principal rather than the
+		// workspace UUID that server 1.26.31 incorrectly filtered against.
+		binding, _, _, err := awconfig.LoadWorkspaceAndTeamState(tm.workspace)
+		if err != nil {
+			t.Fatalf("load connected workspace binding: %v", err)
+		}
+		membership := binding.Membership(tm.teamID)
+		if membership == nil || membership.WorkspaceID == "" {
+			t.Fatalf("connected workspace omitted %s membership: %v", tm.teamID, binding)
+		}
+		workspaceID := membership.WorkspaceID
+
+		body, stderr, err := tm.idRequest("GET", awebURL()+"/v1/status?workspace_id="+workspaceID)
+		if err != nil {
+			t.Fatalf("GET /v1/status failed: %v\nstdout:\n%s\nstderr:\n%s", err, body, stderr)
+		}
+		var serverStatus map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &serverStatus); err != nil {
+			t.Fatalf("GET /v1/status did not return an object: %v\noutput:\n%s", err, body)
+		}
+		serverLocks, _ := serverStatus["locks"].([]any)
+		if len(serverLocks) != 1 {
+			t.Fatalf("server status locks = %v, want one lock", serverLocks)
+		}
+		serverLock, ok := serverLocks[0].(map[string]any)
+		if !ok || serverLock["resource_key"] != resourceKey {
+			t.Fatalf("server status lock = %v, want %q", serverLocks[0], resourceKey)
+		}
+		holderAgentID, _ := serverLock["holder_agent_id"].(string)
+		if holderAgentID == "" || holderAgentID == workspaceID {
+			t.Fatalf("server lock holder %q is not distinct from workspace %q", holderAgentID, workspaceID)
+		}
+
+		body, stderr, err = tm.idRequest("GET", awebURL()+"/v1/agents")
+		if err != nil {
+			t.Fatalf("GET /v1/agents failed: %v\nstdout:\n%s\nstderr:\n%s", err, body, stderr)
+		}
+		var agents map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &agents); err != nil {
+			t.Fatalf("GET /v1/agents did not return an object: %v\noutput:\n%s", err, body)
+		}
+		listed, _ := agents["agents"].([]any)
+		if len(listed) != 1 {
+			t.Fatalf("agent roster = %v, want one agent", listed)
+		}
+		listedAgent, ok := listed[0].(map[string]any)
+		if !ok || listedAgent["online"] != true {
+			t.Fatalf("agent roster did not report the connected workspace online: %v", listed[0])
+		}
+		if listedAgent["agent_id"] != holderAgentID {
+			t.Fatalf("server lock holder %q != roster agent %v", holderAgentID, listedAgent["agent_id"])
+		}
 	}
 }

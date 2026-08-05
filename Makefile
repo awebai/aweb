@@ -12,7 +12,7 @@
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-plan release-run release-receipt test-release-driver test-release-channel-pi-skew test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	release-plan release-run release-receipt test-release-driver test-release-channel-pi-skew test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	release-all-check \
 	publish-skills \
 	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
@@ -120,7 +120,7 @@ build:
 # check-cli-go-tidy is here rather than behind test-cli by a deliberate reversal: it was placed
 # after it to inherit a warm module cache, and moving it forward reattributes that fetch rather
 # than adding one - about a second for 85MB when cold.
-test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-release-driver test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-release-driver test-release-skew-cli-server test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 # Editable AWID metadata is repeated in both committed Python locks. Check both
 # without repair, then prove a missing dependent-lock dependency is rejected.
@@ -620,13 +620,40 @@ release-run:
 release-receipt:
 	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") release-receipt --artifact-id "$(ARTIFACT_ID)" --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)"
 
-test-release-driver: test-release-channel-pi-skew
+test-release-driver: test-release-channel-pi-skew test-release-skew-cli-server
 	python3 scripts/e2e/test_release_driver.py
 	python3 scripts/e2e/test_release_driver_cli.py
 	python3 scripts/e2e/test_release_adapter.py
 
 test-release-channel-pi-skew:
 	python3 scripts/e2e/test_release_channel_pi_skew.py
+
+# G5 CLI/server child: exact artifact resolution, registration, evidence, and
+# shell parameterization. This focused target never starts Docker or dispatches
+# a workflow.
+test-release-skew-cli-server:
+	python3 scripts/e2e/test_release_skew_cli_server.py
+	python3 scripts/e2e/test_cli_server_skew_shell.py
+	cd cli/go && go test -tags e2e ./e2e -count=1
+
+# Execute one already-computed SkewCell. The child harness supplies AW_BIN,
+# AWEB_E2E_SERVER_WHEEL, and AW_SKEW_DIRECTION; this target does not select a
+# matrix cell and never builds either release artifact.
+cli-server-skew-cell:
+	bash scripts/e2e/run_cli_server_skew_cell.sh
+
+# Produce the canonical support document from an exact staged manifest. The
+# result still requires independent workflow-artifact anchoring before its
+# identity may be declared in release/components.toml.
+measure-release-skew-cli-server:
+	python3 scripts/release_skew_cli_server.py measure \
+		--staged-manifest "$(STAGED_MANIFEST)" \
+		$(foreach v,$(SUPPORTED_AW),--supported-aw "$(v)") \
+		$(foreach v,$(SUPPORTED_SERVER),--supported-server "$(v)") \
+		--published-aw-latest "$(PUBLISHED_AW_LATEST)" \
+		--published-server-latest "$(PUBLISHED_SERVER_LATEST)" \
+		--negative-server "$(or $(NEGATIVE_SERVER),1.26.31)" \
+		--output "$(OUTPUT)"
 
 test-npm-exact-publish:
 	bash scripts/e2e/test_npm_exact_publish.sh
