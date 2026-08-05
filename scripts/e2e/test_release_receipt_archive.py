@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -114,7 +115,7 @@ class FakeLocalTransport(FakeArchiveTransport):
 BODY = b"sealed-anchor-zip-bytes"
 REF = "gh-artifact:awebai/aweb:41:9001"
 SOURCE = {"repo": "awebai/aweb", "run_id": "41", "artifact_id": "9001",
-          "anchor": "anchor--aa--bb"}
+          "anchor": "anchor--" + "a" * 64 + "--" + "b" * 64}
 
 
 def fresh_env(body: bytes = BODY, ref: str = REF):
@@ -126,10 +127,14 @@ def fresh_env(body: bytes = BODY, ref: str = REF):
 
 
 def do_archive(store, authority, transport, *, logical_id="receipt:plan:1",
-               ref=REF, recorded_head=None, kind="anchor-artifact"):
+               ref=REF, recorded_head=None, kind="anchor-artifact",
+               source=None):
+    src = dict(source) if source is not None else dict(SOURCE)
+    if kind == "workflow-artifact":
+        src.pop("anchor", None)
     return archive.archive_sealed(
-        logical_id=logical_id, kind=kind, artifact_ref=ref,
-        source=dict(SOURCE), store=store, authority=authority,
+        logical_id=logical_id, kind=kind, source=src,
+        store=store, authority=authority,
         transport=transport, recorded_head=recorded_head,
     )
 
@@ -178,10 +183,12 @@ class ArchiveWriteTests(unittest.TestCase):
         transport.commits[stranger_sha] = {"parent": None, "files": {"x": b"y"}}
         transport.force_move_head(stranger_sha)
         body2 = b"second-sealed-body"
-        store.artifacts["ref2"] = body2
-        authority.digests["ref2"] = sha256(body2)
+        ref2 = "gh-artifact:awebai/aweb:41:9002"
+        source2 = dict(SOURCE, artifact_id="9002")
+        store.artifacts[ref2] = body2
+        authority.digests[ref2] = sha256(body2)
         with self.assertRaisesRegex(rd.ReceiptError, "descend"):
-            do_archive(store, authority, transport, ref="ref2",
+            do_archive(store, authority, transport, source=source2,
                        logical_id="receipt:plan:2",
                        recorded_head=entry["archive_commit"])
 
@@ -195,10 +202,12 @@ class ArchiveWriteTests(unittest.TestCase):
         store, authority, transport = fresh_env()
         entry = do_archive(store, authority, transport)
         body2 = b"different-bytes-same-logical-id"
-        store.artifacts["ref2"] = body2
-        authority.digests["ref2"] = sha256(body2)
+        ref2 = "gh-artifact:awebai/aweb:41:9002"
+        source2 = dict(SOURCE, artifact_id="9002")
+        store.artifacts[ref2] = body2
+        authority.digests[ref2] = sha256(body2)
         with self.assertRaisesRegex(rd.ReceiptError, "rebind"):
-            do_archive(store, authority, transport, ref="ref2",
+            do_archive(store, authority, transport, source=source2,
                        recorded_head=entry["archive_commit"])
 
     def test_duplicate_exact_archive_is_idempotent_not_ambiguous(self):
@@ -228,10 +237,12 @@ class ArchiveWriteTests(unittest.TestCase):
         entry = do_archive(store, authority, transport)
         transport.commits[transport.head]["files"]["receipts/deadbeef/body.zip"] = b"stray"
         body2 = b"second-sealed-body"
-        store.artifacts["ref2"] = body2
-        authority.digests["ref2"] = sha256(body2)
+        ref2 = "gh-artifact:awebai/aweb:41:9002"
+        source2 = dict(SOURCE, artifact_id="9002")
+        store.artifacts[ref2] = body2
+        authority.digests[ref2] = sha256(body2)
         with self.assertRaisesRegex(rd.ReceiptError, "unexpected|stray"):
-            do_archive(store, authority, transport, ref="ref2",
+            do_archive(store, authority, transport, source=source2,
                        logical_id="receipt:plan:2",
                        recorded_head=entry["archive_commit"])
 
@@ -550,9 +561,11 @@ class GitBranchArchiveTests(unittest.TestCase):
         self.assertTrue(len(first["archive_commit"]) == 40)
 
         body2 = b"second-sealed-body"
-        store.artifacts["ref2"] = body2
-        authority.digests["ref2"] = sha256(body2)
-        second = do_archive(store, authority, t1, ref="ref2",
+        ref2 = "gh-artifact:awebai/aweb:41:9002"
+        source2 = dict(SOURCE, artifact_id="9002")
+        store.artifacts[ref2] = body2
+        authority.digests[ref2] = sha256(body2)
+        second = do_archive(store, authority, t1, source=source2,
                             logical_id="receipt:plan:2",
                             recorded_head=first["archive_commit"])
         self.assertNotEqual(second["archive_commit"], first["archive_commit"])
@@ -563,12 +576,18 @@ class GitBranchArchiveTests(unittest.TestCase):
         self.assertEqual(again["archive_commit"], first["archive_commit"],
                          "idempotent re-archive finds the ORIGINAL commit")
 
+        # A local bare remote is a development transport by design, so
+        # production restore refuses it; mechanics are exercised with
+        # production=False against the exact recorded entry.
+        with self.assertRaisesRegex(rd.ReceiptError, "development"):
+            archive.restore_archived(
+                entry=first, transport=t2, production=True,
+                validate=lambda b, m: None,
+                index_authority=FakeIndexAuthority([first]),
+                logical_id=first["logical_id"])
         body = archive.restore_archived(
-            entry=None, transport=t2, production=True,
-            validate=lambda b, m: None,
-            index_authority=FakeIndexAuthority([first]),
-            logical_id=first["logical_id"],
-        )
+            entry=first, transport=t2, production=False,
+            validate=lambda b, m: None)
         self.assertEqual(body, BODY)
 
     def test_concurrent_append_refuses_compare_and_swap(self):
@@ -577,9 +596,11 @@ class GitBranchArchiveTests(unittest.TestCase):
         first = do_archive(store, authority, t1)
         t2 = self.transport()
         body2 = b"concurrent-two"
-        store.artifacts["ref2"] = body2
-        authority.digests["ref2"] = sha256(body2)
-        do_archive(store, authority, t2, ref="ref2",
+        ref2 = "gh-artifact:awebai/aweb:41:9002"
+        source2 = dict(SOURCE, artifact_id="9002")
+        store.artifacts[ref2] = body2
+        authority.digests[ref2] = sha256(body2)
+        do_archive(store, authority, t2, source=source2,
                    logical_id="receipt:plan:2",
                    recorded_head=first["archive_commit"])
         head = t1.fetch_head()
@@ -612,10 +633,12 @@ class GitBranchArchiveTests(unittest.TestCase):
                        capture_output=True, check=True)
         t2 = self.transport()
         body2 = b"post-force"
-        store.artifacts["ref2"] = body2
-        authority.digests["ref2"] = sha256(body2)
-        with self.assertRaisesRegex(rd.ReceiptError, "descend"):
-            do_archive(store, authority, t2, ref="ref2",
+        ref2 = "gh-artifact:awebai/aweb:41:9002"
+        source2 = dict(SOURCE, artifact_id="9002")
+        store.artifacts[ref2] = body2
+        authority.digests[ref2] = sha256(body2)
+        with self.assertRaisesRegex(rd.ReceiptError, "descend|does not exist"):
+            do_archive(store, authority, t2, source=source2,
                        logical_id="receipt:plan:2",
                        recorded_head=first["archive_commit"])
 
@@ -638,32 +661,25 @@ class OperatorCliTests(unittest.TestCase):
         subprocess.run(["git", "init", "--bare", self.remote],
                        capture_output=True, check=True)
 
-    def test_restore_requires_reviewed_index_file(self):
+    def test_cli_restore_refuses_nonproduction_remote(self):
         store, authority = FakeStore({REF: BODY}), FakeAuthority(
             {REF: sha256(BODY)})
         transport = archive.GitBranchArchive(
             remote=self.remote, branch="release-receipts")
         self.addCleanup(transport.close)
         entry = do_archive(store, authority, transport)
-        index = Path(self.tmp.name) / "index.json"
         out = Path(self.tmp.name) / "restored.zip"
-        with self.assertRaisesRegex(rd.ReceiptError, "does not exist"):
+        # The CLI restore builds a ReviewedMainIndexAuthority, which refuses a
+        # remote that is not the canonical production remote, so a local bare
+        # remote can never satisfy production restore.
+        with self.assertRaisesRegex(rd.ReceiptError, "canonical"):
             archive.main([
                 "release-restore", "--remote", self.remote,
                 "--branch", "release-receipts",
                 "--logical-id", entry["logical_id"],
-                "--index-file", str(index), "--out", str(out),
+                "--reviewed-commit", "a" * 40, "--out", str(out),
             ])
-        index.write_text(json.dumps({"entries": [entry]}))
-        code = archive.main([
-            "release-restore", "--remote", self.remote,
-            "--branch", "release-receipts",
-            "--logical-id", entry["logical_id"],
-            "--index-file", str(index), "--out", str(out),
-        ])
-        self.assertEqual(code, 0)
-        self.assertEqual(out.read_bytes(), BODY)
-
+        self.assertFalse(out.exists())
 
 class IndexEntryTests(unittest.TestCase):
     def test_entry_canonical_json_round_trips(self):
@@ -672,6 +688,145 @@ class IndexEntryTests(unittest.TestCase):
         encoded = archive.encode_index_entry(entry)
         self.assertEqual(json.loads(encoded), entry)
         self.assertEqual(encoded, archive.encode_index_entry(json.loads(encoded)))
+
+
+class NackCorrectionControlTests(unittest.TestCase):
+    """Controls for alice's five .9 blocking findings."""
+
+    # Finding 1: production authority is not caller-asserted.
+    def test_local_remote_is_development_class(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            import subprocess
+            remote = str(Path(tmp) / "r.git")
+            subprocess.run(["git", "init", "--bare", remote],
+                           capture_output=True, check=True)
+            transport = archive.GitBranchArchive(
+                remote=remote, branch="release-receipts")
+            self.addCleanup(transport.close)
+            self.assertEqual(transport.trust_class, "local-development")
+
+    def test_production_config_is_durable_class(self):
+        transport = archive.GitBranchArchive(
+            remote="https://github.com/awebai/aweb.git",
+            branch="release-receipts")
+        self.addCleanup(transport.close)
+        self.assertEqual(transport.trust_class, "durable-byte-store")
+
+    def test_reviewed_index_refuses_noncanonical_remote(self):
+        with self.assertRaisesRegex(rd.ReceiptError, "canonical"):
+            archive.ReviewedMainIndexAuthority(
+                remote="https://example.invalid/x.git",
+                reviewed_commit="a" * 40)
+
+    def test_reviewed_index_refuses_commit_not_in_main(self):
+        class FakeGit:
+            def ls_remote(self, ref):
+                return "b" * 40
+            def is_ancestor(self, ancestor, descendant):
+                return False
+            def file_at(self, commit, path):
+                return b"{}"
+        authority = archive.ReviewedMainIndexAuthority(
+            remote="https://github.com/awebai/aweb.git",
+            reviewed_commit="a" * 40, git=FakeGit())
+        with self.assertRaisesRegex(rd.ReceiptError, "not.*ancestor"):
+            authority.lookup("receipt:plan:1")
+
+    def test_reviewed_index_reads_entry_at_landed_commit(self):
+        _, entry, doc = self._reviewed_fixture()
+        got = doc.lookup(entry["logical_id"])
+        self.assertEqual(got, entry)
+
+    def _reviewed_fixture(self):
+        store, authority, transport = fresh_env()
+        entry = do_archive(store, authority, transport)
+        index = json.dumps({
+            "schema": archive.ReviewedMainIndexAuthority.INDEX_SCHEMA,
+            "entries": [entry],
+        }).encode()
+
+        class FakeGit:
+            def ls_remote(self, ref):
+                return "b" * 40
+            def is_ancestor(self, a, d):
+                return True
+            def file_at(self, commit, path):
+                return index if path == archive.ReviewedMainIndexAuthority.INDEX_PATH else None
+        doc = archive.ReviewedMainIndexAuthority(
+            remote="https://github.com/awebai/aweb.git",
+            reviewed_commit="a" * 40, git=FakeGit())
+        return transport, entry, doc
+
+    # Finding 2: production restore runs real semantic validators.
+    def test_semantic_validator_refuses_bad_anchor_bundle(self):
+        validate = archive.semantic_validator()
+        manifest = {"kind": "anchor-artifact", "logical_id": "x",
+                    "source_digest": "a" * 64}
+        with self.assertRaisesRegex(rd.ReceiptError, "release-anchor"):
+            validate(b"not a zip", manifest)
+
+    def test_semantic_validator_refuses_unknown_kind(self):
+        validate = archive.semantic_validator()
+        with self.assertRaisesRegex(rd.ReceiptError, "no semantic validator"):
+            validate(b"x", {"kind": "mystery"})
+
+    # Finding 3: existing-tree integrity.
+    def test_corrupted_existing_body_refuses_at_append(self):
+        store, authority, transport = fresh_env()
+        entry = do_archive(store, authority, transport)
+        path = f"receipts/{entry['body_sha256']}/body.zip"
+        transport.commits[entry["archive_commit"]]["files"][path] = b"corrupt"
+        body2 = b"second"
+        ref2 = "gh-artifact:awebai/aweb:41:9002"
+        source2 = dict(SOURCE, artifact_id="9002")
+        store.artifacts[ref2] = body2
+        authority.digests[ref2] = sha256(body2)
+        with self.assertRaisesRegex(rd.ReceiptError, "content-address"):
+            do_archive(store, authority, transport, source=source2,
+                       logical_id="receipt:plan:2",
+                       recorded_head=entry["archive_commit"])
+
+    # Finding 4: source identity cannot be rebound at copy time.
+    def test_independent_artifact_ref_that_disagrees_refuses(self):
+        store, authority, transport = fresh_env()
+        with self.assertRaisesRegex(rd.ReceiptError, "does not equal the reference"):
+            archive.archive_sealed(
+                logical_id="x", kind="anchor-artifact", source=dict(SOURCE),
+                artifact_ref="gh-artifact:awebai/aweb:41:0000",
+                store=store, authority=authority, transport=transport,
+                recorded_head=None)
+
+    def test_malformed_source_fields_refuse(self):
+        store, authority, transport = fresh_env()
+        for bad in ({"repo": "no-slash", "run_id": "1", "artifact_id": "2"},
+                    dict(SOURCE, run_id="notnumeric"),
+                    dict(SOURCE, anchor="anchor--short--short")):
+            with self.assertRaises(rd.ReceiptError):
+                do_archive(store, authority, transport,
+                           kind="anchor-artifact" if "anchor" in bad else "workflow-artifact",
+                           source=bad, logical_id="x")
+
+    # Finding 5: git/CLI fail-closed details.
+    def test_branch_grammar_and_leading_dash_remote_refuse(self):
+        with self.assertRaisesRegex(rd.ReceiptError, "strict ref"):
+            archive.GitBranchArchive(remote="https://x/y.git",
+                                     branch="bad branch")
+        with self.assertRaisesRegex(rd.ReceiptError, "begin with"):
+            archive.GitBranchArchive(remote="--upload-pack=evil",
+                                     branch="release-receipts")
+
+    def test_cli_output_labels_exact_written_bytes(self):
+        # The archive CLI prints the digest of the bytes it wrote INCLUDING the
+        # trailing newline; the file digest and the printed digest agree.
+        store, authority, transport = fresh_env()
+        entry = do_archive(store, authority, transport)
+        encoded = (archive.encode_index_entry(entry) + "\n").encode()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "entry.json"
+            archive._atomic_write_bytes(out, encoded)
+            self.assertEqual(sha256(out.read_bytes()), sha256(encoded))
+            with self.assertRaisesRegex(rd.ReceiptError, "overwrite"):
+                archive._atomic_write_bytes(out, encoded)
 
 
 class GateTests(unittest.TestCase):

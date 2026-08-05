@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import json
 import re
 import shutil
@@ -65,6 +66,15 @@ KIND_SOURCE_FIELDS = {
 }
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _GIT_SHA = re.compile(r"[0-9a-f]{40}")
+_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+_NUMERIC_ID = re.compile(r"[0-9]+")
+_ANCHOR = re.compile(r"anchor--[0-9a-f]{64}--[0-9a-f]{64}")
+_BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./-]{0,62}")
+PRODUCTION_REMOTES = (
+    "https://github.com/awebai/aweb.git",
+    "git@github.com:awebai/aweb.git",
+)
+PRODUCTION_BRANCH = "release-receipts"
 
 
 def _sha256(data: bytes) -> str:
@@ -103,9 +113,29 @@ def _validate_source(source, kind: str) -> dict:
             f"archive source for kind {kind!r} must carry exactly the "
             f"fields {sorted(required)}"
         )
+    grammar = {
+        "repo": _REPO, "run_id": _NUMERIC_ID, "artifact_id": _NUMERIC_ID,
+        "anchor": _ANCHOR,
+    }
     for field in required:
-        _bounded_identity(source[field], f"source {field}")
+        value = _bounded_identity(source[field], f"source {field}")
+        pattern = grammar.get(field)
+        if pattern is not None and not pattern.fullmatch(value):
+            raise ReceiptError(
+                f"source {field} {value!r} does not match its required "
+                "format"
+            )
     return dict(source)
+
+
+def _fetch_ref_for_source(source: dict) -> str:
+    """The artifact reference is DERIVED from the recorded source identity,
+    never supplied independently, so the archive cannot fetch artifact A
+    while recording artifact B."""
+    return (
+        f"gh-artifact:{source['repo']}:{source['run_id']}:"
+        f"{source['artifact_id']}"
+    )
 
 
 def _validate_entry(entry) -> dict:
@@ -156,7 +186,21 @@ def _parse_manifest(manifest_bytes: bytes, digest: str) -> dict:
         raise ReceiptError(
             f"archive manifest for {digest} has an unsupported schema"
         )
-    _validate_source(manifest["source"], manifest["kind"])
+    _bounded_identity(manifest["logical_id"], "manifest logical_id")
+    _validate_source(manifest["source"], _bounded_identity(
+        manifest["kind"], "manifest kind"))
+    if not isinstance(manifest["source_digest"], str) or not _HEX64.fullmatch(
+        manifest["source_digest"]
+    ):
+        raise ReceiptError(
+            f"archive manifest for {digest} has a malformed source_digest"
+        )
+    if not isinstance(manifest["body_sha256"], str) or not _HEX64.fullmatch(
+        manifest["body_sha256"]
+    ):
+        raise ReceiptError(
+            f"archive manifest for {digest} has a malformed body_sha256"
+        )
     if manifest["body_sha256"] != digest:
         raise ReceiptError(
             f"archive manifest for {digest} conflicts with its own "
@@ -193,6 +237,13 @@ def _existing_manifests(
             "archive holds unexpected unpaired content: stray bodies "
             f"{sorted(stray_bodies)}, stray manifests {sorted(stray_manifests)}"
         )
+    for digest in bodies:
+        body = tree[f"receipts/{digest}/body.zip"]
+        if _sha256(body) != digest:
+            raise ReceiptError(
+                f"archived body under receipts/{digest} does not hash to its "
+                "content-address directory"
+            )
     by_logical: dict[str, str] = {}
     for digest, manifest in manifests.items():
         logical = manifest["logical_id"]
@@ -206,12 +257,21 @@ def _existing_manifests(
 
 
 def archive_sealed(
-    *, logical_id: str, kind: str, artifact_ref: str, source: dict,
+    *, logical_id: str, kind: str, source: dict,
     store, authority, transport, recorded_head: str | None,
+    artifact_ref: str | None = None,
     allowed_paths: tuple[str, ...] = (),
 ) -> dict:
     _bounded_identity(logical_id, "logical id")
     source = _validate_source(source, _bounded_identity(kind, "kind"))
+    derived_ref = _fetch_ref_for_source(source)
+    if artifact_ref is not None and artifact_ref != derived_ref:
+        raise ReceiptError(
+            f"artifact_ref {artifact_ref!r} does not equal the reference "
+            f"derived from the recorded source identity {derived_ref!r}; the "
+            "archive may not fetch one artifact while recording another"
+        )
+    artifact_ref = derived_ref
     expected = authority.expected_digest(artifact_ref)
     body = store.get(artifact_ref)
     body_sha = _sha256(body)
@@ -420,15 +480,148 @@ class IndexFileAuthority:
         return matches[0] if matches else None
 
 
+class ReviewedMainIndexAuthority:
+    """The production reviewed-index authority.
+
+    Trust does not come from a caller-supplied file: it comes from the index
+    at an EXACT reviewed commit that is proven to belong to the canonical
+    remote main ancestry. The authority fetches the canonical main tip from
+    the exact production remote, refuses a reviewed commit that main does not
+    contain, reads the committed index blob at that commit, and enforces the
+    index's own schema and canonical bytes before returning a record."""
+
+    INDEX_PATH = "release/receipt-index.json"
+    INDEX_SCHEMA = "aweb.release-archive-index.v1"
+
+    def __init__(self, *, remote: str, reviewed_commit: str,
+                 main_ref: str = "refs/heads/main", git=None):
+        if remote not in PRODUCTION_REMOTES:
+            raise ReceiptError(
+                f"reviewed-index remote {remote!r} is not the canonical "
+                "production remote"
+            )
+        if not _GIT_SHA.fullmatch(reviewed_commit or ""):
+            raise ReceiptError(
+                "reviewed-index commit must be an exact 40-hex id"
+            )
+        self._remote = remote
+        self._reviewed_commit = reviewed_commit
+        self._main_ref = main_ref
+        self._git = git or _GitReader(remote)
+
+    def _entries(self) -> list[dict]:
+        main_tip = self._git.ls_remote(self._main_ref)
+        if main_tip is None:
+            raise ReceiptError(
+                f"canonical main ref {self._main_ref} is absent on the "
+                "production remote"
+            )
+        if not self._git.is_ancestor(self._reviewed_commit, main_tip):
+            raise ReceiptError(
+                f"reviewed index commit {self._reviewed_commit} is not an "
+                "ancestor of canonical remote main; it is not reviewed-and-"
+                "landed history"
+            )
+        blob = self._git.file_at(self._reviewed_commit, self.INDEX_PATH)
+        if blob is None:
+            raise ReceiptError(
+                f"reviewed commit {self._reviewed_commit} carries no "
+                f"{self.INDEX_PATH}"
+            )
+        try:
+            document = json.loads(blob.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ReceiptError("reviewed index blob is malformed") from exc
+        if (
+            not isinstance(document, dict)
+            or document.get("schema") != self.INDEX_SCHEMA
+            or not isinstance(document.get("entries"), list)
+        ):
+            raise ReceiptError("reviewed index has the wrong top-level schema")
+        return document["entries"]
+
+    def lookup(self, logical_id: str) -> dict | None:
+        matches = [
+            e for e in self._entries()
+            if isinstance(e, dict) and e.get("logical_id") == logical_id
+        ]
+        if len(matches) > 1:
+            raise ReceiptError(
+                f"reviewed index records logical id {logical_id!r} more than "
+                "once; refusing ambiguity"
+            )
+        return matches[0] if matches else None
+
+
+class _GitReader:
+    """Minimal read-only git accessor for the reviewed-index authority,
+    isolated in a temporary bare clone with the sanitized environment. It
+    only fetches from and reads the exact production remote."""
+
+    def __init__(self, remote: str):
+        self._remote = remote
+        self._root = Path(tempfile.mkdtemp(prefix="aweb-receipt-index-"))
+        self._local = self._root / "reader.git"
+        self._run("init", "--bare", str(self._local), cwd=self._root,
+                  check=True)
+
+    def _run(self, *args, cwd=None, check=False):
+        result = subprocess.run(
+            ["git", *args], cwd=str(cwd or self._local),
+            capture_output=True, env=GitBranchArchive._sanitized_env())
+        if check and result.returncode != 0:
+            raise ReceiptError(
+                f"reviewed-index git {' '.join(map(str, args[:2]))} failed: "
+                + result.stderr.decode(errors="replace")[-500:])
+        return result
+
+    def ls_remote(self, ref: str) -> str | None:
+        out = self._run("ls-remote", self._remote, ref, check=True).stdout.decode()
+        return out.split()[0] if out.strip() else None
+
+    def _fetch(self, sha: str) -> None:
+        if not _GIT_SHA.fullmatch(sha):
+            raise ReceiptError(f"reviewed-index sha {sha!r} is not 40-hex")
+        if self._run("cat-file", "-e", f"{sha}^{{commit}}").returncode != 0:
+            self._run("fetch", self._remote, sha, check=True)
+
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        self._fetch(ancestor)
+        self._fetch(descendant)
+        return self._run(
+            "merge-base", "--is-ancestor", ancestor, descendant
+        ).returncode == 0
+
+    def file_at(self, commit: str, path: str) -> bytes | None:
+        self._fetch(commit)
+        result = self._run("cat-file", "blob", f"{commit}:{path}")
+        return result.stdout if result.returncode == 0 else None
+
+    def close(self) -> None:
+        shutil.rmtree(self._root, ignore_errors=True)
+
+
 class GitBranchArchive:
     """Append-only durable byte store on a dedicated git branch.
 
     All operations run inside an isolated temporary clone; the ambient
     repository and worktree are never touched. Ref updates are strict
     compare-and-swap (force-with-lease against the exact expected parent,
-    never force), so a concurrent or force-moved remote refuses."""
+    never force), so a concurrent or force-moved remote refuses.
 
-    trust_class = "durable-byte-store"
+    trust_class is durable-byte-store ONLY for the exact production
+    awebai/aweb + release-receipts configuration; every other remote/branch
+    (a local bare repo, a fork, a different branch) is development, so
+    production restore refuses it regardless of caller assertion."""
+
+    @property
+    def trust_class(self) -> str:
+        if (
+            self._remote in PRODUCTION_REMOTES
+            and self._branch == PRODUCTION_BRANCH
+        ):
+            return "durable-byte-store"
+        return "local-development"
 
     _ENV = {
         "GIT_AUTHOR_NAME": "aweb-release-archive",
@@ -440,20 +633,34 @@ class GitBranchArchive:
     }
 
     def __init__(self, *, remote: str, branch: str):
-        self._remote = remote
+        self._remote = _bounded_identity(remote, "archive remote")
         self._branch = _bounded_identity(branch, "archive branch")
+        if not _BRANCH.fullmatch(self._branch):
+            raise ReceiptError(
+                f"archive branch {self._branch!r} is not a strict ref name"
+            )
+        # A leading "-" would be read as an option by every git subcommand.
+        if self._remote.startswith("-"):
+            raise ReceiptError("archive remote may not begin with '-'")
         self._root = Path(tempfile.mkdtemp(prefix="aweb-receipt-archive-"))
         self._local = self._root / "local.git"
         self._git("init", "--bare", str(self._local), cwd=self._root)
 
-    def _git(self, *args, cwd=None, input_bytes=None) -> bytes:
+    @classmethod
+    def _sanitized_env(cls):
         import os
 
-        result = subprocess.run(
+        return {**os.environ, **cls._ENV}
+
+    def _git_raw(self, *args, cwd=None, input_bytes=None):
+        return subprocess.run(
             ["git", *args], cwd=str(cwd or self._local),
             input=input_bytes, capture_output=True,
-            env={**os.environ, **self._ENV},
+            env=self._sanitized_env(),
         )
+
+    def _git(self, *args, cwd=None, input_bytes=None) -> bytes:
+        result = self._git_raw(*args, cwd=cwd, input_bytes=input_bytes)
         if result.returncode != 0:
             raise ReceiptError(
                 f"archive git {' '.join(map(str, args[:3]))} failed: "
@@ -473,21 +680,14 @@ class GitBranchArchive:
         return sha
 
     def _ensure_object(self, sha: str) -> None:
-        probe = subprocess.run(
-            ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
-            cwd=str(self._local), capture_output=True,
-        )
-        if probe.returncode == 0:
+        if not _GIT_SHA.fullmatch(sha):
+            raise ReceiptError(f"archive commit {sha!r} is not a 40-hex id")
+        if self._git_raw("cat-file", "-e", f"{sha}^{{commit}}").returncode == 0:
             return
-        fetch = subprocess.run(
-            ["git", "fetch", self._remote,
-             f"+refs/heads/{self._branch}:refs/archive/head"],
-            cwd=str(self._local), capture_output=True,
-        )
-        probe = subprocess.run(
-            ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
-            cwd=str(self._local), capture_output=True,
-        )
+        fetch = self._git_raw(
+            "fetch", self._remote,
+            f"+refs/heads/{self._branch}:refs/archive/head")
+        probe = self._git_raw("cat-file", "-e", f"{sha}^{{commit}}")
         if probe.returncode != 0:
             detail = fetch.stderr.decode(errors="replace")[-300:]
             raise ReceiptError(
@@ -497,12 +697,24 @@ class GitBranchArchive:
 
     def read_tree(self, sha: str) -> dict[str, bytes]:
         self._ensure_object(sha)
-        listing = self._git("ls-tree", "-r", sha).decode()
+        listing = self._git("ls-tree", "-r", "-z", sha)
         tree: dict[str, bytes] = {}
-        for line in listing.splitlines():
-            meta, path = line.split("\t", 1)
-            blob = meta.split()[2]
-            tree[path] = self._git("cat-file", "blob", blob)
+        for record in listing.split(b"\x00"):
+            if not record:
+                continue
+            meta, _, path = record.partition(b"\t")
+            mode, obj_type, blob = meta.split()[:3]
+            if mode != b"100644" and mode != b"100755":
+                raise ReceiptError(
+                    f"archive tree entry {path!r} is not a regular file "
+                    f"(mode {mode.decode()}); refusing symlink/submodule"
+                )
+            if obj_type != b"blob":
+                raise ReceiptError(
+                    f"archive tree entry {path!r} is not a blob"
+                )
+            tree[path.decode("utf-8", "surrogateescape")] = self._git(
+                "cat-file", "blob", blob.decode())
         return tree
 
     def parent_of(self, sha: str) -> str | None:
@@ -511,12 +723,13 @@ class GitBranchArchive:
         return tokens[1].decode() if len(tokens) > 1 else None
 
     def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        if not _GIT_SHA.fullmatch(ancestor):
+            raise ReceiptError(f"ancestor {ancestor!r} is not a 40-hex id")
         self._ensure_object(descendant)
-        result = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
-            cwd=str(self._local), capture_output=True,
-        )
-        return result.returncode == 0
+        self._ensure_object(ancestor)
+        return self._git_raw(
+            "merge-base", "--is-ancestor", ancestor, descendant
+        ).returncode == 0
 
     def append(self, parent: str | None, files: dict[str, bytes],
                subject: str) -> str:
@@ -538,12 +751,9 @@ class GitBranchArchive:
         self._git("commit", "-m", subject, cwd=work)
         new_sha = self._git("rev-parse", "HEAD", cwd=work).decode().strip()
         lease = f"refs/heads/{self._branch}:{parent or ''}"
-        push = subprocess.run(
-            ["git", "push", "--force-with-lease=" + lease, self._remote,
-             f"HEAD:refs/heads/{self._branch}"],
-            cwd=str(work), capture_output=True,
-            env={**__import__("os").environ, **self._ENV},
-        )
+        push = self._git_raw(
+            "push", "--force-with-lease=" + lease, self._remote,
+            f"HEAD:refs/heads/{self._branch}", cwd=work)
         if push.returncode != 0:
             raise ReceiptError(
                 "archive append is not fast-forward from the fetched head: "
@@ -559,6 +769,92 @@ class GitBranchArchive:
             raise ReceiptError(
                 f"archive temporary root remains: {self._root}"
             )
+
+
+def semantic_validator(providers=None):
+    """Production semantic validator: parses the sealed body per kind and
+    re-runs the EXISTING release-driver loaders/validators, not a membership
+    check. A corrupted-but-hash-consistent bundle whose semantics are invalid
+    is refused here even though its digests recompute."""
+    import release_driver as rd
+
+    def validate(body: bytes, manifest: dict) -> None:
+        kind = manifest.get("kind")
+        if kind == "anchor-artifact":
+            # The anchor body is the exact release-anchor ZIP; its record.json
+            # binds a logical id and a body digest, and the archived manifest's
+            # source_digest is that verified anchor digest.
+            import io
+            import zipfile
+
+            try:
+                with zipfile.ZipFile(io.BytesIO(body)) as archive:
+                    record = json.loads(archive.read("record.json"))
+                    inner = archive.read("body")
+            except (zipfile.BadZipFile, KeyError, json.JSONDecodeError) as exc:
+                raise ReceiptError(
+                    "archived anchor body is not a valid release-anchor "
+                    "bundle"
+                ) from exc
+            if _sha256(inner) != record.get("digest"):
+                raise ReceiptError(
+                    "archived anchor inner body does not hash to its recorded "
+                    "digest"
+                )
+            if record.get("logical_id") != manifest.get("logical_id"):
+                raise ReceiptError(
+                    "archived anchor record logical id does not equal the "
+                    "manifest logical id"
+                )
+            if record.get("digest") != manifest.get("source_digest"):
+                raise ReceiptError(
+                    "archived anchor digest does not equal the manifest "
+                    "source_digest"
+                )
+        elif kind == "workflow-artifact":
+            # A workflow-artifact archives a sealed plan/receipt/manifest bundle
+            # ZIP; re-run the matching loader so a semantically corrupt bundle
+            # is refused after byte verification.
+            import io
+            import zipfile
+
+            try:
+                with zipfile.ZipFile(io.BytesIO(body)) as archive:
+                    names = set(archive.namelist())
+                    reader = {n: archive.read(n) for n in names}
+            except zipfile.BadZipFile as exc:
+                raise ReceiptError(
+                    "archived workflow-artifact body is not a valid ZIP"
+                ) from exc
+            if "receipt.json" in reader:
+                rd.load_sealed_receipt(
+                    reader["receipt.json"],
+                    expected_digest=_sha256(reader["receipt.json"]))
+            elif "plan.json" in reader:
+                plan_bytes = reader["plan.json"]
+                rd.load_frozen_plan(
+                    plan_bytes, expected_id=_sha256(plan_bytes))
+            elif "manifest.json" in reader:
+                rd.validate_staged_manifest(json.loads(reader["manifest.json"]))
+            else:
+                raise ReceiptError(
+                    "archived workflow-artifact bundle carries no recognized "
+                    "sealed document (receipt.json/plan.json/manifest.json)"
+                )
+        else:
+            raise ReceiptError(
+                f"no semantic validator is defined for archive kind {kind!r}"
+            )
+
+    return validate
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    if path.exists():
+        raise ReceiptError(f"refusing to overwrite existing output {path}")
+    tmp = path.with_suffix(path.suffix + ".part")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
 
 
 def main(argv=None) -> int:
@@ -583,14 +879,15 @@ def main(argv=None) -> int:
     rest.add_argument("--remote", required=True)
     rest.add_argument("--branch", required=True)
     rest.add_argument("--logical-id", required=True)
-    rest.add_argument("--index-file", required=True, type=Path,
-                      help="reviewed index from a reviewed main checkout")
+    rest.add_argument("--reviewed-commit", required=True,
+                      help="exact reviewed main commit carrying the index")
     rest.add_argument("--out", required=True, type=Path)
 
     args = parser.parse_args(argv)
     import release_driver as rd
 
     transport = GitBranchArchive(remote=args.remote, branch=args.branch)
+    reader = None
     try:
         if args.verb == "release-archive":
             source = {"repo": args.source_repo, "run_id": args.run_id,
@@ -598,8 +895,7 @@ def main(argv=None) -> int:
             if args.anchor is not None:
                 source["anchor"] = args.anchor
             entry = archive_sealed(
-                logical_id=args.logical_id, kind=args.kind,
-                artifact_ref=args.artifact_ref, source=source,
+                logical_id=args.logical_id, kind=args.kind, source=source,
                 store=rd.GithubArtifactStore(
                     repo=args.source_repo, workflow_path=args.workflow_path,
                 ),
@@ -608,25 +904,29 @@ def main(argv=None) -> int:
                 ),
                 transport=transport, recorded_head=args.recorded_head,
             )
-            encoded = encode_index_entry(entry)
-            args.entry_out.write_text(encoded + "\n")
-            print(f"{args.entry_out} sha256:{_sha256(encoded.encode())}")
+            # Label the digest of the EXACT bytes written (with the trailing
+            # newline), never a different encoding.
+            encoded = (encode_index_entry(entry) + "\n").encode()
+            _atomic_write_bytes(args.entry_out, encoded)
+            print(f"{args.entry_out} sha256:{_sha256(encoded)}")
             print("record this entry through the reviewed main-branch "
                   "index before any restore may call the copy trusted")
             return 0
+        authority = ReviewedMainIndexAuthority(
+            remote=args.remote, reviewed_commit=args.reviewed_commit)
+        reader = authority._git
         body = restore_archived(
             entry=None, transport=transport, production=True,
-            validate=lambda body, manifest: None if manifest["kind"]
-            in KIND_SOURCE_FIELDS else (_ for _ in ()).throw(
-                ReceiptError(f"unknown kind {manifest['kind']!r}")),
-            index_authority=IndexFileAuthority(args.index_file),
-            logical_id=args.logical_id,
+            validate=semantic_validator(),
+            index_authority=authority, logical_id=args.logical_id,
         )
-        args.out.write_bytes(body)
+        _atomic_write_bytes(args.out, body)
         print(f"{args.out} sha256:{_sha256(body)}")
         return 0
     finally:
         transport.close()
+        if reader is not None:
+            reader.close()
 
 
 if __name__ == "__main__":
