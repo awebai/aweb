@@ -2453,13 +2453,20 @@ def edge_identity(edge: "RuntimeContractEdge") -> str:
 
 @dataclass(frozen=True)
 class SkewCell:
+    # The canonical edge identity and its immutable structured preimage
+    # ride every cell unchanged, so a harness distinguishes edges sharing
+    # endpoints and journey and selects the DECLARED published artifact
+    # locators without guessing.
+    edge_id: str
     edge_a: str
     edge_b: str
     journey: str
-    direction: str  # a-to-b | b-to-a
+    artifacts: dict  # the edge's declared artifact locators, per side
+    declared_direction: str  # both | persisted-state-both | a-to-b | b-to-a
+    direction: str  # this cell's request direction: a-to-b | b-to-a
     a_kind: str  # candidate | published-latest | published-floor | published
     b_kind: str
-    a: dict  # {component, version, digest?, digest_set?}
+    a: dict  # {component, version, digest?, digest_set?, lane_ref?}
     b: dict
 
 
@@ -2582,7 +2589,10 @@ def compute_skew_cells(
     for a_kind, a_side, b_kind, b_side in pairs:
         for direction in directions:
             cells.append(SkewCell(
+                edge_id=edge_identity(edge),
                 edge_a=edge.a, edge_b=edge.b, journey=edge.journey,
+                artifacts=dict(edge.artifacts),
+                declared_direction=edge.direction,
                 direction=direction, a_kind=a_kind, b_kind=b_kind,
                 a=dict(a_side), b=dict(b_side),
             ))
@@ -4461,7 +4471,10 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 for cell in cells:
                     rows.append({
                         "edge": f"{cell.edge_a}<->{cell.edge_b}",
+                        "edge_id": cell.edge_id,
                         "journey": cell.journey,
+                        "artifacts": cell.artifacts,
+                        "declared_direction": cell.declared_direction,
                         "direction": cell.direction,
                         "a": {"kind": cell.a_kind, **cell.a},
                         "b": {"kind": cell.b_kind, **cell.b},

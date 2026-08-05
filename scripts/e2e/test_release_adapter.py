@@ -2330,6 +2330,10 @@ class SkewMatrixVerbTests(unittest.TestCase):
         self.assertTrue(matrix["cells"])
         for row in matrix["cells"]:
             self.assertEqual(row["edge"], "client<->server")
+            self.assertEqual(len(row["edge_id"]), 64)
+            self.assertEqual(row["artifacts"],
+                             {"a": "registry:client", "b": "registry:server"})
+            self.assertEqual(row["declared_direction"], "both")
             self.assertEqual(row["a"]["kind"], "candidate")
             self.assertEqual(
                 row["a"]["lane_ref"]["artifact"],
@@ -2649,6 +2653,75 @@ class EdgeIdentityTests(unittest.TestCase):
             record = {**measurement_record(), "digest": sha256(payload)}
             with self.assertRaises(rd.ReceiptError, msg=str(override)):
                 adapter.resolve(record, edge)
+
+
+class CellIdentityTests(unittest.TestCase):
+    """The canonical identity and immutable edge preimage reach every
+    cell, the harness, and the rendered matrix."""
+
+    def test_cells_carry_the_identity_and_preimage(self) -> None:
+        edge = skew_edge(direction="both")
+        staged = {"client": staged_entry("client", "1.2.0"),
+                  "server": staged_entry("server", "3.2.0")}
+        cells = rd.compute_skew_cells(
+            edge, moving={"client", "server"}, staged=staged,
+            support={"supported_versions": {"client": ["1.1.0"],
+                                            "server": ["3.1.0"]}},
+            published_versions={"client": "1.1.0", "server": "3.1.0"},
+        )
+        for cell in cells:
+            self.assertEqual(cell.edge_id, rd.edge_identity(edge))
+            self.assertEqual(cell.artifacts, edge.artifacts)
+            self.assertEqual(cell.declared_direction, "both")
+            self.assertIn(cell.direction, ("a-to-b", "b-to-a"))
+
+    def test_same_endpoints_and_journey_distinct_artifacts_direction(self) -> None:
+        data = fixture_graph_dict()
+        data["edge"] = [e for e in data["edge"]
+                        if e.get("type") != "runtime-contract"]
+        for artifacts, direction, artifact_id in (
+            ({"a": "pypi:server", "b": "pypi:server"}, "both",
+             "measurement:one"),
+            ({"a": "ghcr:server", "b": "ghcr:server"}, "a-to-b",
+             "measurement:two"),
+        ):
+            data["edge"].append({
+                "type": "runtime-contract",
+                "a": "server", "b": "server",
+                "journey": "make same-journey",
+                "artifacts": artifacts,
+                "direction": direction,
+                "supported": {
+                    "set": "measured:fixture-fleet",
+                    "record": {"authority": "workflow-artifacts",
+                               "artifact_id": artifact_id, "digest": "d"},
+                    "policy": "additive-only",
+                },
+            })
+        graph = rd.Graph.from_dict(data)  # both accepted
+        state = orchestration_state(
+            changed_components={"server": True},
+            versions={"server": "3.1.0"},
+            published_versions={"server": "3.0.0"},
+        )
+        plan = rd.compute_plan(graph, state)
+        edges = plan.runtime_contract_edges
+        self.assertEqual(len(edges), 2)
+        self.assertNotEqual(rd.edge_identity(edges[0]),
+                            rd.edge_identity(edges[1]))
+        staged = {"server": staged_entry("server", "3.1.0")}
+        support = {"supported_versions": {"server": ["3.0.0"]}}
+        for edge in edges:
+            cells = rd.compute_skew_cells(
+                edge, moving={"server"}, staged=staged, support=support,
+                published_versions={"server": "3.0.0"},
+            )
+            for cell in cells:
+                self.assertEqual(cell.edge_id, rd.edge_identity(edge))
+                self.assertEqual(cell.artifacts, edge.artifacts,
+                                 "the harness selects the declared "
+                                 "published artifact without guessing")
+                self.assertEqual(cell.declared_direction, edge.direction)
 
 
 if __name__ == "__main__":
