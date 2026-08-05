@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import subprocess
 import sys
@@ -1022,6 +1023,242 @@ class FileDigestAuthority:
 
     def recorded_ids(self) -> list[str]:
         return list(self._records)
+
+
+# ── external workflow-artifact store and authority (awebai/aw lane) ──
+#
+# Artifact bytes and their expected digest resolve through SEPARATE
+# capabilities of the same external system: the blob download endpoint and
+# the server-computed digest field of the artifacts metadata API. GitHub
+# writes the digest at upload and no caller can rewrite it afterwards.
+# Neither capability is writable from here.
+
+GITHUB_ARTIFACT_REPO_ALLOWLIST = ("awebai/aw",)
+
+
+def _run_gh_api(path: str) -> bytes:
+    import subprocess
+
+    result = subprocess.run(["gh", "api", path], capture_output=True)
+    if result.returncode != 0:
+        raise ReceiptError(
+            f"gh api {path} failed: "
+            f"{result.stderr.decode(errors='replace').strip()}"
+        )
+    return result.stdout
+
+
+def _parse_gh_artifact_id(artifact_id: str) -> tuple[str, str, str]:
+    parts = artifact_id.split(":")
+    if len(parts) != 4 or parts[0] != "gh-artifact" or not all(parts):
+        raise ReceiptError(
+            f"external artifact id must be gh-artifact:<repo>:<run>:<artifact>,"
+            f" got {artifact_id!r}"
+        )
+    _, repo, run_id, gh_artifact_id = parts
+    if repo not in GITHUB_ARTIFACT_REPO_ALLOWLIST:
+        raise ReceiptError(
+            f"repository {repo} is not an allowlisted artifact source "
+            f"({', '.join(GITHUB_ARTIFACT_REPO_ALLOWLIST)})"
+        )
+    return repo, run_id, gh_artifact_id
+
+
+def _gh_artifact_metadata(api, artifact_id: str) -> tuple[dict, str, str, str]:
+    repo, run_id, gh_artifact_id = _parse_gh_artifact_id(artifact_id)
+    meta = json.loads(api(f"repos/{repo}/actions/artifacts/{gh_artifact_id}"))
+    if str(meta.get("workflow_run", {}).get("id")) != run_id:
+        raise ReceiptError(
+            f"{artifact_id}: artifact does not belong to run {run_id}"
+        )
+    if meta.get("expired") is not False:
+        raise ReceiptError(
+            f"{artifact_id}: staged artifact is expired; re-stage, never rebuild"
+        )
+    digest = meta.get("digest") or ""
+    if not digest.startswith("sha256:"):
+        raise ReceiptError(
+            f"{artifact_id}: API digest is {digest!r}, expected sha256:<hex>"
+        )
+    return meta, repo, run_id, gh_artifact_id
+
+
+class GithubArtifactStore:
+    """Read-only exact-bytes retrieval of a staged workflow artifact."""
+
+    def __init__(self, api=None):
+        self._api = api or _run_gh_api
+
+    def get(self, artifact_id: str) -> bytes:
+        meta, repo, run_id, gh_artifact_id = _gh_artifact_metadata(
+            self._api, artifact_id
+        )
+        run = json.loads(self._api(f"repos/{repo}/actions/runs/{run_id}"))
+        if run.get("conclusion") != "success":
+            raise ReceiptError(
+                f"{artifact_id}: staging run concluded "
+                f"{run.get('conclusion')!r}, not success"
+            )
+        if run.get("head_repository", {}).get("full_name") != repo:
+            raise ReceiptError(
+                f"{artifact_id}: staging run came from "
+                f"{run.get('head_repository', {}).get('full_name')!r}, not {repo}"
+            )
+        data = self._api(
+            f"repos/{repo}/actions/artifacts/{gh_artifact_id}/zip"
+        )
+        actual = hashlib.sha256(data).hexdigest()
+        expected = meta["digest"].removeprefix("sha256:")
+        if actual != expected:
+            raise ReceiptError(
+                f"{artifact_id}: downloaded zip digest {actual} does not "
+                f"equal the API-recorded digest {expected}"
+            )
+        return data
+
+    def put(self, artifact_id: str, data: bytes) -> None:
+        raise ReceiptError(
+            "the external workflow-artifact store is read-only; artifacts are "
+            "written by the staging workflow, never from here"
+        )
+
+
+class GithubArtifactDigestAuthority:
+    """Expected digests resolve from the server-computed metadata field."""
+
+    trust_class = "external-immutable"
+
+    def __init__(self, api=None):
+        self._api = api or _run_gh_api
+
+    def expected_digest(self, artifact_id: str) -> str:
+        meta, _, _, _ = _gh_artifact_metadata(self._api, artifact_id)
+        return meta["digest"].removeprefix("sha256:")
+
+    def record(self, artifact_id: str, digest: str) -> None:
+        raise ReceiptError(
+            "the external digest authority is not caller-writable; GitHub "
+            "records the digest at upload"
+        )
+
+
+def validate_lane_staged_artifact(
+    zip_bytes: bytes, *, expected_source_sha: str, expected_version: str
+) -> dict:
+    """Semantic validation of a lane's staged artifact ZIP: the typed
+    manifest must bind the declared source and version, record mode
+    stage-only (verify-only evidence is never publishable), and its files
+    map must name exactly the payload members present, each matching its
+    digest, with a canonical set digest that recomputes."""
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+        names = [n for n in archive.namelist() if not n.endswith("/")]
+        if "manifest.json" not in names:
+            raise ReceiptError("staged artifact carries no manifest.json")
+        manifest = json.loads(archive.read("manifest.json"))
+        if manifest.get("mode") != "stage-only":
+            raise ReceiptError(
+                f"staged artifact mode is {manifest.get('mode')!r}; only "
+                "stage-only artifacts continue to publication"
+            )
+        if manifest.get("source_sha") != expected_source_sha:
+            raise ReceiptError(
+                f"staged manifest binds source {manifest.get('source_sha')}, "
+                f"expected {expected_source_sha}"
+            )
+        if manifest.get("candidate_version") != expected_version:
+            raise ReceiptError(
+                f"staged manifest binds version "
+                f"{manifest.get('candidate_version')}, expected {expected_version}"
+            )
+        files = manifest.get("files")
+        if not isinstance(files, dict) or not files:
+            raise ReceiptError("staged manifest has no files map")
+        recomputed = hashlib.sha256(
+            json.dumps(files, sort_keys=True).encode()
+        ).hexdigest()
+        if manifest.get("canonical_set_digest") != recomputed:
+            raise ReceiptError(
+                "staged manifest canonical set digest does not recompute "
+                "from its files map"
+            )
+        payload_names = [n for n in names if n != "manifest.json"]
+        expected_names = set(files)
+        for name in payload_names:
+            if name not in expected_names:
+                raise ReceiptError(
+                    f"staged artifact carries {name}, which the manifest "
+                    "does not bind"
+                )
+        for name, digest in files.items():
+            if name not in payload_names:
+                raise ReceiptError(
+                    f"staged manifest binds {name}, missing from the artifact"
+                )
+            actual = hashlib.sha256(archive.read(name)).hexdigest()
+            if actual != digest:
+                raise ReceiptError(
+                    f"{name}: payload digest {actual} does not equal the "
+                    f"manifest's {digest}"
+                )
+    return manifest
+
+
+# ── lane observers: one SHA-256 per published item ───────────────────
+
+
+class GithubReleaseObserver:
+    """Downloads release assets and reports one SHA-256 each, or None for
+    an asset the release does not carry."""
+
+    def __init__(self, fetch):
+        self._fetch = fetch  # fetch(asset_name) -> bytes | None
+
+    def observe(self, names: list[str]) -> dict[str, str | None]:
+        observed: dict[str, str | None] = {}
+        for name in names:
+            data = self._fetch(name)
+            observed[name] = (
+                hashlib.sha256(data).hexdigest() if data is not None else None
+            )
+        return observed
+
+
+class NpmRegistryObserver:
+    """Downloads the registry tarball for a version and reports one
+    SHA-256, or None when the version is not published."""
+
+    def __init__(self, fetch):
+        self._fetch = fetch  # fetch(package, version) -> bytes | None
+
+    def observe(self, package: str, version: str) -> str | None:
+        data = self._fetch(package, version)
+        return hashlib.sha256(data).hexdigest() if data is not None else None
+
+
+def classify_remote_state(
+    staged: dict[str, str], observed: dict[str, str | None]
+) -> tuple[list[str], list[str]]:
+    """Adopt exact remote bytes, identify missing items, refuse anything
+    else: a digest mismatch, or staged evidence with no observation."""
+    adopted: list[str] = []
+    missing: list[str] = []
+    for name, digest in staged.items():
+        if name not in observed:
+            raise ReceiptError(
+                f"{name}: no observation produced for staged evidence"
+            )
+        seen = observed[name]
+        if seen is None:
+            missing.append(name)
+        elif seen == digest:
+            adopted.append(name)
+        else:
+            raise ReceiptError(
+                f"{name}: remote bytes {seen} do not equal staged {digest}"
+            )
+    return adopted, missing
 
 
 @dataclass
@@ -2243,6 +2480,15 @@ register_authority(
         kind="local-development",
         trust_class="local-development",
         factory=None,  # constructed with the store root at build time
+    )
+)
+
+register_authority(
+    AuthorityRegistration(
+        kind="github-workflow-artifacts",
+        trust_class="external-immutable",
+        factory=GithubArtifactDigestAuthority,
+        store_factory=GithubArtifactStore,
     )
 )
 

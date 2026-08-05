@@ -621,6 +621,7 @@ release-receipt:
 test-release-driver:
 	python3 scripts/e2e/test_release_driver.py
 	python3 scripts/e2e/test_release_driver_cli.py
+	python3 scripts/e2e/test_release_adapter.py
 
 test-npm-exact-publish:
 	bash scripts/e2e/test_npm_exact_publish.sh
