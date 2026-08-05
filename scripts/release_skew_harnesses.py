@@ -66,3 +66,9 @@ register("make cli-e2e", CliServerSkewHarness)
 register(CHANNEL_JOURNEY, channel_factory)
 register(PI_JOURNEY, pi_factory)
 register(PERSISTED_STATE_JOURNEY, persisted_state_factory)
+
+from release_federation_skew import FederationSkewHarness, JOURNEY  # noqa: E402
+
+# Historical mutation controls belong to the explicit measurement step, never
+# an ordinary release cell. A fresh stateless child owns exactly one invocation.
+register(JOURNEY, FederationSkewHarness)
