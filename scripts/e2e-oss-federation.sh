@@ -19,6 +19,11 @@
 #   AWEB_BETA_E2E_PORT    beta aweb host port (default: 8330)
 #   AWEB_FED_E2E_BUILD    set to 0 to skip docker compose build
 #   AWEB_FED_E2E_KEEP     set to 1 to leave containers/temp dir for debugging
+#   AWEB_FED_E2E_SERVER_MODE source (default) or wheel; wheel requires exact
+#                            alpha/beta wheel path, version, and sha256 inputs
+#   AWEB_FED_E2E_DIRECTION a-to-b (default) or b-to-a for the cell proof
+#   AWEB_FED_E2E_CELL_ID   exact skew edge id rendered in directional evidence
+#   AWEB_FED_E2E_ROUTE_PROBE_ONLY set to 1 for the pre-setup capability control
 
 set -euo pipefail
 
@@ -47,6 +52,10 @@ BETA_URL="http://localhost:$BETA_PORT"
 ALPHA_ORIGIN="http://aweb-alpha:8000"
 BETA_ORIGIN="http://aweb-beta:8000"
 PROJECT="aweb-fed-e2e-$RANDOM"
+SERVER_MODE="${AWEB_FED_E2E_SERVER_MODE:-source}"
+CELL_DIRECTION="${AWEB_FED_E2E_DIRECTION:-a-to-b}"
+CELL_ID="${AWEB_FED_E2E_CELL_ID:-source-journey}"
+ROUTE_PROBE_ONLY="${AWEB_FED_E2E_ROUTE_PROBE_ONLY:-0}"
 
 E2E_ROOT="$(make_temp_dir aw-fed-e2e)"
 E2E_HOME="$E2E_ROOT/home"
@@ -95,6 +104,9 @@ cleanup() {
       echo "Targeted teardown left networks for $PROJECT" >&2
       status=1
     fi
+    rm -rf "$E2E_ROOT"
+  else
+    # Pre-compose validation failures still own only this mktemp directory.
     rm -rf "$E2E_ROOT"
   fi
   echo ""
@@ -234,6 +246,12 @@ container_package_version() {
   compose exec -T "$service" python -c \
     'import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))' \
     "$package_name"
+}
+
+container_wheel_sha256() {
+  local service="$1"
+  compose exec -T "$service" sh -c \
+    'set -- /opt/aweb-wheel/*.whl; [ "$#" -eq 1 ] && sha256sum "$1" | cut -d" " -f1'
 }
 
 run_aw_in() {
@@ -411,6 +429,67 @@ create_identity_and_join_team() {
   assert_contains "$name init connected" "$init_out" "connected"
 }
 
+case "$CELL_DIRECTION" in
+  a-to-b|b-to-a) ;;
+  *) echo "AWEB_FED_E2E_DIRECTION must be a-to-b or b-to-a, got $CELL_DIRECTION" >&2; exit 1 ;;
+esac
+
+case "$SERVER_MODE" in
+  source)
+    ALPHA_SERVER_BUILD="    build:
+      context: $REPO_ROOT
+      dockerfile: server/Dockerfile"
+    BETA_SERVER_BUILD="$ALPHA_SERVER_BUILD"
+    ;;
+  wheel)
+    for variable in \
+      AWEB_ALPHA_WHEEL AWEB_ALPHA_WHEEL_SHA256 AWEB_ALPHA_VERSION \
+      AWEB_BETA_WHEEL AWEB_BETA_WHEEL_SHA256 AWEB_BETA_VERSION; do
+      [[ -n "${!variable:-}" ]] || { echo "$variable is required in wheel mode" >&2; exit 1; }
+    done
+    for digest in "$AWEB_ALPHA_WHEEL_SHA256" "$AWEB_BETA_WHEEL_SHA256"; do
+      [[ "$digest" =~ ^[0-9a-f]{64}$ ]] \
+        || { echo "wheel sha256 must be 64 lowercase hex, got $digest" >&2; exit 1; }
+    done
+    for version in "$AWEB_ALPHA_VERSION" "$AWEB_BETA_VERSION"; do
+      [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] \
+        || { echo "wheel version must be dotted numeric, got $version" >&2; exit 1; }
+    done
+    ALPHA_WHEEL_NAME="$(basename "$AWEB_ALPHA_WHEEL")"
+    BETA_WHEEL_NAME="$(basename "$AWEB_BETA_WHEEL")"
+    for name in "$ALPHA_WHEEL_NAME" "$BETA_WHEEL_NAME"; do
+      [[ "$name" =~ ^[A-Za-z0-9_.+-]+\.whl$ ]] \
+        || { echo "wheel filename is unsafe or invalid: $name" >&2; exit 1; }
+    done
+    [[ "$(shasum -a 256 "$AWEB_ALPHA_WHEEL" | awk '{print $1}')" == "$AWEB_ALPHA_WHEEL_SHA256" ]] \
+      || { echo "alpha selected wheel sha256 disagrees before build" >&2; exit 1; }
+    [[ "$(shasum -a 256 "$AWEB_BETA_WHEEL" | awk '{print $1}')" == "$AWEB_BETA_WHEEL_SHA256" ]] \
+      || { echo "beta selected wheel sha256 disagrees before build" >&2; exit 1; }
+    ALPHA_SERVER_CONTEXT="$E2E_ROOT/alpha-server-context"
+    BETA_SERVER_CONTEXT="$E2E_ROOT/beta-server-context"
+    mkdir "$ALPHA_SERVER_CONTEXT" "$BETA_SERVER_CONTEXT"
+    cp "$REPO_ROOT/scripts/federation-wheel-server.Dockerfile" "$ALPHA_SERVER_CONTEXT/Dockerfile"
+    cp "$REPO_ROOT/scripts/federation-wheel-server.Dockerfile" "$BETA_SERVER_CONTEXT/Dockerfile"
+    cp "$AWEB_ALPHA_WHEEL" "$ALPHA_SERVER_CONTEXT/$ALPHA_WHEEL_NAME"
+    cp "$AWEB_BETA_WHEEL" "$BETA_SERVER_CONTEXT/$BETA_WHEEL_NAME"
+    ALPHA_SERVER_BUILD="    build:
+      context: $ALPHA_SERVER_CONTEXT
+      dockerfile: Dockerfile
+      args:
+        AWEB_WHEEL: $ALPHA_WHEEL_NAME
+        AWEB_WHEEL_SHA256: $AWEB_ALPHA_WHEEL_SHA256
+        AWEB_VERSION: $AWEB_ALPHA_VERSION"
+    BETA_SERVER_BUILD="    build:
+      context: $BETA_SERVER_CONTEXT
+      dockerfile: Dockerfile
+      args:
+        AWEB_WHEEL: $BETA_WHEEL_NAME
+        AWEB_WHEEL_SHA256: $AWEB_BETA_WHEEL_SHA256
+        AWEB_VERSION: $AWEB_BETA_VERSION"
+    ;;
+  *) echo "AWEB_FED_E2E_SERVER_MODE must be source or wheel, got $SERVER_MODE" >&2; exit 1 ;;
+esac
+
 cat > "$DNS_COREFILE" <<'EOF'
 .:53 {
   errors
@@ -503,9 +582,7 @@ services:
       timeout: 2s
       retries: 30
   aweb-alpha:
-    build:
-      context: $REPO_ROOT
-      dockerfile: server/Dockerfile
+$ALPHA_SERVER_BUILD
     ports:
       - "$ALPHA_PORT:8000"
     environment:
@@ -548,9 +625,7 @@ services:
       timeout: 2s
       retries: 30
   aweb-beta:
-    build:
-      context: $REPO_ROOT
-      dockerfile: server/Dockerfile
+$BETA_SERVER_BUILD
     ports:
       - "$BETA_PORT:8000"
     environment:
@@ -608,12 +683,38 @@ PY
 compose up -d aweb-alpha aweb-beta
 wait_health "alpha" "$ALPHA_URL" "aweb-alpha"
 wait_health "beta" "$BETA_URL" "aweb-beta"
-locked_server_mcp="$(lock_package_version "$SERVER_DIR/uv.lock" mcp)"
-installed_server_mcp="$(container_package_version aweb-alpha mcp)"
-assert_eq "aweb image installs locked mcp" "$locked_server_mcp" "$installed_server_mcp"
+if [[ "$SERVER_MODE" == "wheel" ]]; then
+  assert_eq "alpha installs selected aweb version" "$AWEB_ALPHA_VERSION" "$(container_package_version aweb-alpha aweb)"
+  assert_eq "beta installs selected aweb version" "$AWEB_BETA_VERSION" "$(container_package_version aweb-beta aweb)"
+  assert_eq "alpha retains selected wheel sha256" "$AWEB_ALPHA_WHEEL_SHA256" "$(container_wheel_sha256 aweb-alpha)"
+  assert_eq "beta retains selected wheel sha256" "$AWEB_BETA_WHEEL_SHA256" "$(container_wheel_sha256 aweb-beta)"
+else
+  locked_server_mcp="$(lock_package_version "$SERVER_DIR/uv.lock" mcp)"
+  installed_server_mcp="$(container_package_version aweb-alpha mcp)"
+  assert_eq "aweb image installs locked mcp" "$locked_server_mcp" "$installed_server_mcp"
+fi
 locked_awid_fastapi="$(lock_package_version "$REPO_ROOT/awid/uv.lock" fastapi)"
 installed_awid_fastapi="$(container_package_version awid fastapi)"
 assert_eq "awid image installs locked fastapi" "$locked_awid_fastapi" "$installed_awid_fastapi"
+
+probe_federation_route() {
+  local label="$1" url="$2" status
+  status="$(curl -sS -o "$E2E_ROOT/$label-route-probe.json" -w '%{http_code}' \
+    -H 'Content-Type: application/json' -X POST --data '{}' \
+    "$url/v1/federation/messages")"
+  if [[ "$status" != "422" ]]; then
+    echo "$label federation route probe returned $status" >&2
+    exit 1
+  fi
+  assert_eq "$label federation route probe validates an empty envelope" "422" "$status"
+}
+
+probe_federation_route alpha "$ALPHA_URL"
+probe_federation_route beta "$BETA_URL"
+if [[ "$ROUTE_PROBE_ONLY" == "1" ]]; then
+  echo "Route probe controls complete before broader federation setup."
+  exit 0
+fi
 echo ""
 
 echo "=== Phase 2: Create alpha and beta identities/teams ==="
@@ -686,6 +787,13 @@ capture_success bob_e2ee_setup "bob_e2ee_setup" run_aw_in "$BOB_DIR" id encrypti
 assert_not_empty "bob federation e2ee key id" "$(echo "$bob_e2ee_setup" | jq_field key_id)"
 capture_success dave_e2ee_setup "dave_e2ee_setup" run_aw_in "$DAVE_DIR" id encryption-key setup --json
 assert_not_empty "dave local-only federation e2ee key id" "$(echo "$dave_e2ee_setup" | jq_field key_id)"
+echo ""
+
+echo "=== Skew cell direction: $CELL_ID $CELL_DIRECTION ==="
+# Alpha is always the initiator in this source-level journey. The child adapter
+# maps side A to alpha for a-to-b and side B to alpha for b-to-a, so the existing
+# alpha-first federation assertions below execute and report the exact cell.
+echo "  skew cell direction $CELL_DIRECTION: alpha initiates, beta receives"
 echo ""
 
 echo "=== Phase 3: Same-server local alias remains local ==="

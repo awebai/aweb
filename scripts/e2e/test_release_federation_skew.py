@@ -1,0 +1,376 @@
+"""Child-harness tests for the federation server/server G5 skew edge."""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import sys
+import unittest
+import urllib.error
+import zipfile
+from pathlib import Path
+from types import SimpleNamespace
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import release_driver as rd
+
+try:
+    import release_federation_skew as federation
+except ModuleNotFoundError:
+    federation = None
+
+
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def candidate_zip(version="1.26.36", source_sha="c" * 40):
+    wheel_name = f"aweb-{version}-py3-none-any.whl"
+    wheel = b"candidate-wheel"
+    sdist_name = f"aweb-{version}.tar.gz"
+    sdist = b"candidate-sdist"
+    files = {wheel_name: sha256(wheel), sdist_name: sha256(sdist)}
+    manifest = {
+        "mode": "stage-only",
+        "package": "server",
+        "tag": f"server-v{version}",
+        "candidate_version": version,
+        "source_sha": source_sha,
+        "files": files,
+        "canonical_set_digest": sha256(json.dumps(files, sort_keys=True).encode()),
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+        archive.writestr(f"dist/{wheel_name}", wheel)
+        archive.writestr(f"dist/{sdist_name}", sdist)
+    return buffer.getvalue(), wheel_name, wheel, files
+
+
+class Response:
+    def __init__(self, data: bytes):
+        self.data = data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def read(self):
+        return self.data
+
+
+@unittest.skipIf(federation is None, "release_federation_skew is not implemented")
+class CandidateWheelTests(unittest.TestCase):
+    def side(self, zip_bytes, files, *, version="1.26.36"):
+        return {
+            "component": "server",
+            "version": version,
+            "digest": rd.canonical_digest_of_set(files),
+            "digest_set": files,
+            "lane_ref": {
+                "artifact": "gh-artifact:awebai/aweb:41:42",
+                "aw_source_sha": "c" * 40,
+                "zip_digest": "sha256:" + sha256(zip_bytes),
+            },
+        }
+
+    def test_candidate_uses_separate_store_and_digest_authority(self):
+        zip_bytes, wheel_name, wheel, files = candidate_zip()
+
+        class Store:
+            calls = []
+
+            def get(self, artifact):
+                self.calls.append(artifact)
+                return zip_bytes
+
+        class Authority:
+            calls = []
+
+            def expected_digest(self, artifact):
+                self.calls.append(artifact)
+                return sha256(zip_bytes)
+
+        store, authority = Store(), Authority()
+        resolver = federation.WheelResolver(store=store, authority=authority)
+        resolved = resolver.candidate(self.side(zip_bytes, files))
+        self.assertEqual(resolved.name, wheel_name)
+        self.assertEqual(resolved.bytes, wheel)
+        self.assertEqual(resolved.sha256, sha256(wheel))
+        self.assertEqual(store.calls, ["gh-artifact:awebai/aweb:41:42"])
+        self.assertEqual(authority.calls, ["gh-artifact:awebai/aweb:41:42"])
+
+    def test_candidate_refuses_authority_or_cell_identity_mismatch(self):
+        zip_bytes, _, _, files = candidate_zip()
+
+        class Store:
+            def get(self, artifact):
+                return zip_bytes
+
+        class BadAuthority:
+            def expected_digest(self, artifact):
+                return "0" * 64
+
+        with self.assertRaises(rd.ReceiptError):
+            federation.WheelResolver(store=Store(), authority=BadAuthority()).candidate(
+                self.side(zip_bytes, files)
+            )
+
+        class Authority:
+            def expected_digest(self, artifact):
+                return sha256(zip_bytes)
+
+        side = self.side(zip_bytes, files)
+        side["digest_set"] = {**files, "extra.whl": "0" * 64}
+        with self.assertRaises(rd.ReceiptError):
+            federation.WheelResolver(store=Store(), authority=Authority()).candidate(side)
+
+
+@unittest.skipIf(federation is None, "release_federation_skew is not implemented")
+class PublishedWheelTests(unittest.TestCase):
+    def test_published_wheel_is_metadata_bound_and_digest_checked(self):
+        wheel = b"published-wheel"
+        wheel_url = "https://files.pythonhosted.org/packages/aweb.whl"
+        metadata = {
+            "info": {"version": "1.26.35"},
+            "urls": [{
+                "filename": "aweb-1.26.35-py3-none-any.whl",
+                "packagetype": "bdist_wheel",
+                "url": wheel_url,
+                "digests": {"sha256": sha256(wheel)},
+            }],
+        }
+        calls = []
+
+        def opener(request, timeout=0):
+            url = request.full_url if hasattr(request, "full_url") else request
+            calls.append(url)
+            if url == "https://pypi.org/pypi/aweb/1.26.35/json":
+                return Response(json.dumps(metadata).encode())
+            if url == wheel_url:
+                return Response(wheel)
+            raise AssertionError(url)
+
+        resolved = federation.WheelResolver(urlopen=opener).published("1.26.35")
+        self.assertEqual(resolved.bytes, wheel)
+        self.assertEqual(resolved.sha256, sha256(wheel))
+        self.assertEqual(calls, [
+            "https://pypi.org/pypi/aweb/1.26.35/json", wheel_url
+        ])
+
+    def test_only_metadata_404_is_classified_as_absence(self):
+        def metadata_404(request, timeout=0):
+            raise urllib.error.HTTPError(request.full_url, 404, "missing", {}, None)
+
+        with self.assertRaisesRegex(rd.ReceiptError, "absent"):
+            federation.WheelResolver(urlopen=metadata_404).published("1.22.1")
+
+        def metadata_503(request, timeout=0):
+            raise urllib.error.HTTPError(request.full_url, 503, "down", {}, None)
+
+        with self.assertRaisesRegex(rd.ReceiptError, "unavailable"):
+            federation.WheelResolver(urlopen=metadata_503).published("1.22.1")
+
+    def test_malformed_metadata_and_wheel_failure_block(self):
+        for metadata in ({}, {"info": {"version": "other"}, "urls": []}):
+            with self.subTest(metadata=metadata):
+                with self.assertRaises(rd.ReceiptError):
+                    federation.WheelResolver(
+                        urlopen=lambda request, timeout=0, m=metadata:
+                        Response(json.dumps(m).encode())
+                    ).published("1.26.35")
+
+        metadata = {
+            "info": {"version": "1.26.35"},
+            "urls": [{
+                "filename": "aweb-1.26.35-py3-none-any.whl",
+                "packagetype": "bdist_wheel",
+                "url": "https://files.pythonhosted.org/aweb.whl",
+                "digests": {"sha256": "0" * 64},
+            }],
+        }
+
+        def missing_wheel(request, timeout=0):
+            if "pypi.org/pypi" in request.full_url:
+                return Response(json.dumps(metadata).encode())
+            raise urllib.error.HTTPError(request.full_url, 404, "missing", {}, None)
+
+        with self.assertRaisesRegex(rd.ReceiptError, "wheel download"):
+            federation.WheelResolver(urlopen=missing_wheel).published("1.26.35")
+
+
+@unittest.skipIf(federation is None, "release_federation_skew is not implemented")
+class FederationHarnessTests(unittest.TestCase):
+    def cell(self, direction="a-to-b"):
+        return SimpleNamespace(
+            edge_id="e" * 64,
+            edge_a="server",
+            edge_b="server",
+            journey=federation.JOURNEY,
+            artifacts={"a": "pypi:aweb", "b": "pypi:aweb"},
+            declared_direction="both",
+            direction=direction,
+            a_kind="candidate",
+            b_kind="published",
+            a={"component": "server", "version": "1.26.36"},
+            b={"component": "server", "version": "1.26.35"},
+        )
+
+    def test_each_cell_installs_both_exact_wheels_and_reverses_direction(self):
+        wheels = {
+            "1.26.36": federation.WheelArtifact(
+                "aweb-1.26.36.whl", "1.26.36", b"candidate", sha256(b"candidate")
+            ),
+            "1.26.35": federation.WheelArtifact(
+                "aweb-1.26.35.whl", "1.26.35", b"published", sha256(b"published")
+            ),
+        }
+
+        class Resolver:
+            def side(self, value, kind):
+                return wheels[value["version"]]
+
+        calls = []
+
+        def journey(env):
+            calls.append(dict(env))
+            expected = (
+                (b"candidate", b"published")
+                if env["AWEB_FED_E2E_DIRECTION"] == "a-to-b"
+                else (b"published", b"candidate")
+            )
+            self.assertEqual(Path(env["AWEB_ALPHA_WHEEL"]).read_bytes(), expected[0])
+            self.assertEqual(Path(env["AWEB_BETA_WHEEL"]).read_bytes(), expected[1])
+            return SimpleNamespace(returncode=0, stdout="green", stderr="")
+
+        harness = federation.FederationSkewHarness(
+            resolver=Resolver(), journey=journey, controls=lambda: None
+        )
+        harness.run(self.cell("a-to-b"))
+        harness.run(self.cell("b-to-a"))
+        self.assertEqual(
+            [call["AWEB_FED_E2E_DIRECTION"] for call in calls],
+            ["a-to-b", "b-to-a"],
+        )
+        self.assertEqual(
+            [(call["AWEB_ALPHA_VERSION"], call["AWEB_BETA_VERSION"]) for call in calls],
+            [("1.26.36", "1.26.35"), ("1.26.35", "1.26.36")],
+            "b-to-a must make side B the actual alpha initiator",
+        )
+        for call in calls:
+            self.assertEqual(call["AWEB_FED_E2E_SERVER_MODE"], "wheel")
+            self.assertEqual(call["AWEB_FED_E2E_CELL_ID"], "e" * 64)
+
+    def test_nonzero_cell_journey_is_red(self):
+        wheel = federation.WheelArtifact("aweb.whl", "1.0.0", b"x", sha256(b"x"))
+
+        class Resolver:
+            def side(self, value, kind):
+                return wheel
+
+        harness = federation.FederationSkewHarness(
+            resolver=Resolver(),
+            journey=lambda env: SimpleNamespace(returncode=3, stdout="bad", stderr="worse"),
+            controls=lambda: None,
+        )
+        with self.assertRaisesRegex(rd.ReceiptError, "federation skew journey"):
+            harness.run(self.cell())
+
+    def test_controls_require_named_1221_red_and_1230_green(self):
+        versions = []
+
+        class Resolver:
+            def published(self, version):
+                versions.append(version)
+                return federation.WheelArtifact(
+                    f"aweb-{version}.whl", version, version.encode(), sha256(version.encode())
+                )
+
+        calls = []
+
+        def journey(env):
+            calls.append(dict(env))
+            if env["AWEB_BETA_VERSION"] == "1.22.1":
+                return SimpleNamespace(
+                    returncode=1,
+                    stdout="beta federation route probe returned 404",
+                    stderr="",
+                )
+            return SimpleNamespace(returncode=0, stdout="route probe green", stderr="")
+
+        federation.prove_route_controls(Resolver(), journey)
+        self.assertEqual(versions, ["1.23.0", "1.22.1"])
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(c["AWEB_FED_E2E_ROUTE_PROBE_ONLY"] == "1" for c in calls))
+        self.assertEqual(calls[0]["AWEB_ALPHA_VERSION"], "1.23.0")
+        self.assertEqual(calls[0]["AWEB_BETA_VERSION"], "1.22.1")
+        self.assertEqual(calls[1]["AWEB_ALPHA_VERSION"], "1.23.0")
+        self.assertEqual(calls[1]["AWEB_BETA_VERSION"], "1.23.0")
+
+    def test_negative_control_must_fail_for_the_exact_missing_route(self):
+        class Resolver:
+            def published(self, version):
+                return federation.WheelArtifact(
+                    f"aweb-{version}.whl", version, b"x", sha256(b"x")
+                )
+
+        with self.assertRaises(rd.ReceiptError):
+            federation.prove_route_controls(
+                Resolver(),
+                lambda env: SimpleNamespace(returncode=0, stdout="false green", stderr=""),
+            )
+
+
+class ParameterizedJourneyContractTests(unittest.TestCase):
+    def test_wheel_mode_requires_and_proves_both_exact_runtimes(self):
+        script = (REPO_ROOT / "scripts/e2e-oss-federation.sh").read_text()
+        dockerfile = (REPO_ROOT / "scripts/federation-wheel-server.Dockerfile").read_text()
+        for marker in (
+            "AWEB_FED_E2E_SERVER_MODE",
+            "AWEB_ALPHA_WHEEL_SHA256",
+            "AWEB_BETA_WHEEL_SHA256",
+            "alpha installs selected aweb version",
+            "beta installs selected aweb version",
+            "alpha retains selected wheel sha256",
+            "beta retains selected wheel sha256",
+        ):
+            self.assertIn(marker, script)
+        self.assertIn("sha256sum -c", dockerfile)
+        self.assertIn("pip install --no-cache-dir", dockerfile)
+        self.assertIn("mcp<2", dockerfile)
+        self.assertNotIn("COPY server/src", dockerfile)
+
+    def test_route_probe_precedes_setup_and_direction_is_evidenced(self):
+        script = (REPO_ROOT / "scripts/e2e-oss-federation.sh").read_text()
+        self.assertLess(
+            script.index("federation route probe returned"),
+            script.index("=== Phase 2: Create alpha and beta identities/teams ==="),
+        )
+        self.assertIn("AWEB_FED_E2E_ROUTE_PROBE_ONLY", script)
+        self.assertIn("AWEB_FED_E2E_DIRECTION", script)
+        self.assertIn("AWEB_FED_E2E_CELL_ID", script)
+        self.assertIn("skew cell direction", script)
+
+
+class RegistrationAndTargetTests(unittest.TestCase):
+    def test_exact_federation_journey_is_registered(self):
+        import release_skew_harnesses
+
+        self.assertIn(
+            "make test-federation-e2e (both request directions)",
+            release_skew_harnesses.REGISTRY,
+        )
+
+    def test_focused_make_target_runs_the_child_tests(self):
+        makefile = (REPO_ROOT / "Makefile").read_text()
+        self.assertIn("test-release-federation-skew:", makefile)
+        self.assertIn("test_release_federation_skew.py", makefile)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -42,3 +42,11 @@ def register(journey: str, factory) -> None:
             "owns each journey"
         )
     REGISTRY[journey] = factory
+
+
+# The federation child is a singleton so its disposable negative/positive route
+# controls run once before the first exact matrix cell, not once per cell.
+from release_federation_skew import FederationSkewHarness, JOURNEY
+
+_FEDERATION_HARNESS = FederationSkewHarness()
+register(JOURNEY, lambda: _FEDERATION_HARNESS)
