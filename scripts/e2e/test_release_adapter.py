@@ -1302,12 +1302,83 @@ def pypi_lane_zip(*, package="server", pypi_name="aweb", version="1.26.36",
     return buffer.getvalue()
 
 
+def real_oci_archive(*, version="0.5.15", source_sha="d" * 40,
+                     wrong_version_label=False, single_platform=False):
+    """A REAL minimal two-platform labeled OCI layout tar, plus the
+    identities document the reviewed inspector derives from it."""
+    import tarfile
+
+    blobs: dict[str, bytes] = {}
+
+    def add(data: bytes) -> str:
+        digest = "sha256:" + sha256(data)
+        blobs[digest] = data
+        return digest
+
+    MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+    INDEX = "application/vnd.oci.image.index.v1+json"
+    labels = {
+        "org.opencontainers.image.title": "awid",
+        "org.opencontainers.image.version":
+            "9.9.9" if wrong_version_label else version,
+        "org.opencontainers.image.revision": source_sha,
+    }
+    platforms = ["amd64"] if single_platform else ["amd64", "arm64"]
+    entries = []
+    identities = {"platforms": {}}
+    for arch in platforms:
+        config = add(json.dumps({"architecture": arch, "os": "linux",
+                                 "config": {"Labels": labels}}).encode())
+        layer = add(f"layer-bytes-{arch}".encode())
+        manifest = add(json.dumps({
+            "schemaVersion": 2, "mediaType": MANIFEST,
+            "config": {"mediaType":
+                       "application/vnd.oci.image.config.v1+json",
+                       "digest": config, "size": len(blobs[config])},
+            "layers": [{"mediaType":
+                        "application/vnd.oci.image.layer.v1.tar+gzip",
+                        "digest": layer, "size": len(blobs[layer])}],
+        }).encode())
+        entries.append({"mediaType": MANIFEST, "digest": manifest,
+                        "size": len(blobs[manifest]),
+                        "platform": {"os": "linux", "architecture": arch}})
+        identities["platforms"][f"linux/{arch}"] = {
+            "manifest": manifest, "config": config, "layers": [layer],
+        }
+    index_bytes = json.dumps({
+        "schemaVersion": 2, "mediaType": INDEX, "manifests": entries,
+    }).encode()
+    index = add(index_bytes)
+    identities["index"] = index
+    top = json.dumps({
+        "schemaVersion": 2,
+        "manifests": [{"mediaType": INDEX, "digest": index,
+                       "size": len(index_bytes)}],
+    }).encode()
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        def put(name, data):
+            import tarfile as tf
+            info = tf.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        put("oci-layout",
+            json.dumps({"imageLayoutVersion": "1.0.0"}).encode())
+        put("index.json", top)
+        for digest, data in blobs.items():
+            put("blobs/sha256/" + digest.split(":")[1], data)
+    return buffer.getvalue(), identities
+
+
 def image_lane_zip(*, version="0.5.15", mode="stage-only",
-                   source_sha="d" * 40, index="sha256:" + "9" * 64) -> bytes:
-    identities = json.dumps({"index": index, "platforms": {}}).encode()
-    archive = b"oci-archive-bytes"
+                   source_sha="d" * 40, archive=None, identities=None,
+                   duplicate_member=False) -> bytes:
+    if archive is None:
+        archive, identities = real_oci_archive(
+            version=version, source_sha=source_sha)
+    identities_bytes = json.dumps(identities, sort_keys=True).encode()
     files = {"awid-oci.tar": sha256(archive),
-             "identities.json": sha256(identities)}
+             "identities.json": sha256(identities_bytes)}
     canonical = sha256(json.dumps(files, sort_keys=True).encode())
     manifest = {
         "mode": mode, "package": "awid-image", "tag": f"awid-v{version}",
@@ -1318,8 +1389,20 @@ def image_lane_zip(*, version="0.5.15", mode="stage-only",
     with zipfile.ZipFile(buffer, "w") as z:
         z.writestr("manifest.json", json.dumps(manifest))
         z.writestr("awid-oci.tar", archive)
-        z.writestr("identities.json", identities)
+        z.writestr("identities.json", identities_bytes)
+        if duplicate_member:
+            z.writestr("identities.json", identities_bytes)
     return buffer.getvalue()
+
+
+def flattened_oci_set(identities: dict) -> dict:
+    flat = {"index": identities["index"]}
+    for key, ids in sorted(identities["platforms"].items()):
+        flat[f"platform:{key}:manifest"] = ids["manifest"]
+        flat[f"platform:{key}:config"] = ids["config"]
+        for i, layer in enumerate(ids["layers"]):
+            flat[f"platform:{key}:layer:{i}"] = layer
+    return flat
 
 
 def lane_ref_for(api, zip_bytes, source_sha) -> "rd.LaneRef":
@@ -1409,6 +1492,24 @@ class PypiWorkflowLaneTests(unittest.TestCase):
         self.assertEqual(entry.digest_set, files)
         self.assertEqual(entry.digest, rd.canonical_digest_of_set(files))
 
+    def test_duplicate_zip_entries_refuse(self) -> None:
+        """ZipFile.read resolves one of N same-named entries; membership by
+        name presence would let a duplicate smuggle different bytes."""
+        zip_bytes = pypi_lane_zip()
+        buffer = io.BytesIO(zip_bytes)
+        with zipfile.ZipFile(buffer, "a") as z:
+            z.writestr("manifest.json", "{}")
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.validate_pypi_lane_artifact(
+                buffer.getvalue(), expected_source_sha="c" * 40,
+                expected_version="1.26.36", package="server",
+                pypi_name="aweb")
+        self.assertIn("once", str(caught.exception))
+        with self.assertRaises(rd.ReceiptError):
+            rd.validate_image_lane_artifact(
+                image_lane_zip(duplicate_member=True),
+                expected_source_sha="d" * 40, expected_version="0.5.15")
+
     def test_stage_refuses_a_missing_wheel(self) -> None:
         zip_bytes = pypi_lane_zip(drop_wheel=True)
         lane, _ = pypi_lane(zip_bytes, observer=lambda p, v: (404, {}))
@@ -1494,30 +1595,70 @@ def image_lane(zip_bytes, *, tag_observe, runs=None, source_sha="d" * 40):
 
 
 class AwidImageWorkflowLaneTests(unittest.TestCase):
-    INDEX = "sha256:" + "9" * 64
-
-    def test_stage_validates_the_image_payload_protocol(self) -> None:
-        zip_bytes = image_lane_zip()
+    def test_stage_reinspects_and_binds_the_registry_identity(self) -> None:
+        archive, identities = real_oci_archive()
+        zip_bytes = image_lane_zip(archive=archive, identities=identities)
         lane, _ = image_lane(zip_bytes, tag_observe=lambda tag: None)
         entry = lane.stage(rd.PlanNode(
             component="awid-image", reason="changed", version="0.5.15"))
-        self.assertEqual(set(entry.digest_set),
-                         {"awid-oci.tar", "identities.json"})
+        self.assertEqual(entry.digest_set, flattened_oci_set(identities))
+        self.assertEqual(
+            entry.digest, rd.canonical_digest_of_set(entry.digest_set))
+
+    def test_stage_refuses_an_invalid_archive(self) -> None:
+        _, identities = real_oci_archive()
+        zip_bytes = image_lane_zip(
+            archive=b"oci-archive-bytes", identities=identities)
+        lane, _ = image_lane(zip_bytes, tag_observe=lambda tag: None)
+        with self.assertRaises(rd.ReceiptError):
+            lane.stage(rd.PlanNode(
+                component="awid-image", reason="changed", version="0.5.15"))
+
+    def test_stage_refuses_a_wrong_version_label(self) -> None:
+        archive, identities = real_oci_archive(wrong_version_label=True)
+        zip_bytes = image_lane_zip(archive=archive, identities=identities)
+        lane, _ = image_lane(zip_bytes, tag_observe=lambda tag: None)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.stage(rd.PlanNode(
+                component="awid-image", reason="changed", version="0.5.15"))
+        self.assertIn("labels version", str(caught.exception))
+
+    def test_stage_refuses_a_missing_platform(self) -> None:
+        archive, identities = real_oci_archive(single_platform=True)
+        zip_bytes = image_lane_zip(archive=archive, identities=identities)
+        lane, _ = image_lane(zip_bytes, tag_observe=lambda tag: None)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.stage(rd.PlanNode(
+                component="awid-image", reason="changed", version="0.5.15"))
+        self.assertIn("linux/arm64", str(caught.exception))
+
+    def test_stage_refuses_tampered_identities(self) -> None:
+        archive, identities = real_oci_archive()
+        forged = json.loads(json.dumps(identities))
+        forged["platforms"]["linux/amd64"]["config"] = "sha256:" + "0" * 64
+        zip_bytes = image_lane_zip(archive=archive, identities=forged)
+        lane, _ = image_lane(zip_bytes, tag_observe=lambda tag: None)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.stage(rd.PlanNode(
+                component="awid-image", reason="changed", version="0.5.15"))
+        self.assertIn("identities", str(caught.exception))
 
     def test_observe_binds_version_immutably_and_latest_as_pointer(self) -> None:
-        zip_bytes = image_lane_zip()
+        archive, identities = real_oci_archive()
+        INDEX = identities["index"]
+        zip_bytes = image_lane_zip(archive=archive, identities=identities)
         node = rd.PlanNode(component="awid-image", reason="changed",
                            version="0.5.15")
         tags = {}
         lane, _ = image_lane(zip_bytes, tag_observe=lambda tag: tags.get(tag))
         staged = lane.stage(node)
         self.assertIsNone(lane.observe(node, staged), "nothing published yet")
-        tags["0.5.15"] = self.INDEX
+        tags["0.5.15"] = INDEX
         self.assertIsNone(lane.observe(node, staged),
                           "latest not yet transitioned continues")
-        tags["latest"] = self.INDEX
+        tags["latest"] = INDEX
         observed = lane.observe(node, staged)
-        self.assertEqual(observed.digest_set, staged.digest_set)
+        self.assertEqual(observed.digest_set, flattened_oci_set(identities))
         tags["latest"] = "sha256:" + "1" * 64
         self.assertIsNone(lane.observe(node, staged),
                           "latest is the planned mutable pointer")
@@ -1679,10 +1820,12 @@ class PypiOciEndToEndTests(unittest.TestCase):
 
     def test_image_lane_crash_resume(self) -> None:
         version = "0.5.15"
-        INDEX = "sha256:" + "9" * 64
+        archive, identities = real_oci_archive(version=version)
+        INDEX = identities["index"]
 
         def lane_factory(*, publish_ok):
-            zip_bytes = image_lane_zip(version=version)
+            zip_bytes = image_lane_zip(
+                version=version, archive=archive, identities=identities)
             tags = {}
             runs = FakeAwRuns(
                 conclusion="success" if publish_ok else "failure")

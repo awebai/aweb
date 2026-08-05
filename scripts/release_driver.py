@@ -1846,6 +1846,12 @@ def _lane_manifest_common(
     expected_package: str | None = None,
 ) -> dict:
     names = [n for n in archive.namelist() if not n.endswith("/")]
+    for name in set(names):
+        if names.count(name) != 1:
+            raise ReceiptError(
+                f"staged artifact carries {name} more than once; every "
+                "entry must appear exactly once"
+            )
     if "manifest.json" not in names:
         raise ReceiptError("staged artifact carries no manifest.json")
     manifest = json.loads(archive.read("manifest.json"))
@@ -1941,12 +1947,28 @@ def validate_pypi_lane_artifact(
     return manifest
 
 
+def flatten_oci_identities(identities: dict) -> dict[str, str]:
+    """The registry's complete identity as a flat digest set: the index
+    plus every platform manifest, config, and layer digest."""
+    flat = {"index": identities["index"]}
+    for key, ids in sorted(identities.get("platforms", {}).items()):
+        flat[f"platform:{key}:manifest"] = ids["manifest"]
+        flat[f"platform:{key}:config"] = ids["config"]
+        for i, layer in enumerate(ids["layers"]):
+            flat[f"platform:{key}:layer:{i}"] = layer
+    return flat
+
+
 def validate_image_lane_artifact(
     zip_bytes: bytes, *, expected_source_sha: str, expected_version: str,
-) -> tuple[dict, str]:
+) -> tuple[dict, dict]:
     """The awid-image lane protocol: exactly the OCI archive and its
-    identities file at the artifact root. Returns (manifest, index digest
-    read from the digest-proven identities)."""
+    identities file at the artifact root. The archive is REINSPECTED with
+    the reviewed .4 inspector (platforms, blobs, version/revision labels),
+    and its derived identities must exactly equal the digest-proven
+    identities.json. Returns (manifest, identities)."""
+    import subprocess
+    import tempfile
     import zipfile
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
@@ -1962,12 +1984,32 @@ def validate_image_lane_artifact(
             )
         _validate_lane_members(archive, files, {b: b for b in files})
         identities = json.loads(archive.read("identities.json"))
-        index = identities.get("index")
-        if not isinstance(index, str) or not index.startswith("sha256:"):
+        oci_tar = archive.read("awid-oci.tar")
+    with tempfile.TemporaryDirectory() as tmp:
+        tar_path = Path(tmp) / "awid-oci.tar"
+        out_path = Path(tmp) / "reinspected.json"
+        tar_path.write_bytes(oci_tar)
+        result = subprocess.run(
+            ["bash", str(REPO_ROOT / "scripts/oci-exact-publish.sh"),
+             "inspect-staged", "--archive", str(tar_path),
+             "--version", expected_version,
+             "--source-sha", expected_source_sha,
+             "--out", str(out_path)],
+            capture_output=True,
+        )
+        if result.returncode != 0:
             raise ReceiptError(
-                f"staged identities carry no usable index digest: {index!r}"
+                "staged OCI archive fails the reviewed inspection: "
+                + result.stderr.decode(errors="replace").strip()
             )
-    return manifest, index
+        reinspected = json.loads(out_path.read_bytes())
+    if reinspected != identities:
+        raise ReceiptError(
+            "staged identities do not equal the archive's reinspected "
+            "identities; the digest-proven identities.json must be exactly "
+            "what the reviewed inspector derives"
+        )
+    return manifest, identities
 
 
 class _WorkflowLaneBase:
@@ -2152,28 +2194,31 @@ class AwidImageWorkflowLane(_WorkflowLaneBase):
     def stage(self, node) -> "ReceiptEntry":
         ref = self._refs[node.component]
         data = self._fetch_staged(ref)
-        manifest, _ = validate_image_lane_artifact(
+        _, identities = validate_image_lane_artifact(
             data,
             expected_source_sha=ref.aw_source_sha,
             expected_version=node.version,
         )
-        files = manifest["files"]
+        # The registry's complete identity - never the transport payload
+        # checksums: a registry publishes the index and every platform
+        # manifest/config/layer, not the OCI tar container.
+        registry_set = flatten_oci_identities(identities)
         return ReceiptEntry(
             version=node.version,
-            digest=canonical_digest_of_set(files),
-            digest_set=files,
+            digest=canonical_digest_of_set(registry_set),
+            digest_set=registry_set,
             lane_ref=ref.to_dict(),
         )
 
-    def _staged_index(self, staged: "ReceiptEntry") -> str:
+    def _staged_identities(self, staged: "ReceiptEntry") -> dict:
         ref = LaneRef.from_dict(staged.lane_ref)
         data = self._fetch_staged(ref)
-        _, index = validate_image_lane_artifact(
+        _, identities = validate_image_lane_artifact(
             data,
             expected_source_sha=ref.aw_source_sha,
             expected_version=staged.version,
         )
-        return index
+        return identities
 
     def observe(self, node, staged: "ReceiptEntry | None" = None):
         if staged is None or staged.digest_set is None:
@@ -2181,7 +2226,14 @@ class AwidImageWorkflowLane(_WorkflowLaneBase):
                 f"{node.component}: observation requires the anchored staged "
                 "entry; expected values are never re-derived"
             )
-        index = self._staged_index(staged)
+        identities = self._staged_identities(staged)
+        registry_set = flatten_oci_identities(identities)
+        if registry_set != staged.digest_set:
+            raise ReceiptError(
+                f"{node.component}: staged registry identity does not equal "
+                "the anchored entry's set"
+            )
+        index = identities["index"]
         version_digest = self._tag_observe(staged.version)
         if version_digest is None:
             return None
@@ -2197,9 +2249,9 @@ class AwidImageWorkflowLane(_WorkflowLaneBase):
             return None
         return ReceiptEntry(
             version=staged.version,
-            digest=staged.digest,
+            digest=canonical_digest_of_set(registry_set),
             phase="published",
-            digest_set=dict(staged.digest_set),
+            digest_set=registry_set,
             lane_ref=staged.lane_ref,
         )
 
