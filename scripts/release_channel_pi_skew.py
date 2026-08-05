@@ -34,9 +34,39 @@ LEGACY_MESSAGE_ID = "00000000-0000-4000-8000-000000000726"
 LEGACY_MARK_READ_REQUEST = {"up_to_message_id": LEGACY_MESSAGE_ID}
 PUBLISHED_KINDS = {"published", "published-latest", "published-floor"}
 OBSERVATION_PREFIX = "AWEB_SKEW_OBSERVATION "
+OBSERVATION_SCHEMA = "aweb.channel-pi-skew-observation.v1"
+OBSERVATION_CONTRACTS = {
+    ("channel", "a-to-b"): ("chat-mark-read", "removed-from-pending"),
+    ("channel", "b-to-a"): ("sse-chat-presentation", "presented"),
+    ("pi", "a-to-b"): ("resident-mail-reply", "observer-verified"),
+    ("pi", "b-to-a"): ("resident-mail-wake", "session-observed"),
+}
 
 
-def parse_observation(output: bytes, direction: str) -> dict:
+def validate_observation(observation: dict, component: str, direction: str) -> None:
+    operation, result = OBSERVATION_CONTRACTS[(component, direction)]
+    expected = {
+        "schema": OBSERVATION_SCHEMA,
+        "component": component,
+        "direction": direction,
+        "operation": operation,
+        "result": result,
+    }
+    if not isinstance(observation, dict) or any(
+        observation.get(key) != value for key, value in expected.items()
+    ):
+        raise rd.ReceiptError(
+            f"{component} {direction} observation does not match its structured "
+            f"operation/result contract {expected!r}"
+        )
+    for key in ("message_id", "conversation_id"):
+        if not isinstance(observation.get(key), str) or not observation[key]:
+            raise rd.ReceiptError(
+                f"{component} {direction} observation lacks concrete {key}"
+            )
+
+
+def parse_observation(output: bytes, component: str, direction: str) -> dict:
     observations = []
     for line in output.decode(errors="replace").splitlines():
         if line.startswith(OBSERVATION_PREFIX):
@@ -50,13 +80,7 @@ def parse_observation(output: bytes, direction: str) -> dict:
             f"{len(observations)}"
         )
     observation = observations[0]
-    if observation.get("direction") != direction:
-        raise rd.ReceiptError(
-            f"skew journey observation {observation.get('direction')!r} does not "
-            f"match cell direction {direction!r}"
-        )
-    if not isinstance(observation.get("assertion"), str) or not observation["assertion"]:
-        raise rd.ReceiptError("skew journey observation has no assertion")
+    validate_observation(observation, component, direction)
     return observation
 
 
@@ -384,19 +408,27 @@ def _side_identity(kind: str, side: dict) -> dict:
     return value
 
 
-def cell_identity(cell) -> str:
-    preimage = {
+def cell_preimage(cell) -> dict:
+    return {
         "edge_id": cell.edge_id,
+        "edge": {"a": cell.edge_a, "b": cell.edge_b},
         "journey": cell.journey,
-        "artifacts": cell.artifacts,
+        "artifacts": dict(cell.artifacts),
         "declared_direction": cell.declared_direction,
         "cell_direction": cell.direction,
         "a": _side_identity(cell.a_kind, cell.a),
         "b": _side_identity(cell.b_kind, cell.b),
     }
+
+
+def cell_identity_from_preimage(preimage: dict) -> str:
     return hashlib.sha256(
         json.dumps(preimage, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def cell_identity(cell) -> str:
+    return cell_identity_from_preimage(cell_preimage(cell))
 
 
 class FileEvidenceWriter:
@@ -446,8 +478,9 @@ class ChannelPiHarness:
         return client
 
     def run(self, cell) -> None:
+        report = None
         try:
-            self._validate_cell(cell)
+            client_component = self._validate_cell(cell)
             client = self._resolver.resolve(
                 cell.a_kind, cell.a, cell.artifacts["a"]
             )
@@ -463,6 +496,8 @@ class ChannelPiHarness:
                 observation = {"event": self._journey.run_server_event(
                     client, server, cell
                 )}
+            observed = next(iter(observation.values()))
+            validate_observation(observed, client_component, cell.direction)
             if cell.a_kind in PUBLISHED_KINDS and cell.b_kind == "candidate":
                 measured = self._journey.run_mark_read_control(
                     dict(LEGACY_MARK_READ_REQUEST)
@@ -486,6 +521,7 @@ class ChannelPiHarness:
                 "schema": "aweb.channel-pi-server-skew-cell.v1",
                 "result": "green",
                 "cell_id": cell_identity(cell),
+                "cell": cell_preimage(cell),
                 "edge_id": cell.edge_id,
                 "edge": {"a": cell.edge_a, "b": cell.edge_b},
                 "journey": cell.journey,
@@ -499,9 +535,9 @@ class ChannelPiHarness:
                 "observation": observation,
                 "negative_control": negative,
             }
-            self._evidence.write(report)
         finally:
             self._journey.close()
+        self._evidence.write(report)
 
     @staticmethod
     def _artifact_report(artifact: PackageArtifact) -> dict:
@@ -512,6 +548,17 @@ class ChannelPiHarness:
             "sha256": artifact.sha256,
             "source": dict(artifact.source),
         }
+
+
+def compose_project_name(root: Path, cell) -> str:
+    raw = f"aweb-skew-{root.name}-{cell_identity(cell)[:16]}".lower()
+    project = "".join(
+        character if character.isalnum() or character in "_.-" else "-"
+        for character in raw
+    )[:63]
+    if not project or not project[0].isalnum():
+        raise rd.ReceiptError(f"could not derive bounded Compose project from {raw!r}")
+    return project
 
 
 class SubprocessChannelPiJourney:
@@ -567,7 +614,7 @@ class SubprocessChannelPiJourney:
                 f"skew journey command failed ({' '.join(command)}): "
                 + result.stderr.decode(errors="replace")[-4000:]
             )
-        observation = parse_observation(result.stdout, direction)
+        observation = parse_observation(result.stdout, self.component, direction)
         return {
             **observation,
             "command": command,
@@ -577,8 +624,11 @@ class SubprocessChannelPiJourney:
     def _journey(self, client, server, cell) -> dict:
         client_root = self._client_root(client)
         server_wheel = self._materialize(server)
+        project = compose_project_name(self.root, cell)
         common = {
             "AWEB_SKEW_SERVER_WHEEL": str(server_wheel),
+            "AWEB_SKEW_PROJECT_TOKEN": project,
+            "OAS_PROOF_PROJECT": project,
             "AWEB_SKEW_SERVER_SHA256": server.sha256,
             "AWEB_SKEW_CELL_ID": cell_identity(cell),
             "AWEB_SKEW_DIRECTION": cell.direction,
@@ -618,7 +668,18 @@ class SubprocessChannelPiJourney:
 
     def close(self):
         import shutil
-        shutil.rmtree(self.root, ignore_errors=True)
+        try:
+            shutil.rmtree(self.root)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise rd.ReceiptError(
+                f"skew journey cleanup failed for {self.root}: {exc}"
+            ) from exc
+        if self.root.exists():
+            raise rd.ReceiptError(
+                f"skew journey cleanup left its root behind: {self.root}"
+            )
 
 
 def _factory(component: str):
@@ -644,73 +705,172 @@ def _version_key(value: str):
         raise rd.ReceiptError(f"measured version {value!r} is not dotted numeric") from exc
 
 
-def aggregate_support(reports: list[dict], *, expected_cell_ids: list[str]) -> dict:
-    """Create an explicitly unanchored document only from complete exact cells."""
+def _canonical_json_digest(value: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _validate_artifact_against_side(
+    artifact: dict, side: dict, locator: str
+) -> None:
+    component = side.get("component")
+    if (
+        not isinstance(artifact, dict)
+        or artifact.get("component") != component
+        or artifact.get("version") != side.get("version")
+        or not isinstance(artifact.get("filename"), str)
+        or not isinstance(artifact.get("sha256"), str)
+        or len(artifact["sha256"]) != 64
+    ):
+        raise rd.ReceiptError(
+            f"{component} artifact does not bind its frozen cell preimage"
+        )
+    source = artifact.get("source") or {}
+    if side.get("kind") == "candidate":
+        digest_set = side.get("digest_set")
+        filename = artifact["filename"]
+        if (
+            source.get("kind") != "candidate"
+            or source.get("lane_ref") != side.get("lane_ref")
+            or source.get("digest_set") != digest_set
+            or not isinstance(digest_set, dict)
+            or source.get("canonical_set_digest") != rd.canonical_digest_of_set(digest_set)
+            or digest_set.get(filename) != artifact["sha256"]
+            or side.get("digest") != rd.canonical_digest_of_set(digest_set)
+        ):
+            raise rd.ReceiptError(
+                f"candidate {component} artifact does not bind its LaneRef/"
+                "payload complete-set preimage"
+            )
+    elif (
+        source.get("kind") != "published"
+        or source.get("registry") != locator
+    ):
+        raise rd.ReceiptError(
+            f"published {component} artifact does not bind registry {locator}"
+        )
+
+
+def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
+    """Build an explicitly unanchored body from every exact frozen cell."""
+    if not expected_cells:
+        raise rd.ReceiptError("no expected frozen skew cells were supplied")
+    expected_preimages = [cell_preimage(cell) for cell in expected_cells]
+    edge_bindings = {
+        json.dumps({
+            key: preimage[key]
+            for key in (
+                "edge_id", "edge", "journey", "artifacts",
+                "declared_direction",
+            )
+        }, sort_keys=True, separators=(",", ":"))
+        for preimage in expected_preimages
+    }
+    if len(edge_bindings) != 1:
+        raise rd.ReceiptError("support aggregation accepts exactly one runtime edge")
+    expected = {
+        cell_identity_from_preimage(preimage): preimage
+        for preimage in expected_preimages
+    }
+    if len(expected) != len(expected_cells):
+        raise rd.ReceiptError("expected frozen matrix contains duplicate exact cells")
     ids = [report.get("cell_id") for report in reports]
     duplicates = sorted({identity for identity in ids if ids.count(identity) > 1})
     if duplicates:
         raise rd.ReceiptError(f"duplicate exact cells in evidence: {duplicates}")
-    missing = sorted(set(expected_cell_ids) - set(ids))
-    extra = sorted(set(ids) - set(expected_cell_ids))
+    missing = sorted(set(expected) - set(ids))
+    extra = sorted(set(ids) - set(expected))
     if missing or extra:
         raise rd.ReceiptError(
             f"missing exact cells {missing}; unexpected exact cells {extra}"
         )
-    clients = set()
-    servers = set()
-    first = reports[0]
-    bound = {
-        key: first.get(key)
-        for key in (
-            "edge_id", "edge", "journey", "artifacts", "declared_direction"
-        )
-    }
+
+    clients: set[str] = set()
+    servers: set[str] = set()
+    candidate_identities: dict[str, dict] = {}
+    evidence = []
     for report in reports:
-        current = {key: report.get(key) for key in bound}
-        if current != bound:
-            raise rd.ReceiptError(
-                f"cell {report.get('cell_id')} binds a different edge"
-            )
+        identity = report["cell_id"]
+        preimage = expected[identity]
+        if report.get("cell") != preimage:
+            raise rd.ReceiptError(f"cell {identity} does not carry its exact cell preimage")
+        if cell_identity_from_preimage(report["cell"]) != identity:
+            raise rd.ReceiptError(f"cell {identity} identity does not recompute")
         if report.get("schema") != "aweb.channel-pi-server-skew-cell.v1":
-            raise rd.ReceiptError(
-                f"cell {report.get('cell_id')} has the wrong evidence schema"
-            )
-        direction = report.get("cell_direction")
-        observation = report.get("observation") or {}
-        if direction == "a-to-b" and set(observation) != {"request"}:
-            raise rd.ReceiptError(
-                f"cell {report.get('cell_id')} lacks its request assertion"
-            )
-        if direction == "b-to-a" and set(observation) != {"event"}:
-            raise rd.ReceiptError(
-                f"cell {report.get('cell_id')} lacks its event assertion"
-            )
-        if report.get("result") != "green":
-            raise rd.ReceiptError(f"cell {report.get('cell_id')} is not green")
+            raise rd.ReceiptError(f"cell {identity} has the wrong evidence schema")
+        for key in (
+            "edge_id", "edge", "journey", "artifacts", "declared_direction",
+            "cell_direction",
+        ):
+            if report.get(key) != preimage.get(key):
+                raise rd.ReceiptError(
+                    f"cell {identity} top-level {key} differs from its cell preimage"
+                )
         if (
-            str(report.get("client_kind", "")).startswith("published")
-            and report.get("server_kind") == "candidate"
+            report.get("client_kind") != preimage["a"]["kind"]
+            or report.get("server_kind") != preimage["b"]["kind"]
+        ):
+            raise rd.ReceiptError(f"cell {identity} kind differs from its cell preimage")
+        direction = preimage["cell_direction"]
+        observation = report.get("observation") or {}
+        expected_key = "request" if direction == "a-to-b" else "event"
+        if set(observation) != {expected_key}:
+            raise rd.ReceiptError(
+                f"cell {identity} lacks its {expected_key} assertion"
+            )
+        validate_observation(
+            observation[expected_key], preimage["edge"]["a"], direction
+        )
+        if report.get("result") != "green":
+            raise rd.ReceiptError(f"cell {identity} is not green")
+        if (
+            str(preimage["a"]["kind"]).startswith("published")
+            and preimage["b"]["kind"] == "candidate"
         ):
             control = report.get("negative_control") or {}
             if (
                 control.get("request") != LEGACY_MARK_READ_REQUEST
                 or control.get("unmutated_status") != 200
                 or control.get("mutated_status") != 422
-                or control.get("evidence_class")
-                != "control-only-not-candidate"
+                or control.get("evidence_class") != "control-only-not-candidate"
             ):
                 raise rd.ReceiptError(
-                    f"cell {report.get('cell_id')} lacks the required-field control"
+                    f"cell {identity} lacks the required-field control"
                 )
-        client = report["client_artifact"]
-        server = report["server_artifact"]
-        if str(report["client_kind"]).startswith("published"):
+        client = report.get("client_artifact")
+        server = report.get("server_artifact")
+        _validate_artifact_against_side(
+            client, preimage["a"], preimage["artifacts"]["a"]
+        )
+        _validate_artifact_against_side(
+            server, preimage["b"], preimage["artifacts"]["b"]
+        )
+        for side, artifact in ((preimage["a"], client), (preimage["b"], server)):
+            if side["kind"] == "candidate":
+                component = side["component"]
+                prior = candidate_identities.setdefault(component, artifact)
+                if prior != artifact:
+                    raise rd.ReceiptError(
+                        f"candidate {component} identity differs across exact cells"
+                    )
+        if str(preimage["a"]["kind"]).startswith("published"):
             clients.add(client["version"])
-        if str(report["server_kind"]).startswith("published"):
+        if str(preimage["b"]["kind"]).startswith("published"):
             servers.add(server["version"])
+        evidence.append({
+            "cell_id": identity,
+            "cell": preimage,
+            "report_sha256": _canonical_json_digest(report),
+            "client_artifact": client,
+            "server_artifact": server,
+        })
+
+    first = expected_preimages[0]
     return {
         "schema": "aweb.runtime-support-measurement.v1",
         "completeness": "unanchored-local-measurement",
+        "edge_id": first["edge_id"],
         "edge": first["edge"],
         "journey": first["journey"],
         "artifacts": first["artifacts"],
@@ -719,8 +879,6 @@ def aggregate_support(reports: list[dict], *, expected_cell_ids: list[str]) -> d
             first["edge"]["a"]: sorted(clients, key=_version_key),
             "server": sorted(servers, key=_version_key),
         },
-        "evidence": [
-            {"cell_id": report["cell_id"], "direction": report["cell_direction"]}
-            for report in reports
-        ],
+        "candidates": candidate_identities,
+        "evidence": evidence,
     }

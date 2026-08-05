@@ -252,25 +252,62 @@ class FakeResolver:
     def resolve(self, kind, side, locator):
         self.calls.append((kind, side["component"], side["version"], locator))
         body = f"{side['component']}:{side['version']}".encode()
+        source = {"kind": "candidate" if kind == "candidate" else "published"}
+        if kind != "candidate":
+            source["registry"] = locator
+        if kind == "candidate":
+            source.update(
+                lane_ref=side["lane_ref"],
+                digest_set=side["digest_set"],
+                canonical_set_digest=sha(
+                    json.dumps(side["digest_set"], sort_keys=True).encode()
+                ),
+            )
+        filename = f"{side['component']}.artifact"
+        digest = (
+            side["digest_set"][filename]
+            if kind == "candidate" else sha(body)
+        )
         return skew.PackageArtifact(
-            component=side["component"], filename=f"{side['component']}.artifact",
-            version=side["version"], sha256=sha(body), bytes=body,
-            source={"kind": kind},
+            component=side["component"], filename=filename,
+            version=side["version"], sha256=digest, bytes=body,
+            source=source,
         )
 
 
 class FakeJourney:
-    def __init__(self, control=(200, 422)):
+    def __init__(self, control=(200, 422), close_error=None):
         self.events = []
         self.control = control
+        self.close_error = close_error
+
+    @staticmethod
+    def observation(component, direction):
+        if (component, direction) == ("channel", "a-to-b"):
+            operation, result = "chat-mark-read", "removed-from-pending"
+        elif (component, direction) == ("channel", "b-to-a"):
+            operation, result = "sse-chat-presentation", "presented"
+        elif (component, direction) == ("pi", "a-to-b"):
+            operation, result = "resident-mail-reply", "observer-verified"
+        else:
+            operation, result = "resident-mail-wake", "session-observed"
+        return {
+            "schema": "aweb.channel-pi-skew-observation.v1",
+            "component": component,
+            "direction": direction,
+            "operation": operation,
+            "result": result,
+            "message_id": "message-1",
+            "conversation_id": "conversation-1",
+        }
 
     def run_client_request(self, client, server, cell):
         self.events.append(("request", client.component, server.component, cell.direction))
-        return {"assertion": "exact mark-read request accepted", "status": 200}
+        return self.observation(client.component, cell.direction)
 
     def run_server_event(self, client, server, cell):
         self.events.append(("event", server.component, client.component, cell.direction))
-        return {"assertion": "exact SSE event presented before ack", "presented": True}
+        return self.observation(client.component, cell.direction)
 
     def run_mark_read_control(self, payload):
         self.events.append(("control", payload))
@@ -282,6 +319,8 @@ class FakeJourney:
 
     def close(self):
         self.events.append(("close",))
+        if self.close_error:
+            raise rd.ReceiptError(self.close_error)
 
 
 class Reports:
@@ -298,13 +337,27 @@ def cell(client="channel", direction="a-to-b", a_kind="candidate",
         "npm:@awebai/claude-channel" if client == "channel" else "npm:@awebai/pi"
     )
     journey = skew.CHANNEL_JOURNEY if client == "channel" else skew.PI_JOURNEY
+    def side(component, version):
+        body = f"{component}:{version}".encode()
+        files = {f"{component}.artifact": sha(body)}
+        return {
+            "component": component,
+            "version": version,
+            "digest": rd.canonical_digest_of_set(files),
+            "digest_set": files,
+            "lane_ref": {
+                "artifact": "gh-artifact:awebai/aweb:17:23",
+                "aw_source_sha": "a" * 40,
+                "zip_digest": "sha256:" + "1" * 64,
+            },
+        }
     return rd.SkewCell(
         edge_id=f"edge-{client}", edge_a=client, edge_b="server",
         journey=journey, artifacts={"a": locator, "b": "pypi:aweb"},
         declared_direction="both", direction=direction,
         a_kind=a_kind, b_kind=b_kind,
-        a={"component": client, "version": "1.2.3"},
-        b={"component": "server", "version": "1.26.34"},
+        a=side(client, "1.2.3"),
+        b=side("server", "1.26.34"),
     )
 
 
@@ -324,6 +377,8 @@ class ChildHarnessTests(unittest.TestCase):
         self.assertEqual(event_journey.events[0][0], "event")
         self.assertEqual(set(request["observation"]), {"request"})
         self.assertEqual(set(event["observation"]), {"event"})
+        self.assertEqual(request["observation"]["request"]["operation"], "chat-mark-read")
+        self.assertEqual(event["observation"]["event"]["operation"], "sse-chat-presentation")
         self.assertNotEqual(request["cell_id"], event["cell_id"])
         self.assertEqual(request["edge_id"], "edge-channel")
         self.assertEqual(request["artifacts"], {
@@ -353,6 +408,37 @@ class ChildHarnessTests(unittest.TestCase):
                     cell(a_kind="published-latest", b_kind="candidate"),
                     journey=FakeJourney(control=statuses),
                 )
+
+    def test_each_invocation_has_a_bounded_noncolliding_compose_project(self):
+        first = skew.compose_project_name(Path("/tmp/channel-skew-run-a"), cell())
+        second = skew.compose_project_name(Path("/tmp/channel-skew-run-b"), cell())
+        self.assertNotEqual(first, second)
+        for project in (first, second):
+            self.assertRegex(project, r"^[a-z0-9][a-z0-9_.-]{0,62}$")
+
+    def test_free_form_direction_label_cannot_become_green_evidence(self):
+        class LabelOnlyJourney(FakeJourney):
+            def run_client_request(self, client, server, value):
+                observation = super().run_client_request(client, server, value)
+                observation["result"] = "anything"
+                return observation
+
+        reports = Reports()
+        with self.assertRaisesRegex(rd.ReceiptError, "structured"):
+            skew.ChannelPiHarness(
+                resolver=FakeResolver(), journey=LabelOnlyJourney(), evidence=reports
+            ).run(cell())
+        self.assertEqual(reports.items, [])
+
+    def test_cleanup_failure_blocks_and_writes_no_green_evidence(self):
+        reports = Reports()
+        with self.assertRaisesRegex(rd.ReceiptError, "cleanup refused"):
+            skew.ChannelPiHarness(
+                resolver=FakeResolver(),
+                journey=FakeJourney(close_error="cleanup refused"),
+                evidence=reports,
+            ).run(cell())
+        self.assertEqual(reports.items, [])
 
     def test_other_edges_and_labels_refuse(self):
         wrong = cell()
@@ -428,10 +514,7 @@ class MatrixCoverageTests(unittest.TestCase):
             for report in reports.items:
                 expected = "request" if report["cell_direction"] == "a-to-b" else "event"
                 self.assertEqual(set(report["observation"]), {expected})
-            skew.aggregate_support(
-                reports.items,
-                expected_cell_ids=[skew.cell_identity(value) for value in cells],
-            )
+            skew.aggregate_support(reports.items, expected_cells=cells)
 
     def test_one_moving_side_evidences_every_measured_published_version(self):
         cells = self.matrix("channel", {"channel"})
@@ -460,58 +543,71 @@ class MeasurementCompletenessTests(unittest.TestCase):
             cell(direction="b-to-a", a_kind="published-floor", b_kind="candidate"),
         ]
         reports = [self.report(value) for value in cells]
-        expected = [skew.cell_identity(value) for value in cells]
-        document = skew.aggregate_support(reports, expected_cell_ids=expected)
+        document = skew.aggregate_support(reports, expected_cells=cells)
         self.assertEqual(document["completeness"], "unanchored-local-measurement")
         self.assertEqual(document["supported_versions"]["channel"], ["1.2.3"])
         self.assertEqual(document["supported_versions"]["server"], ["1.26.34"])
+        self.assertEqual(len(document["evidence"]), len(cells))
+        self.assertTrue(all(row["report_sha256"] for row in document["evidence"]))
+        self.assertEqual(set(document["candidates"]), {"channel", "server"})
         with self.assertRaisesRegex(rd.ReceiptError, "missing exact cells"):
-            skew.aggregate_support(reports[:-1], expected_cell_ids=expected)
+            skew.aggregate_support(reports[:-1], expected_cells=cells)
 
     def test_aggregate_refuses_duplicate_or_direction_label_without_matching_assertion(self):
         value = cell(direction="a-to-b")
         report = self.report(value)
         with self.assertRaisesRegex(rd.ReceiptError, "duplicate exact cells"):
-            skew.aggregate_support([report, report], expected_cell_ids=[report["cell_id"]])
+            skew.aggregate_support([report, report], expected_cells=[value])
         report["cell_direction"] = "b-to-a"
-        with self.assertRaisesRegex(rd.ReceiptError, "event assertion"):
-            skew.aggregate_support([report], expected_cell_ids=[report["cell_id"]])
+        with self.assertRaisesRegex(rd.ReceiptError, "cell preimage"):
+            skew.aggregate_support([report], expected_cells=[value])
 
     def test_aggregate_refuses_mixed_edges_or_missing_required_control(self):
-        channel_report = self.report(cell())
-        pi_report = self.report(cell(client="pi"))
-        with self.assertRaisesRegex(rd.ReceiptError, "different edge"):
+        channel_cell = cell()
+        pi_cell = cell(client="pi")
+        channel_report = self.report(channel_cell)
+        pi_report = self.report(pi_cell)
+        with self.assertRaisesRegex(rd.ReceiptError, "one runtime edge"):
             skew.aggregate_support(
-                [channel_report, pi_report],
-                expected_cell_ids=[channel_report["cell_id"], pi_report["cell_id"]],
+                [channel_report, pi_report], expected_cells=[channel_cell, pi_cell]
             )
-        controlled = self.report(cell(
-            a_kind="published-latest", b_kind="candidate"
-        ))
+        controlled_cell = cell(a_kind="published-latest", b_kind="candidate")
+        controlled = self.report(controlled_cell)
         controlled["negative_control"] = None
         with self.assertRaisesRegex(rd.ReceiptError, "required-field control"):
-            skew.aggregate_support(
-                [controlled], expected_cell_ids=[controlled["cell_id"]]
-            )
+            skew.aggregate_support([controlled], expected_cells=[controlled_cell])
+
+    def test_aggregate_recomputes_cell_and_artifact_evidence(self):
+        value = cell(direction="a-to-b")
+        report = self.report(value)
+        report["client_artifact"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(rd.ReceiptError, "artifact.*preimage"):
+            skew.aggregate_support([report], expected_cells=[value])
+
+        report = self.report(value)
+        report["cell"]["a"]["version"] = "9.9.9"
+        with self.assertRaisesRegex(rd.ReceiptError, "cell preimage"):
+            skew.aggregate_support([report], expected_cells=[value])
 
 
 class RegistrationAndJourneyParameterTests(unittest.TestCase):
-    def test_real_journey_output_requires_one_matching_direction_observation(self):
+    def test_real_journey_output_requires_one_structured_matching_observation(self):
+        observation = FakeJourney.observation("channel", "a-to-b")
         body = (
             b"runner noise\nAWEB_SKEW_OBSERVATION "
-            b'{"direction":"a-to-b","assertion":"mark-read request accepted"}\n'
+            + json.dumps(observation, sort_keys=True).encode() + b"\n"
         )
         self.assertEqual(
-            skew.parse_observation(body, "a-to-b"),
-            {"direction": "a-to-b", "assertion": "mark-read request accepted"},
+            skew.parse_observation(body, "channel", "a-to-b"), observation
         )
         for output, needle in (
             (b"runner noise", "exactly one"),
             (body + body, "exactly one"),
-            (body.replace(b"a-to-b", b"b-to-a"), "does not match"),
+            (body.replace(b"removed-from-pending", b"anything"), "structured"),
+            (body.replace(b"a-to-b", b"b-to-a"), "structured"),
         ):
             with self.assertRaisesRegex(rd.ReceiptError, needle):
-                skew.parse_observation(output, "a-to-b")
+                skew.parse_observation(output, "channel", "a-to-b")
 
     def test_both_exact_journeys_are_registered_once(self):
         import release_skew_harnesses as registry
@@ -532,6 +628,13 @@ class RegistrationAndJourneyParameterTests(unittest.TestCase):
         self.assertIn("AWEB_CHANNEL_PACKAGE_ROOT", channel)
         self.assertIn("OAS_PROOF_PI_PACKAGE_ROOT", resident)
         self.assertIn("exact installed Pi package", resident)
+        self.assertIn("reserveLoopbackPorts(4)", channel)
+        self.assertIn("Compose project ${server.projectName} still owns resources", channel)
+        self.assertIn('for (const resource of ["container", "volume", "network"])', channel)
+        self.assertIn("for resource in container volume network", resident)
+        self.assertIn("label=com.docker.compose.project", channel)
+        self.assertIn("label=com.docker.compose.project", resident)
+        self.assertIn("Compose cleanup failed for exact project", resident)
         for subject in (channel, resident):
             self.assertIn("AWEB_SKEW_SERVER_WHEEL", subject)
             self.assertIn("AWEB_SKEW_SERVER_SHA256", subject)

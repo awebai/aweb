@@ -175,12 +175,38 @@ pathlib.Path(output).write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n
 PY
 }
 
-AWID_PORT="${OAS_PROOF_AWID_PORT:-18110}"
-AWEB_PORT="${OAS_PROOF_AWEB_PORT:-18100}"
-POSTGRES_PORT="${OAS_PROOF_POSTGRES_PORT:-55433}"
+read -r AWID_PORT AWEB_PORT POSTGRES_PORT < <(python3 - \
+  "${OAS_PROOF_AWID_PORT:-}" "${OAS_PROOF_AWEB_PORT:-}" \
+  "${OAS_PROOF_POSTGRES_PORT:-}" <<'PY'
+import socket, sys
+supplied = sys.argv[1:]
+sockets = []
+ports = []
+try:
+    for value in supplied:
+        if value:
+            port = int(value)
+            if not 1 <= port <= 65535:
+                raise SystemExit(f"invalid explicit loopback port: {value}")
+            ports.append(port)
+            continue
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        sockets.append(sock)
+        ports.append(sock.getsockname()[1])
+    if len(set(ports)) != len(ports):
+        raise SystemExit(f"proof loopback ports are not distinct: {ports}")
+    print(*ports)
+finally:
+    for sock in sockets:
+        sock.close()
+PY
+)
 AWID_URL="http://127.0.0.1:$AWID_PORT"
 AWEB_URL="http://127.0.0.1:$AWEB_PORT"
-PROJECT="${OAS_PROOF_PROJECT:-aweb-oas-retire-proof-$(printf '%s' "$REPO_ROOT" | cksum | cut -d' ' -f1)}"
+PROJECT="${OAS_PROOF_PROJECT:-aweb-oas-retire-proof-$(python3 -c 'import secrets; print(secrets.token_hex(8))')}"
+[[ "$PROJECT" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$ ]] \
+  || { echo "FAIL: OAS_PROOF_PROJECT is not a bounded Compose project name: $PROJECT" >&2; exit 2; }
 COMPOSE=(docker compose -p "$PROJECT" -f "$COMPOSE_FILE")
 
 PROOF_ROOT="$(make_temp_dir)"
@@ -226,7 +252,7 @@ assert_default_tmux_topology_unchanged() {
 }
 
 cleanup() {
-  local status=$? retain="$KEEP"
+  local status=$? retain="$KEEP" remaining resource list_flags
   trap - EXIT
   set +e
   rm -f "$PROOF_HOME/.pi/agent/auth.json"
@@ -240,11 +266,34 @@ cleanup() {
       retain=1
     fi
   fi
-  "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1
+  if ! "${COMPOSE[@]}" down -v --remove-orphans > "$EVIDENCE/compose-down.txt" 2>&1; then
+    echo "FAIL: Compose cleanup failed for exact project $PROJECT" >&2
+    status=1
+    retain=1
+  fi
+  for resource in container volume network; do
+    list_flags=(-q)
+    [[ "$resource" != "container" ]] || list_flags=(-aq)
+    if ! remaining="$(docker "$resource" ls "${list_flags[@]}" --filter \
+      "label=com.docker.compose.project=$PROJECT" \
+      2>> "$EVIDENCE/compose-down.txt")"; then
+      echo "FAIL: could not verify Compose $resource resources for $PROJECT" >&2
+      status=1
+      retain=1
+    fi
+    if [[ -n "$remaining" ]]; then
+      echo "FAIL: Compose project $PROJECT still owns $resource resources: $remaining" >&2
+      status=1
+      retain=1
+    fi
+  done
   if [[ "$retain" == "1" ]]; then
     echo "Proof workspace retained for safe remediation at $PROOF_ROOT" >&2
   else
-    rm -rf "$PROOF_ROOT"
+    if ! rm -rf "$PROOF_ROOT" || [[ -e "$PROOF_ROOT" ]]; then
+      echo "FAIL: proof-root cleanup failed for $PROOF_ROOT" >&2
+      status=1
+    fi
   fi
   exit "$status"
 }
@@ -329,6 +378,22 @@ file_sha256() {
   python3 - "$1" <<'PY'
 import hashlib, sys
 print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+}
+
+emit_skew_observation() {
+  python3 - "$@" <<'PY'
+import json, sys
+component, direction, operation, result, message_id, conversation_id = sys.argv[1:]
+print("AWEB_SKEW_OBSERVATION " + json.dumps({
+    "schema": "aweb.channel-pi-skew-observation.v1",
+    "component": component,
+    "direction": direction,
+    "operation": operation,
+    "result": result,
+    "message_id": message_id,
+    "conversation_id": conversation_id,
+}, sort_keys=True, separators=(",", ":")))
 PY
 }
 
@@ -1001,7 +1066,6 @@ export LIBRARY_E2E_AWEB_PORT="$AWEB_PORT"
 export LIBRARY_E2E_POSTGRES_PORT="$POSTGRES_PORT"
 export LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL="$AWID_URL"
 export LIBRARY_E2E_AWEB_PUBLIC_ORIGIN="$AWEB_URL"
-"${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
 "${COMPOSE[@]}" up --build -d awid aweb
 wait_health awid "$AWID_URL/health"
 wait_health aweb "$AWEB_URL/health"
@@ -1343,7 +1407,8 @@ PY
   }
   cp "$SESSION_FILE" "$EVIDENCE/resident-session.jsonl"
   if [[ "$SKEW_DIRECTION" == "b-to-a" ]]; then
-    printf '%s\n' 'AWEB_SKEW_OBSERVATION {"direction":"b-to-a","assertion":"mail wake presented to resident Pi before acknowledgement"}'
+    emit_skew_observation pi b-to-a resident-mail-wake session-observed \
+      "$WAKE_MESSAGE_ID" "$WAKE_CONVERSATION_ID"
   fi
 
   REPLY_OBSERVED=0
@@ -1376,7 +1441,10 @@ PY
   done
   [[ "$REPLY_OBSERVED" == "1" ]] || fail "observer did not receive the resident's exact verified reply"
   if [[ "$SKEW_DIRECTION" == "a-to-b" ]]; then
-    printf '%s\n' 'AWEB_SKEW_OBSERVATION {"direction":"a-to-b","assertion":"resident Pi reply request accepted and verified by observer"}'
+    REPLY_MESSAGE_ID="$(json_value "$EVIDENCE/resident-reply-observation.json" message_id)"
+    [[ -n "$REPLY_MESSAGE_ID" ]] || fail "verified resident reply has no message identity"
+    emit_skew_observation pi a-to-b resident-mail-reply observer-verified \
+      "$REPLY_MESSAGE_ID" "$WAKE_CONVERSATION_ID"
   fi
   env -u TMUX TMUX_TMPDIR="$PROOF_TMUX_DIR" PATH="$TMUX_GUARD_DIR:$PATH" \
     tmux list-panes -t "=$PROOF_TMUX_SESSION:=$INSTANCE_NAME" \
