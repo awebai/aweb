@@ -55,7 +55,7 @@ publishable = false
 source_paths = ["channel/"]
 version_source = { type = "package-json", path = "channel/package.json" }
 tag_format = "channel-v{version}"
-publish_lane = { workflow = ".github/workflows/channel-release.yml", registry = { type = "npm", package = "@awebai/claude-channel" } }
+publish_lane = { workflow = ".github/workflows/npm-release.yml", registry = { type = "npm", package = "@awebai/claude-channel" } }
 verify = { command = "npm view @awebai/claude-channel@{version} version" }
 delivery_restart = { proof = "plugin update + Claude Code session restart per installed host", note = "an installed plugin keeps loaded code until restart" }
 
@@ -63,7 +63,7 @@ delivery_restart = { proof = "plugin update + Claude Code session restart per in
 source_paths = ["pi-extension/"]
 version_source = { type = "package-json", path = "pi-extension/package.json" }
 tag_format = "pi-v{version}"
-publish_lane = { workflow = ".github/workflows/pi-release.yml", registry = { type = "npm", package = "@awebai/pi" } }
+publish_lane = { workflow = ".github/workflows/npm-release.yml", registry = { type = "npm", package = "@awebai/pi" } }
 verify = { command = "npm view @awebai/pi@{version} version" }
 delivery_restart = { inventory = "pgrep -x pi", update = "pi update npm:@awebai/pi", proof = "resolved cache package.json version + fresh process per host" }
 
@@ -71,7 +71,7 @@ delivery_restart = { inventory = "pgrep -x pi", update = "pi update npm:@awebai/
 source_paths = ["packages/claude-skills/"]
 version_source = { type = "package-json", path = "packages/claude-skills/package.json" }
 tag_format = "skills-v{version}"
-publish_lane = { workflow = ".github/workflows/skills-release.yml", registry = { type = "npm", package = "@awebai/claude-skills" } }
+publish_lane = { workflow = ".github/workflows/npm-release.yml", registry = { type = "npm", package = "@awebai/claude-skills" } }
 verify = { command = "npm view @awebai/claude-skills@{version} version" }
 
 [component.marketplace-pointer]
