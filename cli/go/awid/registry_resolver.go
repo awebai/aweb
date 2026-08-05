@@ -563,29 +563,43 @@ func (r *RegistryResolver) discoverRegistry(ctx context.Context, domain string) 
 }
 
 func (r *RegistryResolver) DiscoverRegistry(ctx context.Context, domain string) (string, error) {
-	if strings.TrimSpace(r.fallbackRegistryURL) != "" {
-		return r.fallbackRegistryURL, nil
-	}
 	return r.discoverRegistry(ctx, domain)
 }
 
 func (r *RegistryResolver) discoverAuthority(ctx context.Context, domain string) (DomainAuthority, error) {
 	domain = canonicalizeDomain(domain)
-	if strings.TrimSpace(r.fallbackRegistryURL) != "" {
-		return DomainAuthority{RegistryURL: r.fallbackRegistryURL}, nil
-	}
 	if cached, ok := r.loadRegistryCache(domain); ok {
 		return cached, nil
 	}
+	// fallbackRegistryURL (the identity's configured registry_url) is a FALLBACK,
+	// not a per-domain override: a domain that publishes an `_awid` record is
+	// authoritative for its own registry. Discovering per domain is what lets a
+	// sender and recipient in different registries each resolve against theirs
+	// in a single send (cross-registry federation).
+	fallback := strings.TrimSpace(r.fallbackRegistryURL)
 	authority, err := DiscoverAuthoritativeRegistry(ctx, r.DNSResolver, domain)
 	if err != nil {
+		// DNS discovery failed (network/DNS error). Fall back to the configured
+		// registry so offline/private deployments keep working; else surface it.
+		if fallback != "" {
+			return DomainAuthority{RegistryURL: fallback}, nil
+		}
 		return DomainAuthority{}, err
 	}
+	if strings.TrimSpace(authority.ControllerDID) == "" {
+		// No `_awid` record found for the domain or any ancestor. Prefer the
+		// explicitly configured fallback registry; otherwise the public default.
+		if fallback != "" {
+			authority.RegistryURL = fallback
+		} else if strings.TrimSpace(authority.RegistryURL) == "" {
+			authority.RegistryURL = DefaultAWIDRegistryURL
+		}
+		r.storeRegistryCache(domain, authority, registryDiscoveryTTL)
+		return authority, nil
+	}
+	// The domain published an authoritative `_awid` record: honour its registry.
 	if strings.TrimSpace(authority.RegistryURL) == "" {
 		authority.RegistryURL = DefaultAWIDRegistryURL
-	}
-	if r.fallbackRegistryURL != "" {
-		authority.RegistryURL = r.fallbackRegistryURL
 	}
 	r.storeRegistryCache(domain, authority, registryDiscoveryTTL)
 	return authority, nil
