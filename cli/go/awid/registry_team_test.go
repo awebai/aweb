@@ -318,10 +318,10 @@ func TestRegisterCertificate(t *testing.T) {
 	}
 
 	cert, err := SignTeamCertificate(teamKey, TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -374,10 +374,10 @@ func TestRegisterCertificateAlreadyRegisteredTypedError(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert, err := SignTeamCertificate(teamKey, TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -426,10 +426,10 @@ func TestFetchTeamCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert, err := SignTeamCertificate(teamKey, TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)

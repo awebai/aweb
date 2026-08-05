@@ -372,10 +372,10 @@ func (r *doctorRunner) runCertificateChecks(state *doctorLocalState) {
 		r.add(localCheck(doctorCheckCertificateAlias, doctorStatusOK, &doctorTarget{Type: "team", ID: expectedTeam}, "Team certificate member name matches the active workspace membership.", "", map[string]any{"alias": expectedAlias}))
 	}
 
-	lifetime := strings.TrimSpace(cert.Lifetime)
-	switch lifetime {
-	case awid.LifetimeEphemeral, awid.LifetimePersistent:
-		r.add(localCheck(doctorCheckCertificateIdentityScope, doctorStatusOK, &doctorTarget{Type: "team", ID: expectedTeam}, "Team certificate identity scope is recognized.", "", map[string]any{"identity_scope": awid.DescribeIdentityClass(lifetime), "legacy_lifetime": lifetime}))
+	identityScope := awid.NormalizeIdentityScope(cert.IdentityScope)
+	switch identityScope {
+	case awid.IdentityModeLocal, awid.IdentityModeGlobal:
+		r.add(localCheck(doctorCheckCertificateIdentityScope, doctorStatusOK, &doctorTarget{Type: "team", ID: expectedTeam}, "Team certificate identity scope is recognized.", "", map[string]any{"identity_scope": identityScope}))
 	default:
 		r.add(localCheck(
 			doctorCheckCertificateIdentityScope,
@@ -383,7 +383,7 @@ func (r *doctorRunner) runCertificateChecks(state *doctorLocalState) {
 			&doctorTarget{Type: "team", ID: expectedTeam},
 			"Team certificate identity scope is unknown.",
 			"Replace the team certificate with one using a supported identity scope.",
-			map[string]any{"legacy_lifetime": lifetime},
+			map[string]any{"identity_scope": identityScope},
 		))
 	}
 
@@ -425,7 +425,7 @@ func (r *doctorRunner) runSigningKeyFileChecks(state *doctorLocalState) {
 		} else {
 			check = localPathCheck(doctorCheckSigningKeyExists, doctorStatusFail, state.signingKeyPath, "Signing key file could not be inspected.", "Check file permissions for .aw/signing.key.", map[string]any{"error": err.Error()})
 		}
-		if state.cert != nil && strings.TrimSpace(state.cert.Lifetime) == awid.LifetimePersistent {
+		if state.cert != nil && awid.NormalizeIdentityScope(state.cert.IdentityScope) == awid.IdentityModeGlobal {
 			check.Handoff = globalIdentityReplacementReviewHandoff(doctorAuthorityStatusNotDetected, nil)
 		}
 		r.add(check)
@@ -444,7 +444,7 @@ func (r *doctorRunner) runSigningKeyFileChecks(state *doctorLocalState) {
 			"Restore a valid Ed25519 signing key for this worktree.",
 			map[string]any{"error": err.Error()},
 		)
-		if state.cert != nil && strings.TrimSpace(state.cert.Lifetime) == awid.LifetimePersistent {
+		if state.cert != nil && awid.NormalizeIdentityScope(state.cert.IdentityScope) == awid.IdentityModeGlobal {
 			check.Handoff = suspectedKeyMismatchReviewHandoff(doctorAuthorityStatusNotDetected, nil)
 		}
 		r.add(check)
@@ -507,8 +507,8 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 		r.addIdentityDependentBlockedChecks(doctorCheckCertificateParse)
 		return
 	}
-	lifetime := strings.TrimSpace(state.cert.Lifetime)
-	if lifetime != awid.LifetimeEphemeral && lifetime != awid.LifetimePersistent {
+	identityScope := awid.NormalizeIdentityScope(state.cert.IdentityScope)
+	if identityScope != awid.IdentityModeLocal && identityScope != awid.IdentityModeGlobal {
 		r.add(blockedLocalCheck(doctorCheckIdentityLocalYAML, "Identity class expectation requires a supported certificate identity scope.", doctorCheckCertificateIdentityScope, localPathTarget(state.identityPath)))
 		r.add(blockedLocalCheck(doctorCheckIdentityGlobalYAML, "Identity class expectation requires a supported certificate identity scope.", doctorCheckCertificateIdentityScope, localPathTarget(state.identityPath)))
 		r.addIdentityDependentBlockedChecks(doctorCheckCertificateIdentityScope)
@@ -526,25 +526,25 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 		}
 	}
 
-	if lifetime == awid.LifetimeEphemeral && !identityExists {
+	if identityScope == awid.IdentityModeLocal && !identityExists {
 		r.add(localPathCheck(
 			doctorCheckIdentityLocalYAML,
 			doctorStatusOK,
 			state.identityPath,
 			"Local workspace does not require identity.yaml.",
 			"",
-			map[string]any{"state": "absent", "identity_scope": awid.IdentityModeLocal, "legacy_lifetime": lifetime},
+			map[string]any{"state": "absent", "identity_scope": awid.IdentityModeLocal},
 		))
 		return
 	}
-	if lifetime == awid.LifetimePersistent && !identityExists {
+	if identityScope == awid.IdentityModeGlobal && !identityExists {
 		check := localPathCheck(
 			doctorCheckIdentityGlobalYAML,
 			doctorStatusFail,
 			state.identityPath,
 			"Global workspace requires identity.yaml, but it is missing.",
 			"Restore .aw/identity.yaml or reconnect this global identity.",
-			map[string]any{"state": "missing", "identity_scope": awid.IdentityModeGlobal, "legacy_lifetime": lifetime},
+			map[string]any{"state": "missing", "identity_scope": awid.IdentityModeGlobal},
 		)
 		check.Handoff = globalIdentityLifecycleReviewHandoff()
 		r.add(check)
@@ -553,14 +553,14 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 		return
 	}
 
-	if lifetime == awid.LifetimeEphemeral {
+	if identityScope == awid.IdentityModeLocal {
 		r.add(localPathCheck(
 			doctorCheckIdentityLocalYAML,
 			doctorStatusInfo,
 			state.identityPath,
-			"Local workspace has an optional identity.yaml file.",
-			"Keep it only if you understand how identity commands use this reserved path.",
-			map[string]any{"state": "present", "identity_scope": awid.IdentityModeLocal, "legacy_lifetime": lifetime},
+			"Local workspace identity.yaml is present.",
+			"",
+			map[string]any{"state": "present", "identity_scope": awid.IdentityModeLocal},
 		))
 	} else {
 		r.add(localPathCheck(
@@ -569,7 +569,7 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 			state.identityPath,
 			"Global workspace identity.yaml is present.",
 			"",
-			map[string]any{"state": "present", "identity_scope": awid.IdentityModeGlobal, "legacy_lifetime": lifetime},
+			map[string]any{"state": "present", "identity_scope": awid.IdentityModeGlobal},
 		))
 	}
 
@@ -583,7 +583,7 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 			"Repair .aw/identity.yaml before relying on local identity state.",
 			map[string]any{"error": err.Error()},
 		)
-		if lifetime == awid.LifetimePersistent {
+		if identityScope == awid.IdentityModeGlobal {
 			check.Handoff = globalIdentityLifecycleReviewHandoff()
 		}
 		r.add(check)
@@ -592,28 +592,28 @@ func (r *doctorRunner) runIdentityChecks(state *doctorLocalState) {
 	}
 	state.identity = identity
 	r.add(localPathCheck(doctorCheckIdentityParse, doctorStatusOK, state.identityPath, "Identity file parsed successfully.", "", nil))
-	r.runIdentityCoherenceChecks(state, lifetime)
+	r.runIdentityCoherenceChecks(state, identityScope)
 }
 
-func (r *doctorRunner) runIdentityCoherenceChecks(state *doctorLocalState, lifetime string) {
+func (r *doctorRunner) runIdentityCoherenceChecks(state *doctorLocalState, certificateScope string) {
 	identity := state.identity
 	cert := state.cert
 	if identity == nil || cert == nil {
 		return
 	}
 
-	identityLifetime := awid.LegacyLifetimeForIdentityScope(identity.IdentityScope)
-	if identityLifetime != lifetime {
+	identityScope := awid.NormalizeIdentityScope(identity.IdentityScope)
+	if identityScope != certificateScope {
 		r.add(localPathCheck(
 			doctorCheckIdentityScope,
 			doctorStatusFail,
 			state.identityPath,
 			"Identity scope does not match the team certificate identity scope.",
 			"Repair identity.yaml or reconnect this worktree so identity scope metadata agrees.",
-			map[string]any{"identity_scope": awid.DescribeIdentityClass(identityLifetime), "certificate_identity_scope": awid.DescribeIdentityClass(lifetime), "identity_legacy_lifetime": identityLifetime, "certificate_legacy_lifetime": lifetime},
+			map[string]any{"identity_scope": identityScope, "certificate_identity_scope": certificateScope},
 		))
 	} else {
-		r.add(localPathCheck(doctorCheckIdentityScope, doctorStatusOK, state.identityPath, "Identity scope matches the team certificate identity scope.", "", map[string]any{"identity_scope": awid.DescribeIdentityClass(lifetime), "legacy_lifetime": lifetime}))
+		r.add(localPathCheck(doctorCheckIdentityScope, doctorStatusOK, state.identityPath, "Identity scope matches the team certificate identity scope.", "", map[string]any{"identity_scope": identityScope}))
 	}
 
 	identityDID := strings.TrimSpace(identity.DID)
@@ -660,7 +660,7 @@ func (r *doctorRunner) runIdentityCoherenceChecks(state *doctorLocalState, lifet
 		))
 	}
 
-	if lifetime == awid.LifetimePersistent {
+	if certificateScope == awid.IdentityModeGlobal {
 		switch {
 		case identityStableID == "":
 			r.add(localPathCheck(doctorCheckIdentityStableID, doctorStatusFail, state.identityPath, "Global identity stable_id is missing.", "Restore the global identity stable_id.", nil))

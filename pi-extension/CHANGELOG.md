@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2
+
+- Keeps plaintext mail with a null encrypted envelope on the authenticated
+  Channel trust path instead of hydrating it through a child `aw` process.
+- Accepts only decrypted subject/body content from child `aw` output, so it
+  cannot overwrite sender identity, signature, or trust fields.
+- Pins child mail/chat reads to Channel's selected team and refuses startup
+  when that team lacks certificate-signing authentication.
+
 ## 0.3.1
 
 - Delivery store saves are serialized across processes, so concurrent Pi

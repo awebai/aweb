@@ -31,10 +31,10 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 
 	// Sign a certificate for the member
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: memberDIDKey,
-		Alias:        "alice",
-		Lifetime:     awid.LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  memberDIDKey,
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -85,12 +85,12 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 
 	// Write identity
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:       memberDIDKey,
-		StableID:  awid.ComputeStableID(memberPub),
-		Address:   "acme.com/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-06T00:00:00Z",
+		DID:           memberDIDKey,
+		StableID:      awid.ComputeStableID(memberPub),
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-06T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -231,10 +231,10 @@ func TestInitWithCertificatePreservesExplicitAPIPath(t *testing.T) {
 	teamDIDKey := awid.ComputeDIDKey(teamPub)
 
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: memberDIDKey,
-		Alias:        "alice",
-		Lifetime:     awid.LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  memberDIDKey,
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -278,12 +278,12 @@ func TestInitWithCertificatePreservesExplicitAPIPath(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:       memberDIDKey,
-		StableID:  awid.ComputeStableID(memberPub),
-		Address:   "acme.com/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-06T00:00:00Z",
+		DID:           memberDIDKey,
+		StableID:      awid.ComputeStableID(memberPub),
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-06T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -345,10 +345,10 @@ func TestConnectResponseWritesWorkspaceYAML(t *testing.T) {
 	_ = teamPub
 
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: awid.ComputeDIDKey(memberPub),
-		Alias:        "bob",
-		Lifetime:     awid.LifetimeEphemeral,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  awid.ComputeDIDKey(memberPub),
+		Alias:         "bob",
+		IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -449,10 +449,10 @@ func TestPostConnectRejectsOversizeResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: awid.ComputeDIDKey(memberPub),
-		Alias:        "alice",
-		Lifetime:     awid.LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  awid.ComputeDIDKey(memberPub),
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)

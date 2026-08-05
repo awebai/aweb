@@ -389,7 +389,7 @@ func loadReplacementAgentOldCertificate(homeDir, teamID, alias, oldDIDKey, newDI
 		}
 		return "", nil, fmt.Errorf("load old team certificate from replacement agent home: %w", err)
 	}
-	if oldCertificate.Team != teamID || oldCertificate.Alias != alias || oldCertificate.MemberDIDKey != oldDIDKey || awid.NormalizeIdentityScope(firstNonEmpty(oldCertificate.IdentityScope, oldCertificate.Lifetime)) != awid.IdentityModeLocal {
+	if oldCertificate.Team != teamID || oldCertificate.Alias != alias || oldCertificate.MemberDIDKey != oldDIDKey || awid.NormalizeIdentityScope(oldCertificate.IdentityScope) != awid.IdentityModeLocal {
 		return "", nil, usageError("old team certificate in %s does not match local member %s (%s -> %s)", homeDir, alias, oldDIDKey, newDIDKey)
 	}
 	if explicitOldCertificateID != "" && explicitOldCertificateID != oldCertificate.CertificateID {

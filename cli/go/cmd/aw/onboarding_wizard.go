@@ -48,10 +48,10 @@ type guidedOnboardingRequest struct {
 	HumanName   string
 	AgentType   string
 	Role        string
-	Persistent  bool
+	Global      bool
 	// InboundMode is the canonical wire form ("" | "open" | "team_and_contacts")
 	// chosen at the CLI by --inbound-mode. Only meaningful when
-	// Persistent is true. Forwarded to whichever creation endpoint
+	// Global is true. Forwarded to whichever creation endpoint
 	// the wizard ends up calling.
 	InboundMode        string
 	InjectAgentDocs    bool
@@ -127,11 +127,11 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	if err != nil {
 		return nil, err
 	}
-	persistent, err := resolveGuidedHostedPersistent(req)
+	global, err := resolveGuidedHostedGlobal(req)
 	if err != nil {
 		return nil, err
 	}
-	req.Persistent = persistent
+	req.Global = global
 	alias, err := resolveGuidedHostedAlias(req)
 	if err != nil {
 		return nil, err
@@ -139,7 +139,7 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 
 	var provisioned hostedIdentityProvision
 	for {
-		provisioned, err = provisionHostedIdentity(serviceURLs.OnboardingURL, serviceURLs.RegistryURL, username, alias, req.Persistent, req.InboundMode)
+		provisioned, err = provisionHostedIdentity(serviceURLs.OnboardingURL, serviceURLs.RegistryURL, username, alias, req.Global, req.InboundMode)
 		if err != nil {
 			if hostedUsernameTakenOnSignup(err) {
 				if req.NonInteractive {
@@ -162,7 +162,7 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 			provisioned.DIDKey,
 			provisioned.DIDAW,
 			provisioned.MemberAddress,
-			req.Persistent,
+			req.Global,
 		); err != nil {
 			return nil, err
 		}
@@ -198,7 +198,7 @@ func validateHostedNonInteractiveRequired(req guidedOnboardingRequest) error {
 	if strings.TrimSpace(req.Username) == "" {
 		return usageError("missing required flag: --username")
 	}
-	if req.Persistent {
+	if req.Global {
 		if strings.TrimSpace(req.Name) == "" && strings.TrimSpace(req.Alias) == "" {
 			return usageError("missing required flag: --name")
 		}
@@ -214,13 +214,13 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 	req.PromptIn = bufferedPromptReader(guidedPromptIn(req.PromptIn))
 	req.PromptOut = guidedPromptOut(req.PromptOut)
 
-	persistent, err := resolveGuidedBYODPersistent(req)
+	global, err := resolveGuidedBYODGlobal(req)
 	if err != nil {
 		return nil, err
 	}
-	req.Persistent = persistent
+	req.Global = global
 
-	name, err := resolveGuidedBYODName(req, persistent)
+	name, err := resolveGuidedBYODName(req, global)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +228,7 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 	if err != nil {
 		return nil, err
 	}
-	printGuidedBYODIdentityPlan(req.PromptOut, persistent, name, domain)
+	printGuidedBYODIdentityPlan(req.PromptOut, global, name, domain)
 
 	serviceURLs, err := resolveOnboardingServiceURLs(req.BaseURL)
 	if err != nil {
@@ -336,22 +336,22 @@ func guidedOnboardingSkipDNSVerify() bool {
 	}
 }
 
-func resolveGuidedBYODPersistent(req guidedOnboardingRequest) (bool, error) {
+func resolveGuidedBYODGlobal(req guidedOnboardingRequest) (bool, error) {
 	// Default local; the --global flag is the canonical signal that promotes
 	// the identity to an addressed did:aw. --name no longer implies global —
 	// it's just the agent name.
-	return req.Persistent, nil
+	return req.Global, nil
 }
 
-func resolveGuidedHostedPersistent(req guidedOnboardingRequest) (bool, error) {
+func resolveGuidedHostedGlobal(req guidedOnboardingRequest) (bool, error) {
 	// Default local; --global is the canonical signal. Matches BYOD shape.
-	return req.Persistent, nil
+	return req.Global, nil
 }
 
-func resolveGuidedBYODName(req guidedOnboardingRequest, persistent bool) (string, error) {
+func resolveGuidedBYODName(req guidedOnboardingRequest, global bool) (string, error) {
 	name := strings.TrimSpace(req.Name)
 	label := "Agent name"
-	if !persistent {
+	if !global {
 		name = strings.TrimSpace(req.Alias)
 		if name == "" {
 			name = strings.TrimSpace(req.Name)
@@ -360,7 +360,7 @@ func resolveGuidedBYODName(req guidedOnboardingRequest, persistent bool) (string
 	}
 	if name == "" {
 		if req.NonInteractive {
-			if persistent {
+			if global {
 				return "", usageError("missing required flag: --name")
 			}
 			return "", usageError("missing required flag: --name")
@@ -385,12 +385,12 @@ func resolveGuidedBYODDomain(req guidedOnboardingRequest) (string, error) {
 	return promptRequiredStringWithIO("Domain", "", req.PromptIn, req.PromptOut)
 }
 
-func printGuidedBYODIdentityPlan(out io.Writer, persistent bool, name, domain string) {
+func printGuidedBYODIdentityPlan(out io.Writer, global bool, name, domain string) {
 	if out == nil {
 		return
 	}
 	normalizedDomain := awconfig.NormalizeDomain(domain)
-	if persistent {
+	if global {
 		fmt.Fprintln(out, "Creating global BYOD identity.")
 		fmt.Fprintf(out, "  Agent name %q becomes public address %s/%s.\n", name, normalizedDomain, name)
 		return
@@ -435,7 +435,7 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if req.Persistent {
+	if req.Global {
 		// Global BYOD shares the id-create registry path: namespace, identity,
 		// then controller-signed address binding.
 		if err := ensureStandaloneRegistryRegistration(ctx, registry, prepared.Plan, prepared.ControllerKey, prepared.IdentityKey); err != nil {
@@ -449,15 +449,15 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 	if alias == "" {
 		alias = prepared.Plan.Name
 	}
-	lifetime := awid.LifetimeEphemeral
+	identityScope := awid.IdentityModeLocal
 	memberDIDAW := ""
 	memberAddress := ""
-	if req.Persistent {
-		lifetime = awid.LifetimePersistent
+	if req.Global {
+		identityScope = awid.IdentityModeGlobal
 		memberDIDAW = prepared.Plan.DIDAW
 		memberAddress = prepared.Plan.Address
 	}
-	team, err := bootstrapLocalTeamMemberWithLifetime(
+	team, err := bootstrapLocalTeamMemberWithScope(
 		ctx,
 		registry,
 		prepared.Plan.RegistryURL,
@@ -469,7 +469,7 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 		memberDIDAW,
 		memberAddress,
 		alias,
-		lifetime,
+		identityScope,
 	)
 	if err != nil {
 		return nil, err
@@ -493,7 +493,7 @@ func persistGuidedBYODIdentity(provisioned *guidedBYODProvision) error {
 	if err := persistLocalSigningKeyAndCertificate(workingDir, provisioned.Identity.IdentityKey, provisioned.Certificate); err != nil {
 		return err
 	}
-	if strings.TrimSpace(provisioned.Certificate.Lifetime) == awid.LifetimeEphemeral {
+	if awid.NormalizeIdentityScope(provisioned.Certificate.IdentityScope) == awid.IdentityModeLocal {
 		return nil
 	}
 	return awconfig.SaveWorktreeIdentityTo(plan.IdentityPath, &awconfig.WorktreeIdentity{
@@ -572,7 +572,7 @@ func resolveGuidedHostedAlias(req guidedOnboardingRequest) (string, error) {
 		return name, nil
 	}
 	if req.NonInteractive {
-		if req.Persistent {
+		if req.Global {
 			return "", usageError("missing required flag: --name")
 		}
 		return "", usageError("missing required flag: --name")
@@ -583,7 +583,7 @@ func resolveGuidedHostedAlias(req guidedOnboardingRequest) (string, error) {
 	// for a second identity pass --name explicitly (e.g., "bob"). $USER is
 	// deliberately not used as a default — that previous behavior silently
 	// bound the developer's OS login name to a public did:aw address.
-	if req.Persistent {
+	if req.Global {
 		return promptRequiredStringWithIO("Agent name", defaultGuidedHostedAlias(), req.PromptIn, req.PromptOut)
 	}
 	return promptRequiredStringWithIO("Agent name", defaultGuidedHostedAlias(), req.PromptIn, req.PromptOut)
@@ -671,7 +671,7 @@ type hostedIdentityProvision struct {
 }
 
 func provisionHostedIdentity(
-	onboardingURL, registryURL, username, alias string, persistent bool, inboundMode string,
+	onboardingURL, registryURL, username, alias string, global bool, inboundMode string,
 ) (hostedIdentityProvision, error) {
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
@@ -689,14 +689,14 @@ func provisionHostedIdentity(
 	}
 	didKey := awid.ComputeDIDKey(pub)
 	didAW := ""
-	if persistent {
+	if global {
 		didAW = awid.ComputeStableID(pub)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if persistent {
+	if global {
 		// Hosted onboarding receives the managed address from cli-signup; the CLI
 		// publishes only the did:aw identity before asking the cloud to bind it.
 		if err := registerHostedDID(ctx, registry, didKey, didAW, signingKey); err != nil {
@@ -800,7 +800,7 @@ func persistGuidedHostedState(
 	signingKey ed25519.PrivateKey,
 	cert *awid.TeamCertificate,
 	didKey, didAW, memberAddress string,
-	persistent bool,
+	global bool,
 	identityHomes ...string,
 ) error {
 	identityHome := filepath.Join(filepath.Clean(workingDir), ".aw")
@@ -810,7 +810,7 @@ func persistGuidedHostedState(
 	if err := persistLocalSigningKeyAndCertificateAt(workingDir, identityHome, signingKey, cert); err != nil {
 		return err
 	}
-	if !persistent {
+	if !global {
 		return nil
 	}
 	identityPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "identity.yaml")

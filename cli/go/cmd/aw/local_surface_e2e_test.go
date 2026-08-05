@@ -443,10 +443,10 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 			}
 			alias, _ := req["alias"].(string)
 			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{
-				Team:         teamID,
-				MemberDIDKey: didKey,
-				Alias:        alias,
-				Lifetime:     awid.LifetimeEphemeral,
+				Team:          teamID,
+				MemberDIDKey:  didKey,
+				Alias:         alias,
+				IdentityScope: awid.IdentityModeLocal,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -466,7 +466,7 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 				"server_url":     serverURL,
 				"did":            didKey,
 				"custody":        "self",
-				"lifetime":       "ephemeral",
+				"identity_scope": "local",
 				"access_mode":    "open",
 				"created":        true,
 				"team_cert":      encoded,

@@ -181,7 +181,7 @@ var apiTransientRetryBaseDelay = 100 * time.Millisecond
 // agentMeta holds cached metadata about a resolved agent.
 type agentMeta struct {
 	DID             string
-	Lifetime        string // "persistent" or "ephemeral"
+	IdentityScope   string // "local" or "global"
 	Custody         string // "self" or "custodial"
 	Resolved        bool
 	ResolutionError string // "not_found" or "unavailable" after a forced refresh
@@ -395,7 +395,7 @@ func (c *Client) StableID() string { return c.stableID }
 
 // SetRequireRecipientBindingForDirectAddresses controls whether signed direct
 // address sends must bind the recipient address to a current did:key before
-// posting. Persistent identity clients should enable this so private or hidden
+// posting. Global identity clients should enable this so private or hidden
 // registry addresses fail closed instead of falling through to local routing.
 func (c *Client) SetRequireRecipientBindingForDirectAddresses(required bool) {
 	c.requireRecipientBinding = required
@@ -526,7 +526,7 @@ func (c *Client) isCurrentTeamRosterReference(address string) bool {
 	return ok
 }
 
-// resolveAgentMeta returns cached lifetime/custody metadata for a sender address.
+// resolveAgentMeta returns cached identity-scope/custody metadata for a sender address.
 // On first contact, resolves via the client's IdentityResolver and caches the result.
 // Returns an unresolved marker if no resolver is set or resolution fails.
 func (c *Client) resolveAgentMeta(ctx context.Context, address string) *agentMeta {
@@ -545,9 +545,9 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 		}
 	}
 	fallback := &agentMeta{
-		Lifetime: LifetimePersistent,
-		Custody:  CustodySelf,
-		Resolved: true,
+		IdentityScope: IdentityModeGlobal,
+		Custody:       CustodySelf,
+		Resolved:      true,
 	}
 	if c.resolver != nil {
 		resolve := c.resolver.Resolve
@@ -560,13 +560,13 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 		}
 		if identity, err := resolve(ctx, trustAddress); err == nil {
 			meta := &agentMeta{
-				DID:      strings.TrimSpace(identity.DID),
-				Lifetime: LifetimePersistent,
-				Custody:  CustodySelf,
-				Resolved: true,
+				DID:           strings.TrimSpace(identity.DID),
+				IdentityScope: IdentityModeGlobal,
+				Custody:       CustodySelf,
+				Resolved:      true,
 			}
-			if identity.Lifetime != "" {
-				meta.Lifetime = identity.Lifetime
+			if identity.IdentityScope != "" {
+				meta.IdentityScope = NormalizeIdentityScope(identity.IdentityScope)
 			}
 			if identity.Custody != "" {
 				meta.Custody = identity.Custody
@@ -594,7 +594,7 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 }
 
 // NormalizeSenderTrust applies sender-specific trust normalization after
-// signature verification. It suppresses contact tags for ephemeral senders and
+// signature verification. It suppresses contact tags for local senders and
 // then applies continuity pinning using shared resolver metadata.
 func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationStatus, rawAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, isContact *bool) (VerificationStatus, *bool) {
 	// Mail applies recipient binding before sender continuity normalization.
@@ -620,7 +620,7 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 			}
 			return VerificationStale, nil
 		}
-		if fresh.Lifetime == LifetimeEphemeral {
+		if fresh.IdentityScope == IdentityModeLocal {
 			return c.verifyResolvedLocalSender(fresh, strings.TrimSpace(rawAddress), trustAddress, fromDID, status), nil
 		}
 		if strings.TrimSpace(fromStableID) == "" {
@@ -631,7 +631,7 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	if meta == nil {
 		meta = c.resolveAgentMeta(ctx, rawAddress)
 	}
-	if strings.TrimSpace(fromStableID) == "" || (meta.Resolved && meta.Lifetime == LifetimeEphemeral) {
+	if strings.TrimSpace(fromStableID) == "" || (meta.Resolved && meta.IdentityScope == IdentityModeLocal) {
 		isContact = nil
 	}
 	var registryConfirmedCurrentKey bool
@@ -665,7 +665,7 @@ func (c *Client) verifyLocalSenderAgainstCurrentRoster(ctx context.Context, rawA
 		}
 		return VerificationStale
 	}
-	if fresh.Lifetime != LifetimeEphemeral {
+	if fresh.IdentityScope != IdentityModeLocal {
 		return IdentityMismatch
 	}
 	return c.verifyResolvedLocalSender(fresh, rawAddress, trustAddress, fromDID, Verified)
@@ -747,7 +747,7 @@ func (c *Client) checkStableIdentityRegistry(ctx context.Context, status Verific
 // before returning IdentityMismatch.
 // Returns the status unchanged if no pin store is set, the message is not
 // verified, or from_did/from_address is empty.
-// Uses the resolver to determine the sender's lifetime (ephemeral agents
+// Uses the resolver to determine the sender's identity scope (local identities
 // skip pinning) and custody (custodial agents return VerifiedCustodial).
 //
 // When fromStableID is present, pins are keyed by stable_id instead of did:key.
@@ -775,7 +775,7 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 	if !meta.Resolved {
 		return status
 	}
-	if meta.Lifetime == LifetimeEphemeral {
+	if meta.IdentityScope == IdentityModeLocal {
 		c.pinStore.mu.Lock()
 		removed := c.pinStore.RemoveAddress(trustAddress)
 		rawAddress = strings.TrimSpace(rawAddress)
@@ -824,7 +824,7 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 		}
 	}
 
-	pinResult := c.pinStore.CheckPin(trustAddress, pinKey, meta.Lifetime)
+	pinResult := c.pinStore.CheckPin(trustAddress, pinKey, meta.IdentityScope)
 	switch pinResult {
 	case PinNew:
 		c.pinStore.StorePin(pinKey, trustAddress, "", "")

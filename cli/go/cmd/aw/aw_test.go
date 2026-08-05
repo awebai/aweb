@@ -313,6 +313,8 @@ func TestDeprecatedVocabularyFlagsWarn(t *testing.T) {
 		want string
 	}{
 		{name: "persistent to member-global", args: []string{"id", "team", "invite", "--persistent", "--help"}, want: "Flag --persistent has been deprecated, use --member-global"},
+		{name: "ephemeral to member-local", args: []string{"id", "team", "invite", "--ephemeral", "--help"}, want: "Flag --ephemeral has been deprecated, use --member-local"},
+		{name: "lifetime to global", args: []string{"id", "team", "add-member", "--lifetime", "persistent", "--help"}, want: "Flag --lifetime has been deprecated, use --global or --local"},
 		{name: "global to member-global", args: []string{"id", "team", "invite", "--global", "--help"}, want: "Flag --global has been deprecated, use --member-global"},
 		{name: "local to member-local", args: []string{"id", "team", "invite", "--local", "--help"}, want: "Flag --local has been deprecated, use --member-local"},
 		{name: "alias to name", args: []string{"id", "team", "accept-invite", "--alias", "bob", "--help"}, want: "Flag --alias has been deprecated, use --name"},
@@ -380,25 +382,25 @@ func TestAwWhoamiJSONUsesActiveCertMemberAddress(t *testing.T) {
 	did := awid.ComputeDIDKey(pub)
 	stableID := awid.ComputeStableID(pub)
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     server.URL,
-		TeamID:      "backend:aweb.ai",
-		Alias:       "amy",
-		WorkspaceID: "workspace-amy",
-		DID:         did,
-		StableID:    stableID,
-		Address:     "aweb.ai/amy",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		SigningKey:  key,
-		CreatedAt:   "2026-04-21T00:00:00Z",
+		AwebURL:       server.URL,
+		TeamID:        "backend:aweb.ai",
+		Alias:         "amy",
+		WorkspaceID:   "workspace-amy",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "aweb.ai/amy",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		SigningKey:    key,
+		CreatedAt:     "2026-04-21T00:00:00Z",
 	})
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Address:   "juan.aweb.ai/amy",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-21T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "juan.aweb.ai/amy",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-21T00:00:00Z",
 	})
 
 	run := exec.CommandContext(ctx, bin, "whoami", "--json")
@@ -417,6 +419,72 @@ func TestAwWhoamiJSONUsesActiveCertMemberAddress(t *testing.T) {
 	}
 	if got.Address != "aweb.ai/amy" || got.Domain != "aweb.ai" {
 		t.Fatalf("whoami address/domain=%q/%q want aweb.ai/amy/aweb.ai", got.Address, got.Domain)
+	}
+}
+
+func TestAwWhoamiReportsDurableLocalScopeWithoutLifetime(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL:       server.URL,
+		TeamID:        "backend:aweb.ai",
+		Alias:         "durable-local",
+		WorkspaceID:   "workspace-durable-local",
+		DID:           did,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		SigningKey:    key,
+		CreatedAt:     "2026-04-21T00:00:00Z",
+	})
+
+	jsonRun := exec.CommandContext(ctx, bin, "whoami", "--json")
+	jsonRun.Env = testCommandEnv(tmp)
+	jsonRun.Dir = tmp
+	jsonOut, err := jsonRun.CombinedOutput()
+	if err != nil {
+		t.Fatalf("whoami --json failed: %v\n%s", err, string(jsonOut))
+	}
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, jsonOut), &got); err != nil {
+		t.Fatalf("parse whoami json: %v\n%s", err, string(jsonOut))
+	}
+	if got["identity_scope"] != awid.IdentityModeLocal {
+		t.Fatalf("identity_scope=%v want local; output:\n%s", got["identity_scope"], string(jsonOut))
+	}
+	if _, ok := got["lifetime"]; ok {
+		t.Fatalf("durable local whoami must not emit lifetime: %s", string(jsonOut))
+	}
+
+	humanRun := exec.CommandContext(ctx, bin, "whoami")
+	humanRun.Env = testCommandEnv(tmp)
+	humanRun.Dir = tmp
+	humanOut, err := humanRun.CombinedOutput()
+	if err != nil {
+		t.Fatalf("whoami failed: %v\n%s", err, string(humanOut))
+	}
+	humanText := string(humanOut)
+	if !strings.Contains(humanText, "Scope:     local") {
+		t.Fatalf("whoami must render canonical local scope:\n%s", humanText)
+	}
+	for _, deprecated := range []string{"lifetime", "ephemeral", "persistent"} {
+		if strings.Contains(strings.ToLower(humanText), deprecated) {
+			t.Fatalf("whoami must not render deprecated %q classification:\n%s", deprecated, humanText)
+		}
 	}
 }
 
@@ -1247,17 +1315,17 @@ func TestAwMailSendToDIDStableFirstContactFailsClosed(t *testing.T) {
 	address := "myco/agent"
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     server.URL,
-		TeamID:      "backend:myco",
-		Alias:       "agent",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		StableID:    stableID,
-		Address:     address,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: server.URL,
-		SigningKey:  priv,
+		AwebURL:       server.URL,
+		TeamID:        "backend:myco",
+		Alias:         "agent",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		StableID:      stableID,
+		Address:       address,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   server.URL,
+		SigningKey:    priv,
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
@@ -1334,17 +1402,17 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 	address := "acme/bot"
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     server.URL,
-		TeamID:      "backend:acme",
-		Alias:       "bot",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		StableID:    stableIDFromDidForTest(t, did),
-		Address:     address,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: registryServer.URL,
-		SigningKey:  priv,
+		AwebURL:       server.URL,
+		TeamID:        "backend:acme",
+		Alias:         "bot",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		StableID:      stableIDFromDidForTest(t, did),
+		Address:       address,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   registryServer.URL,
+		SigningKey:    priv,
 	})
 	writeKnownAgentPinForTest(t, tmp, "test.local/monitor", registryServer.URL)
 
@@ -1472,27 +1540,27 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 	}
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     apiServer.URL,
-		TeamID:      "aweb:aweb.ai",
-		Alias:       "amy",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		StableID:    stableID,
-		Address:     "aweb.ai/amy",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		SigningKey:  priv,
+		AwebURL:       apiServer.URL,
+		TeamID:        "aweb:aweb.ai",
+		Alias:         "amy",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "aweb.ai/amy",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		SigningKey:    priv,
 	})
 	// aako-pattern workspace: the active team certificate supplies the
 	// messaging address, while the global identity carries the registry URL.
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:         did,
-		StableID:    stableID,
-		Address:     "juan.aweb.ai/amy",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: registryServer.URL,
-		CreatedAt:   "2026-04-25T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "juan.aweb.ai/amy",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   registryServer.URL,
+		CreatedAt:     "2026-04-25T00:00:00Z",
 	})
 
 	env := append(withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL"), "AWID_REGISTRY_URL=http://127.0.0.1:1")
@@ -1595,25 +1663,25 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 	}
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     apiServer.URL,
-		TeamID:      "aweb:aweb.ai",
-		Alias:       "amy",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		StableID:    stableID,
-		Address:     "aweb.ai/amy",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		SigningKey:  priv,
+		AwebURL:       apiServer.URL,
+		TeamID:        "aweb:aweb.ai",
+		Alias:         "amy",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "aweb.ai/amy",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		SigningKey:    priv,
 	})
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:         did,
-		StableID:    stableID,
-		Address:     "juan.aweb.ai/amy",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: registryServer.URL,
-		CreatedAt:   "2026-04-26T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "juan.aweb.ai/amy",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   registryServer.URL,
+		CreatedAt:     "2026-04-26T00:00:00Z",
 	})
 	// Build the pin the way production does, so the fixture cannot drift out of
 	// the shape the loader (and channel-core's validator) accepts.
@@ -1705,25 +1773,25 @@ func TestAwChatSendFailsClosedWhenRecipientBindingCannotResolve(t *testing.T) {
 	}
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     apiServer.URL,
-		TeamID:      "aweb:aweb.ai",
-		Alias:       "amy",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		StableID:    stableID,
-		Address:     "aweb.ai/amy",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		SigningKey:  priv,
+		AwebURL:       apiServer.URL,
+		TeamID:        "aweb:aweb.ai",
+		Alias:         "amy",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "aweb.ai/amy",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		SigningKey:    priv,
 	})
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:         did,
-		StableID:    stableID,
-		Address:     "juan.aweb.ai/amy",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: registryServer.URL,
-		CreatedAt:   "2026-04-26T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "juan.aweb.ai/amy",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   registryServer.URL,
+		CreatedAt:     "2026-04-26T00:00:00Z",
 	})
 
 	env := withoutEnvForTest(testCommandEnv(tmp), "AWID_REGISTRY_URL")
@@ -1815,12 +1883,12 @@ func TestAwMailSendToDIDStandaloneFirstContactFailsClosed(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:         did,
-		StableID:    stableID,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: server.URL,
-		CreatedAt:   "2026-04-04T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   server.URL,
+		CreatedAt:     "2026-04-04T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -1908,16 +1976,16 @@ func TestAwMailInboxLogsStableIDWhenAddressMissing(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     server.URL,
-		TeamID:      "backend:acme",
-		Alias:       "bot",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		StableID:    stableID,
-		Address:     "acme.com/bot",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		SigningKey:  priv,
+		AwebURL:       server.URL,
+		TeamID:        "backend:acme",
+		Alias:         "bot",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "acme.com/bot",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		SigningKey:    priv,
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "inbox")

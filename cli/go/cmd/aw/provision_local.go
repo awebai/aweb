@@ -298,8 +298,8 @@ func provisionLocalTeamMember(ctx context.Context, opts localProvisionOptions) (
 	var inviteID, token string
 	if len(matches) == 1 {
 		invite := matches[0]
-		if awid.BuildTeamID(invite.Domain, invite.TeamName) != teamID || !invite.Ephemeral {
-			return localProvisionOutput{}, fmt.Errorf("operation %s local grant contradicts the requested team or lifetime", operationID)
+		if awid.BuildTeamID(invite.Domain, invite.TeamName) != teamID || awid.NormalizeIdentityScope(invite.IdentityScope) != awid.IdentityModeLocal {
+			return localProvisionOutput{}, fmt.Errorf("operation %s local grant contradicts the requested team or identity scope", operationID)
 		}
 		inviteID = invite.InviteID
 		token, err = awconfig.EncodeInviteToken(invite)

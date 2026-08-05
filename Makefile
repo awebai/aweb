@@ -12,9 +12,10 @@
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-all-check release-all-tag release-all-push \
+	release-plan release-run release-receipt test-release-driver test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	release-all-check \
 	publish-skills \
-	cli-e2e ship-suites ship
+	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
@@ -91,8 +92,6 @@ help:
 	@echo "  awid-prod-migrate   Apply pending migrations to awid prod"
 	@echo ""
 	@echo "  release-all-check   Validate ALL products before release"
-	@echo "  release-all-tag     Commit version bumps and create all tags"
-	@echo "  release-all-push    Push main and all tags to trigger CI"
 	@echo ""
 	@echo "  release-server-check / -tag / -push   aweb server (PyPI)"
 	@echo "  release-channel-check / -tag / -push  channel plugin (npm)"
@@ -121,7 +120,7 @@ build:
 # check-cli-go-tidy is here rather than behind test-cli by a deliberate reversal: it was placed
 # after it to inherit a warm module cache, and moving it forward reattributes that fetch rather
 # than adding one - about a second for 85MB when cold.
-test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-release-driver test-release-skew-cli-server test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 # Editable AWID metadata is repeated in both committed Python locks. Check both
 # without repair, then prove a missing dependent-lock dependency is rejected.
@@ -600,6 +599,80 @@ release-channel-push:
 
 # ── CLI release ──────────────────────────────────────────────────────
 
+# What must ship, in what order, from the declared component graph and
+# authoritative remote state. Exit 1 when a declared input is unsatisfied.
+# AUTHORITY selects an allowlisted digest-authority kind; STORE_ROOT the
+# durable artifact store; EXTERNAL_CONTEXT repeatable repository=checkout
+# mappings for external pin contexts.
+release-plan:
+	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") plan
+
+# Executes an anchored frozen plan over available publish lanes; fails closed
+# naming every gap. PLAN_ID and PLAN_ARTIFACT_ID are required.
+# STAGE_ARTIFACT (repeatable, space-separated) binds lane stage references:
+#   STAGE_ARTIFACT='component=aw,ref=gh-artifact:awebai/aw:<run>:<artifact>,source=<lane sha>,digest=sha256:<zip digest>'
+release-run:
+	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(if $(MANIFEST_ID),--manifest-id "$(MANIFEST_ID)") $(if $(ALLOW_LOCAL_AUTHORITY),--allow-local-authority) $(foreach a,$(APPROVAL),--approval "$(a)") $(foreach s,$(STAGE_ARTIFACT),--stage-artifact "$(s)")
+
+# Verifies an anchored receipt against its anchored frozen plan. ARTIFACT_ID,
+# PLAN_ID and PLAN_ARTIFACT_ID are required; digests resolve through the
+# configured authority, never from caller-presented values.
+release-receipt:
+	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") release-receipt --artifact-id "$(ARTIFACT_ID)" --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)"
+
+test-release-federation-skew:
+	python3 scripts/e2e/test_release_federation_skew.py
+
+measure-release-federation-skew-control:
+	PYTHONPATH=scripts python3 -c 'from release_federation_skew import WheelResolver, prove_route_controls; prove_route_controls(WheelResolver())'
+
+test-release-driver: test-release-federation-skew test-release-channel-pi-skew test-release-persisted-state-skew test-release-skew-cli-server
+	python3 scripts/e2e/test_release_driver.py
+	python3 scripts/e2e/test_release_driver_cli.py
+	python3 scripts/e2e/test_release_adapter.py
+
+test-release-channel-pi-skew:
+	python3 scripts/e2e/test_release_channel_pi_skew.py
+
+# G5 CLI/server child: exact artifact resolution, registration, evidence, and
+# shell parameterization. This focused target never starts Docker or dispatches
+# a workflow.
+test-release-skew-cli-server:
+	python3 scripts/e2e/test_release_skew_cli_server.py
+	python3 scripts/e2e/test_cli_server_skew_shell.py
+	cd cli/go && go test -tags e2e ./e2e -count=1
+
+# Execute one already-computed SkewCell. The child harness supplies AW_BIN,
+# AWEB_E2E_SERVER_WHEEL, and AW_SKEW_DIRECTION; this target does not select a
+# matrix cell and never builds either release artifact.
+cli-server-skew-cell:
+	bash scripts/e2e/run_cli_server_skew_cell.sh
+
+# Produce the canonical support document from an exact staged manifest. The
+# result still requires independent workflow-artifact anchoring before its
+# identity may be declared in release/components.toml.
+measure-release-skew-cli-server:
+	python3 scripts/release_skew_cli_server.py measure \
+		--staged-manifest "$(STAGED_MANIFEST)" \
+		$(foreach v,$(SUPPORTED_AW),--supported-aw "$(v)") \
+		$(foreach v,$(SUPPORTED_SERVER),--supported-server "$(v)") \
+		--published-aw-latest "$(PUBLISHED_AW_LATEST)" \
+		--published-server-latest "$(PUBLISHED_SERVER_LATEST)" \
+		--negative-server "$(or $(NEGATIVE_SERVER),1.26.31)" \
+		--output "$(OUTPUT)"
+
+test-release-persisted-state-skew:
+	python3 scripts/e2e/test_release_persisted_state_skew.py
+
+test-npm-exact-publish:
+	bash scripts/e2e/test_npm_exact_publish.sh
+
+test-pypi-exact-publish:
+	bash scripts/e2e/test_pypi_exact_publish.sh
+
+test-oci-exact-publish:
+	bash scripts/e2e/test_oci_exact_publish.sh
+
 test-release-cli-version:
 	bash scripts/check-cli-release-version-test.sh
 
@@ -659,7 +732,7 @@ publish-skills:
 
 # ── Unified release ──────────────────────────────────────────────────
 
-release-all-check:
+release-all-check: check-ship-invocation
 	@echo "=== Validating versions ==="
 	@echo "  server:  $(SERVER_VERSION)"
 	@echo "  awid:    $(AWID_VERSION)"
@@ -735,7 +808,55 @@ SHIP_SUITES := release-awid-check test-federation-e2e test-e2e cli-e2e
 ship-suites:
 	@MAKE="$(MAKE)" ./scripts/run-ship-suites.sh $(SHIP_SUITES)
 
-ship: release-all-check
+# The gate derives every release version and its suite list itself. Any
+# command-line override rides MAKEOVERRIDES into nested makes: CLI_VERSION
+# contaminates the version scenario fixtures, and SHIP_SUITES= can empty the
+# suite list while the run still reports green. So the only accepted
+# invocation is plain `make ship`:
+#  - nonempty MAKEOVERRIDES refuses every command-line override by name;
+#  - the origin check refuses `make -e`, where the environment would override
+#    the file assignments (without -e those assignments win, which is why
+#    environment copies of the other release variables are inert and allowed);
+#  - CLI_VERSION is additionally refused from the environment outright.
+check-ship-invocation:
+	@if [ "$(origin MAKEOVERRIDES)" = "command line" ]; then \
+		echo "ERROR: ship refuses MAKEOVERRIDES on the command line; suppressing override propagation is itself an override."; \
+		echo "       Run plain 'make ship'."; \
+		exit 1; \
+	fi
+	@if [ -n "$(MAKEOVERRIDES)" ]; then \
+		echo "ERROR: ship refuses command-line variable overrides: $(MAKEOVERRIDES)"; \
+		echo "       The gate derives its own versions and suite list. Run plain 'make ship'."; \
+		exit 1; \
+	fi
+	@case "$(origin SERVER_VERSION)/$(origin AWID_VERSION)/$(origin CHANNEL_VERSION)/$(origin CLI_VERSION)/$(origin SHIP_SUITES)" in \
+		*command*|*environment*) \
+			echo "ERROR: ship refuses overridden release variables (make -e or command line): SERVER_VERSION AWID_VERSION CHANNEL_VERSION CLI_VERSION SHIP_SUITES"; \
+			exit 1;; \
+	esac
+	@if [ -n "$$CLI_VERSION" ]; then \
+		echo "ERROR: ship refuses CLI_VERSION from the environment; the gate derives the version itself."; \
+		echo "       Intentional version bumps go through release-cli-tag."; \
+		exit 1; \
+	fi
+
+# ship-gate assumes services, toolchain, and inputs that only ship-env.sh
+# establishes; reaching it by name skips all of that ownership.
+check-ship-owner:
+	@if [ -z "$$AWEB_SHIP_ENV_READY" ]; then \
+		echo "ERROR: ship-gate refuses to run outside scripts/ship-env.sh; run plain 'make ship'."; \
+		exit 1; \
+	fi
+
+ship: check-ship-invocation
+	@./scripts/ship-env.sh $(MAKE) ship-gate
+
+# The owner check is ship-gate's ONLY prerequisite: a sibling prerequisite
+# races it under parallel make, letting the gate start work before the
+# refusal. Recipe-after-prerequisite is a make guarantee at any -j, so the
+# gate stages run as sequential sub-makes from the recipe.
+ship-gate: check-ship-owner
+	$(MAKE) release-all-check
 	@echo ""
 	$(MAKE) ship-suites
 	@echo ""
@@ -746,27 +867,6 @@ ship: release-all-check
 	@echo "    cli:     $(CLI_VERSION)"
 	@echo ""
 	@echo "    Ready for tag-push."
-
-release-all-tag: release-cli-version-check
-	@echo "=== Tagging all products ==="
-	git add server/pyproject.toml server/uv.lock channel/package.json channel/package-lock.json channel/.claude-plugin/plugin.json awid/pyproject.toml awid/uv.lock
-	git commit -m "release: aweb $(SERVER_VERSION), channel $(CHANNEL_VERSION), awid $(AWID_VERSION)"
-	git tag "server-v$(SERVER_VERSION)"
-	git tag "aw-v$(CLI_VERSION)"
-	git tag "channel-v$(CHANNEL_VERSION)"
-	git tag "awid-v$(AWID_VERSION)"
-	git tag "awid-service-v$(AWID_VERSION)"
-	@echo "Created tags: server-v$(SERVER_VERSION) aw-v$(CLI_VERSION) channel-v$(CHANNEL_VERSION) awid-v$(AWID_VERSION) awid-service-v$(AWID_VERSION)"
-
-release-all-push: release-cli-version-check
-	git push origin main
-	git push origin server-v$(SERVER_VERSION)
-	git push origin aw-v$(CLI_VERSION)
-	git push origin channel-v$(CHANNEL_VERSION)
-	git push origin awid-v$(AWID_VERSION)
-	git push origin awid-service-v$(AWID_VERSION)
-	$(MAKE) release-awid-site
-	@echo "All tags pushed and awid site deployed. CI will publish."
 
 clean:
 	@echo "Cleaning build artifacts..."

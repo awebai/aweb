@@ -30,14 +30,14 @@ import (
 // resetInboundModeFlags resets package-level CLI state between tests.
 func resetInboundModeFlags() {
 	initInboundMode = ""
-	initPersistent = false
+	initGlobal = false
 	initBYOD = false
 }
 
 func TestValidateInitInboundModeAcceptsContactsOnlyWithGlobal(t *testing.T) {
 	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "team-and-contacts"
-	initPersistent = true
+	initGlobal = true
 	if err := validateInitInboundMode(); err != nil {
 		t.Fatalf("expected accept, got %v", err)
 	}
@@ -52,7 +52,7 @@ func TestValidateInitInboundModeAcceptsContactsOnlyWithGlobal(t *testing.T) {
 func TestValidateInitInboundModeAcceptsOpenWithGlobal(t *testing.T) {
 	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "open"
-	initPersistent = true
+	initGlobal = true
 	if err := validateInitInboundMode(); err != nil {
 		t.Fatalf("expected accept, got %v", err)
 	}
@@ -64,7 +64,7 @@ func TestValidateInitInboundModeAcceptsOpenWithGlobal(t *testing.T) {
 func TestValidateInitInboundModeOmittedYieldsEmptyWireValue(t *testing.T) {
 	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = ""
-	initPersistent = true
+	initGlobal = true
 	if err := validateInitInboundMode(); err != nil {
 		t.Fatalf("expected accept of empty value, got %v", err)
 	}
@@ -76,7 +76,7 @@ func TestValidateInitInboundModeOmittedYieldsEmptyWireValue(t *testing.T) {
 func TestValidateInitInboundModeRejectsContactsOnlyOnLocal(t *testing.T) {
 	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "team-and-contacts"
-	initPersistent = false
+	initGlobal = false
 	err := validateInitInboundMode()
 	if err == nil {
 		t.Fatal("expected --inbound-mode on local to fail at parse time")
@@ -89,7 +89,7 @@ func TestValidateInitInboundModeRejectsContactsOnlyOnLocal(t *testing.T) {
 func TestValidateInitInboundModeRejectsWithdrawnContactsOrTeammatesUnderscore(t *testing.T) {
 	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "contacts_or_teammates"
-	initPersistent = true
+	initGlobal = true
 	err := validateInitInboundMode()
 	if err == nil {
 		t.Fatal("expected contacts_or_teammates to be rejected at parse time")
@@ -105,7 +105,7 @@ func TestValidateInitInboundModeRejectsWithdrawnContactsOrTeammatesUnderscore(t 
 func TestValidateInitInboundModeRejectsWithdrawnContactsOrTeammatesHyphen(t *testing.T) {
 	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "contacts-or-teammates"
-	initPersistent = true
+	initGlobal = true
 	if err := validateInitInboundMode(); err == nil {
 		t.Fatal("expected hyphenated contacts-or-teammates to be rejected")
 	}
@@ -114,7 +114,7 @@ func TestValidateInitInboundModeRejectsWithdrawnContactsOrTeammatesHyphen(t *tes
 func TestValidateInitInboundModeRejectsUnknownValue(t *testing.T) {
 	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "team-only"
-	initPersistent = true
+	initGlobal = true
 	if err := validateInitInboundMode(); err == nil {
 		t.Fatal("expected unknown value to be rejected")
 	}
@@ -126,7 +126,7 @@ func TestValidateInitInboundModeRejectsUnknownValue(t *testing.T) {
 func TestValidateInitInboundModeRejectsBYODGlobal(t *testing.T) {
 	t.Cleanup(resetInboundModeFlags)
 	initInboundMode = "team-and-contacts"
-	initPersistent = true
+	initGlobal = true
 	initBYOD = true
 	err := validateInitInboundMode()
 	if err == nil {
@@ -180,7 +180,7 @@ func TestProvisionHostedIdentityForwardsInboundModeContactsOnly(t *testing.T) {
 				MemberDIDAW:   didAW,
 				MemberAddress: "alice.aweb.ai/laptop",
 				Alias:         "laptop",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if certErr != nil {
 				t.Fatal(certErr)
@@ -252,7 +252,7 @@ func TestProvisionHostedIdentityOmitsInboundModeWhenUnset(t *testing.T) {
 				MemberDIDAW:   didAW,
 				MemberAddress: "bob.aweb.ai/laptop",
 				Alias:         "laptop",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if certErr != nil {
 				t.Fatal(certErr)
@@ -337,7 +337,7 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 				MemberDIDAW:   stableID,
 				MemberAddress: memberAddress,
 				Alias:         "alice",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if certErr != nil {
 				t.Fatal(certErr)
@@ -389,7 +389,7 @@ func TestRunAPIKeyBootstrapInitForwardsInboundModeContactsOnly(t *testing.T) {
 		Role:        "backend",
 		HumanName:   "Alice",
 		AgentType:   "codex",
-		Persistent:  true,
+		Global:      true,
 		InboundMode: "team_and_contacts", // canonical wire form post-validation
 	})
 	if err != nil {
@@ -449,7 +449,7 @@ func TestRunAPIKeyBootstrapInitOmitsInboundModeWhenUnset(t *testing.T) {
 				MemberDIDAW:   stableID,
 				MemberAddress: memberAddress,
 				Alias:         "alice",
-				Lifetime:      awid.LifetimePersistent,
+				IdentityScope: awid.IdentityModeGlobal,
 			})
 			if certErr != nil {
 				t.Fatal(certErr)
@@ -501,7 +501,7 @@ func TestRunAPIKeyBootstrapInitOmitsInboundModeWhenUnset(t *testing.T) {
 		Role:        "backend",
 		HumanName:   "Alice",
 		AgentType:   "codex",
-		Persistent:  true,
+		Global:      true,
 		// InboundMode intentionally unset → field must be omitted.
 	})
 	if err != nil {

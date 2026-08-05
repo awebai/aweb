@@ -110,7 +110,7 @@ then **namespace control** — never localhost.
    team under that domain, signed, against the identity's registry — **no
    re-signup.** Like the from-nothing path, create **enrolls the caller as the
    first member** of the new team: a member certificate signed by the new team
-   key (e.g. `bootstrapLocalTeamMemberWithLifetime` with the existing identity's
+   key (e.g. `bootstrapLocalTeamMemberWithScope` with the existing identity's
    signing key as the member key), persisted **additively** alongside existing
    memberships (never clobber), with the new team set active. The machinery
    exists: `resolveLocalSigningIdentity` (`cli/go/cmd/aw/id_request.go:251`) to

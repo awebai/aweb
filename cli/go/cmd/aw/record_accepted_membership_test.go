@@ -25,10 +25,10 @@ func writeSelfCustodyIdentityForTest(t *testing.T, workingDir, teamID string) (*
 	}
 	memberDID := awid.ComputeDIDKey(memberPub)
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         teamID,
-		MemberDIDKey: memberDID,
-		Alias:        "bob",
-		Lifetime:     awid.LifetimeEphemeral,
+		Team:          teamID,
+		MemberDIDKey:  memberDID,
+		Alias:         "bob",
+		IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatalf("sign team certificate: %v", err)
@@ -43,10 +43,10 @@ func writeSelfCustodyIdentityForTest(t *testing.T, workingDir, teamID string) (*
 	if err := awconfig.SaveWorktreeIdentityTo(
 		filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath()),
 		&awconfig.WorktreeIdentity{
-			DID:       memberDID,
-			Custody:   awid.CustodySelf,
-			Lifetime:  awid.LifetimeEphemeral,
-			CreatedAt: "2026-04-04T00:00:00Z",
+			DID:           memberDID,
+			Custody:       awid.CustodySelf,
+			IdentityScope: awid.IdentityModeLocal,
+			CreatedAt:     "2026-04-04T00:00:00Z",
 		},
 	); err != nil {
 		t.Fatalf("write worktree identity: %v", err)

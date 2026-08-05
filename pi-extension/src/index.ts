@@ -242,8 +242,10 @@ export default function awebPiExtension(pi: ExtensionAPI) {
     }
 
     let config;
+    let client;
     try {
       config = await loadChannelConfig(ctx.cwd);
+      client = createChannelClient(config);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       pi.sendMessage({
@@ -253,8 +255,6 @@ export default function awebPiExtension(pi: ExtensionAPI) {
       });
       return;
     }
-
-    const client = createChannelClient(config);
     // Fail closed: never start the channel with a discarded (empty) trust store.
     const pinStore = await loadSessionPinStore((message) => {
       pi.sendMessage({
@@ -295,6 +295,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
         stableID: config.stableID,
       },
       signal,
+      teamID: config.teamID,
       workdir: ctx.cwd,
       onAwakening: (awakening) => {
         const dispatcher = wakeDispatcher;

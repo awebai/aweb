@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { APIClient } from "../src/index.js";
+import { APIClient, createChannelClient } from "../src/index.js";
+
+describe("createChannelClient", () => {
+  test("refuses to start without the selected team's certificate auth", () => {
+    expect(() => createChannelClient({
+      baseURL: "https://app.example",
+      did: "did:key:z6Mktest",
+      stableID: "did:aw:test",
+      signingKey: new Uint8Array(32).fill(1),
+      teamID: "backend:acme.com",
+      teamCertificateHeader: "",
+    })).toThrow("selected active team backend:acme.com is missing certificate signing authentication");
+  });
+});
 
 describe("APIClient URL construction", () => {
   const fetchMock = vi.fn<typeof fetch>();

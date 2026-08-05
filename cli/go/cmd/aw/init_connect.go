@@ -174,7 +174,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		fmt.Fprintf(os.Stderr, "Warning: could not publish E2E encryption key automatically: %v\n", err)
 	}
 
-	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime))
+	identityScope := awid.NormalizeIdentityScope(cert.IdentityScope)
 	return connectOutput{
 		Status:        "connected",
 		TeamID:        resp.TeamID,

@@ -44,10 +44,10 @@ func testTeamCertificate(t *testing.T, memberKey ed25519.PrivateKey, alias strin
 		t.Fatal(err)
 	}
 	cert, err := SignTeamCertificate(teamKey, TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: ComputeDIDKey(memberKey.Public().(ed25519.PublicKey)),
-		Alias:        alias,
-		Lifetime:     LifetimeEphemeral,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  ComputeDIDKey(memberKey.Public().(ed25519.PublicKey)),
+		Alias:         alias,
+		IdentityScope: IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -6139,11 +6139,11 @@ func TestCheckTOFUPinEphemeralSkipsPinning(t *testing.T) {
 				t.Fatalf("identifier=%q", identifier)
 			}
 			return &ResolvedIdentity{
-				DID:         senderDID,
-				Address:     identifier,
-				Lifetime:    "ephemeral",
-				Custody:     "self",
-				ResolvedVia: "registry",
+				DID:           senderDID,
+				Address:       identifier,
+				IdentityScope: IdentityModeLocal,
+				Custody:       "self",
+				ResolvedVia:   "registry",
 			}, nil
 		},
 	})
@@ -6225,11 +6225,11 @@ func TestCheckTOFUPinCustodialReturnsVerifiedCustodial(t *testing.T) {
 				t.Fatalf("identifier=%q", identifier)
 			}
 			return &ResolvedIdentity{
-				DID:         senderDID,
-				Address:     identifier,
-				Lifetime:    "persistent",
-				Custody:     "custodial",
-				ResolvedVia: "registry",
+				DID:           senderDID,
+				Address:       identifier,
+				IdentityScope: IdentityModeGlobal,
+				Custody:       "custodial",
+				ResolvedVia:   "registry",
 			}, nil
 		},
 	})
@@ -6303,11 +6303,11 @@ func TestCheckTOFUPinResolverCachesResults(t *testing.T) {
 				t.Fatalf("identifier=%q", identifier)
 			}
 			return &ResolvedIdentity{
-				DID:         senderDID,
-				Address:     identifier,
-				Lifetime:    "persistent",
-				Custody:     "self",
-				ResolvedVia: "registry",
+				DID:           senderDID,
+				Address:       identifier,
+				IdentityScope: IdentityModeGlobal,
+				Custody:       "self",
+				ResolvedVia:   "registry",
 			}, nil
 		},
 	})
@@ -6395,11 +6395,11 @@ func TestCheckTOFUPinResolverFailureNotCached(t *testing.T) {
 				return nil, context.DeadlineExceeded
 			}
 			return &ResolvedIdentity{
-				DID:         senderDID,
-				Address:     identifier,
-				Lifetime:    "persistent",
-				Custody:     "custodial",
-				ResolvedVia: "registry",
+				DID:           senderDID,
+				Address:       identifier,
+				IdentityScope: IdentityModeGlobal,
+				Custody:       "custodial",
+				ResolvedVia:   "registry",
 			}, nil
 		},
 	})
@@ -6493,11 +6493,11 @@ func TestInboxCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 				return nil, context.Canceled
 			}
 			return &ResolvedIdentity{
-				DID:         senderDID,
-				Address:     identifier,
-				Lifetime:    "ephemeral",
-				Custody:     "self",
-				ResolvedVia: "registry",
+				DID:           senderDID,
+				Address:       identifier,
+				IdentityScope: IdentityModeLocal,
+				Custody:       "self",
+				ResolvedVia:   "registry",
 			}, nil
 		},
 	})
@@ -6580,11 +6580,11 @@ func TestChatHistoryCanonicalizesLocalAliasBeforeTOFUPin(t *testing.T) {
 				return nil, context.Canceled
 			}
 			return &ResolvedIdentity{
-				DID:         senderDID,
-				Address:     identifier,
-				Lifetime:    "ephemeral",
-				Custody:     "self",
-				ResolvedVia: "registry",
+				DID:           senderDID,
+				Address:       identifier,
+				IdentityScope: IdentityModeLocal,
+				Custody:       "self",
+				ResolvedVia:   "registry",
 			}, nil
 		},
 	})

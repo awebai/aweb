@@ -262,11 +262,11 @@ func TestE2EEAssertionIdentityUsesMatchingIdentityStableID(t *testing.T) {
 	did := awid.ComputeDIDKey(pub)
 	stableID := awid.ComputeStableID(pub)
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:      did,
-		StableID: stableID,
-		Address:  "example.test/eve",
-		Custody:  awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent,
+		DID:           did,
+		StableID:      stableID,
+		Address:       "example.test/eve",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -304,18 +304,18 @@ func TestE2EEAssertionIdentityUsesExternalIdentityHome(t *testing.T) {
 	principalDID := awid.ComputeDIDKey(principalPub)
 	principalStableID := awid.ComputeStableID(principalPub)
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(principal, "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:      principalDID,
-		StableID: principalStableID,
-		Custody:  awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent,
+		DID:           principalDID,
+		StableID:      principalStableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(instance, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:      awid.ComputeDIDKey(shadowPub),
-		StableID: awid.ComputeStableID(shadowPub),
-		Custody:  awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent,
+		DID:           awid.ComputeDIDKey(shadowPub),
+		StableID:      awid.ComputeStableID(shadowPub),
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -615,12 +615,12 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:         did,
-		StableID:    stableID,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: server.URL,
-		CreatedAt:   "2026-04-26T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   server.URL,
+		CreatedAt:     "2026-04-26T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -706,11 +706,11 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		Address:   "test.local/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimeEphemeral,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		Address:       "test.local/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -842,11 +842,11 @@ func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		Address:   "acme.com/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimeEphemeral,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -957,13 +957,13 @@ func TestAwMailSendToAddressAutoThreadsSentConversationFromIndex(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:         did,
-		StableID:    stableID,
-		Address:     "test.local/gsk",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: server.URL,
-		CreatedAt:   "2026-05-02T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "test.local/gsk",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   server.URL,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -1086,16 +1086,16 @@ func TestAwMailSendAliasAutoThreadsConcreteAgentConversation(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     server.URL,
-		TeamID:      "devteam:test.local",
-		Alias:       "gsk",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		Address:     "test.local/gsk",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimeEphemeral,
-		SigningKey:  priv,
-		CreatedAt:   "2026-05-02T00:00:00Z",
+		AwebURL:       server.URL,
+		TeamID:        "devteam:test.local",
+		Alias:         "gsk",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		Address:       "test.local/gsk",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		SigningKey:    priv,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
@@ -1198,17 +1198,17 @@ func TestAwMailSendAliasToSelfSkipsConversationDiscovery(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     server.URL,
-		TeamID:      "devteam:test.local",
-		Alias:       "gsk",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		StableID:    stableID,
-		Address:     "test.local/gsk",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		SigningKey:  priv,
-		CreatedAt:   "2026-05-02T00:00:00Z",
+		AwebURL:       server.URL,
+		TeamID:        "devteam:test.local",
+		Alias:         "gsk",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "test.local/gsk",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		SigningKey:    priv,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
@@ -1338,11 +1338,11 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		Address:   "acme.com/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimeEphemeral,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -1432,11 +1432,11 @@ func TestAwMailSendConversationIDSurfacesNonParticipantRejection(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -1488,11 +1488,11 @@ func TestAwMailSendConversationIDSurfacesMissingConversation(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -1570,11 +1570,11 @@ func TestAwMailShowFetchesConversation(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -1685,11 +1685,11 @@ func TestAwMailShowLegacyConversationHintAndMessageIDFetch(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)

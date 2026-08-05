@@ -13,18 +13,16 @@ import (
 )
 
 type goneWorkspace struct {
-	WorkspaceID      string
-	Alias            string
-	WorkspacePath    string
-	CleanupStatus    string
-	IdentityDeleted  bool
-	WorkspaceDeleted bool
-	CleanupBlocked   string
+	WorkspaceID    string
+	Alias          string
+	WorkspacePath  string
+	CleanupStatus  string
+	CleanupBlocked string
 }
 
 // detectGoneWorkspaces checks for workspaces on this hostname whose paths
-// no longer exist. The server owns cleanup policy and deletes the bound
-// local identity when the stale workspace is removed.
+// no longer exist. Path absence is informational: identity scope does not say
+// whether the identity should be retired.
 func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWorkspace {
 	hostname, err := os.Hostname()
 	if err != nil || hostname == "" {
@@ -43,7 +41,7 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 	}
 
 	var gone []goneWorkspace
-	deleted := map[string]bool{}
+	seen := map[string]bool{}
 
 	for _, ws := range resp.Workspaces {
 		path := derefString(ws.WorkspacePath)
@@ -53,7 +51,7 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			continue
 		}
-		if deleted[ws.WorkspaceID] {
+		if seen[ws.WorkspaceID] {
 			continue
 		}
 
@@ -66,49 +64,17 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 		scope := workspaceIdentityScope(ws)
 		switch scope {
 		case "local":
-			g.CleanupStatus = "gone_local_cleanup_candidate"
+			g.CleanupStatus = "gone_local_path_only"
+			g.CleanupBlocked = "local identity path unavailable; explicit membership retirement required"
 		case "global":
 			g.CleanupStatus = "gone_global_path_only"
 			g.CleanupBlocked = "global identity path unavailable; no cleanup attempted"
-			deleted[ws.WorkspaceID] = true
-			gone = append(gone, g)
-			continue
 		default:
 			g.CleanupStatus = "unknown_identity_scope_no_cleanup"
 			g.CleanupBlocked = "identity scope unknown; no cleanup attempted"
-			deleted[ws.WorkspaceID] = true
-			gone = append(gone, g)
-			continue
 		}
 
-		deleteWorkspaceCtx, deleteWorkspaceCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		deleteResp, deleteWorkspaceErr := client.WorkspaceDelete(deleteWorkspaceCtx, ws.WorkspaceID)
-		deleteWorkspaceCancel()
-		if deleteWorkspaceErr != nil {
-			if code, reason := workspaceDeleteProtectiveReason(deleteWorkspaceErr); code != "" {
-				switch code {
-				case "persistent_identity_not_cleanup_eligible":
-					g.CleanupStatus = "gone_global_path_only"
-				case "unknown_lifetime_no_cleanup":
-					g.CleanupStatus = "unknown_identity_scope_no_cleanup"
-				}
-				g.CleanupBlocked = reason
-			} else {
-				g.CleanupBlocked = deleteWorkspaceErr.Error()
-			}
-		} else {
-			// WorkspaceDeleted says this call removed the record. It is set only on a
-			// response that says so: a 404 arrives as an error above, where it is
-			// reported as blocked rather than as a removal nobody observed.
-			if deleteResp == nil {
-				g.CleanupBlocked = "delete returned no response body; the removal was not established"
-			} else {
-				g.IdentityDeleted = deleteResp.IdentityDeleted
-				g.WorkspaceDeleted = true
-			}
-		}
-
-		deleted[ws.WorkspaceID] = true
+		seen[ws.WorkspaceID] = true
 		gone = append(gone, g)
 	}
 
@@ -116,17 +82,7 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 }
 
 func workspaceIdentityScope(ws aweb.WorkspaceInfo) string {
-	if scope := strings.TrimSpace(derefString(ws.AgentIdentityScope)); scope != "" {
-		return scope
-	}
-	switch strings.TrimSpace(derefString(ws.AgentLifetime)) {
-	case "ephemeral":
-		return "local"
-	case "persistent":
-		return "global"
-	default:
-		return ""
-	}
+	return strings.TrimSpace(derefString(ws.AgentIdentityScope))
 }
 
 func workspaceDeleteProtectiveReason(err error) (string, string) {
@@ -165,15 +121,9 @@ func formatGoneWorkspaces(gone []goneWorkspace) string {
 	var sb strings.Builder
 	sb.WriteString("Gone workspace checks:\n")
 	for _, g := range gone {
-		details := make([]string, 0, 3)
+		details := make([]string, 0, 2)
 		if g.CleanupStatus != "" {
 			details = append(details, g.CleanupStatus)
-		}
-		if g.IdentityDeleted {
-			details = append(details, "deleted local identity")
-		}
-		if g.WorkspaceDeleted {
-			details = append(details, "removed workspace record")
 		}
 		if len(details) == 0 {
 			details = append(details, "detected gone workspace")

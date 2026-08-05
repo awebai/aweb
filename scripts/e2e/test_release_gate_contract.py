@@ -1,16 +1,20 @@
 """The three unrecoverable publishes refuse unless their suite passed here.
 
-PyPI never lets a version be re-uploaded and a container tag that consumers have
-already pulled cannot be recalled, so aweb on PyPI, awid-service on PyPI and the
-awid image on GHCR each have to establish that the artifact's own suite passed on
-the commit being published - not on main, not on a recent run.
+PyPI never lets a version be re-uploaded and a container tag that consumers
+have already pulled cannot be recalled, so aweb on PyPI, awid-service on PyPI
+and the awid image on GHCR each have to establish that the artifact's own
+suite passed on the commit being published - not on main, not on a recent run.
 
-Each of those three workflows triggers only on its tag push, and a tag push runs
-the workflow file, and checks out the tree, at the tagged commit. So a gate step
-placed before the publishing step in the same job runs against exactly the commit
-that is about to be published, and GitHub's fail-fast step semantics mean the
-publish is never reached when it fails. This asserts that wiring, and mutates it
-to show the assertions can fail.
+In the dispatch-only three-mode lanes that property has two halves. The STAGE
+job checks out the exact declared source, runs the gate suite inside that
+checkout unconditionally, and only then seals and uploads digests of the built
+artifacts; GitHub's fail-fast step semantics mean nothing is sealed when the
+gate fails. The PUBLISH job never builds: it may only run in
+publish-continuation mode, and before any outward step it proves the staged
+artifact's provenance (this repository, this exact workflow file, a
+successful run) and digest identity, then re-inspects the bytes. So the only
+bytes that can publish are bytes the gate passed beside. This asserts that
+wiring, and mutates it to show the assertions can fail.
 """
 
 from __future__ import annotations
@@ -25,34 +29,27 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 
-CHECKOUT_STEP = "      - uses: actions/checkout@v7\n"
-CHECKOUT_ON_MAIN = (
-    "      - uses: actions/checkout@v7\n        with:\n          ref: main\n\n"
-)
-
-STEP_START = re.compile(r"(?m)^      - ")
 STEP_CONDITION = re.compile(r"(?m)^        if:")
 STEP_CONTINUE_ON_ERROR = re.compile(r"(?m)^        continue-on-error:")
-JOB_NAME = re.compile(r"(?m)^  ([A-Za-z0-9_-]+):\s*$")
 
 
 class Surface:
-    """One unrecoverable publishing surface and the gate that must precede it."""
+    """One unrecoverable publishing workflow: its gates and publish markers."""
 
     def __init__(
         self,
         name: str,
         workflow: str,
-        tag_pattern: str,
-        gate_command: str,
+        gate_step_marker: str,
+        gate_targets: tuple[str, ...],
         publish_markers: tuple[str, ...],
         gate_must_run: tuple[str, ...],
         gate_must_not_run: tuple[str, ...] = (),
     ) -> None:
         self.name = name
         self.workflow = workflow
-        self.tag_pattern = tag_pattern
-        self.gate_command = gate_command
+        self.gate_step_marker = gate_step_marker
+        self.gate_targets = gate_targets
         self.publish_markers = publish_markers
         self.gate_must_run = gate_must_run
         self.gate_must_not_run = gate_must_not_run
@@ -63,108 +60,122 @@ class Surface:
 
 SURFACES = (
     Surface(
-        name="aweb server on PyPI",
-        workflow="server-release.yml",
-        tag_pattern="server-v*",
-        gate_command="run: make release-server-gate",
-        publish_markers=("run: uv publish",),
-        gate_must_run=("uv lock --check", "pytest", "uv build"),
-    ),
-    Surface(
-        name="awid-service on PyPI",
-        workflow="awid-pypi-release.yml",
-        tag_pattern="awid-service-v*",
-        gate_command="run: make release-awid-pypi-gate",
-        publish_markers=("run: uv publish",),
+        name="aweb server and awid-service on PyPI",
+        workflow="pypi-release.yml",
+        gate_step_marker='run: make "$GATE"',
+        gate_targets=("release-server-gate", "release-awid-pypi-gate"),
+        publish_markers=("uv publish",),
         gate_must_run=("uv lock --check", "pytest", "uv build"),
     ),
     Surface(
         name="awid image on GHCR",
-        workflow="awid-release.yml",
-        tag_pattern="awid-v*",
-        gate_command="run: make release-awid-image-gate",
-        publish_markers=("docker/build-push-action",),
+        workflow="awid-image-release.yml",
+        gate_step_marker="run: make release-awid-image-gate",
+        gate_targets=("release-awid-image-gate",),
+        publish_markers=("skopeo copy",),
         gate_must_run=("uv lock --check", "pytest"),
-        # The publishing build is the gating build: build-push-action cannot push
-        # an image that failed to build, and it is the only build that covers both
-        # published platforms. A separate gate build would verify amd64 only.
-        gate_must_not_run=("docker build",),
+        gate_must_not_run=("docker build\n",),
     ),
 )
 
 
+def split_jobs(workflow: str) -> tuple[str, str]:
+    """(stage job block, publish job block) of a two-job lane workflow."""
+    jobs = workflow[workflow.index("\njobs:\n") :]
+    stage_at = jobs.index("\n  stage:\n")
+    publish_at = jobs.index("\n  publish:\n")
+    assert stage_at < publish_at, "stage must precede publish"
+    return jobs[stage_at:publish_at], jobs[publish_at:]
+
+
+def step_block(job: str, marker: str) -> str:
+    """The full step block containing the marker line."""
+    at = job.index(marker)
+    start = job.rindex("\n      - ", 0, at)
+    try:
+        end = job.index("\n      - ", at)
+    except ValueError:
+        end = len(job)
+    return job[start:end]
+
+
 class ReleaseGateContractTests(unittest.TestCase):
-    def steps_of_single_job(self, workflow: str) -> list[str]:
-        """Ordered step blocks of the workflow's only job."""
-
-        jobs = workflow[workflow.index("jobs:\n") + len("jobs:\n") :]
-        self.assertEqual(
-            JOB_NAME.findall(jobs),
-            ["publish"],
-            "the gate and the publish must share one job, so they share one checkout",
-        )
-        marker = "\n    steps:\n"
-        body = jobs[jobs.index(marker) + len(marker) :]
-        starts = [match.start() for match in STEP_START.finditer(body)]
-        self.assertTrue(starts, "the job must declare steps")
-        bounds = starts + [len(body)]
-        return [body[bounds[i] : bounds[i + 1]] for i in range(len(starts))]
-
     def assert_publish_is_gated(self, surface: Surface, workflow: str) -> None:
-        steps = self.steps_of_single_job(workflow)
+        stage, publish = split_jobs(workflow)
 
-        gate_positions = [i for i, step in enumerate(steps) if surface.gate_command in step]
+        # The gate runs in the stage job: exactly once, unconditionally, with
+        # failure fatal, inside the exact-source checkout, before anything is
+        # sealed or uploaded.
         self.assertEqual(
-            len(gate_positions),
+            stage.count(surface.gate_step_marker),
             1,
-            f"{surface.workflow} must run '{surface.gate_command}' exactly once",
+            f"{surface.workflow} stage must run '{surface.gate_step_marker}' exactly once",
         )
-        gate = gate_positions[0]
-
+        gate = step_block(stage, surface.gate_step_marker)
         self.assertIsNone(
-            STEP_CONDITION.search(steps[gate]),
+            STEP_CONDITION.search(gate),
             "a conditional gate is a gate that can be skipped",
         )
         self.assertIsNone(
-            STEP_CONTINUE_ON_ERROR.search(steps[gate]),
-            "continue-on-error would let the publish run after the gate failed",
+            STEP_CONTINUE_ON_ERROR.search(gate),
+            "continue-on-error would let staging seal after the gate failed",
         )
-
-        # The tree under the gate has to be the tree that gets published, which is
-        # what a tag push checks out by default. One checkout, taking that default,
-        # is the only arrangement in which that needs no further argument: a second
-        # checkout could replace the tested tree before the publish, and an explicit
-        # ref could name a different tree from the outset.
-        checkouts = [i for i, step in enumerate(steps) if "actions/checkout" in step]
-        self.assertEqual(
-            len(checkouts),
-            1,
-            "the job must check out once; a later checkout can replace the tested tree",
+        self.assertIn(
+            "working-directory: source",
+            gate,
+            "the gate must run inside the exact source checkout",
         )
         self.assertLess(
-            checkouts[0],
-            gate,
-            "the gate must run against the checked-out tagged commit",
+            stage.index("path: source"),
+            stage.index(surface.gate_step_marker),
+            "the exact source checkout must precede the gate",
         )
-        self.assertNotIn(
-            "ref:",
-            steps[checkouts[0]],
-            "the checkout must take the tag's own commit, not name a ref",
+        self.assertLess(
+            stage.index(surface.gate_step_marker),
+            stage.index("upload-artifact"),
+            "nothing may be sealed or uploaded before the gate passed",
         )
+        for marker in surface.publish_markers:
+            self.assertNotIn(
+                marker, stage, "the stage job must never publish anything"
+            )
 
-        publishes = [
-            i
-            for i, step in enumerate(steps)
-            if any(marker in step for marker in surface.publish_markers)
+        # The publish job never builds and is triple-locked: mode-gated,
+        # provenance-proven against this exact workflow file, and digest-bound
+        # before any outward step.
+        self.assertIn(
+            "if: inputs.mode == 'publish-continuation'",
+            publish,
+            "the publish job must be mode-gated",
+        )
+        self.assertIn(
+            f'".github/workflows/{surface.workflow}"',
+            publish,
+            "continuation must prove the staging run used this exact workflow",
+        )
+        publish_positions = [
+            publish.index(marker)
+            for marker in surface.publish_markers
+            if marker in publish
         ]
         self.assertTrue(
-            publishes,
-            f"{surface.workflow} must contain a publishing step to gate",
+            publish_positions,
+            f"{surface.workflow} publish job must contain a publishing step",
         )
-        self.assertLess(
-            gate,
-            min(publishes),
-            "every publishing step must come after the gate",
+        for guard in (
+            "does not equal declared $STAGE_ZIP_DIGEST",
+            "require-publishable",
+        ):
+            self.assertIn(guard, publish)
+            self.assertLess(
+                publish.index(guard),
+                min(publish_positions),
+                f"'{guard}' must precede every publishing step",
+            )
+        self.assertNotIn(
+            surface.gate_step_marker,
+            publish,
+            "the publish job must not rebuild; the gate ran beside the staged bytes",
         )
 
     def test_each_surface_gates_its_publish_on_its_own_suite(self) -> None:
@@ -177,42 +188,44 @@ class ReleaseGateContractTests(unittest.TestCase):
 
         for surface in SURFACES:
             workflow = surface.read()
-            steps = self.steps_of_single_job(workflow)
-            gate_step = next(step for step in steps if surface.gate_command in step)
-            publish_step = next(
-                step
-                for step in steps
-                if any(marker in step for marker in surface.publish_markers)
-            )
+            stage, _ = split_jobs(workflow)
+            gate_step = step_block(stage, surface.gate_step_marker)
 
             mutations = {
-                "gate removed": workflow.replace(gate_step, "", 1),
+                "gate removed": workflow.replace(gate_step, "\n", 1),
                 "gate skipped by a condition": workflow.replace(
                     gate_step,
-                    gate_step.rstrip("\n") + "\n        if: false\n\n",
+                    gate_step.replace(
+                        "\n        run:", "\n        if: false\n        run:", 1
+                    ),
                     1,
                 ),
                 "gate failure tolerated": workflow.replace(
                     gate_step,
-                    gate_step.rstrip("\n") + "\n        continue-on-error: true\n\n",
+                    gate_step.replace(
+                        "\n        run:",
+                        "\n        continue-on-error: true\n        run:",
+                        1,
+                    ),
                     1,
                 ),
-                # These two are the substitution the whole task exists to prevent:
-                # the gate runs, passes, and reports on a tree other than the one
-                # the tag points at. Neither changes the step ORDER.
-                "checkout pinned to main": workflow.replace(
-                    CHECKOUT_STEP, CHECKOUT_ON_MAIN, 1
+                "publish smuggled into the stage job": workflow.replace(
+                    gate_step,
+                    gate_step
+                    + f"\n      - name: smuggle\n        run: {surface.publish_markers[0]} x\n",
+                    1,
                 ),
-                "second checkout of main after the gate": workflow.replace(
-                    gate_step, gate_step + CHECKOUT_ON_MAIN, 1
+                "gate moved after the upload": workflow.replace(
+                    gate_step, "\n", 1
+                ).replace(
+                    "\n      - name: Staged identity",
+                    gate_step + "\n      - name: Staged identity",
+                    1,
                 ),
-                "gate moved after the publish": workflow.replace(
-                    gate_step, "", 1
-                ).replace(publish_step, publish_step + gate_step, 1),
             }
             for name, mutation in mutations.items():
                 with self.subTest(surface=surface.name, mutation=name):
-                    with self.assertRaises(AssertionError):
+                    with self.assertRaises((AssertionError, ValueError)):
                         self.assert_publish_is_gated(surface, mutation)
 
     def test_the_suites_have_the_services_they_need_to_run(self) -> None:
@@ -220,8 +233,8 @@ class ReleaseGateContractTests(unittest.TestCase):
 
         for surface in SURFACES:
             with self.subTest(surface=surface.name):
-                workflow = surface.read()
-                self.assertIn("image: postgres:16", workflow)
+                stage, _ = split_jobs(surface.read())
+                self.assertIn("image: postgres:16", stage)
                 for setting in (
                     "PGHOST: localhost",
                     "PGPORT:",
@@ -229,10 +242,11 @@ class ReleaseGateContractTests(unittest.TestCase):
                     "PGPASSWORD: postgres",
                     "PGDATABASE: postgres",
                 ):
-                    self.assertIn(setting, workflow)
+                    self.assertIn(setting, stage)
 
-    def test_the_tag_push_is_the_only_way_in(self) -> None:
-        """A second trigger would be a publish path the gate was never asked about."""
+    def test_dispatch_is_the_only_way_in(self) -> None:
+        """A tag or branch trigger would be a publish path the mode gate and
+        provenance checks were never asked about."""
 
         for surface in SURFACES:
             with self.subTest(surface=surface.name):
@@ -241,10 +255,8 @@ class ReleaseGateContractTests(unittest.TestCase):
                 if start is None:
                     self.fail(f"{surface.workflow} must declare triggers")
                 triggers = workflow[start.start() : workflow.index("jobs:\n")]
-                self.assertRegex(triggers, r"(?m)^  push:\s*$")
-                self.assertRegex(triggers, r"(?m)^    tags:\s*$")
-                self.assertIn(surface.tag_pattern, triggers)
-                for other in ("workflow_dispatch", "pull_request", "schedule", "branches:"):
+                self.assertIn("workflow_dispatch:", triggers)
+                for other in ("push:", "pull_request", "schedule", "tags:", "branches:"):
                     self.assertNotIn(other, triggers)
 
     def test_the_dry_run_targets_carry_no_recursive_make(self) -> None:
@@ -279,10 +291,10 @@ class ReleaseGateContractTests(unittest.TestCase):
                     return line.split(":", 1)[1].split()
             return []
 
-        targets = [surface.gate_command.split("make ", 1)[1] for surface in SURFACES]
+        targets = [t for surface in SURFACES for t in surface.gate_targets]
         # A wrong extraction yields an empty list, and every assertion below then passes
         # vacuously. The list is the detector; assert it counted before trusting a zero.
-        self.assertTrue(targets, "no dry-run targets extracted - the gate_command parse is broken")
+        self.assertTrue(targets, "no dry-run targets extracted - the surface table is broken")
 
         for target in targets:
             with self.subTest(target=target):
@@ -304,53 +316,53 @@ class ReleaseGateContractTests(unittest.TestCase):
         """Resolved through make itself, so prerequisites count as coverage."""
 
         for surface in SURFACES:
-            with self.subTest(surface=surface.name):
-                target = surface.gate_command.split("make ", 1)[1]
-                # Run the child make free of the parent's MAKEFLAGS, so the plan
-                # asserted below is the committed Makefile's rather than one
-                # bent by how the caller happened to invoke `make test` -
-                # command-line variable overrides propagate through MAKEFLAGS.
-                #
-                # --dry-run DOES NOT MEAN NOTHING RUNS. make executes two things
-                # regardless of -n: a recipe line containing $(MAKE), and every
-                # $(shell ...) in a := assignment, which is evaluated when the
-                # Makefile is PARSED. This test is safe today because the gate
-                # targets' recipes contain no $(MAKE) - they are rm -rf, uv build
-                # and test -f, which -n prints - and because the four := $(shell)
-                # assignments only read files (two sed, two node -p). CLI_VERSION
-                # calls a script but is recursive (=), so it expands only where it
-                # is used.
-                #
-                # ADDING A $(MAKE) LINE TO A GATE TARGET WOULD MAKE THIS TEST RUN
-                # IT. That is the condition to preserve; the flag's name will not
-                # warn you. aweb-aaxk.
-                env = {
-                    key: value
-                    for key, value in os.environ.items()
-                    if key not in ("MAKEFLAGS", "MFLAGS", "MAKELEVEL")
-                }
-                plan = subprocess.run(
-                    ["make", "--dry-run", target],
-                    cwd=REPO_ROOT,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    env=env,
-                ).stdout
-                for command in surface.gate_must_run:
-                    self.assertIn(command, plan, f"{target} must run {command}")
-                for command in surface.gate_must_not_run:
-                    self.assertNotIn(command, plan, f"{target} must not run {command}")
-                self.assertNotIn(
-                    "uv lock\n",
-                    plan,
-                    f"{target} must verify the committed lock, never repair it",
-                )
-                self.assertNotIn(
-                    "uv publish",
-                    plan,
-                    f"{target} is a gate and must not publish anything",
-                )
+            for target in surface.gate_targets:
+                with self.subTest(surface=surface.name, target=target):
+                    # Run the child make free of the parent's MAKEFLAGS, so the plan
+                    # asserted below is the committed Makefile's rather than one
+                    # bent by how the caller happened to invoke `make test` -
+                    # command-line variable overrides propagate through MAKEFLAGS.
+                    #
+                    # --dry-run DOES NOT MEAN NOTHING RUNS. make executes two things
+                    # regardless of -n: a recipe line containing $(MAKE), and every
+                    # $(shell ...) in a := assignment, which is evaluated when the
+                    # Makefile is PARSED. This test is safe today because the gate
+                    # targets' recipes contain no $(MAKE) - they are rm -rf, uv build
+                    # and test -f, which -n prints - and because the four := $(shell)
+                    # assignments only read files (two sed, two node -p). CLI_VERSION
+                    # calls a script but is recursive (=), so it expands only where it
+                    # is used.
+                    #
+                    # ADDING A $(MAKE) LINE TO A GATE TARGET WOULD MAKE THIS TEST RUN
+                    # IT. That is the condition to preserve; the flag's name will not
+                    # warn you. aweb-aaxk.
+                    env = {
+                        key: value
+                        for key, value in os.environ.items()
+                        if key not in ("MAKEFLAGS", "MFLAGS", "MAKELEVEL")
+                    }
+                    plan = subprocess.run(
+                        ["make", "--dry-run", target],
+                        cwd=REPO_ROOT,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                        env=env,
+                    ).stdout
+                    for command in surface.gate_must_run:
+                        self.assertIn(command, plan, f"{target} must run {command}")
+                    for command in surface.gate_must_not_run:
+                        self.assertNotIn(command, plan, f"{target} must not run {command}")
+                    self.assertNotIn(
+                        "uv lock\n",
+                        plan,
+                        f"{target} must verify the committed lock, never repair it",
+                    )
+                    self.assertNotIn(
+                        "uv publish",
+                        plan,
+                        f"{target} is a gate and must not publish anything",
+                    )
 
 
 if __name__ == "__main__":

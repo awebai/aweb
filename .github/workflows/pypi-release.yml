@@ -1,0 +1,352 @@
+name: PyPI Release
+
+# Dispatch-only PyPI lane for server (aweb) and awid-pypi (awid-service).
+# There is deliberately NO tag trigger: a pushed tag runs no code. The
+# outward tag is created by publish-continuation from bytes that were
+# staged and inspected first. PyPI can never re-upload a version, so the
+# suite gates staging and any digest mismatch at continuation is permanent.
+#
+#   stage-only            gate the suite beside the build from an exact
+#                         source SHA, inspect the dist (exactly one sdist +
+#                         one wheel, version inside both), upload the
+#                         staged set. No remote writes.
+#   publish-continuation  download a prior stage-only run's exact bytes,
+#                         re-verify, create the tag at the exact source,
+#                         uv-publish the exact staged files, verify PyPI's
+#                         per-file sha256 equals staged. Idempotent only
+#                         via exact-digest adoption; mismatch refuses.
+#   verify-only           gate + stage + inspect for an already-released
+#                         tag; publish jobs are skipped.
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'Which PyPI lane'
+        required: true
+        type: choice
+        options: [server, awid-pypi]
+      mode:
+        description: 'stage-only | publish-continuation | verify-only'
+        required: true
+        type: choice
+        options: [stage-only, publish-continuation, verify-only]
+      version:
+        description: 'Version X.Y.Z (candidate, or the released version for verify-only)'
+        required: true
+      source_sha:
+        description: 'Exact full source commit SHA'
+        required: true
+      stage_run_id:
+        description: 'publish-continuation: run id of the stage-only run'
+        required: false
+      stage_artifact_id:
+        description: 'publish-continuation: artifact id from the stage-only run'
+        required: false
+      stage_zip_digest:
+        description: 'publish-continuation: expected artifact digest, sha256:<64 hex>'
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-release-${{ inputs.package }}
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    name: Gate, stage, and inspect (${{ inputs.package }})
+    if: inputs.mode == 'stage-only' || inputs.mode == 'verify-only'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PACKAGE: ${{ inputs.package }}
+      MODE: ${{ inputs.mode }}
+      VERSION: ${{ inputs.version }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+    steps:
+      - name: Checkout tooling (this workflow's ref)
+        uses: actions/checkout@v4
+
+      - name: Validate input literals
+        run: |
+          bash scripts/npm-exact-publish.sh validate-inputs \
+            --sha "$SOURCE_SHA" --version "$VERSION"
+
+      - name: Resolve lane
+        id: lane
+        run: |
+          set -euo pipefail
+          case "$PACKAGE" in
+            server)    echo "dir=server"; echo "pypi_name=aweb"; echo "tag_prefix=server-v"; echo "gate=release-server-gate" ;;
+            awid-pypi) echo "dir=awid"; echo "pypi_name=awid-service"; echo "tag_prefix=awid-service-v"; echo "gate=release-awid-pypi-gate" ;;
+          esac >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_sha }}
+          path: source
+
+      - name: Guards
+        working-directory: source
+        env:
+          TAG_PREFIX: ${{ steps.lane.outputs.tag_prefix }}
+          PYPI_NAME: ${{ steps.lane.outputs.pypi_name }}
+          PKG_DIR: ${{ steps.lane.outputs.dir }}
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main \
+            || { echo "REFUSE: source $SOURCE_SHA is not an ancestor of origin/main" >&2; exit 1; }
+          src_version="$(python3 -c "
+          import re
+          text = open('$PKG_DIR/pyproject.toml').read()
+          print(re.search(r'version\s*=\s*\"([^\"]+)\"', text).group(1))")"
+          [[ "$src_version" == "$VERSION" ]] \
+            || { echo "REFUSE: $PKG_DIR/pyproject.toml declares $src_version, not $VERSION" >&2; exit 1; }
+          remote_tag="$(git ls-remote origin "refs/tags/${TAG_PREFIX}${VERSION}" | awk '{print $1}')"
+          if [[ "$MODE" == "stage-only" ]]; then
+            [[ -z "$remote_tag" ]] \
+              || { echo "REFUSE: tag ${TAG_PREFIX}${VERSION} already exists remotely at $remote_tag" >&2; exit 1; }
+            code="$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/${PYPI_NAME}/${VERSION}/json")"
+            case "$code" in
+              404) : ;;
+              200) echo "REFUSE: ${PYPI_NAME} ${VERSION} already exists on PyPI" >&2; exit 1 ;;
+              *) echo "REFUSE: PyPI observation returned status ${code}; absence must be proven, not assumed" >&2; exit 1 ;;
+            esac
+          else
+            deref="$(git rev-parse "${TAG_PREFIX}${VERSION}^{}" 2>/dev/null || true)"
+            [[ "$deref" == "$SOURCE_SHA" ]] \
+              || { echo "REFUSE: verify-only requires tag ${TAG_PREFIX}${VERSION} at exactly $SOURCE_SHA, found ${deref:-absent}" >&2; exit 1; }
+          fi
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Gate the suite beside the build
+        working-directory: source
+        env:
+          GATE: ${{ steps.lane.outputs.gate }}
+        run: make "$GATE"
+
+      - name: Inspect and seal the staged set
+        env:
+          PKG_DIR: ${{ steps.lane.outputs.dir }}
+          PYPI_NAME: ${{ steps.lane.outputs.pypi_name }}
+          TAG_PREFIX: ${{ steps.lane.outputs.tag_prefix }}
+        run: |
+          set -euo pipefail
+          mkdir -p staging/dist
+          cp "source/$PKG_DIR/dist/"* staging/dist/
+          bash scripts/pypi-exact-publish.sh inspect-staged \
+            --dist staging/dist --package "$PYPI_NAME" --version "$VERSION"
+          python3 - <<'PY'
+          import hashlib, json, os
+          files = {}
+          for name in sorted(os.listdir("staging/dist")):
+              with open(os.path.join("staging/dist", name), "rb") as f:
+                  files[name] = hashlib.sha256(f.read()).hexdigest()
+          canonical = hashlib.sha256(
+              json.dumps(files, sort_keys=True).encode()
+          ).hexdigest()
+          manifest = {
+              "mode": os.environ["MODE"],
+              "package": os.environ["PACKAGE"],
+              "tag": os.environ["TAG_PREFIX"] + os.environ["VERSION"],
+              "candidate_version": os.environ["VERSION"],
+              "source_sha": os.environ["SOURCE_SHA"],
+              "files": files,
+              "canonical_set_digest": canonical,
+          }
+          with open("staging/manifest.json", "w") as f:
+              json.dump(manifest, f, indent=2, sort_keys=True)
+          print("canonical set digest:", canonical)
+          PY
+
+      - name: Upload staged artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: pypi-staged-${{ inputs.package }}-${{ inputs.mode }}-v${{ inputs.version }}-${{ inputs.source_sha }}
+          path: staging/
+          if-no-files-found: error
+
+      - name: Staged identity
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          {
+            echo "## Staged ${PACKAGE} (${MODE}): v${VERSION} at ${SOURCE_SHA}"
+            echo "- stage_run_id: ${{ github.run_id }}"
+            echo "- stage_artifact_id: ${ARTIFACT_ID}"
+            echo "- stage_zip_digest (sha256:<hex>, API-computed): ${ARTIFACT_DIGEST}"
+            if [[ "$MODE" == "stage-only" ]]; then
+              echo "- continuation: dispatch mode=publish-continuation with the three values above"
+            else
+              echo "- verify-only evidence: NOT publishable; continuation refuses this artifact"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish continuation (${{ inputs.package }})
+    if: inputs.mode == 'publish-continuation'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      PACKAGE: ${{ inputs.package }}
+      VERSION: ${{ inputs.version }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      STAGE_RUN_ID: ${{ inputs.stage_run_id }}
+      STAGE_ARTIFACT_ID: ${{ inputs.stage_artifact_id }}
+      STAGE_ZIP_DIGEST: ${{ inputs.stage_zip_digest }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout tooling (this workflow's ref)
+        uses: actions/checkout@v4
+
+      - name: Validate input literals
+        run: |
+          set -euo pipefail
+          [[ -n "$STAGE_RUN_ID" && -n "$STAGE_ARTIFACT_ID" && -n "$STAGE_ZIP_DIGEST" ]] \
+            || { echo "REFUSE: publish-continuation requires stage_run_id, stage_artifact_id, stage_zip_digest" >&2; exit 1; }
+          bash scripts/npm-exact-publish.sh validate-inputs \
+            --sha "$SOURCE_SHA" --version "$VERSION" --digest "$STAGE_ZIP_DIGEST" \
+            --run-id "$STAGE_RUN_ID" --artifact-id "$STAGE_ARTIFACT_ID"
+
+      - name: Resolve lane
+        id: lane
+        run: |
+          set -euo pipefail
+          case "$PACKAGE" in
+            server)    echo "dir=server"; echo "pypi_name=aweb"; echo "tag_prefix=server-v" ;;
+            awid-pypi) echo "dir=awid"; echo "pypi_name=awid-service"; echo "tag_prefix=awid-service-v" ;;
+          esac >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_sha }}
+          path: source
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Fetch staged bytes with provenance
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${{ github.repository }}/actions/artifacts/${STAGE_ARTIFACT_ID}")"
+          [[ "$(jq -r .workflow_run.id <<<"$meta")" == "$STAGE_RUN_ID" ]] \
+            || { echo "REFUSE: artifact does not belong to run $STAGE_RUN_ID" >&2; exit 1; }
+          [[ "$(jq -r .expired <<<"$meta")" == "false" ]] \
+            || { echo "REFUSE: staged artifact is expired; re-stage, never rebuild here" >&2; exit 1; }
+          api_digest="$(jq -r .digest <<<"$meta")"
+          [[ "$api_digest" == "$STAGE_ZIP_DIGEST" ]] \
+            || { echo "REFUSE: API-recorded digest $api_digest does not equal declared $STAGE_ZIP_DIGEST" >&2; exit 1; }
+          run="$(gh api "repos/${{ github.repository }}/actions/runs/${STAGE_RUN_ID}")"
+          [[ "$(jq -r .path <<<"$run")" == ".github/workflows/pypi-release.yml" ]] \
+            || { echo "REFUSE: staging run used a different workflow" >&2; exit 1; }
+          [[ "$(jq -r .conclusion <<<"$run")" == "success" ]] \
+            || { echo "REFUSE: staging run did not succeed" >&2; exit 1; }
+          [[ "$(jq -r .head_repository.full_name <<<"$run")" == "${{ github.repository }}" ]] \
+            || { echo "REFUSE: staging run came from a fork" >&2; exit 1; }
+          gh api "repos/${{ github.repository }}/actions/artifacts/${STAGE_ARTIFACT_ID}/zip" > staged.zip
+          zip_digest="sha256:$(sha256sum staged.zip | awk '{print $1}')"
+          [[ "$zip_digest" == "$STAGE_ZIP_DIGEST" ]] \
+            || { echo "REFUSE: downloaded zip digest $zip_digest does not equal declared $STAGE_ZIP_DIGEST" >&2; exit 1; }
+          mkdir staging && unzip -q staged.zip -d staging
+
+      - name: Re-verify staged bytes
+        env:
+          PYPI_NAME: ${{ steps.lane.outputs.pypi_name }}
+        run: |
+          set -euo pipefail
+          bash scripts/npm-exact-publish.sh require-publishable --manifest staging/manifest.json
+          bash scripts/npm-exact-publish.sh verify-manifest \
+            --staging staging/dist --manifest staging/manifest.json \
+            --sha "$SOURCE_SHA" --version "$VERSION"
+          bash scripts/pypi-exact-publish.sh inspect-staged \
+            --dist staging/dist --package "$PYPI_NAME" --version "$VERSION"
+          pkg_declared="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("package",""))' staging/manifest.json)"
+          [[ "$pkg_declared" == "$PACKAGE" ]] \
+            || { echo "REFUSE: staged manifest is for package $pkg_declared, not $PACKAGE" >&2; exit 1; }
+
+      - name: Tag - create at exact source, or adopt identical
+        working-directory: source
+        env:
+          TAG_PREFIX: ${{ steps.lane.outputs.tag_prefix }}
+        run: |
+          set -euo pipefail
+          tag="${TAG_PREFIX}${VERSION}"
+          remote_tag="$(git ls-remote origin "refs/tags/$tag" | awk '{print $1}')"
+          if [[ -z "$remote_tag" ]]; then
+            git tag "$tag" "$SOURCE_SHA"
+            git push origin "refs/tags/$tag"
+            echo "created tag $tag at $SOURCE_SHA"
+          else
+            git fetch origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
+            deref="$(git rev-parse "$tag^{}" 2>/dev/null || echo "$remote_tag")"
+            [[ "$deref" == "$SOURCE_SHA" ]] \
+              || { echo "REFUSE: tag $tag exists at $deref, not $SOURCE_SHA" >&2; exit 1; }
+            echo "adopted existing tag $tag"
+          fi
+
+      - name: PyPI - adopt exact, publish only missing staged files
+        env:
+          PYPI_NAME: ${{ steps.lane.outputs.pypi_name }}
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          set -euo pipefail
+          code="$(curl -s -o observed.json -w '%{http_code}' "https://pypi.org/pypi/${PYPI_NAME}/${VERSION}/json")"
+          # plan-publish maps 404 to everything, 200 to exactly the missing
+          # staged filenames (adopting exact, refusing mismatch/extra), and
+          # any other status to an outage refusal.
+          plan="$(bash scripts/pypi-exact-publish.sh plan-publish \
+            --dist staging/dist --package "$PYPI_NAME" --version "$VERSION" \
+            --observed-status "$code" --observed-json observed.json)"
+          if [[ -z "$plan" ]]; then
+            echo "adopted ${PYPI_NAME} ${VERSION} (complete and byte-identical)"
+          else
+            files=()
+            while IFS= read -r name; do
+              [[ -n "$name" ]] && files+=("staging/dist/$name")
+            done <<<"$plan"
+            uv publish "${files[@]}"
+            echo "published ${#files[@]} missing staged file(s) for ${PYPI_NAME} ${VERSION}"
+          fi
+
+      - name: Verify published state equals staged bytes
+        env:
+          PYPI_NAME: ${{ steps.lane.outputs.pypi_name }}
+        run: |
+          set -euo pipefail
+          bash scripts/pypi-exact-publish.sh verify-published \
+            --dist staging/dist --package "$PYPI_NAME" --version "$VERSION"
+          echo "PyPI ${PYPI_NAME} ${VERSION} is byte-identical to the staged dist" >> "$GITHUB_STEP_SUMMARY"

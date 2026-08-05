@@ -33,13 +33,26 @@ CLI_DIR="$REPO_ROOT/cli/go"
 AW_BIN="$CLI_DIR/aw"
 PROOF_HELPER="$REPO_ROOT/scripts/e2e/oas_principal_proof.py"
 CAPABILITY_SOURCE="$REPO_ROOT/oas/.agents/capabilities/owned/aweb-identity-attach"
-PI_EXTENSION_DIR="$REPO_ROOT/pi-extension"
+PI_PACKAGE_ROOT="${OAS_PROOF_PI_PACKAGE_ROOT:-}"
+PI_EXTENSION_DIR="${PI_PACKAGE_ROOT:-$REPO_ROOT/pi-extension}"
+EXACT_SERVER_WHEEL="${AWEB_SKEW_SERVER_WHEEL:-}"
+EXACT_SERVER_SHA256="${AWEB_SKEW_SERVER_SHA256:-}"
+EXACT_SERVER_VERSION="${AWEB_SKEW_SERVER_VERSION:-}"
+EXACT_SERVER_CONSTRAINTS="${AWEB_SKEW_SERVER_CONSTRAINTS:-}"
+EXACT_SERVER_CONSTRAINTS_SHA256="${AWEB_SKEW_SERVER_CONSTRAINTS_SHA256:-}"
+SERVER_RUNTIME_INVENTORY="$REPO_ROOT/scripts/e2e/server_runtime_inventory.py"
+SERVER_RUNTIME_EVIDENCE=""
 COMPOSE_FILE="$REPO_ROOT/docker-compose.e2e.yml"
 TMUX_GUARD_DIR="$REPO_ROOT/scripts/guard-bin"
 MODE="${OAS_PROOF_MODE:-lifecycle}"
 case "$MODE" in
   lifecycle|resident-pi) ;;
   *) echo "FAIL: OAS_PROOF_MODE must be lifecycle or resident-pi (got $MODE)" >&2; exit 2 ;;
+esac
+SKEW_DIRECTION="${AWEB_SKEW_DIRECTION:-}"
+case "$SKEW_DIRECTION" in
+  ""|a-to-b|b-to-a) ;;
+  *) echo "FAIL: AWEB_SKEW_DIRECTION must be a-to-b or b-to-a (got $SKEW_DIRECTION)" >&2; exit 2 ;;
 esac
 HOST_PI_AUTH="${OAS_PROOF_PI_AUTH:-${PI_CODING_AGENT_DIR:-${HOME:-}/.pi/agent}/auth.json}"
 
@@ -65,12 +78,41 @@ preflight() {
     return 1
   }
   [[ -f "$PI_EXTENSION_DIR/package.json" ]] || {
-    echo "FAIL: Pi extension source not found at $PI_EXTENSION_DIR" >&2
+    echo "FAIL: Pi extension package not found at $PI_EXTENSION_DIR" >&2
     return 1
   }
+  if [[ -n "$PI_PACKAGE_ROOT" && ! -f "$PI_EXTENSION_DIR/dist/index.js" ]]; then
+    echo "FAIL: exact installed Pi package lacks dist/index.js: $PI_EXTENSION_DIR" >&2
+    return 1
+  fi
+  if [[ -n "$EXACT_SERVER_WHEEL" || -n "$EXACT_SERVER_SHA256" || \
+        -n "$EXACT_SERVER_VERSION" || -n "$EXACT_SERVER_CONSTRAINTS" || \
+        -n "$EXACT_SERVER_CONSTRAINTS_SHA256" ]]; then
+    [[ -n "$EXACT_SERVER_WHEEL" && -n "$EXACT_SERVER_SHA256" && \
+       -n "$EXACT_SERVER_VERSION" && -n "$EXACT_SERVER_CONSTRAINTS" && \
+       -n "$EXACT_SERVER_CONSTRAINTS_SHA256" ]] || {
+      echo "FAIL: set the exact server wheel, version, constraints, and both SHA-256 values together" >&2
+      return 1
+    }
+    [[ -f "$EXACT_SERVER_WHEEL" ]] || {
+      echo "FAIL: exact server wheel not found at $EXACT_SERVER_WHEEL" >&2
+      return 1
+    }
+    [[ -f "$EXACT_SERVER_CONSTRAINTS" ]] || {
+      echo "FAIL: exact server constraints not found at $EXACT_SERVER_CONSTRAINTS" >&2
+      return 1
+    }
+    [[ -f "$SERVER_RUNTIME_INVENTORY" ]] || {
+      echo "FAIL: server runtime inventory helper not found at $SERVER_RUNTIME_INVENTORY" >&2
+      return 1
+    }
+  fi
 }
 
 preflight
+if [[ -n "$PI_PACKAGE_ROOT" ]]; then
+  PI_EXTENSION_DIR="$(canonical_dir "$PI_PACKAGE_ROOT")"
+fi
 if [[ "${1:-}" == "--preflight" ]]; then
   exit
 fi
@@ -150,12 +192,38 @@ pathlib.Path(output).write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n
 PY
 }
 
-AWID_PORT="${OAS_PROOF_AWID_PORT:-18110}"
-AWEB_PORT="${OAS_PROOF_AWEB_PORT:-18100}"
-POSTGRES_PORT="${OAS_PROOF_POSTGRES_PORT:-55433}"
+read -r AWID_PORT AWEB_PORT POSTGRES_PORT < <(python3 - \
+  "${OAS_PROOF_AWID_PORT:-}" "${OAS_PROOF_AWEB_PORT:-}" \
+  "${OAS_PROOF_POSTGRES_PORT:-}" <<'PY'
+import socket, sys
+supplied = sys.argv[1:]
+sockets = []
+ports = []
+try:
+    for value in supplied:
+        if value:
+            port = int(value)
+            if not 1 <= port <= 65535:
+                raise SystemExit(f"invalid explicit loopback port: {value}")
+            ports.append(port)
+            continue
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        sockets.append(sock)
+        ports.append(sock.getsockname()[1])
+    if len(set(ports)) != len(ports):
+        raise SystemExit(f"proof loopback ports are not distinct: {ports}")
+    print(*ports)
+finally:
+    for sock in sockets:
+        sock.close()
+PY
+)
 AWID_URL="http://127.0.0.1:$AWID_PORT"
 AWEB_URL="http://127.0.0.1:$AWEB_PORT"
-PROJECT="${OAS_PROOF_PROJECT:-aweb-oas-retire-proof-$(printf '%s' "$REPO_ROOT" | cksum | cut -d' ' -f1)}"
+PROJECT="${OAS_PROOF_PROJECT:-aweb-oas-retire-proof-$(python3 -c 'import secrets; print(secrets.token_hex(8))')}"
+[[ "$PROJECT" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$ ]] \
+  || { echo "FAIL: OAS_PROOF_PROJECT is not a bounded Compose project name: $PROJECT" >&2; exit 2; }
 COMPOSE=(docker compose -p "$PROJECT" -f "$COMPOSE_FILE")
 
 PROOF_ROOT="$(make_temp_dir)"
@@ -201,7 +269,7 @@ assert_default_tmux_topology_unchanged() {
 }
 
 cleanup() {
-  local status=$? retain="$KEEP"
+  local status=$? retain="$KEEP" remaining resource list_flags
   trap - EXIT
   set +e
   rm -f "$PROOF_HOME/.pi/agent/auth.json"
@@ -215,11 +283,34 @@ cleanup() {
       retain=1
     fi
   fi
-  "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1
+  if ! "${COMPOSE[@]}" down -v --remove-orphans > "$EVIDENCE/compose-down.txt" 2>&1; then
+    echo "FAIL: Compose cleanup failed for exact project $PROJECT" >&2
+    status=1
+    retain=1
+  fi
+  for resource in container volume network; do
+    list_flags=(-q)
+    [[ "$resource" != "container" ]] || list_flags=(-aq)
+    if ! remaining="$(docker "$resource" ls "${list_flags[@]}" --filter \
+      "label=com.docker.compose.project=$PROJECT" \
+      2>> "$EVIDENCE/compose-down.txt")"; then
+      echo "FAIL: could not verify Compose $resource resources for $PROJECT" >&2
+      status=1
+      retain=1
+    fi
+    if [[ -n "$remaining" ]]; then
+      echo "FAIL: Compose project $PROJECT still owns $resource resources: $remaining" >&2
+      status=1
+      retain=1
+    fi
+  done
   if [[ "$retain" == "1" ]]; then
     echo "Proof workspace retained for safe remediation at $PROOF_ROOT" >&2
   else
-    rm -rf "$PROOF_ROOT"
+    if ! rm -rf "$PROOF_ROOT" || [[ -e "$PROOF_ROOT" ]]; then
+      echo "FAIL: proof-root cleanup failed for $PROOF_ROOT" >&2
+      status=1
+    fi
   fi
   exit "$status"
 }
@@ -304,6 +395,25 @@ file_sha256() {
   python3 - "$1" <<'PY'
 import hashlib, sys
 print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+}
+
+emit_skew_observation() {
+  [[ -f "$SERVER_RUNTIME_EVIDENCE" ]] \
+    || fail "skew observation lacks in-service server runtime inventory"
+  python3 - "$SERVER_RUNTIME_EVIDENCE" "$@" <<'PY'
+import json, sys
+runtime_path, component, direction, operation, result, message_id, conversation_id = sys.argv[1:]
+print("AWEB_SKEW_OBSERVATION " + json.dumps({
+    "schema": "aweb.channel-pi-skew-observation.v1",
+    "component": component,
+    "direction": direction,
+    "operation": operation,
+    "result": result,
+    "message_id": message_id,
+    "conversation_id": conversation_id,
+    "server_runtime": json.load(open(runtime_path, encoding="utf-8")),
+}, sort_keys=True, separators=(",", ":")))
 PY
 }
 
@@ -905,7 +1015,11 @@ PI_VERSION=""
 PI_EXTENSION_SHA=""
 
 if [[ "$MODE" == "resident-pi" ]]; then
-  echo "=== Prepare the source Pi extension and isolated model session ==="
+  if [[ -n "$PI_PACKAGE_ROOT" ]]; then
+    echo "=== Prepare the exact installed Pi package and isolated model session ==="
+  else
+    echo "=== Prepare the source Pi extension and isolated model session ==="
+  fi
   snapshot_default_tmux_topology "$EVIDENCE/tmux-topology-before.txt" \
     || fail "could not snapshot pre-existing tmux session/window/pane topology"
   [[ -f "$HOST_PI_AUTH" ]] || fail "Pi model authentication not found at $HOST_PI_AUTH"
@@ -913,8 +1027,12 @@ if [[ "$MODE" == "resident-pi" ]]; then
   [[ -n "$PI_LAUNCH_PATH" && -x "$PI_LAUNCH_PATH" ]] || fail "real Pi runtime not found on PATH"
   PI_BIN_SHA="$(file_sha256 "$PI_LAUNCH_PATH")"
   PI_VERSION="$(pi --version)"
-  npm --prefix "$PI_EXTENSION_DIR" ci > "$EVIDENCE/pi-extension-install.txt"
-  npm --prefix "$PI_EXTENSION_DIR" run build > "$EVIDENCE/pi-extension-build.txt"
+  if [[ -z "$PI_PACKAGE_ROOT" ]]; then
+    npm --prefix "$PI_EXTENSION_DIR" ci > "$EVIDENCE/pi-extension-install.txt"
+    npm --prefix "$PI_EXTENSION_DIR" run build > "$EVIDENCE/pi-extension-build.txt"
+  else
+    printf '%s\n' "$PI_EXTENSION_DIR" > "$EVIDENCE/pi-extension-exact-package-root.txt"
+  fi
   PI_EXTENSION_SHA="$(file_sha256 "$PI_EXTENSION_DIR/dist/index.js")"
   mkdir -p "$PROOF_HOME/.pi/agent/sessions"
   install -m 600 "$HOST_PI_AUTH" "$PROOF_HOME/.pi/agent/auth.json"
@@ -933,16 +1051,68 @@ else
   chmod +x "$PROOF_BIN/pi"
 fi
 
+if [[ -n "$EXACT_SERVER_WHEEL" ]]; then
+  echo "=== Bind the exact server wheel into the disposable aweb service ==="
+  OBSERVED_SERVER_SHA256="$(file_sha256 "$EXACT_SERVER_WHEEL")"
+  [[ "$OBSERVED_SERVER_SHA256" == "$EXACT_SERVER_SHA256" ]] \
+    || fail "exact server wheel sha256 $OBSERVED_SERVER_SHA256 does not equal $EXACT_SERVER_SHA256"
+  OBSERVED_CONSTRAINTS_SHA256="$(file_sha256 "$EXACT_SERVER_CONSTRAINTS")"
+  [[ "$OBSERVED_CONSTRAINTS_SHA256" == "$EXACT_SERVER_CONSTRAINTS_SHA256" ]] \
+    || fail "server constraints sha256 $OBSERVED_CONSTRAINTS_SHA256 does not equal $EXACT_SERVER_CONSTRAINTS_SHA256"
+  EXACT_SERVER_BUILD="$PROOF_ROOT/exact-server-wheel"
+  EXACT_SERVER_NAME="$(basename "$EXACT_SERVER_WHEEL")"
+  [[ "$EXACT_SERVER_NAME" =~ ^[A-Za-z0-9_.-]+\.whl$ ]] \
+    || fail "exact server wheel basename is not safe: $EXACT_SERVER_NAME"
+  mkdir -p "$EXACT_SERVER_BUILD"
+  cp "$EXACT_SERVER_WHEEL" "$EXACT_SERVER_BUILD/$EXACT_SERVER_NAME"
+  cp "$EXACT_SERVER_CONSTRAINTS" "$EXACT_SERVER_BUILD/server-runtime-constraints.txt"
+  cp "$SERVER_RUNTIME_INVENTORY" "$EXACT_SERVER_BUILD/server_runtime_inventory.py"
+  cat > "$EXACT_SERVER_BUILD/Dockerfile" <<EOF
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+COPY $EXACT_SERVER_NAME /tmp/$EXACT_SERVER_NAME
+COPY server-runtime-constraints.txt /tmp/server-runtime-constraints.txt
+COPY server_runtime_inventory.py /usr/local/bin/aweb-skew-runtime-inventory
+ENV AWEB_SKEW_SERVER_CONSTRAINTS_SHA256=$EXACT_SERVER_CONSTRAINTS_SHA256
+RUN python -m pip install --no-cache-dir --constraint /tmp/server-runtime-constraints.txt /tmp/$EXACT_SERVER_NAME
+CMD ["aweb", "serve", "--host", "0.0.0.0", "--port", "8000"]
+EOF
+  EXACT_SERVER_OVERRIDE="$PROOF_ROOT/exact-server-compose.yml"
+  cat > "$EXACT_SERVER_OVERRIDE" <<EOF
+services:
+  aweb:
+    build:
+      context: $EXACT_SERVER_BUILD
+      dockerfile: Dockerfile
+EOF
+  COMPOSE+=(-f "$EXACT_SERVER_OVERRIDE")
+fi
+
 echo "=== Start a fresh loopback tmpfs-backed AWID + aweb stack ==="
 export LIBRARY_E2E_AWID_PORT="$AWID_PORT"
 export LIBRARY_E2E_AWEB_PORT="$AWEB_PORT"
 export LIBRARY_E2E_POSTGRES_PORT="$POSTGRES_PORT"
 export LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL="$AWID_URL"
 export LIBRARY_E2E_AWEB_PUBLIC_ORIGIN="$AWEB_URL"
-"${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
 "${COMPOSE[@]}" up --build -d awid aweb
 wait_health awid "$AWID_URL/health"
 wait_health aweb "$AWEB_URL/health"
+if [[ -n "$EXACT_SERVER_WHEEL" ]]; then
+  SERVER_RUNTIME_EVIDENCE="$EVIDENCE/server-runtime.json"
+  "${COMPOSE[@]}" exec -T aweb python /usr/local/bin/aweb-skew-runtime-inventory \
+    > "$SERVER_RUNTIME_EVIDENCE"
+  python3 - "$SERVER_RUNTIME_EVIDENCE" "$EXACT_SERVER_CONSTRAINTS_SHA256" \
+    "$EXACT_SERVER_VERSION" <<'PY'
+import json, re, sys
+path, constraints_digest, server_version = sys.argv[1:]
+report = json.load(open(path, encoding="utf-8"))
+assert report.get("schema") == "aweb.server-runtime-inventory.v1", report
+assert report.get("constraints_sha256") == constraints_digest, report
+assert re.fullmatch(r"[0-9a-f]{64}", report.get("sha256", "")), report
+versions = {row["name"]: row["version"] for row in report.get("distributions", [])}
+assert versions.get("aweb") == server_version, versions
+PY
+fi
 POSTGRES_CONTAINER="$("${COMPOSE[@]}" ps -q postgres)"
 REDIS_CONTAINER="$("${COMPOSE[@]}" ps -q redis)"
 [[ -n "$POSTGRES_CONTAINER" ]] || fail "proof postgres container is missing"
@@ -1280,6 +1450,10 @@ PY
     fail "resident session did not contain identity, wake, and successful reply evidence"
   }
   cp "$SESSION_FILE" "$EVIDENCE/resident-session.jsonl"
+  if [[ "$SKEW_DIRECTION" == "b-to-a" ]]; then
+    emit_skew_observation pi b-to-a resident-mail-wake session-observed \
+      "$WAKE_MESSAGE_ID" "$WAKE_CONVERSATION_ID"
+  fi
 
   REPLY_OBSERVED=0
   for _ in $(seq 1 90); do
@@ -1310,6 +1484,12 @@ PY
     sleep 2
   done
   [[ "$REPLY_OBSERVED" == "1" ]] || fail "observer did not receive the resident's exact verified reply"
+  if [[ "$SKEW_DIRECTION" == "a-to-b" ]]; then
+    REPLY_MESSAGE_ID="$(json_value "$EVIDENCE/resident-reply-observation.json" message_id)"
+    [[ -n "$REPLY_MESSAGE_ID" ]] || fail "verified resident reply has no message identity"
+    emit_skew_observation pi a-to-b resident-mail-reply observer-verified \
+      "$REPLY_MESSAGE_ID" "$WAKE_CONVERSATION_ID"
+  fi
   env -u TMUX TMUX_TMPDIR="$PROOF_TMUX_DIR" PATH="$TMUX_GUARD_DIR:$PATH" \
     tmux list-panes -t "=$PROOF_TMUX_SESSION:=$INSTANCE_NAME" \
       -F '#{pane_pid}|#{pane_current_command}|#{pane_dead}' > "$EVIDENCE/resident-pane.txt"

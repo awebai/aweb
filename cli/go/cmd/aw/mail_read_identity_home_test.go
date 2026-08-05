@@ -241,7 +241,6 @@ func installMailReadEncryptionKeyForTest(t *testing.T, workingDir, identityHome,
 		DID:                  did,
 		Custody:              awid.CustodySelf,
 		IdentityScope:        awid.IdentityModeLocal,
-		Lifetime:             awid.LifetimeEphemeral,
 	}
 	record, assertion, err := createLocalEncryptionKeyRecord(identity, signingKey, "")
 	if err != nil {

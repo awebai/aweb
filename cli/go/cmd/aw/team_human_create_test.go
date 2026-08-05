@@ -1098,10 +1098,10 @@ func TestTeamHumanCreateAPIKeyToleratesAPISuffixedAwebURL(t *testing.T) {
 					}
 					didKey, _ := body["did"].(string)
 					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-						Team:         "backend:acme.com",
-						MemberDIDKey: didKey,
-						Alias:        "eng",
-						Lifetime:     awid.LifetimeEphemeral,
+						Team:          "backend:acme.com",
+						MemberDIDKey:  didKey,
+						Alias:         "eng",
+						IdentityScope: awid.IdentityModeLocal,
 					})
 					if err != nil {
 						t.Fatal(err)
@@ -1176,7 +1176,7 @@ func TestTeamHumanCreateRootOperatorDefaultsToTeamName(t *testing.T) {
 			}
 			gotInitAlias, _ = body["alias"].(string)
 			didKey, _ := body["did"].(string)
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "backend:acme.com", MemberDIDKey: didKey, Alias: gotInitAlias, Lifetime: awid.LifetimeEphemeral})
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "backend:acme.com", MemberDIDKey: didKey, Alias: gotInitAlias, IdentityScope: awid.IdentityModeLocal})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1408,7 +1408,7 @@ func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsMaterializesAndStartsInCallerTm
 				t.Fatal(err)
 			}
 			didKey, _ := initBody["did"].(string)
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "default:launch.aweb.ai", MemberDIDKey: didKey, Alias: "developer", Lifetime: awid.LifetimeEphemeral})
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "default:launch.aweb.ai", MemberDIDKey: didKey, Alias: "developer", IdentityScope: awid.IdentityModeLocal})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1532,7 +1532,7 @@ func TestTeamHumanAddAPIKeyNoActiveTeamBootstrapsGlobalThroughWorkspaceInit(t *t
 				t.Fatal(err)
 			}
 			stableID := awid.ComputeStableID(ed25519.PublicKey(pubKeyBytes))
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "default:launch.aweb.ai", MemberDIDKey: didKey, MemberDIDAW: stableID, MemberAddress: "launch.aweb.ai/global-dev", Alias: "global-dev", Lifetime: awid.LifetimePersistent})
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "default:launch.aweb.ai", MemberDIDKey: didKey, MemberDIDAW: stableID, MemberAddress: "launch.aweb.ai/global-dev", Alias: "global-dev", IdentityScope: awid.IdentityModeGlobal})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1593,7 +1593,7 @@ func TestTeamHumanCreateExistingHostedManagedIdentityFailsClearly(t *testing.T) 
 	if err := os.MkdirAll(filepath.Join(root, ".aw"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{DID: "did:key:zHosted", StableID: "did:aw:zHosted", Address: "alice.aweb.ai/alice", Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, RegistryURL: "https://api.awid.ai", CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{DID: "did:key:zHosted", StableID: "did:aw:zHosted", Address: "alice.aweb.ai/alice", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: "https://api.awid.ai", CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1623,7 +1623,7 @@ func TestTeamHumanCreateFirstAgentGlobalHostedBootstrapAllowed(t *testing.T) {
 	if err := runTeamHumanCreate(nil, []string{"Eng"}); err != nil {
 		t.Fatalf("runTeamHumanCreate: %v", err)
 	}
-	if !captured.Persistent || captured.Name != "eng" || captured.Alias != "" {
+	if !captured.Global || captured.Name != "eng" || captured.Alias != "" {
 		t.Fatalf("hosted first-agent-global request = %+v", captured)
 	}
 }
@@ -1721,7 +1721,7 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(root), memberKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{DID: memberDID, StableID: "did:aw:zSelf", Address: "acme.com/alice", Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{DID: memberDID, StableID: "did:aw:zSelf", Address: "acme.com/alice", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 		t.Fatal(err)
 	}
 	_, controllerKey, err := awid.GenerateKeypair()
@@ -2042,8 +2042,8 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 	if err != nil {
 		t.Fatalf("cert missing: %v", err)
 	}
-	if cert.MemberDIDAW != createdDIDAW || cert.MemberDIDKey != createdDIDKey || cert.MemberAddress != "acme.com/ops" || cert.Lifetime != awid.LifetimePersistent {
-		t.Fatalf("cert fields did_aw=%q did_key=%q address=%q lifetime=%q", cert.MemberDIDAW, cert.MemberDIDKey, cert.MemberAddress, cert.Lifetime)
+	if cert.MemberDIDAW != createdDIDAW || cert.MemberDIDKey != createdDIDKey || cert.MemberAddress != "acme.com/ops" || cert.IdentityScope != awid.IdentityModeGlobal {
+		t.Fatalf("cert fields did_aw=%q did_key=%q address=%q lifetime=%q", cert.MemberDIDAW, cert.MemberDIDKey, cert.MemberAddress, cert.IdentityScope)
 	}
 }
 
@@ -2064,7 +2064,7 @@ func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *test
 	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(root), memberKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{DID: memberDID, StableID: "did:aw:zSelf", Address: "acme.com/alice", Custody: awid.CustodySelf, Lifetime: awid.LifetimePersistent, CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{DID: memberDID, StableID: "did:aw:zSelf", Address: "acme.com/alice", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, CreatedAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{ActiveTeam: "old:acme.com", Memberships: []awconfig.TeamMembership{{TeamID: "old:acme.com", Alias: "alice", CertPath: ".aw/team-certs/old_acme_com.json", JoinedAt: "2026-01-01T00:00:00Z"}}}); err != nil {
@@ -2276,7 +2276,7 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRequiresTeamKeyForHostedRoll
 				t.Fatal(err)
 			}
 			didKey, _ := req["did"].(string)
-			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: "developer", Lifetime: awid.LifetimeEphemeral})
+			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: "developer", IdentityScope: awid.IdentityModeLocal})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -2288,7 +2288,7 @@ func TestTeamHumanAddHostedProfileMaterializeFailureRequiresTeamKeyForHostedRoll
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_id": "server-team-id", "team_slug": "default", "namespace": "rollback.aweb.ai",
 				"identity_id": "agent-developer", "alias": "developer", "server_url": serverURL,
-				"did": didKey, "custody": "self", "lifetime": "ephemeral", "access_mode": "open", "created": true,
+				"did": didKey, "custody": "self", "identity_scope": "local", "access_mode": "open", "created": true,
 				"team_cert": encoded,
 			})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
@@ -2374,7 +2374,7 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 				t.Fatal(err)
 			}
 			didKey, _ := req["did"].(string)
-			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: "developer", Lifetime: awid.LifetimeEphemeral})
+			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: didKey, Alias: "developer", IdentityScope: awid.IdentityModeLocal})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -2386,7 +2386,7 @@ func TestTeamHumanAddHostedProfileRollbackFailureIsLoud(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"team_id": "server-team-id", "team_slug": "default", "namespace": "rollback-fail.aweb.ai",
 				"identity_id": "agent-developer", "alias": "developer", "server_url": serverURL,
-				"did": didKey, "custody": "self", "lifetime": "ephemeral", "access_mode": "open", "created": true,
+				"did": didKey, "custody": "self", "identity_scope": "local", "access_mode": "open", "created": true,
 				"team_cert": encoded,
 			})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":

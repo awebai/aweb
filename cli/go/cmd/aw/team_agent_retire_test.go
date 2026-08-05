@@ -784,7 +784,6 @@ func TestTeamRemoveAgentBinaryRefusesAForeignNamespaceBeforeDeletingAnything(t *
 	}
 }
 
-
 // The server refuses an already-deleted workspace ONLY when its identity is still
 // bound, so that 404 establishes a bad fact rather than a neutral one. A retirement
 // that reads it as convergence revokes the certificate and exits 0, leaving an

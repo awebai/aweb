@@ -1,0 +1,365 @@
+name: Awid Image Release
+
+# Dispatch-only GHCR lane for the awid container image, Option A: the
+# multi-platform image is built ONCE to an OCI archive without any registry
+# push, its complete identity (index, per-platform manifest, config, and
+# layer digests) is bound and inspected, and continuation transfers those
+# exact bytes with skopeo. There is deliberately NO tag trigger.
+#
+#   stage-only            gate the suite, build the two-platform OCI
+#                         archive without push, bind and inspect its
+#                         complete identity, upload the staged set.
+#   publish-continuation  download a prior stage-only run's exact bytes,
+#                         re-verify, create the awid-v tag at the exact
+#                         source, skopeo-copy the archive to the version
+#                         tag AND latest, verify both resolve to the
+#                         staged index digest.
+#   verify-only           gate + build + inspect for an already-released
+#                         tag; publish jobs are skipped.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'stage-only | publish-continuation | verify-only'
+        required: true
+        type: choice
+        options: [stage-only, publish-continuation, verify-only]
+      version:
+        description: 'Version X.Y.Z (candidate, or the released version for verify-only)'
+        required: true
+      source_sha:
+        description: 'Exact full source commit SHA'
+        required: true
+      stage_run_id:
+        description: 'publish-continuation: run id of the stage-only run'
+        required: false
+      stage_artifact_id:
+        description: 'publish-continuation: artifact id from the stage-only run'
+        required: false
+      stage_zip_digest:
+        description: 'publish-continuation: expected artifact digest, sha256:<64 hex>'
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: awid-image-release
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    name: Gate, build once, and inspect
+    if: inputs.mode == 'stage-only' || inputs.mode == 'verify-only'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MODE: ${{ inputs.mode }}
+      VERSION: ${{ inputs.version }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+    steps:
+      - name: Checkout tooling (this workflow's ref)
+        uses: actions/checkout@v4
+
+      - name: Validate input literals
+        run: |
+          bash scripts/npm-exact-publish.sh validate-inputs \
+            --sha "$SOURCE_SHA" --version "$VERSION"
+
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_sha }}
+          path: source
+
+      - name: Guards
+        working-directory: source
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main \
+            || { echo "REFUSE: source $SOURCE_SHA is not an ancestor of origin/main" >&2; exit 1; }
+          src_version="$(python3 -c "
+          import re
+          text = open('awid/pyproject.toml').read()
+          print(re.search(r'version\s*=\s*\"([^\"]+)\"', text).group(1))")"
+          [[ "$src_version" == "$VERSION" ]] \
+            || { echo "REFUSE: awid/pyproject.toml declares $src_version, not $VERSION" >&2; exit 1; }
+          remote_tag="$(git ls-remote origin "refs/tags/awid-v${VERSION}" | awk '{print $1}')"
+          if [[ "$MODE" == "stage-only" ]]; then
+            [[ -z "$remote_tag" ]] \
+              || { echo "REFUSE: tag awid-v${VERSION} already exists remotely at $remote_tag" >&2; exit 1; }
+            # Absence must be proven by an authoritative listing; an outage
+            # or auth failure is never proof the tag is missing.
+            # The listing only counts as an observation when it is
+            # schema-valid; classify-listing refuses malformed evidence and
+            # that refusal maps to an UNAVAILABLE listing, never to absence.
+            listing_status=ok
+            present=no
+            if tags_json="$(skopeo list-tags docker://ghcr.io/awebai/awid)"; then
+              if presence="$(printf '%s' "$tags_json" \
+                  | bash "$GITHUB_WORKSPACE/scripts/oci-exact-publish.sh" classify-listing --tag "$VERSION")"; then
+                present="$presence"
+              else
+                listing_status=failed
+              fi
+            else
+              listing_status=failed
+            fi
+            bash "$GITHUB_WORKSPACE/scripts/oci-exact-publish.sh" require-absent \
+              --listing-status "$listing_status" --present "$present"
+          else
+            deref="$(git rev-parse "awid-v${VERSION}^{}" 2>/dev/null || true)"
+            [[ "$deref" == "$SOURCE_SHA" ]] \
+              || { echo "REFUSE: verify-only requires tag awid-v${VERSION} at exactly $SOURCE_SHA, found ${deref:-absent}" >&2; exit 1; }
+          fi
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Gate the suite at this commit
+        working-directory: source
+        run: make release-awid-image-gate
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build once to an OCI archive (no push)
+        working-directory: source
+        run: |
+          set -euo pipefail
+          mkdir -p ../staging
+          docker buildx build \
+            --file awid/Dockerfile.release \
+            --platform linux/amd64,linux/arm64 \
+            --provenance=false \
+            --sbom=false \
+            --label "org.opencontainers.image.title=awid" \
+            --label "org.opencontainers.image.description=Thin awid.ai registry service wrapper around aweb" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+            --output "type=oci,dest=../staging/awid-oci.tar" \
+            .
+
+      - name: Inspect and seal the staged set
+        run: |
+          set -euo pipefail
+          bash scripts/oci-exact-publish.sh inspect-staged \
+            --archive staging/awid-oci.tar --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" --out staging/identities.json
+          python3 - <<'PY'
+          import hashlib, json, os
+          files = {}
+          for name in sorted(os.listdir("staging")):
+              with open(os.path.join("staging", name), "rb") as f:
+                  files[name] = hashlib.sha256(f.read()).hexdigest()
+          canonical = hashlib.sha256(
+              json.dumps(files, sort_keys=True).encode()
+          ).hexdigest()
+          manifest = {
+              "mode": os.environ["MODE"],
+              "package": "awid-image",
+              "tag": "awid-v" + os.environ["VERSION"],
+              "candidate_version": os.environ["VERSION"],
+              "source_sha": os.environ["SOURCE_SHA"],
+              "files": files,
+              "canonical_set_digest": canonical,
+          }
+          with open("staging/manifest.json", "w") as f:
+              json.dump(manifest, f, indent=2, sort_keys=True)
+          print("canonical set digest:", canonical)
+          PY
+
+      - name: Upload staged artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: awid-image-staged-${{ inputs.mode }}-v${{ inputs.version }}-${{ inputs.source_sha }}
+          path: staging/
+          if-no-files-found: error
+
+      - name: Staged identity
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          {
+            echo "## Staged awid-image (${MODE}): v${VERSION} at ${SOURCE_SHA}"
+            echo "- stage_run_id: ${{ github.run_id }}"
+            echo "- stage_artifact_id: ${ARTIFACT_ID}"
+            echo "- stage_zip_digest (sha256:<hex>, API-computed): ${ARTIFACT_DIGEST}"
+            if [[ "$MODE" == "stage-only" ]]; then
+              echo "- continuation: dispatch mode=publish-continuation with the three values above"
+            else
+              echo "- verify-only evidence: NOT publishable; continuation refuses this artifact"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish continuation
+    if: inputs.mode == 'publish-continuation'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      packages: write
+    env:
+      VERSION: ${{ inputs.version }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      STAGE_RUN_ID: ${{ inputs.stage_run_id }}
+      STAGE_ARTIFACT_ID: ${{ inputs.stage_artifact_id }}
+      STAGE_ZIP_DIGEST: ${{ inputs.stage_zip_digest }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout tooling (this workflow's ref)
+        uses: actions/checkout@v4
+
+      - name: Validate input literals
+        run: |
+          set -euo pipefail
+          [[ -n "$STAGE_RUN_ID" && -n "$STAGE_ARTIFACT_ID" && -n "$STAGE_ZIP_DIGEST" ]] \
+            || { echo "REFUSE: publish-continuation requires stage_run_id, stage_artifact_id, stage_zip_digest" >&2; exit 1; }
+          bash scripts/npm-exact-publish.sh validate-inputs \
+            --sha "$SOURCE_SHA" --version "$VERSION" --digest "$STAGE_ZIP_DIGEST" \
+            --run-id "$STAGE_RUN_ID" --artifact-id "$STAGE_ARTIFACT_ID"
+
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_sha }}
+          path: source
+
+      - name: Fetch staged bytes with provenance
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${{ github.repository }}/actions/artifacts/${STAGE_ARTIFACT_ID}")"
+          [[ "$(jq -r .workflow_run.id <<<"$meta")" == "$STAGE_RUN_ID" ]] \
+            || { echo "REFUSE: artifact does not belong to run $STAGE_RUN_ID" >&2; exit 1; }
+          [[ "$(jq -r .expired <<<"$meta")" == "false" ]] \
+            || { echo "REFUSE: staged artifact is expired; re-stage, never rebuild here" >&2; exit 1; }
+          api_digest="$(jq -r .digest <<<"$meta")"
+          [[ "$api_digest" == "$STAGE_ZIP_DIGEST" ]] \
+            || { echo "REFUSE: API-recorded digest $api_digest does not equal declared $STAGE_ZIP_DIGEST" >&2; exit 1; }
+          run="$(gh api "repos/${{ github.repository }}/actions/runs/${STAGE_RUN_ID}")"
+          [[ "$(jq -r .path <<<"$run")" == ".github/workflows/awid-image-release.yml" ]] \
+            || { echo "REFUSE: staging run used a different workflow" >&2; exit 1; }
+          [[ "$(jq -r .conclusion <<<"$run")" == "success" ]] \
+            || { echo "REFUSE: staging run did not succeed" >&2; exit 1; }
+          [[ "$(jq -r .head_repository.full_name <<<"$run")" == "${{ github.repository }}" ]] \
+            || { echo "REFUSE: staging run came from a fork" >&2; exit 1; }
+          gh api "repos/${{ github.repository }}/actions/artifacts/${STAGE_ARTIFACT_ID}/zip" > staged.zip
+          zip_digest="sha256:$(sha256sum staged.zip | awk '{print $1}')"
+          [[ "$zip_digest" == "$STAGE_ZIP_DIGEST" ]] \
+            || { echo "REFUSE: downloaded zip digest $zip_digest does not equal declared $STAGE_ZIP_DIGEST" >&2; exit 1; }
+          mkdir staging && unzip -q staged.zip -d staging
+
+      - name: Re-verify staged bytes
+        run: |
+          set -euo pipefail
+          bash scripts/npm-exact-publish.sh require-publishable --manifest staging/manifest.json
+          bash scripts/npm-exact-publish.sh verify-manifest \
+            --staging staging --manifest staging/manifest.json \
+            --sha "$SOURCE_SHA" --version "$VERSION"
+          bash scripts/oci-exact-publish.sh inspect-staged \
+            --archive staging/awid-oci.tar --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" --out reinspect.json
+          diff <(jq -S . reinspect.json) <(jq -S . staging/identities.json) >/dev/null \
+            || { echo "REFUSE: re-inspected identities differ from the staged identities" >&2; exit 1; }
+
+      - name: Tag - create at exact source, or adopt identical
+        working-directory: source
+        run: |
+          set -euo pipefail
+          tag="awid-v${VERSION}"
+          remote_tag="$(git ls-remote origin "refs/tags/$tag" | awk '{print $1}')"
+          if [[ -z "$remote_tag" ]]; then
+            git tag "$tag" "$SOURCE_SHA"
+            git push origin "refs/tags/$tag"
+            echo "created tag $tag at $SOURCE_SHA"
+          else
+            git fetch origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
+            deref="$(git rev-parse "$tag^{}" 2>/dev/null || echo "$remote_tag")"
+            [[ "$deref" == "$SOURCE_SHA" ]] \
+              || { echo "REFUSE: tag $tag exists at $deref, not $SOURCE_SHA" >&2; exit 1; }
+            echo "adopted existing tag $tag"
+          fi
+
+      - name: GHCR - adopt exact, transfer missing, refuse mismatch
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | skopeo login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+          staged="$(python3 -c 'import json; print(json.load(open("staging/identities.json"))["index"])')"
+          # Authoritative listing distinguishes missing from unavailable; a
+          # failed observation is never permission to write.
+          listing_status=ok
+          tags_json="$(skopeo list-tags docker://ghcr.io/awebai/awid)" || listing_status=failed
+          for tag in "$VERSION" latest; do
+            kind=version; [[ "$tag" == "latest" ]] && kind=latest
+            present=no; remote_digest=unavailable
+            if [[ "$listing_status" == "ok" ]]; then
+              # Schema-invalid evidence is an unavailable listing, not absence.
+              if presence="$(printf '%s' "$tags_json" \
+                  | bash scripts/oci-exact-publish.sh classify-listing --tag "$tag")"; then
+                present="$presence"
+              else
+                listing_status=failed
+              fi
+            fi
+            if [[ "$present" == "yes" ]]; then
+              # Hash the direct byte stream: variable capture strips the
+              # trailing newline and a here-string appends one, so either
+              # would hash bytes skopeo never returned.
+              if observed="$(skopeo inspect --raw "docker://ghcr.io/awebai/awid:${tag}" \
+                  | bash scripts/oci-exact-publish.sh observe-digest)"; then
+                remote_digest="$observed"
+              fi
+            fi
+            action="$(bash scripts/oci-exact-publish.sh decide-tag \
+              --tag-kind "$kind" --staged "$staged" \
+              --listing-status "$listing_status" --present "$present" \
+              --remote-digest "$remote_digest")"
+            case "$action" in
+              ADOPT)
+                echo "adopted ghcr.io/awebai/awid:${tag} (already the staged index)" ;;
+              COPY)
+                skopeo copy --all "oci-archive:staging/awid-oci.tar" \
+                  "docker://ghcr.io/awebai/awid:${tag}"
+                echo "transferred exact staged bytes to ghcr.io/awebai/awid:${tag}" ;;
+              *)
+                echo "REFUSE: unexpected decide-tag action ${action}" >&2; exit 1 ;;
+            esac
+          done
+
+      - name: Verify published state equals the staged index
+        run: |
+          set -euo pipefail
+          bash scripts/oci-exact-publish.sh verify-published \
+            --archive staging/awid-oci.tar --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" --repository ghcr.io/awebai/awid
+          echo "ghcr.io/awebai/awid:${VERSION} and :latest resolve to the staged index" >> "$GITHUB_STEP_SUMMARY"

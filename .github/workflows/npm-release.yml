@@ -1,0 +1,385 @@
+name: npm Release
+
+# Dispatch-only npm release lane for channel, pi, and skills. There is
+# deliberately NO tag trigger: a pushed tag runs no code, so nothing can
+# rebuild or publish because a tag appeared. The outward tag is created by
+# publish-continuation from bytes that were staged and inspected first.
+# This is the lane surface the release driver (scripts/release_driver.py)
+# stages against before any publication in the plan runs.
+#
+#   stage-only            build once from an exact source SHA, pack and
+#                         inspect the tgz (generic + package profile),
+#                         upload the staged set. No remote writes.
+#   publish-continuation  download a prior stage-only run's exact bytes,
+#                         re-verify, create the tag at the exact source,
+#                         publish the exact tgz (and, for skills, the
+#                         staged release ZIPs). Existing items adopt only
+#                         on byte identity. Idempotent.
+#   verify-only           stage + inspect for an already-released tag;
+#                         its artifact is never publishable.
+#
+# The workspace root is the TOOLING checkout (this workflow's own ref);
+# source/ is the exact source checkout. Inputs reach shell only through
+# validated environment values.
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'Which npm lane'
+        required: true
+        type: choice
+        options: [channel, pi, skills]
+      mode:
+        description: 'stage-only | publish-continuation | verify-only'
+        required: true
+        type: choice
+        options: [stage-only, publish-continuation, verify-only]
+      version:
+        description: 'Version X.Y.Z (candidate, or the released version for verify-only)'
+        required: true
+      source_sha:
+        description: 'Exact full source commit SHA'
+        required: true
+      stage_run_id:
+        description: 'publish-continuation: run id of the stage-only run'
+        required: false
+      stage_artifact_id:
+        description: 'publish-continuation: artifact id from the stage-only run'
+        required: false
+      stage_zip_digest:
+        description: 'publish-continuation: expected artifact digest, sha256:<64 hex>'
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release-${{ inputs.package }}
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    name: Stage and inspect (${{ inputs.package }})
+    if: inputs.mode == 'stage-only' || inputs.mode == 'verify-only'
+    runs-on: ubuntu-latest
+    env:
+      PACKAGE: ${{ inputs.package }}
+      MODE: ${{ inputs.mode }}
+      VERSION: ${{ inputs.version }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+    steps:
+      - name: Checkout tooling (this workflow's ref)
+        uses: actions/checkout@v4
+
+      - name: Validate input literals
+        run: |
+          bash scripts/npm-exact-publish.sh validate-inputs \
+            --sha "$SOURCE_SHA" --version "$VERSION"
+
+      - name: Resolve lane
+        id: lane
+        run: |
+          set -euo pipefail
+          case "$PACKAGE" in
+            channel) echo "dir=channel"; echo "tag_prefix=channel-v"; echo "npm_name=@awebai/claude-channel" ;;
+            pi)      echo "dir=pi-extension"; echo "tag_prefix=pi-v"; echo "npm_name=@awebai/pi" ;;
+            skills)  echo "dir=packages/claude-skills"; echo "tag_prefix=skills-v"; echo "npm_name=@awebai/claude-skills" ;;
+          esac >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_sha }}
+          path: source
+
+      - name: Guards
+        working-directory: source
+        env:
+          TAG_PREFIX: ${{ steps.lane.outputs.tag_prefix }}
+          NPM_NAME: ${{ steps.lane.outputs.npm_name }}
+          PKG_DIR: ${{ steps.lane.outputs.dir }}
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/main \
+            || { echo "REFUSE: source $SOURCE_SHA is not an ancestor of origin/main" >&2; exit 1; }
+          src_version="$(node -p "require('./$PKG_DIR/package.json').version")"
+          [[ "$src_version" == "$VERSION" ]] \
+            || { echo "REFUSE: $PKG_DIR/package.json declares $src_version, not $VERSION" >&2; exit 1; }
+          remote_tag="$(git ls-remote origin "refs/tags/${TAG_PREFIX}${VERSION}" | awk '{print $1}')"
+          if [[ "$MODE" == "stage-only" ]]; then
+            [[ -z "$remote_tag" ]] \
+              || { echo "REFUSE: tag ${TAG_PREFIX}${VERSION} already exists remotely at $remote_tag" >&2; exit 1; }
+            enc="$(node -p "encodeURIComponent(process.env.NPM_NAME)")"
+            status="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${enc}/${VERSION}")"
+            decision="$(bash scripts/npm-exact-publish.sh decide-npm --observed-status "$status")"
+            [[ "$decision" == "ABSENT" ]] \
+              || { echo "REFUSE: registry decision for ${NPM_NAME}@${VERSION} is ${decision}, not ABSENT" >&2; exit 1; }
+          else
+            deref="$(git rev-parse "${TAG_PREFIX}${VERSION}^{}" 2>/dev/null || true)"
+            [[ "$deref" == "$SOURCE_SHA" ]] \
+              || { echo "REFUSE: verify-only requires tag ${TAG_PREFIX}${VERSION} at exactly $SOURCE_SHA, found ${deref:-absent}" >&2; exit 1; }
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Build once
+        working-directory: source
+        run: |
+          set -euo pipefail
+          if [[ "$PACKAGE" == "channel" || "$PACKAGE" == "pi" ]]; then
+            (cd channel-core && npm ci && npm run build)
+          fi
+          case "$PACKAGE" in
+            channel) (cd channel && npm ci && npm run build) ;;
+            pi)      (cd pi-extension && npm ci && npm run build) ;;
+            skills)  (cd packages/claude-ai-skills && ./build-zips.sh) ;;
+          esac
+
+      - name: Pack, inspect, and seal the staged set
+        env:
+          PKG_DIR: ${{ steps.lane.outputs.dir }}
+          TAG_PREFIX: ${{ steps.lane.outputs.tag_prefix }}
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+          bash scripts/npm-exact-publish.sh pack-inspect \
+            --dir "source/$PKG_DIR" --version "$VERSION" --out staging \
+            --profile "$PACKAGE" --source-root source
+          if [[ "$PACKAGE" == "skills" ]]; then
+            cp source/packages/claude-ai-skills/dist/*.zip staging/
+          fi
+          python3 - <<'PY'
+          import hashlib, json, os
+          files = {}
+          for name in sorted(os.listdir("staging")):
+              with open(os.path.join("staging", name), "rb") as f:
+                  files[name] = hashlib.sha256(f.read()).hexdigest()
+          canonical = hashlib.sha256(
+              json.dumps(files, sort_keys=True).encode()
+          ).hexdigest()
+          manifest = {
+              "mode": os.environ["MODE"],
+              "package": os.environ["PACKAGE"],
+              "tag": os.environ["TAG_PREFIX"] + os.environ["VERSION"],
+              "candidate_version": os.environ["VERSION"],
+              "source_sha": os.environ["SOURCE_SHA"],
+              "files": files,
+              "canonical_set_digest": canonical,
+          }
+          with open("staging/manifest.json", "w") as f:
+              json.dump(manifest, f, indent=2, sort_keys=True)
+          print("canonical set digest:", canonical)
+          PY
+
+      - name: Upload staged artifact
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-staged-${{ inputs.package }}-${{ inputs.mode }}-v${{ inputs.version }}-${{ inputs.source_sha }}
+          path: staging/
+          if-no-files-found: error
+
+      - name: Staged identity
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          {
+            echo "## Staged ${PACKAGE} (${MODE}): v${VERSION} at ${SOURCE_SHA}"
+            echo "- stage_run_id: ${{ github.run_id }}"
+            echo "- stage_artifact_id: ${ARTIFACT_ID}"
+            echo "- stage_zip_digest (sha256:<hex>, API-computed): ${ARTIFACT_DIGEST}"
+            if [[ "$MODE" == "stage-only" ]]; then
+              echo "- continuation: dispatch mode=publish-continuation with the three values above"
+            else
+              echo "- verify-only evidence: NOT publishable; continuation refuses this artifact"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish continuation (${{ inputs.package }})
+    if: inputs.mode == 'publish-continuation'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      PACKAGE: ${{ inputs.package }}
+      VERSION: ${{ inputs.version }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      STAGE_RUN_ID: ${{ inputs.stage_run_id }}
+      STAGE_ARTIFACT_ID: ${{ inputs.stage_artifact_id }}
+      STAGE_ZIP_DIGEST: ${{ inputs.stage_zip_digest }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout tooling (this workflow's ref)
+        uses: actions/checkout@v4
+
+      - name: Validate input literals
+        run: |
+          set -euo pipefail
+          [[ -n "$STAGE_RUN_ID" && -n "$STAGE_ARTIFACT_ID" && -n "$STAGE_ZIP_DIGEST" ]] \
+            || { echo "REFUSE: publish-continuation requires stage_run_id, stage_artifact_id, stage_zip_digest" >&2; exit 1; }
+          bash scripts/npm-exact-publish.sh validate-inputs \
+            --sha "$SOURCE_SHA" --version "$VERSION" --digest "$STAGE_ZIP_DIGEST" \
+            --run-id "$STAGE_RUN_ID" --artifact-id "$STAGE_ARTIFACT_ID"
+
+      - name: Resolve lane
+        id: lane
+        run: |
+          set -euo pipefail
+          case "$PACKAGE" in
+            channel) echo "dir=channel"; echo "tag_prefix=channel-v"; echo "npm_name=@awebai/claude-channel" ;;
+            pi)      echo "dir=pi-extension"; echo "tag_prefix=pi-v"; echo "npm_name=@awebai/pi" ;;
+            skills)  echo "dir=packages/claude-skills"; echo "tag_prefix=skills-v"; echo "npm_name=@awebai/claude-skills" ;;
+          esac >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_sha }}
+          path: source
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Fetch staged bytes with provenance
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${{ github.repository }}/actions/artifacts/${STAGE_ARTIFACT_ID}")"
+          [[ "$(jq -r .workflow_run.id <<<"$meta")" == "$STAGE_RUN_ID" ]] \
+            || { echo "REFUSE: artifact does not belong to run $STAGE_RUN_ID" >&2; exit 1; }
+          [[ "$(jq -r .expired <<<"$meta")" == "false" ]] \
+            || { echo "REFUSE: staged artifact is expired; re-stage, never rebuild here" >&2; exit 1; }
+          api_digest="$(jq -r .digest <<<"$meta")"
+          [[ "$api_digest" == "$STAGE_ZIP_DIGEST" ]] \
+            || { echo "REFUSE: API-recorded digest $api_digest does not equal declared $STAGE_ZIP_DIGEST" >&2; exit 1; }
+          run="$(gh api "repos/${{ github.repository }}/actions/runs/${STAGE_RUN_ID}")"
+          [[ "$(jq -r .path <<<"$run")" == ".github/workflows/npm-release.yml" ]] \
+            || { echo "REFUSE: staging run used a different workflow" >&2; exit 1; }
+          [[ "$(jq -r .conclusion <<<"$run")" == "success" ]] \
+            || { echo "REFUSE: staging run did not succeed" >&2; exit 1; }
+          [[ "$(jq -r .head_repository.full_name <<<"$run")" == "${{ github.repository }}" ]] \
+            || { echo "REFUSE: staging run came from a fork" >&2; exit 1; }
+          gh api "repos/${{ github.repository }}/actions/artifacts/${STAGE_ARTIFACT_ID}/zip" > staged.zip
+          zip_digest="sha256:$(sha256sum staged.zip | awk '{print $1}')"
+          [[ "$zip_digest" == "$STAGE_ZIP_DIGEST" ]] \
+            || { echo "REFUSE: downloaded zip digest $zip_digest does not equal declared $STAGE_ZIP_DIGEST" >&2; exit 1; }
+          mkdir staging && unzip -q staged.zip -d staging
+
+      - name: Re-verify staged bytes
+        run: |
+          set -euo pipefail
+          bash scripts/npm-exact-publish.sh require-publishable --manifest staging/manifest.json
+          bash scripts/npm-exact-publish.sh verify-manifest \
+            --staging staging --manifest staging/manifest.json \
+            --sha "$SOURCE_SHA" --version "$VERSION"
+          tgz="$(ls staging/*.tgz)"
+          PROFILE_TMP="$(mktemp -d)"
+          tar -xzf "$tgz" -C "$PROFILE_TMP"
+          pkg_declared="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("package",""))' staging/manifest.json)"
+          [[ "$pkg_declared" == "$PACKAGE" ]] \
+            || { echo "REFUSE: staged manifest is for package $pkg_declared, not $PACKAGE" >&2; exit 1; }
+
+      - name: Tag - create at exact source, or adopt identical
+        working-directory: source
+        env:
+          TAG_PREFIX: ${{ steps.lane.outputs.tag_prefix }}
+        run: |
+          set -euo pipefail
+          tag="${TAG_PREFIX}${VERSION}"
+          remote_tag="$(git ls-remote origin "refs/tags/$tag" | awk '{print $1}')"
+          if [[ -z "$remote_tag" ]]; then
+            git tag "$tag" "$SOURCE_SHA"
+            git push origin "refs/tags/$tag"
+            echo "created tag $tag at $SOURCE_SHA"
+          else
+            git fetch origin "refs/tags/$tag:refs/tags/$tag" 2>/dev/null || true
+            deref="$(git rev-parse "$tag^{}" 2>/dev/null || echo "$remote_tag")"
+            [[ "$deref" == "$SOURCE_SHA" ]] \
+              || { echo "REFUSE: tag $tag exists at $deref, not $SOURCE_SHA" >&2; exit 1; }
+            echo "adopted existing tag $tag"
+          fi
+
+      - name: Skills release ZIPs - upload missing exact bytes, adopt identical
+        if: inputs.package == 'skills'
+        env:
+          TAG_PREFIX: ${{ steps.lane.outputs.tag_prefix }}
+        run: |
+          set -euo pipefail
+          tag="${TAG_PREFIX}${VERSION}"
+          shopt -s nullglob
+          zips=(staging/*.zip)
+          [[ "${#zips[@]}" -gt 0 ]] || { echo "REFUSE: skills staging carries no release ZIPs" >&2; exit 1; }
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --verify-tag --title "$tag" --notes "skills $tag" "${zips[@]}"
+            echo "created release $tag with ${#zips[@]} ZIPs"
+          else
+            gh release view "$tag" --json assets -q '.assets[].name' | sort > observed-names
+            printf '%s\n' "${zips[@]}" | xargs -n1 basename | sort > expected-names
+            extra="$(comm -13 expected-names observed-names)"
+            [[ -z "$extra" ]] \
+              || { echo "REFUSE: release $tag carries unexpected assets:" "$extra" >&2; exit 1; }
+            mkdir -p observed
+            for f in "${zips[@]}"; do
+              name="$(basename "$f")"
+              if gh release download "$tag" --pattern "$name" --output "observed/$name" 2>/dev/null; then
+                bash scripts/npm-exact-publish.sh verify-published --tgz "$f" --observed "observed/$name"
+              else
+                gh release upload "$tag" "$f"
+                echo "uploaded missing asset $name"
+              fi
+            done
+          fi
+
+      - name: npm - publish missing exact tgz, adopt identical
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_NAME: ${{ steps.lane.outputs.npm_name }}
+        run: |
+          set -euo pipefail
+          staged="$(ls staging/*.tgz)"
+          staged_digest="$(sha256sum "$staged" | awk '{print $1}')"
+          enc="$(node -p "encodeURIComponent(process.env.NPM_NAME)")"
+          status="$(curl -s -o packument.json -w '%{http_code}' "https://registry.npmjs.org/${enc}/${VERSION}")"
+          observed_args=()
+          if [[ "$status" == "200" ]]; then
+            observed=unavailable
+            if tarball="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dist"]["tarball"])' packument.json 2>/dev/null)" \
+               && curl -fsSL -o observed.tgz "$tarball"; then
+              observed="$(sha256sum observed.tgz | awk '{print $1}')"
+            fi
+            observed_args=(--observed "$observed")
+          fi
+          decision="$(bash scripts/npm-exact-publish.sh decide-npm \
+            --observed-status "$status" --digest "$staged_digest" "${observed_args[@]}")"
+          case "$decision" in
+            ADOPT)
+              bash scripts/npm-exact-publish.sh verify-published --tgz "$staged" --observed observed.tgz
+              echo "adopted ${NPM_NAME}@${VERSION} (byte-identical)"
+              ;;
+            PUBLISH)
+              bash scripts/npm-exact-publish.sh publish-exact --tgz "$staged"
+              ;;
+            *)
+              echo "REFUSE: unexpected registry decision '${decision}'" >&2; exit 1
+              ;;
+          esac
+
+      - name: Verify published state equals staged bytes
+        env:
+          NPM_NAME: ${{ steps.lane.outputs.npm_name }}
+        run: |
+          set -euo pipefail
+          staged="$(ls staging/*.tgz)"
+          bash scripts/npm-exact-publish.sh verify-published \
+            --tgz "$staged" --package "$NPM_NAME" --version "$VERSION"
+          echo "published ${NPM_NAME}@${VERSION} is byte-identical to the staged tgz" >> "$GITHUB_STEP_SUMMARY"

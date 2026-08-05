@@ -86,6 +86,7 @@ Control events (type="control") are operational signals. On "pause", stop curren
       stableID: config.stableID,
     },
     signal: abort.signal,
+    teamID: config.teamID,
     workdir,
     onAwakening: (awakening) => mcp.notification({
       method: "notifications/claude/channel",

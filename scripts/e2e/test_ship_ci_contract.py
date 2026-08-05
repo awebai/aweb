@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -78,6 +79,16 @@ class ShipCIContractTests(unittest.TestCase):
         mutation = makefile.replace("\t$(MAKE) check-cli-release-vcs-stamps\n", "", 1)
         with self.assertRaises(AssertionError):
             self.assert_release_all_checks_cli_vcs_stamps(mutation)
+
+    def test_makefile_defines_no_all_product_tag_or_push_target(self) -> None:
+        makefile = MAKEFILE.read_text(encoding="utf-8")
+        for target in ("release-all-tag", "release-all-push"):
+            self.assertNotIn(
+                target,
+                makefile,
+                f"{target} must not exist: release tagging is per-component through"
+                " each artifact's own tag lane, never one commit tagging every product",
+            )
 
     def test_workflow_materializes_exact_cross_repo_inputs(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -186,11 +197,33 @@ class ShipCIContractTests(unittest.TestCase):
             "ship-suites must hand the whole suite list to the runner",
         )
 
-        ship = makefile[makefile.index("ship: release-all-check") :]
+        ship = self.require_match(
+            r"(?m)^ship: check-ship-invocation\n(?:\t.*\n)+",
+            makefile,
+            "ship must refuse overridden invocations before anything else runs",
+        )
+        self.assertIn(
+            "./scripts/ship-env.sh",
+            ship.group(0),
+            "ship must run the gate under the environment owner so ambient services"
+            " are provisioned or reused deterministically",
+        )
+        gate = self.require_match(
+            r"(?m)^ship-gate: check-ship-owner\n(?:\t.*\n)+",
+            makefile,
+            "ship-gate's only prerequisite is the owner check: a sibling"
+            " prerequisite races it under parallel make",
+        )
+        self.assertIn(
+            "$(MAKE) release-all-check",
+            gate.group(0),
+            "ship-gate must run release-all-check from its recipe, after the"
+            " owner check has succeeded",
+        )
         self.assertIn(
             "$(MAKE) ship-suites",
-            ship,
-            "ship must run the suites through ship-suites rather than as recipe lines",
+            gate.group(0),
+            "ship-gate must run the suites through ship-suites rather than as recipe lines",
         )
 
         # cli-e2e could exist as a name while doing nothing.
@@ -201,6 +234,152 @@ class ShipCIContractTests(unittest.TestCase):
 
         runner = REPO_ROOT / "scripts" / "run-ship-suites.sh"
         self.assertTrue(runner.is_file(), f"{runner} must exist")
+
+    ENV_SCRIPT = REPO_ROOT / "scripts" / "ship-env.sh"
+
+    def refuse(self, cmd: list[str], env: dict[str, str], must_name: str) -> None:
+        result = subprocess.run(
+            cmd, cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=60
+        )
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, f"{cmd} must refuse")
+        self.assertIn("refuses", output, f"{cmd} must refuse, not fail incidentally")
+        self.assertIn(must_name, output, "the refusal must name the cause")
+
+    def test_ship_invocation_guard_refuses_release_variable_overrides(self) -> None:
+        """Any command-line override rides MAKEOVERRIDES into nested makes:
+        CLI_VERSION contaminates the version scenario fixtures, and SHIP_SUITES=
+        can silently empty the suite list while the run still reports green."""
+        base_env = {k: v for k, v in os.environ.items() if k != "CLI_VERSION"}
+        for override in (
+            "CLI_VERSION=9.9.9",
+            "SERVER_VERSION=9.9.9",
+            "AWID_VERSION=9.9.9",
+            "CHANNEL_VERSION=9.9.9",
+            "SHIP_SUITES=",
+        ):
+            self.refuse(
+                ["make", "-s", "check-ship-invocation", override],
+                base_env,
+                override.split("=")[0],
+            )
+        self.refuse(
+            ["make", "-s", "check-ship-invocation"],
+            {**base_env, "CLI_VERSION": "9.9.9"},
+            "CLI_VERSION",
+        )
+        clean = subprocess.run(
+            ["make", "-s", "check-ship-invocation"],
+            cwd=REPO_ROOT,
+            env=base_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+
+    def test_internal_gate_targets_cannot_bypass_the_guard(self) -> None:
+        """release-all-check and ship-gate are reachable by name, so each must
+        carry the envelope itself: the override guard on release-all-check, the
+        environment-owner marker on ship-gate."""
+        base_env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("CLI_VERSION", "AWEB_SHIP_ENV_READY")
+        }
+        self.refuse(
+            ["make", "-s", "release-all-check", "CLI_VERSION=9.9.9"],
+            base_env,
+            "CLI_VERSION",
+        )
+        self.refuse(
+            ["make", "-s", "release-all-check", "SHIP_SUITES="],
+            base_env,
+            "SHIP_SUITES",
+        )
+        self.refuse(["make", "-s", "ship-gate"], base_env, "ship-env")
+        self.refuse(
+            ["make", "-s", "check-ship-invocation", "MAKEOVERRIDES="],
+            base_env,
+            "MAKEOVERRIDES",
+        )
+        self.refuse(
+            [
+                "make",
+                "-s",
+                "check-ship-invocation",
+                "MAKEOVERRIDES=",
+                "OAS_TEST_ROOT=/tmp/not-canonical",
+            ],
+            base_env,
+            "MAKEOVERRIDES",
+        )
+        self.refuse(
+            ["make", "-s", "ship-gate", "SHIP_SUITES="],
+            {**base_env, "AWEB_SHIP_ENV_READY": "1"},
+            "SHIP_SUITES",
+        )
+        parallel = subprocess.run(
+            ["make", "-j2", "ship-gate"],
+            cwd=REPO_ROOT,
+            env=base_env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        output = parallel.stdout + parallel.stderr
+        self.assertNotEqual(parallel.returncode, 0)
+        self.assertIn("refuses", output)
+        self.assertNotIn(
+            "Validating versions",
+            output,
+            "under parallel make the gate must not start before the owner refusal",
+        )
+
+    def test_ship_environment_owner_proves_its_arms(self) -> None:
+        """Exit 0 alone would pass a self-test gutted to a no-op; require each
+        arm's evidence line, like the suite runner's self-test."""
+        result = subprocess.run(
+            ["bash", str(self.ENV_SCRIPT), "--self-test"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"ship-env self-test failed:\n{result.stdout}\n{result.stderr}",
+        )
+        for arm in (
+            "reachable services are reused and no container is started",
+            "a plain local run provisions even when a foreign service is listening",
+            "provisioning never touches containers it did not create",
+            "cleanup removes exactly the created container ids",
+            "cleanup runs even when the gate fails",
+            "concurrent provisioning runs do not collide",
+            "a mismatched Go toolchain is refused with the fix",
+        ):
+            self.assertIn(arm, result.stdout, f"self-test must prove: {arm}")
+
+    def test_workflow_provisions_the_production_postgres_major(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            "postgres:17",
+            workflow,
+            "the hosted gate must run the PostgreSQL major production runs (17)",
+        )
+        self.assertNotIn("postgres:16", workflow)
+
+    def test_cli_version_scenarios_carry_the_override_leak_probe(self) -> None:
+        harness = (REPO_ROOT / "scripts" / "check-cli-release-version-test.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "leaked into scenario fixtures",
+            harness,
+            "the scenario harness must probe that an outer CLI_VERSION cannot"
+            " reach its fixtures through MAKEFLAGS or the environment",
+        )
 
     RUNNER = REPO_ROOT / "scripts" / "run-ship-suites.sh"
 

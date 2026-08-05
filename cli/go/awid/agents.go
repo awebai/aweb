@@ -38,7 +38,6 @@ type AgentView struct {
 	Online        bool                    `json:"online,omitempty"`
 	IdentityScope string                  `json:"identity_scope,omitempty"`
 	InboundMode   string                  `json:"inbound_mode,omitempty"`
-	Lifetime      string                  `json:"lifetime,omitempty"`
 	EncryptionKey *EncryptionKeyAssertion `json:"encryption_key,omitempty"`
 }
 
@@ -205,15 +204,15 @@ func (r *TeamRosterResolver) resolve(ctx context.Context, identifier string, for
 			publicKey = ed25519.PublicKey(raw)
 		}
 		return &ResolvedIdentity{
-			DID:         did,
-			StableID:    strings.TrimSpace(agent.DIDAW),
-			Address:     firstNonEmpty(strings.TrimSpace(agent.Address), identifier),
-			Handle:      alias,
-			PublicKey:   publicKey,
-			Custody:     CustodySelf,
-			Lifetime:    LegacyLifetimeForIdentityScope(firstNonEmpty(agent.IdentityScope, agent.Lifetime)),
-			ResolvedAt:  time.Now().UTC(),
-			ResolvedVia: "team_roster",
+			DID:           did,
+			StableID:      strings.TrimSpace(agent.DIDAW),
+			Address:       firstNonEmpty(strings.TrimSpace(agent.Address), identifier),
+			Handle:        alias,
+			PublicKey:     publicKey,
+			Custody:       CustodySelf,
+			IdentityScope: NormalizeIdentityScope(agent.IdentityScope),
+			ResolvedAt:    time.Now().UTC(),
+			ResolvedVia:   "team_roster",
 		}, nil
 	}
 	return nil, &APIError{StatusCode: 404, Body: "local alias not found in authenticated team roster"}

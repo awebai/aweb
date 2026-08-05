@@ -113,13 +113,13 @@ type doctorOutput struct {
 }
 
 type doctorSubject struct {
-	WorkingDir   string `json:"working_dir"`
-	AwebURL      string `json:"aweb_url,omitempty"`
-	TeamID       string `json:"team_id,omitempty"`
-	WorkspaceID  string `json:"workspace_id,omitempty"`
-	Alias        string `json:"alias,omitempty"`
-	Lifetime     string `json:"lifetime,omitempty"`
-	IdentityPath string `json:"identity_path,omitempty"`
+	WorkingDir    string `json:"working_dir"`
+	AwebURL       string `json:"aweb_url,omitempty"`
+	TeamID        string `json:"team_id,omitempty"`
+	WorkspaceID   string `json:"workspace_id,omitempty"`
+	Alias         string `json:"alias,omitempty"`
+	IdentityScope string `json:"identity_scope,omitempty"`
+	IdentityPath  string `json:"identity_path,omitempty"`
 }
 
 type doctorCheck struct {
@@ -441,7 +441,7 @@ func collectDoctorSubjectAt(workingDir, identityHome string) doctorSubject {
 		subject.TeamID = strings.TrimSpace(sel.TeamID)
 		subject.WorkspaceID = strings.TrimSpace(sel.WorkspaceID)
 		subject.Alias = strings.TrimSpace(sel.Alias)
-		subject.Lifetime = awid.LegacyLifetimeForIdentityScope(sel.IdentityScope)
+		subject.IdentityScope = awid.NormalizeIdentityScope(sel.IdentityScope)
 	}
 	identityPath := awconfig.WorktreeIdentityPath(subject.WorkingDir)
 	if strings.TrimSpace(identityHome) != "" {
@@ -449,8 +449,8 @@ func collectDoctorSubjectAt(workingDir, identityHome string) doctorSubject {
 	}
 	if identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath); err == nil && identity != nil {
 		subject.IdentityPath = strings.TrimSpace(identityPath)
-		if strings.TrimSpace(subject.Lifetime) == "" {
-			subject.Lifetime = awid.LegacyLifetimeForIdentityScope(identity.IdentityScope)
+		if strings.TrimSpace(subject.IdentityScope) == "" {
+			subject.IdentityScope = awid.NormalizeIdentityScope(identity.IdentityScope)
 		}
 	}
 	return subject

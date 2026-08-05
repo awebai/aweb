@@ -14,7 +14,7 @@ func TestPinStoreStoreAndCheckRoundtrip(t *testing.T) {
 
 	ps.StorePin(did, "myco/agent", "@bob", "app.aweb.ai")
 
-	result := ps.CheckPin("myco/agent", did, LifetimePersistent)
+	result := ps.CheckPin("myco/agent", did, IdentityModeGlobal)
 	if result != PinOK {
 		t.Fatalf("result=%q, want %q", result, PinOK)
 	}
@@ -29,7 +29,7 @@ func TestPinStoreIdentityMismatch(t *testing.T) {
 
 	ps.StorePin(did1, "myco/agent", "@bob", "app.aweb.ai")
 
-	result := ps.CheckPin("myco/agent", did2, LifetimePersistent)
+	result := ps.CheckPin("myco/agent", did2, IdentityModeGlobal)
 	if result != PinMismatch {
 		t.Fatalf("result=%q, want %q", result, PinMismatch)
 	}
@@ -46,7 +46,7 @@ func TestPinStoreEphemeralSkipsPinning(t *testing.T) {
 	ps.StorePin(did1, "myco/agent", "@bob", "app.aweb.ai")
 
 	// Ephemeral agent with a different DID should not trigger mismatch.
-	result := ps.CheckPin("myco/agent", did2, LifetimeEphemeral)
+	result := ps.CheckPin("myco/agent", did2, IdentityModeLocal)
 	if result != PinSkipped {
 		t.Fatalf("result=%q, want %q", result, PinSkipped)
 	}
@@ -58,7 +58,7 @@ func TestPinStoreUnknownAddressReturnsNew(t *testing.T) {
 	ps := NewPinStore()
 	did := "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
 
-	result := ps.CheckPin("myco/agent", did, LifetimePersistent)
+	result := ps.CheckPin("myco/agent", did, IdentityModeGlobal)
 	if result != PinNew {
 		t.Fatalf("result=%q, want %q", result, PinNew)
 	}
@@ -74,13 +74,13 @@ func TestPinStoreAddressChangeUpdatesReverseIndex(t *testing.T) {
 	ps.StorePin(did, "myco/agent-v2", "@bob", "app.aweb.ai")
 
 	// New address should resolve to the same DID.
-	result := ps.CheckPin("myco/agent-v2", did, LifetimePersistent)
+	result := ps.CheckPin("myco/agent-v2", did, IdentityModeGlobal)
 	if result != PinOK {
 		t.Fatalf("new address: result=%q, want %q", result, PinOK)
 	}
 
 	// Old address should no longer be in the reverse index.
-	result = ps.CheckPin("myco/agent-v1", did, LifetimePersistent)
+	result = ps.CheckPin("myco/agent-v1", did, IdentityModeGlobal)
 	if result != PinNew {
 		t.Fatalf("old address: result=%q, want %q", result, PinNew)
 	}
@@ -105,13 +105,13 @@ func TestPinStoreSaveAndLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := loaded.CheckPin("myco/agent", did, LifetimePersistent)
+	result := loaded.CheckPin("myco/agent", did, IdentityModeGlobal)
 	if result != PinOK {
 		t.Fatalf("result=%q after load, want %q", result, PinOK)
 	}
 
 	// Verify reverse index survived.
-	result = loaded.CheckPin("myco/agent", "did:key:z6MkDIFFERENT", LifetimePersistent)
+	result = loaded.CheckPin("myco/agent", "did:key:z6MkDIFFERENT", IdentityModeGlobal)
 	if result != PinMismatch {
 		t.Fatalf("result=%q after load, want %q", result, PinMismatch)
 	}

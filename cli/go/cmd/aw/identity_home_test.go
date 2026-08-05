@@ -86,7 +86,7 @@ func TestExternalIdentityHomeWhoamiCannotRegisterInstanceWorkspace(t *testing.T)
 		AwebURL: server.URL, TeamID: "backend:aweb.ai", Alias: "attached",
 		WorkspaceID: "workspace-attached", DID: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub),
 		Address: "aweb.ai/attached", Custody: awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent, SigningKey: key,
+		IdentityScope: awid.IdentityModeGlobal, SigningKey: key,
 	})
 	identityHome := filepath.Join(principalParent, ".aw")
 	cmd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "whoami", "--json")
@@ -154,7 +154,7 @@ func TestExternalIdentityHomeUsesPrincipalWithoutCopyingOrLinkingIdentityMateria
 		AwebURL: server.URL, TeamID: "backend:aweb.ai", Alias: "attached",
 		WorkspaceID: "workspace-attached", DID: did, StableID: awid.ComputeStableID(pub),
 		Address: "aweb.ai/attached", Custody: awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent, SigningKey: key,
+		IdentityScope: awid.IdentityModeGlobal, SigningKey: key,
 	})
 	identityHome := filepath.Join(principalParent, ".aw")
 	if err := os.WriteFile(filepath.Join(identityHome, "a2a-credentials.yaml"), []byte("credentials:\n  - host: gateway.example\n    api_key: static-principal-secret\n"), 0o600); err != nil {
@@ -308,7 +308,7 @@ func TestExternalIdentityHomeRoutesMailAndRegistrySigningAuthority(t *testing.T)
 		AwebURL: "https://team.example", TeamID: "backend:aweb.ai", Alias: "attached",
 		WorkspaceID: "workspace-attached", DID: did, StableID: awid.ComputeStableID(pub),
 		Address: "aweb.ai/attached", Custody: awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent, SigningKey: key,
+		IdentityScope: awid.IdentityModeGlobal, SigningKey: key,
 	})
 	identityHome := filepath.Join(principalParent, ".aw")
 	t.Setenv(awconfig.IdentityHomeEnv, identityHome)
@@ -366,7 +366,7 @@ func TestRunBinaryUsesExternalPrincipalWorkspaceAndPropagatesIdentityHome(t *tes
 		AwebURL: server.URL, TeamID: "backend:aweb.ai", Alias: "attached",
 		WorkspaceID: "workspace-attached", DID: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub),
 		Address: "aweb.ai/attached", Custody: awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent, SigningKey: key,
+		IdentityScope: awid.IdentityModeGlobal, SigningKey: key,
 	})
 	identityHome, err := filepath.EvalSymlinks(filepath.Join(principalParent, ".aw"))
 	if err != nil {

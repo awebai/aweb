@@ -19,6 +19,13 @@
 #   AWEB_BETA_E2E_PORT    beta aweb host port (default: 8330)
 #   AWEB_FED_E2E_BUILD    set to 0 to skip docker compose build
 #   AWEB_FED_E2E_KEEP     set to 1 to leave containers/temp dir for debugging
+#   AWEB_FED_E2E_SERVER_MODE source (default) or wheel; wheel requires exact
+#                            alpha/beta wheel path, version, and sha256 inputs
+#   AWEB_FED_E2E_DIRECTION a-to-b (default) or b-to-a for the cell proof
+#   AWEB_FED_E2E_CELL_ID   exact full-cell identity rendered in evidence
+#   AWEB_FED_E2E_PROJECT   collision-resistant exact Compose project identity
+#   AWEB_FED_E2E_MCP_VERSION exact server/uv.lock MCP version in wheel mode
+#   AWEB_FED_E2E_ROUTE_PROBE_ONLY set to 1 for the pre-setup capability control
 
 set -euo pipefail
 
@@ -46,7 +53,11 @@ ALPHA_URL="http://localhost:$ALPHA_PORT"
 BETA_URL="http://localhost:$BETA_PORT"
 ALPHA_ORIGIN="http://aweb-alpha:8000"
 BETA_ORIGIN="http://aweb-beta:8000"
-PROJECT="aweb-fed-e2e-$RANDOM"
+PROJECT="${AWEB_FED_E2E_PROJECT:-aweb-fed-e2e-$RANDOM}"
+SERVER_MODE="${AWEB_FED_E2E_SERVER_MODE:-source}"
+CELL_DIRECTION="${AWEB_FED_E2E_DIRECTION:-a-to-b}"
+CELL_ID="${AWEB_FED_E2E_CELL_ID:-source-journey}"
+ROUTE_PROBE_ONLY="${AWEB_FED_E2E_ROUTE_PROBE_ONLY:-0}"
 
 E2E_ROOT="$(make_temp_dir aw-fed-e2e)"
 E2E_HOME="$E2E_ROOT/home"
@@ -95,6 +106,9 @@ cleanup() {
       echo "Targeted teardown left networks for $PROJECT" >&2
       status=1
     fi
+    rm -rf "$E2E_ROOT"
+  else
+    # Pre-compose validation failures still own only this mktemp directory.
     rm -rf "$E2E_ROOT"
   fi
   echo ""
@@ -234,6 +248,30 @@ container_package_version() {
   compose exec -T "$service" python -c \
     'import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))' \
     "$package_name"
+}
+
+container_wheel_sha256() {
+  local service="$1"
+  compose exec -T "$service" sh -c \
+    'set -- /opt/aweb-wheel/*.whl; [ "$#" -eq 1 ] && sha256sum "$1" | cut -d" " -f1'
+}
+
+container_inventory_json() {
+  local service="$1"
+  compose exec -T "$service" python -c '
+import importlib.metadata, json, re
+inventory = {}
+for distribution in importlib.metadata.distributions():
+    name = re.sub(r"[-_.]+", "-", distribution.metadata["Name"]).lower()
+    if name in inventory:
+        raise SystemExit(f"duplicate normalized distribution {name}")
+    inventory[name] = distribution.version
+print(json.dumps(inventory, sort_keys=True, separators=(",", ":")))
+'
+}
+
+canonical_json_sha256() {
+  python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 }
 
 run_aw_in() {
@@ -411,6 +449,81 @@ create_identity_and_join_team() {
   assert_contains "$name init connected" "$init_out" "connected"
 }
 
+case "$CELL_DIRECTION" in
+  a-to-b|b-to-a) ;;
+  *) echo "AWEB_FED_E2E_DIRECTION must be a-to-b or b-to-a, got $CELL_DIRECTION" >&2; exit 1 ;;
+esac
+[[ "$PROJECT" =~ ^aweb-fed-e2e-[a-z0-9]+$ ]] \
+  || { echo "AWEB_FED_E2E_PROJECT is invalid: $PROJECT" >&2; exit 1; }
+for port in "$AWID_PORT" "$ALPHA_PORT" "$BETA_PORT"; do
+  [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1024 && port <= 65535 )) \
+    || { echo "federation host port is invalid: $port" >&2; exit 1; }
+done
+[[ "$AWID_PORT" != "$ALPHA_PORT" && "$AWID_PORT" != "$BETA_PORT" && "$ALPHA_PORT" != "$BETA_PORT" ]] \
+  || { echo "federation host ports must be distinct" >&2; exit 1; }
+echo "Federation invocation: project=$PROJECT ports=awid:$AWID_PORT,alpha:$ALPHA_PORT,beta:$BETA_PORT"
+
+case "$SERVER_MODE" in
+  source)
+    ALPHA_SERVER_BUILD="    build:
+      context: $REPO_ROOT
+      dockerfile: server/Dockerfile"
+    BETA_SERVER_BUILD="$ALPHA_SERVER_BUILD"
+    ;;
+  wheel)
+    [[ "${AWEB_FED_E2E_KEEP:-0}" == "0" ]] \
+      || { echo "AWEB_FED_E2E_KEEP must be 0 in wheel mode" >&2; exit 1; }
+    for variable in \
+      AWEB_ALPHA_WHEEL AWEB_ALPHA_WHEEL_SHA256 AWEB_ALPHA_VERSION \
+      AWEB_BETA_WHEEL AWEB_BETA_WHEEL_SHA256 AWEB_BETA_VERSION \
+      AWEB_FED_E2E_MCP_VERSION; do
+      [[ -n "${!variable:-}" ]] || { echo "$variable is required in wheel mode" >&2; exit 1; }
+    done
+    for digest in "$AWEB_ALPHA_WHEEL_SHA256" "$AWEB_BETA_WHEEL_SHA256"; do
+      [[ "$digest" =~ ^[0-9a-f]{64}$ ]] \
+        || { echo "wheel sha256 must be 64 lowercase hex, got $digest" >&2; exit 1; }
+    done
+    for version in "$AWEB_ALPHA_VERSION" "$AWEB_BETA_VERSION"; do
+      [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] \
+        || { echo "wheel version must be dotted numeric, got $version" >&2; exit 1; }
+    done
+    ALPHA_WHEEL_NAME="$(basename "$AWEB_ALPHA_WHEEL")"
+    BETA_WHEEL_NAME="$(basename "$AWEB_BETA_WHEEL")"
+    for name in "$ALPHA_WHEEL_NAME" "$BETA_WHEEL_NAME"; do
+      [[ "$name" =~ ^[A-Za-z0-9_.+-]+\.whl$ ]] \
+        || { echo "wheel filename is unsafe or invalid: $name" >&2; exit 1; }
+    done
+    [[ "$(shasum -a 256 "$AWEB_ALPHA_WHEEL" | awk '{print $1}')" == "$AWEB_ALPHA_WHEEL_SHA256" ]] \
+      || { echo "alpha selected wheel sha256 disagrees before build" >&2; exit 1; }
+    [[ "$(shasum -a 256 "$AWEB_BETA_WHEEL" | awk '{print $1}')" == "$AWEB_BETA_WHEEL_SHA256" ]] \
+      || { echo "beta selected wheel sha256 disagrees before build" >&2; exit 1; }
+    ALPHA_SERVER_CONTEXT="$E2E_ROOT/alpha-server-context"
+    BETA_SERVER_CONTEXT="$E2E_ROOT/beta-server-context"
+    mkdir "$ALPHA_SERVER_CONTEXT" "$BETA_SERVER_CONTEXT"
+    cp "$REPO_ROOT/scripts/federation-wheel-server.Dockerfile" "$ALPHA_SERVER_CONTEXT/Dockerfile"
+    cp "$REPO_ROOT/scripts/federation-wheel-server.Dockerfile" "$BETA_SERVER_CONTEXT/Dockerfile"
+    cp "$AWEB_ALPHA_WHEEL" "$ALPHA_SERVER_CONTEXT/$ALPHA_WHEEL_NAME"
+    cp "$AWEB_BETA_WHEEL" "$BETA_SERVER_CONTEXT/$BETA_WHEEL_NAME"
+    ALPHA_SERVER_BUILD="    build:
+      context: $ALPHA_SERVER_CONTEXT
+      dockerfile: Dockerfile
+      args:
+        AWEB_WHEEL: $ALPHA_WHEEL_NAME
+        AWEB_WHEEL_SHA256: $AWEB_ALPHA_WHEEL_SHA256
+        AWEB_VERSION: $AWEB_ALPHA_VERSION
+        MCP_VERSION: $AWEB_FED_E2E_MCP_VERSION"
+    BETA_SERVER_BUILD="    build:
+      context: $BETA_SERVER_CONTEXT
+      dockerfile: Dockerfile
+      args:
+        AWEB_WHEEL: $BETA_WHEEL_NAME
+        AWEB_WHEEL_SHA256: $AWEB_BETA_WHEEL_SHA256
+        AWEB_VERSION: $AWEB_BETA_VERSION
+        MCP_VERSION: $AWEB_FED_E2E_MCP_VERSION"
+    ;;
+  *) echo "AWEB_FED_E2E_SERVER_MODE must be source or wheel, got $SERVER_MODE" >&2; exit 1 ;;
+esac
+
 cat > "$DNS_COREFILE" <<'EOF'
 .:53 {
   errors
@@ -503,9 +616,7 @@ services:
       timeout: 2s
       retries: 30
   aweb-alpha:
-    build:
-      context: $REPO_ROOT
-      dockerfile: server/Dockerfile
+$ALPHA_SERVER_BUILD
     ports:
       - "$ALPHA_PORT:8000"
     environment:
@@ -548,9 +659,7 @@ services:
       timeout: 2s
       retries: 30
   aweb-beta:
-    build:
-      context: $REPO_ROOT
-      dockerfile: server/Dockerfile
+$BETA_SERVER_BUILD
     ports:
       - "$BETA_PORT:8000"
     environment:
@@ -608,12 +717,100 @@ PY
 compose up -d aweb-alpha aweb-beta
 wait_health "alpha" "$ALPHA_URL" "aweb-alpha"
 wait_health "beta" "$BETA_URL" "aweb-beta"
-locked_server_mcp="$(lock_package_version "$SERVER_DIR/uv.lock" mcp)"
-installed_server_mcp="$(container_package_version aweb-alpha mcp)"
-assert_eq "aweb image installs locked mcp" "$locked_server_mcp" "$installed_server_mcp"
+if [[ "$SERVER_MODE" == "wheel" ]]; then
+  alpha_installed_version="$(container_package_version aweb-alpha aweb)"
+  beta_installed_version="$(container_package_version aweb-beta aweb)"
+  alpha_retained_wheel_sha256="$(container_wheel_sha256 aweb-alpha)"
+  beta_retained_wheel_sha256="$(container_wheel_sha256 aweb-beta)"
+  alpha_installed_mcp="$(container_package_version aweb-alpha mcp)"
+  beta_installed_mcp="$(container_package_version aweb-beta mcp)"
+  alpha_installed_distributions="$(container_inventory_json aweb-alpha)"
+  beta_installed_distributions="$(container_inventory_json aweb-beta)"
+  alpha_inventory_sha256="$(printf '%s' "$alpha_installed_distributions" | canonical_json_sha256)"
+  beta_inventory_sha256="$(printf '%s' "$beta_installed_distributions" | canonical_json_sha256)"
+  assert_eq "alpha installs selected aweb version" "$AWEB_ALPHA_VERSION" "$alpha_installed_version"
+  assert_eq "beta installs selected aweb version" "$AWEB_BETA_VERSION" "$beta_installed_version"
+  assert_eq "alpha retains selected wheel sha256" "$AWEB_ALPHA_WHEEL_SHA256" "$alpha_retained_wheel_sha256"
+  assert_eq "beta retains selected wheel sha256" "$AWEB_BETA_WHEEL_SHA256" "$beta_retained_wheel_sha256"
+  assert_eq "alpha installs exact locked mcp" "$AWEB_FED_E2E_MCP_VERSION" "$alpha_installed_mcp"
+  assert_eq "beta installs exact locked mcp" "$AWEB_FED_E2E_MCP_VERSION" "$beta_installed_mcp"
+  [[ "$alpha_inventory_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo "alpha canonical dependency inventory digest is invalid" >&2; exit 1; }
+  [[ "$beta_inventory_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo "beta canonical dependency inventory digest is invalid" >&2; exit 1; }
+else
+  locked_server_mcp="$(lock_package_version "$SERVER_DIR/uv.lock" mcp)"
+  installed_server_mcp="$(container_package_version aweb-alpha mcp)"
+  assert_eq "aweb image installs locked mcp" "$locked_server_mcp" "$installed_server_mcp"
+fi
 locked_awid_fastapi="$(lock_package_version "$REPO_ROOT/awid/uv.lock" fastapi)"
 installed_awid_fastapi="$(container_package_version awid fastapi)"
 assert_eq "awid image installs locked fastapi" "$locked_awid_fastapi" "$installed_awid_fastapi"
+
+probe_federation_route() {
+  local label="$1" url="$2" status
+  status="$(curl -sS -o "$E2E_ROOT/$label-route-probe.json" -w '%{http_code}' \
+    -H 'Content-Type: application/json' -X POST --data '{}' \
+    "$url/v1/federation/messages")"
+  if [[ "$status" != "422" ]]; then
+    echo "$label federation route probe returned $status" >&2
+    exit 1
+  fi
+  assert_eq "$label federation route probe validates an empty envelope" "422" "$status"
+}
+
+if [[ "$SERVER_MODE" == "wheel" && "$ROUTE_PROBE_ONLY" == "1" ]]; then
+  python3 - \
+    "$CELL_ID" "$PROJECT" "$AWID_PORT" "$ALPHA_PORT" "$BETA_PORT" \
+    "$alpha_installed_version" "$alpha_retained_wheel_sha256" \
+    "$alpha_installed_mcp" "$alpha_installed_distributions" "$alpha_inventory_sha256" \
+    "$beta_installed_version" "$beta_retained_wheel_sha256" \
+    "$beta_installed_mcp" "$beta_installed_distributions" "$beta_inventory_sha256" <<'PY'
+import json
+import sys
+
+(
+    cell_id, project, awid_port, alpha_port, beta_port,
+    alpha_version, alpha_wheel, alpha_mcp, alpha_inventory, alpha_inventory_digest,
+    beta_version, beta_wheel, beta_mcp, beta_inventory, beta_inventory_digest,
+) = sys.argv[1:]
+record = {
+    "alpha": {
+        "installed_distributions": json.loads(alpha_inventory),
+        "installed_distributions_sha256": alpha_inventory_digest,
+        "mcp_version": alpha_mcp,
+        "version": alpha_version,
+        "wheel_sha256": alpha_wheel,
+    },
+    "beta": {
+        "installed_distributions": json.loads(beta_inventory),
+        "installed_distributions_sha256": beta_inventory_digest,
+        "mcp_version": beta_mcp,
+        "version": beta_version,
+        "wheel_sha256": beta_wheel,
+    },
+    "cell_id": cell_id,
+    "ports": {
+        "alpha": int(alpha_port),
+        "awid": int(awid_port),
+        "beta": int(beta_port),
+    },
+    "project": project,
+    "schema": "aweb.release.federation-skew-control-runtime.v1",
+}
+print(
+    "AWEB_FEDERATION_SKEW_CONTROL_RUNTIME="
+    + json.dumps(record, sort_keys=True, separators=(",", ":"))
+)
+PY
+fi
+
+probe_federation_route alpha "$ALPHA_URL"
+probe_federation_route beta "$BETA_URL"
+if [[ "$ROUTE_PROBE_ONLY" == "1" ]]; then
+  echo "Route probe controls complete before broader federation setup."
+  exit 0
+fi
 echo ""
 
 echo "=== Phase 2: Create alpha and beta identities/teams ==="
@@ -686,6 +883,13 @@ capture_success bob_e2ee_setup "bob_e2ee_setup" run_aw_in "$BOB_DIR" id encrypti
 assert_not_empty "bob federation e2ee key id" "$(echo "$bob_e2ee_setup" | jq_field key_id)"
 capture_success dave_e2ee_setup "dave_e2ee_setup" run_aw_in "$DAVE_DIR" id encryption-key setup --json
 assert_not_empty "dave local-only federation e2ee key id" "$(echo "$dave_e2ee_setup" | jq_field key_id)"
+echo ""
+
+echo "=== Skew cell direction: $CELL_ID $CELL_DIRECTION ==="
+# Alpha is always the initiator in this source-level journey. The child adapter
+# maps side A to alpha for a-to-b and side B to alpha for b-to-a, so the existing
+# alpha-first federation assertions below execute and report the exact cell.
+echo "  skew cell direction $CELL_DIRECTION: alpha initiates, beta receives"
 echo ""
 
 echo "=== Phase 3: Same-server local alias remains local ==="
@@ -1017,3 +1221,62 @@ capture_success bob_replay_inbox "bob_replay_inbox" run_aw_in "$BOB_DIR" mail in
 replay_count="$(echo "$bob_replay_inbox" | json_count_matching subject "Replay federated mail")"
 assert_eq "direct federation replay stores one message" "1" "$replay_count"
 echo ""
+
+if [[ "$SERVER_MODE" == "wheel" && "$fail" == "0" ]]; then
+  initiated_side="a"
+  [[ "$CELL_DIRECTION" == "b-to-a" ]] && initiated_side="b"
+  python3 - \
+    "$CELL_ID" "$initiated_side" "$PROJECT" \
+    "$AWID_PORT" "$ALPHA_PORT" "$BETA_PORT" \
+    "$alpha_installed_version" "$alpha_retained_wheel_sha256" \
+    "$alpha_installed_mcp" "$alpha_installed_distributions" "$alpha_inventory_sha256" \
+    "$beta_installed_version" "$beta_retained_wheel_sha256" \
+    "$beta_installed_mcp" "$beta_installed_distributions" "$beta_inventory_sha256" <<'PY'
+import json
+import sys
+
+(
+    cell_id, initiated_side, project,
+    awid_port, alpha_port, beta_port,
+    alpha_version, alpha_wheel, alpha_mcp, alpha_inventory, alpha_inventory_digest,
+    beta_version, beta_wheel, beta_mcp, beta_inventory, beta_inventory_digest,
+) = sys.argv[1:]
+observation = {
+    "alpha": {
+        "installed_distributions": json.loads(alpha_inventory),
+        "installed_distributions_sha256": alpha_inventory_digest,
+        "mcp_version": alpha_mcp,
+        "version": alpha_version,
+        "wheel_sha256": alpha_wheel,
+    },
+    "beta": {
+        "installed_distributions": json.loads(beta_inventory),
+        "installed_distributions_sha256": beta_inventory_digest,
+        "mcp_version": beta_mcp,
+        "version": beta_version,
+        "wheel_sha256": beta_wheel,
+    },
+    "cell_id": cell_id,
+    "initiated_side": initiated_side,
+    "outcomes": {
+        "encrypted_chat": True,
+        "encrypted_mail": True,
+        "fail_closed": True,
+        "plaintext_mail": True,
+        "replay_idempotent": True,
+        "route_validation": True,
+    },
+    "ports": {
+        "alpha": int(alpha_port),
+        "awid": int(awid_port),
+        "beta": int(beta_port),
+    },
+    "project": project,
+    "schema": "aweb.release.federation-skew-observation.v1",
+}
+print(
+    "AWEB_FEDERATION_SKEW_OBSERVATION="
+    + json.dumps(observation, sort_keys=True, separators=(",", ":"))
+)
+PY
+fi

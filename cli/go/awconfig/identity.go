@@ -26,25 +26,33 @@ type ResolvedIdentity struct {
 	Domain               string
 	Custody              string
 	IdentityScope        string
-	// Lifetime is a deprecated-read-compat mirror of IdentityScope. New identity
-	// config writes identity_scope; keep this populated while downstream callers
-	// migrate from persistent/ephemeral helpers.
-	Lifetime       string
-	RegistryURL    string
-	RegistryStatus string
-	CreatedAt      string
+	RegistryURL          string
+	RegistryStatus       string
+	CreatedAt            string
 }
 
 type WorktreeIdentity struct {
-	SchemaVersion int    `yaml:"schema_version,omitempty"`
-	DID           string `yaml:"did"`
-	StableID      string `yaml:"stable_id,omitempty"`
-	Address       string `yaml:"address,omitempty"`
-	Custody       string `yaml:"custody"`
-	IdentityScope string `yaml:"identity_scope,omitempty"`
-	// Lifetime is deprecated-read-compat for pre-v2 identity.yaml files. Loaders
-	// accept lifetime=persistent/ephemeral and normalize it to identity_scope;
-	// writers intentionally omit lifetime.
+	SchemaVersion  int    `yaml:"schema_version,omitempty"`
+	DID            string `yaml:"did"`
+	StableID       string `yaml:"stable_id,omitempty"`
+	Address        string `yaml:"address,omitempty"`
+	Custody        string `yaml:"custody"`
+	IdentityScope  string `yaml:"identity_scope,omitempty"`
+	RegistryURL    string `yaml:"registry_url,omitempty"`
+	RegistryStatus string `yaml:"registry_status,omitempty"`
+	CreatedAt      string `yaml:"created_at"`
+}
+
+// worktreeIdentityWire is the pre-v2 identity.yaml decode boundary. Lifetime
+// is intentionally absent from WorktreeIdentity so compatibility input is
+// normalized to identity_scope before entering the canonical model.
+type worktreeIdentityWire struct {
+	SchemaVersion  int    `yaml:"schema_version,omitempty"`
+	DID            string `yaml:"did"`
+	StableID       string `yaml:"stable_id,omitempty"`
+	Address        string `yaml:"address,omitempty"`
+	Custody        string `yaml:"custody"`
+	IdentityScope  string `yaml:"identity_scope,omitempty"`
 	Lifetime       string `yaml:"lifetime,omitempty"`
 	RegistryURL    string `yaml:"registry_url,omitempty"`
 	RegistryStatus string `yaml:"registry_status,omitempty"`
@@ -82,11 +90,22 @@ func LoadWorktreeIdentityFrom(path string) (*WorktreeIdentity, error) {
 	if err != nil {
 		return nil, err
 	}
-	var state WorktreeIdentity
-	if err := yaml.Unmarshal(data, &state); err != nil {
+	var wire worktreeIdentityWire
+	if err := yaml.Unmarshal(data, &wire); err != nil {
 		return nil, err
 	}
-	if err := normalizeWorktreeIdentityScope(&state); err != nil {
+	state := WorktreeIdentity{
+		SchemaVersion:  wire.SchemaVersion,
+		DID:            wire.DID,
+		StableID:       wire.StableID,
+		Address:        wire.Address,
+		Custody:        wire.Custody,
+		IdentityScope:  wire.IdentityScope,
+		RegistryURL:    wire.RegistryURL,
+		RegistryStatus: wire.RegistryStatus,
+		CreatedAt:      wire.CreatedAt,
+	}
+	if err := normalizeWorktreeIdentityScope(&state, wire.Lifetime); err != nil {
 		return nil, err
 	}
 	return &state, nil
@@ -112,14 +131,13 @@ func SaveWorktreeIdentityTo(path string, state *WorktreeIdentity) error {
 		return errors.New("nil identity state")
 	}
 	out := *state
-	if err := normalizeWorktreeIdentityScope(&out); err != nil {
+	if err := normalizeWorktreeIdentityScope(&out, ""); err != nil {
 		return err
 	}
 	if strings.TrimSpace(out.IdentityScope) == "" {
 		return errors.New("identity_scope is required")
 	}
 	out.SchemaVersion = WorktreeIdentitySchemaVersion
-	out.Lifetime = ""
 	data, err := yaml.Marshal(&out)
 	if err != nil {
 		return err
@@ -127,12 +145,12 @@ func SaveWorktreeIdentityTo(path string, state *WorktreeIdentity) error {
 	return atomicWriteFile(path, append(bytesTrimRightNewlines(data), '\n'))
 }
 
-func normalizeWorktreeIdentityScope(state *WorktreeIdentity) error {
+func normalizeWorktreeIdentityScope(state *WorktreeIdentity, legacyLifetime string) error {
 	if state == nil {
 		return errors.New("nil identity state")
 	}
 	rawScope := strings.TrimSpace(state.IdentityScope)
-	rawLifetime := strings.TrimSpace(state.Lifetime)
+	rawLifetime := strings.TrimSpace(legacyLifetime)
 	if rawScope == "" && rawLifetime == "" {
 		return nil
 	}
@@ -144,11 +162,10 @@ func normalizeWorktreeIdentityScope(state *WorktreeIdentity) error {
 		}
 	}
 	if rawLifetime != "" {
-		legacyLifetime := awid.NormalizeLifetime(rawLifetime)
-		if legacyLifetime != awid.LifetimeEphemeral && legacyLifetime != awid.LifetimePersistent {
-			return fmt.Errorf("deprecated lifetime must be %q or %q", awid.LifetimeEphemeral, awid.LifetimePersistent)
+		compatScope := awid.IdentityScopeFromLegacyLifetime(rawLifetime)
+		if compatScope != awid.IdentityModeLocal && compatScope != awid.IdentityModeGlobal {
+			return fmt.Errorf("deprecated lifetime must be %q or %q", "ephemeral", "persistent")
 		}
-		compatScope := awid.NormalizeIdentityScope(legacyLifetime)
 		if scope != "" && scope != compatScope {
 			return fmt.Errorf("identity_scope %q conflicts with deprecated lifetime %q", rawScope, rawLifetime)
 		}
@@ -157,7 +174,6 @@ func normalizeWorktreeIdentityScope(state *WorktreeIdentity) error {
 		}
 	}
 	state.IdentityScope = scope
-	state.Lifetime = awid.LegacyLifetimeForIdentityScope(scope)
 	return nil
 }
 
@@ -225,7 +241,6 @@ func resolvedIdentityFromState(workingDir, identityHome, identityPath, signingKe
 		Address:        strings.TrimSpace(identity.Address),
 		Custody:        strings.TrimSpace(identity.Custody),
 		IdentityScope:  identityScope,
-		Lifetime:       strings.TrimSpace(identity.Lifetime),
 		RegistryURL:    strings.TrimSpace(identity.RegistryURL),
 		RegistryStatus: strings.TrimSpace(identity.RegistryStatus),
 		CreatedAt:      strings.TrimSpace(identity.CreatedAt),

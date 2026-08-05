@@ -40,7 +40,7 @@ func TestBootstrapRedeem(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"certificate":    "Y2VydA==",
 			"team_id":        "default:juanre.aweb.ai",
-			"lifetime":       "persistent",
+			"identity_scope": "global",
 			"alias":          "laptop-agent",
 			"did_aw":         "did:aw:test123",
 			"member_address": "juanre.aweb.ai/laptop-agent",
@@ -153,10 +153,10 @@ func TestBootstrapRedeemWithAPIBaseURLSignsWirePath(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"certificate": "Y2VydA==",
-			"team_id":     "default:juanre.aweb.ai",
-			"lifetime":    "ephemeral",
-			"alias":       "ci-runner-01",
+			"certificate":    "Y2VydA==",
+			"team_id":        "default:juanre.aweb.ai",
+			"identity_scope": "local",
+			"alias":          "ci-runner-01",
 		})
 	}))
 	t.Cleanup(server.Close)
