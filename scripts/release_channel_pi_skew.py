@@ -925,10 +925,14 @@ class SubprocessChannelPiJourney:
 
 
 def _factory(component: str):
+    configured = os.getenv("AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR")
+    base = Path(configured or (
+        Path(tempfile.gettempdir()) / "aweb-channel-pi-skew-evidence"
+    ))
     return ChannelPiHarness(
         resolver=ArtifactResolver(),
         journey_factory=lambda: SubprocessChannelPiJourney(component),
-        evidence=FileEvidenceWriter(),
+        evidence=FileEvidenceWriter(base / component),
     )
 
 

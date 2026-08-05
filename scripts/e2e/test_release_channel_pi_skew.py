@@ -894,6 +894,21 @@ class RegistrationAndJourneyParameterTests(unittest.TestCase):
             with self.assertRaisesRegex(rd.ReceiptError, needle):
                 skew.parse_observation(output, "channel", "a-to-b")
 
+    def test_channel_and_pi_factories_isolate_matrix_evidence_roots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prior = os.environ.get("AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR")
+            os.environ["AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR"] = tmp
+            try:
+                channel = skew.channel_factory()
+                pi = skew.pi_factory()
+            finally:
+                if prior is None:
+                    os.environ.pop("AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR", None)
+                else:
+                    os.environ["AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR"] = prior
+            self.assertEqual(channel._evidence.root, Path(tmp).resolve() / "channel")
+            self.assertEqual(pi._evidence.root, Path(tmp).resolve() / "pi")
+
     def test_both_exact_journeys_are_registered_once(self):
         import release_skew_harnesses as registry
 
