@@ -27,7 +27,10 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import release_channel_pi_skew as measurement_inputs
 import release_driver as rd
+
+PublishedServerAuthority = measurement_inputs.PublishedServerAuthority
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 JOURNEY = "make cli-e2e"
@@ -1206,17 +1209,38 @@ def aggregate_frozen_matrix(matrix_path: Path, evidence_root: Path) -> dict:
     return measurement
 
 
+def validate_measurement_input(document: dict) -> dict:
+    """Apply the frozen shared measurement-input schema to the aw edge."""
+    return measurement_inputs.validate_measurement_input(document, component="aw")
+
+
 def measure_support(
     *,
-    staged: dict[str, rd.ReceiptEntry],
-    staged_manifest_digest: str,
+    measurement_input: dict,
+    measurement_input_bytes: bytes,
     supported_versions: dict[str, list[str]],
-    published_versions: dict[str, str],
     negative_server: str,
+    published_authority,
     harness,
 ) -> dict:
-    """Run the known-red control, then the runner-defined supported matrix."""
+    """Run the known-red control, then the candidate-aw supported matrix."""
+    document = validate_measurement_input(measurement_input)
+    canonical_input = json.dumps(
+        document, sort_keys=True, separators=(",", ":")
+    ).encode()
+    if measurement_input_bytes != canonical_input:
+        raise rd.ReceiptError(
+            "CLI/server measurement input bytes are not the canonical encoding "
+            "of the validated document"
+        )
+    measurement_input_digest = _sha256(measurement_input_bytes)
+
     server_support = supported_versions.get("server") or []
+    if set(supported_versions) != {"server"}:
+        raise rd.ReceiptError(
+            "a candidate-aw measurement takes a supported set for the server "
+            f"only, got {sorted(supported_versions)}"
+        )
     if negative_server in server_support:
         raise rd.ReceiptError(
             f"server {negative_server} is negative-only and cannot enter "
@@ -1232,11 +1256,45 @@ def measure_support(
             f"the measured server floor must start at the first published fix "
             f"{FIRST_SUPPORTED_SERVER_VERSION}, got {server_support}"
         )
+
+    entries = document["entries"]
+    published = entries["server"]
+    if server_support[-1] != published["version"]:
+        raise rd.ReceiptError(
+            "measured server support set must end at the published server "
+            f"{published['version']!r} bound by the measurement input"
+        )
+    moving = {
+        name for name, entry in entries.items()
+        if entry["kind"] == "candidate"
+    }
+    if moving != {"aw"}:
+        raise rd.ReceiptError(
+            f"CLI/server measurement moving set must derive as ['aw'], got "
+            f"{sorted(moving)}"
+        )
+    candidate = entries["aw"]
+    staged = {"aw": rd.ReceiptEntry(
+        version=candidate["version"],
+        digest=candidate["digest"],
+        phase="staged",
+        digest_set=candidate["digest_set"],
+        lane_ref=candidate["lane_ref"],
+    )}
+    published_versions = {"server": published["version"]}
+
+    if published_authority is None:
+        raise rd.ReceiptError(
+            "CLI/server measurement requires the published-server authority "
+            "resolver; a declared verify-only authority must be consumed"
+        )
+    published_report = published_authority.resolve(published)
+
     matrix = rd.freeze_skew_matrix(
-        EDGE, moving={"aw", "server"}, staged=staged,
+        EDGE, moving=moving, staged=staged,
         support={"supported_versions": supported_versions},
         published_versions=published_versions,
-        staged_manifest_digest=staged_manifest_digest,
+        staged_manifest_digest=measurement_input_digest,
     )
     freeze = getattr(harness, "freeze_matrix", None)
     finish = getattr(harness, "finish_matrix", None)
@@ -1248,7 +1306,7 @@ def measure_support(
 
     negative_cells = rd.compute_skew_cells(
         EDGE,
-        moving={"aw"},
+        moving=moving,
         staged=staged,
         support={"supported_versions": {"server": [negative_server]}},
         published_versions={"server": negative_server},
@@ -1285,8 +1343,6 @@ def measure_support(
     _require_uniform_dependency_posture(
         negative_evidence + first_supported_controls
     )
-    if DIRTY_FLEET_AW_VERSION in (supported_versions.get("aw") or []):
-        _require_dirty_fleet_evidence(evidence)
     aggregate_path = finish(matrix)
     aggregate = json.loads(Path(aggregate_path).read_bytes())
     aggregate.update({
@@ -1297,17 +1353,13 @@ def measure_support(
                 "first_supported": FIRST_SUPPORTED_SERVER_VERSION,
                 "required_feature": "distinct workspace/agent lock and presence identity",
             },
-            "aw": {
-                DIRTY_FLEET_AW_VERSION: {
-                    "provenance_status": "rejected-dirty",
-                    "use": "installed-fleet-compatibility-only",
-                    "candidate_eligible": False,
-                }
-            },
         },
         "supported_versions": {
             name: list(versions) for name, versions in sorted(supported_versions.items())
         },
+        "measurement_input_id": document["manifest_id"],
+        "measurement_input_sha256": measurement_input_digest,
+        "published_server_authority": published_report,
         "negative_control": negative_evidence,
         "cell_evidence": evidence,
     })
@@ -1384,62 +1436,32 @@ def _require_dirty_fleet_evidence(evidence: list[dict]) -> None:
             )
 
 
-def _entry_from_manifest(name: str, entry: dict) -> rd.ReceiptEntry:
-    return rd.ReceiptEntry(
-        version=entry["version"],
-        digest=entry["digest"],
-        phase="staged",
-        digest_set=entry.get("digest_set"),
-        lane_ref=entry.get("lane_ref"),
-    )
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="verb", required=True)
     measure = sub.add_parser("measure")
-    measure.add_argument("--staged-manifest", required=True)
-    measure.add_argument("--supported-aw", action="append", required=True)
+    measure.add_argument(
+        "--measurement-input", required=True,
+        help="canonical aweb.measurement-input-manifest.v1 for aw<->server; "
+             "NOT a release staged manifest",
+    )
     measure.add_argument("--supported-server", action="append", required=True)
-    measure.add_argument("--published-aw-latest", required=True)
-    measure.add_argument("--published-server-latest", required=True)
     measure.add_argument("--negative-server", default=NEGATIVE_SERVER_VERSION)
     measure.add_argument("--output", required=True)
     args = parser.parse_args(argv)
 
-    manifest_path = Path(args.staged_manifest)
+    manifest_path = Path(args.measurement_input)
     body = manifest_path.read_bytes()
     try:
-        manifest = json.loads(body)
-        rd.validate_staged_manifest(manifest)
-        required_entries = {"aw", "server"}
-        manifest_entries = set(manifest["entries"])
-        if manifest_entries != required_entries:
-            raise rd.ReceiptError(
-                "CLI/server staged manifest entries must be exactly "
-                f"{sorted(required_entries)}; "
-                f"missing={sorted(required_entries - manifest_entries)}, "
-                f"extra={sorted(manifest_entries - required_entries)}"
-            )
-        entries = {
-            name: _entry_from_manifest(name, manifest["entries"][name])
-            for name in ("aw", "server")
-        }
+        measurement_input = validate_measurement_input(json.loads(body))
         document = measure_support(
-            staged=entries,
-            staged_manifest_digest=_sha256(body),
-            supported_versions={
-                "aw": args.supported_aw,
-                "server": args.supported_server,
-            },
-            published_versions={
-                "aw": args.published_aw_latest,
-                "server": args.published_server_latest,
-            },
+            measurement_input=measurement_input,
+            measurement_input_bytes=body,
+            supported_versions={"server": args.supported_server},
             negative_server=args.negative_server,
+            published_authority=PublishedServerAuthority(),
             harness=CliServerSkewHarness(),
         )
-        document["staged_manifest_sha256"] = _sha256(body)
         document.pop("measurement_id", None)
         document["measurement_id"] = rd.canonical_json_digest(document)
         output = Path(args.output)

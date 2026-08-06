@@ -814,92 +814,184 @@ class HarnessTests(unittest.TestCase):
         self.assertIn("agent_id absent", evidence["error"])
 
 
-class MeasurementCliTests(unittest.TestCase):
-    def write_manifest(self, root: Path, names: set[str]) -> tuple[Path, bytes]:
-        entries = {}
-        for index, name in enumerate(sorted(names), start=1):
-            digest_set = {f"{name}.artifact": f"{index:x}" * 64}
-            entries[name] = {
-                "version": f"1.0.{index}",
-                "digest": rd.canonical_digest_of_set(digest_set),
-                "digest_set": digest_set,
+def measurement_input(*, entries=None, source="a" * 40):
+    aw_files = {"aw_1.35.0_darwin_arm64.tar.gz": "1" * 64}
+    server_files = {
+        "aweb-1.26.35-py3-none-any.whl": "2" * 64,
+        "aweb-1.26.35.tar.gz": "3" * 64,
+    }
+    document = {
+        "schema": "aweb.measurement-input-manifest.v1",
+        "edge": {"a": "aw", "b": "server"},
+        "source_sha": source,
+        "entries": entries or {
+            "aw": {
+                "kind": "candidate",
+                "version": "1.35.0",
+                "digest": rd.canonical_digest_of_set(aw_files),
+                "digest_set": aw_files,
                 "lane_ref": {
-                    "artifact": f"gh-artifact:awebai/aweb:100:{index}",
-                    "aw_source_sha": "a" * 40,
-                    "zip_digest": "sha256:" + "b" * 64,
+                    "artifact": "gh-artifact:awebai/aw:17:23",
+                    "aw_source_sha": source,
+                    "zip_digest": "sha256:" + "4" * 64,
                 },
-            }
-        body = json.dumps({"entries": entries}, sort_keys=True).encode()
-        path = root / "staged-manifest.json"
-        path.write_bytes(body)
-        return path, body
+                "stage_run_id": "17",
+                "stage_artifact_id": "23",
+                "stage_zip_digest": "sha256:" + "4" * 64,
+            },
+            "server": {
+                "kind": "published",
+                "version": "1.26.35",
+                "digest_set": server_files,
+                "authority": {
+                    "provider": "verify-only-lane",
+                    "repo": "awebai/aweb",
+                    "workflow": ".github/workflows/pypi-release.yml",
+                    "artifact": "gh-artifact:awebai/aweb:41:9001",
+                    "source_sha": "c" * 40,
+                    "zip_digest": "sha256:" + "5" * 64,
+                },
+            },
+        },
+        "grants": "measurement-only",
+    }
+    document["manifest_id"] = rd.canonical_json_digest(document)
+    return document
 
+
+def reseal_measurement_input(document):
+    document.pop("manifest_id", None)
+    document["manifest_id"] = rd.canonical_json_digest(document)
+    return document
+
+
+def canonical_bytes(document):
+    return json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+
+
+class MeasurementCliTests(unittest.TestCase):
     @staticmethod
     def arguments(manifest: Path, output: Path) -> list[str]:
         return [
             "measure",
-            "--staged-manifest", str(manifest),
-            "--supported-aw", "1.35.0",
+            "--measurement-input", str(manifest),
             "--supported-server", "1.26.35",
-            "--published-aw-latest", "1.34.3",
-            "--published-server-latest", "1.26.35",
             "--output", str(output),
         ]
 
-    def assert_manifest_set_refused(self, names: set[str], detail: str) -> None:
+    def assert_input_refused(self, document: dict, message: str) -> None:
         import release_skew_cli_server as subject
 
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            manifest, _ = self.write_manifest(root, names)
+            manifest = root / "measurement-input.json"
+            manifest.write_bytes(canonical_bytes(document))
             output = root / "measurement.json"
             stdout = io.StringIO()
             with (
-                mock.patch.object(subject, "_entry_from_manifest") as project,
+                mock.patch.object(
+                    subject, "PublishedServerAuthority", create=True
+                ) as authority,
                 mock.patch.object(subject, "measure_support") as measure,
                 mock.patch.object(subject, "CliServerSkewHarness") as harness,
                 contextlib.redirect_stdout(stdout),
             ):
                 status = subject.main(self.arguments(manifest, output))
             self.assertEqual(status, 1)
-            self.assertIn("staged manifest entries must be exactly", stdout.getvalue())
-            self.assertIn(detail, stdout.getvalue())
+            self.assertIn(message, stdout.getvalue())
             self.assertFalse(output.exists())
-            project.assert_not_called()
+            authority.assert_not_called()
             measure.assert_not_called()
             harness.assert_not_called()
 
     def test_real_cli_refuses_extra_manifest_entry_before_effects_or_output(self):
-        self.assert_manifest_set_refused(
-            {"aw", "server", "channel"}, "extra=['channel']"
+        document = measurement_input()
+        document["entries"]["channel"] = dict(document["entries"]["aw"])
+        self.assert_input_refused(
+            reseal_measurement_input(document), "entries must be exactly"
         )
 
     def test_real_cli_refuses_missing_manifest_entry_before_effects_or_output(self):
-        for names, missing in (({"aw"}, "server"), ({"server"}, "aw")):
+        for missing in ("aw", "server"):
             with self.subTest(missing=missing):
-                self.assert_manifest_set_refused(names, f"missing=['{missing}']")
+                document = measurement_input()
+                del document["entries"][missing]
+                self.assert_input_refused(
+                    reseal_measurement_input(document), "entries must be exactly"
+                )
 
-    def test_real_cli_accepts_honest_exact_manifest_set(self):
+    def test_real_cli_refuses_release_staged_manifest(self):
+        staged = {
+            "frozen_plan_id": "f" * 64,
+            "source_sha": "a" * 40,
+            "entries": {"aw": {"version": "1.35.0", "digest": "d"}},
+        }
+        self.assert_input_refused(staged, "measurement input")
+
+    def test_real_cli_refuses_non_candidate_or_conflicting_aw_stage(self):
+        published = measurement_input()
+        published["entries"]["aw"]["kind"] = "published"
+        self.assert_input_refused(
+            reseal_measurement_input(published), "not 'candidate'"
+        )
+
+        conflicting = measurement_input()
+        conflicting["entries"]["aw"]["stage_run_id"] = "18"
+        self.assert_input_refused(
+            reseal_measurement_input(conflicting), "disagrees with its lane reference"
+        )
+
+    def test_real_cli_refuses_candidate_or_invented_lane_for_server(self):
+        candidate = measurement_input()
+        candidate["entries"]["server"]["kind"] = "candidate"
+        self.assert_input_refused(
+            reseal_measurement_input(candidate), "not 'published'"
+        )
+
+        invented = measurement_input()
+        invented["entries"]["server"]["lane_ref"] = {
+            "artifact": "gh-artifact:awebai/aweb:41:9001",
+            "aw_source_sha": "c" * 40,
+            "zip_digest": "sha256:" + "5" * 64,
+        }
+        self.assert_input_refused(
+            reseal_measurement_input(invented), "server does not carry exactly"
+        )
+
+    def test_real_cli_accepts_honest_candidate_aw_published_server(self):
         import release_skew_cli_server as subject
 
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
-            manifest, body = self.write_manifest(root, {"aw", "server"})
+            document = measurement_input()
+            body = canonical_bytes(document)
+            manifest = root / "measurement-input.json"
+            manifest.write_bytes(body)
             output = root / "measurement.json"
             observed = {}
             harness = object()
+            authority = object()
 
             def measure_success(**kwargs):
                 observed.update(kwargs)
-                return {
+                result = {
                     "schema": "aweb.release.runtime-support-measurement.v1",
                     "status": "incomplete-unanchored",
                     "support_complete": False,
                     "anchor": None,
+                    "measurement_input_id": document["manifest_id"],
+                    "measurement_input_sha256": sha(body),
+                    "published_server_authority": {"provider": "verify-only-lane"},
                 }
+                result["measurement_id"] = rd.canonical_json_digest(result)
+                return result
 
             stdout = io.StringIO()
             with (
+                mock.patch.object(
+                    subject, "PublishedServerAuthority", return_value=authority,
+                    create=True,
+                ),
                 mock.patch.object(subject, "measure_support", side_effect=measure_success),
                 mock.patch.object(subject, "CliServerSkewHarness", return_value=harness),
                 contextlib.redirect_stdout(stdout),
@@ -909,51 +1001,64 @@ class MeasurementCliTests(unittest.TestCase):
             self.assertEqual(status, 0)
             self.assertTrue(output.is_file())
             self.assertIn("measurement", stdout.getvalue())
-            self.assertEqual(set(observed["staged"]), {"aw", "server"})
-            self.assertEqual(observed["staged_manifest_digest"], sha(body))
+            self.assertEqual(observed["measurement_input"], document)
+            self.assertEqual(observed["measurement_input_bytes"], body)
+            self.assertEqual(observed["supported_versions"], {"server": ["1.26.35"]})
+            self.assertIs(observed["published_authority"], authority)
             self.assertIs(observed["harness"], harness)
-            document = json.loads(output.read_text())
-            self.assertEqual(document["staged_manifest_sha256"], sha(body))
-            measurement_id = document.pop("measurement_id")
-            self.assertEqual(measurement_id, rd.canonical_json_digest(document))
+            self.assertNotIn("staged", observed)
+            result = json.loads(output.read_text())
+            self.assertEqual(result["measurement_input_id"], document["manifest_id"])
+            self.assertEqual(result["measurement_input_sha256"], sha(body))
+
+    def test_make_target_accepts_only_the_measurement_input(self):
+        makefile = (SCRIPTS.parent / "Makefile").read_text()
+        block = makefile.split("measure-release-skew-cli-server:", 1)[1].split(
+            "\n\n", 1
+        )[0]
+        self.assertIn("--measurement-input", block)
+        self.assertNotIn("--staged-manifest", block)
+        self.assertNotIn("--supported-aw", block)
+        self.assertNotIn("--published-aw", block)
 
 
 class MeasurementTests(unittest.TestCase):
-    def test_negative_control_must_be_red_and_supported_matrix_green(self):
+    def test_negative_control_and_candidate_aw_matrix_bind_honest_input(self):
         import release_skew_cli_server as subject
 
-        aw_zip, aw_manifest = staged_aw_zip()
-        server_zip, server_manifest = staged_server_zip()
-        staged = {
-            "aw": rd.ReceiptEntry(
-                version="1.35.0", digest=aw_manifest["canonical_set_digest"],
-                phase="staged", digest_set=aw_manifest["files"],
-                lane_ref=candidate_side("aw", "1.35.0", aw_zip, aw_manifest, "a" * 40)["lane_ref"],
-            ),
-            "server": rd.ReceiptEntry(
-                version="1.26.36", digest=server_manifest["canonical_set_digest"],
-                phase="staged", digest_set=server_manifest["files"],
-                lane_ref=candidate_side("server", "1.26.36", server_zip, server_manifest, "b" * 40)["lane_ref"],
-            ),
-        }
+        events = []
+        document = measurement_input()
+        body = canonical_bytes(document)
+
+        class Authority:
+            def resolve(self, entry):
+                events.append("authority")
+                self.entry = entry
+                return {
+                    "provider": "verify-only-lane",
+                    "artifact": entry["authority"]["artifact"],
+                    "version": entry["version"],
+                    "digest_set": dict(entry["digest_set"]),
+                }
 
         class Harness:
             def __init__(self):
                 self.root = tempfile.TemporaryDirectory()
-                self.events = []
+                self.matrix = None
 
-            def freeze_matrix(self, document):
-                self.events.append("freeze")
+            def freeze_matrix(self, frozen):
+                events.append("freeze")
+                self.matrix = frozen
 
-            def finish_matrix(self, document):
-                self.events.append("finish")
+            def finish_matrix(self, frozen):
+                events.append("finish")
                 path = Path(self.root.name) / "aggregate.json"
                 path.write_text(json.dumps({
                     "schema": "aweb.release.runtime-support-measurement.v1",
                     "status": "incomplete-unanchored",
                     "support_complete": False,
                     "anchor": None,
-                    "matrix_id": document["matrix_id"],
+                    "matrix_id": frozen["matrix_id"],
                     "edge": {"a": "aw", "b": "server"},
                     "journey": "make cli-e2e",
                     "direction": "both",
@@ -961,79 +1066,115 @@ class MeasurementTests(unittest.TestCase):
                 return path
 
             def run(self, value):
-                self.events.append("run")
+                events.append("run")
                 return self._evidence(value)
 
             def run_evidenced(self, value):
-                self.events.append("control")
+                events.append("control")
                 return self._evidence(value)
 
             def _evidence(self, value):
                 identity = subject.cell_document(value)
-                runtime = runtime_proof(
-                    value.b["version"], "a" * 64, identity
-                )
+                runtime = runtime_proof(value.b["version"], "a" * 64, identity)
+                evidence = {
+                    "outcome": "green",
+                    "cell": identity,
+                    "artifacts": [{"payload_sha256": "b" * 64}],
+                    "runtime": runtime,
+                }
                 if value.b.get("version") == "1.26.31":
-                    evidence = {
-                        "outcome": "red", "cell": identity,
-                        "artifacts": [{"payload_sha256": "a" * 64}],
-                        "runtime": runtime,
-                    }
+                    evidence["outcome"] = "red"
                     evidence["error"] = "server status locks = [], want one lock"
                     raise subject.SkewJourneyFailure(evidence["error"], evidence)
-                artifacts = [{"payload_sha256": "b" * 64}]
-                for side in (value.a, value.b):
-                    if side.get("component") == "aw" and side.get("version") == "1.34.2":
-                        artifacts.append({
-                            "component": "aw",
-                            "version": "1.34.2",
-                            "kind": "published-floor",
-                            "outer_sha256": "c" * 64,
-                            "registry_sha256": "c" * 64,
-                            "checksums_recorded_sha256": "c" * 64,
-                            "checksums_sha256": "e" * 64,
-                            "checksums_registry_sha256": "e" * 64,
-                            "payload_sha256": "d" * 64,
-                            "registry_digest_set": {"asset": "f" * 64},
-                            "registry_set_digest": rd.canonical_digest_of_set({"asset": "f" * 64}),
-                            **aw_version_proof(
-                                "1.34.2", module_version="v1.34.2+dirty"
-                            ),
-                            "provenance_status": "rejected-dirty",
-                            "use": "installed-fleet-compatibility-only",
-                        })
-                return {
-                    "outcome": "green", "cell": identity,
-                    "artifacts": artifacts, "runtime": runtime,
-                }
+                return evidence
 
+        authority = Authority()
         harness = Harness()
-        document = subject.measure_support(
-            staged=staged,
-            staged_manifest_digest="f" * 64,
-            supported_versions={"aw": ["1.34.2", "1.34.3"], "server": ["1.26.35"]},
-            published_versions={"aw": "1.34.3", "server": "1.26.35"},
+        result = subject.measure_support(
+            measurement_input=document,
+            measurement_input_bytes=body,
+            supported_versions={"server": ["1.26.35"]},
             negative_server="1.26.31",
+            published_authority=authority,
             harness=harness,
         )
-        self.assertEqual(harness.events[0], "freeze")
-        self.assertEqual(document["status"], "incomplete-unanchored")
-        self.assertEqual(document["journey"], "make cli-e2e")
-        self.assertEqual(document["direction"], "both")
-        self.assertEqual(document["supported_versions"]["aw"], ["1.34.2", "1.34.3"])
-        self.assertEqual(document["support_basis"]["server"]["first_supported"], "1.26.35")
-        self.assertEqual(document["support_basis"]["server"]["negative_only"], "1.26.31")
+        self.assertEqual(events[0], "authority")
+        self.assertLess(events.index("authority"), events.index("freeze"))
+        preimage = harness.matrix["preimage"]
+        self.assertEqual(preimage["moving"], ["aw"])
+        self.assertEqual(set(preimage["staged"]), {"aw"})
         self.assertEqual(
-            document["support_basis"]["aw"]["1.34.2"]["provenance_status"],
-            "rejected-dirty",
+            preimage["published_versions"], {"aw": None, "server": "1.26.35"}
         )
-        self.assertEqual({row["outcome"] for row in document["negative_control"]}, {"red"})
-        self.assertEqual({row["outcome"] for row in document["cell_evidence"]}, {"green"})
-        self.assertEqual(
-            {row["cell"]["direction"] for row in document["cell_evidence"]},
-            {"a-to-b", "b-to-a"},
-        )
+        self.assertNotIn("lane_ref", document["entries"]["server"])
+        self.assertEqual(authority.entry, document["entries"]["server"])
+        self.assertEqual(result["status"], "incomplete-unanchored")
+        self.assertEqual(result["supported_versions"], {"server": ["1.26.35"]})
+        self.assertEqual(result["measurement_input_id"], document["manifest_id"])
+        self.assertEqual(result["measurement_input_sha256"], sha(body))
+        self.assertEqual(result["published_server_authority"]["provider"],
+                         "verify-only-lane")
+        self.assertEqual(result["support_basis"]["server"]["first_supported"],
+                         "1.26.35")
+        self.assertEqual(result["support_basis"]["server"]["negative_only"],
+                         "1.26.31")
+        self.assertEqual({row["outcome"] for row in result["negative_control"]},
+                         {"red"})
+        self.assertEqual({row["outcome"] for row in result["cell_evidence"]},
+                         {"green"})
         harness.root.cleanup()
+
+    def test_noncanonical_input_refuses_before_authority_or_matrix(self):
+        import release_skew_cli_server as subject
+
+        document = measurement_input()
+        authority = mock.Mock()
+        harness = mock.Mock()
+        with self.assertRaisesRegex(rd.ReceiptError, "canonical encoding"):
+            subject.measure_support(
+                measurement_input=document,
+                measurement_input_bytes=json.dumps(document, indent=2).encode(),
+                supported_versions={"server": ["1.26.35"]},
+                negative_server="1.26.31",
+                published_authority=authority,
+                harness=harness,
+            )
+        authority.resolve.assert_not_called()
+        harness.freeze_matrix.assert_not_called()
+
+    def test_missing_published_authority_refuses_before_matrix(self):
+        import release_skew_cli_server as subject
+
+        document = measurement_input()
+        harness = mock.Mock()
+        with self.assertRaisesRegex(rd.ReceiptError, "published-server authority"):
+            subject.measure_support(
+                measurement_input=document,
+                measurement_input_bytes=canonical_bytes(document),
+                supported_versions={"server": ["1.26.35"]},
+                negative_server="1.26.31",
+                published_authority=None,
+                harness=harness,
+            )
+        harness.freeze_matrix.assert_not_called()
+
+    def test_supported_latest_must_equal_manifest_published_server(self):
+        import release_skew_cli_server as subject
+
+        document = measurement_input()
+        authority = mock.Mock()
+        harness = mock.Mock()
+        with self.assertRaisesRegex(rd.ReceiptError, "published server"):
+            subject.measure_support(
+                measurement_input=document,
+                measurement_input_bytes=canonical_bytes(document),
+                supported_versions={"server": ["1.26.35", "1.26.36"]},
+                negative_server="1.26.31",
+                published_authority=authority,
+                harness=harness,
+            )
+        authority.resolve.assert_not_called()
+        harness.freeze_matrix.assert_not_called()
 
     def test_controls_refuse_dependency_resolution_drift_beyond_server_wheel(self):
         import release_skew_cli_server as subject
@@ -1058,14 +1199,18 @@ class MeasurementTests(unittest.TestCase):
     def test_negative_server_version_cannot_enter_supported_versions(self):
         import release_skew_cli_server as subject
 
+        document = measurement_input()
+        authority = mock.Mock()
         with self.assertRaisesRegex(rd.ReceiptError, "negative-only.*supported_versions"):
             subject.measure_support(
-                staged={}, staged_manifest_digest="f" * 64,
-                supported_versions={"aw": ["1.34.2", "1.34.3"], "server": ["1.26.31", "1.26.35"]},
-                published_versions={"aw": "1.34.3", "server": "1.26.35"},
+                measurement_input=document,
+                measurement_input_bytes=canonical_bytes(document),
+                supported_versions={"server": ["1.26.31", "1.26.35"]},
                 negative_server="1.26.31",
+                published_authority=authority,
                 harness=None,
             )
+        authority.resolve.assert_not_called()
 
     def test_unrelated_negative_failure_refuses_measurement(self):
         import release_skew_cli_server as subject
@@ -1089,19 +1234,17 @@ class MeasurementTests(unittest.TestCase):
                 }
                 raise subject.SkewJourneyFailure("network timeout", evidence)
 
-        staged = {
-            name: rd.ReceiptEntry(
-                version="9.0.0", digest="d", phase="staged", digest_set={"x": "y"},
-                lane_ref={"artifact": "gh-artifact:awebai/aw:1:2" if name == "aw" else "gh-artifact:awebai/aweb:1:2", "aw_source_sha": "a" * 40, "zip_digest": "sha256:" + "b" * 64},
-            )
-            for name in ("aw", "server")
-        }
+        document = measurement_input()
+        authority = mock.Mock(resolve=mock.Mock(return_value={
+            "provider": "verify-only-lane"
+        }))
         with self.assertRaisesRegex(rd.ReceiptError, "did not fail on the required.*feature"):
             subject.measure_support(
-                staged=staged, staged_manifest_digest="f" * 64,
-                supported_versions={"aw": ["1.34.3"], "server": ["1.26.35"]},
-                published_versions={"aw": "1.34.3", "server": "1.26.35"},
+                measurement_input=document,
+                measurement_input_bytes=canonical_bytes(document),
+                supported_versions={"server": ["1.26.35"]},
                 negative_server="1.26.31",
+                published_authority=authority,
                 harness=BrokenDownload(),
             )
 
@@ -1121,19 +1264,17 @@ class MeasurementTests(unittest.TestCase):
             def run_evidenced(self, value):
                 return {"outcome": "green", "cell": subject.cell_document(value), "artifacts": []}
 
-        staged = {
-            name: rd.ReceiptEntry(
-                version="9.0.0", digest="d", phase="staged", digest_set={"x": "y"},
-                lane_ref={"artifact": "gh-artifact:awebai/aw:1:2" if name == "aw" else "gh-artifact:awebai/aweb:1:2", "aw_source_sha": "a" * 40, "zip_digest": "sha256:" + "b" * 64},
-            )
-            for name in ("aw", "server")
-        }
+        document = measurement_input()
+        authority = mock.Mock(resolve=mock.Mock(return_value={
+            "provider": "verify-only-lane"
+        }))
         with self.assertRaisesRegex(rd.ReceiptError, "negative control.*green"):
             subject.measure_support(
-                staged=staged, staged_manifest_digest="f" * 64,
-                supported_versions={"aw": ["1.34.3"], "server": ["1.26.35"]},
-                published_versions={"aw": "1.34.3", "server": "1.26.35"},
+                measurement_input=document,
+                measurement_input_bytes=canonical_bytes(document),
+                supported_versions={"server": ["1.26.35"]},
                 negative_server="1.26.31",
+                published_authority=authority,
                 harness=Green(),
             )
 

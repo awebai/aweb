@@ -1426,6 +1426,7 @@ ENVELOPE_SCHEMA = "aweb.runtime-support-measurement-envelope.v1"
 
 MEASUREMENT_INPUT_SCHEMA = "aweb.measurement-input-manifest.v1"
 MEASUREMENT_GRANTS = "measurement-only"
+MEASUREMENT_CLIENTS = frozenset(CLIENT_ARTIFACTS) | {"aw"}
 _INPUT_KEYS = {"schema", "edge", "source_sha", "entries", "grants", "manifest_id"}
 _CANDIDATE_KEYS = {
     "kind", "version", "digest", "digest_set", "lane_ref",
@@ -1489,9 +1490,9 @@ def validate_measurement_input(document, *, component: str) -> dict:
     documents are deliberately different types and neither validator accepts
     the other's shape.
     """
-    if component not in CLIENT_ARTIFACTS:
+    if component not in MEASUREMENT_CLIENTS:
         raise rd.ReceiptError(
-            f"measurement input covers only {sorted(CLIENT_ARTIFACTS)}, got "
+            f"measurement input covers only {sorted(MEASUREMENT_CLIENTS)}, got "
             f"{component!r}"
         )
     if not isinstance(document, dict) or set(document) != _INPUT_KEYS:
