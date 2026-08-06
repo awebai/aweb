@@ -1,13 +1,5 @@
 # Changelog
 
-## 0.3.3
-
-- Bounds half-open Channel event streams with a server heartbeat window, an
-  inactivity deadline and a planned-close horizon, so a stream that stops
-  delivering is detected instead of appearing healthy.
-- Releases backoff abort listeners on reconnect, so repeated reconnects no
-  longer accumulate listeners on the shared abort signal.
-
 ## 0.3.2
 
 - Keeps plaintext mail with a null encrypted envelope on the authenticated
