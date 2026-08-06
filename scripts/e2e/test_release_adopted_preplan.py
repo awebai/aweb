@@ -167,6 +167,7 @@ class FakeRecoverySurface:
         self.verify_calls = []
         self.runs = {name: [] for name in document["components"]}
         self.run_conclusions = {}
+        self.run_attempt_artifact_ids = {}
         self.adopt_failure = None
         self.stage_mutation = None
         self.publish_mode = {}
@@ -246,6 +247,7 @@ class FakeRecoverySurface:
             raise rd.ReceiptError(f"{component}: dispatch failed before a run existed")
         run_id = f"continuation-{component}-{len(self.runs[component]) + 1}"
         self.runs[component].append(run_id)
+        self.run_attempt_artifact_ids[run_id] = attempt_artifact_id
         if mode == "failure":
             self.run_conclusions[run_id] = "failure"
             raise rd.ReceiptError(f"{component}: continuation failed")
@@ -276,7 +278,7 @@ class FakeRecoverySurface:
         return rd.RecoveryContinuation(
             entry=observed.entry,
             continuation_run_id=run_id,
-            attempt_artifact_id=attempt_artifact_id,
+            attempt_artifact_id=self.run_attempt_artifact_ids.get(run_id),
         )
 
     def assert_snapshot(self, component, before_run_ids):
@@ -717,6 +719,39 @@ class AdoptedPreplanStateMachineTests(unittest.TestCase):
             receipt.document["components"]["channel"]["continuation_run_id"],
             "continuation-channel-1",
         )
+
+    def test_unowned_successful_run_cannot_be_adopted_as_current_attempt(self):
+        for observed_attempt_id in (None, "different-attempt"):
+            with self.subTest(observed_attempt_id=observed_attempt_id):
+                self.store, self.authority = MemoryStore(), MemoryAuthority()
+                self.surface = FakeRecoverySurface(self.document)
+                handle = self.prepare()
+                authorization = self.authorization(handle)
+                self.surface.publish_mode["channel"] = "dispatch-failure"
+                with self.assertRaises(rd.ReceiptError):
+                    self.execute(handle, authorization)
+
+                run_id = "sole-unrelated-success"
+                self.surface.runs["channel"].append(run_id)
+                self.surface._complete("channel", run_id)
+                if observed_attempt_id is not None:
+                    self.surface.run_attempt_artifact_ids[run_id] = (
+                        observed_attempt_id
+                    )
+
+                resumed_handle = self.prepare()
+                with self.assertRaises(rd.ReceiptError) as caught:
+                    self.execute(resumed_handle, authorization)
+                self.assertIn("attempt", str(caught.exception))
+                self.assertEqual(
+                    self.surface.publish_calls, ["channel"],
+                    "unowned run evidence must not dispatch Pi",
+                )
+                self.assertFalse(any(
+                    artifact_id.startswith("adopted-preplan-transition:")
+                    or artifact_id.startswith("adopted-preplan-receipt:")
+                    for artifact_id in self.authority.records
+                ), "unowned run must refuse before transition or receipt")
 
     def test_failure_stops_other_lane_and_same_authorization_is_spent(self):
         handle = self.prepare()
