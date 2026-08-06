@@ -2529,5 +2529,126 @@ class SharedVerifyOnlyValidatorTests(unittest.TestCase):
 
 
 
+
+class RegistryTruthAuthorityTests(unittest.TestCase):
+    """aweb-abbe.20: a published distribution is already attested by the
+    registry, which is independent of the machine measuring. Routing that
+    through a GitHub verify-only run added an availability dependency without
+    adding an independent party, and a runner outage then blocked measurement
+    entirely."""
+
+    VERSION = "1.26.35"
+
+    def registry(self, *, files=None, status=200, duplicate=False,
+                 corrupt=None, missing_status=None):
+        wheel = b"exact wheel bytes"
+        sdist = b"exact sdist bytes"
+        bodies = {
+            f"aweb-{self.VERSION}-py3-none-any.whl": wheel,
+            f"aweb-{self.VERSION}.tar.gz": sdist,
+        }
+        declared = files if files is not None else {
+            n: sha(b) for n, b in bodies.items()}
+        urls = [{
+            "filename": n,
+            "packagetype": "bdist_wheel" if n.endswith(".whl") else "sdist",
+            "digests": {"sha256": declared[n]},
+            "url": f"https://files.pythonhosted.org/packages/{n}",
+            "yanked": False,
+        } for n in bodies]
+        if duplicate:
+            clone = dict(urls[0])
+            clone["digests"] = {"sha256": "9" * 64}
+            urls.append(clone)
+        meta = json.dumps({"urls": urls}).encode()
+
+        def http_get(url):
+            if url.endswith("/json"):
+                return status, meta
+            name = url.rsplit("/", 1)[-1]
+            if missing_status is not None:
+                return missing_status, b""
+            body = bodies[name]
+            if corrupt == name:
+                body = body + b"tampered"
+            return 200, body
+
+        return http_get, {n: sha(b) for n, b in bodies.items()}
+
+    def published(self, digest_set):
+        return {
+            "kind": "published",
+            "version": self.VERSION,
+            "digest_set": digest_set,
+            "authority": {
+                "provider": skew.REGISTRY_TRUTH_PROVIDER,
+                "registry": "pypi",
+                "project": "aweb",
+            },
+        }
+
+    def resolver(self, http_get):
+        return skew.PublishedServerAuthority(
+            store=None, digest_authority=None, http_get=http_get)
+
+    def test_registry_truth_resolves_without_github(self):
+        http_get, digests = self.registry()
+        report = self.resolver(http_get).resolve(self.published(digests))
+        self.assertEqual(report["provider"], skew.REGISTRY_TRUTH_PROVIDER)
+        self.assertEqual(report["version"], self.VERSION)
+        self.assertEqual(report["digest_set"], digests)
+
+    def test_declared_digest_not_matching_the_input_refuses(self):
+        http_get, digests = self.registry()
+        drifted = dict(digests)
+        drifted[next(iter(drifted))] = "0" * 64
+        with self.assertRaisesRegex(rd.ReceiptError, "do not equal"):
+            self.resolver(http_get).resolve(self.published(drifted))
+
+    def test_distribution_bytes_not_hashing_to_the_declared_digest_refuses(self):
+        """The registry's digest is a claim until the bytes hash to it."""
+        name = f"aweb-{self.VERSION}-py3-none-any.whl"
+        http_get, digests = self.registry(corrupt=name)
+        with self.assertRaisesRegex(rd.ReceiptError, "hashes"):
+            self.resolver(http_get).resolve(self.published(digests))
+
+    def test_ambiguous_duplicate_record_refuses(self):
+        http_get, digests = self.registry(duplicate=True)
+        with self.assertRaisesRegex(rd.ReceiptError, "ambiguous|twice"):
+            self.resolver(http_get).resolve(self.published(digests))
+
+    def test_absent_version_refuses_and_is_distinguished_from_outage(self):
+        http_get, digests = self.registry(status=404)
+        with self.assertRaisesRegex(rd.ReceiptError, "no aweb"):
+            self.resolver(http_get).resolve(self.published(digests))
+        http_get, digests = self.registry(status=503)
+        with self.assertRaisesRegex(rd.ReceiptError, "never proof of absence"):
+            self.resolver(http_get).resolve(self.published(digests))
+
+    def test_unretrievable_distribution_refuses(self):
+        http_get, digests = self.registry(missing_status=404)
+        with self.assertRaisesRegex(rd.ReceiptError, "returned 404"):
+            self.resolver(http_get).resolve(self.published(digests))
+
+    def test_projection_mutation_refuses(self):
+        for mutation in ({"registry": "npm"}, {"project": "not-aweb"},
+                         {"provider": "self-asserted"}):
+            with self.subTest(mutation=mutation):
+                http_get, digests = self.registry()
+                entry = self.published(digests)
+                entry["authority"].update(mutation)
+                with self.assertRaises(rd.ReceiptError):
+                    skew._validate_published_entry(entry)
+
+    def test_report_binds_unchanged_through_the_output(self):
+        http_get, digests = self.registry()
+        report = self.resolver(http_get).resolve(self.published(digests))
+        self.assertEqual(set(report),
+                         {"provider", "registry", "project", "version",
+                          "digest_set"})
+        self.assertEqual(report["digest_set"], digests)
+
+
+
 if __name__ == "__main__":
     unittest.main()
