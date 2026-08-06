@@ -1,4 +1,5 @@
 name: npm Release
+run-name: aweb-npm|${{ inputs.mode }}|${{ inputs.package }}|${{ inputs.recovery_attempt_artifact_id }}
 
 # Dispatch-only npm release lane for channel, pi, and skills. There is
 # deliberately NO tag trigger: a pushed tag runs no code, so nothing can
