@@ -12,7 +12,7 @@
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-plan release-run release-receipt test-release-driver test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	release-plan release-run release-receipt test-release-driver test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control measure-release-federation-support-current test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	release-all-check \
 	publish-skills \
 	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
@@ -633,6 +633,15 @@ test-release-federation-skew:
 
 measure-release-federation-skew-control:
 	PYTHONPATH=scripts python3 -c 'from release_federation_skew import WheelResolver, prove_route_controls; prove_route_controls(WheelResolver())'
+
+FEDERATION_SUPPORT_OUTPUT ?= release/measurements/server-federation-$(SERVER_VERSION).json
+FEDERATION_SUPPORT_ARTIFACT_ID ?= support:server-federation:$(SERVER_VERSION)
+measure-release-federation-support-current:
+	PYTHONPATH=scripts python3 scripts/release_federation_skew.py measure-current \
+		--version "$(SERVER_VERSION)" \
+		--output "$(FEDERATION_SUPPORT_OUTPUT)" \
+		--store-root ".release-runs" \
+		--artifact-id "$(FEDERATION_SUPPORT_ARTIFACT_ID)"
 
 test-release-receipt-archive:
 	python3 scripts/e2e/test_release_receipt_archive.py
