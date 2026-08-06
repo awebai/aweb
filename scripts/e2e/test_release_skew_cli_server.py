@@ -996,9 +996,21 @@ class PublishedServerRegistryAuthorityTests(unittest.TestCase):
         return published, metadata, wheel
 
     def authority(self, subject, metadata, download):
-        resolver = subject.CliServerArtifactResolver(
-            pypi_metadata_fetch=lambda version: metadata,
-            url_fetch=lambda url: download,
+        version = metadata["info"]["version"]
+        observed_set = {
+            record["filename"]: record["digests"]["sha256"]
+            for record in metadata["urls"]
+        }
+        metadata_url = f"https://pypi.org/pypi/aweb/{version}/json"
+
+        def http_get(url):
+            if url == metadata_url:
+                return 200, json.dumps(metadata).encode()
+            return 200, download
+
+        resolver = subject.measurement_inputs.ArtifactResolver(
+            http_get=http_get,
+            pypi_observe=lambda project, requested: (200, observed_set),
         )
         return subject.PublishedServerAuthority(resolver=resolver)
 
@@ -1023,7 +1035,7 @@ class PublishedServerRegistryAuthorityTests(unittest.TestCase):
         import release_skew_cli_server as subject
 
         published, metadata, _ = self.published()
-        with self.assertRaisesRegex(rd.ReceiptError, "PyPI records"):
+        with self.assertRaisesRegex(rd.ReceiptError, "does not equal PyPI"):
             self.authority(subject, metadata, b"substituted").resolve(published)
 
     def test_refuses_ambiguous_registry_file_set(self):
@@ -1032,7 +1044,7 @@ class PublishedServerRegistryAuthorityTests(unittest.TestCase):
         published, metadata, wheel = self.published()
         metadata = json.loads(json.dumps(metadata))
         metadata["urls"].append(dict(metadata["urls"][0]))
-        with self.assertRaisesRegex(rd.ReceiptError, "repeats release filename"):
+        with self.assertRaisesRegex(rd.ReceiptError, "repeats filename"):
             self.authority(subject, metadata, wheel).resolve(published)
 
     def test_refuses_projection_that_differs_from_registry(self):
@@ -1658,9 +1670,9 @@ class MeasurementTests(unittest.TestCase):
             support_complete=True,
             anchor={"forged": True},
         ))
-        authority = mock.Mock(resolve=mock.Mock(return_value={
-            "provider": "verify-only-lane"
-        }))
+        authority = mock.Mock(
+            resolve=mock.Mock(return_value=expected_published_authority(document))
+        )
         reaggregate = mock.Mock()
         try:
             with mock.patch.object(subject, "aggregate_frozen_matrix", reaggregate):
@@ -1682,9 +1694,9 @@ class MeasurementTests(unittest.TestCase):
 
         document = measurement_input()
         harness = FakeMeasurementLifecycle(measurement_child)
-        authority = mock.Mock(resolve=mock.Mock(return_value={
-            "provider": "verify-only-lane"
-        }))
+        authority = mock.Mock(
+            resolve=mock.Mock(return_value=expected_published_authority(document))
+        )
 
         def mismatched(*args, **kwargs):
             return measurement_child(harness.matrix["matrix_id"], reports=[{
@@ -1720,9 +1732,9 @@ class MeasurementTests(unittest.TestCase):
             return path
 
         harness.finish_matrix = pretty_finish
-        authority = mock.Mock(resolve=mock.Mock(return_value={
-            "provider": "verify-only-lane"
-        }))
+        authority = mock.Mock(
+            resolve=mock.Mock(return_value=expected_published_authority(document))
+        )
         try:
             with self.assertRaisesRegex(rd.ReceiptError, "canonical bytes"):
                 subject.measure_support(
@@ -1850,9 +1862,9 @@ class MeasurementTests(unittest.TestCase):
                 raise subject.SkewJourneyFailure("network timeout", evidence)
 
         document = measurement_input()
-        authority = mock.Mock(resolve=mock.Mock(return_value={
-            "provider": "verify-only-lane"
-        }))
+        authority = mock.Mock(
+            resolve=mock.Mock(return_value=expected_published_authority(document))
+        )
         with self.assertRaisesRegex(rd.ReceiptError, "did not fail on the required.*feature"):
             subject.measure_support(
                 measurement_input=document,
@@ -1883,9 +1895,9 @@ class MeasurementTests(unittest.TestCase):
                 return {"outcome": "green", "cell": subject.cell_document(value), "artifacts": []}
 
         document = measurement_input()
-        authority = mock.Mock(resolve=mock.Mock(return_value={
-            "provider": "verify-only-lane"
-        }))
+        authority = mock.Mock(
+            resolve=mock.Mock(return_value=expected_published_authority(document))
+        )
         with self.assertRaisesRegex(rd.ReceiptError, "negative control.*green"):
             subject.measure_support(
                 measurement_input=document,

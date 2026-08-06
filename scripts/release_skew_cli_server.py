@@ -30,6 +30,10 @@ from pathlib import Path
 import release_channel_pi_skew as measurement_inputs
 import release_driver as rd
 
+PublishedServerAuthority = measurement_inputs.PublishedServerAuthority
+expected_published_server_authority_report = (
+    measurement_inputs.expected_published_server_authority_report
+)
 _atomic_write_text = measurement_inputs._atomic_write_text
 _require_child_identity = measurement_inputs._require_child_identity
 _require_envelope = measurement_inputs._require_envelope
@@ -431,59 +435,6 @@ class CliServerArtifactResolver:
                 "payload_sha256": actual,
             },
         )
-
-
-def expected_published_server_authority_report(published: dict) -> dict:
-    """Project the validated PyPI wheel identity bound by measurement input."""
-    authority = published["authority"]
-    return {
-        "provider": authority["provider"],
-        "project": authority["project"],
-        "version": published["version"],
-        "filename": authority["filename"],
-        "registry_sha256": authority["registry_sha256"],
-        "download_url": authority["download_url"],
-    }
-
-
-class PublishedServerAuthority:
-    """Resolve published server bytes directly from immutable PyPI truth."""
-
-    def __init__(self, *, resolver=None):
-        self._resolver = resolver or CliServerArtifactResolver()
-
-    def resolve(self, published: dict) -> dict:
-        with tempfile.TemporaryDirectory(prefix="aweb-server-registry-") as raw:
-            resolved = self._resolver.resolve(
-                {
-                    "component": "server",
-                    "version": published["version"],
-                },
-                "published",
-                ARTIFACTS["b"],
-                Path(raw),
-            )
-        evidence = resolved.evidence
-        if evidence["registry_digest_set"] != published["digest_set"]:
-            raise rd.ReceiptError(
-                "PyPI registry file set does not equal the complete published "
-                "server digest_set in the measurement input"
-            )
-        observed = {
-            "provider": "pypi-registry",
-            "project": "aweb",
-            "version": resolved.version,
-            "filename": evidence["payload_name"],
-            "registry_sha256": evidence["registry_sha256"],
-            "download_url": evidence["url"],
-        }
-        expected = expected_published_server_authority_report(published)
-        if observed != expected:
-            raise rd.ReceiptError(
-                "published server registry projection does not equal immutable "
-                "PyPI metadata and downloaded bytes"
-            )
-        return observed
 
 
 def _zip_member(body: bytes, member: str) -> bytes:
@@ -1740,15 +1691,10 @@ def _require_output_envelope(
         measurement_input_id=measurement_input_id,
         measurement_input_digest=measurement_input_digest,
         supported_versions=supported_versions,
+        expected_published_server_authority=(
+            expected_published_server_authority
+        ),
     )
-    if (
-        document["published_server_authority"]
-        != expected_published_server_authority
-    ):
-        raise rd.ReceiptError(
-            "measurement envelope published-server authority does not exactly "
-            "equal the report derived from the validated measurement input"
-        )
     child = document["measurement"]
     _require_unanchored_measurement(child, matrix_id=child.get("matrix_id"))
     _require_child_identity(child)

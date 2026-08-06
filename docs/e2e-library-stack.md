@@ -212,9 +212,11 @@ exactly `{aw}`; the server is never represented as staged and carries no invente
 LaneRef or GitHub workflow dependency. Before evidence, the target reads the
 complete PyPI release file set, requires the projected wheel identity, registry
 digest, and download URL to match, downloads that wheel, and recomputes its
-SHA-256. The trusted registry report is bound unchanged through the output. The
-target runs the known-red server 1.26.31 control and the runner-defined supported
-matrix, independently reaggregates the exact frozen cell/control inventory, and
+SHA-256. The trusted registry report is bound unchanged through the output.
+Channel/server and Pi/server measurement use the same published-server resolver,
+projection, and final envelope check; only unpublished candidates retain GitHub
+lane authority. The target runs the known-red server 1.26.31 control and the
+runner-defined supported matrix, independently reaggregates the exact frozen cell/control inventory, and
 preserves that canonical incomplete-unanchored child unchanged inside a
 separately identified input/authority envelope. The final envelope is committed
 with the shared no-clobber, fsynced atomic-output protocol. Server 1.26.31 is
