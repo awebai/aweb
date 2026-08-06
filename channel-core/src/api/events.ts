@@ -296,7 +296,20 @@ export function streamErrorCause(err: unknown): string {
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal.aborted) { resolve(); return; }
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const onAbort = () => finish();
+    const timer = setTimeout(finish, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+    // Abort cannot normally interleave between the check and listener install
+    // in one JS turn, but re-check so nonstandard EventTarget implementations
+    // cannot strand this sleep.
+    if (signal.aborted) finish();
   });
 }

@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { describe, expect, test, vi } from "vitest";
 import {
   formatEventStreamState,
@@ -333,6 +334,47 @@ describe("parseAgentEvent", () => {
     abort.abort();
     await vi.runAllTimersAsync();
     await consuming;
+    vi.useRealTimers();
+  });
+
+  test("keeps parent abort listeners bounded across repeated watchdog backoffs", async () => {
+    vi.useFakeTimers();
+    const abort = new AbortController();
+    let attempts = 0;
+    let connectedEvents = 0;
+    const client = {
+      openSSE: vi.fn(async () => {
+        attempts++;
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(sseFrame("connected", {}));
+          },
+        }));
+      }),
+    };
+    const consuming = (async () => {
+      for await (const event of streamAgentEvents(client as never, abort.signal)) {
+        if (event.type === "connected") connectedEvents++;
+      }
+    })();
+
+    await vi.waitFor(() => expect(connectedEvents).toBe(1));
+    const activeListenerCount = getEventListeners(abort.signal, "abort").length;
+    expect(activeListenerCount).toBeGreaterThan(0);
+    for (let cycle = 0; cycle < 11; cycle++) {
+      await vi.advanceTimersByTimeAsync(EVENT_STREAM_INACTIVITY_MS);
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.waitFor(() => expect(connectedEvents).toBe(cycle + 2));
+    }
+
+    expect(attempts).toBe(12);
+    expect(getEventListeners(abort.signal, "abort")).toHaveLength(activeListenerCount);
+    abort.abort();
+    await vi.runAllTimersAsync();
+    await consuming;
+    expect(getEventListeners(abort.signal, "abort")).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(EVENT_STREAM_DEADLINE_MS * 2);
+    expect(attempts).toBe(12);
     vi.useRealTimers();
   });
 
