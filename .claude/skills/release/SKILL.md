@@ -42,19 +42,21 @@ human maintaining a parallel list is how the steps drift from reality.
 
 ## A tag push publishes nothing
 
-Every publishing workflow is `workflow_dispatch`-only, in three modes:
-`stage-only` (build and inspect), `publish-continuation` (publish the exact
-bytes a prior stage produced), `verify-only` (re-inspect a released version).
-Pushing a tag runs no publishing code at all.
+Publishing workflows for the driver-owned components are
+`workflow_dispatch`-only, in three modes: `stage-only` (build and inspect),
+`publish-continuation` (publish the exact bytes a prior stage produced), and
+`verify-only` (re-inspect a released version). Pushing one of those components'
+tags runs no publishing code.
 
 This is deliberate. A tag trigger meant CI rebuilt from source and published
 whatever it happened to produce; that is how five of six aw releases shipped
 wrong VCS stamps. The driver publishes bytes that were already inspected.
 
-Exception, verified per workflow rather than assumed: `aw-release.yml` in this
-repo still triggers on `aw-v*` and syncs `cli/go` to `awebai/aw`. The driver
-drives the aw lane through the dispatch-only workflow in `awebai/aw` itself, so
-treat the tag-sync path as legacy; do not start an aw release by pushing a tag.
+Exceptions must be verified per workflow rather than assumed. `aw-release.yml`
+in this repo still triggers on `aw-v*` and syncs `cli/go` to `awebai/aw`; the
+driver instead uses the dispatch-only workflow in `awebai/aw`. The A2A gateway
+also retains a legacy tag-triggered workflow outside the release graph. Do not
+generalize either legacy path into instructions for driver-owned components.
 
 ## Publication is not delivery
 

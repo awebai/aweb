@@ -63,7 +63,8 @@ This is the ONLY boundary with that property. Do not generalise it.
 1. **Design** — agree on the contract change between OSS and cloud.
    Identify which side goes first.
 
-2. **OSS first** — land the OSS change on aweb main. Run all tests.
+2. **OSS first** — land the OSS change on aweb main after the relevant focused
+   tests pass.
 
 3. **Release** — use the repository's `release` skill and driver. The driver
    stages once, publishes those exact bytes, verifies registry truth, and seals
