@@ -83,6 +83,16 @@ _RELEASE_TRANSITION_ID = re.compile(
     r"(?P<digest>[0-9a-f]{64})")
 _RELEASE_RECEIPT_ID = re.compile(
     r"receipt:(?P<frozen>[0-9a-f]{64}):(?P<digest>[0-9a-f]{64})")
+_LANE_LOGICAL_ID = re.compile(
+    r"lane:(?P<package>aw|channel|pi|skills|server|awid-pypi|awid-image):"
+    r"(?P<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\."
+    r"(?:0|[1-9][0-9]*)):(?P<source>[0-9a-f]{40})")
+_ANCHOR_LOGICAL_PATTERNS = (
+    ("plan", _RELEASE_PLAN_ID),
+    ("staged-manifest", _RELEASE_STAGED_ID),
+    ("transition", _RELEASE_TRANSITION_ID),
+    ("receipt", _RELEASE_RECEIPT_ID),
+)
 PRODUCTION_REMOTES = (
     "https://github.com/awebai/aweb.git",
     "git@github.com:awebai/aweb.git",
@@ -156,6 +166,46 @@ def _validate_source(source, kind: str) -> dict:
     return dict(source)
 
 
+def _validate_logical_id(
+    kind: str, logical_id, *, source: dict | None = None,
+) -> dict[str, str]:
+    """Apply the one closed logical-ID namespace allowed for an archive kind.
+
+    This is deliberately independent of the body dispatcher: entry/index and
+    manifest trust boundaries must reject an unknown name before a valid body
+    can make that name look authoritative.
+    """
+    logical = _bounded_identity(logical_id, f"{kind} logical id")
+    if kind == "anchor-artifact":
+        matches = [
+            (logical_class, match)
+            for logical_class, pattern in _ANCHOR_LOGICAL_PATTERNS
+            if (match := pattern.fullmatch(logical)) is not None
+        ]
+        if len(matches) != 1:
+            raise ReceiptError(
+                f"anchor-artifact logical id class/grammar is unsupported or "
+                f"malformed: {logical!r}")
+        logical_class, match = matches[0]
+        return {"class": logical_class, **match.groupdict()}
+    if kind == "workflow-artifact":
+        match = _LANE_LOGICAL_ID.fullmatch(logical)
+        if match is None:
+            raise ReceiptError(
+                f"workflow-artifact logical id is malformed: {logical!r}; "
+                "expected lane:<supported-package>:<semver>:<40hex-source>")
+        if source is not None and match.group("source") != source.get(
+            "source_sha"
+        ):
+            raise ReceiptError(
+                f"workflow-artifact logical id source "
+                f"{match.group('source')!r} does not equal archive source "
+                f"{source.get('source_sha')!r}")
+        return {"class": "lane", **match.groupdict()}
+    raise ReceiptError(
+        f"unsupported archive kind {kind!r} has no logical id grammar")
+
+
 def _fetch_ref_for_source(source: dict) -> str:
     """The artifact reference is DERIVED from the recorded source identity,
     never supplied independently, so the archive cannot fetch artifact A
@@ -176,8 +226,9 @@ def _validate_entry(entry) -> dict:
         )
     if entry["schema"] != INDEX_ENTRY_SCHEMA:
         raise ReceiptError("archive index entry has an unsupported schema")
-    _bounded_identity(entry["logical_id"], "index entry logical_id")
-    _validate_source(entry["source"], _bounded_identity(entry["kind"], "kind"))
+    kind = _bounded_identity(entry["kind"], "kind")
+    source = _validate_source(entry["source"], kind)
+    _validate_logical_id(kind, entry["logical_id"], source=source)
     for field in ("source_digest", "body_sha256", "manifest_sha256"):
         if not isinstance(entry[field], str) or not _HEX64.fullmatch(entry[field]):
             raise ReceiptError(
@@ -214,9 +265,9 @@ def _parse_manifest(manifest_bytes: bytes, digest: str) -> dict:
         raise ReceiptError(
             f"archive manifest for {digest} has an unsupported schema"
         )
-    _bounded_identity(manifest["logical_id"], "manifest logical_id")
-    _validate_source(manifest["source"], _bounded_identity(
-        manifest["kind"], "manifest kind"))
+    kind = _bounded_identity(manifest["kind"], "manifest kind")
+    source = _validate_source(manifest["source"], kind)
+    _validate_logical_id(kind, manifest["logical_id"], source=source)
     if not isinstance(manifest["source_digest"], str) or not _HEX64.fullmatch(
         manifest["source_digest"]
     ):
@@ -338,8 +389,8 @@ def archive_sealed(
     """``semantic`` defaults to the real production validator; a caller must
     pass an explicit permissive callable to skip it, so production can never
     silently append an artifact whose semantics were never checked."""
-    _bounded_identity(logical_id, "logical id")
     source = _validate_source(source, _bounded_identity(kind, "kind"))
+    _validate_logical_id(kind, logical_id, source=source)
     derived_ref = _fetch_ref_for_source(source)
     if artifact_ref is not None and artifact_ref != derived_ref:
         raise ReceiptError(
@@ -990,9 +1041,6 @@ class GitBranchArchive:
             )
 
 
-ANCHOR_LOGICAL_CLASSES = ("plan", "staged-manifest", "transition", "receipt")
-
-
 def semantic_validator(providers=None):
     """Production semantic validator over the REAL sealed formats.
 
@@ -1029,12 +1077,8 @@ def semantic_validator(providers=None):
             raise ReceiptError(f"{label} is not a valid ZIP") from exc
 
     def _inner_semantics(logical_id: str, inner: bytes, digest: str) -> None:
-        klass = logical_id.split(":", 1)[0]
-        if klass not in ANCHOR_LOGICAL_CLASSES:
-            raise ReceiptError(
-                f"archived anchor logical id class {klass!r} is not one of "
-                f"{list(ANCHOR_LOGICAL_CLASSES)}"
-            )
+        klass = _validate_logical_id(
+            "anchor-artifact", logical_id)["class"]
         if klass == "plan":
             parts = logical_id.split(":")
             if len(parts) != 3:
@@ -1171,35 +1215,24 @@ def semantic_validator(providers=None):
         package = lane_manifest.get("package")
         source_sha = lane_manifest.get("source_sha")
         version = lane_manifest.get("candidate_version")
-        # A lane logical id of the form lane:<package>:<version> is a CLAIM;
-        # it is checked against the real lane manifest rather than used to
-        # derive the expectations it is then compared to.
-        logical = manifest.get("logical_id", "")
-        if logical.startswith("lane:"):
-            claim = logical.split(":")
-            # Package and version alone do not identify a lane artifact: two
-            # valid stagings of the SAME package/version from different sources
-            # are distinct bytes, and without the source in the identity either
-            # could be substituted for the other.
-            if len(claim) != 4:
-                raise ReceiptError(
-                    f"lane logical id {logical!r} is malformed; the contract is "
-                    "lane:<package>:<version>:<source_sha>"
-                )
-            if not _GIT_SHA.fullmatch(claim[3]):
-                raise ReceiptError(
-                    f"lane logical id source {claim[3]!r} is not a 40-hex sha"
-                )
-            if claim[1] != package or claim[2] != version:
-                raise ReceiptError(
-                    f"lane logical id claims {claim[1]!r}/{claim[2]!r} but the "
-                    f"lane manifest binds {package!r}/{version!r}"
-                )
-            if claim[3] != source_sha:
-                raise ReceiptError(
-                    f"lane logical id claims source {claim[3]!r} but the lane "
-                    f"manifest binds {source_sha!r}"
-                )
+        # The kind-specific validator has no bypass namespace: every workflow
+        # artifact is a lane identity, and every claim is then bound to the
+        # real manifest rather than self-derived from it.
+        claim = _validate_logical_id(
+            "workflow-artifact", manifest.get("logical_id"),
+            source=manifest.get("source"))
+        manifest_package = "aw" if package is None else package
+        if claim["package"] != manifest_package or claim["version"] != version:
+            raise ReceiptError(
+                f"lane logical id claims {claim['package']!r}/"
+                f"{claim['version']!r} but the lane manifest binds "
+                f"{manifest_package!r}/{version!r}"
+            )
+        if claim["source"] != source_sha:
+            raise ReceiptError(
+                f"lane logical id claims source {claim['source']!r} but the "
+                f"lane manifest binds {source_sha!r}"
+            )
         claimed_source = (manifest.get("source") or {}).get("source_sha")
         if claimed_source != source_sha:
             raise ReceiptError(
@@ -1234,6 +1267,11 @@ def semantic_validator(providers=None):
 
     def validate(body: bytes, manifest: dict) -> None:
         kind = manifest.get("kind")
+        if kind not in KIND_SOURCE_FIELDS:
+            raise ReceiptError(
+                f"no semantic validator is defined for archive kind {kind!r}")
+        _validate_logical_id(
+            kind, manifest.get("logical_id"), source=manifest.get("source"))
         if kind == "anchor-artifact":
             _anchor(body, manifest)
         elif kind == "workflow-artifact":
