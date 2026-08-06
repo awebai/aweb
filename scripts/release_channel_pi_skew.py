@@ -1432,7 +1432,30 @@ _CANDIDATE_KEYS = {
     "stage_run_id", "stage_artifact_id", "stage_zip_digest",
 }
 _PUBLISHED_KEYS = {"kind", "version", "digest_set", "authority"}
-_AUTHORITY_KEYS = {"provider", "verify_only_run_id", "verify_only_artifact_id"}
+_AUTHORITY_KEYS = {
+    "provider", "repo", "workflow", "artifact", "source_sha", "zip_digest",
+}
+SERVER_LANE_REPO = "awebai/aweb"
+SERVER_LANE_WORKFLOW = ".github/workflows/pypi-release.yml"
+_GH_ID = re.compile(r"[1-9][0-9]*")
+
+
+def _parse_artifact(artifact, label: str) -> tuple[str, str, str]:
+    """rd's parse plus canonical GitHub id grammar.
+
+    GitHub ids are positive integers. `0` and leading zeros are not real ids and
+    would otherwise pass a digit-shaped check while naming nothing.
+    """
+    if not isinstance(artifact, str):
+        raise rd.ReceiptError(f"{label} artifact reference is not a string")
+    repo, run_id, artifact_id = rd._parse_gh_artifact_id(artifact)
+    for name, value in (("run", run_id), ("artifact", artifact_id)):
+        if not _GH_ID.fullmatch(value):
+            raise rd.ReceiptError(
+                f"{label} {name} id {value!r} is not a canonical positive "
+                "integer GitHub id"
+            )
+    return repo, run_id, artifact_id
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"(?:sha256:)?[0-9a-f]{64}")
 _DIGITS = re.compile(r"[0-9]+")
@@ -1565,7 +1588,8 @@ def _validate_candidate_entry(entry, component: str, source_sha: str) -> None:
     # recomputed canonical manifest_id otherwise authorizes a document whose
     # provenance fields contradict the lane reference they claim to describe.
     lane = rd.LaneRef.from_dict(entry["lane_ref"])
-    _, lane_run_id, lane_artifact_id = rd._parse_gh_artifact_id(lane.artifact)
+    _, lane_run_id, lane_artifact_id = _parse_artifact(
+        lane.artifact, f"candidate {component} lane")
     for field, pattern in (
         ("stage_run_id", _DIGITS), ("stage_artifact_id", _DIGITS),
         ("stage_zip_digest", _SHA256),
@@ -1635,8 +1659,28 @@ def _validate_published_entry(entry) -> None:
             f"measurement input server authority provider "
             f"{authority['provider']!r} is not the reviewed verify-only lane"
         )
-    for field in ("verify_only_run_id", "verify_only_artifact_id"):
-        _exact(authority[field], _DIGITS, f"server authority {field}")
+    # One immutable workflow-artifact reference, not duplicated labels: the
+    # repo is bound to the repo encoded in the artifact reference, so the two
+    # cannot name different places.
+    repo, _, _ = _parse_artifact(authority["artifact"], "server authority")
+    if authority["repo"] != repo:
+        raise rd.ReceiptError(
+            f"measurement input server authority repo {authority['repo']!r} "
+            f"disagrees with the repo encoded in its artifact reference {repo!r}"
+        )
+    if authority["repo"] != SERVER_LANE_REPO:
+        raise rd.ReceiptError(
+            f"measurement input server authority repo {authority['repo']!r} is "
+            f"not the reviewed server lane repo {SERVER_LANE_REPO!r}"
+        )
+    if authority["workflow"] != SERVER_LANE_WORKFLOW:
+        raise rd.ReceiptError(
+            f"measurement input server authority workflow "
+            f"{authority['workflow']!r} is not the reviewed verify-only lane "
+            f"{SERVER_LANE_WORKFLOW!r}"
+        )
+    _exact(authority["source_sha"], _SHA40, "server authority source_sha")
+    _exact(authority["zip_digest"], _SHA256, "server authority zip_digest")
 
 
 
@@ -1661,6 +1705,155 @@ def _require_child_identity(measurement: dict) -> str:
     return recorded
 
 
+def _validate_verify_only_server_artifact(
+    zip_bytes: bytes, *, expected_source_sha: str, expected_version: str,
+) -> dict:
+    """The PyPI lane protocol for a VERIFY-ONLY server artifact.
+
+    `rd.validate_pypi_lane_artifact` cannot be reused: it routes through
+    `_lane_manifest_common`, which hard-requires `mode == "stage-only"` because
+    it exists to gate artifacts continuing to publication. A measurement
+    consumes a verify-only artifact, which by definition never continues, so
+    reusing that validator would mean writing "stage-only" into a manifest that
+    is not one. The structural protocol is otherwise identical and is checked
+    here: exactly one wheel and one sdist for the version, members under dist/,
+    manifest keys the two basenames, and every declared digest equal to the
+    member bytes.
+    """
+    import io
+    import zipfile
+
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile as exc:
+        raise rd.ReceiptError("server lane artifact is not a valid ZIP") from exc
+    with archive:
+        names = [n for n in archive.namelist() if not n.endswith("/")]
+        if len(names) != len(set(names)):
+            raise rd.ReceiptError("server lane artifact repeats a member name")
+        if "manifest.json" not in names:
+            raise rd.ReceiptError("server lane artifact carries no manifest.json")
+        try:
+            manifest = json.loads(archive.read("manifest.json"))
+        except json.JSONDecodeError as exc:
+            raise rd.ReceiptError(
+                "server lane manifest.json is malformed") from exc
+        if manifest.get("mode") != "verify-only":
+            raise rd.ReceiptError(
+                f"server lane artifact mode is {manifest.get('mode')!r}; a "
+                "measurement consumes only a verify-only artifact"
+            )
+        if manifest.get("package") != "server":
+            raise rd.ReceiptError(
+                f"server lane artifact package is {manifest.get('package')!r}, "
+                "not 'server'"
+            )
+        if manifest.get("candidate_version") != expected_version:
+            raise rd.ReceiptError(
+                f"server lane artifact is version "
+                f"{manifest.get('candidate_version')!r}, not the published "
+                f"{expected_version!r} the measurement input asserts"
+            )
+        if manifest.get("source_sha") != expected_source_sha:
+            raise rd.ReceiptError(
+                f"server lane artifact source {manifest.get('source_sha')!r} "
+                f"does not equal the recorded {expected_source_sha!r}"
+            )
+        files = manifest.get("files")
+        expected_names = {
+            f"aweb-{expected_version}-py3-none-any.whl",
+            f"aweb-{expected_version}.tar.gz",
+        }
+        if not isinstance(files, dict) or set(files) != expected_names:
+            raise rd.ReceiptError(
+                f"server lane artifact must declare exactly "
+                f"{sorted(expected_names)}, got "
+                f"{sorted(files) if isinstance(files, dict) else files!r}"
+            )
+        for name, declared in files.items():
+            member = f"dist/{name}"
+            if member not in names:
+                raise rd.ReceiptError(
+                    f"server lane artifact declares {name} but carries no "
+                    f"{member}"
+                )
+            observed = hashlib.sha256(archive.read(member)).hexdigest()
+            if observed != declared:
+                raise rd.ReceiptError(
+                    f"server lane artifact {name} hashes {observed}, not the "
+                    f"declared {declared}"
+                )
+        stray = set(names) - {"manifest.json"} - {f"dist/{n}" for n in files}
+        if stray:
+            raise rd.ReceiptError(
+                f"server lane artifact carries unexpected members "
+                f"{sorted(stray)}"
+            )
+    return manifest
+
+
+class PublishedServerAuthority:
+    """Resolves the published server through the reviewed verify-only lane.
+
+    A declared authority that nothing consumes is decorative: any digit-shaped
+    run/artifact id would re-identify a manifest and the measurement would
+    complete anyway, because the cells only ever observe PyPI. This downloads
+    the exact verify-only artifact through the reviewed store and an
+    independent digest authority, validates it as a PyPI lane artifact for
+    `aweb`, and requires it to equal the published entry the manifest asserts --
+    all before any evidence is written or any cell runs.
+    """
+
+    def __init__(self, *, store=None, digest_authority=None):
+        self._store = store if store is not None else rd.GithubArtifactStore(
+            repo=SERVER_LANE_REPO, workflow_path=SERVER_LANE_WORKFLOW)
+        self._authority = (
+            digest_authority if digest_authority is not None
+            else rd.GithubArtifactDigestAuthority(
+                repo=SERVER_LANE_REPO, workflow_path=SERVER_LANE_WORKFLOW)
+        )
+
+    def resolve(self, published: dict) -> dict:
+        authority = published["authority"]
+        artifact = authority["artifact"]
+        # The independent authority first: its digest must equal what the
+        # manifest claims BEFORE the bytes are fetched, so a substituted
+        # artifact is refused without being downloaded.
+        expected = self._authority.expected_digest(artifact)
+        if expected != authority["zip_digest"]:
+            raise rd.ReceiptError(
+                f"server authority {artifact}: independent digest {expected!r} "
+                f"does not equal the recorded {authority['zip_digest']!r}"
+            )
+        body = self._store.get(artifact)
+        observed = "sha256:" + hashlib.sha256(body).hexdigest()
+        if observed != authority["zip_digest"]:
+            raise rd.ReceiptError(
+                f"server authority {artifact}: retrieved bytes hash {observed} "
+                f"and not the recorded {authority['zip_digest']}"
+            )
+        manifest = _validate_verify_only_server_artifact(
+            body,
+            expected_source_sha=authority["source_sha"],
+            expected_version=published["version"],
+        )
+        files = manifest.get("files")
+        if files != published["digest_set"]:
+            raise rd.ReceiptError(
+                "server authority lane artifact digest set does not equal the "
+                "published digest set the measurement input asserts"
+            )
+        return {
+            "artifact": artifact,
+            "repo": authority["repo"],
+            "workflow": authority["workflow"],
+            "source_sha": authority["source_sha"],
+            "zip_digest": authority["zip_digest"],
+            "version": published["version"],
+            "digest_set": dict(published["digest_set"]),
+        }
+
+
 def _contract_for(component: str) -> rd.RuntimeContractEdge:
     return rd.RuntimeContractEdge(
         a=component,
@@ -1679,6 +1872,7 @@ def measure_support(
     measurement_input_bytes: bytes,
     supported_versions: dict[str, list[str]],
     harness,
+    published_authority=None,
 ) -> dict:
     """Measure one client-server edge over the frozen matrix lifecycle.
 
@@ -1706,6 +1900,15 @@ def measure_support(
     measurement_input_digest = hashlib.sha256(measurement_input_bytes).hexdigest()
 
     entries = document["entries"]
+    # Resolve the published server through the reviewed verify-only lane BEFORE
+    # freezing, running any cell, or writing any evidence.
+    if published_authority is None:
+        raise rd.ReceiptError(
+            "channel/Pi measurement requires the published-server authority "
+            "resolver; a declared authority that is never consumed proves "
+            "nothing"
+        )
+    published_report = published_authority.resolve(entries["server"])
     candidate = entries[component]
     published = entries["server"]
     # moving is DERIVED from candidate-kind entries, never passed in. A
@@ -1811,6 +2014,7 @@ def measure_support(
         "component": component,
         "measurement_input_id": document["manifest_id"],
         "measurement_input_sha256": measurement_input_digest,
+        "published_server_authority": published_report,
         "supported_versions": {
             name: list(versions)
             for name, versions in sorted(supported_versions.items())
@@ -1833,8 +2037,9 @@ def pi_measure_support(**kwargs) -> dict:
 
 ENVELOPE_KEYS = {
     "schema", "policy", "component", "measurement_input_id",
-    "measurement_input_sha256", "supported_versions", "measurement_id",
-    "measurement_sha256", "measurement", "envelope_id",
+    "measurement_input_sha256", "published_server_authority",
+    "supported_versions", "measurement_id", "measurement_sha256",
+    "measurement", "envelope_id",
 }
 
 
@@ -2093,6 +2298,7 @@ def main(argv: list[str] | None = None) -> int:
             measurement_input=document,
             measurement_input_bytes=body,
             supported_versions={"server": args.supported_server},
+            published_authority=PublishedServerAuthority(),
             harness=ChannelPiHarness(
                 resolver=ArtifactResolver(),
                 journey_factory=lambda: SubprocessChannelPiJourney(component),

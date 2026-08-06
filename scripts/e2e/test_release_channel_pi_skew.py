@@ -1020,7 +1020,7 @@ def measurement_input(component="channel", *, server_version="1.26.34",
                       source="a" * 40, **overrides):
     """A canonical aweb.measurement-input-manifest.v1 for one edge."""
     files = {f"{component}.artifact": sha(component.encode())}
-    server_files = {"aweb-%s.whl" % server_version: sha(b"server")}
+    server_files = server_lane_files(server_version)
     entries = {
         component: {
             "kind": "candidate",
@@ -1042,8 +1042,11 @@ def measurement_input(component="channel", *, server_version="1.26.34",
             "digest_set": server_files,
             "authority": {
                 "provider": "verify-only-lane",
-                "verify_only_run_id": "41",
-                "verify_only_artifact_id": "9001",
+                "repo": "awebai/aweb",
+                "workflow": ".github/workflows/pypi-release.yml",
+                "artifact": "gh-artifact:awebai/aweb:41:9001",
+                "source_sha": "c" * 40,
+                "zip_digest": "sha256:" + server_zip_digest(server_version),
             },
         },
     }
@@ -1068,6 +1071,68 @@ class _Drop:
 
 
 _DROP = _Drop()
+
+
+def server_lane_zip(version="1.26.34", source_sha="c" * 40):
+    """A real-shaped PyPI verify-only lane artifact for package aweb."""
+    names = {
+        f"aweb-{version}-py3-none-any.whl": b"wheel " + version.encode(),
+        f"aweb-{version}.tar.gz": b"sdist " + version.encode(),
+    }
+    files = {n: sha(d) for n, d in names.items()}
+    manifest = {
+        "mode": "verify-only", "package": "server",
+        "tag": f"server-v{version}", "candidate_version": version,
+        "source_sha": source_sha, "files": files,
+        "canonical_set_digest": sha(
+            json.dumps(files, sort_keys=True).encode()),
+    }
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("manifest.json", json.dumps(manifest))
+        for n, d in names.items():
+            z.writestr(f"dist/{n}", d)
+    return buf.getvalue(), files
+
+
+def server_lane_files(version="1.26.34"):
+    return server_lane_zip(version)[1]
+
+
+def server_zip_digest(version="1.26.34", source_sha="c" * 40):
+    return sha(server_lane_zip(version, source_sha)[0])
+
+
+class FakePublishedAuthority:
+    """The injected resolver: no network, real semantics."""
+
+    def __init__(self, *, version="1.26.34", source_sha="c" * 40,
+                 artifact="gh-artifact:awebai/aweb:41:9001"):
+        self.body, self.files = server_lane_zip(version, source_sha)
+        self.artifact = artifact
+        self.calls = []
+
+    def expected_digest(self, artifact_id):
+        self.calls.append(("digest", artifact_id))
+        if artifact_id != self.artifact:
+            raise rd.ReceiptError(f"no authority digest for {artifact_id}")
+        return "sha256:" + sha(self.body)
+
+    def get(self, artifact_id):
+        self.calls.append(("get", artifact_id))
+        if artifact_id != self.artifact:
+            raise rd.ReceiptError(f"artifact {artifact_id} is absent")
+        return self.body
+
+
+# Bound at import: the CLI tests monkeypatch skew.PublishedServerAuthority, and
+# resolving it lazily here would make this helper call itself.
+_REAL_PUBLISHED_AUTHORITY = skew.PublishedServerAuthority
+
+
+def published_authority(**kw):
+    fake = FakePublishedAuthority(**kw)
+    return _REAL_PUBLISHED_AUTHORITY(store=fake, digest_authority=fake)
 
 
 def input_pair(component="channel", **kw):
@@ -1127,6 +1192,7 @@ class MeasureSupportTests(unittest.TestCase):
             measurement_input=document,
             measurement_input_bytes=canonical_bytes(document),
             supported_versions=supported or {"server": ["1.26.34"]},
+            published_authority=published_authority(),
             harness=harness,
         )
 
@@ -1221,6 +1287,7 @@ class MeasureSupportTests(unittest.TestCase):
                     component="skills",
                     **input_pair("channel"),
                     supported_versions={"server": ["1.26.34"]},
+                published_authority=published_authority(),
                     harness=skew.ChannelPiHarness(
                         resolver=FakeResolver(), journey=FakeJourney(),
                         evidence=skew.evidence_writer_for("channel", Path(tmp)),
@@ -1236,6 +1303,7 @@ class MeasureSupportTests(unittest.TestCase):
                 component="channel",
                 **input_pair("channel"),
                 supported_versions={"server": ["1.26.34"]},
+                published_authority=published_authority(),
                 harness=NoLifecycle(),
             )
 
@@ -1260,6 +1328,7 @@ class MeasureSupportTests(unittest.TestCase):
                     component="channel",
                     **input_pair("channel"),
                     supported_versions={"server": ["1.26.34"]},
+                published_authority=published_authority(),
                     harness=harness,
                 )
 
@@ -1287,6 +1356,7 @@ class MeasureSupportTests(unittest.TestCase):
                     component="channel",
                     **input_pair("channel"),
                     supported_versions={"server": ["1.26.34"]},
+                published_authority=published_authority(),
                     harness=harness,
                 )
 
@@ -1324,6 +1394,7 @@ class MeasureSupportTests(unittest.TestCase):
                     component="channel",
                     **input_pair("channel"),
                     supported_versions={"server": ["1.26.34"]},
+                published_authority=published_authority(),
                     harness=harness,
                 )
 
@@ -1357,6 +1428,7 @@ class MeasureSupportBoundaryTests(unittest.TestCase):
             measurement_input=document,
             measurement_input_bytes=canonical_bytes(document),
             supported_versions=supported or {"server": ["1.26.34"]},
+            published_authority=published_authority(),
             harness=harness if harness is not None else self.harness(
                 tmp, component),
         )
@@ -1569,6 +1641,8 @@ class CliMeasurementInputTests(unittest.TestCase):
             for name, replacement in (
                 ("ArtifactResolver", lambda *a, **k: FakeResolver()),
                 ("SubprocessChannelPiJourney", lambda *a, **k: FakeJourney()),
+                ("PublishedServerAuthority",
+                 lambda *a, **k: published_authority()),
             ):
                 self.addCleanup(setattr, skew, name, getattr(skew, name))
                 setattr(skew, name, replacement)
@@ -1655,6 +1729,8 @@ class CliMeasurementInputTests(unittest.TestCase):
             for name, replacement in (
                 ("ArtifactResolver", lambda *a, **k: FakeResolver()),
                 ("SubprocessChannelPiJourney", lambda *a, **k: FakeJourney()),
+                ("PublishedServerAuthority",
+                 lambda *a, **k: published_authority(version="1.26.35")),
             ):
                 self.addCleanup(setattr, skew, name, getattr(skew, name))
                 setattr(skew, name, replacement)
@@ -2007,6 +2083,7 @@ class EnvelopeAuthorityTests(unittest.TestCase):
             "component": "channel",
             "measurement_input_id": "a" * 64,
             "measurement_input_sha256": "b" * 64,
+            "published_server_authority": {"artifact": "gh-artifact:awebai/aweb:41:9001"},
             "supported_versions": {"channel": ["1.2.2"], "server": ["1.26.34"]},
             "measurement_id": child["measurement_id"],
             "measurement_sha256": hashlib.sha256(canonical).hexdigest(),
@@ -2196,6 +2273,7 @@ class MeasurementInputBindingTests(unittest.TestCase):
         for name, replacement in (
             ("ArtifactResolver", lambda *a, **k: FakeResolver()),
             ("SubprocessChannelPiJourney", lambda *a, **k: FakeJourney()),
+            ("PublishedServerAuthority", lambda *a, **k: published_authority()),
         ):
             self.addCleanup(setattr, skew, name, getattr(skew, name))
             setattr(skew, name, replacement)
@@ -2232,6 +2310,147 @@ class MeasurementInputBindingTests(unittest.TestCase):
                     self.assertFalse((Path(tmp) / "out.json").exists())
                     self.assertFalse((Path(tmp) / "evidence").exists(),
                                      "refusal must precede any evidence")
+
+
+
+
+class PublishedAuthorityConsumedTests(unittest.TestCase):
+    """The authority must be RESOLVED, not merely shaped.
+
+    Previously it was digit-shaped labels nothing consumed, so any run/artifact
+    id re-identified a manifest and the measurement completed anyway, because
+    the cells only ever observe PyPI.
+    """
+
+    @staticmethod
+    def reseal(document):
+        document.pop("manifest_id", None)
+        document["manifest_id"] = rd.canonical_json_digest(document)
+        return document
+
+    def resolve(self, document, *, authority=None):
+        resolver = authority or published_authority()
+        return resolver.resolve(document["entries"]["server"])
+
+    def test_honest_authority_resolves(self):
+        report = self.resolve(measurement_input("channel"))
+        self.assertEqual(report["artifact"], "gh-artifact:awebai/aweb:41:9001")
+        self.assertEqual(report["version"], "1.26.34")
+
+    def test_substituted_artifact_or_run_refuses(self):
+        for artifact in (
+            "gh-artifact:awebai/aweb:41:9002",
+            "gh-artifact:awebai/aweb:42:9001",
+        ):
+            with self.subTest(artifact=artifact):
+                doc = measurement_input("channel")
+                doc["entries"]["server"]["authority"]["artifact"] = artifact
+                with self.assertRaises(rd.ReceiptError):
+                    self.resolve(self.reseal(doc))
+
+    def test_foreign_repo_or_workflow_refuses(self):
+        doc = measurement_input("channel")
+        doc["entries"]["server"]["authority"].update({
+            "repo": "attacker/aweb",
+            "artifact": "gh-artifact:attacker/aweb:41:9001",
+        })
+        with self.assertRaises(rd.ReceiptError):
+            skew.validate_measurement_input(self.reseal(doc), component="channel")
+
+        doc = measurement_input("channel")
+        doc["entries"]["server"]["authority"]["workflow"] = (
+            ".github/workflows/npm-release.yml")
+        with self.assertRaisesRegex(rd.ReceiptError, "verify-only lane"):
+            skew.validate_measurement_input(self.reseal(doc), component="channel")
+
+    def test_repo_disagreeing_with_its_artifact_refuses(self):
+        doc = measurement_input("channel")
+        doc["entries"]["server"]["authority"]["repo"] = "awebai/aw"
+        with self.assertRaisesRegex(rd.ReceiptError, "disagrees"):
+            skew.validate_measurement_input(self.reseal(doc), component="channel")
+
+    def test_substituted_source_refuses(self):
+        doc = measurement_input("channel")
+        doc["entries"]["server"]["authority"]["source_sha"] = "d" * 40
+        with self.assertRaisesRegex(rd.ReceiptError, "source"):
+            self.resolve(self.reseal(doc))
+
+    def test_substituted_outer_digest_refuses(self):
+        doc = measurement_input("channel")
+        doc["entries"]["server"]["authority"]["zip_digest"] = (
+            "sha256:" + "9" * 64)
+        with self.assertRaisesRegex(rd.ReceiptError, "independent digest"):
+            self.resolve(self.reseal(doc))
+
+    def test_substituted_server_version_refuses(self):
+        doc = measurement_input("channel")
+        doc["entries"]["server"]["version"] = "9.9.9"
+        with self.assertRaises(rd.ReceiptError):
+            self.resolve(self.reseal(doc))
+
+    def test_substituted_digest_set_refuses(self):
+        doc = measurement_input("channel")
+        doc["entries"]["server"]["digest_set"] = {"aweb-1.26.34.whl": "0" * 64}
+        with self.assertRaises(rd.ReceiptError):
+            self.resolve(self.reseal(doc))
+
+    def test_non_canonical_github_ids_refuse(self):
+        for artifact in (
+            "gh-artifact:awebai/aweb:0:9001",
+            "gh-artifact:awebai/aweb:41:0",
+            "gh-artifact:awebai/aweb:041:9001",
+        ):
+            with self.subTest(artifact=artifact):
+                doc = measurement_input("channel")
+                doc["entries"]["server"]["authority"]["artifact"] = artifact
+                with self.assertRaisesRegex(
+                    rd.ReceiptError, "canonical positive integer"
+                ):
+                    skew.validate_measurement_input(
+                        self.reseal(doc), component="channel")
+
+    def test_measurement_refuses_before_any_evidence_or_effect(self):
+        """The whole point: a bad authority must stop the run before a cell."""
+        doc = measurement_input("channel")
+        doc["entries"]["server"]["authority"]["zip_digest"] = (
+            "sha256:" + "9" * 64)
+        self.reseal(doc)
+        journeys = []
+
+        def factory():
+            journey = FakeJourney()
+            journeys.append(journey)
+            return journey
+
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = skew.evidence_writer_for("channel", Path(tmp))
+            harness = skew.ChannelPiHarness(
+                resolver=FakeResolver(), journey_factory=factory,
+                evidence=evidence)
+            with self.assertRaises(rd.ReceiptError):
+                skew.measure_support(
+                    component="channel",
+                    measurement_input=doc,
+                    measurement_input_bytes=canonical_bytes(doc),
+                    supported_versions={"server": ["1.26.34"]},
+                    published_authority=published_authority(),
+                    harness=harness)
+            self.assertEqual(journeys, [], "no cell may run")
+            self.assertFalse((evidence.root / "cells").exists(),
+                             "no evidence may be written")
+
+    def test_missing_resolver_refuses(self):
+        doc = measurement_input("channel")
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(rd.ReceiptError, "never consumed"):
+                skew.measure_support(
+                    component="channel",
+                    measurement_input=doc,
+                    measurement_input_bytes=canonical_bytes(doc),
+                    supported_versions={"server": ["1.26.34"]},
+                    harness=skew.ChannelPiHarness(
+                        resolver=FakeResolver(), journey_factory=FakeJourney,
+                        evidence=skew.evidence_writer_for("channel", Path(tmp))))
 
 
 
