@@ -23,6 +23,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,6 +52,10 @@ class ApprovalRequired(Exception):
 
 
 class ReceiptError(Exception):
+    pass
+
+
+class _GitHubApiTimeout(ReceiptError):
     pass
 
 
@@ -1157,10 +1162,17 @@ RECOVERY_ATTEMPT_EVIDENCE_SCHEMA = (
 ANCHOR_DISPATCH_LIMIT = 64000
 
 
-def _run_gh_api(path: str) -> bytes:
+def _run_gh_api(path: str, *, timeout: float | None = None) -> bytes:
     import subprocess
 
-    result = subprocess.run(["gh", "api", path], capture_output=True)
+    try:
+        result = subprocess.run(
+            ["gh", "api", path], capture_output=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise _GitHubApiTimeout(
+            f"gh api {path} exceeded its {timeout:g}-second deadline"
+        ) from exc
     if result.returncode != 0:
         raise ReceiptError(
             f"gh api {path} failed: "
@@ -1783,20 +1795,38 @@ class AwLaneRuns:
     so a busy shared workflow cannot push the owned run out of view.
     """
 
-    MAX_RUN_HISTORY_PAGES = 20
+    MAX_RUN_HISTORY_PAGES_PER_PASS = 20
+    MAX_RUN_HISTORY_PASSES = 4
+    MAX_RUN_HISTORY_REQUESTS = 80
+    MAX_RUN_HISTORY_SECONDS = 30.0
     RUN_HISTORY_PAGE_SIZE = 100
 
     def __init__(self, api=None, *, repo: str = "awebai/aw",
-                 workflow_file: str = "aw-release.yml"):
+                 workflow_file: str = "aw-release.yml", clock=None):
         self._api = api or _run_gh_api
+        self._uses_default_api = api is None
+        self._clock = time.monotonic if clock is None else clock
         self.repo = repo
         self.workflow_file = workflow_file
 
-    def _run_ids_page(self, *, per_page: int, page: int) -> list[int]:
-        body = json.loads(self._api(
+    def _run_ids_page(
+        self, *, per_page: int, page: int, timeout: float | None = None,
+    ) -> list[int]:
+        path = (
             f"repos/{self.repo}/actions/workflows/{self.workflow_file}/runs"
             f"?per_page={per_page}&page={page}"
-        ))
+        )
+        data = (
+            _run_gh_api(path, timeout=timeout)
+            if self._uses_default_api and timeout is not None
+            else self._api(path)
+        )
+        body = json.loads(data)
+        if not isinstance(body, dict):
+            raise ReceiptError(
+                f"{self.workflow_file}: workflow run page {page} is not "
+                "an object"
+            )
         runs = body.get("workflow_runs")
         if not isinstance(runs, list):
             raise ReceiptError(
@@ -1829,38 +1859,125 @@ class AwLaneRuns:
         return run_ids[0] if run_ids else None
 
     def list_run_ids_after(self, boundary_run_id) -> list[int]:
-        """Enumerate the complete bounded window newer than boundary."""
-        boundary = (
-            None if boundary_run_id is None else str(boundary_run_id)
-        )
-        seen: set[str] = set()
-        collected: list[int] = []
-        for page in range(1, self.MAX_RUN_HISTORY_PAGES + 1):
-            run_ids = self._run_ids_page(
-                per_page=self.RUN_HISTORY_PAGE_SIZE, page=page
+        """Return a stable, completely enumerated window newer than boundary.
+
+        GitHub's workflow-run listing is mutable and offset-paginated. Each
+        pass therefore starts again at page one, validates newest-first ID
+        order after overlap deduplication, and reaches the persisted boundary
+        (or empty-history terminator). Only two consecutive identical complete
+        passes establish a window from which "no owned run" may be concluded.
+        """
+        if boundary_run_id is None:
+            boundary = None
+        elif (
+            isinstance(boundary_run_id, int)
+            and not isinstance(boundary_run_id, bool)
+            and boundary_run_id > 0
+        ):
+            boundary = boundary_run_id
+        elif (
+            isinstance(boundary_run_id, str)
+            and re.fullmatch(r"[1-9][0-9]*", boundary_run_id)
+        ):
+            boundary = int(boundary_run_id)
+        else:
+            raise ReceiptError(
+                f"{self.workflow_file}: incomplete workflow-run enumeration; "
+                f"boundary {boundary_run_id!r} is not a canonical numeric ID"
             )
-            if not run_ids:
-                if boundary is None:
-                    return collected
-                raise ReceiptError(
-                    f"{self.workflow_file}: incomplete workflow-run "
-                    f"enumeration; boundary {boundary!r} was not reached "
-                    "before empty history"
+
+        started = self._clock()
+        requests = 0
+        previous: list[int] | None = None
+
+        def refuse(reason: str) -> None:
+            raise ReceiptError(
+                f"{self.workflow_file}: incomplete workflow-run enumeration; "
+                + reason
+            )
+
+        def check_budget() -> None:
+            if requests >= self.MAX_RUN_HISTORY_REQUESTS:
+                refuse(
+                    "the explicit total request bound of "
+                    f"{self.MAX_RUN_HISTORY_REQUESTS} was reached"
                 )
-            for run_id in run_ids:
-                identity = str(run_id)
-                if identity == boundary:
-                    return collected
-                if identity in seen:
-                    continue
-                seen.add(identity)
-                collected.append(run_id)
-        raise ReceiptError(
-            f"{self.workflow_file}: incomplete workflow-run enumeration; "
-            f"boundary {boundary!r} was not reached within the explicit "
-            f"{self.MAX_RUN_HISTORY_PAGES}-page/"
-            f"{self.MAX_RUN_HISTORY_PAGES}-request bound"
+            if self._clock() - started >= self.MAX_RUN_HISTORY_SECONDS:
+                refuse(
+                    "the explicit time bound of "
+                    f"{self.MAX_RUN_HISTORY_SECONDS:g} seconds was reached"
+                )
+
+        for _pass in range(1, self.MAX_RUN_HISTORY_PASSES + 1):
+            seen: set[int] = set()
+            collected: list[int] = []
+            last_unique: int | None = None
+            complete = False
+            for page in range(1, self.MAX_RUN_HISTORY_PAGES_PER_PASS + 1):
+                check_budget()
+                elapsed = self._clock() - started
+                try:
+                    run_ids = self._run_ids_page(
+                        per_page=self.RUN_HISTORY_PAGE_SIZE,
+                        page=page,
+                        timeout=max(
+                            self.MAX_RUN_HISTORY_SECONDS - elapsed, 0.001
+                        ),
+                    )
+                except _GitHubApiTimeout:
+                    refuse(
+                        "the explicit time bound of "
+                        f"{self.MAX_RUN_HISTORY_SECONDS:g} seconds was reached"
+                    )
+                requests += 1
+                if self._clock() - started >= self.MAX_RUN_HISTORY_SECONDS:
+                    refuse(
+                        "the explicit time bound of "
+                        f"{self.MAX_RUN_HISTORY_SECONDS:g} seconds was reached"
+                    )
+                if not run_ids:
+                    if boundary is None:
+                        complete = True
+                        break
+                    refuse(
+                        f"boundary {str(boundary)!r} was not reached before "
+                        "empty history"
+                    )
+                for run_id in run_ids:
+                    if run_id in seen:
+                        continue
+                    if last_unique is not None and run_id >= last_unique:
+                        refuse(
+                            f"page {page} violates strictly descending "
+                            "workflow-run ID order after deduplication"
+                        )
+                    seen.add(run_id)
+                    last_unique = run_id
+                    if complete:
+                        continue
+                    if run_id == boundary:
+                        complete = True
+                    else:
+                        collected.append(run_id)
+                if complete:
+                    break
+            if not complete:
+                refuse(
+                    f"boundary {str(boundary)!r} was not reached within the "
+                    "explicit "
+                    f"{self.MAX_RUN_HISTORY_PAGES_PER_PASS}-page per-pass bound"
+                )
+            if previous == collected:
+                return collected
+            previous = collected
+
+        refuse(
+            "two consecutive complete passes did not agree within the "
+            f"explicit {self.MAX_RUN_HISTORY_PASSES}-pass/"
+            f"{self.MAX_RUN_HISTORY_REQUESTS}-request/"
+            f"{self.MAX_RUN_HISTORY_SECONDS:g}-second bounds"
         )
+        raise AssertionError("unreachable")
 
     def dispatch(self, inputs: dict) -> None:
         import subprocess

@@ -803,9 +803,111 @@ class WorkflowRunAttemptEvidenceTests(unittest.TestCase):
             [300, 299, 298, 297],
         )
         self.assertEqual(
-            sum(path.endswith("page=2") for path in calls), 1,
-            "pagination must continue through overlap until the boundary",
+            sum(path.endswith("page=2") for path in calls), 2,
+            "two complete agreeing passes must reach the boundary",
         )
+
+    def test_run_history_retries_after_deletion_shift_hides_owned_run(self):
+        calls = []
+        first_page_reads = 0
+
+        def api(path):
+            nonlocal first_page_reads
+            calls.append(path)
+            if path.endswith("?per_page=100&page=1"):
+                first_page_reads += 1
+                run_ids = (
+                    list(range(300, 200, -1))
+                    if first_page_reads == 1
+                    else list(range(299, 199, -1))
+                )
+            elif path.endswith("?per_page=100&page=2"):
+                # Run 300 was deleted after the first page read, moving the
+                # owned run 200 onto that already-read page during pass one.
+                run_ids = list(range(199, 99, -1))
+            else:
+                raise AssertionError(f"unexpected API path {path}")
+            return json.dumps({
+                "workflow_runs": [{"id": item} for item in run_ids]
+            }).encode()
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        observed = runs.list_run_ids_after("100")
+        self.assertIn(200, observed)
+        self.assertNotIn(300, observed)
+        self.assertEqual(first_page_reads, 3)
+        self.assertEqual(len(calls), 6)
+
+    def test_run_history_requires_canonical_numeric_boundary(self):
+        runs = rd.AwLaneRuns(
+            api=lambda path: json.dumps({"workflow_runs": []}).encode(),
+            repo="awebai/aweb", workflow_file="npm-release.yml",
+        )
+        for boundary in ("0250", "0", 0, -1, True, 250.0):
+            with self.subTest(boundary=boundary):
+                with self.assertRaises(rd.ReceiptError) as caught:
+                    runs.list_run_ids_after(boundary)
+                self.assertIn("canonical numeric ID", str(caught.exception))
+
+    def test_run_history_refuses_order_mutation(self):
+        def api(path):
+            return json.dumps({"workflow_runs": [
+                {"id": 300}, {"id": 298}, {"id": 299}, {"id": 250},
+            ]}).encode()
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        with self.assertRaises(rd.ReceiptError) as caught:
+            runs.list_run_ids_after("250")
+        self.assertIn("order", str(caught.exception))
+        self.assertIn("incomplete", str(caught.exception))
+
+    def test_run_history_refuses_continuous_churn_without_agreement(self):
+        calls = []
+
+        def api(path):
+            calls.append(path)
+            newest = 300 + len(calls)
+            return json.dumps({"workflow_runs": [
+                {"id": newest}, {"id": 250},
+            ]}).encode()
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        runs.MAX_RUN_HISTORY_PASSES = 3
+        with self.assertRaises(rd.ReceiptError) as caught:
+            runs.list_run_ids_after("250")
+        self.assertIn("incomplete", str(caught.exception))
+        self.assertIn("agree", str(caught.exception))
+        self.assertEqual(len(calls), 3)
+
+    def test_run_history_bounds_total_requests_and_time(self):
+        for mode in ("requests", "time"):
+            with self.subTest(mode=mode):
+                calls = []
+                ticks = iter([0.0, 0.0, 0.0, 2.0, 2.0])
+
+                def api(path):
+                    calls.append(path)
+                    newest = 300 + len(calls)
+                    return json.dumps({"workflow_runs": [
+                        {"id": newest}, {"id": 250},
+                    ]}).encode()
+
+                runs = rd.AwLaneRuns(
+                    api=api, repo="awebai/aweb",
+                    workflow_file="npm-release.yml",
+                    clock=(lambda: next(ticks)) if mode == "time" else None,
+                )
+                if mode == "requests":
+                    runs.MAX_RUN_HISTORY_REQUESTS = 2
+                else:
+                    runs.MAX_RUN_HISTORY_SECONDS = 1.0
+                with self.assertRaises(rd.ReceiptError) as caught:
+                    runs.list_run_ids_after("250")
+                self.assertIn("incomplete", str(caught.exception))
+                self.assertLessEqual(len(calls), 2)
 
     def test_missing_boundary_and_page_cap_refuse_incomplete_enumeration(self):
         for mode in ("missing", "cap"):
@@ -822,7 +924,7 @@ class WorkflowRunAttemptEvidenceTests(unittest.TestCase):
 
                 runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
                                      workflow_file="npm-release.yml")
-                runs.MAX_RUN_HISTORY_PAGES = 2
+                runs.MAX_RUN_HISTORY_PAGES_PER_PASS = 2
                 with self.assertRaises(rd.ReceiptError) as caught:
                     runs.list_run_ids_after("250")
                 self.assertIn("incomplete", str(caught.exception))
