@@ -1705,93 +1705,6 @@ def _require_child_identity(measurement: dict) -> str:
     return recorded
 
 
-def _validate_verify_only_server_artifact(
-    zip_bytes: bytes, *, expected_source_sha: str, expected_version: str,
-) -> dict:
-    """The PyPI lane protocol for a VERIFY-ONLY server artifact.
-
-    `rd.validate_pypi_lane_artifact` cannot be reused: it routes through
-    `_lane_manifest_common`, which hard-requires `mode == "stage-only"` because
-    it exists to gate artifacts continuing to publication. A measurement
-    consumes a verify-only artifact, which by definition never continues, so
-    reusing that validator would mean writing "stage-only" into a manifest that
-    is not one. The structural protocol is otherwise identical and is checked
-    here: exactly one wheel and one sdist for the version, members under dist/,
-    manifest keys the two basenames, and every declared digest equal to the
-    member bytes.
-    """
-    import io
-    import zipfile
-
-    try:
-        archive = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    except zipfile.BadZipFile as exc:
-        raise rd.ReceiptError("server lane artifact is not a valid ZIP") from exc
-    with archive:
-        names = [n for n in archive.namelist() if not n.endswith("/")]
-        if len(names) != len(set(names)):
-            raise rd.ReceiptError("server lane artifact repeats a member name")
-        if "manifest.json" not in names:
-            raise rd.ReceiptError("server lane artifact carries no manifest.json")
-        try:
-            manifest = json.loads(archive.read("manifest.json"))
-        except json.JSONDecodeError as exc:
-            raise rd.ReceiptError(
-                "server lane manifest.json is malformed") from exc
-        if manifest.get("mode") != "verify-only":
-            raise rd.ReceiptError(
-                f"server lane artifact mode is {manifest.get('mode')!r}; a "
-                "measurement consumes only a verify-only artifact"
-            )
-        if manifest.get("package") != "server":
-            raise rd.ReceiptError(
-                f"server lane artifact package is {manifest.get('package')!r}, "
-                "not 'server'"
-            )
-        if manifest.get("candidate_version") != expected_version:
-            raise rd.ReceiptError(
-                f"server lane artifact is version "
-                f"{manifest.get('candidate_version')!r}, not the published "
-                f"{expected_version!r} the measurement input asserts"
-            )
-        if manifest.get("source_sha") != expected_source_sha:
-            raise rd.ReceiptError(
-                f"server lane artifact source {manifest.get('source_sha')!r} "
-                f"does not equal the recorded {expected_source_sha!r}"
-            )
-        files = manifest.get("files")
-        expected_names = {
-            f"aweb-{expected_version}-py3-none-any.whl",
-            f"aweb-{expected_version}.tar.gz",
-        }
-        if not isinstance(files, dict) or set(files) != expected_names:
-            raise rd.ReceiptError(
-                f"server lane artifact must declare exactly "
-                f"{sorted(expected_names)}, got "
-                f"{sorted(files) if isinstance(files, dict) else files!r}"
-            )
-        for name, declared in files.items():
-            member = f"dist/{name}"
-            if member not in names:
-                raise rd.ReceiptError(
-                    f"server lane artifact declares {name} but carries no "
-                    f"{member}"
-                )
-            observed = hashlib.sha256(archive.read(member)).hexdigest()
-            if observed != declared:
-                raise rd.ReceiptError(
-                    f"server lane artifact {name} hashes {observed}, not the "
-                    f"declared {declared}"
-                )
-        stray = set(names) - {"manifest.json"} - {f"dist/{n}" for n in files}
-        if stray:
-            raise rd.ReceiptError(
-                f"server lane artifact carries unexpected members "
-                f"{sorted(stray)}"
-            )
-    return manifest
-
-
 class PublishedServerAuthority:
     """Resolves the published server through the reviewed verify-only lane.
 
@@ -1832,10 +1745,16 @@ class PublishedServerAuthority:
                 f"server authority {artifact}: retrieved bytes hash {observed} "
                 f"and not the recorded {authority['zip_digest']}"
             )
-        manifest = _validate_verify_only_server_artifact(
+        # The SHARED validator, with the mode made explicit. A near-copy here
+        # drifted within one round: it never recomputed canonical_set_digest,
+        # so a forged one completed a measurement.
+        manifest = rd.validate_pypi_lane_artifact(
             body,
             expected_source_sha=authority["source_sha"],
             expected_version=published["version"],
+            package="server",
+            pypi_name="aweb",
+            required_mode="verify-only",
         )
         files = manifest.get("files")
         if files != published["digest_set"]:
