@@ -660,6 +660,52 @@ class FederationHarnessTests(unittest.TestCase):
             first.release()
             second.release()
 
+    def test_runnerless_current_support_records_both_directions_in_local_authority(self):
+        calls = []
+        published = wheel_artifact("1.26.35", b"published-current")
+
+        class Resolver:
+            def published(self, version):
+                self_version = version
+                if self_version != "1.26.35":
+                    raise AssertionError(self_version)
+                return published
+
+        def journey(env):
+            calls.append(dict(env))
+            self.assertEqual(Path(env["AWEB_ALPHA_WHEEL"]).read_bytes(), published.bytes)
+            self.assertEqual(Path(env["AWEB_BETA_WHEEL"]).read_bytes(), published.bytes)
+            return SimpleNamespace(
+                returncode=0, stdout=self.observation(env), stderr=""
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "support.json"
+            result = federation.measure_current_published_support(
+                "1.26.35",
+                output=output,
+                store_root=root / "authority",
+                artifact_id="support:server-federation:1.26.35",
+                resolver=Resolver(),
+                journey=journey,
+            )
+            output_bytes = output.read_bytes()
+            document = json.loads(output_bytes)
+            stored = rd.FileArtifactStore(root / "authority").get(result["artifact_id"])
+            authority_digest = rd.FileDigestAuthority(root / "authority").expected_digest(
+                result["artifact_id"]
+            )
+
+        self.assertEqual([call["AWEB_FED_E2E_DIRECTION"] for call in calls], ["a-to-b", "b-to-a"])
+        self.assertEqual(document["edge"], {"a": "server", "b": "server"})
+        self.assertEqual(document["supported_versions"], {"server": ["1.26.35"]})
+        self.assertEqual([cell["direction"] for cell in document["cells"]], ["a-to-b", "b-to-a"])
+        self.assertEqual(stored, output_bytes)
+        self.assertEqual(authority_digest, result["digest"])
+        self.assertEqual(result["record"]["authority"], "local-development")
+        self.assertEqual(result["set"], f"measured:{document['measurement_id']}")
+
     def test_controls_are_one_explicit_measurement_and_never_hidden_in_cells(self):
         versions = []
 

@@ -214,19 +214,18 @@ class PublishedArtifactTests(unittest.TestCase):
             )
 
     def test_published_server_reuses_pypi_status_and_digest_set(self):
-        wheel = b"published wheel"
+        bodies, metadata_document = published_registry_fixture("1.26.34")
         wheel_name = "aweb-1.26.34-py3-none-any.whl"
-        wheel_url = "https://files.example/aweb.whl"
+        wheel = bodies[wheel_name]
         metadata_url = "https://pypi.org/pypi/aweb/1.26.34/json"
-        metadata = json.dumps({"urls": [{
-            "filename": wheel_name,
-            "packagetype": "bdist_wheel",
-            "url": wheel_url,
-            "digests": {"sha256": sha(wheel)},
-        }]}).encode()
+        metadata = json.dumps(metadata_document).encode()
+        observed_set = {name: sha(body) for name, body in bodies.items()}
         resolver = skew.ArtifactResolver(
-            pypi_observe=lambda package, version: (200, {wheel_name: sha(wheel)}),
-            http_get=lambda url: (200, metadata if url == metadata_url else wheel),
+            pypi_observe=lambda package, version: (200, observed_set),
+            http_get=lambda url: (
+                (200, metadata) if url == metadata_url
+                else (200, bodies[url.rsplit("/", 1)[-1]])
+            ),
         )
         artifact = resolver.resolve(
             "published", {"component": "server", "version": "1.26.34"},
@@ -1041,12 +1040,16 @@ def measurement_input(component="channel", *, server_version="1.26.34",
             "version": server_version,
             "digest_set": server_files,
             "authority": {
-                "provider": "verify-only-lane",
-                "repo": "awebai/aweb",
-                "workflow": ".github/workflows/pypi-release.yml",
-                "artifact": "gh-artifact:awebai/aweb:41:9001",
-                "source_sha": "c" * 40,
-                "zip_digest": "sha256:" + server_zip_digest(server_version),
+                "provider": "pypi-registry",
+                "project": "aweb",
+                "filename": f"aweb-{server_version}-py3-none-any.whl",
+                "registry_sha256": server_files[
+                    f"aweb-{server_version}-py3-none-any.whl"
+                ],
+                "download_url": (
+                    "https://files.pythonhosted.org/"
+                    f"aweb-{server_version}-py3-none-any.whl"
+                ),
             },
         },
     }
@@ -1110,38 +1113,56 @@ def server_zip_digest(version="1.26.34", source_sha="c" * 40):
     return sha(server_lane_zip(version, source_sha)[0])
 
 
-class FakePublishedAuthority:
-    """The injected resolver: no network, real semantics."""
+def published_registry_fixture(version="1.26.34"):
+    wheel_name = f"aweb-{version}-py3-none-any.whl"
+    sdist_name = f"aweb-{version}.tar.gz"
+    bodies = {
+        wheel_name: b"wheel " + version.encode(),
+        sdist_name: b"sdist " + version.encode(),
+    }
+    metadata = {
+        "info": {"version": version},
+        "urls": [
+            {
+                "filename": name,
+                "packagetype": (
+                    "bdist_wheel" if name == wheel_name else "sdist"
+                ),
+                "yanked": False,
+                "url": f"https://files.pythonhosted.org/{name}",
+                "digests": {"sha256": sha(body)},
+            }
+            for name, body in bodies.items()
+        ],
+    }
+    return bodies, metadata
 
-    def __init__(self, *, version="1.26.34", source_sha="c" * 40,
-                 artifact="gh-artifact:awebai/aweb:41:9001",
-                 canonical_set_digest=_KEEP):
-        self.body, self.files = server_lane_zip(
-            version, source_sha, canonical_set_digest)
-        self.artifact = artifact
-        self.calls = []
 
-    def expected_digest(self, artifact_id):
-        self.calls.append(("digest", artifact_id))
-        if artifact_id != self.artifact:
-            raise rd.ReceiptError(f"no authority digest for {artifact_id}")
-        return "sha256:" + sha(self.body)
-
-    def get(self, artifact_id):
-        self.calls.append(("get", artifact_id))
-        if artifact_id != self.artifact:
-            raise rd.ReceiptError(f"artifact {artifact_id} is absent")
-        return self.body
-
-
-# Bound at import: the CLI tests monkeypatch skew.PublishedServerAuthority, and
-# resolving it lazily here would make this helper call itself.
 _REAL_PUBLISHED_AUTHORITY = skew.PublishedServerAuthority
+_REAL_ARTIFACT_RESOLVER = skew.ArtifactResolver
 
 
-def published_authority(**kw):
-    fake = FakePublishedAuthority(**kw)
-    return _REAL_PUBLISHED_AUTHORITY(store=fake, digest_authority=fake)
+def published_authority(*, version="1.26.34", metadata=None, downloads=None,
+                        observed_set=None):
+    bodies, honest_metadata = published_registry_fixture(version)
+    metadata = honest_metadata if metadata is None else metadata
+    downloads = bodies if downloads is None else downloads
+    observed_set = observed_set if observed_set is not None else {
+        name: sha(body) for name, body in bodies.items()
+    }
+    metadata_url = f"https://pypi.org/pypi/aweb/{version}/json"
+
+    def http_get(url):
+        if url == metadata_url:
+            return 200, json.dumps(metadata).encode()
+        filename = url.rsplit("/", 1)[-1]
+        return (200, downloads[filename]) if filename in downloads else (404, b"")
+
+    resolver = _REAL_ARTIFACT_RESOLVER(
+        http_get=http_get,
+        pypi_observe=lambda project, requested: (200, observed_set),
+    )
+    return _REAL_PUBLISHED_AUTHORITY(resolver=resolver)
 
 
 def input_pair(component="channel", **kw):
@@ -1442,6 +1463,24 @@ class MeasureSupportBoundaryTests(unittest.TestCase):
                 tmp, component),
         )
 
+    def test_shared_entrypoint_refuses_aw_before_any_effect(self):
+        document = measurement_input("aw")
+        authority = unittest.mock.Mock()
+        harness = unittest.mock.Mock()
+        with self.assertRaisesRegex(rd.ReceiptError, "supports only.*channel.*pi"):
+            skew.measure_support(
+                component="aw",
+                measurement_input=document,
+                measurement_input_bytes=canonical_bytes(document),
+                supported_versions={"server": ["1.26.34"]},
+                published_authority=authority,
+                harness=harness,
+            )
+        authority.resolve.assert_not_called()
+        harness.freeze_matrix.assert_not_called()
+        harness.run.assert_not_called()
+        harness.finish_matrix.assert_not_called()
+
     # 1. the measurement input is not a release staged manifest
     def test_release_staged_manifest_is_refused(self):
         """The whole point of the seam: a document that asserts a frozen plan,
@@ -1521,7 +1560,7 @@ class MeasureSupportBoundaryTests(unittest.TestCase):
         doc["entries"]["server"]["authority"]["provider"] = "self-asserted"
         doc.pop("manifest_id")
         doc["manifest_id"] = rd.canonical_json_digest(doc)
-        with self.assertRaisesRegex(rd.ReceiptError, "verify-only"):
+        with self.assertRaisesRegex(rd.ReceiptError, "pypi-registry"):
             skew.validate_measurement_input(doc, component="channel")
 
     def test_candidate_digest_not_matching_its_set_refused(self):
@@ -1641,10 +1680,11 @@ class CliMeasurementInputTests(unittest.TestCase):
     """The CLI must validate the whole measurement input before any effect and
     must never accept a release staged manifest."""
 
-    def run_cli(self, tmp, *, document=None, fake=True, out_name="out.json"):
+    def run_cli(self, tmp, *, component="channel", document=None, fake=True,
+                out_name="out.json"):
         path = Path(tmp) / "input.json"
         document = document if document is not None else measurement_input(
-            "channel")
+            component)
         path.write_bytes(canonical_bytes(document))
         if fake:
             for name, replacement in (
@@ -1656,7 +1696,7 @@ class CliMeasurementInputTests(unittest.TestCase):
                 self.addCleanup(setattr, skew, name, getattr(skew, name))
                 setattr(skew, name, replacement)
         return skew.main([
-            "measure-channel", "--measurement-input", str(path),
+            f"measure-{component}", "--measurement-input", str(path),
             "--supported-server", "1.26.34",
             "--evidence-root", str(Path(tmp) / "evidence"),
             "--output", str(Path(tmp) / out_name),
@@ -1671,19 +1711,29 @@ class CliMeasurementInputTests(unittest.TestCase):
             code = self.run_cli(tmp, **kw)
         return code, captured.getvalue()
 
-    def test_cli_success_writes_a_valid_envelope(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            code, output = self.capture(tmp)
-            self.assertEqual(code, 0, output)
-            self.assertIn("status: incomplete-unanchored", output)
-            envelope = json.loads((Path(tmp) / "out.json").read_bytes())
-            self.assertEqual(envelope["schema"], skew.ENVELOPE_SCHEMA)
-            self.assertEqual(envelope["component"], "channel")
-            self.assertEqual(envelope["supported_versions"],
-                             {"server": ["1.26.34"]})
-            self.assertEqual(envelope["measurement"]["status"],
-                             "incomplete-unanchored")
-            self.assertTrue(envelope["measurement_input_id"])
+    def test_each_cli_binds_the_exact_registry_authority_report(self):
+        for component in ("channel", "pi"):
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as tmp:
+                document = measurement_input(component)
+                code, output = self.capture(
+                    tmp, component=component, document=document
+                )
+                self.assertEqual(code, 0, output)
+                self.assertIn("status: incomplete-unanchored", output)
+                envelope = json.loads((Path(tmp) / "out.json").read_bytes())
+                self.assertEqual(envelope["schema"], skew.ENVELOPE_SCHEMA)
+                self.assertEqual(envelope["component"], component)
+                self.assertEqual(envelope["supported_versions"],
+                                 {"server": ["1.26.34"]})
+                self.assertEqual(envelope["measurement"]["status"],
+                                 "incomplete-unanchored")
+                self.assertEqual(
+                    envelope["published_server_authority"],
+                    skew.expected_published_server_authority_report(
+                        document["entries"]["server"]
+                    ),
+                )
+                self.assertTrue(envelope["measurement_input_id"])
 
     def test_cli_refuses_a_release_staged_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2324,12 +2374,7 @@ class MeasurementInputBindingTests(unittest.TestCase):
 
 
 class PublishedAuthorityConsumedTests(unittest.TestCase):
-    """The authority must be RESOLVED, not merely shaped.
-
-    Previously it was digit-shaped labels nothing consumed, so any run/artifact
-    id re-identified a manifest and the measurement completed anyway, because
-    the cells only ever observe PyPI.
-    """
+    """Published server authority is the one shared immutable PyPI report."""
 
     @staticmethod
     def reseal(document):
@@ -2338,179 +2383,102 @@ class PublishedAuthorityConsumedTests(unittest.TestCase):
         return document
 
     def resolve(self, document, *, authority=None):
-        resolver = authority or published_authority()
+        resolver = authority or published_authority(
+            version=document["entries"]["server"]["version"])
         return resolver.resolve(document["entries"]["server"])
 
-    def test_honest_authority_resolves(self):
-        report = self.resolve(measurement_input("channel"))
-        self.assertEqual(report["artifact"], "gh-artifact:awebai/aweb:41:9001")
-        self.assertEqual(report["version"], "1.26.34")
+    def test_honest_registry_authority_resolves(self):
+        document = measurement_input("channel")
+        report = self.resolve(document)
+        self.assertEqual(
+            report,
+            skew.expected_published_server_authority_report(
+                document["entries"]["server"]
+            ),
+        )
 
-    def test_substituted_artifact_or_run_refuses(self):
-        for artifact in (
-            "gh-artifact:awebai/aweb:41:9002",
-            "gh-artifact:awebai/aweb:42:9001",
-        ):
-            with self.subTest(artifact=artifact):
-                doc = measurement_input("channel")
-                doc["entries"]["server"]["authority"]["artifact"] = artifact
-                with self.assertRaises(rd.ReceiptError):
-                    self.resolve(self.reseal(doc))
+    def test_registry_download_digest_mismatch_refuses(self):
+        version = "1.26.34"
+        bodies, metadata = published_registry_fixture(version)
+        wheel = f"aweb-{version}-py3-none-any.whl"
+        downloads = dict(bodies, **{wheel: b"substituted"})
+        with self.assertRaisesRegex(rd.ReceiptError, "does not equal PyPI"):
+            self.resolve(
+                measurement_input("channel"),
+                authority=published_authority(
+                    version=version, metadata=metadata, downloads=downloads
+                ),
+            )
 
-    def test_foreign_repo_or_workflow_refuses(self):
-        doc = measurement_input("channel")
-        doc["entries"]["server"]["authority"].update({
-            "repo": "attacker/aweb",
-            "artifact": "gh-artifact:attacker/aweb:41:9001",
-        })
-        with self.assertRaises(rd.ReceiptError):
-            skew.validate_measurement_input(self.reseal(doc), component="channel")
+    def test_ambiguous_registry_files_refuse(self):
+        version = "1.26.34"
+        _, metadata = published_registry_fixture(version)
+        metadata = json.loads(json.dumps(metadata))
+        metadata["urls"].append(dict(metadata["urls"][0]))
+        with self.assertRaisesRegex(rd.ReceiptError, "repeats filename"):
+            self.resolve(
+                measurement_input("channel"),
+                authority=published_authority(version=version, metadata=metadata),
+            )
 
-        doc = measurement_input("channel")
-        doc["entries"]["server"]["authority"]["workflow"] = (
-            ".github/workflows/npm-release.yml")
-        with self.assertRaisesRegex(rd.ReceiptError, "verify-only lane"):
-            skew.validate_measurement_input(self.reseal(doc), component="channel")
+    def test_projection_mutation_refuses(self):
+        document = measurement_input("channel")
+        document["entries"]["server"]["authority"]["registry_sha256"] = "0" * 64
+        self.reseal(document)
+        with self.assertRaisesRegex(rd.ReceiptError, "registry projection"):
+            self.resolve(document)
 
-    def test_repo_disagreeing_with_its_artifact_refuses(self):
-        doc = measurement_input("channel")
-        doc["entries"]["server"]["authority"]["repo"] = "awebai/aw"
-        with self.assertRaisesRegex(rd.ReceiptError, "disagrees"):
-            skew.validate_measurement_input(self.reseal(doc), component="channel")
-
-    def test_substituted_source_refuses(self):
-        doc = measurement_input("channel")
-        doc["entries"]["server"]["authority"]["source_sha"] = "d" * 40
-        with self.assertRaisesRegex(rd.ReceiptError, "source"):
-            self.resolve(self.reseal(doc))
-
-    def test_substituted_outer_digest_refuses(self):
-        doc = measurement_input("channel")
-        doc["entries"]["server"]["authority"]["zip_digest"] = (
-            "sha256:" + "9" * 64)
-        with self.assertRaisesRegex(rd.ReceiptError, "independent digest"):
-            self.resolve(self.reseal(doc))
-
-    def test_substituted_server_version_refuses(self):
-        doc = measurement_input("channel")
-        doc["entries"]["server"]["version"] = "9.9.9"
-        with self.assertRaises(rd.ReceiptError):
-            self.resolve(self.reseal(doc))
-
-    def test_substituted_digest_set_refuses(self):
-        doc = measurement_input("channel")
-        doc["entries"]["server"]["digest_set"] = {"aweb-1.26.34.whl": "0" * 64}
-        with self.assertRaises(rd.ReceiptError):
-            self.resolve(self.reseal(doc))
-
-    def test_non_canonical_github_ids_refuse(self):
-        for artifact in (
-            "gh-artifact:awebai/aweb:0:9001",
-            "gh-artifact:awebai/aweb:41:0",
-            "gh-artifact:awebai/aweb:041:9001",
-        ):
-            with self.subTest(artifact=artifact):
-                doc = measurement_input("channel")
-                doc["entries"]["server"]["authority"]["artifact"] = artifact
-                with self.assertRaisesRegex(
-                    rd.ReceiptError, "canonical positive integer"
-                ):
-                    skew.validate_measurement_input(
-                        self.reseal(doc), component="channel")
-
-    def test_measurement_refuses_before_any_evidence_or_effect(self):
-        """The whole point: a bad authority must stop the run before a cell."""
-        doc = measurement_input("channel")
-        doc["entries"]["server"]["authority"]["zip_digest"] = (
-            "sha256:" + "9" * 64)
-        self.reseal(doc)
+    def test_measurement_refuses_bad_registry_before_evidence(self):
+        document = measurement_input("channel")
+        document["entries"]["server"]["authority"]["registry_sha256"] = "0" * 64
+        document["entries"]["server"]["digest_set"][
+            "aweb-1.26.34-py3-none-any.whl"
+        ] = "0" * 64
+        self.reseal(document)
         journeys = []
 
         def factory():
-            journey = FakeJourney()
-            journeys.append(journey)
-            return journey
+            journeys.append(FakeJourney())
+            return journeys[-1]
 
         with tempfile.TemporaryDirectory() as tmp:
             evidence = skew.evidence_writer_for("channel", Path(tmp))
             harness = skew.ChannelPiHarness(
                 resolver=FakeResolver(), journey_factory=factory,
-                evidence=evidence)
+                evidence=evidence,
+            )
             with self.assertRaises(rd.ReceiptError):
                 skew.measure_support(
                     component="channel",
-                    measurement_input=doc,
-                    measurement_input_bytes=canonical_bytes(doc),
+                    measurement_input=document,
+                    measurement_input_bytes=canonical_bytes(document),
                     supported_versions={"server": ["1.26.34"]},
                     published_authority=published_authority(),
-                    harness=harness)
-            self.assertEqual(journeys, [], "no cell may run")
-            self.assertFalse((evidence.root / "cells").exists(),
-                             "no evidence may be written")
+                    harness=harness,
+                )
+            self.assertEqual(journeys, [])
+            self.assertFalse((evidence.root / "cells").exists())
 
     def test_missing_resolver_refuses(self):
-        doc = measurement_input("channel")
+        document = measurement_input("channel")
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(rd.ReceiptError, "never consumed"):
+            with self.assertRaisesRegex(rd.ReceiptError, "must be consumed"):
                 skew.measure_support(
                     component="channel",
-                    measurement_input=doc,
-                    measurement_input_bytes=canonical_bytes(doc),
+                    measurement_input=document,
+                    measurement_input_bytes=canonical_bytes(document),
                     supported_versions={"server": ["1.26.34"]},
                     harness=skew.ChannelPiHarness(
                         resolver=FakeResolver(), journey_factory=FakeJourney,
-                        evidence=skew.evidence_writer_for("channel", Path(tmp))))
+                        evidence=skew.evidence_writer_for("channel", Path(tmp)),
+                    ),
+                )
 
 
+class PypiLaneValidatorTests(unittest.TestCase):
+    """The lane validator remains explicit for candidate-stage callers."""
 
-
-class SharedVerifyOnlyValidatorTests(unittest.TestCase):
-    """The near-copy drifted within one round: it never recomputed
-    canonical_set_digest, so a forged one completed a measurement. The shared
-    validator does recompute it, and is now called with an explicit mode."""
-
-    def authority_for(self, **kw):
-        fake = FakePublishedAuthority(**kw)
-        return _REAL_PUBLISHED_AUTHORITY(store=fake, digest_authority=fake), fake
-
-    def input_for(self, fake):
-        doc = measurement_input("channel")
-        doc["entries"]["server"]["authority"]["zip_digest"] = (
-            "sha256:" + sha(fake.body))
-        doc["entries"]["server"]["digest_set"] = fake.files
-        doc.pop("manifest_id")
-        doc["manifest_id"] = rd.canonical_json_digest(doc)
-        return doc
-
-    def test_forged_canonical_set_digest_refuses(self):
-        """The ZIP digest and the independent authority are BOTH correct for
-        these bytes -- only the manifest's own set digest is forged."""
-        resolver, fake = self.authority_for(canonical_set_digest="0" * 64)
-        doc = self.input_for(fake)
-        with self.assertRaisesRegex(rd.ReceiptError, "canonical set digest"):
-            resolver.resolve(doc["entries"]["server"])
-
-    def test_missing_canonical_set_digest_refuses(self):
-        resolver, fake = self.authority_for(canonical_set_digest=_DROP)
-        doc = self.input_for(fake)
-        with self.assertRaisesRegex(rd.ReceiptError, "canonical set digest"):
-            resolver.resolve(doc["entries"]["server"])
-
-    def test_non_string_canonical_set_digest_refuses(self):
-        for value in (None, 12345, ["x"]):
-            with self.subTest(value=value):
-                resolver, fake = self.authority_for(canonical_set_digest=value)
-                doc = self.input_for(fake)
-                with self.assertRaises(rd.ReceiptError):
-                    resolver.resolve(doc["entries"]["server"])
-
-    def test_honest_artifact_still_resolves(self):
-        resolver, fake = self.authority_for()
-        report = resolver.resolve(self.input_for(fake)["entries"]["server"])
-        self.assertEqual(report["version"], "1.26.34")
-
-    def test_stage_only_artifact_refused_for_a_measurement(self):
-        """Mode is explicit in both directions."""
+    def test_stage_only_artifact_refused_when_verify_only_is_requested(self):
         stage, _ = server_lane_zip(mode="stage-only")
         with self.assertRaisesRegex(rd.ReceiptError, "verify-only"):
             rd.validate_pypi_lane_artifact(
@@ -2518,15 +2486,13 @@ class SharedVerifyOnlyValidatorTests(unittest.TestCase):
                 expected_version="1.26.34", package="server",
                 pypi_name="aweb", required_mode="verify-only")
 
-    def test_default_mode_is_unchanged_for_existing_callers(self):
-        """Every existing caller passes no mode and must still get stage-only."""
+    def test_default_mode_is_unchanged_for_candidate_callers(self):
         body, _ = server_lane_zip()
         with self.assertRaisesRegex(rd.ReceiptError, "stage-only"):
             rd.validate_pypi_lane_artifact(
                 body, expected_source_sha="c" * 40,
                 expected_version="1.26.34", package="server",
                 pypi_name="aweb")
-
 
 
 if __name__ == "__main__":

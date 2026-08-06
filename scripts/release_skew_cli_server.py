@@ -1499,7 +1499,7 @@ def measure_support(
     if published_authority is None:
         raise rd.ReceiptError(
             "CLI/server measurement requires the published-server authority "
-            "resolver; a declared verify-only authority must be consumed"
+            "resolver; the exact PyPI registry projection must be consumed"
         )
     published_report = published_authority.resolve(published)
 
@@ -1691,15 +1691,10 @@ def _require_output_envelope(
         measurement_input_id=measurement_input_id,
         measurement_input_digest=measurement_input_digest,
         supported_versions=supported_versions,
+        expected_published_server_authority=(
+            expected_published_server_authority
+        ),
     )
-    if (
-        document["published_server_authority"]
-        != expected_published_server_authority
-    ):
-        raise rd.ReceiptError(
-            "measurement envelope published-server authority does not exactly "
-            "equal the report derived from the validated measurement input"
-        )
     child = document["measurement"]
     _require_unanchored_measurement(child, matrix_id=child.get("matrix_id"))
     _require_child_identity(child)

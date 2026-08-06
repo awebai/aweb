@@ -844,12 +844,14 @@ def measurement_input(*, entries=None, source="a" * 40):
                 "version": "1.26.35",
                 "digest_set": server_files,
                 "authority": {
-                    "provider": "verify-only-lane",
-                    "repo": "awebai/aweb",
-                    "workflow": ".github/workflows/pypi-release.yml",
-                    "artifact": "gh-artifact:awebai/aweb:41:9001",
-                    "source_sha": "c" * 40,
-                    "zip_digest": "sha256:" + "5" * 64,
+                    "provider": "pypi-registry",
+                    "project": "aweb",
+                    "filename": "aweb-1.26.35-py3-none-any.whl",
+                    "registry_sha256": "2" * 64,
+                    "download_url": (
+                        "https://files.pythonhosted.org/"
+                        "aweb-1.26.35-py3-none-any.whl"
+                    ),
                 },
             },
         },
@@ -940,13 +942,12 @@ def expected_published_authority(document):
     published = document["entries"]["server"]
     authority = published["authority"]
     return {
-        "artifact": authority["artifact"],
-        "repo": authority["repo"],
-        "workflow": authority["workflow"],
-        "source_sha": authority["source_sha"],
-        "zip_digest": authority["zip_digest"],
+        "provider": authority["provider"],
+        "project": authority["project"],
         "version": published["version"],
-        "digest_set": dict(published["digest_set"]),
+        "filename": authority["filename"],
+        "registry_sha256": authority["registry_sha256"],
+        "download_url": authority["download_url"],
     }
 
 
@@ -969,6 +970,90 @@ def measurement_envelope(document, body, child=None, authority=None):
     }
     envelope["envelope_id"] = rd.canonical_json_digest(envelope)
     return envelope
+
+
+class PublishedServerRegistryAuthorityTests(unittest.TestCase):
+    def published(self, *, wheel=b"published-wheel", metadata=None):
+        document = measurement_input()
+        published = document["entries"]["server"]
+        metadata = metadata or pypi_fixture(published["version"], wheel)
+        records = metadata["urls"]
+        wheel_record = next(
+            record for record in records
+            if record.get("packagetype") == "bdist_wheel"
+        )
+        published["digest_set"] = {
+            record["filename"]: record["digests"]["sha256"]
+            for record in records
+        }
+        published["authority"] = {
+            "provider": "pypi-registry",
+            "project": "aweb",
+            "filename": wheel_record["filename"],
+            "registry_sha256": wheel_record["digests"]["sha256"],
+            "download_url": wheel_record["url"],
+        }
+        return published, metadata, wheel
+
+    def authority(self, subject, metadata, download):
+        version = metadata["info"]["version"]
+        observed_set = {
+            record["filename"]: record["digests"]["sha256"]
+            for record in metadata["urls"]
+        }
+        metadata_url = f"https://pypi.org/pypi/aweb/{version}/json"
+
+        def http_get(url):
+            if url == metadata_url:
+                return 200, json.dumps(metadata).encode()
+            return 200, download
+
+        resolver = subject.measurement_inputs.ArtifactResolver(
+            http_get=http_get,
+            pypi_observe=lambda project, requested: (200, observed_set),
+        )
+        return subject.PublishedServerAuthority(resolver=resolver)
+
+    def test_accepts_exact_registry_projection_and_download_bytes(self):
+        import release_skew_cli_server as subject
+
+        published, metadata, wheel = self.published()
+        report = self.authority(subject, metadata, wheel).resolve(published)
+        self.assertEqual(report, {
+            "provider": "pypi-registry",
+            "project": "aweb",
+            "version": "1.26.35",
+            "filename": "aweb-1.26.35-py3-none-any.whl",
+            "registry_sha256": sha(wheel),
+            "download_url": (
+                "https://files.pythonhosted.org/"
+                "aweb-1.26.35-py3-none-any.whl"
+            ),
+        })
+
+    def test_refuses_registry_download_digest_mismatch(self):
+        import release_skew_cli_server as subject
+
+        published, metadata, _ = self.published()
+        with self.assertRaisesRegex(rd.ReceiptError, "does not equal PyPI"):
+            self.authority(subject, metadata, b"substituted").resolve(published)
+
+    def test_refuses_ambiguous_registry_file_set(self):
+        import release_skew_cli_server as subject
+
+        published, metadata, wheel = self.published()
+        metadata = json.loads(json.dumps(metadata))
+        metadata["urls"].append(dict(metadata["urls"][0]))
+        with self.assertRaisesRegex(rd.ReceiptError, "repeats filename"):
+            self.authority(subject, metadata, wheel).resolve(published)
+
+    def test_refuses_projection_that_differs_from_registry(self):
+        import release_skew_cli_server as subject
+
+        published, metadata, wheel = self.published()
+        published["authority"]["registry_sha256"] = "0" * 64
+        with self.assertRaisesRegex(rd.ReceiptError, "registry projection"):
+            self.authority(subject, metadata, wheel).resolve(published)
 
 
 class MeasurementCliTests(unittest.TestCase):
@@ -1390,12 +1475,7 @@ class MeasurementTests(unittest.TestCase):
             def resolve(self, entry):
                 events.append("authority")
                 self.entry = entry
-                return {
-                    "provider": "verify-only-lane",
-                    "artifact": entry["authority"]["artifact"],
-                    "version": entry["version"],
-                    "digest_set": dict(entry["digest_set"]),
-                }
+                return expected_published_authority(document)
 
         class Harness:
             def __init__(self):
@@ -1478,7 +1558,7 @@ class MeasurementTests(unittest.TestCase):
         self.assertEqual(result["measurement_input_id"], document["manifest_id"])
         self.assertEqual(result["measurement_input_sha256"], sha(body))
         self.assertEqual(result["published_server_authority"]["provider"],
-                         "verify-only-lane")
+                         "pypi-registry")
         self.assertEqual(result["measurement"], harness.child)
         self.assertEqual(result["measurement_id"], harness.child["measurement_id"])
         self.assertEqual(result["measurement"]["status"], "incomplete-unanchored")
@@ -1546,12 +1626,9 @@ class MeasurementTests(unittest.TestCase):
                 )
             return proof
 
-        authority = mock.Mock(resolve=mock.Mock(return_value={
-            "provider": "verify-only-lane",
-            "artifact": document["entries"]["server"]["authority"]["artifact"],
-            "version": "1.26.35",
-            "digest_set": document["entries"]["server"]["digest_set"],
-        }))
+        authority = mock.Mock(
+            resolve=mock.Mock(return_value=expected_published_authority(document))
+        )
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             harness = subject.CliServerSkewHarness(
@@ -1593,9 +1670,9 @@ class MeasurementTests(unittest.TestCase):
             support_complete=True,
             anchor={"forged": True},
         ))
-        authority = mock.Mock(resolve=mock.Mock(return_value={
-            "provider": "verify-only-lane"
-        }))
+        authority = mock.Mock(
+            resolve=mock.Mock(return_value=expected_published_authority(document))
+        )
         reaggregate = mock.Mock()
         try:
             with mock.patch.object(subject, "aggregate_frozen_matrix", reaggregate):
@@ -1617,9 +1694,9 @@ class MeasurementTests(unittest.TestCase):
 
         document = measurement_input()
         harness = FakeMeasurementLifecycle(measurement_child)
-        authority = mock.Mock(resolve=mock.Mock(return_value={
-            "provider": "verify-only-lane"
-        }))
+        authority = mock.Mock(
+            resolve=mock.Mock(return_value=expected_published_authority(document))
+        )
 
         def mismatched(*args, **kwargs):
             return measurement_child(harness.matrix["matrix_id"], reports=[{
@@ -1655,9 +1732,9 @@ class MeasurementTests(unittest.TestCase):
             return path
 
         harness.finish_matrix = pretty_finish
-        authority = mock.Mock(resolve=mock.Mock(return_value={
-            "provider": "verify-only-lane"
-        }))
+        authority = mock.Mock(
+            resolve=mock.Mock(return_value=expected_published_authority(document))
+        )
         try:
             with self.assertRaisesRegex(rd.ReceiptError, "canonical bytes"):
                 subject.measure_support(
@@ -1785,9 +1862,9 @@ class MeasurementTests(unittest.TestCase):
                 raise subject.SkewJourneyFailure("network timeout", evidence)
 
         document = measurement_input()
-        authority = mock.Mock(resolve=mock.Mock(return_value={
-            "provider": "verify-only-lane"
-        }))
+        authority = mock.Mock(
+            resolve=mock.Mock(return_value=expected_published_authority(document))
+        )
         with self.assertRaisesRegex(rd.ReceiptError, "did not fail on the required.*feature"):
             subject.measure_support(
                 measurement_input=document,
@@ -1818,9 +1895,9 @@ class MeasurementTests(unittest.TestCase):
                 return {"outcome": "green", "cell": subject.cell_document(value), "artifacts": []}
 
         document = measurement_input()
-        authority = mock.Mock(resolve=mock.Mock(return_value={
-            "provider": "verify-only-lane"
-        }))
+        authority = mock.Mock(
+            resolve=mock.Mock(return_value=expected_published_authority(document))
+        )
         with self.assertRaisesRegex(rd.ReceiptError, "negative control.*green"):
             subject.measure_support(
                 measurement_input=document,

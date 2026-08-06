@@ -802,6 +802,21 @@ def resume_remaining(
 class Approval:
     who: str
     when: str
+    risk: str | None = None
+    g5_deferred: bool = False
+
+
+def runnerless_risk_approval(value: str | None, *, defer_g5: bool) -> Approval:
+    """One explicit human record selects local authority and any G5 deferral."""
+    parts = value.split(",", 2) if value else []
+    if len(parts) != 3 or not all(parts):
+        raise ReceiptError(
+            "runnerless local authority requires one explicit risk authorization "
+            "as who,when,risk"
+        )
+    return Approval(
+        who=parts[0], when=parts[1], risk=parts[2], g5_deferred=defer_g5
+    )
 
 
 def require_approval(node: PlanNode, *, approval) -> None:
@@ -927,7 +942,12 @@ def seal_receipt(
                 for name, e in sorted(entries.items())
             },
             "approvals": {
-                component: {"who": a.who, "when": a.when}
+                component: {
+                    "who": a.who,
+                    "when": a.when,
+                    **({"risk": a.risk} if a.risk is not None else {}),
+                    **({"g5_deferred": True} if a.g5_deferred else {}),
+                }
                 for component, a in sorted(approvals.items())
             },
         },
@@ -1169,6 +1189,20 @@ def recovery_run_marker(component: str, attempt_artifact_id: str) -> str:
     )
 
 
+GH_API_DEFAULT_TIMEOUT = 60.0
+
+
+def _default_gh_api(path: str) -> bytes:
+    """Single-argument default for the artifact store/authority/run reader.
+
+    _run_gh_api takes a required keyword-only timeout, but those consumers call
+    their injected api with the path alone -- an injected fake has that
+    signature too. Storing _run_gh_api directly therefore raised TypeError on
+    every real use while every test passed, because tests inject fakes.
+    """
+    return _run_gh_api(path, timeout=GH_API_DEFAULT_TIMEOUT)
+
+
 def _run_gh_api(path: str, *, timeout: float) -> bytes:
     import subprocess
 
@@ -1263,7 +1297,7 @@ class GithubArtifactStore:
 
     def __init__(self, api=None, *, repo: str = "awebai/aw",
                  workflow_path: str = AW_LANE_WORKFLOW_PATH):
-        self._api = api or _run_gh_api
+        self._api = api or _default_gh_api
         self._repo = repo
         self._workflow_path = workflow_path
 
@@ -1298,7 +1332,7 @@ class GithubArtifactDigestAuthority:
 
     def __init__(self, api=None, *, repo: str = "awebai/aw",
                  workflow_path: str = AW_LANE_WORKFLOW_PATH):
-        self._api = api or _run_gh_api
+        self._api = api or _default_gh_api
         self._repo = repo
         self._workflow_path = workflow_path
 
@@ -1322,7 +1356,7 @@ class GithubAnchorTransport:
     workflow. Inputs reach the dispatch as literal fields, never shell."""
 
     def __init__(self, api=None, repo: str = ANCHOR_REPO):
-        self._api = api or _run_gh_api
+        self._api = api or _default_gh_api
         self.repo = repo
 
     def list_artifacts(self) -> list[dict]:
@@ -3383,6 +3417,162 @@ class NpmWorkflowLane(_WorkflowLaneBase):
         )
 
 
+class SubprocessLocalAdapter:
+    """Tiny checked-in protocol for existing component/direct release scripts."""
+
+    def __init__(self, executable: Path):
+        self.executable = str(Path(executable).resolve())
+
+    def _run(self, operation, node, stage, source_sha=None):
+        command = [
+            self.executable, operation,
+            "--component", node.component,
+            "--version", node.version,
+            "--stage", str(stage),
+        ]
+        if source_sha is not None:
+            command += ["--source-sha", source_sha]
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise ReceiptError(
+                f"{node.component}: local adapter {operation} failed: "
+                f"{result.stderr.strip()}"
+            )
+        return json.loads(result.stdout or "{}")
+
+    def stage(self, node, output, source_sha):
+        self._run("stage", node, output, source_sha)
+
+    def publish(self, node, stage, files):
+        return self._run("publish", node, stage)
+
+    def observe(self, node, stage, files):
+        result = self._run("observe", node, stage)
+        return result.get("files")
+
+
+class LocalRunnerlessLane:
+    """Build once locally, then publish exactly the recorded files.
+
+    The adapter is deliberately small: stage writes files into the supplied
+    directory; publish consumes those paths; observe returns registry digests.
+    Git/tag hosting is a continuation and may be deferred after registry
+    success. The durable local manifest makes resume reuse bytes, never build.
+    """
+
+    def __init__(self, component: str, root: Path, adapter, source_sha: str):
+        self.component = component
+        self.root = Path(root).resolve()
+        self.adapter = adapter
+        self.source_sha = source_sha
+        self._metadata = {}
+
+    def has_lane(self, component):
+        return component == self.component
+
+    def _stage_dir(self, node):
+        return self.root / self.source_sha / node.component / node.version
+
+    @staticmethod
+    def _inventory(stage: Path) -> dict[str, str]:
+        return {
+            path.relative_to(stage).as_posix(): hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
+            for path in sorted(stage.rglob("*"))
+            if path.is_file() and path != stage / "manifest.json"
+        }
+
+    def stage(self, node):
+        stage = self._stage_dir(node)
+        manifest_path = stage / "manifest.json"
+        if not manifest_path.exists():
+            stage.mkdir(parents=True, exist_ok=False)
+            self.adapter.stage(node, stage, self.source_sha)
+            files = self._inventory(stage)
+            if not files:
+                raise ReceiptError(f"{node.component}: local stage produced no files")
+            manifest = {
+                "schema": "aweb.release.local-stage.v1",
+                "component": node.component,
+                "version": node.version,
+                "source_sha": self.source_sha,
+                "files": files,
+            }
+            manifest_path.write_bytes(canonical_json_bytes(manifest))
+        manifest = json.loads(manifest_path.read_bytes())
+        files = self._inventory(stage)
+        if manifest != {
+            "schema": "aweb.release.local-stage.v1",
+            "component": node.component,
+            "version": node.version,
+            "source_sha": self.source_sha,
+            "files": files,
+        }:
+            raise ReceiptError(f"{node.component}: local staged bytes changed")
+        return ReceiptEntry(
+            version=node.version,
+            digest=canonical_digest_of_set(files),
+            digest_set=files,
+            lane_ref={
+                "kind": "local-runnerless",
+                "stage": str(stage),
+                "source_sha": self.source_sha,
+                "manifest_sha256": hashlib.sha256(
+                    manifest_path.read_bytes()
+                ).hexdigest(),
+            },
+        )
+
+    def _checked_stage(self, node, entry):
+        ref = entry.lane_ref or {}
+        if ref.get("kind") != "local-runnerless":
+            raise ReceiptError(f"{node.component}: not a local runnerless stage")
+        stage = Path(ref["stage"])
+        files = self._inventory(stage)
+        if files != entry.digest_set or canonical_digest_of_set(files) != entry.digest:
+            raise ReceiptError(f"{node.component}: local stage no longer matches receipt")
+        return stage, files
+
+    def publish(self, node, staged):
+        stage, files = self._checked_stage(node, staged)
+        result = self.adapter.publish(node, stage, files) or {}
+        observed = self.adapter.observe(node, stage, files)
+        if observed != files:
+            raise ReceiptError(f"{node.component}: registry does not equal staged bytes")
+        hosting = result.get("hosting", "complete")
+        if hosting not in {"complete", "deferred"}:
+            raise ReceiptError(f"{node.component}: invalid hosting result {hosting!r}")
+        self._metadata[node.component] = {
+            "status": hosting,
+            "continuation": result.get("continuation"),
+        }
+        return ReceiptEntry(
+            version=staged.version, digest=staged.digest, phase="published",
+            digest_set=dict(files), lane_ref=staged.lane_ref,
+        )
+
+    def verify(self, node, published):
+        stage, files = self._checked_stage(node, published)
+        if self.adapter.observe(node, stage, files) != files:
+            raise ReceiptError(f"{node.component}: registry verification differs")
+
+    def observe(self, node, staged=None):
+        if staged is None:
+            return None
+        stage, files = self._checked_stage(node, staged)
+        observed = self.adapter.observe(node, stage, files)
+        if observed != files:
+            return None
+        return ReceiptEntry(
+            version=staged.version, digest=staged.digest, phase="published",
+            digest_set=dict(files), lane_ref=staged.lane_ref,
+        )
+
+    def receipt_metadata(self):
+        return dict(self._metadata)
+
+
 class WorkflowLanes:
     """Per-component delegation over the composed lane objects."""
 
@@ -3407,6 +3597,15 @@ class WorkflowLanes:
     def observe(self, node, staged=None):
         lane = self._lanes.get(node.component)
         return lane.observe(node, staged) if lane is not None else None
+
+    def receipt_metadata(self):
+        return {
+            component: metadata
+            for component, lane in self._lanes.items()
+            for component, metadata in getattr(
+                lane, "receipt_metadata", lambda: {}
+            )().items()
+        }
 
     def observe_recovery(self, node, staged):
         if (
@@ -4167,14 +4366,18 @@ class AnchoredMeasurementAuthority:
     store-bytes + digest-authority capabilities as every other anchor -
     then schema-binds to the exact edge, journey, and support set."""
 
-    def __init__(self, *, store, authority):
+    def __init__(
+        self, *, store, authority,
+        accepted_authorities=("workflow-artifacts",),
+    ):
         self._store = store
         self._authority = authority
+        self._accepted_authorities = frozenset(accepted_authorities)
 
     def resolve(self, record, edge):
         if (
             not isinstance(record, dict)
-            or record.get("authority") != "workflow-artifacts"
+            or record.get("authority") not in self._accepted_authorities
             or not record.get("artifact_id")
             or not isinstance(record.get("artifact_id"), str)
             or not record.get("digest")
@@ -4182,8 +4385,8 @@ class AnchoredMeasurementAuthority:
         ):
             raise ReceiptError(
                 f"runtime-contract {edge.a}<->{edge.b}: support record must "
-                "name authority workflow-artifacts with a nonempty "
-                f"artifact_id and digest, got {record!r}"
+                f"name one of {sorted(self._accepted_authorities)} with a "
+                f"nonempty artifact_id and digest, got {record!r}"
             )
         recorded = self._authority.expected_digest(record["artifact_id"])
         if recorded is None:
@@ -4447,6 +4650,8 @@ class Providers:
     state: object = None
     source_sha: str | None = None
     measurement: object = None
+    runnerless_risk: Approval | None = None
+    defer_g5: bool = False
     # Established by trusted composition (build_providers with an allowlisted
     # registration), never by an attribute a caller-writable implementation
     # asserts about itself.
@@ -6196,7 +6401,15 @@ def validate_staged_manifest(
             raise ReceiptError(f"{name}: manifest entry needs digest and version")
         lane_ref = entry.get("lane_ref")
         if lane_ref is not None:
-            LaneRef.from_dict(lane_ref)
+            if lane_ref.get("kind") == "local-runnerless":
+                if set(lane_ref) != {
+                    "kind", "stage", "source_sha", "manifest_sha256"
+                }:
+                    raise ReceiptError(
+                        f"{name}: local runnerless lane reference is malformed"
+                    )
+            else:
+                LaneRef.from_dict(lane_ref)
         digest_set = entry.get("digest_set")
         if digest_set is not None:
             if not isinstance(digest_set, dict) or not digest_set or not all(
@@ -6481,10 +6694,16 @@ def run_plan(
         )
         if problems:
             raise BlockedByDeclaredInputs("; ".join(problems))
+    runnerless_risk = providers.runnerless_risk if providers is not None else None
+    defer_g5 = bool(providers.defer_g5) if providers is not None else False
+    if authority_trust == "local-runnerless" and runnerless_risk is None:
+        raise ReceiptError(
+            "runnerless local authority requires explicit risk authorization"
+        )
     complete_edges = [
         e for e in plan.runtime_contract_edges if not e.declared_incomplete
     ]
-    if complete_edges:
+    if complete_edges and not defer_g5:
         if measurement is None:
             raise BlockedByDeclaredInputs(
                 "runtime-contract support records are declared complete but no "
@@ -6505,7 +6724,7 @@ def run_plan(
     missing_skew = [
         f"{e.a}<->{e.b}"
         for e in plan.runtime_contract_edges
-        if not skew.has_matrix(e)
+        if not defer_g5 and not skew.has_matrix(e)
     ]
     if missing_skew:
         raise SkewUnavailable(
@@ -6599,14 +6818,15 @@ def run_plan(
         )
         manifest["_artifact_id"] = manifest_id
 
-    freeze_matrix = getattr(skew, "freeze_matrix", None)
-    if freeze_matrix is not None:
+    if not defer_g5:
+        freeze_matrix = getattr(skew, "freeze_matrix", None)
+        if freeze_matrix is not None:
+            for edge in plan.runtime_contract_edges:
+                freeze_matrix(
+                    edge, staged, staged_manifest_digest=manifest_digest
+                )
         for edge in plan.runtime_contract_edges:
-            freeze_matrix(
-                edge, staged, staged_manifest_digest=manifest_digest
-            )
-    for edge in plan.runtime_contract_edges:
-        skew.execute(edge, staged)
+            skew.execute(edge, staged)
 
     def anchor_transition(
         component: str, entry: ReceiptEntry, sequence: int, kind: str
@@ -6716,12 +6936,28 @@ def run_plan(
         )
         verified[node.component] = entry
 
+    receipt_approvals = dict(approvals)
+    if runnerless_risk is not None:
+        receipt_approvals["runnerless-local-authority"] = runnerless_risk
+        for component, metadata in getattr(
+            lanes, "receipt_metadata", lambda: {}
+        )().items():
+            if metadata.get("status") == "deferred":
+                receipt_approvals[f"deferred-hosting:{component}"] = Approval(
+                    who=runnerless_risk.who,
+                    when=runnerless_risk.when,
+                    risk=(
+                        "registry published exact staged bytes; hosting "
+                        "continuation deferred: "
+                        f"{metadata.get('continuation') or 'tag-and-release'}"
+                    ),
+                )
     sealed, digest = seal_receipt(
         plan,
         graph,
         source_sha=source_sha,
         entries=verified,
-        approvals=approvals,
+        approvals=receipt_approvals,
         frozen_plan_id=frozen_plan_id,
         staged_manifest_id=manifest_id,
     )
@@ -6746,6 +6982,8 @@ def resume_plan(
     require_external_authority: bool = False,
     authority_trust: str = "local-development",
     manifest_id: str | None = None,
+    runnerless_risk: Approval | None = None,
+    defer_g5: bool = False,
 ) -> dict[str, ReceiptEntry]:
     """Resume from the ORIGINAL anchored staged manifest: fetch it by id,
     verify it through the authority, stage NOTHING, observe every claimed
@@ -6937,7 +7175,10 @@ def resume_plan(
         state=state,
         frozen=frozen,
         providers=Providers(
-            store=store, authority=authority, measurement=measurement
+            store=store, authority=authority, measurement=measurement,
+            authority_trust=authority_trust,
+            runnerless_risk=runnerless_risk,
+            defer_g5=defer_g5,
         ),
         _resume_manifest=manifest,
         _resume_published=published,
@@ -7370,6 +7611,28 @@ class RegistryProviders:
         )
 
 
+def parse_local_adapters(raw: list[str], *, root: Path):
+    lanes = {}
+    for item in raw:
+        identity, separator, executable = item.partition("=")
+        component, at, source_sha = identity.partition("@")
+        if (
+            not separator or not at or not component
+            or not re.fullmatch(r"[0-9a-f]{40}", source_sha)
+            or not Path(executable).is_absolute()
+        ):
+            raise ReceiptError(
+                "--local-adapter must be "
+                "component@<40-hex-reviewed-source>=/absolute/path/to/adapter"
+            )
+        if component in lanes:
+            raise ReceiptError(f"duplicate local adapter for {component}")
+        lanes[component] = LocalRunnerlessLane(
+            component, root, SubprocessLocalAdapter(Path(executable)), source_sha
+        )
+    return WorkflowLanes(lanes)
+
+
 def _parse_approvals(raw: list[str]) -> dict[str, Approval]:
     approvals: dict[str, Approval] = {}
     for item in raw:
@@ -7390,6 +7653,14 @@ register_authority(
 
 register_authority(
     AuthorityRegistration(
+        kind="local-runnerless",
+        trust_class="local-runnerless",
+        factory=None,
+    )
+)
+
+register_authority(
+    AuthorityRegistration(
         kind="github-workflow-artifacts",
         trust_class="external-immutable",
         # The writable anchors pair carries the driver's own evidence
@@ -7399,6 +7670,32 @@ register_authority(
         store_factory=GithubAnchorStore,
     )
 )
+
+
+def ship_gate_warning(source_sha: str) -> dict:
+    """Informational only: GitHub absence/outage can never block a release."""
+    try:
+        result = subprocess.run(
+            [
+                "gh", "run", "list", "--workflow", "ship.yml",
+                "--commit", source_sha, "--limit", "1",
+                "--json", "conclusion,url",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return {"status": "unknown", "detail": result.stderr.strip()}
+        runs = json.loads(result.stdout)
+        if not runs:
+            return {"status": "none", "detail": "no ship.yml run found"}
+        conclusion = runs[0].get("conclusion")
+        return {
+            "status": "success" if conclusion == "success" else "failure",
+            "detail": conclusion or "incomplete",
+            "url": runs[0].get("url"),
+        }
+    except Exception as exc:  # informational warning, never a gate
+        return {"status": "unknown", "detail": str(exc)}
 
 
 def main(argv: list[str] | None = None, providers: Providers | None = None) -> int:
@@ -7427,6 +7724,18 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
     run_parser.add_argument("--resume", action="store_true")
     run_parser.add_argument("--approval", action="append", default=[])
     run_parser.add_argument("--allow-local-authority", action="store_true")
+    run_parser.add_argument(
+        "--local-adapter", action="append", default=[],
+        help="runnerless component@reviewed-source=/absolute/direct-adapter",
+    )
+    run_parser.add_argument(
+        "--local-risk-authorization",
+        help="one explicit who,when,risk record selecting local authority",
+    )
+    run_parser.add_argument(
+        "--defer-g5", action="store_true",
+        help="record an explicit human-authorized G5 deferral",
+    )
     run_parser.add_argument(
         "--manifest-id",
         help="explicit full staged-manifest artifact id for resume binding",
@@ -7496,7 +7805,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         root = Path(args.store_root)
         root.mkdir(parents=True, exist_ok=True)
         registration = AUTHORITY_ALLOWLIST[args.authority]
-        if registration.kind == "local-development":
+        if registration.kind in {"local-development", "local-runnerless"}:
             authority = FileDigestAuthority(root)
             store = FileArtifactStore(root)
         else:
@@ -7594,6 +7903,24 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 capture_output=True,
                 text=True,
             ).stdout.strip()
+        if registration.kind == "local-runnerless" and args.verb == "release-run":
+            try:
+                providers.runnerless_risk = runnerless_risk_approval(
+                    args.local_risk_authorization, defer_g5=args.defer_g5
+                )
+                providers.defer_g5 = args.defer_g5
+                providers.measurement = AnchoredMeasurementAuthority(
+                    store=store,
+                    authority=authority,
+                    accepted_authorities=("local-development",),
+                )
+                providers.lanes = parse_local_adapters(
+                    args.local_adapter,
+                    root=root / "local-stages",
+                )
+            except ReceiptError as exc:
+                print(f"BLOCKED: {exc}")
+                return 1
     state = providers.state
     source_sha = providers.source_sha or "unknown"
 
@@ -7669,6 +7996,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                         for e in plan.runtime_contract_edges
                     ],
                     "declared_input_problems": problems,
+                    "ship_gate": ship_gate_warning(source_sha),
                     "plan_digest": plan_digest(plan, graph),
                 },
                 indent=2,
@@ -7783,7 +8111,9 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         # Ordinary production release-run composes the G5 matrix runner; a
         # touched runtime edge with no registered harness or measured
         # support REFUSES rather than silently selecting NoSkew.
-        if providers.skew is not None:
+        if providers.defer_g5:
+            skew = NoSkew()
+        elif providers.skew is not None:
             skew = providers.skew
         else:
             try:
@@ -7801,6 +8131,8 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             state=state,
             measurement=providers.measurement,
             authority_trust=providers.authority_trust,
+            runnerless_risk=providers.runnerless_risk,
+            defer_g5=providers.defer_g5,
         )
         try:
             if args.resume:
@@ -7816,9 +8148,14 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     state=state,
                     frozen=frozen,
                     measurement=providers.measurement,
-                    require_external_authority=not args.allow_local_authority,
+                    require_external_authority=(
+                        providers.authority_trust != "local-runnerless"
+                        and not args.allow_local_authority
+                    ),
                     authority_trust=providers.authority_trust,
                     manifest_id=args.manifest_id,
+                    runnerless_risk=providers.runnerless_risk,
+                    defer_g5=providers.defer_g5,
                 )
             else:
                 run_plan(
@@ -7828,7 +8165,10 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     source_sha=source_sha,
                     approvals=_parse_approvals(args.approval),
                     state=state,
-                    require_external_authority=not args.allow_local_authority,
+                    require_external_authority=(
+                        providers.authority_trust != "local-runnerless"
+                        and not args.allow_local_authority
+                    ),
                     frozen=frozen,
                 )
         except (
