@@ -2591,6 +2591,29 @@ class RegistryTruthAuthorityTests(unittest.TestCase):
         return skew.PublishedServerAuthority(
             store=None, digest_authority=None, http_get=http_get)
 
+    def test_registry_authority_passes_schema_validation(self):
+        """The gap my other controls missed: they call resolve() directly and
+        skip _validate_published_entry, so a registry authority that could never
+        pass schema validation still looked green."""
+        _, digests = self.registry()
+        skew._validate_published_entry(self.published(digests))
+
+    def test_verify_only_authority_still_requires_its_exact_key_set(self):
+        """Dispatching on provider first must not weaken the other branch."""
+        entry = self.published({"x": "0" * 64})
+        entry["authority"] = {
+            "provider": "verify-only-lane", "repo": "awebai/aweb",
+        }
+        with self.assertRaisesRegex(rd.ReceiptError, "exactly"):
+            skew._validate_published_entry(entry)
+
+    def test_registry_authority_cannot_smuggle_verify_only_keys(self):
+        _, digests = self.registry()
+        entry = self.published(digests)
+        entry["authority"]["artifact"] = "gh-artifact:awebai/aweb:41:9001"
+        with self.assertRaisesRegex(rd.ReceiptError, "exactly"):
+            skew._validate_published_entry(entry)
+
     def test_registry_truth_resolves_without_github(self):
         http_get, digests = self.registry()
         report = self.resolver(http_get).resolve(self.published(digests))

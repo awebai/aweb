@@ -1676,17 +1676,25 @@ def _validate_published_entry(entry) -> None:
             "sha256 values"
         )
     authority = entry["authority"]
-    if not isinstance(authority, dict) or set(authority) != _AUTHORITY_KEYS:
-        present = set(authority) if isinstance(authority, dict) else set()
+    if not isinstance(authority, dict):
+        raise rd.ReceiptError("measurement input server authority is not a record")
+    # Dispatch on the provider FIRST, then require that provider's exact key
+    # set. Checking one fixed key set before dispatching made the registry
+    # provider unreachable: its three keys could never satisfy the six
+    # verify-only keys. Each branch still demands an exact set, so neither
+    # provider is weakened and no key from one can appear in the other.
+    provider = authority.get("provider")
+    if provider == REGISTRY_TRUTH_PROVIDER:
+        _validate_registry_authority(authority)
+        return
+    if set(authority) != _AUTHORITY_KEYS:
+        present = set(authority)
         raise rd.ReceiptError(
             "measurement input server authority does not carry exactly "
             f"{sorted(_AUTHORITY_KEYS)}; missing "
             f"{sorted(_AUTHORITY_KEYS - present)}, unexpected "
             f"{sorted(present - _AUTHORITY_KEYS)}"
         )
-    if authority.get("provider") == REGISTRY_TRUTH_PROVIDER:
-        _validate_registry_authority(authority)
-        return
     if authority["provider"] != "verify-only-lane":
         raise rd.ReceiptError(
             f"measurement input server authority provider "
