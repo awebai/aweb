@@ -3614,6 +3614,54 @@ def validate_staged_manifest(
                 )
 
 
+TRANSITION_FIELDS = (
+    "frozen_plan_id", "staged_manifest_id", "sequence", "component", "kind",
+    "entry",
+)
+TRANSITION_ENTRY_FIELDS = (
+    "version", "digest", "phase", "pointer_state", "delivery_proof",
+    "lane_ref", "digest_set",
+)
+
+
+def validate_transition_document(document) -> dict:
+    """The exact shape anchor_transition seals. One definition, used both when
+    sealing and when re-validating an archived transition, so an archived
+    transition cannot be accepted in a shape the driver would never write."""
+    if not isinstance(document, dict) or set(document) != set(TRANSITION_FIELDS):
+        present = set(document) if isinstance(document, dict) else set()
+        raise ReceiptError(
+            "transition document does not carry exactly "
+            f"{sorted(TRANSITION_FIELDS)}; missing "
+            f"{sorted(set(TRANSITION_FIELDS) - present)}, unexpected "
+            f"{sorted(present - set(TRANSITION_FIELDS))}"
+        )
+    if not isinstance(document["sequence"], int) or isinstance(
+        document["sequence"], bool
+    ):
+        raise ReceiptError("transition sequence must be an integer")
+    for field in ("frozen_plan_id", "staged_manifest_id", "component", "kind"):
+        value = document[field]
+        if not isinstance(value, str) or not value:
+            raise ReceiptError(
+                f"transition {field} must be a nonempty string"
+            )
+    entry = document["entry"]
+    if not isinstance(entry, dict) or set(entry) != set(
+        TRANSITION_ENTRY_FIELDS
+    ):
+        present = set(entry) if isinstance(entry, dict) else set()
+        raise ReceiptError(
+            "transition entry does not carry exactly "
+            f"{sorted(TRANSITION_ENTRY_FIELDS)}; missing "
+            f"{sorted(set(TRANSITION_ENTRY_FIELDS) - present)}, unexpected "
+            f"{sorted(present - set(TRANSITION_ENTRY_FIELDS))}"
+        )
+    if not isinstance(entry["version"], str) or not entry["version"]:
+        raise ReceiptError("transition entry version must be a nonempty string")
+    return document
+
+
 def load_staged_manifest(data: bytes, *, expected_digest: str) -> dict:
     if hashlib.sha256(data).hexdigest() != expected_digest:
         raise ReceiptError("staged manifest does not match its recorded digest")
@@ -3949,25 +3997,26 @@ def run_plan(
     def anchor_transition(
         component: str, entry: ReceiptEntry, sequence: int, kind: str
     ) -> None:
-        body = json.dumps(
-            {
-                "frozen_plan_id": frozen_plan_id,
-                "staged_manifest_id": manifest_id,
-                "sequence": sequence,
-                "component": component,
-                "kind": kind,
-                "entry": {
-                    "version": entry.version,
-                    "digest": entry.digest,
-                    "phase": entry.phase,
-                    "pointer_state": entry.pointer_state,
-                    "delivery_proof": entry.delivery_proof,
-                    "lane_ref": entry.lane_ref,
-                    "digest_set": entry.digest_set,
-                },
+        document = {
+            "frozen_plan_id": frozen_plan_id,
+            "staged_manifest_id": manifest_id,
+            "sequence": sequence,
+            "component": component,
+            "kind": kind,
+            "entry": {
+                "version": entry.version,
+                "digest": entry.digest,
+                "phase": entry.phase,
+                "pointer_state": entry.pointer_state,
+                "delivery_proof": entry.delivery_proof,
+                "lane_ref": entry.lane_ref,
+                "digest_set": entry.digest_set,
             },
-            sort_keys=True,
-        ).encode()
+        }
+        # The sealing path validates the same shape the archive re-validates,
+        # so a transition can never be written in a form restore would refuse.
+        validate_transition_document(document)
+        body = json.dumps(document, sort_keys=True).encode()
         digest = hashlib.sha256(body).hexdigest()
         artifact_id = (
             f"transition:{frozen_plan_id}:{sequence:03d}:{kind}:"
