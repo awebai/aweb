@@ -813,13 +813,23 @@ async function promotePendingMail(
   const pending = pendingMailDeliveries.get(dispatched);
   for (const delivery of promotable) {
     if (pending?.get(delivery.key) !== delivery) continue;
-    await persistDeliveryMark(options.deliveryStore, dispatched, delivery.key);
-    if (options.mailAcknowledgment !== "manual") {
-      await ackMessage(options.client, delivery.messageID);
-    }
+    // Claim promotion synchronously before the first await. Different event
+    // lanes can finish together; leaving the entry visible until after save/ack
+    // lets both lanes promote and acknowledge the same mail.
     pending.delete(delivery.key);
+    try {
+      await persistDeliveryMark(options.deliveryStore, dispatched, delivery.key);
+      if (options.mailAcknowledgment !== "manual") {
+        await ackMessage(options.client, delivery.messageID);
+      }
+    } catch (error) {
+      // A genuinely later loop iteration must be able to retry a failed durable
+      // save or ack. Restore a new identity so racers that snapshotted the old
+      // claim before this attempt cannot steal the retry in the same iteration.
+      if (!pending.has(delivery.key)) pending.set(delivery.key, { ...delivery });
+      throw error;
+    }
   }
-  if (pending?.size === 0) pendingMailDeliveries.delete(dispatched);
 }
 
 async function persistDeliveryMark(
