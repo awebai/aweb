@@ -121,7 +121,7 @@ decorative for the question "did my change work."
 
 - Docker build + `uv sync` from lockfile → tests against pinned PyPI version,
   not local source. The aweb 1.23.0 federation work surfaced this: the
-  aweb-cloud release image copied sibling aweb sources, but `uv sync` still
+  ac release image copied sibling aweb sources, but `uv sync` still
   installed PyPI `aweb==1.22.0` from `uv.lock`. The Docker user-journey gate
   ran against the stale package for the duration of the federation work; all
   "Docker e2e green" signals were false-evidence for source-level correctness.

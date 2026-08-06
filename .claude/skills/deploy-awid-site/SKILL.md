@@ -1,43 +1,22 @@
 ---
 name: deploy-awid-site
-description: Deploy the awid.ai landing page. Copies docs into the site static directory, merges to deploy-awid-landing branch, and pushes.
+description: Deploy the awid.ai landing page through the release driver. Use after changing its mirrored docs or site files.
 ---
 
-# Deploy awid.ai landing page
+# Deploy the awid.ai landing page
 
-The awid.ai site is deployed via the `deploy-awid-landing` branch.
-Pushing to that branch triggers the hosting platform deployment.
+The deployed artifact is `awid/site/`, including the repository-owned mirrors
+of `docs/identity-guide.md` and `docs/trust-model.md`. The release graph owns
+both synchronization and the `deploy-awid-landing` delivery lane.
 
-## Flow
+Use the normal or runnerless commands in the `release` skill. Do not invoke the
+underlying branch target as a separate hand-maintained procedure; the driver
+plans the site node, runs its lane in graph order, and records the result.
 
-1. Run the Makefile target.
-   ```bash
-   make release-awid-site
-   ```
+Deployment is an outward production action and still requires the applicable
+human authorization. After delivery, verify that awid.ai serves the intended
+site and both mirrored documents.
 
-   This does:
-   - Copies `docs/identity-guide.md` into `awid/site/static/`
-   - Copies `docs/trust-model.md` into `awid/site/static/`
-   - Commits if anything changed
-   - Checks out `deploy-awid-landing`
-   - Merges main
-   - Pushes `deploy-awid-landing`
-   - Checks out main
-
-2. Verify.
-   The deployment should be live within a few minutes at awid.ai.
-
-## When to deploy
-
-Deploy after changing any of:
-- `docs/identity-guide.md`
-- `docs/trust-model.md`
-- `awid/site/` templates or static files
-
-## Notes
-
-- The site serves identity-guide.md and trust-model.md as static files
-  at `https://awid.ai/identity-guide.md` and `https://awid.ai/trust-model.md`.
-- The agent-guide.md is served from aweb.ai, not awid.ai. Alice
-  handles the aweb.ai site deployment.
-- Always push main before deploying so the site gets the latest docs.
+The agent guide is served from aweb.ai rather than awid.ai. Resolve current
+ownership and review routing from the active team instructions and `aw
+workspace status`; never rely on a teammate name recorded in this skill.

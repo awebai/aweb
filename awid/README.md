@@ -38,14 +38,7 @@ curl http://localhost:8010/health
 
 ## Release
 
-`awid` is released as a GHCR container image.
-
-Local release commands:
-
-```bash
-make release-awid-check
-make release-awid-tag
-make release-awid-push
-```
-
-The version lives in `pyproject.toml`. The release tag must be `awid-vX.Y.Z`, and it must match that version or the GitHub workflow will fail.
+`awid` is released as a GHCR container image through the repository's `release`
+skill and driver. The driver owns planning, exact-byte staging, publication,
+tagging, registry verification, and the receipt; do not start a release by
+pushing an `awid-vX.Y.Z` tag. The version remains in `pyproject.toml`.

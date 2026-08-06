@@ -82,7 +82,7 @@ This was done for awid 0.3.1. See commit cd01fac for the consolidation.
 
 ## Notes
 
-- The cloud database at aweb-cloud/.env.production is SEPARATE.
+- The hosted ac database configured from `../ac/.env.production` is SEPARATE.
   It has an embedded awid copy with minimal data. The external
   awid.ai registry database is what matters for production.
 - Always verify orphan addresses before deploying migrations that
