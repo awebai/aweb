@@ -115,7 +115,7 @@ except FileNotFoundError:
     sys.exit("REFUSE: channel tgz lacks .mcp.json")
 servers = doc.get("mcpServers")
 if not isinstance(servers, dict) or set(servers) != {"aweb-channel"}:
-    sys.exit("REFUSE: channel .mcp.json must declare exactly the non-colliding aweb-channel MCP server")
+    sys.exit("REFUSE: channel .mcp.json must declare exactly the distinct aweb-channel MCP server")
 PYMCP
       # The plugin manifest ships in the tgz; the version coherence must
       # hold in the SHIPPED bytes, not only in the source tree the

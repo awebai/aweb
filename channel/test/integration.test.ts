@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -84,6 +84,18 @@ interface ServerRuntimeProof {
   sha256: string;
 }
 
+interface LiveNameHarnessConfig {
+  channel_spec: string;
+  claude_binary: string;
+  claude_sha256: string;
+  claude_version: string;
+  collision_fixture: string;
+  credential_env: string;
+  evidence_path: string;
+  plugin_root: string;
+  tgz_sha256: string;
+}
+
 interface ServerHandle {
   awebURL: string;
   awidURL: string;
@@ -152,6 +164,7 @@ describe.sequential("channel integration", () => {
   let transport: StdioClientTransport | undefined;
   let notifications: NotificationQueue;
   let channelStderr = "";
+  let liveNameEvidencePath = "";
 
   beforeAll(async () => {
     tempRoot = await mkdtemp(join(tmpdir(), "channel-e2e-"));
@@ -206,6 +219,11 @@ describe.sequential("channel integration", () => {
       }
     }
     if (cleanupFailure) throw cleanupFailure;
+    if (liveNameEvidencePath) {
+      const evidence = JSON.parse(await readFile(liveNameEvidencePath, "utf8")) as Record<string, unknown>;
+      evidence.server_cleanup_complete = true;
+      await writeFile(liveNameEvidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
+    }
   }, 45_000);
 
   test("reports a live stream outage once and reconnects with durable catch-up guidance", async () => {
@@ -281,6 +299,129 @@ describe.sequential("channel integration", () => {
     expect(channelStderr).not.toContain("fatal:");
   }, 120_000);
 
+  test("fresh isolated Claude session wakes through the exact distinct MCP name beside an aweb fixture", async () => {
+    const configPath = process.env.AWEB_CHANNEL_NAME_LIVE_CONFIG;
+    if (!configPath) return;
+
+    const config = JSON.parse(await readFile(configPath, "utf8")) as LiveNameHarnessConfig;
+    liveNameEvidencePath = config.evidence_path;
+    requireLoopbackURL(server.awebURL, "aweb");
+    requireLoopbackURL(server.awidURL, "awid");
+    if (config.channel_spec !== "plugin:aweb-channel:aweb-channel") {
+      throw new Error(`unexpected development-channel spec: ${config.channel_spec}`);
+    }
+    const credential = process.env[config.credential_env];
+    if (!credential) throw new Error(`missing dedicated credential ${config.credential_env}`);
+
+    const claudeRoot = join(tempRoot, "claude-isolated");
+    const claudeHome = join(claudeRoot, "home");
+    const claudeConfig = join(claudeRoot, "config");
+    const xdgConfig = join(claudeRoot, "xdg-config");
+    const xdgCache = join(claudeRoot, "xdg-cache");
+    const xdgState = join(claudeRoot, "xdg-state");
+    await Promise.all([claudeHome, claudeConfig, xdgConfig, xdgCache, xdgState]
+      .map((path) => mkdir(path, { recursive: true })));
+
+    const collisionAttempts = join(claudeRoot, "aweb-collision-attempts.jsonl");
+    const collisionConfig = join(claudeRoot, "collision-mcp.json");
+    const settingsPath = join(claudeRoot, "settings.json");
+    const debugPath = join(claudeRoot, "claude-debug.log");
+    await writeFile(collisionConfig, `${JSON.stringify({
+      mcpServers: {
+        aweb: {
+          command: process.execPath,
+          args: [config.collision_fixture, collisionAttempts],
+        },
+      },
+    }, null, 2)}\n`);
+    await writeFile(settingsPath, "{}\n");
+
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      HOME: claudeHome,
+      CLAUDE_CONFIG_DIR: claudeConfig,
+      XDG_CONFIG_HOME: xdgConfig,
+      XDG_CACHE_HOME: xdgCache,
+      XDG_STATE_HOME: xdgState,
+      TMPDIR: claudeRoot,
+      AW_BIN: awBinary,
+      AWID_REGISTRY_URL: server.awidURL,
+      AWID_SKIP_DNS_VERIFY: "1",
+      [config.credential_env]: credential,
+    };
+    const args = [
+      "--print",
+      "--input-format", "stream-json",
+      "--output-format", "stream-json",
+      "--verbose",
+      "--debug-file", debugPath,
+      "--settings", settingsPath,
+      "--mcp-config", collisionConfig,
+      "--strict-mcp-config",
+      "--plugin-dir", config.plugin_root,
+      "--dangerously-load-development-channels", config.channel_spec,
+    ];
+    const claude = spawn(config.claude_binary, args, {
+      cwd: bobDir,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    claude.stdout.setEncoding("utf8");
+    claude.stderr.setEncoding("utf8");
+    claude.stdout.on("data", (chunk) => { stdout += chunk; });
+    claude.stderr.on("data", (chunk) => { stderr += chunk; });
+
+    let childCleaned = false;
+    try {
+      claude.stdin.write(`${JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "Wait for the disposable aweb channel wake." }],
+        },
+      })}\n`);
+      await waitUntil(async () => {
+        const attempts = await readFile(collisionAttempts, "utf8").catch(() => "");
+        const debug = await readFile(debugPath, "utf8").catch(() => "");
+        return attempts.includes('"method":"initialize"')
+          && debug.includes("aweb-channel")
+          && /mcp|MCP/.test(debug);
+      }, 45_000, () => `both MCP initialize attempts were not observed\n${stderr}`);
+
+      const marker = `aweb-abbs-live-${Date.now()}`;
+      const mail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", marker);
+      const expectedSource = "plugin:aweb-channel:aweb-channel";
+      await waitUntil(
+        async () => stdout.includes(marker) && stdout.includes(expectedSource),
+        60_000,
+        () => `fresh Claude process did not present exact-name wake ${mail.message_id}\n${stdout}\n${stderr}`,
+      );
+      expect(stdout.match(new RegExp(marker, "g"))?.length).toBe(1);
+      expect(stdout).not.toMatch(/plugin:aweb-channel:aweb(?![A-Za-z0-9_-])/);
+
+      await stopExactChild(claude);
+      childCleaned = true;
+      await writeFile(config.evidence_path, `${JSON.stringify({
+        schema: "aweb.channel-name-live-proof.v1",
+        candidate_tgz_sha256: config.tgz_sha256,
+        channel_source: expectedSource,
+        claude_binary: config.claude_binary,
+        claude_sha256: config.claude_sha256,
+        claude_version: config.claude_version,
+        collision_fixture_name: "aweb",
+        collision_initialize_observed: true,
+        plugin_initialize_observed: true,
+        message_id: mail.message_id,
+        marker,
+        child_cleanup_complete: true,
+      }, null, 2)}\n`);
+    } finally {
+      if (!childCleaned) await stopExactChild(claude).catch(() => {});
+    }
+  }, 180_000);
+
   async function startChannelIfNeeded(): Promise<void> {
     if (mcpClient) return;
 
@@ -317,6 +458,40 @@ describe.sequential("channel integration", () => {
     await mcpClient.connect(transport);
   }
 });
+
+function requireLoopbackURL(rawURL: string, label: string): void {
+  const url = new URL(rawURL);
+  if (url.protocol !== "http:" || (url.hostname !== "127.0.0.1" && url.hostname !== "::1")) {
+    throw new Error(`${label} live-proof endpoint must be loopback HTTP, got ${rawURL}`);
+  }
+}
+
+async function waitUntil(
+  predicate: () => Promise<boolean>,
+  timeoutMs: number,
+  failure: () => string,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await delay(100);
+  }
+  throw new Error(failure());
+}
+
+async function stopExactChild(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  child.kill("SIGTERM");
+  const graceful = await Promise.race([
+    exited.then(() => true),
+    delay(2_000).then(() => false),
+  ]);
+  if (!graceful && child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+    await exited;
+  }
+}
 
 async function ensureServer(tempRoot: string): Promise<ServerHandle> {
   const providedAwebURL = process.env.AWEB_TEST_URL;

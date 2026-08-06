@@ -255,7 +255,7 @@ profile_case "channel profile accepts coherent fixture" channel ok ""
 profile_case "channel profile refuses missing sentinel" channel refuse "sentinel\|contract" --no-sentinel
 profile_case "channel profile refuses missing plugin manifest" channel refuse "plugin" --plugin missing
 profile_case "channel profile refuses mismatched plugin version" channel refuse "plugin" --plugin mismatched
-profile_case "channel profile refuses the colliding bare MCP server name" channel refuse "aweb-channel" --mcp-name aweb
+profile_case "channel profile refuses the retired bare MCP server name" channel refuse "aweb-channel" --mcp-name aweb
 profile_case "channel profile refuses a bundle without the final MCP runtime name" channel refuse "runtime MCP server" --drop-mcp-runtime-name
 profile_case "channel profile refuses missing authenticated trust boundary" channel refuse "encrypted_envelope" --drop-trust-boundary
 profile_case "channel profile refuses trust-field overwrite merge" channel refuse "overwrite" --unsafe-decrypt-merge

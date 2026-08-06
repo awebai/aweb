@@ -33,7 +33,7 @@ const authenticatedTrustCodeMarkers = [
 ];
 const unsafeDecryptMerge = "Object.assign(msg, decrypted)";
 const channelMCPServerName = '{ name: "aweb-channel", version: "0.1.0" }';
-const collidingMCPServerName = '{ name: "aweb", version: "0.1.0" }';
+const retiredBareMCPServerName = '{ name: "aweb", version: "0.1.0" }';
 
 // Freshness gate: the plugin bundle inlines channel-core via the file: symlink,
 // so a stale channel-core/dist would silently ship the plugin WITHOUT the
@@ -89,7 +89,7 @@ function validatePackageDist(candidate) {
   if (candidate.includes(unsafeDecryptMerge)) {
     throw new Error("channel dist permits decrypted child output to overwrite trust fields");
   }
-  if (!candidate.includes(channelMCPServerName) || candidate.includes(collidingMCPServerName)) {
+  if (!candidate.includes(channelMCPServerName) || candidate.includes(retiredBareMCPServerName)) {
     throw new Error("channel dist must identify its runtime MCP server as aweb-channel, not bare aweb");
   }
   for (const marker of securityCodeMarkers) {

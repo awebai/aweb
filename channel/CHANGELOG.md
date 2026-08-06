@@ -2,9 +2,9 @@
 
 ## 1.7.3
 
-- Gives the plugin MCP server the distinct `aweb-channel` name so Claude Code
-  can initialize it independently of the hosted `aweb` connector, including
-  when that connector needs authentication or fails to initialize.
+- Uses the distinct `aweb-channel` MCP declaration and runtime name as an
+  empirical defense against observed fresh-session plugin MCP non-enumeration.
+  The underlying Claude Code mechanism remains unconfirmed.
 
 ## 1.7.2
 
