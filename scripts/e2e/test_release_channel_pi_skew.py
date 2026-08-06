@@ -1411,10 +1411,22 @@ class MeasureSupportBoundaryTests(unittest.TestCase):
                         self.measure(
                             tmp, harness=self.mutating_harness(tmp, mutation))
 
-    def test_unmutated_output_still_measures(self):
-        """The control for the class check: identical machinery, honest output."""
+    def test_pretty_json_rewrite_refuses(self):
+        """Semantically identical, canonical measurement_id preserved, only the
+        BYTES differ. A dict comparison accepts this; the envelope would then
+        bless the rewritten bytes with a fresh sha256."""
+        def pretty(document):
+            return document  # re-serialized non-canonically by the harness
+
         with tempfile.TemporaryDirectory() as tmp:
-            document = self.measure(tmp, harness=self.mutating_harness(tmp, {}))
+            with self.assertRaisesRegex(rd.ReceiptError, "bytes do not equal"):
+                self.measure(tmp, harness=self.mutating_harness_fn(tmp, pretty))
+
+    def test_unmutated_output_still_measures(self):
+        """The control for the class check: identical machinery, honest output
+        left byte-for-byte as the lifecycle wrote it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            document = self.measure(tmp)
         child = document["measurement"]
         self.assertEqual(child["status"], "incomplete-unanchored")
         self.assertIs(child["support_complete"], False)
@@ -1457,9 +1469,18 @@ class CliExactManifestTests(unittest.TestCase):
             entries=entries, graph=graph)
         return body
 
-    def run_cli(self, components, tmp):
+    def run_cli(self, components, tmp, fake=False):
         path = Path(tmp) / "staged.json"
         path.write_bytes(self.manifest_bytes(components))
+        if fake:
+            # The REAL harness and the real CLI wiring; only the two
+            # network-touching dependencies are substituted.
+            for name, replacement in (
+                ("ArtifactResolver", lambda *a, **k: FakeResolver()),
+                ("SubprocessChannelPiJourney", lambda *a, **k: FakeJourney()),
+            ):
+                self.addCleanup(setattr, skew, name, getattr(skew, name))
+                setattr(skew, name, replacement)
         return skew.main([
             "measure-channel", "--staged-manifest", str(path),
             "--supported-channel", "1.2.2", "--supported-server", "1.26.34",
@@ -1468,6 +1489,40 @@ class CliExactManifestTests(unittest.TestCase):
             "--evidence-root", str(Path(tmp) / "evidence"),
             "--output", str(Path(tmp) / "out.json"),
         ])
+
+    def test_cli_success_writes_a_valid_envelope(self):
+        """The honest path. It previously raised KeyError reading a
+        top-level status the envelope does not have -- AFTER writing."""
+        import contextlib
+        import io as _io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            captured = _io.StringIO()
+            with contextlib.redirect_stdout(captured):
+                code = self.run_cli(["channel", "server"], tmp, fake=True)
+            self.assertEqual(code, 0, captured.getvalue())
+            self.assertIn("status: incomplete-unanchored", captured.getvalue())
+            self.assertTrue(out.exists())
+            envelope = json.loads(out.read_bytes())
+            self.assertEqual(envelope["schema"], skew.ENVELOPE_SCHEMA)
+            self.assertEqual(envelope["component"], "channel")
+            self.assertEqual(envelope["measurement"]["status"],
+                             "incomplete-unanchored")
+            self.assertEqual(envelope["measurement_id"],
+                             envelope["measurement"]["measurement_id"])
+
+    def test_every_refused_path_leaves_no_output(self):
+        import contextlib
+        import io as _io
+
+        for components in (["channel", "pi", "server"], ["channel"]):
+            with self.subTest(components=components):
+                with tempfile.TemporaryDirectory() as tmp:
+                    with contextlib.redirect_stdout(_io.StringIO()):
+                        code = self.run_cli(components, tmp)
+                    self.assertEqual(code, 1)
+                    self.assertFalse((Path(tmp) / "out.json").exists())
 
     def test_cli_refuses_extra_staged_entry(self):
         import contextlib

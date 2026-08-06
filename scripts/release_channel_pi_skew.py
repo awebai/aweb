@@ -1553,9 +1553,16 @@ def measure_support(
         root,
         control_path=root / f"control-{matrix_id}.json",
     )
-    if measurement != independent:
+    # Byte-exact, not dict-equal. A pretty-printed rewrite is semantically
+    # identical and keeps the canonical measurement_id, so a dict comparison
+    # accepts it -- and the envelope would then bless the changed bytes with a
+    # fresh measurement_sha256. The bytes are the artifact.
+    canonical_child = json.dumps(
+        independent, sort_keys=True, separators=(",", ":")
+    ).encode()
+    if measurement_bytes != canonical_child:
         raise rd.ReceiptError(
-            "channel/Pi measurement output does not equal the aggregate "
+            "channel/Pi measurement bytes do not equal the canonical bytes "
             "derived independently from the frozen matrix and its evidence; "
             "the returned document is not what the lifecycle produced"
         )
@@ -1589,6 +1596,63 @@ def channel_measure_support(**kwargs) -> dict:
 
 def pi_measure_support(**kwargs) -> dict:
     return measure_support(component="pi", **kwargs)
+
+
+ENVELOPE_KEYS = {
+    "schema", "policy", "component", "staged_manifest_sha256",
+    "supported_versions", "measurement_id", "measurement_sha256",
+    "measurement", "envelope_id",
+}
+
+
+def _require_envelope(document, *, component: str,
+                      staged_manifest_digest: str) -> str:
+    """The envelope's own contract, checked before anything reaches disk.
+
+    The measurement status lives on the nested child, not at the top level;
+    reading it from the envelope raised KeyError on the HONEST path, after the
+    output had already been written.
+    """
+    if not isinstance(document, dict) or set(document) != ENVELOPE_KEYS:
+        present = set(document) if isinstance(document, dict) else set()
+        raise rd.ReceiptError(
+            "measurement envelope does not carry exactly "
+            f"{sorted(ENVELOPE_KEYS)}; missing "
+            f"{sorted(ENVELOPE_KEYS - present)}, unexpected "
+            f"{sorted(present - ENVELOPE_KEYS)}"
+        )
+    if document["schema"] != ENVELOPE_SCHEMA:
+        raise rd.ReceiptError(
+            f"measurement envelope schema {document['schema']!r} is not "
+            f"{ENVELOPE_SCHEMA!r}"
+        )
+    if document["component"] != component:
+        raise rd.ReceiptError(
+            f"measurement envelope binds component {document['component']!r}, "
+            f"not the measured {component!r}"
+        )
+    if document["staged_manifest_sha256"] != staged_manifest_digest:
+        raise rd.ReceiptError(
+            "measurement envelope binds a different staged manifest"
+        )
+    child = document["measurement"]
+    if not isinstance(child, dict):
+        raise rd.ReceiptError("measurement envelope carries no child document")
+    if document["measurement_id"] != child.get("measurement_id"):
+        raise rd.ReceiptError(
+            "measurement envelope does not bind the child's own identity"
+        )
+    canonical = json.dumps(child, sort_keys=True, separators=(",", ":")).encode()
+    if document["measurement_sha256"] != hashlib.sha256(canonical).hexdigest():
+        raise rd.ReceiptError(
+            "measurement envelope does not bind the child's exact bytes"
+        )
+    status = child.get("status")
+    if status != "incomplete-unanchored":
+        raise rd.ReceiptError(
+            f"measurement child status {status!r} is not incomplete-unanchored"
+        )
+    return status
 
 
 def _entry_from_manifest(name: str, entry: dict) -> rd.ReceiptEntry:
@@ -1663,12 +1727,19 @@ def main(argv: list[str] | None = None) -> int:
                 evidence=evidence,
             ),
         )
+        # Validate BEFORE anything is committed to disk. Reading the status
+        # after writing left a half-finished output behind on the honest path.
+        status = _require_envelope(
+            document, component=component,
+            staged_manifest_digest=hashlib.sha256(body).hexdigest(),
+        )
+        payload = json.dumps(document, indent=2, sort_keys=True) + "\n"
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+        output.write_text(payload)
         digest = hashlib.sha256(output.read_bytes()).hexdigest()
         print(f"measurement {output} sha256:{digest}")
-        print(f"status: {document['status']}")
+        print(f"status: {status}")
         return 0
     except (KeyError, ValueError, rd.ReceiptError) as exc:
         print(f"BLOCKED: {exc}")
