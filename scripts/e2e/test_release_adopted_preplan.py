@@ -661,6 +661,34 @@ class AdoptedPreplanStateMachineTests(unittest.TestCase):
         self.assertEqual(self.surface.publish_calls, ["channel", "channel", "pi"])
         self.assertEqual(receipt.document["authorization_id"], "decision-two")
 
+    def test_current_authorization_attempt_is_adopted_amid_older_history(self):
+        handle = self.prepare()
+        first = self.authorization(handle, authorization_id="decision-one")
+        self.surface.publish_mode["channel"] = "failure"
+        with self.assertRaises(rd.ReceiptError):
+            self.execute(handle, first)
+
+        second = self.authorization(handle, authorization_id="decision-two")
+        second["issued_at"] = "2026-08-06T00:00:02Z"
+        self.surface.publish_mode["channel"] = "crash"
+        with self.assertRaises(SimulatedCrash):
+            self.execute(handle, second)
+        self.assertEqual(self.surface.publish_calls, ["channel", "channel"])
+
+        resumed_handle = self.prepare()
+        self.surface.publish_mode["channel"] = "success"
+        receipt = self.execute(resumed_handle, second)
+        self.assertEqual(
+            self.surface.publish_calls,
+            ["channel", "channel", "pi"],
+            "exact current attempt must be adopted without channel redispatch",
+        )
+        self.assertEqual(receipt.document["authorization_id"], "decision-two")
+        self.assertEqual(
+            receipt.document["components"]["channel"]["continuation_run_id"],
+            "continuation-channel-2",
+        )
+
     def test_failure_stops_other_lane_and_same_authorization_is_spent(self):
         handle = self.prepare()
         authorization = self.authorization(handle)
