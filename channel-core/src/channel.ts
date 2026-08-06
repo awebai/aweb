@@ -7,6 +7,11 @@ import { APIClient } from "./api/client.js";
 import { streamAgentEvents, type AgentEvent, type EventStreamState } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
+import {
+  AgentEventScheduler,
+  runDurableReconcile,
+  type ReconcileSchedule,
+} from "./reconcile.js";
 import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
 import { RegistryResolver } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
@@ -76,6 +81,7 @@ export interface ChannelLoopOptions {
   pinStoreWriter?: PinStoreWriter;
   log?: (message: string) => void;
   onStreamState?: (state: EventStreamState) => void;
+  reconcileSchedule?: ReconcileSchedule;
 }
 
 export async function loadPinStore(path: string = DEFAULT_PIN_STORE_PATH): Promise<PinStore> {
@@ -414,16 +420,33 @@ export async function startChannelLoop(options: ChannelLoopOptions & { teamID: s
   const wiredOptions = { ...options, deliveryStore, undeliveredLog, localDecrypt };
   const log = options.log || (() => {});
   await catchUpLegacyMail(wiredOptions, dispatched, log);
-  await consumeAgentEvents(
-    // UNGUARDED: no test covers this function, so removing any dependency from
-    // this spread silently disables it rather than failing. Deleting
-    // undeliveredLog here leaves all 281 tests passing while the channel stops
-    // recording dropped messages entirely. See aweb-aayl.
-    wiredOptions,
-    dispatched,
-    streamAgentEvents(options.client, options.signal, options.onStreamState),
-    log,
-  );
+  const scheduler = new AgentEventScheduler(async (event) => {
+    await dispatchAgentEvent(wiredOptions, dispatched, event, log);
+    pruneDispatched(dispatched);
+  }, log);
+  await Promise.all([
+    consumeAgentEvents(
+      // Keep the fully wired options shared by both stream and reconcile. The
+      // real-loop controls cover this boundary so neither source can silently
+      // lose durable delivery, decrypt, or undelivered-log state.
+      wiredOptions,
+      dispatched,
+      streamAgentEvents(options.client, options.signal, options.onStreamState),
+      log,
+      scheduler,
+    ),
+    runDurableReconcile(
+      options.client,
+      scheduler,
+      options.signal,
+      log,
+      {
+        ...options.reconcileSchedule,
+        mailAcknowledgment: options.mailAcknowledgment,
+      },
+    ),
+  ]);
+  await scheduler.drain();
 }
 
 export async function consumeAgentEvents(
@@ -431,42 +454,19 @@ export async function consumeAgentEvents(
   dispatched: Set<string>,
   events: AsyncIterable<AgentEvent>,
   log: (message: string) => void = () => {},
+  scheduler?: AgentEventScheduler,
 ): Promise<void> {
-  const lanes = new Map<string, Promise<void>>();
-  const pending = new Set<Promise<void>>();
+  const ownsScheduler = scheduler === undefined;
+  const activeScheduler = scheduler || new AgentEventScheduler(async (event) => {
+    await dispatchAgentEvent(options, dispatched, event, log);
+    pruneDispatched(dispatched);
+  }, log);
 
   for await (const event of events) {
-    const lane = eventDispatchLane(event);
-    const previous = lane ? lanes.get(lane) : undefined;
-    const job = (previous || Promise.resolve())
-      .then(async () => {
-        await dispatchAgentEvent(options, dispatched, event, log);
-        pruneDispatched(dispatched);
-      })
-      .catch((error) => {
-        const detail = error instanceof Error ? error.message : String(error);
-        log(`aweb: could not process an incoming event: ${detail}; it remains pending`);
-      });
-    pending.add(job);
-    if (lane) lanes.set(lane, job);
-    void job.finally(() => {
-      pending.delete(job);
-      if (lane && lanes.get(lane) === job) lanes.delete(lane);
-    });
+    void activeScheduler.enqueue(event);
   }
 
-  await Promise.all([...pending]);
-}
-
-function eventDispatchLane(event: AgentEvent): string {
-  switch (event.type) {
-    case "mail_message":
-      return "mail";
-    case "chat_message":
-      return `chat:${event.session_id || event.conversation_id || "unknown"}`;
-    default:
-      return "";
-  }
+  if (ownsScheduler) await activeScheduler.drain();
 }
 
 export async function dispatchAgentEvent(

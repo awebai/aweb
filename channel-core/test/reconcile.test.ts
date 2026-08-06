@@ -1,7 +1,18 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { APIClient } from "../src/api/client.js";
 import type { AgentEvent } from "../src/api/events.js";
+import {
+  DeliveryStore,
+  dispatchAgentEvent,
+  startChannelLoop,
+  type ChannelAwakening,
+} from "../src/channel.js";
+import { PinStore } from "../src/identity/pinstore.js";
+import type { SenderTrustManager } from "../src/identity/trust.js";
 import {
   AgentEventScheduler,
   RECONCILE_INTERVAL_MS,
@@ -17,6 +28,66 @@ function snapshotClient(get: (path: string, signal?: AbortSignal) => Promise<unk
 function recordingSink(events: AgentEvent[]): ReconcileEventSink {
   return {
     enqueue: vi.fn(async (event: AgentEvent) => { events.push(event); }),
+  };
+}
+
+const self = {
+  alias: "eve",
+  address: "acme.com/eve",
+  did: "did:key:self-eve",
+  stableID: "did:aw:self-eve",
+};
+const trust = {
+  normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+} as unknown as SenderTrustManager;
+
+function inboxMessage(messageID: string) {
+  return {
+    message_id: messageID,
+    conversation_id: "conversation-durable",
+    from_agent_id: "agent-1",
+    from_alias: "alice",
+    from_address: "acme.com/alice",
+    to_alias: "eve",
+    subject: "delivery",
+    body: "durable mail",
+    priority: "normal",
+    created_at: "2026-08-06T00:00:00Z",
+  };
+}
+
+function chatMessage(messageID: string) {
+  return {
+    message_id: messageID,
+    conversation_id: "session-durable",
+    from_agent: "alice",
+    from_address: "acme.com/alice",
+    body: "durable chat",
+    timestamp: "2026-08-06T00:00:00Z",
+    sender_leaving: false,
+  };
+}
+
+function dispatchClient(messages: ReturnType<typeof inboxMessage>[]) {
+  return {
+    get: vi.fn(async () => ({ messages })),
+    post: vi.fn(async () => undefined),
+    openSSE: vi.fn(),
+  };
+}
+
+function dispatchOptions(
+  client: ReturnType<typeof dispatchClient>,
+  deliveryStore: DeliveryStore,
+  awakenings: ChannelAwakening[],
+) {
+  return {
+    client: client as never,
+    pinStore: new PinStore(),
+    trust,
+    self,
+    deliveryStore,
+    onAwakening: (awakening: ChannelAwakening) => { awakenings.push(awakening); },
   };
 }
 
@@ -61,6 +132,111 @@ describe("durable communication reconcile", () => {
     await scheduler.drain();
     expect(started.indexOf("mail-2")).toBeGreaterThan(started.indexOf("mail-1"));
     expect(started.indexOf("chat-2")).toBeGreaterThan(started.indexOf("chat-1"));
+  });
+
+  test("simultaneous stream and sweep mail discovery notifies and marks once", async () => {
+    const deliveryStore = await DeliveryStore.load(
+      join(await mkdtemp(join(tmpdir(), "aweb-reconcile-race-")), "delivered.json"),
+    );
+    const message = inboxMessage("mail-race");
+    const client = dispatchClient([message]);
+    const awakenings: ChannelAwakening[] = [];
+    const dispatched = new Set<string>();
+    const scheduler = new AgentEventScheduler((event) => dispatchAgentEvent(
+      dispatchOptions(client, deliveryStore, awakenings),
+      dispatched,
+      event,
+    ));
+
+    await Promise.all([
+      scheduler.enqueue({ type: "mail_message", message_id: message.message_id }),
+      scheduler.enqueue({ type: "mail_message", message_id: message.message_id }),
+    ]);
+
+    expect(awakenings).toHaveLength(1);
+    expect(deliveryStore.has(`mail:${message.conversation_id}:${message.message_id}`)).toBe(true);
+    expect(client.post).toHaveBeenCalledTimes(1);
+  });
+
+  test("ack failure after durable mark retries without another notification", async () => {
+    const deliveryStore = await DeliveryStore.load(
+      join(await mkdtemp(join(tmpdir(), "aweb-reconcile-ack-")), "delivered.json"),
+    );
+    const message = inboxMessage("mail-ack-retry");
+    const client = dispatchClient([message]);
+    client.post.mockRejectedValueOnce(new Error("ack unavailable"));
+    const awakenings: ChannelAwakening[] = [];
+    const dispatched = new Set<string>();
+    const scheduler = new AgentEventScheduler(
+      (event) => dispatchAgentEvent(
+        dispatchOptions(client, deliveryStore, awakenings),
+        dispatched,
+        event,
+      ),
+      vi.fn(),
+    );
+
+    await scheduler.enqueue({ type: "mail_message", message_id: message.message_id });
+    await scheduler.enqueue({ type: "mail_message", message_id: message.message_id });
+    expect(deliveryStore.has(`mail:${message.conversation_id}:${message.message_id}`)).toBe(true);
+    expect(awakenings).toHaveLength(1);
+
+    await scheduler.enqueue({ type: "mail_message", message_id: message.message_id });
+    expect(awakenings).toHaveLength(1);
+    expect(client.post).toHaveBeenCalledTimes(2);
+  });
+
+  test("heartbeat-only stream reconciles pending mail and chat within the interval", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const deliveryStore = await DeliveryStore.load(
+      join(await mkdtemp(join(tmpdir(), "aweb-reconcile-loop-")), "delivered.json"),
+    );
+    const mail = inboxMessage("mail-durable");
+    const chat = chatMessage("chat-durable");
+    const encoder = new TextEncoder();
+    const client = dispatchClient([mail]);
+    client.get.mockImplementation(async (path: string) => {
+      if (path.startsWith("/v1/messages/inbox?")) return { messages: [mail] };
+      if (path === "/v1/chat/pending") {
+        return { pending: [{ session_id: "session-durable", unread_count: 1 }] };
+      }
+      if (path.startsWith("/v1/chat/sessions/session-durable/messages?")) {
+        return { messages: [chat] };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    client.openSSE.mockImplementation(async (_path: string, signal?: AbortSignal) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(stream) {
+          stream.enqueue(encoder.encode(": heartbeat\n\n"));
+          signal?.addEventListener("abort", () => {
+            try { stream.close(); } catch { /* already closed */ }
+          }, { once: true });
+        },
+      });
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
+    });
+    const awakenings: ChannelAwakening[] = [];
+    const running = startChannelLoop({
+      ...dispatchOptions(client, deliveryStore, awakenings),
+      signal: controller.signal,
+      teamID: "backend:acme.com",
+      reconcileSchedule: { intervalMs: 100, jitterRatio: 0 },
+      onAwakening: (awakening) => {
+        awakenings.push(awakening);
+        if (new Set(awakenings.map((item) => item.kind)).size === 2) controller.abort();
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(100);
+    await running;
+
+    expect(awakenings.map((item) => item.kind)).toEqual(expect.arrayContaining(["mail", "chat"]));
+    expect(awakenings.filter((item) => item.kind === "mail")).toHaveLength(1);
+    expect(awakenings.filter((item) => item.kind === "chat")).toHaveLength(1);
+    expect(client.openSSE).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   test("fetches mail and chat independently and drains bounded backlog passes", async () => {
