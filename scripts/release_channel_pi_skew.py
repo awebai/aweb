@@ -18,6 +18,7 @@ import tarfile
 import tempfile
 import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -416,6 +417,10 @@ class ArtifactResolver:
             source={
                 "kind": "published", "registry": f"npm:{package}",
                 "metadata_url": metadata_url, "tarball_url": tarball_url,
+                "digest_set": {filename: digest},
+                "canonical_set_digest": rd.canonical_digest_of_set(
+                    {filename: digest}
+                ),
             },
         )
 
@@ -506,6 +511,7 @@ class ArtifactResolver:
                 "kind": "published", "registry": SERVER_ARTIFACT,
                 "metadata_url": metadata_url, "download_url": item["url"],
                 "digest_set": dict(observed_set),
+                "canonical_set_digest": rd.canonical_digest_of_set(observed_set),
             },
         )
 
@@ -522,26 +528,15 @@ def _side_identity(kind: str, side: dict) -> dict:
 
 
 def cell_preimage(cell) -> dict:
-    return {
-        "edge_id": cell.edge_id,
-        "edge": {"a": cell.edge_a, "b": cell.edge_b},
-        "journey": cell.journey,
-        "artifacts": dict(cell.artifacts),
-        "declared_direction": cell.declared_direction,
-        "cell_direction": cell.direction,
-        "a": _side_identity(cell.a_kind, cell.a),
-        "b": _side_identity(cell.b_kind, cell.b),
-    }
+    return rd.skew_cell_preimage(cell)
 
 
 def cell_identity_from_preimage(preimage: dict) -> str:
-    return hashlib.sha256(
-        json.dumps(preimage, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    return rd.canonical_json_digest(preimage)
 
 
 def cell_identity(cell) -> str:
-    return cell_identity_from_preimage(cell_preimage(cell))
+    return rd.skew_cell_identity(cell)
 
 
 class FileEvidenceWriter:
@@ -552,21 +547,94 @@ class FileEvidenceWriter:
         )).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def write(self, report: dict) -> None:
-        body = json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
-        identity = hashlib.sha256(body).hexdigest()
-        path = self.root / f"cell-{report['cell_id']}-{identity}.json"
-        temporary = path.with_suffix(".tmp")
+    def write_path(self, path: Path, document: dict) -> Path:
+        body = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_bytes(body)
         os.replace(temporary, path)
-        print(f"channel/Pi skew evidence: {path} sha256:{identity}")
+        return path
+
+    def write(self, report: dict) -> dict:
+        path = self.root / "cells" / (
+            f"{report['matrix_id']}-{report['cell_id']}.json"
+        )
+        self.write_path(path, report)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        print(f"channel/Pi skew evidence: {path} sha256:{digest}")
+        return {"path": path, "sha256": digest}
 
 
 class ChannelPiHarness:
-    def __init__(self, *, resolver: ArtifactResolver, journey, evidence):
+    def __init__(
+        self, *, resolver: ArtifactResolver, evidence,
+        journey=None, journey_factory=None,
+    ):
+        if (journey is None) == (journey_factory is None):
+            raise TypeError("provide exactly one of journey or journey_factory")
         self._resolver = resolver
         self._journey = journey
+        self._journey_factory = journey_factory
         self._evidence = evidence
+        self._matrix: dict | None = None
+        self._cells: dict[str, object] = {}
+        self._cell_evidence: dict[str, dict] = {}
+        self._control_path: Path | None = None
+
+    def _new_journey(self):
+        return self._journey if self._journey is not None else self._journey_factory()
+
+    def freeze_matrix(self, document: dict) -> Path:
+        cells = rd.validate_skew_matrix_document(document)
+        edge = document["preimage"]["edge"]
+        if not cells:
+            raise rd.ReceiptError("channel/Pi matrix is empty")
+        client = cells[0].edge_a
+        expected_journey = CHANNEL_JOURNEY if client == "channel" else PI_JOURNEY
+        if edge != {
+            "a": client, "b": "server", "journey": expected_journey,
+            "artifacts": {"a": CLIENT_ARTIFACTS.get(client), "b": SERVER_ARTIFACT},
+            "direction": "both",
+        } or any(self._cell_invalid(cell) for cell in cells):
+            raise rd.ReceiptError(
+                "channel/Pi child accepts only its exact frozen edge matrix"
+            )
+        if self._matrix is not None and self._matrix != document:
+            raise rd.ReceiptError("channel/Pi child was given two matrices")
+        path = self._evidence.root / f"matrix-{document['matrix_id']}.json"
+        if path.exists():
+            try:
+                body = path.read_bytes()
+                stored = json.loads(body)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise rd.ReceiptError("channel/Pi matrix evidence is unreadable") from exc
+            if stored != document or body != json.dumps(
+                stored, sort_keys=True, separators=(",", ":")
+            ).encode():
+                raise rd.ReceiptError("channel/Pi matrix evidence is stale or tampered")
+        else:
+            self._evidence.write_path(path, document)
+        self._matrix = json.loads(json.dumps(document))
+        self._cells = {rd.skew_cell_identity(cell): cell for cell in cells}
+        return path
+
+    @staticmethod
+    def _cell_invalid(cell) -> bool:
+        try:
+            ChannelPiHarness._validate_cell(cell)
+        except rd.ReceiptError:
+            return True
+        return False
+
+    def _frozen_cell_id(self, cell) -> str:
+        if self._matrix is None:
+            raise rd.ReceiptError("channel/Pi cell arrived before its frozen matrix")
+        identity = rd.skew_cell_identity(cell)
+        if self._cells.get(identity) != cell:
+            raise rd.ReceiptError(
+                "channel/Pi cell is not an exact member of its frozen matrix"
+            )
+        return identity
 
     @staticmethod
     def _validate_cell(cell) -> str:
@@ -591,6 +659,16 @@ class ChannelPiHarness:
         return client
 
     def run(self, cell) -> None:
+        frozen_cell_id = self._frozen_cell_id(cell)
+        evidence_root = getattr(self._evidence, "root", None)
+        target = (
+            Path(evidence_root) / "cells" /
+            f"{self._matrix['matrix_id']}-{frozen_cell_id}.json"
+            if evidence_root is not None else None
+        )
+        if target is not None and target.exists():
+            raise rd.ReceiptError("channel/Pi frozen cell already has evidence")
+        journey = self._new_journey()
         report = None
         try:
             client_component = self._validate_cell(cell)
@@ -600,42 +678,23 @@ class ChannelPiHarness:
             server = self._resolver.resolve(
                 cell.b_kind, cell.b, cell.artifacts["b"]
             )
-            negative = None
             if cell.direction == "a-to-b":
-                observation = {"request": self._journey.run_client_request(
+                observation = {"request": journey.run_client_request(
                     client, server, cell
                 )}
             else:
-                observation = {"event": self._journey.run_server_event(
+                observation = {"event": journey.run_server_event(
                     client, server, cell
                 )}
             observed = next(iter(observation.values()))
             validate_observation(
                 observed, client_component, cell.direction, server.version
             )
-            if cell.a_kind in PUBLISHED_KINDS and cell.b_kind == "candidate":
-                measured = self._journey.run_mark_read_control(
-                    dict(LEGACY_MARK_READ_REQUEST)
-                )
-                if (
-                    measured.get("unmutated_status") != 200
-                    or measured.get("mutated_status") != 422
-                ):
-                    raise rd.ReceiptError(
-                        "required-field control must observe 200 on the "
-                        "unmutated server and 422 on the disposable mutation"
-                    )
-                negative = {
-                    "request": dict(LEGACY_MARK_READ_REQUEST),
-                    "unmutated_status": 200,
-                    "mutated_status": 422,
-                    "mutation_subject": measured.get("mutation_subject"),
-                    "evidence_class": "control-only-not-candidate",
-                }
             report = {
                 "schema": "aweb.channel-pi-server-skew-cell.v1",
                 "result": "green",
-                "cell_id": cell_identity(cell),
+                "matrix_id": self._matrix["matrix_id"],
+                "cell_id": frozen_cell_id,
                 "cell": cell_preimage(cell),
                 "edge_id": cell.edge_id,
                 "edge": {"a": cell.edge_a, "b": cell.edge_b},
@@ -649,11 +708,91 @@ class ChannelPiHarness:
                 "server_artifact": self._artifact_report(server),
                 "server_runtime": observed["server_runtime"],
                 "observation": observation,
-                "negative_control": negative,
             }
         finally:
-            self._journey.close()
-        self._evidence.write(report)
+            journey.close()
+        report["report_id"] = rd.canonical_json_digest(report)
+        self._cell_evidence[frozen_cell_id] = self._evidence.write(report)
+
+    def _validate_effect_time_evidence(self) -> None:
+        if set(self._cell_evidence) != set(self._cells):
+            raise rd.ReceiptError(
+                "channel/Pi effect-time evidence inventory is not exact"
+            )
+        for cell_id in self._cells:
+            expected_path = self._evidence.root / "cells" / (
+                f"{self._matrix['matrix_id']}-{cell_id}.json"
+            )
+            evidence = self._cell_evidence[cell_id]
+            if (
+                not isinstance(evidence, dict)
+                or set(evidence) != {"path", "sha256"}
+                or evidence["path"] != expected_path
+                or expected_path.is_symlink()
+            ):
+                raise rd.ReceiptError(
+                    f"channel/Pi effect-time evidence inventory drifted for {cell_id}"
+                )
+            try:
+                observed = hashlib.sha256(expected_path.read_bytes()).hexdigest()
+            except OSError as exc:
+                raise rd.ReceiptError(
+                    f"channel/Pi effect-time evidence is unreadable for {cell_id}: {exc}"
+                ) from exc
+            if observed != evidence["sha256"]:
+                raise rd.ReceiptError(
+                    f"channel/Pi effect-time report digest changed for {cell_id}"
+                )
+
+    def finish_matrix(self, document: dict) -> Path:
+        if document != self._matrix:
+            raise rd.ReceiptError(
+                "channel/Pi finish request does not equal its frozen matrix"
+            )
+        if self._control_path is not None:
+            raise rd.ReceiptError("channel/Pi control ran more than once")
+        self._validate_effect_time_evidence()
+        _require_channel_report_files(document, self._evidence.root)
+        journey = self._new_journey()
+        try:
+            measured = journey.run_mark_read_control(
+                dict(LEGACY_MARK_READ_REQUEST)
+            )
+        finally:
+            journey.close()
+        if (
+            measured.get("unmutated_status") != 200
+            or measured.get("mutated_status") != 422
+        ):
+            raise rd.ReceiptError(
+                "required-field control must observe 200 on the unmutated "
+                "server and 422 on the disposable mutation"
+            )
+        control = {
+            "schema": "aweb.channel-pi-skew-control.v1",
+            "matrix_id": document["matrix_id"],
+            "request": dict(LEGACY_MARK_READ_REQUEST),
+            "unmutated_status": 200,
+            "mutated_status": 422,
+            "mutation_subject": measured.get("mutation_subject"),
+            "evidence_class": "control-only-not-candidate",
+        }
+        control["control_id"] = rd.canonical_json_digest(control)
+        self._control_path = self._evidence.write_path(
+            self._evidence.root / f"control-{document['matrix_id']}.json", control
+        )
+        measurement = aggregate_frozen_matrix(
+            self._evidence.root / f"matrix-{document['matrix_id']}.json",
+            self._evidence.root,
+            control_path=self._control_path,
+        )
+        return self._evidence.write_path(
+            self._evidence.root / (
+                f"aggregate-{document['matrix_id']}-"
+                f"{measurement['measurement_id']}.json"
+            ),
+            measurement,
+        )
 
     @staticmethod
     def _artifact_report(artifact: PackageArtifact) -> dict:
@@ -817,10 +956,14 @@ class SubprocessChannelPiJourney:
 
 
 def _factory(component: str):
+    configured = os.getenv("AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR")
+    base = Path(configured or (
+        Path(tempfile.gettempdir()) / "aweb-channel-pi-skew-evidence"
+    ))
     return ChannelPiHarness(
         resolver=ArtifactResolver(),
-        journey=SubprocessChannelPiJourney(component),
-        evidence=FileEvidenceWriter(),
+        journey_factory=lambda: SubprocessChannelPiJourney(component),
+        evidence=FileEvidenceWriter(base / component),
     )
 
 
@@ -851,11 +994,11 @@ def _validate_artifact_against_side(
     component = side.get("component")
     if (
         not isinstance(artifact, dict)
+        or set(artifact) != {"component", "filename", "version", "sha256", "source"}
         or artifact.get("component") != component
         or artifact.get("version") != side.get("version")
         or not isinstance(artifact.get("filename"), str)
-        or not isinstance(artifact.get("sha256"), str)
-        or len(artifact["sha256"]) != 64
+        or not re.fullmatch(r"[0-9a-f]{64}", artifact.get("sha256", ""))
     ):
         raise rd.ReceiptError(
             f"{component} artifact does not bind its frozen cell preimage"
@@ -865,7 +1008,11 @@ def _validate_artifact_against_side(
         digest_set = side.get("digest_set")
         filename = artifact["filename"]
         if (
-            source.get("kind") != "candidate"
+            set(source) != {
+                "kind", "lane_ref", "outer_zip_sha256",
+                "canonical_set_digest", "digest_set",
+            }
+            or source.get("kind") != "candidate"
             or source.get("lane_ref") != side.get("lane_ref")
             or source.get("digest_set") != digest_set
             or not isinstance(digest_set, dict)
@@ -877,16 +1024,66 @@ def _validate_artifact_against_side(
                 f"candidate {component} artifact does not bind its LaneRef/"
                 "payload complete-set preimage"
             )
-    elif (
-        source.get("kind") != "published"
-        or source.get("registry") != locator
-    ):
-        raise rd.ReceiptError(
-            f"published {component} artifact does not bind registry {locator}"
+    else:
+        digest_set = source.get("digest_set")
+        expected_source_fields = (
+            {"kind", "registry", "metadata_url", "tarball_url",
+             "digest_set", "canonical_set_digest"}
+            if component in CLIENT_ARTIFACTS else
+            {"kind", "registry", "metadata_url", "download_url",
+             "digest_set", "canonical_set_digest"}
         )
+        metadata_url = urllib.parse.urlparse(source.get("metadata_url", ""))
+        payload_url = urllib.parse.urlparse(
+            source.get(
+                "tarball_url" if component in CLIENT_ARTIFACTS else "download_url",
+                "",
+            )
+        )
+        expected_metadata = (
+            f"https://registry.npmjs.org/"
+            f"{CLIENT_ARTIFACTS[component].removeprefix('npm:').replace('/', '%2F')}/"
+            f"{artifact['version']}"
+            if component in CLIENT_ARTIFACTS else
+            f"https://pypi.org/pypi/aweb/{artifact['version']}/json"
+        )
+        safe_payload = (
+            payload_url.scheme == "https"
+            and payload_url.username is None
+            and payload_url.password is None
+            and payload_url.port is None
+            and not payload_url.params
+            and not payload_url.query
+            and not payload_url.fragment
+            and urllib.parse.unquote(Path(payload_url.path).name)
+                == artifact["filename"]
+            and payload_url.netloc == (
+                "registry.npmjs.org"
+                if component in CLIENT_ARTIFACTS else "files.pythonhosted.org"
+            )
+        )
+        if (
+            set(source) != expected_source_fields
+            or source.get("kind") != "published"
+            or source.get("registry") != locator
+            or source.get("metadata_url") != expected_metadata
+            or not safe_payload
+            or not isinstance(digest_set, dict) or not digest_set
+            or any(not re.fullmatch(r"[0-9a-f]{64}", value or "")
+                   for value in digest_set.values())
+            or digest_set.get(artifact["filename"]) != artifact["sha256"]
+            or source.get("canonical_set_digest")
+                != rd.canonical_digest_of_set(digest_set)
+        ):
+            raise rd.ReceiptError(
+                f"published {component} artifact does not bind its complete "
+                f"registry identity {locator}"
+            )
 
 
-def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
+def aggregate_support(
+    reports: list[dict], *, expected_cells: list, matrix_id: str | None = None,
+) -> dict:
     """Build an explicitly unanchored body from every exact frozen cell."""
     if not expected_cells:
         raise rd.ReceiptError("no expected frozen skew cells were supplied")
@@ -895,7 +1092,7 @@ def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
         json.dumps({
             key: preimage[key]
             for key in (
-                "edge_id", "edge", "journey", "artifacts",
+                "edge_id", "edge_a", "edge_b", "journey", "artifacts",
                 "declared_direction",
             )
         }, sort_keys=True, separators=(",", ":"))
@@ -923,6 +1120,7 @@ def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
     clients: set[str] = set()
     servers: set[str] = set()
     candidate_identities: dict[str, dict] = {}
+    published_identities: dict[tuple[str, str], dict] = {}
     server_runtime_identities: dict[tuple[str, str], dict] = {}
     evidence = []
     for report in reports:
@@ -932,22 +1130,39 @@ def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
             raise rd.ReceiptError(f"cell {identity} does not carry its exact cell preimage")
         if cell_identity_from_preimage(report["cell"]) != identity:
             raise rd.ReceiptError(f"cell {identity} identity does not recompute")
-        if report.get("schema") != "aweb.channel-pi-server-skew-cell.v1":
-            raise rd.ReceiptError(f"cell {identity} has the wrong evidence schema")
-        for key in (
-            "edge_id", "edge", "journey", "artifacts", "declared_direction",
-            "cell_direction",
+        without_id = {key: value for key, value in report.items() if key != "report_id"}
+        if (
+            set(report) != {
+                "schema", "result", "matrix_id", "cell_id", "cell",
+                "edge_id", "edge", "journey", "artifacts",
+                "declared_direction", "cell_direction", "client_kind",
+                "server_kind", "client_artifact", "server_artifact",
+                "server_runtime", "observation", "report_id",
+            }
+            or report.get("schema") != "aweb.channel-pi-server-skew-cell.v1"
+            or report.get("matrix_id") != matrix_id
+            or report.get("report_id") != rd.canonical_json_digest(without_id)
         ):
-            if report.get(key) != preimage.get(key):
+            raise rd.ReceiptError(f"cell {identity} has the wrong evidence schema/digest")
+        expected_top = {
+            "edge_id": preimage["edge_id"],
+            "edge": {"a": preimage["edge_a"], "b": preimage["edge_b"]},
+            "journey": preimage["journey"],
+            "artifacts": preimage["artifacts"],
+            "declared_direction": preimage["declared_direction"],
+            "cell_direction": preimage["direction"],
+        }
+        for key, value in expected_top.items():
+            if report.get(key) != value:
                 raise rd.ReceiptError(
                     f"cell {identity} top-level {key} differs from its cell preimage"
                 )
         if (
-            report.get("client_kind") != preimage["a"]["kind"]
-            or report.get("server_kind") != preimage["b"]["kind"]
+            report.get("client_kind") != preimage["a_kind"]
+            or report.get("server_kind") != preimage["b_kind"]
         ):
             raise rd.ReceiptError(f"cell {identity} kind differs from its cell preimage")
-        direction = preimage["cell_direction"]
+        direction = preimage["direction"]
         observation = report.get("observation") or {}
         expected_key = "request" if direction == "a-to-b" else "event"
         if set(observation) != {expected_key}:
@@ -955,7 +1170,7 @@ def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
                 f"cell {identity} lacks its {expected_key} assertion"
             )
         validate_observation(
-            observation[expected_key], preimage["edge"]["a"], direction,
+            observation[expected_key], preimage["edge_a"], direction,
             preimage["b"]["version"],
         )
         runtime = report.get("server_runtime")
@@ -965,27 +1180,15 @@ def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
             )
         if report.get("result") != "green":
             raise rd.ReceiptError(f"cell {identity} is not green")
-        if (
-            str(preimage["a"]["kind"]).startswith("published")
-            and preimage["b"]["kind"] == "candidate"
-        ):
-            control = report.get("negative_control") or {}
-            if (
-                control.get("request") != LEGACY_MARK_READ_REQUEST
-                or control.get("unmutated_status") != 200
-                or control.get("mutated_status") != 422
-                or control.get("evidence_class") != "control-only-not-candidate"
-            ):
-                raise rd.ReceiptError(
-                    f"cell {identity} lacks the required-field control"
-                )
         client = report.get("client_artifact")
         server = report.get("server_artifact")
+        a_side = {"kind": preimage["a_kind"], **preimage["a"]}
+        b_side = {"kind": preimage["b_kind"], **preimage["b"]}
         _validate_artifact_against_side(
-            client, preimage["a"], preimage["artifacts"]["a"]
+            client, a_side, preimage["artifacts"]["a"]
         )
         _validate_artifact_against_side(
-            server, preimage["b"], preimage["artifacts"]["b"]
+            server, b_side, preimage["artifacts"]["b"]
         )
         runtime_key = (server["version"], server["sha256"])
         prior_runtime = server_runtime_identities.setdefault(runtime_key, runtime)
@@ -993,17 +1196,25 @@ def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
             raise rd.ReceiptError(
                 f"server runtime inventory differs for exact artifact {runtime_key}"
             )
-        for side, artifact in ((preimage["a"], client), (preimage["b"], server)):
+        for side, artifact in ((a_side, client), (b_side, server)):
+            component = side["component"]
             if side["kind"] == "candidate":
-                component = side["component"]
                 prior = candidate_identities.setdefault(component, artifact)
                 if prior != artifact:
                     raise rd.ReceiptError(
                         f"candidate {component} identity differs across exact cells"
                     )
-        if str(preimage["a"]["kind"]).startswith("published"):
+            else:
+                key = (component, side["version"])
+                prior = published_identities.setdefault(key, artifact)
+                if prior != artifact:
+                    raise rd.ReceiptError(
+                        f"published {component} {side['version']} identity "
+                        "differs across exact cells"
+                    )
+        if str(preimage["a_kind"]).startswith("published"):
             clients.add(client["version"])
-        if str(preimage["b"]["kind"]).startswith("published"):
+        if str(preimage["b_kind"]).startswith("published"):
             servers.add(server["version"])
         evidence.append({
             "cell_id": identity,
@@ -1015,18 +1226,124 @@ def aggregate_support(reports: list[dict], *, expected_cells: list) -> dict:
         })
 
     first = expected_preimages[0]
-    return {
+    measurement = {
         "schema": "aweb.runtime-support-measurement.v1",
         "completeness": "unanchored-local-measurement",
+        "status": "incomplete-unanchored",
+        "support_complete": False,
+        "anchor": None,
+        "matrix_id": matrix_id,
         "edge_id": first["edge_id"],
-        "edge": first["edge"],
+        "edge": {"a": first["edge_a"], "b": first["edge_b"]},
         "journey": first["journey"],
         "artifacts": first["artifacts"],
         "direction": first["declared_direction"],
         "supported_versions": {
-            first["edge"]["a"]: sorted(clients, key=_version_key),
+            first["edge_a"]: sorted(clients, key=_version_key),
             "server": sorted(servers, key=_version_key),
         },
         "candidates": candidate_identities,
+        "published_identities": [
+            published_identities[key] for key in sorted(published_identities)
+        ],
         "evidence": evidence,
     }
+    measurement["measurement_id"] = rd.canonical_json_digest(measurement)
+    return measurement
+
+
+def _require_channel_report_files(document: dict, evidence_root: Path) -> dict[str, Path]:
+    cells = rd.validate_skew_matrix_document(document)
+    matrix_id = document["matrix_id"]
+    expected = {
+        f"{matrix_id}-{rd.skew_cell_identity(cell)}.json" for cell in cells
+    }
+    cell_dir = Path(evidence_root) / "cells"
+    try:
+        entries = list(cell_dir.iterdir())
+    except OSError as exc:
+        raise rd.ReceiptError(f"channel/Pi reports are unreadable: {exc}") from exc
+    actual = {
+        item.name: item for item in entries
+        if item.is_file() and not item.is_symlink()
+    }
+    if set(actual) != expected or len(entries) != len(expected):
+        raise rd.ReceiptError(
+            "channel/Pi report-file set does not equal the frozen matrix; "
+            f"missing={sorted(expected - set(actual))}, "
+            f"extra={sorted(set(actual) - expected)}"
+        )
+    return actual
+
+
+def aggregate_frozen_matrix(
+    matrix_path: Path, evidence_root: Path, *, control_path: Path,
+) -> dict:
+    matrix_path = Path(matrix_path)
+    matrix_body = matrix_path.read_bytes()
+    document = json.loads(matrix_body)
+    if matrix_body != json.dumps(
+        document, sort_keys=True, separators=(",", ":")
+    ).encode():
+        raise rd.ReceiptError("channel/Pi matrix is not canonical JSON")
+    cells = rd.validate_skew_matrix_document(document)
+    matrix_id = document["matrix_id"]
+    if matrix_path.name != f"matrix-{matrix_id}.json":
+        raise rd.ReceiptError("channel/Pi matrix filename does not equal its identity")
+    expected = {
+        f"{matrix_id}-{rd.skew_cell_identity(cell)}.json": cell
+        for cell in cells
+    }
+    actual = _require_channel_report_files(document, evidence_root)
+    reports = []
+    for filename in expected:
+        body = actual[filename].read_bytes()
+        report = json.loads(body)
+        if body != json.dumps(
+            report, sort_keys=True, separators=(",", ":")
+        ).encode():
+            raise rd.ReceiptError(f"{filename}: report is not canonical JSON")
+        reports.append(report)
+    measurement = aggregate_support(
+        reports, expected_cells=cells, matrix_id=matrix_id
+    )
+    measurement["supported_versions"] = document["preimage"]["support"][
+        "supported_versions"
+    ]
+    expected_candidates = set(document["preimage"]["staged"])
+    if set(measurement["candidates"]) != expected_candidates:
+        raise rd.ReceiptError(
+            "channel/Pi candidate identities do not equal the frozen matrix"
+        )
+    control_body = Path(control_path).read_bytes()
+    control = json.loads(control_body)
+    without_id = {key: value for key, value in control.items() if key != "control_id"}
+    if (
+        set(control) != {
+            "schema", "matrix_id", "request", "unmutated_status",
+            "mutated_status", "mutation_subject", "evidence_class", "control_id",
+        }
+        or control.get("schema") != "aweb.channel-pi-skew-control.v1"
+        or control.get("matrix_id") != matrix_id
+        or control.get("request") != LEGACY_MARK_READ_REQUEST
+        or control.get("unmutated_status") != 200
+        or control.get("mutated_status") != 422
+        or control.get("evidence_class") != "control-only-not-candidate"
+        or control.get("control_id") != rd.canonical_json_digest(without_id)
+        or control_body != json.dumps(
+            control, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ):
+        raise rd.ReceiptError("channel/Pi control evidence is invalid")
+    measurement.update({
+        "staged_manifest_digest": document["preimage"]["staged_manifest_digest"],
+        "published_versions": document["preimage"]["published_versions"],
+        "control": {
+            "control_id": control["control_id"],
+            "file_sha256": hashlib.sha256(control_body).hexdigest(),
+            "evidence_class": "control-only-not-candidate",
+        },
+    })
+    measurement.pop("measurement_id", None)
+    measurement["measurement_id"] = rd.canonical_json_digest(measurement)
+    return measurement

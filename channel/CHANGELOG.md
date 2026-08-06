@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.3
+
+- Uses the distinct `aweb-channel` MCP declaration and runtime name as an
+  empirical defense against observed fresh-session plugin MCP non-enumeration.
+  The underlying Claude Code mechanism remains unconfirmed.
+
 ## 1.7.2
 
 - Keeps plaintext mail with a null encrypted envelope on the authenticated

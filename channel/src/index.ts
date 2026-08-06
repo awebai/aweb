@@ -52,7 +52,7 @@ async function main() {
   );
 
   const mcp = new Server(
-    { name: "aweb", version: "0.1.0" },
+    { name: "aweb-channel", version: "0.1.0" },
     {
       capabilities: {
         experimental: { "claude/channel": {} },
