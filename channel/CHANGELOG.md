@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.4
+
+- Defers the mail acknowledgement until delivery promotion, so a message is no
+  longer marked read when the notification is merely sent. A bridge that dies
+  before presenting a message no longer silently consumes it.
+- Claims mail promotion atomically, so concurrent promotion cannot double-claim
+  or drop a message.
+
 ## 1.7.3
 
 - Uses the distinct `aweb-channel` MCP declaration and runtime name as an
