@@ -1146,6 +1146,7 @@ class FederationSkewHarness:
         self._report_dir = Path(report_dir or DEFAULT_REPORT_DIR)
         self._matrix: dict | None = None
         self._cells: dict[str, object] = {}
+        self._cell_evidence: dict[str, dict] = {}
         self._finished = False
 
     def freeze_matrix(self, document: dict) -> Path:
@@ -1266,7 +1267,37 @@ class FederationSkewHarness:
         }
         # subprocess completion includes the shell EXIT trap and exact-project
         # teardown. Only then may a green report become visible atomically.
-        _atomic_report(self._report_dir / "cells" / f"{identity}.json", report)
+        path = self._report_dir / "cells" / f"{identity}.json"
+        digest = _atomic_report(path, report)
+        self._cell_evidence[identity] = {"path": path, "sha256": digest}
+
+    def _validate_effect_time_evidence(self) -> None:
+        if set(self._cell_evidence) != set(self._cells):
+            raise release_driver.ReceiptError(
+                "federation effect-time evidence inventory is not exact"
+            )
+        for cell_id in self._cells:
+            expected_path = self._report_dir / "cells" / f"{cell_id}.json"
+            evidence = self._cell_evidence[cell_id]
+            if (
+                not isinstance(evidence, dict)
+                or set(evidence) != {"path", "sha256"}
+                or evidence["path"] != expected_path
+                or expected_path.is_symlink()
+            ):
+                raise release_driver.ReceiptError(
+                    f"federation effect-time evidence inventory drifted for {cell_id}"
+                )
+            try:
+                observed = hashlib.sha256(expected_path.read_bytes()).hexdigest()
+            except OSError as exc:
+                raise release_driver.ReceiptError(
+                    f"federation effect-time evidence is unreadable for {cell_id}: {exc}"
+                ) from exc
+            if observed != evidence["sha256"]:
+                raise release_driver.ReceiptError(
+                    f"federation effect-time report digest changed for {cell_id}"
+                )
 
     def finish_matrix(self, document: dict) -> Path:
         if document != self._matrix:
@@ -1277,6 +1308,7 @@ class FederationSkewHarness:
             raise release_driver.ReceiptError(
                 "federation frozen matrix already finished"
             )
+        self._validate_effect_time_evidence()
         matrix_path = self._report_dir / f"matrix-{document['matrix_id']}.json"
         stored, _ = _read_canonical_report(matrix_path)
         if stored != document:

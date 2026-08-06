@@ -592,6 +592,37 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(calls, [])
             for value in cells:
                 harness.run(value)
+            report_paths = sorted((Path(tmp) / "cells").iterdir())
+            originals = {path: path.read_bytes() for path in report_paths}
+            for path in report_paths:
+                rewritten = json.loads(originals[path])
+                published = next(
+                    artifact for artifact in rewritten["artifacts"]
+                    if artifact["kind"] != "candidate"
+                )
+                registry = {
+                    name: "0" * 64 for name in published["registry_digest_set"]
+                }
+                published["registry_digest_set"] = registry
+                published["registry_set_digest"] = rd.canonical_digest_of_set(registry)
+                published["outer_sha256"] = registry[published["payload_name"]]
+                published["registry_sha256"] = published["outer_sha256"]
+                published["checksums_recorded_sha256"] = published["outer_sha256"]
+                published["checksums_sha256"] = registry["checksums.txt"]
+                published["checksums_registry_sha256"] = registry["checksums.txt"]
+                rewritten["report_id"] = rd.canonical_json_digest({
+                    key: value for key, value in rewritten.items()
+                    if key != "report_id"
+                })
+                path.write_text(json.dumps(
+                    rewritten, sort_keys=True, separators=(",", ":")
+                ))
+            with self.assertRaisesRegex(
+                rd.ReceiptError, "effect-time.*digest"
+            ):
+                harness.finish_matrix(document)
+            for path, original in originals.items():
+                path.write_bytes(original)
             aggregate_path = harness.finish_matrix(document)
             aggregate = json.loads(aggregate_path.read_text())
             self.assertEqual(aggregate["status"], "incomplete-unanchored")

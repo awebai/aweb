@@ -618,6 +618,7 @@ class CliServerSkewHarness:
         self._temporary_directory = temporary_directory
         self._matrix: dict | None = None
         self._cells: dict[str, rd.SkewCell] = {}
+        self._cell_evidence: dict[str, dict] = {}
         self._finished = False
 
     def freeze_matrix(self, document: dict) -> Path:
@@ -673,7 +674,11 @@ class CliServerSkewHarness:
             "cell_id": cell_id,
         }
         report["report_id"] = rd.canonical_json_digest(report)
-        self._write_matrix_report(report)
+        path = self._write_matrix_report(report)
+        self._cell_evidence[cell_id] = {
+            "path": path,
+            "sha256": _sha256(path.read_bytes()),
+        }
         return evidence
 
     def run_evidenced(self, cell: rd.SkewCell, *, publish: bool = True) -> dict:
@@ -740,11 +745,41 @@ class CliServerSkewHarness:
         os.replace(temporary, path)
         return path
 
-    def _write_matrix_report(self, report: dict) -> None:
+    def _write_matrix_report(self, report: dict) -> Path:
         path = self._evidence_root / "cells" / (
             f"{self._matrix['matrix_id']}-{report['cell_id']}.json"
         )
-        self._atomic_json(path, report)
+        return self._atomic_json(path, report)
+
+    def _validate_effect_time_evidence(self) -> None:
+        if set(self._cell_evidence) != set(self._cells):
+            raise rd.ReceiptError(
+                "CLI/server effect-time evidence inventory is not exact"
+            )
+        for cell_id in self._cells:
+            expected_path = self._evidence_root / "cells" / (
+                f"{self._matrix['matrix_id']}-{cell_id}.json"
+            )
+            evidence = self._cell_evidence[cell_id]
+            if (
+                not isinstance(evidence, dict)
+                or set(evidence) != {"path", "sha256"}
+                or evidence["path"] != expected_path
+                or expected_path.is_symlink()
+            ):
+                raise rd.ReceiptError(
+                    f"CLI/server effect-time evidence inventory drifted for {cell_id}"
+                )
+            try:
+                observed = _sha256(expected_path.read_bytes())
+            except OSError as exc:
+                raise rd.ReceiptError(
+                    f"CLI/server effect-time evidence is unreadable for {cell_id}: {exc}"
+                ) from exc
+            if observed != evidence["sha256"]:
+                raise rd.ReceiptError(
+                    f"CLI/server effect-time report digest changed for {cell_id}"
+                )
 
     def finish_matrix(self, document: dict) -> Path:
         if document != self._matrix:
@@ -753,6 +788,7 @@ class CliServerSkewHarness:
             )
         if self._finished:
             raise rd.ReceiptError("CLI/server frozen matrix already finished")
+        self._validate_effect_time_evidence()
         measurement = aggregate_frozen_matrix(
             self._evidence_root / f"matrix-{document['matrix_id']}.json",
             self._evidence_root,

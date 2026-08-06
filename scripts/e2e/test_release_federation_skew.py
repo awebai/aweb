@@ -559,6 +559,29 @@ class FederationHarnessTests(unittest.TestCase):
             self.assertTrue(matrix_path.is_file())
             for value in cells:
                 harness.run(value)
+            report_paths = sorted((Path(tmp) / "cells").iterdir())
+            originals = {path: path.read_bytes() for path in report_paths}
+            for index, path in enumerate(report_paths):
+                rewritten = json.loads(originals[path])
+                token = f"{index + 10:032x}"
+                rewritten["observation"]["project"] = f"aweb-fed-e2e-{token}"
+                rewritten["observation"]["ports"] = {
+                    "awid": federation._token_port(token, 0),
+                    "alpha": federation._token_port(token, 1),
+                    "beta": federation._token_port(token, 2),
+                }
+                rewritten["observation_sha256"] = sha256(json.dumps(
+                    rewritten["observation"], sort_keys=True, separators=(",", ":")
+                ).encode())
+                path.write_text(json.dumps(
+                    rewritten, sort_keys=True, separators=(",", ":")
+                ) + "\n")
+            with self.assertRaisesRegex(
+                rd.ReceiptError, "effect-time.*digest"
+            ):
+                harness.finish_matrix(document)
+            for path, original in originals.items():
+                path.write_bytes(original)
             aggregate_path = harness.finish_matrix(document)
             aggregate = json.loads(aggregate_path.read_text())
             self.assertEqual(aggregate["matrix_id"], document["matrix_id"])
