@@ -1044,8 +1044,10 @@ class TransitionSetTests(unittest.TestCase):
                 [self.document(2), self.document(1)])
 
     def test_component_inventory_must_match_the_plan(self):
-        docs = [self.document(1, component="channel"),
-                self.document(2, component="pi")]
+        # Real kinds: a plan's effect anchor is the published transition, and
+        # expected_components now requires one per component.
+        docs = [self.document(1, component="channel", kind="published"),
+                self.document(2, component="pi", kind="published")]
         archive.validate_transition_set(
             docs, expected_components={"channel", "pi"})
         with self.assertRaisesRegex(rd.ReceiptError, "component inventory"):
@@ -1253,8 +1255,10 @@ class ProductionPathControlTests(unittest.TestCase):
         authority = FakeAuthority({ref: sha256(lane_zip)})
         transport = FakeArchiveTransport()
         source = {k: v for k, v in SOURCE.items() if k != "anchor"}
+        source["source_sha"] = "c" * 40
         entry = archive.archive_sealed(
-            logical_id="lane:server:" + version, kind="workflow-artifact",
+            logical_id=f"lane:server:{version}:{'c' * 40}",
+            kind="workflow-artifact",
             source=source, store=store, authority=authority,
             transport=transport, recorded_head=None)
         restored = archive.restore_archived(
@@ -1295,13 +1299,16 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
     SOURCE_SHA = "a" * 40
 
     # ---- a complete, real release set -------------------------------------
-    def real_release_set(self, *, source_sha=None):
+    def real_release_set(self, *, source_sha=None, entry_digest=None,
+                         staged_digest=None):
         source_sha = source_sha or self.SOURCE_SHA
+        entry_digest = entry_digest or "d" * 64
+        staged_digest = staged_digest or entry_digest
         graph, plan = real_graph_and_plan()
         plan_bytes, frozen_id = rd.freeze_plan(
             plan, graph, source_sha=source_sha)
         staged = {"channel": rd.ReceiptEntry(
-            version="1.7.2", digest="d" * 64, phase="staged")}
+            version="1.7.2", digest=staged_digest, phase="staged")}
         manifest_bytes, manifest_digest = rd.seal_staged_manifest(
             plan, frozen_plan_id=frozen_id, source_sha=source_sha,
             entries=staged, graph=graph)
@@ -1315,10 +1322,12 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
                 "sequence": sequence,
                 "component": "channel",
                 "kind": kind,
-                "entry": {"version": "1.7.2", "digest": "d" * 64,
+                # digest_set/lane_ref must equal the staged entry exactly;
+                # the staged ReceiptEntry below leaves both unset.
+                "entry": {"version": "1.7.2", "digest": entry_digest,
                           "phase": kind, "pointer_state": None,
                           "delivery_proof": None, "lane_ref": None,
-                          "digest_set": {}},
+                          "digest_set": None},
             }
             body = json.dumps(document, sort_keys=True).encode()
             logical = (f"transition:{frozen_id}:{sequence:03d}:{kind}:"
@@ -1340,6 +1349,7 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
         ]
         return {
             "frozen_plan_id": frozen_id,
+            "plan_bytes": plan_bytes,
             "plan": artifacts[0][0],
             "staged_manifest": staged_id,
             "transitions": [logical for logical, _ in transitions],
@@ -1530,8 +1540,33 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
             z.writestr(f"dist/{name}", tgz)
         return buf.getvalue()
 
-    def lane_manifest_for(self, body, logical_id, **source_extra):
+    def pypi_lane_zip(self, *, version="1.26.36", source_sha="c" * 40):
+        import io
+        import zipfile
+
+        names = {
+            f"aweb-{version}-py3-none-any.whl": b"exact staged wheel " + source_sha.encode(),
+            f"aweb-{version}.tar.gz": b"exact staged sdist " + source_sha.encode(),
+        }
+        files = {n: sha256(d) for n, d in names.items()}
+        lane_manifest = {
+            "mode": "stage-only", "package": "server",
+            "tag": f"server-v{version}", "candidate_version": version,
+            "source_sha": source_sha, "files": files,
+            "canonical_set_digest": sha256(
+                json.dumps(files, sort_keys=True).encode()),
+        }
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("manifest.json", json.dumps(lane_manifest))
+            for n, d in names.items():
+                z.writestr(f"dist/{n}", d)
+        return buf.getvalue()
+
+    def lane_manifest_for(self, body, logical_id, source_sha="c" * 40,
+                          **source_extra):
         source = {k: v for k, v in SOURCE.items() if k != "anchor"}
+        source["source_sha"] = source_sha
         source.update(source_extra)
         return {
             "schema": archive.MANIFEST_SCHEMA,
@@ -1545,7 +1580,7 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
     def test_lane_id_claiming_a_foreign_package_refuses(self):
         """Lane substitution by package: real channel bytes, labelled pi."""
         body = self.lane_zip(package="channel", version="1.7.2")
-        manifest = self.lane_manifest_for(body, "lane:pi:1.7.2")
+        manifest = self.lane_manifest_for(body, "lane:pi:1.7.2:" + "c" * 40)
         with self.assertRaisesRegex(rd.ReceiptError, "lane manifest binds"):
             archive.semantic_validator()(body, manifest)
 
@@ -1553,14 +1588,55 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
         """Lane substitution by version: the 1.7.1 bytes relabelled 1.7.2 is
         precisely the swap byte-identity exists to prevent."""
         body = self.lane_zip(package="channel", version="1.7.1")
-        manifest = self.lane_manifest_for(body, "lane:channel:1.7.2")
+        manifest = self.lane_manifest_for(body, "lane:channel:1.7.2:" + "c" * 40)
         with self.assertRaisesRegex(rd.ReceiptError, "lane manifest binds"):
             archive.semantic_validator()(body, manifest)
 
-    def test_archive_source_claiming_a_foreign_commit_refuses(self):
-        body = self.lane_zip(source_sha="c" * 40)
+    def test_same_package_version_from_two_sources_are_distinct(self):
+        """Two VALID stagings of the same package/version from different
+        commits. Without the source in the identity either could stand in for
+        the other, and both would validate."""
+        first = self.pypi_lane_zip(source_sha="c" * 40)
+        second = self.pypi_lane_zip(source_sha="e" * 40)
+        self.assertNotEqual(first, second, "distinct sources, distinct bytes")
+        validate = archive.semantic_validator()
+        validate(first, self.lane_manifest_for(
+            first, f"lane:server:1.26.36:{'c' * 40}", source_sha="c" * 40))
+        validate(second, self.lane_manifest_for(
+            second, f"lane:server:1.26.36:{'e' * 40}", source_sha="e" * 40))
+
+    def test_substituting_the_other_source_artifact_refuses(self):
+        second = self.pypi_lane_zip(source_sha="e" * 40)
+        # The first artifact's identity, the second artifact's bytes.
         manifest = self.lane_manifest_for(
-            body, "lane:channel:1.7.2", source_sha="d" * 40)
+            second, f"lane:server:1.26.36:{'c' * 40}", source_sha="c" * 40)
+        with self.assertRaisesRegex(rd.ReceiptError, "source"):
+            archive.semantic_validator()(second, manifest)
+
+    def test_lane_id_source_alone_wrong_refuses(self):
+        """Discriminating for the ID binding: the archive source AGREES with
+        the lane manifest, so only the logical id disagrees. The
+        archive-source check cannot see this one."""
+        body = self.pypi_lane_zip(source_sha="e" * 40)
+        manifest = self.lane_manifest_for(
+            body, f"lane:server:1.26.36:{'c' * 40}", source_sha="e" * 40)
+        with self.assertRaisesRegex(
+            rd.ReceiptError, "lane logical id claims source"
+        ):
+            archive.semantic_validator()(body, manifest)
+
+    def test_lane_id_without_a_source_sha_refuses(self):
+        body = self.pypi_lane_zip()
+        manifest = self.lane_manifest_for(body, "lane:server:1.26.36")
+        with self.assertRaisesRegex(rd.ReceiptError, "malformed"):
+            archive.semantic_validator()(body, manifest)
+
+    def test_archive_source_claiming_a_foreign_commit_refuses(self):
+        # A non-lane logical id skips the id-claim branch, so this isolates the
+        # archive-source-vs-manifest check rather than re-testing the id.
+        body = self.pypi_lane_zip(source_sha="c" * 40)
+        manifest = self.lane_manifest_for(
+            body, "staged:server:1.26.36", source_sha="d" * 40)
         with self.assertRaisesRegex(rd.ReceiptError, "asserts source_sha"):
             archive.semantic_validator()(body, manifest)
 
@@ -1800,6 +1876,73 @@ class UnrelatedReleaseSetTests(unittest.TestCase):
         body, entry = self.index([self.good_set(), self.good_set("b" * 64)])
         resolved = self.authority(body).release_set("a" * 64)
         self.assertEqual(resolved["frozen_plan_id"], "a" * 64)
+
+
+
+
+class ReleaseSetCrossValidationTests(RoundFiveCounterexampleTests):
+    """Reviewer blocker 1: the relationship checks were optional and unreached.
+
+    restore_release_set loaded neither the plan nor the staged manifest for
+    cross-validation and passed no expected components or entries, so real
+    artifacts with source drift, entry drift, and a trailing transition
+    omission all restored cleanly.
+    """
+
+    def restore(self, released, transport, authority):
+        return archive.restore_release_set(
+            frozen_plan_id=released["frozen_plan_id"], transport=transport,
+            index_authority=authority, production=True)
+
+    def test_trailing_transition_omission_refuses(self):
+        """[1] of [1,2] is SELF-CONSISTENT: it satisfies 1..n for n=1. Only an
+        expectation derived from the frozen plan can catch it."""
+        released = self.real_release_set()
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(
+            released, transitions=[released["transitions"][0]])])
+        with self.assertRaises(rd.ReceiptError):
+            self.restore(released, transport, authority)
+
+    def test_entry_digest_drift_against_staged_refuses(self):
+        released = self.real_release_set(entry_digest="1" * 64)
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(released)])
+        with self.assertRaisesRegex(rd.ReceiptError, "field for field"):
+            self.restore(released, transport, authority)
+
+    def test_drift_against_staged_alone_refuses(self):
+        """Discriminating: transitions and receipt agree with each other, and
+        only the STAGED manifest disagrees. The receipt comparison cannot see
+        this one."""
+        released = self.real_release_set(staged_digest="2" * 64)
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(released)])
+        with self.assertRaisesRegex(rd.ReceiptError, "staged entry"):
+            self.restore(released, transport, authority)
+
+    def test_plan_id_source_drift_refuses(self):
+        released = self.real_release_set()
+        bad_plan = f"plan:{'9' * 40}:{released['frozen_plan_id']}"
+        # Defence in depth: the archive-time semantic validator already
+        # refuses a plan id whose source disagrees with the frozen plan, so the
+        # substitution cannot even reach the durable store. Asserting around
+        # both steps records WHERE it dies rather than assuming restore is the
+        # only guard.
+        with self.assertRaisesRegex(rd.ReceiptError, "claims source"):
+            transport, entries = self.archive_all(
+                released["artifacts"] + [(bad_plan, released["plan_bytes"])])
+            authority = self.index_authority(
+                entries, [self.inventory(released, plan=bad_plan)])
+            self.restore(released, transport, authority)
+
+    def test_complete_honest_set_still_restores(self):
+        """Control: the same machinery must accept an undrifted set."""
+        released = self.real_release_set()
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(released)])
+        restored = self.restore(released, transport, authority)
+        self.assertEqual([d["sequence"] for d in restored["transitions"]], [1, 2])
 
 
 
