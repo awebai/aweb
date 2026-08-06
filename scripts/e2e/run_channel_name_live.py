@@ -125,7 +125,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--claude-sha256", required=True)
     result.add_argument("--claude-version", required=True)
     result.add_argument("--credential-env", required=True)
-    result.add_argument("--channel-spec", default=FINAL_SOURCE, choices=[FINAL_SOURCE])
+    result.add_argument("--channel-load-spec", required=True)
     result.add_argument("--path-dir", action="append", required=True)
     return result
 
@@ -169,13 +169,14 @@ def main(argv: list[str] | None = None) -> int:
         evidence_path = root / "live-evidence.json"
         config_path = root / "live-config.json"
         config_path.write_text(json.dumps({
-            "channel_spec": args.channel_spec,
+            "channel_load_spec": args.channel_load_spec,
             "claude_binary": str(claude),
             "claude_sha256": args.claude_sha256,
             "claude_version": observed_version,
             "collision_fixture": str(repo / "scripts" / "e2e" / "fixtures" / "aweb-name-collision-mcp.mjs"),
             "credential_env": args.credential_env,
             "evidence_path": str(evidence_path),
+            "expected_source": FINAL_SOURCE,
             "plugin_root": str(package_root),
             "tgz_sha256": args.tgz_sha256,
         }, indent=2) + "\n")

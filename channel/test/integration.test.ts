@@ -85,13 +85,14 @@ interface ServerRuntimeProof {
 }
 
 interface LiveNameHarnessConfig {
-  channel_spec: string;
+  channel_load_spec: string;
   claude_binary: string;
   claude_sha256: string;
   claude_version: string;
   collision_fixture: string;
   credential_env: string;
   evidence_path: string;
+  expected_source: string;
   plugin_root: string;
   tgz_sha256: string;
 }
@@ -307,8 +308,11 @@ describe.sequential("channel integration", () => {
     liveNameEvidencePath = config.evidence_path;
     requireLoopbackURL(server.awebURL, "aweb");
     requireLoopbackURL(server.awidURL, "awid");
-    if (config.channel_spec !== "plugin:aweb-channel:aweb-channel") {
-      throw new Error(`unexpected development-channel spec: ${config.channel_spec}`);
+    if (!config.channel_load_spec.trim()) {
+      throw new Error("development-channel load spec is empty");
+    }
+    if (config.expected_source !== "plugin:aweb-channel:aweb-channel") {
+      throw new Error(`unexpected Channel notification source: ${config.expected_source}`);
     }
     const credential = process.env[config.credential_env];
     if (!credential) throw new Error(`missing dedicated credential ${config.credential_env}`);
@@ -359,7 +363,7 @@ describe.sequential("channel integration", () => {
       "--mcp-config", collisionConfig,
       "--strict-mcp-config",
       "--plugin-dir", config.plugin_root,
-      "--dangerously-load-development-channels", config.channel_spec,
+      "--dangerously-load-development-channels", config.channel_load_spec,
     ];
     const claude = spawn(config.claude_binary, args, {
       cwd: bobDir,
@@ -392,7 +396,7 @@ describe.sequential("channel integration", () => {
 
       const marker = `aweb-abbs-live-${Date.now()}`;
       const mail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", marker);
-      const expectedSource = "plugin:aweb-channel:aweb-channel";
+      const expectedSource = config.expected_source;
       await waitUntil(
         async () => stdout.includes(marker) && stdout.includes(expectedSource),
         60_000,
