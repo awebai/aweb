@@ -540,11 +540,16 @@ def cell_identity(cell) -> str:
 
 
 class FileEvidenceWriter:
-    def __init__(self, root: Path | None = None):
+    def __init__(self, root: Path | None = None, *, component: str | None = None):
         configured = os.getenv("AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR")
         self.root = Path(root or configured or (
             Path(tempfile.gettempdir()) / "aweb-channel-pi-skew-evidence"
         )).resolve()
+        # Which component's evidence this root holds. A root is not
+        # self-describing: two components can be handed the same directory, and
+        # the completeness inventory would then read one component's reports as
+        # the other's. Carrying the identity lets the measurement bind it.
+        self.component = component
         self.root.mkdir(parents=True, exist_ok=True)
 
     def write_path(self, path: Path, document: dict) -> Path:
@@ -583,6 +588,11 @@ class ChannelPiHarness:
 
     def _new_journey(self):
         return self._journey if self._journey is not None else self._journey_factory()
+
+    @property
+    def evidence_component(self) -> str | None:
+        """The component whose evidence root this lifecycle writes into."""
+        return getattr(self._evidence, "component", None)
 
     def freeze_matrix(self, document: dict) -> Path:
         cells = rd.validate_skew_matrix_document(document)
@@ -1365,7 +1375,46 @@ def evidence_writer_for(component: str, root: Path | None = None) -> FileEvidenc
     base = root or os.getenv("AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR") or (
         Path(tempfile.gettempdir()) / "aweb-channel-pi-skew-evidence"
     )
-    return FileEvidenceWriter(Path(base) / component)
+    return FileEvidenceWriter(Path(base) / component, component=component)
+
+
+UNANCHORED_MEASUREMENT_CLASS = {
+    "schema": "aweb.runtime-support-measurement.v1",
+    "completeness": "unanchored-local-measurement",
+    "status": "incomplete-unanchored",
+}
+
+
+def _require_unanchored_measurement(measurement, *, matrix_id: str) -> None:
+    """The only output class this entrypoint may extend and re-identify.
+
+    Re-computing measurement_id over whatever finish returned would re-sign a
+    document that claims to be complete or anchored. The class is checked
+    BEFORE any wrapper field is added, so a forged completion can never acquire
+    a fresh identity from this code path.
+    """
+    if not isinstance(measurement, dict):
+        raise rd.ReceiptError("channel/Pi measurement output is not a document")
+    for key, expected in UNANCHORED_MEASUREMENT_CLASS.items():
+        if measurement.get(key) != expected:
+            raise rd.ReceiptError(
+                f"channel/Pi measurement output {key}={measurement.get(key)!r} "
+                f"is not the only permitted unanchored class {expected!r}"
+            )
+    if measurement.get("support_complete") is not False:
+        raise rd.ReceiptError(
+            "channel/Pi measurement output must carry support_complete=false; "
+            "this entrypoint never produces a complete support claim"
+        )
+    if measurement.get("anchor") is not None:
+        raise rd.ReceiptError(
+            "channel/Pi measurement output carries an anchor; anchoring is a "
+            "separate reviewed step and is never asserted by measurement"
+        )
+    if measurement.get("matrix_id") != matrix_id:
+        raise rd.ReceiptError(
+            "channel/Pi measurement output binds a different frozen matrix"
+        )
 
 
 def _contract_for(component: str) -> rd.RuntimeContractEdge:
@@ -1415,6 +1464,31 @@ def measure_support(
             "channel/Pi measurement requires the frozen matrix lifecycle"
         )
 
+    # Exact component sets. An unrelated component's versions passed here are
+    # not merely ignored: they ride into the frozen matrix preimage and the
+    # output, so a Pi identity could be retained inside a Channel measurement.
+    exact = {component, "server"}
+    for label, supplied in (
+        ("supported_versions", supported_versions),
+        ("published_versions", published_versions),
+        ("staged", staged),
+    ):
+        if set(supplied) != exact:
+            raise rd.ReceiptError(
+                f"channel/Pi measurement of {component} requires exactly "
+                f"{sorted(exact)} in {label}, got {sorted(supplied)}"
+            )
+
+    # The evidence root must belong to the component being measured, checked
+    # before freeze so no cell effect lands in a foreign root.
+    evidence_component = getattr(harness, "evidence_component", None)
+    if evidence_component != component:
+        raise rd.ReceiptError(
+            f"channel/Pi measurement of {component} was given a lifecycle whose "
+            f"evidence root belongs to {evidence_component!r}; each component "
+            "measures into its own root"
+        )
+
     matrix = rd.freeze_skew_matrix(
         _contract_for(component),
         moving={component, "server"},
@@ -1429,6 +1503,7 @@ def measure_support(
     aggregate_path = finish(matrix)
 
     measurement = json.loads(Path(aggregate_path).read_bytes())
+    _require_unanchored_measurement(measurement, matrix_id=matrix["matrix_id"])
     measurement.update({
         "policy": "additive-only",
         "component": component,
