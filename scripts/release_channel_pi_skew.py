@@ -1436,6 +1436,9 @@ _PUBLISHED_KEYS = {"kind", "version", "digest_set", "authority"}
 _AUTHORITY_KEYS = {
     "provider", "repo", "workflow", "artifact", "source_sha", "zip_digest",
 }
+_REGISTRY_AUTHORITY_KEYS = {
+    "provider", "project", "filename", "registry_sha256", "download_url",
+}
 SERVER_LANE_REPO = "awebai/aweb"
 SERVER_LANE_WORKFLOW = ".github/workflows/pypi-release.yml"
 _GH_ID = re.compile(r"[1-9][0-9]*")
@@ -1530,7 +1533,7 @@ def validate_measurement_input(document, *, component: str) -> dict:
             f"{sorted(present)}"
         )
     _validate_candidate_entry(entries[component], component, source_sha)
-    _validate_published_entry(entries["server"])
+    _validate_published_entry(entries["server"], component=component)
 
     recorded = document["manifest_id"]
     body = {k: v for k, v in document.items() if k != "manifest_id"}
@@ -1616,7 +1619,7 @@ def _validate_candidate_entry(entry, component: str, source_sha: str) -> None:
             )
 
 
-def _validate_published_entry(entry) -> None:
+def _validate_published_entry(entry, *, component: str) -> None:
     if not isinstance(entry, dict) or set(entry) != _PUBLISHED_KEYS:
         present = set(entry) if isinstance(entry, dict) else set()
         raise rd.ReceiptError(
@@ -1647,6 +1650,9 @@ def _validate_published_entry(entry) -> None:
             "sha256 values"
         )
     authority = entry["authority"]
+    if component == "aw":
+        _validate_published_registry_authority(entry, authority)
+        return
     if not isinstance(authority, dict) or set(authority) != _AUTHORITY_KEYS:
         present = set(authority) if isinstance(authority, dict) else set()
         raise rd.ReceiptError(
@@ -1683,6 +1689,53 @@ def _validate_published_entry(entry) -> None:
     _exact(authority["source_sha"], _SHA40, "server authority source_sha")
     _exact(authority["zip_digest"], _SHA256, "server authority zip_digest")
 
+
+def _validate_published_registry_authority(entry: dict, authority) -> None:
+    if not isinstance(authority, dict) or set(authority) != _REGISTRY_AUTHORITY_KEYS:
+        present = set(authority) if isinstance(authority, dict) else set()
+        raise rd.ReceiptError(
+            "measurement input server registry authority does not carry exactly "
+            f"{sorted(_REGISTRY_AUTHORITY_KEYS)}; missing "
+            f"{sorted(_REGISTRY_AUTHORITY_KEYS - present)}, unexpected "
+            f"{sorted(present - _REGISTRY_AUTHORITY_KEYS)}"
+        )
+    if authority["provider"] != "pypi-registry" or authority["project"] != "aweb":
+        raise rd.ReceiptError(
+            "measurement input server registry authority must name "
+            "pypi-registry project 'aweb'"
+        )
+    filename = authority["filename"]
+    expected_filename = f"aweb-{entry['version']}-py3-none-any.whl"
+    if filename != expected_filename:
+        raise rd.ReceiptError(
+            f"measurement input server registry filename {filename!r} is not "
+            f"the exact runtime wheel {expected_filename!r}"
+        )
+    digest = authority["registry_sha256"]
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise rd.ReceiptError(
+            "measurement input server registry authority registry_sha256 is "
+            "not an exact lowercase SHA-256"
+        )
+    if digest != entry["digest_set"].get(filename):
+        raise rd.ReceiptError(
+            "measurement input server registry digest does not equal the "
+            "published digest_set entry for its exact wheel"
+        )
+    url = authority["download_url"]
+    parsed = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+    if (
+        parsed is None
+        or parsed.scheme != "https"
+        or parsed.netloc != "files.pythonhosted.org"
+        or parsed.query
+        or parsed.fragment
+        or Path(urllib.parse.unquote(parsed.path)).name != filename
+    ):
+        raise rd.ReceiptError(
+            f"measurement input server registry download URL {url!r} does not "
+            "safely name the exact wheel"
+        )
 
 
 def _require_child_identity(measurement: dict) -> str:
