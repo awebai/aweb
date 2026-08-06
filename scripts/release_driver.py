@@ -1089,6 +1089,11 @@ DELIVERY_PROOF_CONSUMERS = NPM_LANE_COMPONENTS
 ANCHOR_REPO = "awebai/aweb"
 ANCHOR_WORKFLOW_PATH = ".github/workflows/release-anchor.yml"
 ANCHOR_WORKFLOW_FILE = "release-anchor.yml"
+RECOVERY_ATTEMPT_EVIDENCE_NAME = "recovery-attempt-identity"
+RECOVERY_ATTEMPT_EVIDENCE_MEMBER = "recovery-attempt.json"
+RECOVERY_ATTEMPT_EVIDENCE_SCHEMA = (
+    "aweb.release.recovery-continuation-attempt.v1"
+)
 # GitHub bounds the TOTAL workflow-dispatch payload at 65,535 characters;
 # the check bounds the ENCODED body plus the other input fields with margin,
 # both here before dispatch and again inside the workflow.
@@ -1752,6 +1757,91 @@ class AwLaneRuns:
         ))
         return body.get("conclusion")
 
+    def run_attempt_artifact_id(self, run_id) -> str | None:
+        """Read immutable attempt identity from an artifact owned by this run."""
+        import zipfile
+
+        body = json.loads(self._api(
+            f"repos/{self.repo}/actions/runs/{run_id}/artifacts?per_page=100"
+        ))
+        artifacts = [
+            artifact for artifact in body.get("artifacts", [])
+            if artifact.get("name") == RECOVERY_ATTEMPT_EVIDENCE_NAME
+        ]
+        if not artifacts:
+            return None
+        if len(artifacts) != 1:
+            raise ReceiptError(
+                f"continuation run {run_id} carries {len(artifacts)} "
+                "recovery-attempt evidence artifacts, not exactly one"
+            )
+        artifact = artifacts[0]
+        if str(artifact.get("workflow_run", {}).get("id")) != str(run_id):
+            raise ReceiptError(
+                f"continuation run {run_id} evidence belongs to another run"
+            )
+        if artifact.get("expired") is not False:
+            raise ReceiptError(
+                f"continuation run {run_id} attempt evidence is expired"
+            )
+        digest = artifact.get("digest") or ""
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise ReceiptError(
+                f"continuation run {run_id} attempt evidence has invalid "
+                f"API digest {digest!r}"
+            )
+        data = self._api(
+            f"repos/{self.repo}/actions/artifacts/{artifact.get('id')}/zip"
+        )
+        actual = hashlib.sha256(data).hexdigest()
+        if f"sha256:{actual}" != digest:
+            raise ReceiptError(
+                f"continuation run {run_id} attempt evidence ZIP digest "
+                "differs from the GitHub API"
+            )
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                names = [name for name in archive.namelist()
+                         if not name.endswith("/")]
+                if names != [RECOVERY_ATTEMPT_EVIDENCE_MEMBER]:
+                    raise ReceiptError(
+                        f"continuation run {run_id} attempt evidence carries "
+                        f"members {names!r}"
+                    )
+                evidence_bytes = archive.read(
+                    RECOVERY_ATTEMPT_EVIDENCE_MEMBER
+                )
+        except zipfile.BadZipFile as exc:
+            raise ReceiptError(
+                f"continuation run {run_id} attempt evidence is not a ZIP"
+            ) from exc
+        try:
+            evidence = json.loads(evidence_bytes)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ReceiptError(
+                f"continuation run {run_id} attempt evidence is not JSON"
+            ) from exc
+        if canonical_json_bytes(evidence) != evidence_bytes:
+            raise ReceiptError(
+                f"continuation run {run_id} attempt evidence is not canonical"
+            )
+        _exact_keys(
+            evidence,
+            {"schema", "attempt_artifact_id", "continuation_run_id"},
+            f"continuation run {run_id} attempt evidence",
+        )
+        if (
+            evidence["schema"] != RECOVERY_ATTEMPT_EVIDENCE_SCHEMA
+            or str(evidence["continuation_run_id"]) != str(run_id)
+        ):
+            raise ReceiptError(
+                f"continuation run {run_id} attempt evidence binding mismatch"
+            )
+        return _nonempty_text(
+            evidence["attempt_artifact_id"],
+            f"continuation run {run_id} attempt artifact id",
+        )
+
 
 class AwWorkflowLane:
     """The aw component's lane over the reviewed three-mode workflow.
@@ -2135,7 +2225,9 @@ class _WorkflowLaneBase:
             if str(run_id) not in before
         ]
 
-    def _wait_for_continuation(self, before_run_ids) -> str:
+    def _wait_for_continuation(
+        self, before_run_ids, *, expected_attempt_artifact_id=None
+    ) -> tuple[str, str | None]:
         new_runs: list[tuple[str, object]] = []
         for _ in range(self.POLL_ATTEMPTS):
             new_runs = self._new_continuation_runs(before_run_ids)
@@ -2159,9 +2251,23 @@ class _WorkflowLaneBase:
                 f"{self.component}: continuation run {run_id} concluded "
                 f"{conclusion!r}, not success"
             )
-        return run_id
+        observed_attempt_artifact_id = None
+        if expected_attempt_artifact_id is not None:
+            observed_attempt_artifact_id = (
+                self._runs.run_attempt_artifact_id(native_run_id)
+            )
+            if observed_attempt_artifact_id != expected_attempt_artifact_id:
+                raise ReceiptError(
+                    f"{self.component}: continuation run {run_id} observed "
+                    f"attempt identity {observed_attempt_artifact_id!r}, not "
+                    f"{expected_attempt_artifact_id!r}"
+                )
+        return run_id, observed_attempt_artifact_id
 
-    def _dispatch_and_wait(self, inputs: dict, *, before_run_ids=None) -> str:
+    def _dispatch_and_wait(
+        self, inputs: dict, *, before_run_ids=None,
+        expected_attempt_artifact_id=None,
+    ) -> tuple[str, str | None]:
         before = (
             list(before_run_ids)
             if before_run_ids is not None
@@ -2172,7 +2278,18 @@ class _WorkflowLaneBase:
                 f"{self.component}: continuation run set drifted before dispatch"
             )
         self._runs.dispatch(inputs)
-        return self._wait_for_continuation(before)
+        return self._wait_for_continuation(
+            before,
+            expected_attempt_artifact_id=expected_attempt_artifact_id,
+        )
+
+    def _recovery_continuation_inputs(
+        self, staged: "ReceiptEntry", attempt_artifact_id: str
+    ) -> dict:
+        raise ReceiptError(
+            f"{self.component}: workflow lane has no persistently observable "
+            "recovery-attempt identity surface"
+        )
 
     def publish_recovery(
         self, node, staged: "ReceiptEntry", *, before_run_ids,
@@ -2183,8 +2300,12 @@ class _WorkflowLaneBase:
                 f"{node.component}: recovery action is no longer unused; "
                 "exact existing state must be adopted before an attempt"
             )
-        run_id = self._dispatch_and_wait(
-            self._continuation_inputs(staged), before_run_ids=before_run_ids
+        run_id, observed_attempt_artifact_id = self._dispatch_and_wait(
+            self._recovery_continuation_inputs(
+                staged, attempt_artifact_id
+            ),
+            before_run_ids=before_run_ids,
+            expected_attempt_artifact_id=attempt_artifact_id,
         )
         observed = self.observe(node, staged)
         if observed is None:
@@ -2194,7 +2315,7 @@ class _WorkflowLaneBase:
         return RecoveryContinuation(
             entry=observed,
             continuation_run_id=run_id,
-            attempt_artifact_id=attempt_artifact_id,
+            attempt_artifact_id=observed_attempt_artifact_id,
         )
 
     def recover_recovery_attempt(
@@ -2216,6 +2337,15 @@ class _WorkflowLaneBase:
                 f"{node.component}: attempted continuation run {run_id} "
                 f"concluded {conclusion!r}, not success"
             )
+        observed_attempt_artifact_id = self._runs.run_attempt_artifact_id(
+            native_run_id
+        )
+        if observed_attempt_artifact_id != attempt_artifact_id:
+            raise ReceiptError(
+                f"{node.component}: attempted continuation run {run_id} "
+                f"observed attempt identity {observed_attempt_artifact_id!r}, "
+                f"not {attempt_artifact_id!r}"
+            )
         observed = self.observe(node, staged)
         if observed is None:
             raise ReceiptError(
@@ -2224,7 +2354,7 @@ class _WorkflowLaneBase:
         return RecoveryContinuation(
             entry=observed,
             continuation_run_id=run_id,
-            attempt_artifact_id=attempt_artifact_id,
+            attempt_artifact_id=observed_attempt_artifact_id,
         )
 
     def publish(self, node, staged: "ReceiptEntry") -> "ReceiptEntry":
@@ -2544,6 +2674,12 @@ class NpmWorkflowLane(_WorkflowLaneBase):
     def _continuation_inputs(self, staged):
         inputs = super()._continuation_inputs(staged)
         return {"package": self.component, **inputs}
+
+    def _recovery_continuation_inputs(self, staged, attempt_artifact_id):
+        return {
+            **self._continuation_inputs(staged),
+            "recovery_attempt_artifact_id": attempt_artifact_id,
+        }
 
     def observe(self, node, staged: "ReceiptEntry | None" = None):
         if staged is None or staged.digest_set is None:

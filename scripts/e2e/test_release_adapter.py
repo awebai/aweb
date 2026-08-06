@@ -696,13 +696,16 @@ class ObserverTests(unittest.TestCase):
 
 
 class FakeAwRuns:
-    """The aw-release.yml runs surface: list, dispatch, conclusion."""
+    """The workflow runs surface: list, dispatch, conclusion, attempt evidence."""
 
-    def __init__(self, *, new_runs_per_dispatch=1, conclusion="success"):
+    def __init__(self, *, new_runs_per_dispatch=1, conclusion="success",
+                 observed_attempt_artifact_id="from-dispatch"):
         self.run_ids = [100, 101]
         self.dispatched: list[dict] = []
         self.new_runs_per_dispatch = new_runs_per_dispatch
         self.conclusion = conclusion
+        self.observed_attempt_artifact_id = observed_attempt_artifact_id
+        self.run_attempt_artifact_ids = {}
         self._next = 200
 
     def list_run_ids(self):
@@ -711,11 +714,75 @@ class FakeAwRuns:
     def dispatch(self, inputs: dict):
         self.dispatched.append(dict(inputs))
         for _ in range(self.new_runs_per_dispatch):
-            self.run_ids.append(self._next)
+            run_id = self._next
+            self.run_ids.append(run_id)
+            observed = self.observed_attempt_artifact_id
+            if observed == "from-dispatch":
+                observed = inputs.get("recovery_attempt_artifact_id")
+            if observed is not None:
+                self.run_attempt_artifact_ids[run_id] = observed
             self._next += 1
 
     def run_conclusion(self, run_id):
         return self.conclusion
+
+    def run_attempt_artifact_id(self, run_id):
+        return self.run_attempt_artifact_ids.get(run_id)
+
+
+class WorkflowRunAttemptEvidenceTests(unittest.TestCase):
+    def evidence_zip(self, attempt_artifact_id, run_id="777"):
+        body = rd.canonical_json_bytes({
+            "schema": "aweb.release.recovery-continuation-attempt.v1",
+            "attempt_artifact_id": attempt_artifact_id,
+            "continuation_run_id": run_id,
+        })
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("recovery-attempt.json", body)
+        return buffer.getvalue()
+
+    def test_reads_attempt_identity_from_run_owned_persistent_artifact(self):
+        attempt_id = "adopted-preplan-attempt:" + "a" * 64 + ":channel:" + "b" * 64
+        artifact_zip = self.evidence_zip(attempt_id)
+
+        def api(path):
+            if path == "repos/awebai/aweb/actions/runs/777/artifacts?per_page=100":
+                return json.dumps({"artifacts": [{
+                    "id": 88,
+                    "name": "recovery-attempt-identity",
+                    "expired": False,
+                    "digest": "sha256:" + sha256(artifact_zip),
+                    "workflow_run": {"id": 777},
+                }]}).encode()
+            if path == "repos/awebai/aweb/actions/artifacts/88/zip":
+                return artifact_zip
+            raise AssertionError(f"unexpected API path {path}")
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        self.assertEqual(runs.run_attempt_artifact_id(777), attempt_id)
+
+    def test_npm_workflow_persists_recovery_identity_before_effects(self):
+        workflow = (REPO_ROOT / ".github/workflows/npm-release.yml").read_text()
+        publish = workflow[workflow.index("\n  publish:\n"):]
+        self.assertIn("recovery_attempt_artifact_id:", workflow)
+        self.assertIn(
+            "RECOVERY_ATTEMPT_ARTIFACT_ID: "
+            "${{ inputs.recovery_attempt_artifact_id }}",
+            publish,
+        )
+        self.assertIn("recovery-attempt.json", publish)
+        self.assertIn("name: recovery-attempt-identity", publish)
+        first_effect = publish.index("name: Tag - create at exact source")
+        self.assertLess(
+            publish.index("name: Persist recovery attempt identity"),
+            first_effect,
+        )
+        self.assertLess(
+            publish.index("name: Upload recovery attempt identity"),
+            first_effect,
+        )
 
 
 def lane_fixture(*, zip_bytes=None, remote=None, runs=None):
@@ -3013,7 +3080,33 @@ class NpmWorkflowLaneTests(unittest.TestCase):
             attempt_artifact_id="attempt:channel:one")
         self.assertEqual(result.continuation_run_id, str(runs.run_ids[-1]))
         self.assertEqual(result.attempt_artifact_id, "attempt:channel:one")
+        self.assertEqual(
+            runs.dispatched[0]["recovery_attempt_artifact_id"],
+            "attempt:channel:one",
+        )
         self.assertEqual(result.entry.digest_set, adopted.entry.digest_set)
+
+    def test_recovery_publish_refuses_run_with_different_attempt_evidence(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": None}
+        runs = FakeAwRuns(observed_attempt_artifact_id="different-attempt")
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        before = lane.continuation_snapshot(self.node())
+        original = runs.dispatch
+
+        def dispatch(inputs):
+            original(inputs)
+            state["value"] = sha256(tgz)
+        runs.dispatch = dispatch
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.publish_recovery(
+                self.node(), adopted.entry, before_run_ids=before,
+                attempt_artifact_id="attempt:channel:expected")
+        self.assertIn("attempt", str(caught.exception))
 
     def test_recovery_attempt_correlates_one_exact_success_without_dispatch(self) -> None:
         tgz = channel_tgz()
@@ -3027,6 +3120,7 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         before = lane.continuation_snapshot(self.node())
         runs.run_ids.append(777)
         runs.conclusion = "success"
+        runs.run_attempt_artifact_ids[777] = "attempt:channel:two"
         state["value"] = sha256(tgz)
         recovered = lane.recover_recovery_attempt(
             self.node(), adopted.entry, before_run_ids=before,
@@ -3034,6 +3128,31 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         self.assertEqual(recovered.continuation_run_id, "777")
         self.assertEqual(recovered.attempt_artifact_id, "attempt:channel:two")
         self.assertEqual(runs.dispatched, [])
+
+    def test_recovery_attempt_refuses_unowned_success_without_dispatch(self) -> None:
+        for observed_attempt_id in (None, "different-attempt"):
+            with self.subTest(observed_attempt_id=observed_attempt_id):
+                tgz = channel_tgz()
+                zip_bytes = npm_lane_zip(tgz=tgz)
+                state = {"value": None}
+                runs = FakeAwRuns()
+                lane, _ = npm_lane(
+                    zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+                    delivery_proofs={"channel": dict(GOOD_PROOF)})
+                adopted = lane.adopt_preplan(self.node())
+                before = lane.continuation_snapshot(self.node())
+                runs.run_ids.append(777)
+                runs.conclusion = "success"
+                if observed_attempt_id is not None:
+                    runs.run_attempt_artifact_ids[777] = observed_attempt_id
+                state["value"] = sha256(tgz)
+
+                with self.assertRaises(rd.ReceiptError) as caught:
+                    lane.recover_recovery_attempt(
+                        self.node(), adopted.entry, before_run_ids=before,
+                        attempt_artifact_id="attempt:channel:expected")
+                self.assertIn("attempt", str(caught.exception))
+                self.assertEqual(runs.dispatched, [])
 
     def test_stage_refuses_a_profile_violation_in_the_tgz(self) -> None:
         zip_bytes = npm_lane_zip(tgz=channel_tgz(sentinel=False))
