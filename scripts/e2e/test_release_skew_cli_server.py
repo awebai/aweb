@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -13,6 +14,7 @@ import tarfile
 import tempfile
 import unittest
 import zipfile
+from unittest import mock
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -810,6 +812,110 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(evidence["runtime"]["server_version"], "1.26.31")
         self.assertEqual(evidence["runtime"]["wheel_sha256"], "2" * 64)
         self.assertIn("agent_id absent", evidence["error"])
+
+
+class MeasurementCliTests(unittest.TestCase):
+    def write_manifest(self, root: Path, names: set[str]) -> tuple[Path, bytes]:
+        entries = {}
+        for index, name in enumerate(sorted(names), start=1):
+            digest_set = {f"{name}.artifact": f"{index:x}" * 64}
+            entries[name] = {
+                "version": f"1.0.{index}",
+                "digest": rd.canonical_digest_of_set(digest_set),
+                "digest_set": digest_set,
+                "lane_ref": {
+                    "artifact": f"gh-artifact:awebai/aweb:100:{index}",
+                    "aw_source_sha": "a" * 40,
+                    "zip_digest": "sha256:" + "b" * 64,
+                },
+            }
+        body = json.dumps({"entries": entries}, sort_keys=True).encode()
+        path = root / "staged-manifest.json"
+        path.write_bytes(body)
+        return path, body
+
+    @staticmethod
+    def arguments(manifest: Path, output: Path) -> list[str]:
+        return [
+            "measure",
+            "--staged-manifest", str(manifest),
+            "--supported-aw", "1.35.0",
+            "--supported-server", "1.26.35",
+            "--published-aw-latest", "1.34.3",
+            "--published-server-latest", "1.26.35",
+            "--output", str(output),
+        ]
+
+    def assert_manifest_set_refused(self, names: set[str], detail: str) -> None:
+        import release_skew_cli_server as subject
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest, _ = self.write_manifest(root, names)
+            output = root / "measurement.json"
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(subject, "_entry_from_manifest") as project,
+                mock.patch.object(subject, "measure_support") as measure,
+                mock.patch.object(subject, "CliServerSkewHarness") as harness,
+                contextlib.redirect_stdout(stdout),
+            ):
+                status = subject.main(self.arguments(manifest, output))
+            self.assertEqual(status, 1)
+            self.assertIn("staged manifest entries must be exactly", stdout.getvalue())
+            self.assertIn(detail, stdout.getvalue())
+            self.assertFalse(output.exists())
+            project.assert_not_called()
+            measure.assert_not_called()
+            harness.assert_not_called()
+
+    def test_real_cli_refuses_extra_manifest_entry_before_effects_or_output(self):
+        self.assert_manifest_set_refused(
+            {"aw", "server", "channel"}, "extra=['channel']"
+        )
+
+    def test_real_cli_refuses_missing_manifest_entry_before_effects_or_output(self):
+        for names, missing in (({"aw"}, "server"), ({"server"}, "aw")):
+            with self.subTest(missing=missing):
+                self.assert_manifest_set_refused(names, f"missing=['{missing}']")
+
+    def test_real_cli_accepts_honest_exact_manifest_set(self):
+        import release_skew_cli_server as subject
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest, body = self.write_manifest(root, {"aw", "server"})
+            output = root / "measurement.json"
+            observed = {}
+            harness = object()
+
+            def measure_success(**kwargs):
+                observed.update(kwargs)
+                return {
+                    "schema": "aweb.release.runtime-support-measurement.v1",
+                    "status": "incomplete-unanchored",
+                    "support_complete": False,
+                    "anchor": None,
+                }
+
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(subject, "measure_support", side_effect=measure_success),
+                mock.patch.object(subject, "CliServerSkewHarness", return_value=harness),
+                contextlib.redirect_stdout(stdout),
+            ):
+                status = subject.main(self.arguments(manifest, output))
+
+            self.assertEqual(status, 0)
+            self.assertTrue(output.is_file())
+            self.assertIn("measurement", stdout.getvalue())
+            self.assertEqual(set(observed["staged"]), {"aw", "server"})
+            self.assertEqual(observed["staged_manifest_digest"], sha(body))
+            self.assertIs(observed["harness"], harness)
+            document = json.loads(output.read_text())
+            self.assertEqual(document["staged_manifest_sha256"], sha(body))
+            measurement_id = document.pop("measurement_id")
+            self.assertEqual(measurement_id, rd.canonical_json_digest(document))
 
 
 class MeasurementTests(unittest.TestCase):

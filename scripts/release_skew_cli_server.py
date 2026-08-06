@@ -1412,6 +1412,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manifest = json.loads(body)
         rd.validate_staged_manifest(manifest)
+        required_entries = {"aw", "server"}
+        manifest_entries = set(manifest["entries"])
+        if manifest_entries != required_entries:
+            raise rd.ReceiptError(
+                "CLI/server staged manifest entries must be exactly "
+                f"{sorted(required_entries)}; "
+                f"missing={sorted(required_entries - manifest_entries)}, "
+                f"extra={sorted(manifest_entries - required_entries)}"
+            )
         entries = {
             name: _entry_from_manifest(name, manifest["entries"][name])
             for name in ("aw", "server")
