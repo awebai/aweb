@@ -468,20 +468,66 @@ class ArtifactResolver:
             raise rd.ReceiptError(
                 f"published PyPI aweb {version} metadata is malformed"
             ) from exc
-        metadata_set = {
-            item.get("filename"): (item.get("digests") or {}).get("sha256")
-            for item in metadata.get("urls", [])
-            if item.get("filename")
+        if (metadata.get("info") or {}).get("version") != version:
+            raise rd.ReceiptError(
+                f"published PyPI aweb metadata does not describe {version}"
+            )
+        records = metadata.get("urls")
+        if not isinstance(records, list) or not records:
+            raise rd.ReceiptError(
+                f"published PyPI aweb {version} release file set is empty"
+            )
+        metadata_set = {}
+        by_type = {}
+        for item in records:
+            if not isinstance(item, dict):
+                raise rd.ReceiptError(
+                    f"published PyPI aweb {version} has malformed file metadata"
+                )
+            filename = item.get("filename")
+            digest = (item.get("digests") or {}).get("sha256")
+            package_type = item.get("packagetype")
+            url = item.get("url")
+            parsed = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+            if (
+                not isinstance(filename, str)
+                or not filename
+                or Path(filename).name != filename
+                or package_type not in {"bdist_wheel", "sdist"}
+                or item.get("yanked") is not False
+                or not isinstance(digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or parsed is None
+                or parsed.scheme != "https"
+                or parsed.netloc != "files.pythonhosted.org"
+                or parsed.query
+                or parsed.fragment
+                or Path(urllib.parse.unquote(parsed.path)).name != filename
+            ):
+                raise rd.ReceiptError(
+                    f"published PyPI aweb {version} has malformed or ambiguous "
+                    f"file metadata for {filename!r}"
+                )
+            if filename in metadata_set:
+                raise rd.ReceiptError(
+                    f"published PyPI aweb {version} repeats filename {filename}"
+                )
+            metadata_set[filename] = digest
+            by_type.setdefault(package_type, []).append(item)
+        expected_names = {
+            f"aweb-{version}-py3-none-any.whl",
+            f"aweb-{version}.tar.gz",
         }
-        if metadata_set != observed_set:
+        if (
+            metadata_set != observed_set
+            or set(metadata_set) != expected_names
+            or set(by_type) != {"bdist_wheel", "sdist"}
+        ):
             raise rd.ReceiptError(
                 f"published PyPI aweb {version} metadata set does not equal "
-                "the classified complete registry set"
+                "the exact classified registry set"
             )
-        wheels = [
-            item for item in metadata.get("urls", [])
-            if item.get("packagetype") == "bdist_wheel"
-        ]
+        wheels = by_type["bdist_wheel"]
         if len(wheels) != 1:
             raise rd.ReceiptError(
                 f"published PyPI aweb {version} exposes {len(wheels)} wheels, expected one"
@@ -1433,41 +1479,10 @@ _CANDIDATE_KEYS = {
     "stage_run_id", "stage_artifact_id", "stage_zip_digest",
 }
 _PUBLISHED_KEYS = {"kind", "version", "digest_set", "authority"}
-_AUTHORITY_KEYS = {
-    "provider", "repo", "workflow", "artifact", "source_sha", "zip_digest",
+_REGISTRY_AUTHORITY_KEYS = {
+    "provider", "project", "filename", "registry_sha256", "download_url",
 }
-# Registry truth: a published distribution is already attested by the registry,
-# which is a third party independent of the machine asking to measure. Routing
-# that through a GitHub verify-only run added an availability dependency without
-# adding an independent party, and a runner outage then blocked measurement
-# entirely. Candidates still need workflow authority, because unpublished bytes
-# exist nowhere else.
-_REGISTRY_AUTHORITY_KEYS = {"provider", "registry", "project"}
-REGISTRY_TRUTH_PROVIDER = "registry-truth"
-PYPI_PROJECT_URL = "https://pypi.org/pypi/{project}/{version}/json"
-SERVER_LANE_REPO = "awebai/aweb"
-SERVER_LANE_WORKFLOW = ".github/workflows/pypi-release.yml"
 _GH_ID = re.compile(r"[1-9][0-9]*")
-
-
-def _validate_registry_authority(authority) -> None:
-    if set(authority) != _REGISTRY_AUTHORITY_KEYS:
-        present = set(authority)
-        raise rd.ReceiptError(
-            "measurement input registry authority does not carry exactly "
-            f"{sorted(_REGISTRY_AUTHORITY_KEYS)}; missing "
-            f"{sorted(_REGISTRY_AUTHORITY_KEYS - present)}, unexpected "
-            f"{sorted(present - _REGISTRY_AUTHORITY_KEYS)}"
-        )
-    if authority["registry"] != "pypi":
-        raise rd.ReceiptError(
-            f"measurement input registry {authority['registry']!r} is not pypi"
-        )
-    if authority["project"] != "aweb":
-        raise rd.ReceiptError(
-            f"measurement input registry project {authority['project']!r} is "
-            "not the reviewed server distribution 'aweb'"
-        )
 
 
 def _parse_artifact(artifact, label: str) -> tuple[str, str, str]:
@@ -1675,54 +1690,55 @@ def _validate_published_entry(entry) -> None:
             "measurement input server needs a complete digest_set of exact "
             "sha256 values"
         )
-    authority = entry["authority"]
-    if not isinstance(authority, dict):
-        raise rd.ReceiptError("measurement input server authority is not a record")
-    # Dispatch on the provider FIRST, then require that provider's exact key
-    # set. Checking one fixed key set before dispatching made the registry
-    # provider unreachable: its three keys could never satisfy the six
-    # verify-only keys. Each branch still demands an exact set, so neither
-    # provider is weakened and no key from one can appear in the other.
-    provider = authority.get("provider")
-    if provider == REGISTRY_TRUTH_PROVIDER:
-        _validate_registry_authority(authority)
-        return
-    if set(authority) != _AUTHORITY_KEYS:
-        present = set(authority)
-        raise rd.ReceiptError(
-            "measurement input server authority does not carry exactly "
-            f"{sorted(_AUTHORITY_KEYS)}; missing "
-            f"{sorted(_AUTHORITY_KEYS - present)}, unexpected "
-            f"{sorted(present - _AUTHORITY_KEYS)}"
-        )
-    if authority["provider"] != "verify-only-lane":
-        raise rd.ReceiptError(
-            f"measurement input server authority provider "
-            f"{authority['provider']!r} is not the reviewed verify-only lane"
-        )
-    # One immutable workflow-artifact reference, not duplicated labels: the
-    # repo is bound to the repo encoded in the artifact reference, so the two
-    # cannot name different places.
-    repo, _, _ = _parse_artifact(authority["artifact"], "server authority")
-    if authority["repo"] != repo:
-        raise rd.ReceiptError(
-            f"measurement input server authority repo {authority['repo']!r} "
-            f"disagrees with the repo encoded in its artifact reference {repo!r}"
-        )
-    if authority["repo"] != SERVER_LANE_REPO:
-        raise rd.ReceiptError(
-            f"measurement input server authority repo {authority['repo']!r} is "
-            f"not the reviewed server lane repo {SERVER_LANE_REPO!r}"
-        )
-    if authority["workflow"] != SERVER_LANE_WORKFLOW:
-        raise rd.ReceiptError(
-            f"measurement input server authority workflow "
-            f"{authority['workflow']!r} is not the reviewed verify-only lane "
-            f"{SERVER_LANE_WORKFLOW!r}"
-        )
-    _exact(authority["source_sha"], _SHA40, "server authority source_sha")
-    _exact(authority["zip_digest"], _SHA256, "server authority zip_digest")
+    _validate_published_registry_authority(entry, entry["authority"])
 
+
+def _validate_published_registry_authority(entry: dict, authority) -> None:
+    if not isinstance(authority, dict) or set(authority) != _REGISTRY_AUTHORITY_KEYS:
+        present = set(authority) if isinstance(authority, dict) else set()
+        raise rd.ReceiptError(
+            "measurement input server registry authority does not carry exactly "
+            f"{sorted(_REGISTRY_AUTHORITY_KEYS)}; missing "
+            f"{sorted(_REGISTRY_AUTHORITY_KEYS - present)}, unexpected "
+            f"{sorted(present - _REGISTRY_AUTHORITY_KEYS)}"
+        )
+    if authority["provider"] != "pypi-registry" or authority["project"] != "aweb":
+        raise rd.ReceiptError(
+            "measurement input server registry authority must name "
+            "pypi-registry project 'aweb'"
+        )
+    filename = authority["filename"]
+    expected_filename = f"aweb-{entry['version']}-py3-none-any.whl"
+    if filename != expected_filename:
+        raise rd.ReceiptError(
+            f"measurement input server registry filename {filename!r} is not "
+            f"the exact runtime wheel {expected_filename!r}"
+        )
+    digest = authority["registry_sha256"]
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise rd.ReceiptError(
+            "measurement input server registry authority registry_sha256 is "
+            "not an exact lowercase SHA-256"
+        )
+    if digest != entry["digest_set"].get(filename):
+        raise rd.ReceiptError(
+            "measurement input server registry digest does not equal the "
+            "published digest_set entry for its exact wheel"
+        )
+    url = authority["download_url"]
+    parsed = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+    if (
+        parsed is None
+        or parsed.scheme != "https"
+        or parsed.netloc != "files.pythonhosted.org"
+        or parsed.query
+        or parsed.fragment
+        or Path(urllib.parse.unquote(parsed.path)).name != filename
+    ):
+        raise rd.ReceiptError(
+            f"measurement input server registry download URL {url!r} does not "
+            "safely name the exact wheel"
+        )
 
 
 def _require_child_identity(measurement: dict) -> str:
@@ -1747,158 +1763,50 @@ def _require_child_identity(measurement: dict) -> str:
 
 
 def expected_published_server_authority_report(published: dict) -> dict:
-    """Project a validated published-server entry to the resolver's report."""
+    """Project the validated PyPI wheel identity bound by measurement input."""
     authority = published["authority"]
     return {
-        "artifact": authority["artifact"],
-        "repo": authority["repo"],
-        "workflow": authority["workflow"],
-        "source_sha": authority["source_sha"],
-        "zip_digest": authority["zip_digest"],
+        "provider": authority["provider"],
+        "project": authority["project"],
         "version": published["version"],
-        "digest_set": dict(published["digest_set"]),
+        "filename": authority["filename"],
+        "registry_sha256": authority["registry_sha256"],
+        "download_url": authority["download_url"],
     }
 
 
 class PublishedServerAuthority:
-    """Resolves the published server through the reviewed verify-only lane.
+    """Resolve published server bytes directly from immutable PyPI truth."""
 
-    A declared authority that nothing consumes is decorative: any digit-shaped
-    run/artifact id would re-identify a manifest and the measurement would
-    complete anyway, because the cells only ever observe PyPI. This downloads
-    the exact verify-only artifact through the reviewed store and an
-    independent digest authority, validates it as a PyPI lane artifact for
-    `aweb`, and requires it to equal the published entry the manifest asserts --
-    all before any evidence is written or any cell runs.
-    """
-
-    def __init__(self, *, store=None, digest_authority=None, http_get=None):
-        self._http_get = http_get or _http_get
-        self._store = store if store is not None else rd.GithubArtifactStore(
-            repo=SERVER_LANE_REPO, workflow_path=SERVER_LANE_WORKFLOW)
-        self._authority = (
-            digest_authority if digest_authority is not None
-            else rd.GithubArtifactDigestAuthority(
-                repo=SERVER_LANE_REPO, workflow_path=SERVER_LANE_WORKFLOW)
-        )
-
-    def _resolve_registry(self, published: dict) -> dict:
-        authority = published["authority"]
-        version = published["version"]
-        project = authority["project"]
-        declared = _registry_files(project, version, self._http_get)
-        digests = {name: digest for name, (digest, _) in declared.items()}
-        if digests != published["digest_set"]:
-            raise rd.ReceiptError(
-                "registry-declared distribution digests do not equal the "
-                "digest set the measurement input asserts"
-            )
-        # Recompute from the exact bytes: a registry-declared digest is a claim
-        # until the distribution actually hashes to it.
-        for name, (digest, url) in sorted(declared.items()):
-            status, body = self._http_get(url)
-            if status != 200:
-                raise rd.ReceiptError(
-                    f"registry distribution {name} returned {status}; the exact "
-                    "bytes must be retrievable to be measured"
-                )
-            observed = hashlib.sha256(body).hexdigest()
-            if observed != digest:
-                raise rd.ReceiptError(
-                    f"registry distribution {name} hashes {observed}, not the "
-                    f"registry-declared {digest}"
-                )
-        return {
-            "provider": REGISTRY_TRUTH_PROVIDER,
-            "registry": authority["registry"],
-            "project": project,
-            "version": version,
-            "digest_set": dict(digests),
-        }
+    def __init__(self, *, resolver=None):
+        self._resolver = resolver or ArtifactResolver()
 
     def resolve(self, published: dict) -> dict:
-        authority = published["authority"]
-        if authority.get("provider") == REGISTRY_TRUTH_PROVIDER:
-            return self._resolve_registry(published)
-        artifact = authority["artifact"]
-        # The independent authority first: its digest must equal what the
-        # manifest claims BEFORE the bytes are fetched, so a substituted
-        # artifact is refused without being downloaded.
-        expected = self._authority.expected_digest(artifact)
-        if expected != authority["zip_digest"]:
-            raise rd.ReceiptError(
-                f"server authority {artifact}: independent digest {expected!r} "
-                f"does not equal the recorded {authority['zip_digest']!r}"
-            )
-        body = self._store.get(artifact)
-        observed = "sha256:" + hashlib.sha256(body).hexdigest()
-        if observed != authority["zip_digest"]:
-            raise rd.ReceiptError(
-                f"server authority {artifact}: retrieved bytes hash {observed} "
-                f"and not the recorded {authority['zip_digest']}"
-            )
-        # The SHARED validator, with the mode made explicit. A near-copy here
-        # drifted within one round: it never recomputed canonical_set_digest,
-        # so a forged one completed a measurement.
-        manifest = rd.validate_pypi_lane_artifact(
-            body,
-            expected_source_sha=authority["source_sha"],
-            expected_version=published["version"],
-            package="server",
-            pypi_name="aweb",
-            required_mode="verify-only",
+        artifact = self._resolver.resolve(
+            "published",
+            {"component": "server", "version": published["version"]},
+            SERVER_ARTIFACT,
         )
-        files = manifest.get("files")
-        if files != published["digest_set"]:
+        if artifact.source["digest_set"] != published["digest_set"]:
             raise rd.ReceiptError(
-                "server authority lane artifact digest set does not equal the "
-                "published digest set the measurement input asserts"
+                "PyPI registry file set does not equal the complete published "
+                "server digest_set in the measurement input"
             )
-        return expected_published_server_authority_report(published)
-
-
-def _registry_files(project: str, version: str, http_get) -> dict:
-    """The registry's own declared sha256 per distribution file.
-
-    Reuses release_persisted_state_skew's hardened record validator rather than
-    re-implementing it: https, files.pythonhosted.org, no params/query/fragment,
-    decoded basename equal to the filename, yanked false, lowercase 64-hex.
-    """
-    import release_persisted_state_skew as persisted
-
-    url = PYPI_PROJECT_URL.format(project=project, version=version)
-    status, body = http_get(url)
-    if status == 404:
-        raise rd.ReceiptError(
-            f"registry has no {project} {version}; a measurement cannot invent "
-            "a published distribution"
-        )
-    if status != 200:
-        raise rd.ReceiptError(
-            f"registry lookup for {project} {version} returned {status}; an "
-            "outage is never proof of absence, so this refuses rather than "
-            "proceeding"
-        )
-    try:
-        metadata = json.loads(body)
-    except json.JSONDecodeError as exc:
-        raise rd.ReceiptError("registry metadata is malformed") from exc
-    records = metadata.get("urls")
-    if not isinstance(records, list) or not records:
-        raise rd.ReceiptError(
-            f"registry lists no distribution files for {project} {version}"
-        )
-    files: dict[str, tuple[str, str]] = {}
-    for record in records:
-        name, digest = persisted.WheelResolver._validate_release_record(
-            record, version)
-        if name in files and files[name][0] != digest:
+        observed = {
+            "provider": "pypi-registry",
+            "project": "aweb",
+            "version": artifact.version,
+            "filename": artifact.filename,
+            "registry_sha256": artifact.sha256,
+            "download_url": artifact.source["download_url"],
+        }
+        expected = expected_published_server_authority_report(published)
+        if observed != expected:
             raise rd.ReceiptError(
-                f"registry declares {name} twice with different digests; "
-                "ambiguous truth refuses"
+                "published server registry projection does not equal immutable "
+                "PyPI metadata and downloaded bytes"
             )
-        files[name] = (digest, record["url"])
-    return files
+        return observed
 
 
 def _contract_for(component: str) -> rd.RuntimeContractEdge:
@@ -1936,6 +1844,12 @@ def measure_support(
     The result is explicitly unanchored. Declaring measured support in
     release/components.toml is a separate reviewed step over anchored bytes.
     """
+    if component not in CLIENT_ARTIFACTS:
+        raise rd.ReceiptError(
+            "shared Channel/Pi measurement entrypoint supports only "
+            f"{sorted(CLIENT_ARTIFACTS)}, got {component!r}; aw uses its "
+            "dedicated journey"
+        )
     document = validate_measurement_input(measurement_input, component=component)
     if measurement_input_bytes != json.dumps(
         document, sort_keys=True, separators=(",", ":")
@@ -1947,13 +1861,12 @@ def measure_support(
     measurement_input_digest = hashlib.sha256(measurement_input_bytes).hexdigest()
 
     entries = document["entries"]
-    # Resolve the published server through the reviewed verify-only lane BEFORE
-    # freezing, running any cell, or writing any evidence.
+    # Resolve the published server from immutable PyPI truth BEFORE freezing,
+    # running any cell, or writing any evidence.
     if published_authority is None:
         raise rd.ReceiptError(
             "channel/Pi measurement requires the published-server authority "
-            "resolver; a declared authority that is never consumed proves "
-            "nothing"
+            "resolver; the exact PyPI registry projection must be consumed"
         )
     published_report = published_authority.resolve(entries["server"])
     candidate = entries[component]
@@ -2217,7 +2130,8 @@ def _rollback_link(path: Path, tmp: Path, linked_identity) -> None:
 def _require_envelope(document, *, component: str,
                       measurement_input_id: str,
                       measurement_input_digest: str,
-                      supported_versions: dict | None = None) -> str:
+                      supported_versions: dict | None = None,
+                      expected_published_server_authority: dict | None = None) -> str:
     """The envelope's own contract, checked before anything reaches disk.
 
     The measurement status lives on the nested child, not at the top level;
@@ -2249,6 +2163,15 @@ def _require_envelope(document, *, component: str,
     if document["measurement_input_sha256"] != measurement_input_digest:
         raise rd.ReceiptError(
             "measurement envelope binds different measurement input bytes"
+        )
+    if (
+        expected_published_server_authority is not None
+        and document["published_server_authority"]
+        != expected_published_server_authority
+    ):
+        raise rd.ReceiptError(
+            "measurement envelope published-server authority does not exactly "
+            "equal the registry report derived from validated input"
         )
     child = document["measurement"]
     if not isinstance(child, dict):
@@ -2336,6 +2259,9 @@ def main(argv: list[str] | None = None) -> int:
         # side's independent authority are checked before any effect.
         document = validate_measurement_input(
             json.loads(body), component=component)
+        expected_authority = expected_published_server_authority_report(
+            document["entries"]["server"]
+        )
         evidence = evidence_writer_for(
             component,
             Path(args.evidence_root) if args.evidence_root else None,
@@ -2359,6 +2285,7 @@ def main(argv: list[str] | None = None) -> int:
             measurement_input_id=document["manifest_id"],
             measurement_input_digest=hashlib.sha256(body).hexdigest(),
             supported_versions={"server": args.supported_server},
+            expected_published_server_authority=expected_authority,
         )
         payload = json.dumps(envelope, indent=2, sort_keys=True) + "\n"
         output = Path(args.output)
