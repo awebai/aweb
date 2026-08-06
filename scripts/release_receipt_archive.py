@@ -284,6 +284,50 @@ def _existing_manifests(
     return manifests
 
 
+def _verify_append_only_history(
+    transport, recorded_head: str, live_head: str,
+) -> dict[str, tuple[str, str, bytes]]:
+    """Prove every commit after the recorded head is a linear addition.
+
+    A descendant check alone permits an ordinary fast-forward commit to delete
+    old receipts and a later archive to rebind their logical IDs. Walk the
+    actual parent chain and require each child tree to preserve every parent
+    path with exactly the same Git mode, object type, and bytes. New paths are
+    the only permitted difference; merges, deletions, replacements, and mode or
+    type changes all refuse before append.
+    """
+    cursor = live_head
+    live_tree = transport.read_tree_entries(cursor)
+    child = live_tree
+    visited: set[str] = set()
+    while cursor != recorded_head:
+        if cursor in visited:
+            raise ReceiptError(
+                "archive history is not a linear append-only parent chain")
+        visited.add(cursor)
+        parents = transport.parents_of(cursor)
+        if len(parents) != 1:
+            raise ReceiptError(
+                f"archive commit {cursor} has {len(parents)} parents; every "
+                "commit after the recorded head must have one linear parent")
+        parent = parents[0]
+        parent_tree = transport.read_tree_entries(parent)
+        for path, recorded_entry in parent_tree.items():
+            live_entry = child.get(path)
+            if live_entry is None:
+                raise ReceiptError(
+                    f"archive append-only history deleted recorded path {path!r} "
+                    f"between {parent} and {cursor}; child is not a superset")
+            if live_entry != recorded_entry:
+                raise ReceiptError(
+                    f"archive append-only history replaced recorded path "
+                    f"{path!r} between {parent} and {cursor}; bytes, mode, and "
+                    "object type must remain exact")
+        cursor = parent
+        child = parent_tree
+    return live_tree
+
+
 def archive_sealed(
     *, logical_id: str, kind: str, source: dict,
     store, authority, transport, recorded_head: str | None,
@@ -314,6 +358,7 @@ def archive_sealed(
         )
 
     head = transport.fetch_head()
+    verified_entries = None
     if recorded_head is None:
         if head is not None:
             raise ReceiptError(
@@ -332,8 +377,18 @@ def archive_sealed(
                 "archive head does not descend from the recorded head; "
                 "refusing non-fast-forward history"
             )
+        verified_entries = _verify_append_only_history(
+            transport, recorded_head, head)
 
-    tree = transport.read_tree(head) if head is not None else {}
+    if head is None:
+        tree = {}
+    else:
+        entries = (
+            verified_entries
+            if verified_entries is not None
+            else transport.read_tree_entries(head)
+        )
+        tree = {path: entry[2] for path, entry in entries.items()}
     manifests = _existing_manifests(tree, allowed_paths)
     for digest, manifest in manifests.items():
         if manifest["logical_id"] == logical_id and digest != body_sha:
@@ -847,10 +902,10 @@ class GitBranchArchive:
                 f"remote{': ' + detail if detail else ''}"
             )
 
-    def read_tree(self, sha: str) -> dict[str, bytes]:
+    def read_tree_entries(self, sha: str) -> dict[str, tuple[str, str, bytes]]:
         self._ensure_object(sha)
         listing = self._git("ls-tree", "-r", "-z", sha)
-        tree: dict[str, bytes] = {}
+        tree: dict[str, tuple[str, str, bytes]] = {}
         for record in listing.split(b"\x00"):
             if not record:
                 continue
@@ -865,14 +920,26 @@ class GitBranchArchive:
                 raise ReceiptError(
                     f"archive tree entry {path!r} is not a blob"
                 )
-            tree[path.decode("utf-8", "surrogateescape")] = self._git(
-                "cat-file", "blob", blob.decode())
+            tree[path.decode("utf-8", "surrogateescape")] = (
+                mode.decode(), obj_type.decode(),
+                self._git("cat-file", "blob", blob.decode()),
+            )
         return tree
 
-    def parent_of(self, sha: str) -> str | None:
+    def read_tree(self, sha: str) -> dict[str, bytes]:
+        return {
+            path: entry[2]
+            for path, entry in self.read_tree_entries(sha).items()
+        }
+
+    def parents_of(self, sha: str) -> tuple[str, ...]:
         self._ensure_object(sha)
         tokens = self._git("rev-list", "--parents", "-n", "1", sha).split()
-        return tokens[1].decode() if len(tokens) > 1 else None
+        return tuple(token.decode() for token in tokens[1:])
+
+    def parent_of(self, sha: str) -> str | None:
+        parents = self.parents_of(sha)
+        return parents[0] if parents else None
 
     def is_ancestor(self, ancestor: str, descendant: str) -> bool:
         if not _GIT_SHA.fullmatch(ancestor):
