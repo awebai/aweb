@@ -1015,6 +1015,74 @@ class RegistrationAndJourneyParameterTests(unittest.TestCase):
 
 
 
+
+def measurement_input(component="channel", *, server_version="1.26.34",
+                      source="a" * 40, **overrides):
+    """A canonical aweb.measurement-input-manifest.v1 for one edge."""
+    files = {f"{component}.artifact": sha(component.encode())}
+    server_files = {"aweb-%s.whl" % server_version: sha(b"server")}
+    entries = {
+        component: {
+            "kind": "candidate",
+            "version": "1.2.3",
+            "digest": rd.canonical_digest_of_set(files),
+            "digest_set": files,
+            "lane_ref": {
+                "artifact": "gh-artifact:awebai/aweb:17:23",
+                "aw_source_sha": "a" * 40,
+                "zip_digest": "sha256:" + "1" * 64,
+            },
+            "stage_run_id": "17",
+            "stage_artifact_id": "23",
+            "stage_zip_digest": "sha256:" + "1" * 64,
+        },
+        "server": {
+            "kind": "published",
+            "version": server_version,
+            "digest_set": server_files,
+            "authority": {
+                "provider": "verify-only-lane",
+                "verify_only_run_id": "41",
+                "verify_only_artifact_id": "9001",
+            },
+        },
+    }
+    body = {
+        "schema": skew.MEASUREMENT_INPUT_SCHEMA,
+        "edge": {"a": component, "b": "server"},
+        "source_sha": source,
+        "entries": entries,
+        "grants": skew.MEASUREMENT_GRANTS,
+    }
+    for key, value in overrides.items():
+        if value is _DROP:
+            body.pop(key, None)
+        else:
+            body[key] = value
+    body["manifest_id"] = rd.canonical_json_digest(body)
+    return body
+
+
+class _Drop:
+    pass
+
+
+_DROP = _Drop()
+
+
+def input_pair(component="channel", **kw):
+    """Both halves of the measurement input, always consistent."""
+    document = measurement_input(component, **kw)
+    return {
+        "measurement_input": document,
+        "measurement_input_bytes": canonical_bytes(document),
+    }
+
+
+def canonical_bytes(document):
+    return json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+
+
 class MeasureSupportTests(unittest.TestCase):
     """aweb-abbe.14: the Channel and Pi measurement entrypoints.
 
@@ -1039,28 +1107,26 @@ class MeasureSupportTests(unittest.TestCase):
             },
         )
 
-    def measure(self, component, tmp, *, journeys=None, supported=None):
+    def measure(self, component, tmp, *, journeys=None, supported=None,
+                document=None, harness=None):
         def factory():
             journey = FakeJourney()
             if journeys is not None:
                 journeys.append(journey)
             return journey
 
-        evidence = skew.evidence_writer_for(component, Path(tmp))
-        harness = skew.ChannelPiHarness(
-            resolver=FakeResolver(), journey_factory=factory, evidence=evidence,
-        )
+        if harness is None:
+            harness = skew.ChannelPiHarness(
+                resolver=FakeResolver(), journey_factory=factory,
+                evidence=skew.evidence_writer_for(component, Path(tmp)),
+            )
+        document = document if document is not None else measurement_input(
+            component)
         return skew.measure_support(
             component=component,
-            staged={
-                component: self.staged(component, "1.2.3"),
-                "server": self.staged("server", "1.26.35"),
-            },
-            staged_manifest_digest="f" * 64,
-            supported_versions=supported or {
-                component: ["1.2.2"], "server": ["1.26.34"],
-            },
-            published_versions={component: "1.2.2", "server": "1.26.34"},
+            measurement_input=document,
+            measurement_input_bytes=canonical_bytes(document),
+            supported_versions=supported or {"server": ["1.26.34"]},
             harness=harness,
         )
 
@@ -1073,9 +1139,10 @@ class MeasureSupportTests(unittest.TestCase):
             self.assertEqual(child["status"], "incomplete-unanchored")
             self.assertEqual(
                 child["completeness"], "unanchored-local-measurement")
+            # Server-only: the client is the candidate, so there is no
+            # client support set to measure against.
             self.assertEqual(
-                document["supported_versions"],
-                {component: ["1.2.2"], "server": ["1.26.34"]})
+                document["supported_versions"], {"server": ["1.26.34"]})
             self.assertEqual(document["measurement_id"],
                              child["measurement_id"],
                              "the envelope binds the CHILD's identity")
@@ -1152,11 +1219,8 @@ class MeasureSupportTests(unittest.TestCase):
             with self.assertRaisesRegex(rd.ReceiptError, "channel.*pi|component"):
                 skew.measure_support(
                     component="skills",
-                    staged={"skills": self.staged("skills", "1.0.0"),
-                            "server": self.staged("server", "1.26.35")},
-                    staged_manifest_digest="f" * 64,
-                    supported_versions={"skills": ["0.9.0"], "server": ["1.26.34"]},
-                    published_versions={"skills": "0.9.0", "server": "1.26.34"},
+                    **input_pair("channel"),
+                    supported_versions={"server": ["1.26.34"]},
                     harness=skew.ChannelPiHarness(
                         resolver=FakeResolver(), journey=FakeJourney(),
                         evidence=skew.evidence_writer_for("channel", Path(tmp)),
@@ -1170,11 +1234,8 @@ class MeasureSupportTests(unittest.TestCase):
         with self.assertRaisesRegex(rd.ReceiptError, "frozen matrix lifecycle"):
             skew.measure_support(
                 component="channel",
-                staged={"channel": self.staged("channel", "1.2.3"),
-                        "server": self.staged("server", "1.26.35")},
-                staged_manifest_digest="f" * 64,
-                supported_versions={"channel": ["1.2.2"], "server": ["1.26.34"]},
-                published_versions={"channel": "1.2.2", "server": "1.26.34"},
+                **input_pair("channel"),
+                supported_versions={"server": ["1.26.34"]},
                 harness=NoLifecycle(),
             )
 
@@ -1197,13 +1258,8 @@ class MeasureSupportTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError):
                 skew.measure_support(
                     component="channel",
-                    staged={"channel": self.staged("channel", "1.2.3"),
-                            "server": self.staged("server", "1.26.35")},
-                    staged_manifest_digest="f" * 64,
-                    supported_versions={"channel": ["1.2.2"],
-                                        "server": ["1.26.34"]},
-                    published_versions={"channel": "1.2.2",
-                                        "server": "1.26.34"},
+                    **input_pair("channel"),
+                    supported_versions={"server": ["1.26.34"]},
                     harness=harness,
                 )
 
@@ -1229,13 +1285,8 @@ class MeasureSupportTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError):
                 skew.measure_support(
                     component="channel",
-                    staged={"channel": self.staged("channel", "1.2.3"),
-                            "server": self.staged("server", "1.26.35")},
-                    staged_manifest_digest="f" * 64,
-                    supported_versions={"channel": ["1.2.2"],
-                                        "server": ["1.26.34"]},
-                    published_versions={"channel": "1.2.2",
-                                        "server": "1.26.34"},
+                    **input_pair("channel"),
+                    supported_versions={"server": ["1.26.34"]},
                     harness=harness,
                 )
 
@@ -1271,13 +1322,8 @@ class MeasureSupportTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError):
                 skew.measure_support(
                     component="channel",
-                    staged={"channel": self.staged("channel", "1.2.3"),
-                            "server": self.staged("server", "1.26.35")},
-                    staged_manifest_digest="f" * 64,
-                    supported_versions={"channel": ["1.2.2"],
-                                        "server": ["1.26.34"]},
-                    published_versions={"channel": "1.2.2",
-                                        "server": "1.26.34"},
+                    **input_pair("channel"),
+                    supported_versions={"server": ["1.26.34"]},
                     harness=harness,
                 )
 
@@ -1303,52 +1349,126 @@ class MeasureSupportBoundaryTests(unittest.TestCase):
         )
 
     def measure(self, tmp, *, component="channel", supported=None,
-                published=None, staged=None, harness=None):
+                document=None, harness=None):
+        document = document if document is not None else measurement_input(
+            component)
         return skew.measure_support(
             component=component,
-            staged=staged or {
-                component: self.staged(component, "1.2.3"),
-                "server": self.staged("server", "1.26.35"),
-            },
-            staged_manifest_digest="f" * 64,
-            supported_versions=supported or {
-                component: ["1.2.2"], "server": ["1.26.34"],
-            },
-            published_versions=published or {
-                component: "1.2.2", "server": "1.26.34",
-            },
+            measurement_input=document,
+            measurement_input_bytes=canonical_bytes(document),
+            supported_versions=supported or {"server": ["1.26.34"]},
             harness=harness if harness is not None else self.harness(
                 tmp, component),
         )
 
-    # 1. foreign component identity must not ride along in the preimage
-    def test_extra_component_in_support_map_refuses(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(rd.ReceiptError, "exactly|extra|unrelated"):
-                self.measure(tmp, supported={
-                    "channel": ["1.2.2"], "pi": ["0.3.1"], "server": ["1.26.34"],
-                })
+    # 1. the measurement input is not a release staged manifest
+    def test_release_staged_manifest_is_refused(self):
+        """The whole point of the seam: a document that asserts a frozen plan,
+        staging and publish authority is not a measurement authorization."""
+        graph = rd.Graph.from_dict({"component": {"channel": {
+            "source_paths": ["channel/"],
+            "version_source": {"type": "manifest", "path": "channel/v"},
+            "tag_format": "channel-v{version}",
+            "verify": {"command": "true"},
+        }}, "edge": []})
+        state = rd.FixtureState(
+            changed_components={"channel": True},
+            versions={"channel": "1.2.3"},
+            published_versions={"channel": "1.2.2"})
+        plan = rd.compute_plan(graph, state)
+        files = {"channel.artifact": sha(b"channel")}
+        staged_bytes, _ = rd.seal_staged_manifest(
+            plan, frozen_plan_id="f" * 64, source_sha="a" * 40,
+            entries={"channel": rd.ReceiptEntry(
+                version="1.2.3", digest=rd.canonical_digest_of_set(files),
+                digest_set=files,
+                lane_ref={"artifact": "gh-artifact:awebai/aweb:17:23",
+                          "aw_source_sha": "a" * 40,
+                          "zip_digest": "sha256:" + "1" * 64})},
+            graph=graph)
+        with self.assertRaisesRegex(rd.ReceiptError, "exactly|schema"):
+            skew.validate_measurement_input(
+                json.loads(staged_bytes), component="channel")
 
-    def test_extra_component_in_published_map_refuses(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(rd.ReceiptError, "exactly|extra|unrelated"):
-                self.measure(tmp, published={
-                    "channel": "1.2.2", "pi": "0.3.1", "server": "1.26.34",
-                })
+    def test_candidate_server_is_refused(self):
+        doc = measurement_input("channel")
+        doc["entries"]["server"]["kind"] = "candidate"
+        doc.pop("manifest_id")
+        doc["manifest_id"] = rd.canonical_json_digest(doc)
+        with self.assertRaisesRegex(rd.ReceiptError, "not 'published'"):
+            skew.validate_measurement_input(doc, component="channel")
 
-    def test_extra_staged_entry_refuses(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(rd.ReceiptError, "exactly|extra|unrelated"):
-                self.measure(tmp, staged={
-                    "channel": self.staged("channel", "1.2.3"),
-                    "pi": self.staged("pi", "0.3.1"),
-                    "server": self.staged("server", "1.26.35"),
-                })
+    def test_invented_server_lane_ref_is_refused(self):
+        doc = measurement_input("channel")
+        doc["entries"]["server"]["lane_ref"] = {
+            "artifact": "gh-artifact:awebai/aweb:17:23",
+            "aw_source_sha": "a" * 40, "zip_digest": "sha256:" + "1" * 64}
+        doc.pop("manifest_id")
+        doc["manifest_id"] = rd.canonical_json_digest(doc)
+        with self.assertRaisesRegex(rd.ReceiptError, "lane_ref|exactly"):
+            skew.validate_measurement_input(doc, component="channel")
 
-    def test_missing_component_side_refuses(self):
+    def test_extra_or_missing_entry_is_refused(self):
+        doc = measurement_input("channel")
+        doc["entries"]["pi"] = dict(doc["entries"]["channel"])
+        doc.pop("manifest_id")
+        doc["manifest_id"] = rd.canonical_json_digest(doc)
+        with self.assertRaisesRegex(rd.ReceiptError, "exactly"):
+            skew.validate_measurement_input(doc, component="channel")
+
+        short = measurement_input("channel")
+        del short["entries"]["server"]
+        short.pop("manifest_id")
+        short["manifest_id"] = rd.canonical_json_digest(short)
+        with self.assertRaisesRegex(rd.ReceiptError, "exactly"):
+            skew.validate_measurement_input(short, component="channel")
+
+    def test_wrong_edge_grants_source_or_authority_refused(self):
+        cases = {
+            "edge": {"a": "pi", "b": "server"},
+            "grants": "publish",
+            "source_sha": "not-a-sha",
+            "schema": "aweb.staged-manifest.v1",
+        }
+        for key, value in cases.items():
+            with self.subTest(field=key):
+                doc = measurement_input("channel", **{key: value})
+                with self.assertRaises(rd.ReceiptError):
+                    skew.validate_measurement_input(doc, component="channel")
+
+        doc = measurement_input("channel")
+        doc["entries"]["server"]["authority"]["provider"] = "self-asserted"
+        doc.pop("manifest_id")
+        doc["manifest_id"] = rd.canonical_json_digest(doc)
+        with self.assertRaisesRegex(rd.ReceiptError, "verify-only"):
+            skew.validate_measurement_input(doc, component="channel")
+
+    def test_candidate_digest_not_matching_its_set_refused(self):
+        doc = measurement_input("channel")
+        doc["entries"]["channel"]["digest"] = "0" * 64
+        doc.pop("manifest_id")
+        doc["manifest_id"] = rd.canonical_json_digest(doc)
+        with self.assertRaisesRegex(rd.ReceiptError, "canonical digest"):
+            skew.validate_measurement_input(doc, component="channel")
+
+    def test_forged_manifest_id_refused(self):
+        doc = measurement_input("channel")
+        doc["manifest_id"] = "0" * 64
+        with self.assertRaisesRegex(rd.ReceiptError, "manifest_id"):
+            skew.validate_measurement_input(doc, component="channel")
+
+    def test_honest_matrix_has_no_staged_server(self):
+        """The positive: a candidate client measured against the published
+        server, with the server appearing nowhere as staged."""
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(rd.ReceiptError):
-                self.measure(tmp, supported={"server": ["1.26.34"]})
+            envelope = self.measure(tmp)
+        matrix_files = list(
+            (Path(tmp) / "channel").glob("matrix-*.json")) if False else []
+        child = envelope["measurement"]
+        self.assertEqual(child["status"], "incomplete-unanchored")
+        blob = json.dumps(child)
+        self.assertNotIn('"component": "server", "digest"', blob)
+        self.assertIn("channel", blob)
 
     # 2. the evidence root must belong to the component being measured
     def test_pi_measurement_into_a_channel_evidence_root_refuses(self):
@@ -1436,46 +1556,16 @@ class MeasureSupportBoundaryTests(unittest.TestCase):
 
 
 
-class CliExactManifestTests(unittest.TestCase):
-    """Reviewer defect 3: the CLI projected (component, server) out of a wider
-    staged manifest, so an unrelated component never reached the API's
-    exact-set check."""
+class CliMeasurementInputTests(unittest.TestCase):
+    """The CLI must validate the whole measurement input before any effect and
+    must never accept a release staged manifest."""
 
-    def manifest_bytes(self, components):
-        graph = rd.Graph.from_dict({"component": {
-            name: {
-                "source_paths": [f"{name}/"],
-                "version_source": {"type": "manifest", "path": f"{name}/v"},
-                "tag_format": name + "-v{version}",
-                "verify": {"command": "true"},
-            } for name in components
-        }, "edge": []})
-        state = rd.FixtureState(
-            changed_components={n: True for n in components},
-            versions={n: "1.2.3" for n in components},
-            published_versions={n: "1.2.2" for n in components},
-        )
-        plan = rd.compute_plan(graph, state)
-        entries = {}
-        for name in components:
-            files = {f"{name}.artifact": sha(name.encode())}
-            entries[name] = rd.ReceiptEntry(
-                version="1.2.3", digest=rd.canonical_digest_of_set(files),
-                digest_set=files,
-                lane_ref={"artifact": "gh-artifact:awebai/aweb:17:23",
-                          "aw_source_sha": "a" * 40,
-                          "zip_digest": "sha256:" + "1" * 64})
-        body, _ = rd.seal_staged_manifest(
-            plan, frozen_plan_id="f" * 64, source_sha="a" * 40,
-            entries=entries, graph=graph)
-        return body
-
-    def run_cli(self, components, tmp, fake=False):
-        path = Path(tmp) / "staged.json"
-        path.write_bytes(self.manifest_bytes(components))
+    def run_cli(self, tmp, *, document=None, fake=True, out_name="out.json"):
+        path = Path(tmp) / "input.json"
+        document = document if document is not None else measurement_input(
+            "channel")
+        path.write_bytes(canonical_bytes(document))
         if fake:
-            # The REAL harness and the real CLI wiring; only the two
-            # network-touching dependencies are substituted.
             for name, replacement in (
                 ("ArtifactResolver", lambda *a, **k: FakeResolver()),
                 ("SubprocessChannelPiJourney", lambda *a, **k: FakeJourney()),
@@ -1483,80 +1573,105 @@ class CliExactManifestTests(unittest.TestCase):
                 self.addCleanup(setattr, skew, name, getattr(skew, name))
                 setattr(skew, name, replacement)
         return skew.main([
-            "measure-channel", "--staged-manifest", str(path),
-            "--supported-channel", "1.2.2", "--supported-server", "1.26.34",
-            "--published-channel-latest", "1.2.2",
-            "--published-server-latest", "1.26.34",
+            "measure-channel", "--measurement-input", str(path),
+            "--supported-server", "1.26.34",
             "--evidence-root", str(Path(tmp) / "evidence"),
-            "--output", str(Path(tmp) / "out.json"),
+            "--output", str(Path(tmp) / out_name),
         ])
 
-    def test_cli_success_writes_a_valid_envelope(self):
-        """The honest path. It previously raised KeyError reading a
-        top-level status the envelope does not have -- AFTER writing."""
+    def capture(self, tmp, **kw):
         import contextlib
         import io as _io
 
+        captured = _io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            code = self.run_cli(tmp, **kw)
+        return code, captured.getvalue()
+
+    def test_cli_success_writes_a_valid_envelope(self):
         with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "out.json"
-            captured = _io.StringIO()
-            with contextlib.redirect_stdout(captured):
-                code = self.run_cli(["channel", "server"], tmp, fake=True)
-            self.assertEqual(code, 0, captured.getvalue())
-            self.assertIn("status: incomplete-unanchored", captured.getvalue())
-            self.assertTrue(out.exists())
-            envelope = json.loads(out.read_bytes())
+            code, output = self.capture(tmp)
+            self.assertEqual(code, 0, output)
+            self.assertIn("status: incomplete-unanchored", output)
+            envelope = json.loads((Path(tmp) / "out.json").read_bytes())
             self.assertEqual(envelope["schema"], skew.ENVELOPE_SCHEMA)
             self.assertEqual(envelope["component"], "channel")
+            self.assertEqual(envelope["supported_versions"],
+                             {"server": ["1.26.34"]})
             self.assertEqual(envelope["measurement"]["status"],
                              "incomplete-unanchored")
-            self.assertEqual(envelope["measurement_id"],
-                             envelope["measurement"]["measurement_id"])
+            self.assertTrue(envelope["measurement_input_id"])
 
-    def test_every_refused_path_leaves_no_output(self):
-        import contextlib
-        import io as _io
+    def test_cli_refuses_a_release_staged_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "input.json"
+            path.write_bytes(json.dumps({
+                "frozen_plan_id": "f" * 64, "source_sha": "a" * 40,
+                "entries": {"channel": {"version": "1.2.3"}},
+            }, sort_keys=True, separators=(",", ":")).encode())
+            import contextlib
+            import io as _io
 
-        for components in (["channel", "pi", "server"], ["channel"]):
-            with self.subTest(components=components):
+            captured = _io.StringIO()
+            with contextlib.redirect_stdout(captured):
+                code = skew.main([
+                    "measure-channel", "--measurement-input", str(path),
+                    "--supported-server", "1.26.34",
+                    "--evidence-root", str(Path(tmp) / "evidence"),
+                    "--output", str(Path(tmp) / "out.json"),
+                ])
+            self.assertEqual(code, 1)
+            self.assertFalse((Path(tmp) / "out.json").exists())
+
+    def test_cli_refuses_before_any_effect(self):
+        """Every refusal leaves no output and no evidence."""
+        bad = [
+            measurement_input("channel", grants="publish"),
+            measurement_input("channel", edge={"a": "pi", "b": "server"}),
+            measurement_input("channel", source_sha="nope"),
+        ]
+        for document in bad:
+            with self.subTest(doc=document["grants"]):
                 with tempfile.TemporaryDirectory() as tmp:
-                    with contextlib.redirect_stdout(_io.StringIO()):
-                        code = self.run_cli(components, tmp)
+                    code, _ = self.capture(tmp, document=document)
                     self.assertEqual(code, 1)
                     self.assertFalse((Path(tmp) / "out.json").exists())
+                    self.assertFalse((Path(tmp) / "evidence").exists())
 
     def test_cli_refuses_a_pre_existing_output(self):
-        """Discriminating for the atomic commit at the CLI boundary: the honest
-        path must refuse rather than truncate an existing output."""
-        import contextlib
-        import io as _io
-
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "out.json"
             out.write_text("prior contents")
-            captured = _io.StringIO()
-            with contextlib.redirect_stdout(captured):
-                code = self.run_cli(["channel", "server"], tmp, fake=True)
+            code, output = self.capture(tmp)
             self.assertEqual(code, 1)
-            self.assertIn("existing output", captured.getvalue())
-            self.assertEqual(out.read_text(), "prior contents",
-                             "the pre-existing output must be untouched")
+            self.assertIn("existing output", output)
+            self.assertEqual(out.read_text(), "prior contents")
 
-    def test_cli_refuses_extra_staged_entry(self):
-        import contextlib
-        import io as _io
-
+    def test_cli_refuses_a_support_set_not_ending_at_the_published_server(self):
         with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "input.json"
+            document = measurement_input("channel", server_version="1.26.35")
+            path.write_bytes(canonical_bytes(document))
+            for name, replacement in (
+                ("ArtifactResolver", lambda *a, **k: FakeResolver()),
+                ("SubprocessChannelPiJourney", lambda *a, **k: FakeJourney()),
+            ):
+                self.addCleanup(setattr, skew, name, getattr(skew, name))
+                setattr(skew, name, replacement)
+            import contextlib
+            import io as _io
+
             captured = _io.StringIO()
             with contextlib.redirect_stdout(captured):
-                code = self.run_cli(["channel", "pi", "server"], tmp)
+                code = skew.main([
+                    "measure-channel", "--measurement-input", str(path),
+                    "--supported-server", "1.26.34",
+                    "--evidence-root", str(Path(tmp) / "evidence"),
+                    "--output", str(Path(tmp) / "out.json"),
+                ])
             self.assertEqual(code, 1)
-            self.assertIn("not \nexactly the measured edge".replace("\n", ""),
-                          captured.getvalue().replace("\n", " "))
-            self.assertFalse((Path(tmp) / "out.json").exists(),
-                             "a refused measurement writes no output")
-
-
+            self.assertIn("published server", captured.getvalue())
+            self.assertFalse((Path(tmp) / "out.json").exists())
 
 
 class AtomicOutputTests(unittest.TestCase):
@@ -1808,6 +1923,64 @@ class AtomicOutputTests(unittest.TestCase):
                 ):
                     skew._atomic_write_text(out, "payload")
 
+    def test_redundant_finalizer_cannot_mask_a_successful_commit(self):
+        """After the protected unlink and fsync both succeed, no last-resort
+        cleanup may run and report an error over a committed final."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            real_unlink = os.unlink
+            calls = {"n": 0}
+
+            def unlink_then_explode(target):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    return real_unlink(target)
+                # Any later unlink is the redundant finalizer. Non-OSError on
+                # purpose: catching only OSError would let this through.
+                raise RuntimeError("redundant finalizer exploded")
+
+            with unittest.mock.patch.object(os, "unlink", unlink_then_explode):
+                skew._atomic_write_text(out, "payload")
+
+            self.assertEqual(out.read_text(), "payload",
+                             "the commit must stand")
+            self.assertEqual(calls["n"], 1,
+                             "no redundant unlink may run after a commit")
+            self.assertFalse((Path(tmp) / "out.json.part").exists())
+
+    def test_pre_link_cleanup_errors_stay_strict(self):
+        """Before any commit the temp is ours alone, so a cleanup failure is a
+        real problem and must not be swallowed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            real_unlink = os.unlink
+
+            class Exploding:
+                def write(self, data):
+                    raise OSError("disk full")
+
+                def flush(self):
+                    pass
+
+                def fileno(self):
+                    return 0
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+            def failing_unlink(target):
+                raise OSError("temp cleanup failed before any commit")
+
+            with unittest.mock.patch.object(
+                os, "fdopen", lambda fd, *a, **k: (os.close(fd), Exploding())[1]
+            ), unittest.mock.patch.object(os, "unlink", failing_unlink):
+                with self.assertRaises(OSError):
+                    skew._atomic_write_text(out, "payload")
+            self.assertFalse(out.exists())
+
     def test_successful_write_commits_exact_bytes_and_cleans_up(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "out.json"
@@ -1832,7 +2005,8 @@ class EnvelopeAuthorityTests(unittest.TestCase):
             "schema": skew.ENVELOPE_SCHEMA,
             "policy": "additive-only",
             "component": "channel",
-            "staged_manifest_sha256": "f" * 64,
+            "measurement_input_id": "a" * 64,
+            "measurement_input_sha256": "b" * 64,
             "supported_versions": {"channel": ["1.2.2"], "server": ["1.26.34"]},
             "measurement_id": child["measurement_id"],
             "measurement_sha256": hashlib.sha256(canonical).hexdigest(),
@@ -1844,7 +2018,8 @@ class EnvelopeAuthorityTests(unittest.TestCase):
 
     def check(self, document, **kw):
         return skew._require_envelope(
-            document, component="channel", staged_manifest_digest="f" * 64,
+            document, component="channel",
+            measurement_input_id="a" * 64, measurement_input_digest="b" * 64,
             supported_versions={"channel": ["1.2.2"], "server": ["1.26.34"]},
             **kw)
 
