@@ -1300,46 +1300,102 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
 
     # ---- a complete, real release set -------------------------------------
     def real_release_set(self, *, source_sha=None, entry_digest=None,
-                         staged_digest=None):
+                         staged_digest=None, components=("channel",),
+                         delivery_obligation=None, receipt_partial=False,
+                         receipt_plan_digest=None,
+                         transition_kinds=("published",)):
         source_sha = source_sha or self.SOURCE_SHA
         entry_digest = entry_digest or "d" * 64
         staged_digest = staged_digest or entry_digest
-        graph, plan = real_graph_and_plan()
+        graph_data = {
+            "component": {
+                component: {
+                    "source_paths": [f"{component}/"],
+                    "version_source": {
+                        "type": "manifest", "path": f"{component}/v"},
+                    "tag_format": f"{component}-v{{version}}",
+                    "verify": {"command": "true"},
+                }
+                for component in components
+            },
+            "edge": [],
+        }
+        graph = rd.Graph.from_dict(graph_data)
+        versions = {
+            component: f"1.7.{index + 2}"
+            for index, component in enumerate(components)
+        }
+        plan = rd.compute_plan(graph, rd.FixtureState(
+            changed_components={component: True for component in components},
+            versions=versions,
+            published_versions={
+                component: f"1.7.{index + 1}"
+                for index, component in enumerate(components)
+            },
+        ))
         plan_bytes, frozen_id = rd.freeze_plan(
             plan, graph, source_sha=source_sha)
-        staged = {"channel": rd.ReceiptEntry(
-            version="1.7.2", digest=staged_digest, phase="staged")}
+        staged = {
+            component: rd.ReceiptEntry(
+                version=versions[component],
+                digest=staged_digest if component == "channel" else "d" * 64,
+                phase="staged",
+            )
+            for component in components
+        }
         manifest_bytes, manifest_digest = rd.seal_staged_manifest(
             plan, frozen_plan_id=frozen_id, source_sha=source_sha,
             entries=staged, graph=graph)
+        if delivery_obligation is not None:
+            manifest_document = json.loads(manifest_bytes)
+            manifest_document["entries"]["channel"][
+                "delivery_obligation"] = delivery_obligation
+            manifest_bytes = json.dumps(
+                manifest_document, sort_keys=True).encode()
+            manifest_digest = sha256(manifest_bytes)
         staged_id = f"staged-manifest:{frozen_id}:{manifest_digest}"
 
         transitions = []
-        for sequence, kind in ((1, "staged"), (2, "published")):
-            document = {
-                "frozen_plan_id": frozen_id,
-                "staged_manifest_id": staged_id,
-                "sequence": sequence,
-                "component": "channel",
-                "kind": kind,
-                # digest_set/lane_ref must equal the staged entry exactly;
-                # the staged ReceiptEntry below leaves both unset.
-                "entry": {"version": "1.7.2", "digest": entry_digest,
-                          "phase": kind, "pointer_state": None,
-                          "delivery_proof": None, "lane_ref": None,
-                          "digest_set": None},
-            }
-            body = json.dumps(document, sort_keys=True).encode()
-            logical = (f"transition:{frozen_id}:{sequence:03d}:{kind}:"
-                       f"channel:{sha256(body)}")
-            transitions.append((logical, body))
+        sequence = 0
+        for component in components:
+            for kind in transition_kinds:
+                sequence += 1
+                digest = entry_digest if component == "channel" else "d" * 64
+                document = {
+                    "frozen_plan_id": frozen_id,
+                    "staged_manifest_id": staged_id,
+                    "sequence": sequence,
+                    "component": component,
+                    "kind": kind,
+                    "entry": {"version": versions[component],
+                              "digest": digest,
+                              "phase": "published", "pointer_state": None,
+                              "delivery_proof": None, "lane_ref": None,
+                              "digest_set": None},
+                }
+                body = json.dumps(document, sort_keys=True).encode()
+                logical = (f"transition:{frozen_id}:{sequence:03d}:{kind}:"
+                           f"{component}:{sha256(body)}")
+                transitions.append((logical, body))
 
+        receipt_entries = {
+            component: rd.ReceiptEntry(
+                version=versions[component],
+                digest="d" * 64, phase="verified")
+            for component in components
+        }
         sealed, receipt_digest = rd.seal_receipt(
-            plan, graph, source_sha=source_sha,
-            entries={"channel": rd.ReceiptEntry(
-                version="1.7.2", digest="d" * 64, phase="verified")},
+            plan, graph, source_sha=source_sha, entries=receipt_entries,
             approvals={}, frozen_plan_id=frozen_id,
-            staged_manifest_id=staged_id)
+            staged_manifest_id=staged_id, partial=receipt_partial)
+        if receipt_plan_digest is not None:
+            outer = json.loads(sealed)
+            receipt_document = json.loads(outer["body"])
+            receipt_document["plan_digest"] = receipt_plan_digest
+            outer["body"] = json.dumps(receipt_document, sort_keys=True)
+            outer["seal"] = sha256(outer["body"].encode())
+            sealed = json.dumps(outer).encode()
+            receipt_digest = sha256(sealed)
 
         artifacts = [
             (f"plan:{source_sha}:{frozen_id}", plan_bytes),
@@ -1425,7 +1481,7 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
 
         self.assertEqual(restored["frozen_plan_id"], released["frozen_plan_id"])
         self.assertEqual([d["sequence"] for d in restored["transitions"]],
-                         [1, 2])
+                         [1])
         self.assertEqual({d["component"] for d in restored["transitions"]},
                          {"channel"})
 
@@ -1435,9 +1491,9 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
         released = self.real_release_set()
         transport, entries = self.archive_all(released["artifacts"])
         authority = self.index_authority(entries, [self.inventory(
-            released, transitions=[released["transitions"][1]])])
+            released, transitions=[])])
 
-        with self.assertRaisesRegex(rd.ReceiptError, "ordered set"):
+        with self.assertRaisesRegex(rd.ReceiptError, "no transitions"):
             archive.restore_release_set(
                 frozen_plan_id=released["frozen_plan_id"], transport=transport,
                 index_authority=authority, production=True)
@@ -1445,7 +1501,7 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
     def test_set_restore_refuses_reordered_inventory(self):
         """The reviewer's [2, 1]: every artifact is present and intact, and the
         SET is still wrong."""
-        released = self.real_release_set()
+        released = self.real_release_set(components=("channel", "pi"))
         transport, entries = self.archive_all(released["artifacts"])
         authority = self.index_authority(entries, [self.inventory(
             released, transitions=list(reversed(released["transitions"])))])
@@ -1490,7 +1546,7 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
             released["artifacts"] + other["artifacts"])
         authority = self.index_authority(entries, [self.inventory(
             released,
-            transitions=[released["transitions"][0], other["transitions"][1]])])
+            transitions=[released["transitions"][0], other["transitions"][0]])])
 
         with self.assertRaisesRegex(rd.ReceiptError, "bind the frozen plan"):
             archive.restore_release_set(
@@ -1897,7 +1953,7 @@ class ReleaseSetCrossValidationTests(RoundFiveCounterexampleTests):
     def test_trailing_transition_omission_refuses(self):
         """[1] of [1,2] is SELF-CONSISTENT: it satisfies 1..n for n=1. Only an
         expectation derived from the frozen plan can catch it."""
-        released = self.real_release_set()
+        released = self.real_release_set(components=("channel", "pi"))
         transport, entries = self.archive_all(released["artifacts"])
         authority = self.index_authority(entries, [self.inventory(
             released, transitions=[released["transitions"][0]])])
@@ -1936,13 +1992,43 @@ class ReleaseSetCrossValidationTests(RoundFiveCounterexampleTests):
                 entries, [self.inventory(released, plan=bad_plan)])
             self.restore(released, transport, authority)
 
+    def test_forged_staged_delivery_obligation_refuses(self):
+        released = self.real_release_set(
+            delivery_obligation="forged-delivery-obligation")
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(released)])
+        with self.assertRaisesRegex(rd.ReceiptError, "delivery obligation"):
+            self.restore(released, transport, authority)
+
+    def test_partial_receipt_cannot_be_the_final_receipt(self):
+        released = self.real_release_set(receipt_partial=True)
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(released)])
+        with self.assertRaisesRegex(rd.ReceiptError, "partial"):
+            self.restore(released, transport, authority)
+
+    def test_final_receipt_plan_digest_must_equal_the_frozen_plan(self):
+        released = self.real_release_set(receipt_plan_digest="9" * 64)
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(released)])
+        with self.assertRaisesRegex(rd.ReceiptError, "plan digest"):
+            self.restore(released, transport, authority)
+
+    def test_hidden_transition_kind_refuses(self):
+        released = self.real_release_set(
+            transition_kinds=("published", "unreviewed-control"))
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(released)])
+        with self.assertRaisesRegex(rd.ReceiptError, "published transition"):
+            self.restore(released, transport, authority)
+
     def test_complete_honest_set_still_restores(self):
         """Control: the same machinery must accept an undrifted set."""
         released = self.real_release_set()
         transport, entries = self.archive_all(released["artifacts"])
         authority = self.index_authority(entries, [self.inventory(released)])
         restored = self.restore(released, transport, authority)
-        self.assertEqual([d["sequence"] for d in restored["transitions"]], [1, 2])
+        self.assertEqual([d["sequence"] for d in restored["transitions"]], [1])
 
 
 
