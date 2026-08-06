@@ -26,7 +26,7 @@ import sys
 import time
 import tomllib
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GRAPH_PATH = REPO_ROOT / "release" / "components.toml"
@@ -4359,12 +4359,59 @@ class MatrixSkewRunner:
             finish(document)
 
 
+def _validate_measurement_document(body: bytes, edge, *, require_schema=False):
+    try:
+        doc = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise ReceiptError(
+            f"runtime-contract {edge.a}<->{edge.b}: measurement body is "
+            f"not valid JSON ({exc})"
+        ) from exc
+    if (
+        require_schema
+        and doc.get("schema") != "aweb.runtime-support-measurement.v1"
+    ):
+        raise ReceiptError(
+            f"runtime-contract {edge.a}<->{edge.b}: repository measurement "
+            f"schema is {doc.get('schema')!r}, not "
+            "'aweb.runtime-support-measurement.v1'"
+        )
+    if doc.get("edge") != {"a": edge.a, "b": edge.b}:
+        raise ReceiptError(
+            f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
+            f"edge {doc.get('edge')!r}, not this edge"
+        )
+    if doc.get("journey") != edge.journey:
+        raise ReceiptError(
+            f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
+            f"journey {doc.get('journey')!r}, not {edge.journey!r}"
+        )
+    if doc.get("artifacts") != edge.artifacts:
+        raise ReceiptError(
+            f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
+            f"artifacts {doc.get('artifacts')!r}, not this edge's "
+            f"{edge.artifacts!r}"
+        )
+    if doc.get("direction") != edge.direction:
+        raise ReceiptError(
+            f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
+            f"direction {doc.get('direction')!r}, not {edge.direction!r}"
+        )
+    supported = doc.get("supported_versions")
+    if not isinstance(supported, dict) or not supported or not all(
+        isinstance(k, str) and isinstance(v, list)
+        and all(isinstance(item, str) for item in v)
+        for k, v in supported.items()
+    ):
+        raise ReceiptError(
+            f"runtime-contract {edge.a}<->{edge.b}: measurement "
+            "supported_versions must map components to version lists"
+        )
+    return doc
+
+
 class AnchoredMeasurementAuthority:
-    """The production measurement resolution: the record names the
-    external authority artifact carrying the measured support document,
-    and the document resolves through the SAME independently checked
-    store-bytes + digest-authority capabilities as every other anchor -
-    then schema-binds to the exact edge, journey, and support set."""
+    """Resolve measurement bytes through an artifact store and its authority."""
 
     def __init__(
         self, *, store, authority,
@@ -4403,46 +4450,87 @@ class AnchoredMeasurementAuthority:
                 f"runtime-contract {edge.a}<->{edge.b}: measurement bytes "
                 f"hash {actual}, not the declared {record['digest']}"
             )
-        try:
-            doc = json.loads(body)
-        except json.JSONDecodeError as exc:
+        return _validate_measurement_document(body, edge)
+
+
+class RepositoryMeasurementAuthority:
+    """Resolve reviewed measurement bytes from the exact source commit."""
+
+    def __init__(self, *, repo_root: Path, source_sha: str):
+        if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
             raise ReceiptError(
-                f"runtime-contract {edge.a}<->{edge.b}: measurement body is "
-                f"not valid JSON ({exc})"
-            ) from exc
-        if doc.get("edge") != {"a": edge.a, "b": edge.b}:
-            raise ReceiptError(
-                f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
-                f"edge {doc.get('edge')!r}, not this edge"
+                f"repository measurement source must be a 40-hex SHA, got "
+                f"{source_sha!r}"
             )
-        if doc.get("journey") != edge.journey:
-            raise ReceiptError(
-                f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
-                f"journey {doc.get('journey')!r}, not {edge.journey!r}"
-            )
-        if doc.get("artifacts") != edge.artifacts:
-            raise ReceiptError(
-                f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
-                f"artifacts {doc.get('artifacts')!r}, not this edge's "
-                f"{edge.artifacts!r}"
-            )
-        if doc.get("direction") != edge.direction:
-            raise ReceiptError(
-                f"runtime-contract {edge.a}<->{edge.b}: measurement binds "
-                f"direction {doc.get('direction')!r}, not "
-                f"{edge.direction!r}"
-            )
-        supported = doc.get("supported_versions")
-        if not isinstance(supported, dict) or not supported or not all(
-            isinstance(k, str) and isinstance(v, list)
-            and all(isinstance(item, str) for item in v)
-            for k, v in supported.items()
+        self._repo_root = repo_root
+        self._source_sha = source_sha
+
+    def resolve(self, record, edge):
+        raw_path = record.get("path") if isinstance(record, dict) else None
+        path = PurePosixPath(raw_path) if isinstance(raw_path, str) else None
+        if (
+            not isinstance(record, dict)
+            or record.get("authority") != "repository"
+            or not isinstance(record.get("artifact_id"), str)
+            or not record.get("artifact_id")
+            or not isinstance(record.get("digest"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", record.get("digest", ""))
+            or path is None
+            or path.is_absolute()
+            or path.parts[:2] != ("release", "measurements")
+            or any(part in {"", ".", ".."} for part in path.parts)
         ):
             raise ReceiptError(
-                f"runtime-contract {edge.a}<->{edge.b}: measurement "
-                "supported_versions must map components to version lists"
+                f"runtime-contract {edge.a}<->{edge.b}: repository support "
+                "record needs authority repository, artifact_id, SHA-256 "
+                "digest, and a safe path under release/measurements"
             )
-        return doc
+        try:
+            result = subprocess.run(
+                [
+                    "git", "-C", str(self._repo_root), "cat-file", "blob",
+                    f"{self._source_sha}:{path.as_posix()}",
+                ],
+                capture_output=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: cannot read "
+                f"repository measurement from exact source: {exc}"
+            ) from exc
+        if result.returncode != 0:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: repository measurement "
+                f"{path.as_posix()} is absent from exact source "
+                f"{self._source_sha}"
+            )
+        body = result.stdout
+        actual = hashlib.sha256(body).hexdigest()
+        if actual != record["digest"]:
+            raise ReceiptError(
+                f"runtime-contract {edge.a}<->{edge.b}: repository measurement "
+                f"hash {actual}, not the declared digest {record['digest']}"
+            )
+        return _validate_measurement_document(body, edge, require_schema=True)
+
+
+class RepositoryMeasurementRouter:
+    """Route repository records explicitly; preserve the configured authority."""
+
+    def __init__(self, repository, fallback=None):
+        self._repository = repository
+        self._fallback = fallback
+
+    def resolve(self, record, edge):
+        if isinstance(record, dict) and record.get("authority") == "repository":
+            return self._repository.resolve(record, edge)
+        if self._fallback is not None:
+            return self._fallback.resolve(record, edge)
+        raise ReceiptError(
+            f"runtime-contract {edge.a}<->{edge.b}: unsupported measurement "
+            f"authority {record.get('authority') if isinstance(record, dict) else None!r}"
+        )
 
 
 class _FrozenSupport:
@@ -7923,6 +8011,13 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 return 1
     state = providers.state
     source_sha = providers.source_sha or "unknown"
+    if source_sha != "unknown":
+        providers.measurement = RepositoryMeasurementRouter(
+            RepositoryMeasurementAuthority(
+                repo_root=REPO_ROOT, source_sha=source_sha
+            ),
+            fallback=providers.measurement,
+        )
 
     if args.verb == "adopted-preplan-recovery":
         if recovery_exception is None:
@@ -7962,15 +8057,20 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
     if args.verb == "plan":
         plan = compute_plan(graph, state)
         problems = check_declared_inputs(graph, plan, state)
-        frozen_bytes, frozen_id = freeze_plan(
-            plan, graph, source_sha=source_sha, state=state,
-            measurement=providers.measurement,
-        )
-        plan_artifact_id = f"plan:{source_sha}:{frozen_id}"
-        _put_content_addressed(
-            providers.store, providers.authority, plan_artifact_id,
-            frozen_bytes, frozen_id,
-        )
+        frozen_id = None
+        plan_artifact_id = None
+        try:
+            frozen_bytes, frozen_id = freeze_plan(
+                plan, graph, source_sha=source_sha, state=state,
+                measurement=providers.measurement,
+            )
+            plan_artifact_id = f"plan:{source_sha}:{frozen_id}"
+            _put_content_addressed(
+                providers.store, providers.authority, plan_artifact_id,
+                frozen_bytes, frozen_id,
+            )
+        except (BlockedByDeclaredInputs, ReceiptError) as exc:
+            problems.append(str(exc))
         print(
             json.dumps(
                 {

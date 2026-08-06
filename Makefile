@@ -12,7 +12,7 @@
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-plan release-run release-receipt test-release-driver test-release-runnerless test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	release-plan release-run release-receipt test-release-driver test-release-runnerless test-release-repository-measurement test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	release-all-check \
 	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
 
@@ -644,6 +644,9 @@ release-receipt:
 
 test-release-runnerless:
 	python3 scripts/e2e/test_release_runnerless.py
+
+test-release-repository-measurement:
+	python3 scripts/e2e/test_release_repository_measurement.py
 
 test-release-driver: test-release-adopted-preplan test-release-channel-pi-skew test-release-skew-cli-server test-release-receipt-archive test-release-persisted-state-skew test-release-federation-skew
 	python3 scripts/e2e/test_release_driver.py
