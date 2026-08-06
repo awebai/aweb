@@ -29,10 +29,13 @@ make release-run AUTHORITY=local-runnerless \
 
 Append `EXTERNAL_CONTEXT='<repo>=/absolute/checkout'` to planning when the
 graph names an external pin. Add `DEFER_G5=1` only when that same authorization
-accepts deferring runtime compatibility measurement. Resume with `RESUME=1 MANIFEST_ID=<id>` when the
-driver reports a deferred continuation. The local adapter follows the protocol
-in `docs/runnerless-release.md`; do not replace it with a hand-maintained stage
-or publish sequence.
+accepts deferring runtime compatibility measurement. Use `RESUME=1
+MANIFEST_ID=<id>` only to resume an interrupted release-run from its staged
+manifest. A receipt's `deferred-hosting:*` / `tag-and-release` record is a
+separate explicitly authorized continuation; release-run resume does not
+perform it. The local adapter follows the protocol in
+`docs/runnerless-release.md`; do not replace it with a hand-maintained stage or
+publish sequence.
 
 The driver reads the component graph (`release/components.toml`), works out
 what moves and in what order, stages each artifact **once**, inspects the exact
