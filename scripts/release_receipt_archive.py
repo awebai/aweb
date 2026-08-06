@@ -63,7 +63,7 @@ _MANIFEST_FIELDS = (
 )
 KIND_SOURCE_FIELDS = {
     "anchor-artifact": ("repo", "run_id", "artifact_id", "anchor"),
-    "workflow-artifact": ("repo", "run_id", "artifact_id"),
+    "workflow-artifact": ("repo", "run_id", "artifact_id", "source_sha"),
 }
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _GIT_SHA = re.compile(r"[0-9a-f]{40}")
@@ -118,7 +118,7 @@ def _validate_source(source, kind: str) -> dict:
         )
     grammar = {
         "repo": _REPO, "run_id": _NUMERIC_ID, "artifact_id": _NUMERIC_ID,
-        "anchor": _ANCHOR,
+        "anchor": _ANCHOR, "source_sha": _GIT_SHA,
     }
     for field in required:
         value = _bounded_identity(source[field], f"source {field}")
@@ -1079,15 +1079,31 @@ def semantic_validator(providers=None):
         logical = manifest.get("logical_id", "")
         if logical.startswith("lane:"):
             claim = logical.split(":")
-            if len(claim) != 3:
-                raise ReceiptError(f"lane logical id {logical!r} is malformed")
+            # Package and version alone do not identify a lane artifact: two
+            # valid stagings of the SAME package/version from different sources
+            # are distinct bytes, and without the source in the identity either
+            # could be substituted for the other.
+            if len(claim) != 4:
+                raise ReceiptError(
+                    f"lane logical id {logical!r} is malformed; the contract is "
+                    "lane:<package>:<version>:<source_sha>"
+                )
+            if not _GIT_SHA.fullmatch(claim[3]):
+                raise ReceiptError(
+                    f"lane logical id source {claim[3]!r} is not a 40-hex sha"
+                )
             if claim[1] != package or claim[2] != version:
                 raise ReceiptError(
                     f"lane logical id claims {claim[1]!r}/{claim[2]!r} but the "
                     f"lane manifest binds {package!r}/{version!r}"
                 )
+            if claim[3] != source_sha:
+                raise ReceiptError(
+                    f"lane logical id claims source {claim[3]!r} but the lane "
+                    f"manifest binds {source_sha!r}"
+                )
         claimed_source = (manifest.get("source") or {}).get("source_sha")
-        if claimed_source is not None and claimed_source != source_sha:
+        if claimed_source != source_sha:
             raise ReceiptError(
                 f"archive source asserts source_sha {claimed_source!r} but the "
                 f"lane manifest binds {source_sha!r}"
@@ -1248,26 +1264,53 @@ def restore_release_set(
                 f"{staged_manifest_id!r}"
             )
         documents.append(document)
-    # The control that was previously unreachable from production.
-    validate_transition_set(documents)
 
+    # Completeness cannot come from the transition list itself: a trailing
+    # omission is self-consistent, because [1] satisfies 1..n for n=1. The
+    # expected inventory is therefore DERIVED from the frozen plan, and the
+    # entries are compared against the staged manifest and the receipt.
+    plan = rd.load_frozen_plan(
+        inner(inventory["plan"]), expected_id=frozen_plan_id)
+    if plan_id[1] != plan.source_sha:
+        raise ReceiptError(
+            f"release-set plan id claims source {plan_id[1]!r} but the frozen "
+            f"plan binds {plan.source_sha!r}"
+        )
+    manifest = rd.load_staged_manifest(
+        inner(inventory["staged_manifest"]), expected_digest=manifest_id[2])
+    if manifest.get("frozen_plan_id") != frozen_plan_id:
+        raise ReceiptError(
+            "release-set staged manifest binds a different frozen plan"
+        )
+    if manifest.get("source_sha") != plan.source_sha:
+        raise ReceiptError(
+            f"release-set staged manifest binds source "
+            f"{manifest.get('source_sha')!r}, not the frozen plan's "
+            f"{plan.source_sha!r}"
+        )
     receipt = rd.load_sealed_receipt(
-        inner(inventory["receipt"]),
-        expected_digest=receipt_id[2])
-    if getattr(receipt, "staged_manifest_id", None) not in (
-        None, "", staged_manifest_id
-    ):
+        inner(inventory["receipt"]), expected_digest=receipt_id[2])
+    if getattr(receipt, "frozen_plan_id", None) != frozen_plan_id:
+        raise ReceiptError(
+            "restored receipt binds a frozen plan outside this release set"
+        )
+    if getattr(receipt, "staged_manifest_id", None) != staged_manifest_id:
         raise ReceiptError(
             "restored receipt binds a staged manifest outside this release set"
         )
-    components = {d["component"] for d in documents}
-    receipt_entries = set(getattr(receipt, "entries", {}) or {})
-    unexplained = receipt_entries - components
-    if receipt_entries and unexplained:
+    receipt_source = getattr(receipt, "source_sha", None)
+    if receipt_source is not None and receipt_source != plan.source_sha:
         raise ReceiptError(
-            f"receipt names components with no transition in the set: "
-            f"{sorted(unexplained)}"
+            f"restored receipt binds source {receipt_source!r}, not the frozen "
+            f"plan's {plan.source_sha!r}"
         )
+
+    validate_transition_set(
+        documents,
+        expected_components={n.component for n in plan.plan.moving},
+        staged_entries=manifest.get("entries"),
+        receipt_entries=getattr(receipt, "entries", None),
+    )
     return {
         "frozen_plan_id": frozen_plan_id,
         "plan": bodies[inventory["plan"]],
@@ -1329,24 +1372,73 @@ def validate_transition_set(
                 f"inventory: missing {sorted(expected - actual)}, unexpected "
                 f"{sorted(actual - expected)}"
             )
+        # Component coverage alone does not catch a dropped KIND: omitting the
+        # trailing published transition leaves a set that still names every
+        # component and whose sequences still satisfy 1..n. The release path
+        # anchors one published transition per moving component, so its absence
+        # is the discriminating evidence.
+        published = {
+            d["component"] for d in documents if d["kind"] == "published"
+        }
+        if published != expected:
+            raise ReceiptError(
+                "transition set has no published transition for "
+                f"{sorted(expected - published)}; a set missing the effect "
+                "anchor is incomplete even when its sequences are contiguous"
+            )
+    # The staged manifest declares a delivery OBLIGATION and carries no proof,
+    # and an early-kind transition has not earned one yet, so staged identity is
+    # compared on the fields that exist on both sides and must never drift.
+    # Full equality belongs to the FINAL transition per component, which is what
+    # the receipt records.
+    final_by_component = {}
+    for document in documents:
+        current = final_by_component.get(document["component"])
+        if current is None or document["sequence"] > current["sequence"]:
+            final_by_component[document["component"]] = document
+
     for document in documents:
         component = document["component"]
         entry = document["entry"]
-        for label, table in (("staged", staged_entries),
-                             ("receipt", receipt_entries)):
-            if table is None:
-                continue
-            if component not in table:
+        if staged_entries is not None:
+            if component not in staged_entries:
                 raise ReceiptError(
-                    f"{label} entries have no record for component "
+                    "staged entries have no record for component "
                     f"{component!r} that the transition set claims"
                 )
-            other = _entry_fields(table[component])
-            if _entry_fields(entry) != other:
+            if _staged_identity(entry) != _staged_identity(
+                staged_entries[component]
+            ):
                 raise ReceiptError(
                     f"transition entry for {component} does not equal the "
-                    f"{label} entry field for field"
+                    "staged entry field for field"
                 )
+
+    if receipt_entries is not None:
+        for component, document in final_by_component.items():
+            if component not in receipt_entries:
+                raise ReceiptError(
+                    "receipt entries have no record for component "
+                    f"{component!r} that the transition set claims"
+                )
+            if _entry_fields(document["entry"]) != _entry_fields(
+                receipt_entries[component]
+            ):
+                raise ReceiptError(
+                    f"final transition entry for {component} does not equal "
+                    "the receipt entry field for field"
+                )
+
+
+def _staged_identity(entry) -> dict:
+    """The staged-manifest-comparable identity: what the staged bytes fix and
+    no later transition may change. Delivery proof and pointer state are
+    excluded because the manifest declares an obligation rather than a proof,
+    and an early-kind transition has not earned one yet."""
+    fields = ("version", "digest", "digest_set", "lane_ref")
+    if isinstance(entry, dict):
+        return {f: entry.get(f) for f in fields}
+    return {f: getattr(entry, f, None) for f in fields}
 
 
 def _entry_fields(entry) -> dict:
@@ -1410,6 +1502,9 @@ def main(argv=None) -> int:
     arch.add_argument("--run-id", required=True)
     arch.add_argument("--artifact-id", required=True)
     arch.add_argument("--anchor")
+    arch.add_argument("--source-sha",
+                      help="exact 40-hex source sha; required for "
+                           "workflow-artifact lane archives")
     arch.add_argument("--workflow-path", required=True)
     arch.add_argument("--recorded-head")
     arch.add_argument("--entry-out", required=True, type=Path)
@@ -1444,6 +1539,8 @@ def main(argv=None) -> int:
                       "artifact_id": args.artifact_id}
             if args.anchor is not None:
                 source["anchor"] = args.anchor
+            if args.source_sha is not None:
+                source["source_sha"] = args.source_sha
             entry = archive_sealed(
                 logical_id=args.logical_id, kind=args.kind, source=source,
                 store=rd.GithubArtifactStore(
