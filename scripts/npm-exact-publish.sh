@@ -34,7 +34,8 @@
 # <repo root>: package-specific contract checks against the unpacked tgz
 # bytes (channel: package-dist markers + sentinel via
 # channel/scripts/check-package-dist.mjs, plus the .mcp.json mcpServers
-# wrapper; pi: pi-extension/scripts/check-package-dist.mjs markers - the
+# wrapper with the exact aweb-channel server name; pi:
+# pi-extension/scripts/check-package-dist.mjs markers - the
 # bundled channel-core freshness gate for pi, whose bundle does not carry
 # the channel sentinel constant - plus the five skill directories; skills:
 # plugin version equals the package version and exactly the five skill
@@ -113,8 +114,8 @@ try:
 except FileNotFoundError:
     sys.exit("REFUSE: channel tgz lacks .mcp.json")
 servers = doc.get("mcpServers")
-if not isinstance(servers, dict) or not servers:
-    sys.exit("REFUSE: channel .mcp.json lacks a nonempty mcpServers wrapper")
+if not isinstance(servers, dict) or set(servers) != {"aweb-channel"}:
+    sys.exit("REFUSE: channel .mcp.json must declare exactly the distinct aweb-channel MCP server")
 PYMCP
       # The plugin manifest ships in the tgz; the version coherence must
       # hold in the SHIPPED bytes, not only in the source tree the
