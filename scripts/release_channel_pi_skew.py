@@ -1605,8 +1605,53 @@ ENVELOPE_KEYS = {
 }
 
 
+def _atomic_write_text(path: Path, payload: str) -> None:
+    """Exclusive create of both the temporary and the final path.
+
+    write_text() truncates an existing output and can leave a partial final
+    file if the write fails midway. Here the temp is created O_EXCL in the
+    DESTINATION directory (so the commit is a same-filesystem link), fully
+    written and fsynced, then committed with os.link, which refuses when the
+    target exists -- so the commit step is itself the race check. The temp is
+    removed unconditionally, and the directory entry is synced so the commit
+    survives a crash.
+    """
+    data = payload.encode()
+    if path.exists() or path.is_symlink():
+        raise rd.ReceiptError(f"refusing to overwrite existing output {path}")
+    tmp = path.with_name(path.name + ".part")
+    if tmp.exists() or tmp.is_symlink():
+        raise rd.ReceiptError(
+            f"refusing to write through pre-existing temporary path {tmp}"
+        )
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError as exc:
+            raise rd.ReceiptError(
+                f"refusing to overwrite existing output {path}: it was created "
+                "concurrently while this measurement was writing"
+            ) from exc
+        directory = os.open(str(path.parent), os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+
 def _require_envelope(document, *, component: str,
-                      staged_manifest_digest: str) -> str:
+                      staged_manifest_digest: str,
+                      supported_versions: dict | None = None) -> str:
     """The envelope's own contract, checked before anything reaches disk.
 
     The measurement status lives on the nested child, not at the top level;
@@ -1646,6 +1691,40 @@ def _require_envelope(document, *, component: str,
     if document["measurement_sha256"] != hashlib.sha256(canonical).hexdigest():
         raise rd.ReceiptError(
             "measurement envelope does not bind the child's exact bytes"
+        )
+    if document["policy"] != "additive-only":
+        raise rd.ReceiptError(
+            f"measurement envelope policy {document['policy']!r} is not "
+            "additive-only"
+        )
+    # The envelope's supported set must equal BOTH the child's and the frozen
+    # input's. Checking only one lets the envelope advertise a support set the
+    # measurement never exercised.
+    envelope_support = document["supported_versions"]
+    child_support = child.get("supported_versions")
+    if child_support is not None and envelope_support != child_support:
+        raise rd.ReceiptError(
+            "measurement envelope supported_versions does not equal the "
+            "child's"
+        )
+    if supported_versions is not None:
+        expected = {
+            name: list(versions)
+            for name, versions in sorted(supported_versions.items())
+        }
+        if envelope_support != expected:
+            raise rd.ReceiptError(
+                "measurement envelope supported_versions does not equal the "
+                "frozen measurement input"
+            )
+    # envelope_id is canonical over every other field, so it is recomputed
+    # rather than trusted.
+    recorded = document["envelope_id"]
+    body = {k: v for k, v in document.items() if k != "envelope_id"}
+    if recorded != rd.canonical_json_digest(body):
+        raise rd.ReceiptError(
+            "measurement envelope_id is not the canonical identity of its own "
+            "contents"
         )
     status = child.get("status")
     if status != "incomplete-unanchored":
@@ -1732,11 +1811,15 @@ def main(argv: list[str] | None = None) -> int:
         status = _require_envelope(
             document, component=component,
             staged_manifest_digest=hashlib.sha256(body).hexdigest(),
+            supported_versions={
+                component: args.supported_client,
+                "server": args.supported_server,
+            },
         )
         payload = json.dumps(document, indent=2, sort_keys=True) + "\n"
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(payload)
+        _atomic_write_text(output, payload)
         digest = hashlib.sha256(output.read_bytes()).hexdigest()
         print(f"measurement {output} sha256:{digest}")
         print(f"status: {status}")

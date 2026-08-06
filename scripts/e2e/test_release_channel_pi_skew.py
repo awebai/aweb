@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import zipfile
 from pathlib import Path
 
@@ -1524,6 +1525,23 @@ class CliExactManifestTests(unittest.TestCase):
                     self.assertEqual(code, 1)
                     self.assertFalse((Path(tmp) / "out.json").exists())
 
+    def test_cli_refuses_a_pre_existing_output(self):
+        """Discriminating for the atomic commit at the CLI boundary: the honest
+        path must refuse rather than truncate an existing output."""
+        import contextlib
+        import io as _io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            out.write_text("prior contents")
+            captured = _io.StringIO()
+            with contextlib.redirect_stdout(captured):
+                code = self.run_cli(["channel", "server"], tmp, fake=True)
+            self.assertEqual(code, 1)
+            self.assertIn("existing output", captured.getvalue())
+            self.assertEqual(out.read_text(), "prior contents",
+                             "the pre-existing output must be untouched")
+
     def test_cli_refuses_extra_staged_entry(self):
         import contextlib
         import io as _io
@@ -1537,6 +1555,161 @@ class CliExactManifestTests(unittest.TestCase):
                           captured.getvalue().replace("\n", " "))
             self.assertFalse((Path(tmp) / "out.json").exists(),
                              "a refused measurement writes no output")
+
+
+
+
+class AtomicOutputTests(unittest.TestCase):
+    """Reviewer: the CLI committed with write_text(), which truncates an
+    existing output and can leave partial final bytes when the write fails."""
+
+    def test_pre_existing_target_refuses_and_is_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            out.write_text("prior contents")
+            with self.assertRaisesRegex(rd.ReceiptError, "existing output"):
+                skew._atomic_write_text(out, "new")
+            self.assertEqual(out.read_text(), "prior contents")
+
+    def test_pre_existing_temp_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            (Path(tmp) / "out.json.part").write_text("squatted")
+            with self.assertRaisesRegex(rd.ReceiptError, "temporary"):
+                skew._atomic_write_text(out, "new")
+            self.assertFalse(out.exists())
+
+    def test_raced_target_refuses_and_keeps_the_winner(self):
+        """The target does not exist at the check and does by the commit."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            real_fdopen = os.fdopen
+
+            def racing(fd, mode, *a, **k):
+                handle = real_fdopen(fd, mode, *a, **k)
+                if not out.exists():
+                    out.write_text("winner")
+                return handle
+
+            with unittest.mock.patch.object(os, "fdopen", racing):
+                with self.assertRaisesRegex(rd.ReceiptError, "concurrently"):
+                    skew._atomic_write_text(out, "loser")
+            self.assertEqual(out.read_text(), "winner")
+            self.assertFalse((Path(tmp) / "out.json.part").exists())
+
+    def test_mid_write_failure_leaves_no_output_and_no_temp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+
+            class Exploding:
+                def write(self, data):
+                    raise OSError("disk full")
+
+                def flush(self):
+                    pass
+
+                def fileno(self):
+                    return 0
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+            with unittest.mock.patch.object(
+                os, "fdopen", lambda fd, *a, **k: (os.close(fd), Exploding())[1]
+            ):
+                with self.assertRaises(OSError):
+                    skew._atomic_write_text(out, "payload")
+            self.assertFalse(out.exists())
+            self.assertFalse((Path(tmp) / "out.json.part").exists())
+
+    def test_successful_write_commits_exact_bytes_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            skew._atomic_write_text(out, "exact\n")
+            self.assertEqual(out.read_bytes(), b"exact\n")
+            self.assertFalse((Path(tmp) / "out.json.part").exists())
+
+
+class EnvelopeAuthorityTests(unittest.TestCase):
+    """Reviewer: _require_envelope validated selected fields only."""
+
+    def envelope(self, **overrides):
+        child = {
+            "schema": "aweb.runtime-support-measurement.v1",
+            "status": "incomplete-unanchored",
+            "measurement_id": "c" * 64,
+            "supported_versions": {"channel": ["1.2.2"], "server": ["1.26.34"]},
+        }
+        canonical = json.dumps(
+            child, sort_keys=True, separators=(",", ":")).encode()
+        body = {
+            "schema": skew.ENVELOPE_SCHEMA,
+            "policy": "additive-only",
+            "component": "channel",
+            "staged_manifest_sha256": "f" * 64,
+            "supported_versions": {"channel": ["1.2.2"], "server": ["1.26.34"]},
+            "measurement_id": child["measurement_id"],
+            "measurement_sha256": hashlib.sha256(canonical).hexdigest(),
+            "measurement": child,
+        }
+        body.update(overrides)
+        body["envelope_id"] = rd.canonical_json_digest(body)
+        return body
+
+    def check(self, document, **kw):
+        return skew._require_envelope(
+            document, component="channel", staged_manifest_digest="f" * 64,
+            supported_versions={"channel": ["1.2.2"], "server": ["1.26.34"]},
+            **kw)
+
+    def test_honest_envelope_validates(self):
+        self.assertEqual(self.check(self.envelope()), "incomplete-unanchored")
+
+    def test_wrong_policy_refuses(self):
+        with self.assertRaisesRegex(rd.ReceiptError, "policy"):
+            self.check(self.envelope(policy="replace-all"))
+
+    def test_supported_versions_disagreeing_with_the_frozen_input_refuses(self):
+        """Discriminating: the envelope and the child AGREE with each other, so
+        only the frozen-input comparison can catch this."""
+        drifted = {"channel": ["9.9.9"], "server": ["1.26.34"]}
+        doc = self.envelope(supported_versions=drifted)
+        child = dict(doc["measurement"], supported_versions=drifted)
+        canonical = json.dumps(
+            child, sort_keys=True, separators=(",", ":")).encode()
+        doc["measurement"] = child
+        doc["measurement_sha256"] = hashlib.sha256(canonical).hexdigest()
+        doc.pop("envelope_id")
+        doc["envelope_id"] = rd.canonical_json_digest(doc)
+        with self.assertRaisesRegex(rd.ReceiptError, "frozen measurement input"):
+            self.check(doc)
+
+    def test_supported_versions_disagreeing_with_the_child_refuses(self):
+        doc = self.envelope()
+        doc["measurement"] = dict(
+            doc["measurement"],
+            supported_versions={"channel": ["0.0.1"], "server": ["1.26.34"]})
+        doc.pop("envelope_id")
+        doc["envelope_id"] = rd.canonical_json_digest(doc)
+        with self.assertRaisesRegex(rd.ReceiptError, "child"):
+            self.check(doc)
+
+    def test_forged_envelope_id_refuses(self):
+        doc = self.envelope()
+        doc["envelope_id"] = "0" * 64
+        with self.assertRaisesRegex(rd.ReceiptError, "envelope_id"):
+            self.check(doc)
+
+    def test_coherent_mutation_with_recomputed_envelope_id_still_refuses(self):
+        """The coherent case: change a field AND re-sign the envelope. It is
+        caught because the envelope is checked against the frozen input and the
+        child, not only against itself."""
+        doc = self.envelope(component="pi")
+        with self.assertRaisesRegex(rd.ReceiptError, "component"):
+            self.check(doc)
 
 
 
