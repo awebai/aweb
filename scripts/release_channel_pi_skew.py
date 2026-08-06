@@ -1625,11 +1625,15 @@ def _atomic_write_text(path: Path, payload: str) -> None:
             f"refusing to write through pre-existing temporary path {tmp}"
         )
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    linked_identity = None
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
+        # Captured BEFORE the temp entry goes away: it is how rollback proves the
+        # final link is the one THIS call created rather than a racer's file.
+        temp_stat = os.stat(tmp)
         try:
             os.link(tmp, path)
         except FileExistsError as exc:
@@ -1637,16 +1641,69 @@ def _atomic_write_text(path: Path, payload: str) -> None:
                 f"refusing to overwrite existing output {path}: it was created "
                 "concurrently while this measurement was writing"
             ) from exc
-        directory = os.open(str(path.parent), os.O_RDONLY)
+        linked_identity = (temp_stat.st_dev, temp_stat.st_ino)
+
+        # Post-link protocol. Removing the temp BEFORE the directory fsync means
+        # one sync makes both the final link and the cleanup durable; syncing
+        # first would leave a .part entry that can survive a crash.
+        os.unlink(tmp)
         try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+            _fsync_directory(path.parent)
+        except OSError as exc:
+            # The final link already exists, so reporting an error without
+            # undoing it would leave output behind on a failed call.
+            _rollback_link(path, tmp, linked_identity)
+            raise rd.ReceiptError(
+                f"refusing {path}: directory durability failed after the commit, "
+                "so the write was rolled back"
+            ) from exc
     finally:
         try:
             os.unlink(tmp)
         except FileNotFoundError:
             pass
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Make the directory's own entries durable, not just file contents."""
+    handle = os.open(str(directory), os.O_RDONLY)
+    try:
+        os.fsync(handle)
+    finally:
+        os.close(handle)
+
+
+def _rollback_link(path: Path, tmp: Path, linked_identity) -> None:
+    """Undo only the final link this invocation created.
+
+    A racer may have replaced the path between the commit and the failure. Its
+    file is not ours to delete, so the inode identity captured before the temp
+    was unlinked decides. Rollback that cannot be made durable fails closed:
+    silently leaving a possibly-resurrectable final entry is the failure mode
+    this whole protocol exists to prevent.
+    """
+    try:
+        current = os.lstat(path)
+    except FileNotFoundError:
+        current = None
+    if current is not None and (
+        current.st_dev, current.st_ino
+    ) == linked_identity:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+    try:
+        _fsync_directory(path.parent)
+    except OSError as exc:
+        raise rd.ReceiptError(
+            f"rollback of {path} could not be made durable; failing closed "
+            "rather than leaving an uncertain output"
+        ) from exc
 
 
 def _require_envelope(document, *, component: str,

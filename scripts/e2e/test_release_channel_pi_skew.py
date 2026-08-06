@@ -1625,6 +1625,87 @@ class AtomicOutputTests(unittest.TestCase):
             self.assertFalse(out.exists())
             self.assertFalse((Path(tmp) / "out.json.part").exists())
 
+    def test_directory_fsync_failure_rolls_back_and_leaves_no_output(self):
+        """The reviewer's kill: the final link already exists when the durability
+        step fails, so reporting an error without undoing it leaves output
+        behind."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            calls = []
+            real = skew._fsync_directory
+
+            def failing(directory):
+                calls.append(directory)
+                if len(calls) == 1:
+                    raise OSError("directory fsync failed")
+                return real(directory)
+
+            with unittest.mock.patch.object(skew, "_fsync_directory", failing):
+                with self.assertRaisesRegex(rd.ReceiptError, "rolled back"):
+                    skew._atomic_write_text(out, "payload")
+            self.assertFalse(out.exists(),
+                             "an error must never leave the final output")
+            self.assertFalse((Path(tmp) / "out.json.part").exists())
+            self.assertEqual(len(calls), 2,
+                             "commit fsync then rollback fsync")
+
+    def test_rollback_never_removes_a_racers_file(self):
+        """If a racer replaced the path between commit and failure, that file is
+        not ours to delete."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            real = skew._fsync_directory
+
+            def failing(directory):
+                if not getattr(failing, "fired", False):
+                    failing.fired = True
+                    out.unlink()
+                    out.write_text("racer wins")
+                    raise OSError("directory fsync failed")
+                return real(directory)
+
+            with unittest.mock.patch.object(skew, "_fsync_directory", failing):
+                with self.assertRaises(rd.ReceiptError):
+                    skew._atomic_write_text(out, "payload")
+            self.assertEqual(out.read_text(), "racer wins",
+                             "rollback must remove only our own link")
+
+    def test_uncertain_rollback_durability_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+
+            def always_failing(directory):
+                raise OSError("directory fsync failed")
+
+            with unittest.mock.patch.object(
+                skew, "_fsync_directory", always_failing
+            ):
+                with self.assertRaisesRegex(rd.ReceiptError, "failing closed"):
+                    skew._atomic_write_text(out, "payload")
+            self.assertFalse(out.exists())
+
+    def test_temp_is_removed_before_the_durability_sync(self):
+        """Ordering control: one sync must make BOTH the final link and the temp
+        removal durable, or a .part entry can survive a crash."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            part = Path(tmp) / "out.json.part"
+            observed = {}
+            real = skew._fsync_directory
+
+            def observing(directory):
+                observed["part_present_at_sync"] = part.exists()
+                observed["final_present_at_sync"] = out.exists()
+                return real(directory)
+
+            with unittest.mock.patch.object(skew, "_fsync_directory", observing):
+                skew._atomic_write_text(out, "payload")
+            self.assertFalse(observed["part_present_at_sync"],
+                             "temp must be unlinked BEFORE the durability sync")
+            self.assertTrue(observed["final_present_at_sync"])
+            self.assertEqual(out.read_text(), "payload")
+            self.assertFalse(part.exists())
+
     def test_successful_write_commits_exact_bytes_and_cleans_up(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "out.json"
