@@ -11,6 +11,7 @@ import io
 import json
 import sys
 import unittest
+import unittest.mock
 import zipfile
 from pathlib import Path
 
@@ -1895,6 +1896,50 @@ def pypi_lane(zip_bytes, *, observer, runs=None, source_sha="c" * 40,
         runs=runs if runs is not None else FakeAwRuns(),
         waiter=lambda: None,
     ), api
+
+
+class GithubApiDefaultSignatureTests(unittest.TestCase):
+    """The store/authority/run-reader call their api with the path alone, and an
+    injected fake has that signature. Storing _run_gh_api directly -- which
+    requires a keyword-only timeout -- raised TypeError on every real use while
+    every test passed, because tests inject fakes."""
+
+    def test_default_api_is_callable_with_the_path_alone(self) -> None:
+        import inspect
+
+        for build in (
+            lambda: rd.GithubArtifactStore(repo="awebai/aweb", workflow_path="w"),
+            lambda: rd.GithubArtifactDigestAuthority(
+                repo="awebai/aweb", workflow_path="w"),
+        ):
+            api = build()._api
+            sig = inspect.signature(api)
+            required = [
+                name for name, prm in sig.parameters.items()
+                if prm.default is inspect.Parameter.empty
+                and prm.kind is not inspect.Parameter.VAR_KEYWORD
+            ]
+            self.assertEqual(required, ["path"], f"default api takes {sig}")
+
+    def test_default_api_threads_a_timeout_to_run_gh_api(self) -> None:
+        seen = {}
+
+        def fake_run(path, *, timeout):
+            seen["path"], seen["timeout"] = path, timeout
+            return b"{}"
+
+        with unittest.mock.patch.object(rd, "_run_gh_api", fake_run):
+            rd._default_gh_api("repos/x/actions/runs/1")
+        self.assertEqual(seen["path"], "repos/x/actions/runs/1")
+        self.assertGreater(seen["timeout"], 0)
+
+    def test_injected_api_is_still_used_unchanged(self) -> None:
+        calls = []
+        store = rd.GithubArtifactStore(
+            lambda path: calls.append(path) or b"{}",
+            repo="awebai/aweb", workflow_path="w")
+        store._api("repos/x")
+        self.assertEqual(calls, ["repos/x"])
 
 
 class PypiWorkflowLaneTests(unittest.TestCase):
