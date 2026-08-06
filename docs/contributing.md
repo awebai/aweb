@@ -180,14 +180,16 @@ for the pinned release result. Update the committed pin deliberately when the
 reviewed OAS seam advances; a clean first run requires network access to fetch the
 pinned commit, while later runs reuse and reset the repository-owned cache.
 
-## Mandatory comprehensive CI
+## Comprehensive CI signal
 
-`make ship`, not `make test` or `make release-all-check`, is the canonical release
-proof. It includes the release and AWID packaging checks, the cross-server
-federation journey, the OSS user journey and its mutation guard, and the
-real-binary profile/team/Library journey. The `Comprehensive ship gate` workflow
-runs that exact target for every pull request and every push to `main`; no person
-chooses whether the journeys run.
+`make ship`, not `make test` or `make release-all-check`, is the comprehensive
+release proof. It includes the release and AWID packaging checks, the
+cross-server federation journey, the OSS user journey and its mutation guard,
+and the real-binary profile/team/Library journey. The `Comprehensive ship gate`
+workflow runs that exact target for every pull request and every push to `main`.
+The release plan reports whether it is green at the exact source SHA as useful
+information; runner outages or a red signal do not mechanically prevent a
+human-authorized release.
 
 Those suites run independently of each other. `make` stops a recipe at the first
 failing line, so while they were recipe lines a failure in one silently removed the
@@ -213,12 +215,9 @@ paths before spawning. It never substitutes a globally installed or previously
 published CLI/runtime. A developer laptop is weak evidence for this property
 precisely because its accumulated tools can hide missing setup.
 
-A workflow that merely reports failure is capability, not enforcement. Repository
-protection must make `Comprehensive ship gate` a required status check, require a
-strict up-to-date branch, and apply to administrators. Observe the exact hosted
-check name and a successful run before enabling that rule: requiring a misspelled
-or never-reported context blocks every merge. Renaming the job therefore requires
-a coordinated protection update, never an isolated workflow edit.
+Treat the workflow as a diagnostic signal, not an availability dependency. Fix
+persistent failures rather than ignoring them, but keep the explicit human risk
+acceptance usable when runners are unavailable or urgency warrants proceeding.
 
 ## Vulnerability audits
 
