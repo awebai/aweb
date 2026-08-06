@@ -1,4 +1,5 @@
 name: npm Release
+run-name: aweb-npm|${{ inputs.mode }}|${{ inputs.package }}|${{ inputs.recovery_attempt_artifact_id }}
 
 # Dispatch-only npm release lane for channel, pi, and skills. There is
 # deliberately NO tag trigger: a pushed tag runs no code, so nothing can
@@ -49,6 +50,9 @@ on:
         required: false
       stage_zip_digest:
         description: 'publish-continuation: expected artifact digest, sha256:<64 hex>'
+        required: false
+      recovery_attempt_artifact_id:
+        description: 'adopted-preplan recovery: anchored attempt identity to persist on the run'
         required: false
 
 permissions:
@@ -215,6 +219,7 @@ jobs:
       STAGE_RUN_ID: ${{ inputs.stage_run_id }}
       STAGE_ARTIFACT_ID: ${{ inputs.stage_artifact_id }}
       STAGE_ZIP_DIGEST: ${{ inputs.stage_zip_digest }}
+      RECOVERY_ATTEMPT_ARTIFACT_ID: ${{ inputs.recovery_attempt_artifact_id }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout tooling (this workflow's ref)
@@ -228,6 +233,12 @@ jobs:
           bash scripts/npm-exact-publish.sh validate-inputs \
             --sha "$SOURCE_SHA" --version "$VERSION" --digest "$STAGE_ZIP_DIGEST" \
             --run-id "$STAGE_RUN_ID" --artifact-id "$STAGE_ARTIFACT_ID"
+          if [[ -n "$RECOVERY_ATTEMPT_ARTIFACT_ID" ]]; then
+            [[ "$RECOVERY_ATTEMPT_ARTIFACT_ID" =~ ^adopted-preplan-attempt:[0-9a-f]{64}:(channel|pi|skills):[0-9a-f]{64}$ ]] \
+              || { echo "REFUSE: invalid recovery attempt artifact identity" >&2; exit 1; }
+            [[ "${BASH_REMATCH[1]}" == "$PACKAGE" ]] \
+              || { echo "REFUSE: recovery attempt belongs to ${BASH_REMATCH[1]}, not $PACKAGE" >&2; exit 1; }
+          fi
 
       - name: Resolve lane
         id: lane
@@ -288,6 +299,31 @@ jobs:
           pkg_declared="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("package",""))' staging/manifest.json)"
           [[ "$pkg_declared" == "$PACKAGE" ]] \
             || { echo "REFUSE: staged manifest is for package $pkg_declared, not $PACKAGE" >&2; exit 1; }
+
+      - name: Persist recovery attempt identity
+        if: inputs.recovery_attempt_artifact_id != ''
+        run: |
+          set -euo pipefail
+          mkdir recovery-attempt-evidence
+          python3 - <<'PY'
+          import json, os, pathlib
+          evidence = {
+              "schema": "aweb.release.recovery-continuation-attempt.v1",
+              "attempt_artifact_id": os.environ["RECOVERY_ATTEMPT_ARTIFACT_ID"],
+              "continuation_run_id": os.environ["GITHUB_RUN_ID"],
+          }
+          pathlib.Path("recovery-attempt-evidence/recovery-attempt.json").write_bytes(
+              json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+          )
+          PY
+
+      - name: Upload recovery attempt identity
+        if: inputs.recovery_attempt_artifact_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-attempt-identity
+          path: recovery-attempt-evidence/recovery-attempt.json
+          if-no-files-found: error
 
       - name: Tag - create at exact source, or adopt identical
         working-directory: source

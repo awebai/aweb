@@ -696,26 +696,430 @@ class ObserverTests(unittest.TestCase):
 
 
 class FakeAwRuns:
-    """The aw-release.yml runs surface: list, dispatch, conclusion."""
+    """The workflow runs surface: list, dispatch, conclusion, attempt evidence."""
 
-    def __init__(self, *, new_runs_per_dispatch=1, conclusion="success"):
+    def __init__(self, *, new_runs_per_dispatch=1, conclusion="success",
+                 observed_attempt_artifact_id="from-dispatch"):
         self.run_ids = [100, 101]
         self.dispatched: list[dict] = []
         self.new_runs_per_dispatch = new_runs_per_dispatch
         self.conclusion = conclusion
+        self.observed_attempt_artifact_id = observed_attempt_artifact_id
+        self.run_attempt_artifact_ids = {}
         self._next = 200
 
     def list_run_ids(self):
         return list(self.run_ids)
 
+    def high_water_run_id(self):
+        run_ids = self.list_run_ids()
+        return run_ids[-1] if run_ids else None
+
+    def list_run_ids_after(self, boundary_run_id):
+        run_ids = self.list_run_ids()
+        if boundary_run_id is None:
+            return run_ids
+        boundary = str(boundary_run_id)
+        for index, run_id in enumerate(run_ids):
+            if str(run_id) == boundary:
+                return run_ids[index + 1:]
+        raise rd.ReceiptError("incomplete fake run enumeration: boundary missing")
+
     def dispatch(self, inputs: dict):
         self.dispatched.append(dict(inputs))
         for _ in range(self.new_runs_per_dispatch):
-            self.run_ids.append(self._next)
+            run_id = self._next
+            self.run_ids.append(run_id)
+            observed = self.observed_attempt_artifact_id
+            if observed == "from-dispatch":
+                observed = inputs.get("recovery_attempt_artifact_id")
+            if observed is not None:
+                self.run_attempt_artifact_ids[run_id] = observed
             self._next += 1
 
-    def run_conclusion(self, run_id):
+    def run_display_title(self, run_id, *, budget=None):
+        attempt_id = self.run_attempt_artifact_ids.get(run_id)
+        if attempt_id is None:
+            return "aweb-npm|stage-only|channel|"
+        return rd.recovery_run_marker("channel", attempt_id)
+
+    def run_conclusion(self, run_id, *, budget=None):
         return self.conclusion
+
+    def run_attempt_artifact_id(self, run_id, *, budget=None):
+        return self.run_attempt_artifact_ids.get(run_id)
+
+
+class WorkflowRunAttemptEvidenceTests(unittest.TestCase):
+    def evidence_zip(self, attempt_artifact_id, run_id="777"):
+        body = rd.canonical_json_bytes({
+            "schema": "aweb.release.recovery-continuation-attempt.v1",
+            "attempt_artifact_id": attempt_artifact_id,
+            "continuation_run_id": run_id,
+        })
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("recovery-attempt.json", body)
+        return buffer.getvalue()
+
+    def test_reads_attempt_identity_from_run_owned_persistent_artifact(self):
+        attempt_id = "adopted-preplan-attempt:" + "a" * 64 + ":channel:" + "b" * 64
+        artifact_zip = self.evidence_zip(attempt_id)
+
+        def api(path):
+            if path == (
+                "repos/awebai/aweb/actions/runs/777/artifacts?"
+                "name=recovery-attempt-identity&per_page=100&page=1"
+            ):
+                return json.dumps({"total_count": 1, "artifacts": [{
+                    "id": 88,
+                    "name": "recovery-attempt-identity",
+                    "expired": False,
+                    "digest": "sha256:" + sha256(artifact_zip),
+                    "workflow_run": {"id": 777},
+                }]}).encode()
+            if path == "repos/awebai/aweb/actions/artifacts/88/zip":
+                return artifact_zip
+            raise AssertionError(f"unexpected API path {path}")
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        self.assertEqual(runs.run_attempt_artifact_id(777), attempt_id)
+
+    def test_evidence_lookup_falls_back_and_finds_page_two_after_overlap(self):
+        attempt_id = "attempt:channel:page-two-evidence"
+        artifact_zip = self.evidence_zip(attempt_id)
+        unrelated = [
+            {"id": artifact_id, "name": f"unrelated-{artifact_id}"}
+            for artifact_id in range(1, 101)
+        ]
+        owned = {
+            "id": 101,
+            "name": "recovery-attempt-identity",
+            "expired": False,
+            "digest": "sha256:" + sha256(artifact_zip),
+            "workflow_run": {"id": 777},
+        }
+        calls = []
+
+        def api(path):
+            calls.append(path)
+            if "?name=recovery-attempt-identity" in path:
+                # Simulate an endpoint which ignores the optional name filter.
+                return json.dumps({
+                    "total_count": 101, "artifacts": unrelated,
+                }).encode()
+            if path.endswith("?per_page=100&page=1"):
+                return json.dumps({
+                    "total_count": 101, "artifacts": unrelated,
+                }).encode()
+            if path.endswith("?per_page=100&page=2"):
+                return json.dumps({
+                    "total_count": 101,
+                    "artifacts": [unrelated[-1], owned],
+                }).encode()
+            if path.endswith("/actions/artifacts/101/zip"):
+                return artifact_zip
+            raise AssertionError(f"unexpected API path {path}")
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        self.assertEqual(runs.run_attempt_artifact_id(777), attempt_id)
+        self.assertEqual(
+            sum(path.endswith("?per_page=100&page=2") for path in calls), 2,
+            "fallback enumeration must stabilize through page two",
+        )
+
+    def test_evidence_lookup_refuses_multiple_exact_artifacts_across_pages(self):
+        exact = [
+            {"id": artifact_id, "name": "recovery-attempt-identity"}
+            for artifact_id in range(1, 102)
+        ]
+
+        def api(path):
+            if path.endswith("page=1"):
+                page = exact[:100]
+            else:
+                page = [exact[99], exact[100]]
+            return json.dumps({
+                "total_count": 101, "artifacts": page,
+            }).encode()
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        with self.assertRaises(rd.ReceiptError) as caught:
+            runs.run_attempt_artifact_id(777)
+        self.assertIn("not exactly one", str(caught.exception))
+
+    def test_run_history_uses_high_water_and_deduplicates_page_drift(self):
+        calls = []
+        pages = {
+            1: [300, 299, 298],
+            2: [298, 297, 250, 249],
+        }
+
+        def api(path):
+            calls.append(path)
+            if path.endswith("?per_page=1&page=1"):
+                return json.dumps({"workflow_runs": [{"id": 300}]}).encode()
+            for page, run_ids in pages.items():
+                if path.endswith(f"?per_page=100&page={page}"):
+                    return json.dumps({
+                        "workflow_runs": [{"id": item} for item in run_ids]
+                    }).encode()
+            raise AssertionError(f"unexpected API path {path}")
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        self.assertEqual(runs.high_water_run_id(), 300)
+        self.assertEqual(
+            runs.list_run_ids_after("250"),
+            [300, 299, 298, 297],
+        )
+        self.assertEqual(
+            sum(path.endswith("page=2") for path in calls), 2,
+            "two complete agreeing passes must reach the boundary",
+        )
+
+    def test_run_history_retries_after_deletion_shift_hides_owned_run(self):
+        calls = []
+        first_page_reads = 0
+
+        def api(path):
+            nonlocal first_page_reads
+            calls.append(path)
+            if path.endswith("?per_page=100&page=1"):
+                first_page_reads += 1
+                run_ids = (
+                    list(range(300, 200, -1))
+                    if first_page_reads == 1
+                    else list(range(299, 199, -1))
+                )
+            elif path.endswith("?per_page=100&page=2"):
+                # Run 300 was deleted after the first page read, moving the
+                # owned run 200 onto that already-read page during pass one.
+                run_ids = list(range(199, 99, -1))
+            else:
+                raise AssertionError(f"unexpected API path {path}")
+            return json.dumps({
+                "workflow_runs": [{"id": item} for item in run_ids]
+            }).encode()
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        observed = runs.list_run_ids_after("100")
+        self.assertIn(200, observed)
+        self.assertNotIn(300, observed)
+        self.assertEqual(first_page_reads, 3)
+        self.assertEqual(len(calls), 6)
+
+    def test_run_history_requires_canonical_numeric_boundary(self):
+        runs = rd.AwLaneRuns(
+            api=lambda path: json.dumps({"workflow_runs": []}).encode(),
+            repo="awebai/aweb", workflow_file="npm-release.yml",
+        )
+        for boundary in ("0250", "0", 0, -1, True, 250.0):
+            with self.subTest(boundary=boundary):
+                with self.assertRaises(rd.ReceiptError) as caught:
+                    runs.list_run_ids_after(boundary)
+                self.assertIn("canonical numeric ID", str(caught.exception))
+
+    def test_run_history_refuses_order_mutation(self):
+        def api(path):
+            return json.dumps({"workflow_runs": [
+                {"id": 300}, {"id": 298}, {"id": 299}, {"id": 250},
+            ]}).encode()
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        with self.assertRaises(rd.ReceiptError) as caught:
+            runs.list_run_ids_after("250")
+        self.assertIn("order", str(caught.exception))
+        self.assertIn("incomplete", str(caught.exception))
+
+    def test_run_history_refuses_continuous_churn_without_agreement(self):
+        calls = []
+
+        def api(path):
+            calls.append(path)
+            newest = 300 + len(calls)
+            return json.dumps({"workflow_runs": [
+                {"id": newest}, {"id": 250},
+            ]}).encode()
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        runs.MAX_RUN_HISTORY_PASSES = 3
+        with self.assertRaises(rd.ReceiptError) as caught:
+            runs.list_run_ids_after("250")
+        self.assertIn("incomplete", str(caught.exception))
+        self.assertIn("agree", str(caught.exception))
+        self.assertEqual(len(calls), 3)
+
+    def test_run_history_bounds_total_requests_and_time(self):
+        for mode in ("requests", "time"):
+            with self.subTest(mode=mode):
+                calls = []
+                ticks = iter([0.0, 0.0, 0.0, 2.0, 2.0])
+
+                def api(path):
+                    calls.append(path)
+                    newest = 300 + len(calls)
+                    return json.dumps({"workflow_runs": [
+                        {"id": newest}, {"id": 250},
+                    ]}).encode()
+
+                runs = rd.AwLaneRuns(
+                    api=api, repo="awebai/aweb",
+                    workflow_file="npm-release.yml",
+                    clock=(lambda: next(ticks)) if mode == "time" else None,
+                )
+                if mode == "requests":
+                    runs.MAX_CORRELATION_REQUESTS = 2
+                else:
+                    runs.MAX_CORRELATION_SECONDS = 1.0
+                with self.assertRaises(rd.ReceiptError) as caught:
+                    runs.list_run_ids_after("250")
+                self.assertIn("incomplete", str(caught.exception))
+                self.assertLessEqual(len(calls), 2)
+
+    def test_missing_boundary_and_page_cap_refuse_incomplete_enumeration(self):
+        for mode in ("missing", "cap"):
+            with self.subTest(mode=mode):
+                calls = []
+
+                def api(path):
+                    calls.append(path)
+                    if mode == "missing" and path.endswith("page=2"):
+                        return json.dumps({"workflow_runs": []}).encode()
+                    return json.dumps({
+                        "workflow_runs": [{"id": 400 - len(calls)}]
+                    }).encode()
+
+                runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                                     workflow_file="npm-release.yml")
+                runs.MAX_RUN_HISTORY_PAGES_PER_PASS = 2
+                with self.assertRaises(rd.ReceiptError) as caught:
+                    runs.list_run_ids_after("250")
+                self.assertIn("incomplete", str(caught.exception))
+                self.assertLessEqual(len(calls), 2)
+
+    def test_default_github_calls_receive_positive_remaining_timeout(self):
+        attempt_id = "attempt:channel:timeout"
+        artifact_zip = self.evidence_zip(attempt_id)
+        observed_timeouts = []
+        original = rd._run_gh_api
+
+        def api(path, *, timeout):
+            observed_timeouts.append(timeout)
+            if "/workflows/" in path:
+                return json.dumps({"workflow_runs": [
+                    {"id": 777}, {"id": 100},
+                ]}).encode()
+            if "/artifacts?name=recovery-attempt-identity&" in path:
+                return json.dumps({"total_count": 1, "artifacts": [{
+                    "id": 88,
+                    "name": "recovery-attempt-identity",
+                    "expired": False,
+                    "digest": "sha256:" + sha256(artifact_zip),
+                    "workflow_run": {"id": 777},
+                }]}).encode()
+            if path.endswith("/artifacts/88/zip"):
+                return artifact_zip
+            if path.endswith("/actions/runs/777"):
+                return json.dumps({"conclusion": "success"}).encode()
+            raise AssertionError(f"unexpected API path {path}")
+
+        rd._run_gh_api = api
+        try:
+            runs = rd.AwLaneRuns(repo="awebai/aweb",
+                                 workflow_file="npm-release.yml")
+            budget = runs.new_correlation_budget(
+                max_seconds=3600.0, max_requests=2048
+            )
+            self.assertEqual(
+                runs.list_run_ids_after("100", budget=budget), [777]
+            )
+            self.assertEqual(
+                runs.run_attempt_artifact_id(777, budget=budget), attempt_id
+            )
+            self.assertEqual(
+                runs.run_conclusion(777, budget=budget), "success"
+            )
+        finally:
+            rd._run_gh_api = original
+        self.assertEqual(len(observed_timeouts), 6)
+        self.assertTrue(
+            all(0 < timeout <= 30.0 for timeout in observed_timeouts)
+        )
+
+    def test_correlation_deadline_covers_evidence_list_zip_and_conclusion(self):
+        attempt_id = "attempt:channel:deadline"
+        artifact_zip = self.evidence_zip(attempt_id)
+        for stage in ("evidence-list", "evidence-zip", "conclusion"):
+            with self.subTest(stage=stage):
+                now = [0.0]
+                timeouts = []
+
+                def api(path):
+                    timeouts.append(path)
+                    if "/artifacts?name=recovery-attempt-identity&" in path:
+                        if stage == "evidence-list":
+                            now[0] = 31.0
+                        return json.dumps({"total_count": 1, "artifacts": [{
+                            "id": 88,
+                            "name": "recovery-attempt-identity",
+                            "expired": False,
+                            "digest": "sha256:" + sha256(artifact_zip),
+                            "workflow_run": {"id": 777},
+                        }]}).encode()
+                    if path.endswith("/artifacts/88/zip"):
+                        if stage == "evidence-zip":
+                            now[0] = 31.0
+                        return artifact_zip
+                    if path.endswith("/actions/runs/777"):
+                        now[0] = 31.0
+                        return json.dumps({"conclusion": "success"}).encode()
+                    raise AssertionError(f"unexpected API path {path}")
+
+                runs = rd.AwLaneRuns(
+                    api=api, repo="awebai/aweb",
+                    workflow_file="npm-release.yml", clock=lambda: now[0],
+                )
+                budget = runs.new_correlation_budget()
+                with self.assertRaises(rd.ReceiptError) as caught:
+                    if stage == "conclusion":
+                        runs.run_conclusion(777, budget=budget)
+                    else:
+                        runs.run_attempt_artifact_id(777, budget=budget)
+                self.assertIn("incomplete", str(caught.exception))
+                self.assertTrue(timeouts)
+
+    def test_npm_workflow_persists_recovery_identity_before_effects(self):
+        workflow = (REPO_ROOT / ".github/workflows/npm-release.yml").read_text()
+        publish = workflow[workflow.index("\n  publish:\n"):]
+        self.assertIn("recovery_attempt_artifact_id:", workflow)
+        self.assertIn(
+            "run-name: aweb-npm|${{ inputs.mode }}|${{ inputs.package }}|"
+            "${{ inputs.recovery_attempt_artifact_id }}",
+            workflow,
+        )
+        self.assertIn(
+            "RECOVERY_ATTEMPT_ARTIFACT_ID: "
+            "${{ inputs.recovery_attempt_artifact_id }}",
+            publish,
+        )
+        self.assertIn("recovery-attempt.json", publish)
+        self.assertIn("name: recovery-attempt-identity", publish)
+        first_effect = publish.index("name: Tag - create at exact source")
+        self.assertLess(
+            publish.index("name: Persist recovery attempt identity"),
+            first_effect,
+        )
+        self.assertLess(
+            publish.index("name: Upload recovery attempt identity"),
+            first_effect,
+        )
 
 
 def lane_fixture(*, zip_bytes=None, remote=None, runs=None):
@@ -3017,6 +3421,815 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         self.assertEqual(entry.digest,
                          rd.canonical_digest_of_set(entry.digest_set))
 
+    def test_adopt_preplan_revalidates_without_calling_stage(self) -> None:
+        zip_bytes = npm_lane_zip()
+        lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
+        lane.stage = lambda node: self.fail("adoption called normal stage()")
+        adopted = lane.adopt_preplan(self.node())
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+            expected_manifest = "sha256:" + sha256(archive.read("manifest.json"))
+        self.assertEqual(adopted.manifest_digest, expected_manifest)
+        self.assertEqual(adopted.entry.lane_ref,
+                         lane._refs["channel"].to_dict())
+
+    def test_adopt_preplan_requires_independent_zip_authority(self) -> None:
+        zip_bytes = npm_lane_zip()
+        lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
+
+        class WrongAuthority:
+            def expected_digest(self, artifact):
+                return "0" * 64
+
+        lane._lane_authority = WrongAuthority()
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.adopt_preplan(self.node())
+        self.assertIn("independent", str(caught.exception))
+
+    def test_recovery_continuation_uses_persisted_snapshot_and_returns_run(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": None}
+        runs = FakeAwRuns()
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        before = lane.continuation_snapshot(self.node())
+        self.assertEqual(before, ["101"], "persist only the stable high-water run")
+        original = runs.dispatch
+
+        def dispatch(inputs):
+            original(inputs)
+            state["value"] = sha256(tgz)
+        runs.dispatch = dispatch
+        result = lane.publish_recovery(
+            self.node(), adopted.entry, before_run_ids=before,
+            attempt_artifact_id="attempt:channel:one")
+        self.assertEqual(result.continuation_run_id, str(runs.run_ids[-1]))
+        self.assertEqual(result.attempt_artifact_id, "attempt:channel:one")
+        self.assertEqual(
+            runs.dispatched[0]["recovery_attempt_artifact_id"],
+            "attempt:channel:one",
+        )
+        self.assertEqual(result.entry.digest_set, adopted.entry.digest_set)
+
+    def test_recovery_publish_ignores_unrelated_run_until_owned_run_appears(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": None}
+
+        class InterleavedRuns(FakeAwRuns):
+            def __init__(self):
+                super().__init__(new_runs_per_dispatch=0)
+                self.dispatch_started = False
+                self.polls = 0
+                self.expected_attempt = None
+
+            def dispatch(self, inputs):
+                self.dispatched.append(dict(inputs))
+                self.expected_attempt = inputs["recovery_attempt_artifact_id"]
+                self.dispatch_started = True
+                state["value"] = sha256(tgz)
+
+            def list_run_ids(self):
+                if self.dispatch_started:
+                    self.polls += 1
+                    if self.polls == 1:
+                        self.run_ids.append(200)
+                        self.run_attempt_artifact_ids[200] = "unrelated-attempt"
+                    elif self.polls == 2:
+                        self.run_ids.append(201)
+                        self.run_attempt_artifact_ids[201] = self.expected_attempt
+                return list(self.run_ids)
+
+        runs = InterleavedRuns()
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        before = lane.continuation_snapshot(self.node())
+        recovered = lane.publish_recovery(
+            self.node(), adopted.entry, before_run_ids=before,
+            attempt_artifact_id="attempt:channel:expected")
+        self.assertEqual(recovered.continuation_run_id, "201")
+        self.assertEqual(recovered.attempt_artifact_id,
+                         "attempt:channel:expected")
+        self.assertEqual(len(runs.dispatched), 1)
+
+    def test_recovery_publish_refuses_run_with_different_attempt_evidence(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": None}
+        runs = FakeAwRuns(observed_attempt_artifact_id="different-attempt")
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        before = lane.continuation_snapshot(self.node())
+        original = runs.dispatch
+
+        def dispatch(inputs):
+            original(inputs)
+            state["value"] = sha256(tgz)
+        runs.dispatch = dispatch
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.publish_recovery(
+                self.node(), adopted.entry, before_run_ids=before,
+                attempt_artifact_id="attempt:channel:expected")
+        self.assertIn("attempt", str(caught.exception))
+
+    def test_recovery_attempt_correlates_one_exact_success_without_dispatch(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": None}
+        runs = FakeAwRuns()
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        before = lane.continuation_snapshot(self.node())
+        runs.run_ids.append(777)
+        runs.conclusion = "success"
+        runs.run_attempt_artifact_ids[777] = "attempt:channel:two"
+        state["value"] = sha256(tgz)
+        recovered = lane.recover_recovery_attempt(
+            self.node(), adopted.entry, before_run_ids=before,
+            attempt_artifact_id="attempt:channel:two")
+        self.assertEqual(recovered.continuation_run_id, "777")
+        self.assertEqual(recovered.attempt_artifact_id, "attempt:channel:two")
+        self.assertEqual(runs.dispatched, [])
+
+    def test_recovery_finds_owned_run_beyond_first_history_page(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": sha256(tgz)}
+        attempt_id = "attempt:channel:beyond-page-one"
+        owned_run_id = 1101
+        boundary_run_id = 1000
+        unrelated = list(range(1201, 1101, -1))
+        evidence_body = rd.canonical_json_bytes({
+            "schema": "aweb.release.recovery-continuation-attempt.v1",
+            "attempt_artifact_id": attempt_id,
+            "continuation_run_id": str(owned_run_id),
+        })
+        evidence_buffer = io.BytesIO()
+        with zipfile.ZipFile(evidence_buffer, "w") as archive:
+            archive.writestr("recovery-attempt.json", evidence_body)
+        evidence_zip = evidence_buffer.getvalue()
+        calls = []
+        prefix = "repos/awebai/aweb/actions/workflows/npm-release.yml/runs"
+
+        def runs_api(path):
+            calls.append(path)
+            if path == prefix + "?per_page=100&page=1":
+                return json.dumps({
+                    "workflow_runs": [{"id": item} for item in unrelated]
+                }).encode()
+            if path == prefix + "?per_page=100&page=2":
+                return json.dumps({"workflow_runs": [
+                    {"id": owned_run_id}, {"id": boundary_run_id},
+                ]}).encode()
+            if path == (
+                f"repos/awebai/aweb/actions/runs/{owned_run_id}/artifacts?"
+                "name=recovery-attempt-identity&per_page=100&page=1"
+            ):
+                return json.dumps({"total_count": 1, "artifacts": [{
+                    "id": 88,
+                    "name": "recovery-attempt-identity",
+                    "expired": False,
+                    "digest": "sha256:" + sha256(evidence_zip),
+                    "workflow_run": {"id": owned_run_id},
+                }]}).encode()
+            if path == "repos/awebai/aweb/actions/artifacts/88/zip":
+                return evidence_zip
+            if path == f"repos/awebai/aweb/actions/runs/{owned_run_id}":
+                return json.dumps({
+                    "display_title": rd.recovery_run_marker(
+                        "channel", attempt_id
+                    ),
+                    "conclusion": "success",
+                }).encode()
+            if path.startswith("repos/awebai/aweb/actions/runs/"):
+                return json.dumps({
+                    "display_title": "aweb-npm|stage-only|channel|",
+                    "conclusion": "success",
+                }).encode()
+            raise AssertionError(f"unexpected API path {path}")
+
+        runs = rd.AwLaneRuns(api=runs_api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        recovered = lane.recover_recovery_attempt(
+            self.node(), adopted.entry,
+            before_run_ids=[str(boundary_run_id)],
+            attempt_artifact_id=attempt_id)
+        self.assertEqual(recovered.continuation_run_id, str(owned_run_id))
+        self.assertEqual(recovered.attempt_artifact_id, attempt_id)
+        self.assertIn(prefix + "?per_page=100&page=2", calls)
+
+    def test_sync_and_crash_correlation_bound_every_owned_run_request(self):
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        attempt_id = "attempt:channel:bounded"
+        evidence_body = rd.canonical_json_bytes({
+            "schema": "aweb.release.recovery-continuation-attempt.v1",
+            "attempt_artifact_id": attempt_id,
+            "continuation_run_id": "777",
+        })
+        evidence_buffer = io.BytesIO()
+        with zipfile.ZipFile(evidence_buffer, "w") as archive:
+            archive.writestr("recovery-attempt.json", evidence_body)
+        evidence_zip = evidence_buffer.getvalue()
+        history = (
+            "repos/awebai/aweb/actions/workflows/npm-release.yml/runs"
+            "?per_page=100&page=1"
+        )
+
+        for operation in ("sync", "crash"):
+            for hanging in ("evidence-list", "evidence-zip", "conclusion"):
+                with self.subTest(operation=operation, hanging=hanging):
+                    now = [0.0]
+                    run_reads = 0
+
+                    def api(path):
+                        nonlocal run_reads
+                        if path == history:
+                            return json.dumps({"workflow_runs": [
+                                {"id": 777}, {"id": 100},
+                            ]}).encode()
+                        if (
+                            "/actions/runs/777/artifacts?"
+                            "name=recovery-attempt-identity&" in path
+                        ):
+                            if hanging == "evidence-list":
+                                now[0] = 31.0
+                            return json.dumps({
+                                "total_count": 1, "artifacts": [{
+                                "id": 88,
+                                "name": "recovery-attempt-identity",
+                                "expired": False,
+                                "digest": "sha256:" + sha256(evidence_zip),
+                                "workflow_run": {"id": 777},
+                            }]}).encode()
+                        if path.endswith("/actions/artifacts/88/zip"):
+                            if hanging == "evidence-zip":
+                                now[0] = 31.0
+                            return evidence_zip
+                        if path.endswith("/actions/runs/777"):
+                            run_reads += 1
+                            if hanging == "conclusion" and run_reads == 2:
+                                now[0] = 31.0
+                            return json.dumps({
+                                "display_title": rd.recovery_run_marker(
+                                    "channel", attempt_id
+                                ),
+                                "conclusion": "success",
+                            }).encode()
+                        raise AssertionError(f"unexpected API path {path}")
+
+                    runs = rd.AwLaneRuns(
+                        api=api, repo="awebai/aweb",
+                        workflow_file="npm-release.yml",
+                        clock=lambda: now[0],
+                    )
+                    lane, _ = npm_lane(
+                        zip_bytes, observer=lambda p, v: sha256(tgz),
+                        runs=runs,
+                        delivery_proofs={"channel": dict(GOOD_PROOF)},
+                    )
+                    adopted = lane.adopt_preplan(self.node())
+                    with self.assertRaises(rd.ReceiptError) as caught:
+                        if operation == "sync":
+                            lane._wait_for_continuation(
+                                ["100"],
+                                expected_attempt_artifact_id=attempt_id,
+                            )
+                        else:
+                            lane.recover_recovery_attempt(
+                                self.node(), adopted.entry,
+                                before_run_ids=["100"],
+                                attempt_artifact_id=attempt_id,
+                            )
+                    self.assertIn("incomplete", str(caught.exception))
+
+    def test_sync_and_crash_refuse_many_unrelated_candidate_exhaustion(self):
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        run_ids = list(range(1000, 700, -1))
+        history_prefix = (
+            "repos/awebai/aweb/actions/workflows/npm-release.yml/runs"
+        )
+
+        for operation in ("sync", "crash"):
+            with self.subTest(operation=operation):
+                calls = []
+
+                def api(path):
+                    calls.append(path)
+                    if path == history_prefix + "?per_page=100&page=1":
+                        page = run_ids[:100]
+                        return json.dumps({"workflow_runs": [
+                            {"id": run_id} for run_id in page
+                        ]}).encode()
+                    if path == history_prefix + "?per_page=100&page=2":
+                        page = run_ids[100:200]
+                        return json.dumps({"workflow_runs": [
+                            {"id": run_id} for run_id in page
+                        ]}).encode()
+                    if path == history_prefix + "?per_page=100&page=3":
+                        page = run_ids[200:]
+                        return json.dumps({"workflow_runs": [
+                            {"id": run_id} for run_id in page
+                        ]}).encode()
+                    if path == history_prefix + "?per_page=100&page=4":
+                        return json.dumps({"workflow_runs": [
+                            {"id": 600},
+                        ]}).encode()
+                    if "/actions/runs/" in path:
+                        return json.dumps({
+                            "display_title": "aweb-npm|stage-only|channel|",
+                            "conclusion": "success",
+                        }).encode()
+                    raise AssertionError(f"unexpected API path {path}")
+
+                runs = rd.AwLaneRuns(
+                    api=api, repo="awebai/aweb",
+                    workflow_file="npm-release.yml",
+                )
+                lane, _ = npm_lane(
+                    zip_bytes, observer=lambda p, v: sha256(tgz), runs=runs,
+                    delivery_proofs={"channel": dict(GOOD_PROOF)},
+                )
+                if operation == "sync":
+                    lane.SYNC_CORRELATION_REQUESTS = 256
+                adopted = lane.adopt_preplan(self.node())
+                with self.assertRaises(rd.ReceiptError) as caught:
+                    if operation == "sync":
+                        lane._wait_for_continuation(
+                            ["600"],
+                            expected_attempt_artifact_id="attempt:missing",
+                        )
+                    else:
+                        lane.recover_recovery_attempt(
+                            self.node(), adopted.entry,
+                            before_run_ids=["600"],
+                            attempt_artifact_id="attempt:missing",
+                        )
+                self.assertIn("incomplete", str(caught.exception))
+                self.assertLessEqual(
+                    len(calls), runs.MAX_CORRELATION_REQUESTS
+                )
+
+    def test_synchronous_polling_shares_one_correlation_budget(self):
+        tgz = channel_tgz()
+        history = (
+            "repos/awebai/aweb/actions/workflows/npm-release.yml/runs"
+            "?per_page=100&page=1"
+        )
+        calls = []
+
+        def api(path):
+            calls.append(path)
+            if path == history:
+                return json.dumps({"workflow_runs": [
+                    {"id": 777}, {"id": 100},
+                ]}).encode()
+            if "/artifacts?name=recovery-attempt-identity&" in path:
+                return json.dumps({
+                    "total_count": 0, "artifacts": [],
+                }).encode()
+            if path.endswith("/actions/runs/777"):
+                return json.dumps({
+                    "display_title": rd.recovery_run_marker(
+                        "channel", "attempt:missing"
+                    ),
+                    "conclusion": "success",
+                }).encode()
+            raise AssertionError(f"unexpected API path {path}")
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        lane, _ = npm_lane(
+            npm_lane_zip(tgz=tgz), observer=lambda p, v: None, runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)},
+        )
+        lane.POLL_ATTEMPTS = 10
+        lane.SYNC_CORRELATION_REQUESTS = 8
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane._wait_for_continuation(
+                ["100"], expected_attempt_artifact_id="attempt:missing"
+            )
+        self.assertIn("incomplete", str(caught.exception))
+        self.assertLessEqual(len(calls), 8)
+
+    def test_sync_ordinary_and_adopted_survive_45_seconds_pending(self):
+        tgz = channel_tgz()
+        attempt_id = "attempt:channel:long-pending"
+        evidence_body = rd.canonical_json_bytes({
+            "schema": "aweb.release.recovery-continuation-attempt.v1",
+            "attempt_artifact_id": attempt_id,
+            "continuation_run_id": "777",
+        })
+        evidence_buffer = io.BytesIO()
+        with zipfile.ZipFile(evidence_buffer, "w") as archive:
+            archive.writestr("recovery-attempt.json", evidence_body)
+        evidence_zip = evidence_buffer.getvalue()
+
+        for mode in ("ordinary", "adopted"):
+            with self.subTest(mode=mode):
+                now = [0.0]
+                conclusion_calls = 0
+
+                def waiter():
+                    now[0] += 15.0
+
+                def api(path):
+                    nonlocal conclusion_calls
+                    if "/workflows/npm-release.yml/runs?" in path:
+                        return json.dumps({"workflow_runs": [
+                            {"id": 777}, {"id": 100},
+                        ]}).encode()
+                    if path.endswith("/actions/runs/777"):
+                        if mode == "ordinary":
+                            conclusion_calls += 1
+                            conclusion = (
+                                "success" if conclusion_calls == 4 else None
+                            )
+                        else:
+                            conclusion = "success"
+                        return json.dumps({
+                            "display_title": rd.recovery_run_marker(
+                                "channel", attempt_id
+                            ),
+                            "conclusion": conclusion,
+                        }).encode()
+                    if "/runs/777/artifacts?name=" in path:
+                        artifacts = [] if now[0] < 45.0 else [{
+                            "id": 88,
+                            "name": "recovery-attempt-identity",
+                            "expired": False,
+                            "digest": "sha256:" + sha256(evidence_zip),
+                            "workflow_run": {"id": 777},
+                        }]
+                        return json.dumps({
+                            "total_count": len(artifacts),
+                            "artifacts": artifacts,
+                        }).encode()
+                    if path.endswith("/actions/artifacts/88/zip"):
+                        return evidence_zip
+                    raise AssertionError(f"unexpected API path {path}")
+
+                runs = rd.AwLaneRuns(
+                    api=api, repo="awebai/aweb",
+                    workflow_file="npm-release.yml", clock=lambda: now[0],
+                )
+                lane, _ = npm_lane(
+                    npm_lane_zip(tgz=tgz), observer=lambda p, v: sha256(tgz),
+                    runs=runs, delivery_proofs={"channel": dict(GOOD_PROOF)},
+                )
+                lane._waiter = waiter
+                run_id, observed_attempt = lane._wait_for_continuation(
+                    ["100"],
+                    expected_attempt_artifact_id=(
+                        attempt_id if mode == "adopted" else None
+                    ),
+                )
+                self.assertEqual(run_id, "777")
+                self.assertEqual(
+                    observed_attempt,
+                    attempt_id if mode == "adopted" else None,
+                )
+                self.assertEqual(now[0], 45.0)
+
+    def test_sync_polling_uses_exact_max_attempts_without_final_sleep(self):
+        tgz = channel_tgz()
+        for outcome in ("success-at-limit", "exhausted"):
+            with self.subTest(outcome=outcome):
+                conclusion_calls = 0
+                waits = 0
+
+                def waiter():
+                    nonlocal waits
+                    waits += 1
+
+                def api(path):
+                    nonlocal conclusion_calls
+                    if "/workflows/npm-release.yml/runs?" in path:
+                        return json.dumps({"workflow_runs": [
+                            {"id": 777}, {"id": 100},
+                        ]}).encode()
+                    if path.endswith("/actions/runs/777"):
+                        conclusion_calls += 1
+                        conclusion = (
+                            "success"
+                            if outcome == "success-at-limit"
+                            and conclusion_calls == 3
+                            else None
+                        )
+                        return json.dumps({
+                            "conclusion": conclusion,
+                        }).encode()
+                    raise AssertionError(f"unexpected API path {path}")
+
+                runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                                     workflow_file="npm-release.yml")
+                lane, _ = npm_lane(
+                    npm_lane_zip(tgz=tgz), observer=lambda p, v: None,
+                    runs=runs,
+                    delivery_proofs={"channel": dict(GOOD_PROOF)},
+                )
+                lane.POLL_ATTEMPTS = 3
+                lane._waiter = waiter
+                if outcome == "success-at-limit":
+                    self.assertEqual(
+                        lane._wait_for_continuation(["100"]), ("777", None)
+                    )
+                else:
+                    with self.assertRaises(rd.ReceiptError) as caught:
+                        lane._wait_for_continuation(["100"])
+                    self.assertIn("uncertain", str(caught.exception))
+                self.assertEqual(conclusion_calls, 3)
+                self.assertEqual(waits, 2)
+
+    def test_sync_lifecycle_deadline_exhaustion_refuses_uncertain(self):
+        tgz = channel_tgz()
+        attempt_id = "attempt:channel:lifecycle-exhaustion"
+        now = [0.0]
+
+        def api(path):
+            if "/workflows/npm-release.yml/runs?" in path:
+                return json.dumps({"workflow_runs": [
+                    {"id": 777}, {"id": 100},
+                ]}).encode()
+            if path.endswith("/actions/runs/777"):
+                return json.dumps({
+                    "display_title": rd.recovery_run_marker(
+                        "channel", attempt_id
+                    ),
+                    "conclusion": "success",
+                }).encode()
+            if "/runs/777/artifacts?name=" in path:
+                return json.dumps({
+                    "total_count": 0, "artifacts": [],
+                }).encode()
+            raise AssertionError(f"unexpected API path {path}")
+
+        runs = rd.AwLaneRuns(
+            api=api, repo="awebai/aweb", workflow_file="npm-release.yml",
+            clock=lambda: now[0],
+        )
+        lane, _ = npm_lane(
+            npm_lane_zip(tgz=tgz), observer=lambda p, v: None, runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)},
+        )
+        lane.POLL_ATTEMPTS = 3
+        lane.POLL_INTERVAL_SECONDS = 10.0
+        lane._waiter = lambda: now.__setitem__(0, now[0] + 31.0)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane._wait_for_continuation(
+                ["100"], expected_attempt_artifact_id=attempt_id
+            )
+        self.assertIn("uncertain", str(caught.exception))
+        self.assertEqual(now[0], 62.0)
+
+    def test_terminal_exact_marker_evidence_appearing_next_poll_succeeds(self):
+        tgz = channel_tgz()
+        attempt_id = "attempt:channel:eventual-evidence"
+        evidence_body = rd.canonical_json_bytes({
+            "schema": "aweb.release.recovery-continuation-attempt.v1",
+            "attempt_artifact_id": attempt_id,
+            "continuation_run_id": "777",
+        })
+        evidence_buffer = io.BytesIO()
+        with zipfile.ZipFile(evidence_buffer, "w") as archive:
+            archive.writestr("recovery-attempt.json", evidence_body)
+        evidence_zip = evidence_buffer.getvalue()
+
+        for operation in ("sync", "crash"):
+            with self.subTest(operation=operation):
+                evidence_lists = 0
+
+                def api(path):
+                    nonlocal evidence_lists
+                    if "/workflows/npm-release.yml/runs?" in path:
+                        return json.dumps({"workflow_runs": [
+                            {"id": 777}, {"id": 100},
+                        ]}).encode()
+                    if path.endswith("/actions/runs/777"):
+                        return json.dumps({
+                            "display_title": rd.recovery_run_marker(
+                                "channel", attempt_id
+                            ),
+                            "conclusion": "success",
+                        }).encode()
+                    if "/runs/777/artifacts?name=" in path:
+                        evidence_lists += 1
+                        artifacts = [] if evidence_lists <= 2 else [{
+                            "id": 88,
+                            "name": "recovery-attempt-identity",
+                            "expired": False,
+                            "digest": "sha256:" + sha256(evidence_zip),
+                            "workflow_run": {"id": 777},
+                        }]
+                        return json.dumps({
+                            "total_count": len(artifacts),
+                            "artifacts": artifacts,
+                        }).encode()
+                    if path.endswith("/actions/artifacts/88/zip"):
+                        return evidence_zip
+                    raise AssertionError(f"unexpected API path {path}")
+
+                runs = rd.AwLaneRuns(
+                    api=api, repo="awebai/aweb",
+                    workflow_file="npm-release.yml",
+                )
+                lane, _ = npm_lane(
+                    npm_lane_zip(tgz=tgz),
+                    observer=lambda p, v: sha256(tgz), runs=runs,
+                    delivery_proofs={"channel": dict(GOOD_PROOF)},
+                )
+                if operation == "sync":
+                    run_id, observed_attempt = lane._wait_for_continuation(
+                        ["100"], expected_attempt_artifact_id=attempt_id
+                    )
+                else:
+                    recovered = lane.recover_recovery_attempt(
+                        self.node(), lane.adopt_preplan(self.node()).entry,
+                        before_run_ids=["100"],
+                        attempt_artifact_id=attempt_id,
+                    )
+                    run_id = recovered.continuation_run_id
+                    observed_attempt = recovered.attempt_artifact_id
+                self.assertEqual(
+                    (run_id, observed_attempt), ("777", attempt_id)
+                )
+                self.assertEqual(evidence_lists, 4)
+
+    def test_exact_marker_without_evidence_refuses_uncertain_sync_and_crash(self):
+        tgz = channel_tgz()
+        attempt_id = "attempt:channel:never-evidence"
+
+        for operation in ("sync", "crash"):
+            with self.subTest(operation=operation):
+                calls = []
+
+                def api(path):
+                    calls.append(path)
+                    if "/workflows/npm-release.yml/runs?" in path:
+                        return json.dumps({"workflow_runs": [
+                            {"id": 777}, {"id": 100},
+                        ]}).encode()
+                    if path.endswith("/actions/runs/777"):
+                        return json.dumps({
+                            "display_title": rd.recovery_run_marker(
+                                "channel", attempt_id
+                            ),
+                            "conclusion": "success",
+                        }).encode()
+                    if "/runs/777/artifacts?name=" in path:
+                        return json.dumps({
+                            "total_count": 0, "artifacts": [],
+                        }).encode()
+                    raise AssertionError(f"unexpected API path {path}")
+
+                runs = rd.AwLaneRuns(
+                    api=api, repo="awebai/aweb",
+                    workflow_file="npm-release.yml",
+                )
+                runs.MAX_CORRELATION_REQUESTS = 16
+                lane, _ = npm_lane(
+                    npm_lane_zip(tgz=tgz),
+                    observer=lambda p, v: sha256(tgz), runs=runs,
+                    delivery_proofs={"channel": dict(GOOD_PROOF)},
+                )
+                if operation == "sync":
+                    lane.SYNC_CORRELATION_REQUESTS = 16
+                adopted = lane.adopt_preplan(self.node())
+                with self.assertRaises(rd.ReceiptError) as caught:
+                    if operation == "sync":
+                        lane._wait_for_continuation(
+                            ["100"],
+                            expected_attempt_artifact_id=attempt_id,
+                        )
+                    else:
+                        lane.recover_recovery_attempt(
+                            self.node(), adopted.entry,
+                            before_run_ids=["100"],
+                            attempt_artifact_id=attempt_id,
+                        )
+                self.assertIn("uncertain", str(caught.exception))
+                self.assertLessEqual(len(calls), 16)
+
+    def test_multiple_exact_run_markers_refuse_before_evidence(self):
+        tgz = channel_tgz()
+        attempt_id = "attempt:channel:duplicate-marker"
+
+        def api(path):
+            if "/workflows/npm-release.yml/runs?" in path:
+                return json.dumps({"workflow_runs": [
+                    {"id": 778}, {"id": 777}, {"id": 100},
+                ]}).encode()
+            if path.endswith("/actions/runs/778") or path.endswith(
+                "/actions/runs/777"
+            ):
+                return json.dumps({
+                    "display_title": rd.recovery_run_marker(
+                        "channel", attempt_id
+                    ),
+                    "conclusion": "success",
+                }).encode()
+            raise AssertionError(
+                "multiple exact markers must refuse before evidence lookup"
+            )
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        lane, _ = npm_lane(
+            npm_lane_zip(tgz=tgz), observer=lambda p, v: sha256(tgz),
+            runs=runs, delivery_proofs={"channel": dict(GOOD_PROOF)},
+        )
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.recover_recovery_attempt(
+                self.node(), lane.adopt_preplan(self.node()).entry,
+                before_run_ids=["100"], attempt_artifact_id=attempt_id,
+            )
+        self.assertIn("marker", str(caught.exception))
+
+    def test_recovery_attempt_selects_owned_run_amid_unrelated_run(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": None}
+        runs = FakeAwRuns()
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        before = lane.continuation_snapshot(self.node())
+        runs.run_ids.extend([777, 778])
+        runs.run_attempt_artifact_ids.update({
+            777: "unrelated-attempt",
+            778: "attempt:channel:expected",
+        })
+        state["value"] = sha256(tgz)
+
+        recovered = lane.recover_recovery_attempt(
+            self.node(), adopted.entry, before_run_ids=before,
+            attempt_artifact_id="attempt:channel:expected")
+        self.assertEqual(recovered.continuation_run_id, "778")
+        self.assertEqual(recovered.attempt_artifact_id,
+                         "attempt:channel:expected")
+        self.assertEqual(runs.dispatched, [])
+
+    def test_recovery_attempt_refuses_multiple_owned_runs(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": sha256(tgz)}
+        runs = FakeAwRuns()
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        before = lane.continuation_snapshot(self.node())
+        runs.run_ids.extend([777, 778])
+        runs.run_attempt_artifact_ids.update({
+            777: "attempt:channel:expected",
+            778: "attempt:channel:expected",
+        })
+
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.recover_recovery_attempt(
+                self.node(), adopted.entry, before_run_ids=before,
+                attempt_artifact_id="attempt:channel:expected")
+        self.assertIn("exactly one", str(caught.exception))
+        self.assertEqual(runs.dispatched, [])
+
+    def test_recovery_attempt_ignores_unowned_success_without_dispatch(self) -> None:
+        for observed_attempt_id in (None, "different-attempt"):
+            with self.subTest(observed_attempt_id=observed_attempt_id):
+                tgz = channel_tgz()
+                zip_bytes = npm_lane_zip(tgz=tgz)
+                state = {"value": None}
+                runs = FakeAwRuns()
+                lane, _ = npm_lane(
+                    zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+                    delivery_proofs={"channel": dict(GOOD_PROOF)})
+                adopted = lane.adopt_preplan(self.node())
+                before = lane.continuation_snapshot(self.node())
+                runs.run_ids.append(777)
+                runs.conclusion = "success"
+                if observed_attempt_id is not None:
+                    runs.run_attempt_artifact_ids[777] = observed_attempt_id
+                state["value"] = sha256(tgz)
+
+                recovered = lane.recover_recovery_attempt(
+                    self.node(), adopted.entry, before_run_ids=before,
+                    attempt_artifact_id="attempt:channel:expected")
+                self.assertIsNone(recovered)
+                self.assertEqual(runs.dispatched, [])
+
     def test_stage_refuses_a_profile_violation_in_the_tgz(self) -> None:
         zip_bytes = npm_lane_zip(tgz=channel_tgz(sentinel=False))
         lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
@@ -3133,6 +4346,40 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         self.assertEqual(published.phase, "published")
         self.assertEqual(runs.dispatched, [],
                          "exact adoption dispatches zero runs")
+
+
+class WorkflowRecoveryObservationTests(unittest.TestCase):
+    def test_combines_exact_tag_and_registry_observations_without_expectations(self):
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        registry = {"value": None}
+        tag = {"value": None}
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: registry["value"],
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        lanes = rd.WorkflowLanes(
+            {"channel": lane},
+            recovery_tag_names={"channel": "channel-v1.7.3"},
+            recovery_tag_observe=lambda name: tag["value"],
+        )
+        node = rd.PlanNode(component="channel", reason="adopted-preplan",
+                           version="1.7.3")
+        staged = lane.adopt_preplan(node).entry
+        absent = lanes.observe_recovery(node, staged)
+        self.assertEqual(absent.public, {
+            "tag": {"name": "channel-v1.7.3", "status": "absent",
+                    "source_sha": None},
+            "registry": {"status": "absent", "digest_set": None},
+        })
+        self.assertIsNone(absent.entry)
+
+        tag["value"] = "f" * 40
+        registry["value"] = sha256(tgz)
+        exact = lanes.observe_recovery(node, staged)
+        self.assertEqual(exact.public["tag"]["source_sha"], "f" * 40)
+        self.assertEqual(exact.public["registry"]["digest_set"],
+                         staged.digest_set)
+        self.assertEqual(exact.entry.digest, staged.digest)
 
 
 class NpmRegistryClassifierTests(unittest.TestCase):
