@@ -1,99 +1,83 @@
 ---
 name: release-channel
-description: Prepare an @awebai/claude-channel npm release. Runs quality gates, bumps versions in both the channel package and the awebai/claude-plugins marketplace, commits, tags, and pushes. The CI workflow then publishes to npm.
+description: Release @awebai/claude-channel. The release driver owns the sequence; this skill carries what the artifact is, the hazards that survive automation, and the one command. A tag push publishes NOTHING.
 argument-hint: [version]
-allowed-tools: Bash(npm *), Bash(node *), Bash(git *), Bash(ls *), Bash(cat *), Bash(rm -rf channel/dist/*), Bash(gh run *)
+allowed-tools: Bash(make *), Bash(npm view *), Bash(git *), Bash(gh run *)
 ---
 
-# Release @awebai/claude-channel to npm
+# Release @awebai/claude-channel
 
-The release has two parts that **must** both happen for users to receive the upgrade:
+## The command
 
-1. **npm publish** — driven by tagging `channel-v<VERSION>` in the aweb repo. CI publishes the package.
-2. **marketplace bump** — the sibling repo `awebai/claude-plugins` must have its `marketplace.json` `version` field bumped to the same `<VERSION>`. Without this, `claude plugin update` reports "already at the latest version" no matter what's published on npm.
+```
+make release-plan
+make release-run PLAN_ID=<id> PLAN_ARTIFACT_ID=<id>
+```
 
-The marketplace repo is expected to be cloned at `../claude-plugins` (sibling of the aweb repo).
+The driver owns the whole sequence: it stages the package once, inspects the
+exact bytes, refuses unless every guarantee holds, publishes those same bytes,
+creates the tag, verifies what landed, and seals a receipt. There is no
+hand-maintained step list here any more because the driver, not a human,
+performs the steps.
 
-## Steps
+## What you must know that the driver cannot tell you
 
-1. **Determine version.** If $ARGUMENTS is provided, use it. Otherwise read the current version from `channel/package.json` and ask what the new version should be.
+**A tag push publishes nothing.** There is no tag-triggered publisher. The npm
+lane (`.github/workflows/npm-release.yml`) is dispatch-only in three modes:
+`stage-only` builds and inspects, `publish-continuation` publishes the exact
+bytes a prior stage produced, `verify-only` re-inspects an already-released
+version. A pushed tag runs no code at all. This is deliberate: a tag trigger
+meant CI rebuilt from source and published whatever it happened to produce,
+which is how five of six aw releases shipped wrong stamps.
 
-2. **Verify clean state** in both repos:
-   ```
-   git -C . status
-   git -C . log origin/main..HEAD --oneline
-   git -C ../claude-plugins status
-   git -C ../claude-plugins log origin/main..HEAD --oneline
-   ```
-   Both working trees must be clean and up to date with origin. If `../claude-plugins` is missing, ask the user to clone it first.
+**Publication is not delivery.** Three things must all happen before a user is
+running the new code:
 
-3. **Run quality gates** (all must pass, run from `channel/`):
-   ```
-   npm test
-   npm run build
-   ```
+1. the exact bytes are published to npm,
+2. the marketplace pointer in `awebai/claude-plugins`
+   (`.claude-plugin/marketplace.json`) pins the new version — a forced pointer
+   edge in `release/components.toml`, not an optional follow-up. Claude Code
+   only re-resolves an npm source when the marketplace entry advertises a
+   version, so publishing alone is invisible to existing installs,
+3. each host updates the plugin **and restarts its session**. An installed
+   plugin keeps its loaded code until restart; this is the `delivery_restart`
+   obligation recorded in `release/components.toml`, and it requires proof per
+   host, not an assumption.
 
-4. **Bump version** in `channel/package.json`:
-   ```
-   cd channel && npm version <VERSION> --no-git-tag-version
-   npm run sync-plugin-version
-   ```
-   This updates `package.json`, `package-lock.json`, and `.claude-plugin/plugin.json`.
+Skipping step 3 is the most common way a "shipped" fix reaches nobody.
 
-5. **Verify the package:**
-   - `cd channel && npm pack --dry-run`
-   - Confirm `dist/index.js` is present.
-   - Confirm tarball contains `dist/`, `.claude-plugin/plugin.json`, `.mcp.json`, `README.md`, `package.json`, `skills/`.
-   - Confirm `.mcp.json` has the `mcpServers` wrapper (not just `{"aweb": {...}}`) — this was a bug in 1.1.0–1.3.0.
-   - Confirm no unexpected files (no `node_modules`, no `test/`, no `src/`).
+**Publication is immutable.** A published version is never overwritten,
+deleted, or re-stamped, and a tag is never moved. If anything is wrong after
+publication, fix forward to a new version.
 
-6. **Commit, tag, and push the channel release:**
-   ```
-   git add channel/package.json channel/package-lock.json channel/.claude-plugin/plugin.json
-   git commit -m "release: @awebai/claude-channel <VERSION>"
-   git tag channel-v<VERSION>
-   git push origin <current-branch>:main
-   git push origin channel-v<VERSION>
-   ```
-   The tag push triggers `.github/workflows/channel-release.yml` which runs `npm publish`.
+**Pi ships separately.** If the same channel-core change is also in
+`@awebai/pi`, that is its own lane, its own authorization, and its own delivery
+proof — see the `release-pi` skill. Do not treat one publication as covering
+both surfaces.
 
-7. **Wait for npm publish to land.** Watch the workflow:
-   ```
-   gh run watch <run-id> --exit-status
-   ```
-   Then verify:
-   ```
-   npm view @awebai/claude-channel version
-   ```
-   should print `<VERSION>`.
+## Current gate state (delete this section when it stops being true)
 
-8. **Bump the marketplace** in the sibling repo:
-   ```
-   # in ../claude-plugins
-   # edit .claude-plugin/marketplace.json: set plugins[0].source.version = "<VERSION>"
-   git add .claude-plugin/marketplace.json
-   git commit -m "pin aweb-channel npm version to <VERSION>"
-   git push origin main
-   ```
+The driver refuses a release whose runtime-contract edges have no measured
+support. The channel↔server and pi↔server edges are not yet measured, so
+`make release-run` will refuse these lanes until the G5 measurements land and
+are anchored (epic `aweb-abbe`).
 
-9. **Report.** Tell the user:
-   - The npm tag is published at `https://www.npmjs.com/package/@awebai/claude-channel/v/<VERSION>`.
-   - The marketplace pin is pushed to `awebai/claude-plugins`.
-   - Customer upgrade path: `/plugin marketplace update awebai-marketplace && /plugin update aweb-channel@awebai-marketplace`.
+Until then a channel release requires an explicit, recorded exception, and the
+G1 guarantees still hold in full — only the G5 orchestration is bypassed. The
+precedent, including the exact authorization structure and the artifact
+identities to adopt rather than rebuild, is recorded on `aweb-abbt`
+(channel 1.7.2 / pi 0.3.2, 2026-08-05). Do not invent a new bypass shape; reuse
+that one, and get the exception authorized rather than assumed.
 
-## Version Format
+## Verify what actually landed
 
-MAJOR.MINOR.PATCH (no `v` prefix in `package.json` — the git tag uses `channel-v` prefix).
+```
+npm view @awebai/claude-channel version
+curl -s https://registry.npmjs.org/@awebai%2Fclaude-channel/-/claude-channel-<VERSION>.tgz | shasum -a 256
+git ls-remote origin refs/tags/channel-v<VERSION>
+```
 
-## Pi is a separate delivery gate
-
-If the same channel-core change also ships in `@awebai/pi`, run the separate
-`release-pi` skill. A Pi npm publish does not refresh the cache under
-`~/.pi/agent/npm` or reload active Pi sessions; that release is incomplete
-until the package-aware update and fresh-process restart evidence is recorded.
-
-## Why both bumps are required
-
-Claude Code resolves a plugin's version from (1) `plugin.json` inside the published package, (2) the marketplace entry's `version` field, (3) git SHA, (4) `unknown` for npm sources without an explicit version (`https://code.claude.com/docs/en/plugins-reference.md#version-management`).
-
-For `npm` sources, `claude plugin update` only re-resolves the npm registry when the marketplace entry advertises a version. Bumping the package alone is invisible to existing installs.
+The published tarball's sha256 must equal the staged digest the driver recorded,
+and the tag must dereference to the exact reviewed source commit. Byte identity
+is the point of the whole lane; check it rather than trusting that the workflow
+said success.
