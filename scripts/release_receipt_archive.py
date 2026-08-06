@@ -567,6 +567,36 @@ class ReviewedMainIndexAuthority:
                     "once; refusing ambiguity"
                 )
             seen.add(logical)
+        # Every release-set record is validated here, not only the one a caller
+        # happens to ask for. A malformed or duplicated unrelated set is a
+        # defect in the reviewed index itself: validating lazily at lookup lets
+        # a corrupt index serve one good answer and hide the rest.
+        sets = document.get("release_sets")
+        if sets is not None:
+            if not isinstance(sets, list):
+                raise ReceiptError(
+                    "reviewed index release_sets is not a list"
+                )
+            plans: set[str] = set()
+            for record in sets:
+                if not isinstance(record, dict):
+                    raise ReceiptError(
+                        "reviewed index release_sets contains a non-record"
+                    )
+                frozen_plan_id = record.get("frozen_plan_id")
+                if not isinstance(frozen_plan_id, str) or not frozen_plan_id:
+                    raise ReceiptError(
+                        "reviewed index release set carries no frozen plan "
+                        "identity"
+                    )
+                validate_release_set_inventory(
+                    record, frozen_plan_id=frozen_plan_id)
+                if frozen_plan_id in plans:
+                    raise ReceiptError(
+                        f"reviewed index records frozen plan {frozen_plan_id} "
+                        "more than once; refusing ambiguity"
+                    )
+                plans.add(frozen_plan_id)
         return document
 
     def _entries(self) -> list[dict]:
