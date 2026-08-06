@@ -1426,6 +1426,7 @@ ENVELOPE_SCHEMA = "aweb.runtime-support-measurement-envelope.v1"
 
 MEASUREMENT_INPUT_SCHEMA = "aweb.measurement-input-manifest.v1"
 MEASUREMENT_GRANTS = "measurement-only"
+MEASUREMENT_CLIENTS = frozenset(CLIENT_ARTIFACTS) | {"aw"}
 _INPUT_KEYS = {"schema", "edge", "source_sha", "entries", "grants", "manifest_id"}
 _CANDIDATE_KEYS = {
     "kind", "version", "digest", "digest_set", "lane_ref",
@@ -1489,9 +1490,9 @@ def validate_measurement_input(document, *, component: str) -> dict:
     documents are deliberately different types and neither validator accepts
     the other's shape.
     """
-    if component not in CLIENT_ARTIFACTS:
+    if component not in MEASUREMENT_CLIENTS:
         raise rd.ReceiptError(
-            f"measurement input covers only {sorted(CLIENT_ARTIFACTS)}, got "
+            f"measurement input covers only {sorted(MEASUREMENT_CLIENTS)}, got "
             f"{component!r}"
         )
     if not isinstance(document, dict) or set(document) != _INPUT_KEYS:
@@ -1705,6 +1706,20 @@ def _require_child_identity(measurement: dict) -> str:
     return recorded
 
 
+def expected_published_server_authority_report(published: dict) -> dict:
+    """Project a validated published-server entry to the resolver's report."""
+    authority = published["authority"]
+    return {
+        "artifact": authority["artifact"],
+        "repo": authority["repo"],
+        "workflow": authority["workflow"],
+        "source_sha": authority["source_sha"],
+        "zip_digest": authority["zip_digest"],
+        "version": published["version"],
+        "digest_set": dict(published["digest_set"]),
+    }
+
+
 class PublishedServerAuthority:
     """Resolves the published server through the reviewed verify-only lane.
 
@@ -1762,15 +1777,7 @@ class PublishedServerAuthority:
                 "server authority lane artifact digest set does not equal the "
                 "published digest set the measurement input asserts"
             )
-        return {
-            "artifact": artifact,
-            "repo": authority["repo"],
-            "workflow": authority["workflow"],
-            "source_sha": authority["source_sha"],
-            "zip_digest": authority["zip_digest"],
-            "version": published["version"],
-            "digest_set": dict(published["digest_set"]),
-        }
+        return expected_published_server_authority_report(published)
 
 
 def _contract_for(component: str) -> rd.RuntimeContractEdge:

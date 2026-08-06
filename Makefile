@@ -12,7 +12,7 @@
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-plan release-run release-receipt test-release-driver test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	release-plan release-run release-receipt test-release-driver test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	release-all-check \
 	publish-skills \
 	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
@@ -623,16 +623,19 @@ release-run:
 release-receipt:
 	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") release-receipt --artifact-id "$(ARTIFACT_ID)" --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)"
 
+test-release-driver: test-release-adopted-preplan test-release-channel-pi-skew test-release-skew-cli-server test-release-receipt-archive test-release-persisted-state-skew test-release-federation-skew
+	python3 scripts/e2e/test_release_driver.py
+	python3 scripts/e2e/test_release_driver_cli.py
+	python3 scripts/e2e/test_release_adapter.py
+
 test-release-federation-skew:
 	python3 scripts/e2e/test_release_federation_skew.py
 
 measure-release-federation-skew-control:
 	PYTHONPATH=scripts python3 -c 'from release_federation_skew import WheelResolver, prove_route_controls; prove_route_controls(WheelResolver())'
 
-test-release-driver: test-release-adopted-preplan test-release-federation-skew test-release-channel-pi-skew test-release-persisted-state-skew test-release-skew-cli-server
-	python3 scripts/e2e/test_release_driver.py
-	python3 scripts/e2e/test_release_driver_cli.py
-	python3 scripts/e2e/test_release_adapter.py
+test-release-receipt-archive:
+	python3 scripts/e2e/test_release_receipt_archive.py
 
 test-release-adopted-preplan:
 	python3 scripts/e2e/test_release_adopted_preplan.py
@@ -654,16 +657,15 @@ test-release-skew-cli-server:
 cli-server-skew-cell:
 	bash scripts/e2e/run_cli_server_skew_cell.sh
 
-# Produce the canonical support document from an exact staged manifest. The
+# Measure candidate aw against the published server named by a canonical
+# aweb.measurement-input-manifest.v1. The input grants measurement only: it is
+# not a release staged manifest and never invents a staged server lane_ref. The
 # result still requires independent workflow-artifact anchoring before its
 # identity may be declared in release/components.toml.
 measure-release-skew-cli-server:
 	python3 scripts/release_skew_cli_server.py measure \
-		--staged-manifest "$(STAGED_MANIFEST)" \
-		$(foreach v,$(SUPPORTED_AW),--supported-aw "$(v)") \
+		--measurement-input "$(MEASUREMENT_INPUT)" \
 		$(foreach v,$(SUPPORTED_SERVER),--supported-server "$(v)") \
-		--published-aw-latest "$(PUBLISHED_AW_LATEST)" \
-		--published-server-latest "$(PUBLISHED_SERVER_LATEST)" \
 		--negative-server "$(or $(NEGATIVE_SERVER),1.26.31)" \
 		--output "$(OUTPUT)"
 
