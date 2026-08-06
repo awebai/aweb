@@ -12,7 +12,7 @@
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-plan release-run release-receipt test-release-driver test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	release-plan release-run release-receipt test-release-driver test-release-runnerless test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	release-all-check \
 	publish-skills \
 	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
@@ -628,16 +628,23 @@ release-plan:
 
 # Executes an anchored frozen plan over available publish lanes; fails closed
 # naming every gap. PLAN_ID and PLAN_ARTIFACT_ID are required.
-# STAGE_ARTIFACT (repeatable, space-separated) binds lane stage references:
-#   STAGE_ARTIFACT='component=aw,ref=gh-artifact:awebai/aw:<run>:<artifact>,source=<lane sha>,digest=sha256:<zip digest>'
+# STAGE_ARTIFACT (repeatable, space-separated) binds hosted lane references.
+# Runnerless mode is first-class and needs no GitHub identity:
+#   AUTHORITY=local-runnerless STORE_ROOT=<durable-dir>
+#   LOCAL_ADAPTER='component@<reviewed-source-sha>=/absolute/direct-adapter'
+#   LOCAL_RISK_AUTHORIZATION='who,when,risk accepted' [DEFER_G5=1]
+# See docs/runnerless-release.md.
 release-run:
-	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(if $(MANIFEST_ID),--manifest-id "$(MANIFEST_ID)") $(if $(ALLOW_LOCAL_AUTHORITY),--allow-local-authority) $(foreach a,$(APPROVAL),--approval "$(a)") $(foreach s,$(STAGE_ARTIFACT),--stage-artifact "$(s)")
+	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(if $(MANIFEST_ID),--manifest-id "$(MANIFEST_ID)") $(if $(ALLOW_LOCAL_AUTHORITY),--allow-local-authority) $(foreach a,$(APPROVAL),--approval "$(a)") $(foreach s,$(STAGE_ARTIFACT),--stage-artifact "$(s)") $(foreach a,$(LOCAL_ADAPTER),--local-adapter "$(a)") $(if $(LOCAL_RISK_AUTHORIZATION),--local-risk-authorization "$(LOCAL_RISK_AUTHORIZATION)") $(if $(DEFER_G5),--defer-g5)
 
 # Verifies an anchored receipt against its anchored frozen plan. ARTIFACT_ID,
 # PLAN_ID and PLAN_ARTIFACT_ID are required; digests resolve through the
 # configured authority, never from caller-presented values.
 release-receipt:
 	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") release-receipt --artifact-id "$(ARTIFACT_ID)" --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)"
+
+test-release-runnerless:
+	python3 scripts/e2e/test_release_runnerless.py
 
 test-release-driver: test-release-adopted-preplan test-release-channel-pi-skew test-release-skew-cli-server test-release-receipt-archive test-release-persisted-state-skew test-release-federation-skew
 	python3 scripts/e2e/test_release_driver.py
