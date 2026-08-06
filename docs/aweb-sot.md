@@ -611,28 +611,28 @@ permanence prevents UUID reuse after message GC. The historical `federated_messa
 compatibility but receives no new claims and is not replay authority after
 activation.
 
-**Read semantic (authoritative): mail is marked read when it is PRESENTED to
-the agent — never on transport-send alone, and never withheld under a
-never-ack policy.** Presentation is surface-specific but always concrete: the
-Claude MCP channel notification is the presentation (ack at notification); Pi
-acks after `pi.sendMessage` accepts the injection; native `aw run` acks after a
-successful provider run. The failure mode is a rare host-drop between
-transport-send and presentation, and it splits into two sub-cases that recover
-differently. If the transport send itself fails, the ack is skipped, the message
-stays unread, and the next reconnect re-fetches it (the inbox pulls unread only)
-— auto-recovered. If the transport send succeeds and the ack fires but the
-process dies before the harness presents the message, the message is already
-read server-side, so an unread-only reconnect does NOT re-fetch it and it is
-absent from the unread inbox; its content is still on the server and reachable
-via `aw mail show --message-id <id>` or a read-inclusive view, but it is not
-auto-recovered.
-(Auto-surfacing that second sub-case on reconnect was considered and
-deliberately rejected: re-delivering already-read mail would reopen the
-replay/double-action hazard, and a crashed agent recovers procedurally on
-restart, so singling out one message would dress a general crash up as a
-delivery defect. See default-aaka.) Acking before presentation (the original defect) risks
-silent message loss; never acking (manual-only) leaves mail unread so the server
-re-delivers it on every reconnect — the replay burst regression (default-aajy).
+**Read semantic (authoritative): mail is marked read only after the receiving
+surface has survived a presentation boundary — never on transport-send alone,
+and never withheld under a never-ack policy.** Presentation is surface-specific:
+Pi acks after `pi.sendMessage` accepts the injection, and native `aw run` acks
+after a successful provider run. Claude's fire-and-forget MCP notification has
+no presentation receipt, so its first successful callback is only process-local
+pending delivery. A later successful channel-loop iteration promotes that mail
+to the durable delivery store and then acks it. If the bridge dies before
+promotion, it leaves neither a durable promoted mark nor a server ack; the next
+process re-fetches and presents the still-unread mail. A promoted durable mark
+is authoritative dedup state and may retry an outstanding ack without
+re-notifying.
+
+Delivery-store values written by the old ack-at-notification implementation are
+ambiguous: they may describe a notification whose bridge died before the host
+presented it. On startup the Claude channel performs one read-inclusive fetch
+capped at 20 messages and re-presents only records matching those legacy marks.
+New promoted marks use an explicit state and remain authoritative, so startup
+catch-up cannot replay them or grow into the reconnect burst fixed by
+default-aajy. Acking at the first callback risks silent message loss; never
+acking leaves mail unread so the server re-delivers it on every reconnect — the
+opposite replay-burst failure.
 `aw mail ack` is the authenticated recipient-side read transition. For unread
 recipient mail, the endpoint idempotently sets `read_at`; that removes the
 message from unread inbox and actionable reconnect delivery, and emits
