@@ -205,18 +205,21 @@ artifact/proof temporary-directory cleanup all succeed; the
 public `/health` contract is unchanged.
 
 `make test-release-skew-cli-server` is the focused, non-Docker contract suite.
-Once exact candidate LaneRefs exist, `make measure-release-skew-cli-server`
-runs the known-red server 1.26.31 control and the runner-defined supported
-matrix and writes a digest-bearing JSON support document. Server 1.26.31 is
-negative-only: it filters lock-holder agent IDs as workspace IDs. Server
-1.26.35 is the first published fix and the initial measured floor. Published aw
-1.34.2 is measured only as installed-fleet compatibility and is explicitly
-recorded as rejected dirty provenance; its independently checked public bytes
-cannot be candidate or release-provenance evidence. That document does
-not become release authority merely by existing locally: it must later be
-independently anchored as a workflow artifact, reviewed, and referenced by the
-`aw`↔`server` edge in `release/components.toml`. The measurement target does
-not dispatch that anchor or any release workflow.
+Once the exact candidate aw LaneRef exists, `make measure-release-skew-cli-server`
+consumes an `aweb.measurement-input-manifest.v1` that binds that candidate and
+the published server's verify-only lane authority. It derives the moving set as
+exactly `{aw}`; the server is never represented as staged and carries no invented
+LaneRef. The target runs the known-red server 1.26.31 control and the
+runner-defined supported matrix, independently reaggregates the exact frozen
+cell/control inventory, and preserves that canonical incomplete-unanchored
+child unchanged inside a separately identified input/authority envelope. The
+final envelope is committed with the shared no-clobber, fsynced atomic-output
+protocol. Server 1.26.31 is negative-only: it filters lock-holder agent IDs as
+workspace IDs. Server 1.26.35 is the first published fix and the initial measured
+floor. The document does not become release authority merely by existing
+locally: it must later be independently anchored as a workflow artifact,
+reviewed, and referenced by the `aw`↔`server` edge in `release/components.toml`.
+The measurement target does not dispatch that anchor or any release workflow.
 
 To iterate against an already-running stack without the up/down cycle:
 

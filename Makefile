@@ -670,16 +670,15 @@ test-release-skew-cli-server:
 cli-server-skew-cell:
 	bash scripts/e2e/run_cli_server_skew_cell.sh
 
-# Produce the canonical support document from an exact staged manifest. The
+# Measure candidate aw against the published server named by a canonical
+# aweb.measurement-input-manifest.v1. The input grants measurement only: it is
+# not a release staged manifest and never invents a staged server lane_ref. The
 # result still requires independent workflow-artifact anchoring before its
 # identity may be declared in release/components.toml.
 measure-release-skew-cli-server:
 	python3 scripts/release_skew_cli_server.py measure \
-		--staged-manifest "$(STAGED_MANIFEST)" \
-		$(foreach v,$(SUPPORTED_AW),--supported-aw "$(v)") \
+		--measurement-input "$(MEASUREMENT_INPUT)" \
 		$(foreach v,$(SUPPORTED_SERVER),--supported-server "$(v)") \
-		--published-aw-latest "$(PUBLISHED_AW_LATEST)" \
-		--published-server-latest "$(PUBLISHED_SERVER_LATEST)" \
 		--negative-server "$(or $(NEGATIVE_SERVER),1.26.31)" \
 		--output "$(OUTPUT)"
 

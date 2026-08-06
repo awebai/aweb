@@ -39,6 +39,7 @@ import argparse
 import hashlib
 import os
 import json
+import pwd
 import re
 import shutil
 import subprocess
@@ -71,6 +72,27 @@ _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _NUMERIC_ID = re.compile(r"[0-9]+")
 _ANCHOR = re.compile(r"anchor--[0-9a-f]{64}--[0-9a-f]{64}")
 _BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./-]{0,62}")
+_RELEASE_PLAN_ID = re.compile(
+    r"plan:(?P<source>[0-9a-f]{40}):(?P<frozen>[0-9a-f]{64})")
+_RELEASE_STAGED_ID = re.compile(
+    r"staged-manifest:(?P<frozen>[0-9a-f]{64}):(?P<digest>[0-9a-f]{64})")
+_RELEASE_TRANSITION_ID = re.compile(
+    r"transition:(?P<frozen>[0-9a-f]{64}):"
+    r"(?P<sequence>(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})):"
+    r"(?P<kind>published):(?P<component>[A-Za-z0-9][A-Za-z0-9_.-]{0,62}):"
+    r"(?P<digest>[0-9a-f]{64})")
+_RELEASE_RECEIPT_ID = re.compile(
+    r"receipt:(?P<frozen>[0-9a-f]{64}):(?P<digest>[0-9a-f]{64})")
+_LANE_LOGICAL_ID = re.compile(
+    r"lane:(?P<package>aw|channel|pi|skills|server|awid-pypi|awid-image):"
+    r"(?P<version>(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\."
+    r"(?:0|[1-9][0-9]*)):(?P<source>[0-9a-f]{40})")
+_ANCHOR_LOGICAL_PATTERNS = (
+    ("plan", _RELEASE_PLAN_ID),
+    ("staged-manifest", _RELEASE_STAGED_ID),
+    ("transition", _RELEASE_TRANSITION_ID),
+    ("receipt", _RELEASE_RECEIPT_ID),
+)
 PRODUCTION_REMOTES = (
     "https://github.com/awebai/aweb.git",
     "git@github.com:awebai/aweb.git",
@@ -78,6 +100,19 @@ PRODUCTION_REMOTES = (
     "ssh://git@ssh.github.com:443/awebai/aweb.git",
 )
 PRODUCTION_BRANCH = "release-receipts"
+
+# Release authority must not depend on whichever executable an operator's
+# ambient PATH happens to name. These are reviewed system-policy binaries on
+# the supported production POSIX hosts; Git's compiled exec-path supplies its
+# own remote helpers, while the fixed PATH permits only system helpers.
+SYSTEM_GIT = "/usr/bin/git"
+SYSTEM_SSH = "/usr/bin/ssh"
+SYSTEM_PATH = "/usr/bin:/bin"
+SYSTEM_SSH_COMMAND = (
+    f"{SYSTEM_SSH} -F /dev/null -oBatchMode=yes "
+    "-oCanonicalizeHostname=no -oClearAllForwardings=yes "
+    "-oPermitLocalCommand=no -oProxyCommand=none -oProxyJump=none"
+)
 
 
 def _sha256(data: bytes) -> str:
@@ -131,6 +166,46 @@ def _validate_source(source, kind: str) -> dict:
     return dict(source)
 
 
+def _validate_logical_id(
+    kind: str, logical_id, *, source: dict | None = None,
+) -> dict[str, str]:
+    """Apply the one closed logical-ID namespace allowed for an archive kind.
+
+    This is deliberately independent of the body dispatcher: entry/index and
+    manifest trust boundaries must reject an unknown name before a valid body
+    can make that name look authoritative.
+    """
+    logical = _bounded_identity(logical_id, f"{kind} logical id")
+    if kind == "anchor-artifact":
+        matches = [
+            (logical_class, match)
+            for logical_class, pattern in _ANCHOR_LOGICAL_PATTERNS
+            if (match := pattern.fullmatch(logical)) is not None
+        ]
+        if len(matches) != 1:
+            raise ReceiptError(
+                f"anchor-artifact logical id class/grammar is unsupported or "
+                f"malformed: {logical!r}")
+        logical_class, match = matches[0]
+        return {"class": logical_class, **match.groupdict()}
+    if kind == "workflow-artifact":
+        match = _LANE_LOGICAL_ID.fullmatch(logical)
+        if match is None:
+            raise ReceiptError(
+                f"workflow-artifact logical id is malformed: {logical!r}; "
+                "expected lane:<supported-package>:<semver>:<40hex-source>")
+        if source is not None and match.group("source") != source.get(
+            "source_sha"
+        ):
+            raise ReceiptError(
+                f"workflow-artifact logical id source "
+                f"{match.group('source')!r} does not equal archive source "
+                f"{source.get('source_sha')!r}")
+        return {"class": "lane", **match.groupdict()}
+    raise ReceiptError(
+        f"unsupported archive kind {kind!r} has no logical id grammar")
+
+
 def _fetch_ref_for_source(source: dict) -> str:
     """The artifact reference is DERIVED from the recorded source identity,
     never supplied independently, so the archive cannot fetch artifact A
@@ -151,8 +226,9 @@ def _validate_entry(entry) -> dict:
         )
     if entry["schema"] != INDEX_ENTRY_SCHEMA:
         raise ReceiptError("archive index entry has an unsupported schema")
-    _bounded_identity(entry["logical_id"], "index entry logical_id")
-    _validate_source(entry["source"], _bounded_identity(entry["kind"], "kind"))
+    kind = _bounded_identity(entry["kind"], "kind")
+    source = _validate_source(entry["source"], kind)
+    _validate_logical_id(kind, entry["logical_id"], source=source)
     for field in ("source_digest", "body_sha256", "manifest_sha256"):
         if not isinstance(entry[field], str) or not _HEX64.fullmatch(entry[field]):
             raise ReceiptError(
@@ -189,9 +265,9 @@ def _parse_manifest(manifest_bytes: bytes, digest: str) -> dict:
         raise ReceiptError(
             f"archive manifest for {digest} has an unsupported schema"
         )
-    _bounded_identity(manifest["logical_id"], "manifest logical_id")
-    _validate_source(manifest["source"], _bounded_identity(
-        manifest["kind"], "manifest kind"))
+    kind = _bounded_identity(manifest["kind"], "manifest kind")
+    source = _validate_source(manifest["source"], kind)
+    _validate_logical_id(kind, manifest["logical_id"], source=source)
     if not isinstance(manifest["source_digest"], str) or not _HEX64.fullmatch(
         manifest["source_digest"]
     ):
@@ -259,6 +335,50 @@ def _existing_manifests(
     return manifests
 
 
+def _verify_append_only_history(
+    transport, recorded_head: str, live_head: str,
+) -> dict[str, tuple[str, str, bytes]]:
+    """Prove every commit after the recorded head is a linear addition.
+
+    A descendant check alone permits an ordinary fast-forward commit to delete
+    old receipts and a later archive to rebind their logical IDs. Walk the
+    actual parent chain and require each child tree to preserve every parent
+    path with exactly the same Git mode, object type, and bytes. New paths are
+    the only permitted difference; merges, deletions, replacements, and mode or
+    type changes all refuse before append.
+    """
+    cursor = live_head
+    live_tree = transport.read_tree_entries(cursor)
+    child = live_tree
+    visited: set[str] = set()
+    while cursor != recorded_head:
+        if cursor in visited:
+            raise ReceiptError(
+                "archive history is not a linear append-only parent chain")
+        visited.add(cursor)
+        parents = transport.parents_of(cursor)
+        if len(parents) != 1:
+            raise ReceiptError(
+                f"archive commit {cursor} has {len(parents)} parents; every "
+                "commit after the recorded head must have one linear parent")
+        parent = parents[0]
+        parent_tree = transport.read_tree_entries(parent)
+        for path, recorded_entry in parent_tree.items():
+            live_entry = child.get(path)
+            if live_entry is None:
+                raise ReceiptError(
+                    f"archive append-only history deleted recorded path {path!r} "
+                    f"between {parent} and {cursor}; child is not a superset")
+            if live_entry != recorded_entry:
+                raise ReceiptError(
+                    f"archive append-only history replaced recorded path "
+                    f"{path!r} between {parent} and {cursor}; bytes, mode, and "
+                    "object type must remain exact")
+        cursor = parent
+        child = parent_tree
+    return live_tree
+
+
 def archive_sealed(
     *, logical_id: str, kind: str, source: dict,
     store, authority, transport, recorded_head: str | None,
@@ -269,8 +389,8 @@ def archive_sealed(
     """``semantic`` defaults to the real production validator; a caller must
     pass an explicit permissive callable to skip it, so production can never
     silently append an artifact whose semantics were never checked."""
-    _bounded_identity(logical_id, "logical id")
     source = _validate_source(source, _bounded_identity(kind, "kind"))
+    _validate_logical_id(kind, logical_id, source=source)
     derived_ref = _fetch_ref_for_source(source)
     if artifact_ref is not None and artifact_ref != derived_ref:
         raise ReceiptError(
@@ -289,6 +409,7 @@ def archive_sealed(
         )
 
     head = transport.fetch_head()
+    verified_entries = None
     if recorded_head is None:
         if head is not None:
             raise ReceiptError(
@@ -307,8 +428,18 @@ def archive_sealed(
                 "archive head does not descend from the recorded head; "
                 "refusing non-fast-forward history"
             )
+        verified_entries = _verify_append_only_history(
+            transport, recorded_head, head)
 
-    tree = transport.read_tree(head) if head is not None else {}
+    if head is None:
+        tree = {}
+    else:
+        entries = (
+            verified_entries
+            if verified_entries is not None
+            else transport.read_tree_entries(head)
+        )
+        tree = {path: entry[2] for path, entry in entries.items()}
     manifests = _existing_manifests(tree, allowed_paths)
     for digest, manifest in manifests.items():
         if manifest["logical_id"] == logical_id and digest != body_sha:
@@ -657,7 +788,7 @@ class _GitReader:
 
     def _run(self, *args, cwd=None, check=False):
         result = subprocess.run(
-            ["git", *args], cwd=str(cwd or self._local),
+            [SYSTEM_GIT, *args], cwd=str(cwd or self._local),
             capture_output=True, env=GitBranchArchive._sanitized_env())
         if check and result.returncode != 0:
             raise ReceiptError(
@@ -729,6 +860,9 @@ class GitBranchArchive:
         # url.<attacker>.insteadOf rewrite would redirect the canonical remote.
         "GIT_CONFIG_COUNT": "0",
         "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS": "/bin/false",
+        "SSH_ASKPASS": "/bin/false",
+        "GIT_SSH_COMMAND": SYSTEM_SSH_COMMAND,
         # ext:: runs an arbitrary command as a transport.
         "GIT_ALLOW_PROTOCOL": "file:git:http:https:ssh",
     }
@@ -737,8 +871,6 @@ class GitBranchArchive:
     # that stays correct as git grows new configuration entry points: a
     # deny-list silently readmits whatever it has not heard of yet.
     _PRESERVED_ENV = (
-        "PATH",
-        "HOME",           # ~/.ssh/known_hosts; global git config is /dev/null
         "SSH_AUTH_SOCK",  # agent auth for the canonical ssh remote
         "LANG",
         "LC_ALL",
@@ -763,19 +895,24 @@ class GitBranchArchive:
 
     @classmethod
     def _sanitized_env(cls):
-        import os
-
         env = {
             name: os.environ[name]
             for name in cls._PRESERVED_ENV
             if name in os.environ
         }
+        # HOME comes from the OS account database, never ambient input. SSH's
+        # fixed -F /dev/null policy ignores user/system config while retaining
+        # that account's known_hosts and agent credential path.
+        env.update({
+            "HOME": pwd.getpwuid(os.getuid()).pw_dir,
+            "PATH": SYSTEM_PATH,
+        })
         env.update(cls._ENV)
         return env
 
     def _git_raw(self, *args, cwd=None, input_bytes=None):
         return subprocess.run(
-            ["git", *args], cwd=str(cwd or self._local),
+            [SYSTEM_GIT, *args], cwd=str(cwd or self._local),
             input=input_bytes, capture_output=True,
             env=self._sanitized_env(),
         )
@@ -816,10 +953,10 @@ class GitBranchArchive:
                 f"remote{': ' + detail if detail else ''}"
             )
 
-    def read_tree(self, sha: str) -> dict[str, bytes]:
+    def read_tree_entries(self, sha: str) -> dict[str, tuple[str, str, bytes]]:
         self._ensure_object(sha)
         listing = self._git("ls-tree", "-r", "-z", sha)
-        tree: dict[str, bytes] = {}
+        tree: dict[str, tuple[str, str, bytes]] = {}
         for record in listing.split(b"\x00"):
             if not record:
                 continue
@@ -834,14 +971,26 @@ class GitBranchArchive:
                 raise ReceiptError(
                     f"archive tree entry {path!r} is not a blob"
                 )
-            tree[path.decode("utf-8", "surrogateescape")] = self._git(
-                "cat-file", "blob", blob.decode())
+            tree[path.decode("utf-8", "surrogateescape")] = (
+                mode.decode(), obj_type.decode(),
+                self._git("cat-file", "blob", blob.decode()),
+            )
         return tree
 
-    def parent_of(self, sha: str) -> str | None:
+    def read_tree(self, sha: str) -> dict[str, bytes]:
+        return {
+            path: entry[2]
+            for path, entry in self.read_tree_entries(sha).items()
+        }
+
+    def parents_of(self, sha: str) -> tuple[str, ...]:
         self._ensure_object(sha)
         tokens = self._git("rev-list", "--parents", "-n", "1", sha).split()
-        return tokens[1].decode() if len(tokens) > 1 else None
+        return tuple(token.decode() for token in tokens[1:])
+
+    def parent_of(self, sha: str) -> str | None:
+        parents = self.parents_of(sha)
+        return parents[0] if parents else None
 
     def is_ancestor(self, ancestor: str, descendant: str) -> bool:
         if not _GIT_SHA.fullmatch(ancestor):
@@ -892,9 +1041,6 @@ class GitBranchArchive:
             )
 
 
-ANCHOR_LOGICAL_CLASSES = ("plan", "staged-manifest", "transition", "receipt")
-
-
 def semantic_validator(providers=None):
     """Production semantic validator over the REAL sealed formats.
 
@@ -931,12 +1077,8 @@ def semantic_validator(providers=None):
             raise ReceiptError(f"{label} is not a valid ZIP") from exc
 
     def _inner_semantics(logical_id: str, inner: bytes, digest: str) -> None:
-        klass = logical_id.split(":", 1)[0]
-        if klass not in ANCHOR_LOGICAL_CLASSES:
-            raise ReceiptError(
-                f"archived anchor logical id class {klass!r} is not one of "
-                f"{list(ANCHOR_LOGICAL_CLASSES)}"
-            )
+        klass = _validate_logical_id(
+            "anchor-artifact", logical_id)["class"]
         if klass == "plan":
             parts = logical_id.split(":")
             if len(parts) != 3:
@@ -1073,35 +1215,24 @@ def semantic_validator(providers=None):
         package = lane_manifest.get("package")
         source_sha = lane_manifest.get("source_sha")
         version = lane_manifest.get("candidate_version")
-        # A lane logical id of the form lane:<package>:<version> is a CLAIM;
-        # it is checked against the real lane manifest rather than used to
-        # derive the expectations it is then compared to.
-        logical = manifest.get("logical_id", "")
-        if logical.startswith("lane:"):
-            claim = logical.split(":")
-            # Package and version alone do not identify a lane artifact: two
-            # valid stagings of the SAME package/version from different sources
-            # are distinct bytes, and without the source in the identity either
-            # could be substituted for the other.
-            if len(claim) != 4:
-                raise ReceiptError(
-                    f"lane logical id {logical!r} is malformed; the contract is "
-                    "lane:<package>:<version>:<source_sha>"
-                )
-            if not _GIT_SHA.fullmatch(claim[3]):
-                raise ReceiptError(
-                    f"lane logical id source {claim[3]!r} is not a 40-hex sha"
-                )
-            if claim[1] != package or claim[2] != version:
-                raise ReceiptError(
-                    f"lane logical id claims {claim[1]!r}/{claim[2]!r} but the "
-                    f"lane manifest binds {package!r}/{version!r}"
-                )
-            if claim[3] != source_sha:
-                raise ReceiptError(
-                    f"lane logical id claims source {claim[3]!r} but the lane "
-                    f"manifest binds {source_sha!r}"
-                )
+        # The kind-specific validator has no bypass namespace: every workflow
+        # artifact is a lane identity, and every claim is then bound to the
+        # real manifest rather than self-derived from it.
+        claim = _validate_logical_id(
+            "workflow-artifact", manifest.get("logical_id"),
+            source=manifest.get("source"))
+        manifest_package = "aw" if package is None else package
+        if claim["package"] != manifest_package or claim["version"] != version:
+            raise ReceiptError(
+                f"lane logical id claims {claim['package']!r}/"
+                f"{claim['version']!r} but the lane manifest binds "
+                f"{manifest_package!r}/{version!r}"
+            )
+        if claim["source"] != source_sha:
+            raise ReceiptError(
+                f"lane logical id claims source {claim['source']!r} but the "
+                f"lane manifest binds {source_sha!r}"
+            )
         claimed_source = (manifest.get("source") or {}).get("source_sha")
         if claimed_source != source_sha:
             raise ReceiptError(
@@ -1136,6 +1267,11 @@ def semantic_validator(providers=None):
 
     def validate(body: bytes, manifest: dict) -> None:
         kind = manifest.get("kind")
+        if kind not in KIND_SOURCE_FIELDS:
+            raise ReceiptError(
+                f"no semantic validator is defined for archive kind {kind!r}")
+        _validate_logical_id(
+            kind, manifest.get("logical_id"), source=manifest.get("source"))
         if kind == "anchor-artifact":
             _anchor(body, manifest)
         elif kind == "workflow-artifact":
@@ -1165,24 +1301,65 @@ def validate_release_set_inventory(inventory, *, frozen_plan_id: str) -> dict:
             f"{sorted(RELEASE_SET_KEYS - present)}, unexpected "
             f"{sorted(present - RELEASE_SET_KEYS)})"
         )
+    if not isinstance(frozen_plan_id, str) or not _HEX64.fullmatch(
+        frozen_plan_id
+    ):
+        raise ReceiptError(
+            "release-set frozen plan identity is not an exact 64-hex digest")
     if inventory["frozen_plan_id"] != frozen_plan_id:
         raise ReceiptError(
             "release-set inventory binds a different frozen plan than requested"
         )
-    for field in ("plan", "staged_manifest", "receipt"):
-        _bounded_identity(inventory[field], f"release-set {field} logical id")
+
+    exact_ids = (
+        ("plan", _RELEASE_PLAN_ID),
+        ("staged_manifest", _RELEASE_STAGED_ID),
+        ("receipt", _RELEASE_RECEIPT_ID),
+    )
+    for field, pattern in exact_ids:
+        logical = _bounded_identity(
+            inventory[field], f"release-set {field} logical id")
+        match = pattern.fullmatch(logical)
+        if match is None:
+            raise ReceiptError(
+                f"release-set {field} logical id {logical!r} does not match "
+                "its exact grammar")
+        if match.group("frozen") != frozen_plan_id:
+            raise ReceiptError(
+                f"release-set {field} logical id binds frozen plan "
+                f"{match.group('frozen')}, not record {frozen_plan_id}")
+
     transitions = inventory["transitions"]
     if not isinstance(transitions, list) or not transitions:
         raise ReceiptError(
             "release-set inventory carries no transitions; an empty ordered "
             "set cannot be complete"
         )
-    for logical in transitions:
-        _bounded_identity(logical, "release-set transition logical id")
-    if len(set(transitions)) != len(transitions):
-        raise ReceiptError(
-            "release-set inventory repeats a transition logical id"
-        )
+    components: set[str] = set()
+    for position, logical_value in enumerate(transitions, 1):
+        logical = _bounded_identity(
+            logical_value, "release-set transition logical id")
+        match = _RELEASE_TRANSITION_ID.fullmatch(logical)
+        if match is None:
+            raise ReceiptError(
+                f"release-set transition logical id {logical!r} does not "
+                "match its exact published transition grammar")
+        if match.group("frozen") != frozen_plan_id:
+            raise ReceiptError(
+                "release-set transition logical id does not bind the frozen "
+                f"plan in its record: {match.group('frozen')} != "
+                f"{frozen_plan_id}")
+        if match.group("sequence") != f"{position:03d}":
+            raise ReceiptError(
+                f"release-set transition order archived is invalid: sequence "
+                f"{match.group('sequence')} does not equal position "
+                f"{position:03d}")
+        component = match.group("component")
+        if component in components:
+            raise ReceiptError(
+                f"release-set inventory repeats published component "
+                f"{component!r}")
+        components.add(component)
     return inventory
 
 
@@ -1278,32 +1455,23 @@ def restore_release_set(
         )
     manifest = rd.load_staged_manifest(
         inner(inventory["staged_manifest"]), expected_digest=manifest_id[2])
-    if manifest.get("frozen_plan_id") != frozen_plan_id:
-        raise ReceiptError(
-            "release-set staged manifest binds a different frozen plan"
-        )
-    if manifest.get("source_sha") != plan.source_sha:
-        raise ReceiptError(
-            f"release-set staged manifest binds source "
-            f"{manifest.get('source_sha')!r}, not the frozen plan's "
-            f"{plan.source_sha!r}"
-        )
+    rd.validate_staged_manifest(
+        manifest,
+        plan=plan.plan,
+        graph=plan.graph,
+        frozen_plan_id=frozen_plan_id,
+        source_sha=plan.source_sha,
+    )
     receipt = rd.load_sealed_receipt(
         inner(inventory["receipt"]), expected_digest=receipt_id[2])
-    if getattr(receipt, "frozen_plan_id", None) != frozen_plan_id:
-        raise ReceiptError(
-            "restored receipt binds a frozen plan outside this release set"
-        )
-    if getattr(receipt, "staged_manifest_id", None) != staged_manifest_id:
-        raise ReceiptError(
-            "restored receipt binds a staged manifest outside this release set"
-        )
-    receipt_source = getattr(receipt, "source_sha", None)
-    if receipt_source is not None and receipt_source != plan.source_sha:
-        raise ReceiptError(
-            f"restored receipt binds source {receipt_source!r}, not the frozen "
-            f"plan's {plan.source_sha!r}"
-        )
+    rd.validate_final_receipt(
+        receipt,
+        plan=plan.plan,
+        graph=plan.graph,
+        frozen_plan_id=frozen_plan_id,
+        staged_manifest_id=staged_manifest_id,
+        source_sha=plan.source_sha,
+    )
 
     validate_transition_set(
         documents,
@@ -1377,14 +1545,16 @@ def validate_transition_set(
         # component and whose sequences still satisfy 1..n. The release path
         # anchors one published transition per moving component, so its absence
         # is the discriminating evidence.
-        published = {
-            d["component"] for d in documents if d["kind"] == "published"
-        }
-        if published != expected:
+        published = [
+            d["component"] for d in documents
+            if d["kind"] == "published" and d["entry"].get("phase") == "published"
+        ]
+        if len(documents) != len(expected) or set(published) != expected or len(
+            published
+        ) != len(set(published)):
             raise ReceiptError(
-                "transition set has no published transition for "
-                f"{sorted(expected - published)}; a set missing the effect "
-                "anchor is incomplete even when its sequences are contiguous"
+                "transition set must contain exactly one published transition "
+                "per moving component and no other kind or phase"
             )
     # The staged manifest declares a delivery OBLIGATION and carries no proof,
     # and an early-kind transition has not earned one yet, so staged identity is

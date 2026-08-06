@@ -982,6 +982,63 @@ def receipt_matches_run(
     return True, "receipt matches this run"
 
 
+def validate_final_receipt(
+    receipt: Receipt,
+    *,
+    plan: Plan,
+    graph: Graph,
+    frozen_plan_id: str,
+    staged_manifest_id: str,
+    source_sha: str,
+) -> None:
+    """Validate a loaded receipt against the complete final-seal contract.
+
+    Loading proves the outer digest and seal. This validator proves that the
+    loaded document is the non-partial final receipt for this exact frozen
+    plan, graph, source, staged manifest, and moving component set.
+    """
+    if receipt.partial:
+        raise ReceiptError("a partial receipt cannot authorize a final release set")
+    if receipt.frozen_plan_id != frozen_plan_id:
+        raise ReceiptError("final receipt does not bind this frozen plan")
+    if receipt.staged_manifest_id != staged_manifest_id:
+        raise ReceiptError("final receipt does not bind this staged manifest")
+    matches, reason = receipt_matches_run(
+        receipt, plan, graph, source_sha=source_sha)
+    if not matches:
+        raise ReceiptError(f"final receipt {reason}")
+
+    approvals = dict(receipt.approvals)
+    for node in plan.moving:
+        entry = receipt.entries[node.component]
+        if entry.phase != "verified":
+            raise ReceiptError(
+                f"final receipt entry {node.component} is not verified")
+        if node.reason.startswith("pointer:") and not entry.pointer_state:
+            raise ReceiptError(
+                f"{node.component}: final receipt pointer state is absent")
+        component = graph.components[node.component]
+        needs_delivery = (
+            component.delivery_restart is not None or component.lane is not None
+        )
+        if needs_delivery:
+            if not entry.delivery_proof:
+                raise ReceiptError(
+                    f"{node.component}: final receipt delivery proof is absent")
+            validate_delivery_proof(
+                entry.delivery_proof,
+                _delivery_obligation(graph, node.component),
+                node.component,
+            )
+        if component.approval_required:
+            approval = approvals.get(node.component)
+            if not isinstance(approval, dict) or not approval.get(
+                "who"
+            ) or not approval.get("when"):
+                raise ReceiptError(
+                    f"{node.component}: final receipt lacks its approval record")
+
+
 def receipt_accepts(
     receipt: Receipt, component: str, *, version: str, digest: str
 ) -> tuple[bool, str]:

@@ -82,6 +82,12 @@ class FakeArchiveTransport:
     def read_tree(self, sha: str) -> dict[str, bytes]:
         return self._tree_at(sha)
 
+    def read_tree_entries(self, sha: str):
+        return {
+            path: ("100644", "blob", data)
+            for path, data in self._tree_at(sha).items()
+        }
+
     def is_ancestor(self, ancestor: str, descendant: str) -> bool:
         cursor: str | None = descendant
         while cursor is not None:
@@ -90,11 +96,16 @@ class FakeArchiveTransport:
             cursor = self.commits[cursor]["parent"]
         return False
 
-    def parent_of(self, sha: str) -> str | None:
+    def parents_of(self, sha: str) -> tuple[str, ...]:
         commit = self.commits.get(sha)
         if commit is None:
             raise rd.ReceiptError(f"archive commit {sha} does not exist")
-        return commit["parent"]
+        parent = commit["parent"]
+        return (parent,) if parent is not None else ()
+
+    def parent_of(self, sha: str) -> str | None:
+        parents = self.parents_of(sha)
+        return parents[0] if parents else None
 
     def append(self, parent: str | None, files: dict[str, bytes], subject: str) -> str:
         if parent != self.head:
@@ -119,6 +130,8 @@ BODY = b"sealed-anchor-zip-bytes"
 REF = "gh-artifact:awebai/aweb:41:9001"
 SOURCE = {"repo": "awebai/aweb", "run_id": "41", "artifact_id": "9001",
           "anchor": "anchor--" + "a" * 64 + "--" + "b" * 64}
+LOGICAL_ONE = f"receipt:{'f' * 64}:{'1' * 64}"
+LOGICAL_TWO = f"receipt:{'f' * 64}:{'2' * 64}"
 
 
 def fresh_env(body: bytes = BODY, ref: str = REF):
@@ -138,7 +151,7 @@ def _permissive(body, manifest):
     return None
 
 
-def do_archive(store, authority, transport, *, logical_id="receipt:plan:1",
+def do_archive(store, authority, transport, *, logical_id=LOGICAL_ONE,
                ref=REF, recorded_head=None, kind="anchor-artifact",
                source=None, semantic=_permissive):
     src = dict(source) if source is not None else dict(SOURCE)
@@ -157,7 +170,7 @@ class ArchiveWriteTests(unittest.TestCase):
         store, authority, transport = fresh_env()
         entry = do_archive(store, authority, transport)
         self.assertEqual(entry["schema"], archive.INDEX_ENTRY_SCHEMA)
-        self.assertEqual(entry["logical_id"], "receipt:plan:1")
+        self.assertEqual(entry["logical_id"], LOGICAL_ONE)
         self.assertEqual(entry["source"], SOURCE)
         self.assertEqual(entry["source_digest"], sha256(BODY))
         self.assertEqual(entry["body_sha256"], sha256(BODY))
@@ -167,7 +180,7 @@ class ArchiveWriteTests(unittest.TestCase):
         manifest_path = f"receipts/{sha256(BODY)}/manifest.json"
         self.assertEqual(tree[body_path], BODY)
         manifest = json.loads(tree[manifest_path])
-        self.assertEqual(manifest["logical_id"], "receipt:plan:1")
+        self.assertEqual(manifest["logical_id"], LOGICAL_ONE)
         self.assertEqual(
             entry["manifest_sha256"], sha256(tree[manifest_path])
         )
@@ -202,7 +215,7 @@ class ArchiveWriteTests(unittest.TestCase):
         authority.digests[ref2] = sha256(body2)
         with self.assertRaisesRegex(rd.ReceiptError, "descend"):
             do_archive(store, authority, transport, source=source2,
-                       logical_id="receipt:plan:2",
+                       logical_id=LOGICAL_TWO,
                        recorded_head=entry["archive_commit"])
 
     def test_unrecorded_prior_content_refuses(self):
@@ -237,7 +250,7 @@ class ArchiveWriteTests(unittest.TestCase):
         tree = transport.read_tree(transport.head)
         manifest_path = f"receipts/{sha256(BODY)}/manifest.json"
         broken = json.loads(tree[manifest_path])
-        broken["logical_id"] = "receipt:other"
+        broken["logical_id"] = LOGICAL_TWO
         transport.commits[transport.head]["files"][manifest_path] = (
             json.dumps(broken, sort_keys=True).encode()
         )
@@ -256,7 +269,7 @@ class ArchiveWriteTests(unittest.TestCase):
         authority.digests[ref2] = sha256(body2)
         with self.assertRaisesRegex(rd.ReceiptError, "unexpected|stray"):
             do_archive(store, authority, transport, source=source2,
-                       logical_id="receipt:plan:2",
+                       logical_id=LOGICAL_TWO,
                        recorded_head=entry["archive_commit"])
 
 
@@ -413,12 +426,12 @@ class ReviewedIndexAuthorityTests(unittest.TestCase):
 
     def test_archive_branch_content_never_substitutes_authority(self):
         transport, entry = self.archived()
-        forged = dict(entry, logical_id="receipt:forged")
+        forged = dict(entry, logical_id=LOGICAL_TWO)
         files = transport.commits[entry["archive_commit"]]["files"]
         files["index.json"] = json.dumps({"entries": [forged]}).encode()
         with self.assertRaisesRegex(rd.ReceiptError, "not recorded"):
             self.restore(transport, None, FakeIndexAuthority([]),
-                         logical_id="receipt:forged")
+                         logical_id=LOGICAL_TWO)
 
     def test_index_file_authority_reads_reviewed_file_only(self):
         import tempfile
@@ -435,7 +448,7 @@ class ReviewedIndexAuthorityTests(unittest.TestCase):
             with self.assertRaisesRegex(rd.ReceiptError, "not recorded"):
                 self.restore(transport, None,
                              archive.IndexFileAuthority(index),
-                             logical_id="receipt:absent")
+                             logical_id=LOGICAL_TWO)
             missing = Path(tmp) / "absent.json"
             with self.assertRaisesRegex(rd.ReceiptError, "does not exist"):
                 self.restore(transport, None,
@@ -579,7 +592,7 @@ class GitBranchArchiveTests(unittest.TestCase):
         store.artifacts[ref2] = body2
         authority.digests[ref2] = sha256(body2)
         second = do_archive(store, authority, t1, source=source2,
-                            logical_id="receipt:plan:2",
+                            logical_id=LOGICAL_TWO,
                             recorded_head=first["archive_commit"])
         self.assertNotEqual(second["archive_commit"], first["archive_commit"])
 
@@ -614,7 +627,7 @@ class GitBranchArchiveTests(unittest.TestCase):
         store.artifacts[ref2] = body2
         authority.digests[ref2] = sha256(body2)
         do_archive(store, authority, t2, source=source2,
-                   logical_id="receipt:plan:2",
+                   logical_id=LOGICAL_TWO,
                    recorded_head=first["archive_commit"])
         head = t1.fetch_head()
         body3 = b"concurrent-three"
@@ -652,8 +665,140 @@ class GitBranchArchiveTests(unittest.TestCase):
         authority.digests[ref2] = sha256(body2)
         with self.assertRaisesRegex(rd.ReceiptError, "descend|does not exist"):
             do_archive(store, authority, t2, source=source2,
-                       logical_id="receipt:plan:2",
+                       logical_id=LOGICAL_TWO,
                        recorded_head=first["archive_commit"])
+
+    def test_normal_fast_forward_deletion_cannot_erase_and_rebind(self):
+        """A non-force descendant is not enough: every intervening commit
+        must preserve the exact prior tree before same-ID archival can append."""
+        graph, plan = real_graph_and_plan()
+        plan_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha="a" * 40)
+        logical = f"plan:{'a' * 40}:{frozen_id}"
+        first_body, _ = anchor_bundle(logical, plan_bytes)
+        first_ref = "gh-artifact:awebai/aweb:41:9001"
+        first = archive.archive_sealed(
+            logical_id=logical,
+            kind="anchor-artifact",
+            source=dict(
+                SOURCE,
+                anchor=rd._anchor_name(logical, sha256(plan_bytes))),
+            store=FakeStore({first_ref: first_body}),
+            authority=FakeAuthority({first_ref: sha256(first_body)}),
+            transport=self.transport(),
+            recorded_head=None,
+        )
+
+        attacker = Path(self.tmp.name) / "normal-ff-delete"
+        subprocess.run(
+            [archive.SYSTEM_GIT, "clone", self.remote, str(attacker)],
+            capture_output=True, check=True)
+        subprocess.run(
+            [archive.SYSTEM_GIT, "checkout", "release-receipts"],
+            cwd=attacker, capture_output=True, check=True)
+        for path in (attacker / "receipts").rglob("*"):
+            if path.is_file():
+                path.unlink()
+        for path in sorted(
+            (attacker / "receipts").rglob("*"), reverse=True
+        ):
+            if path.is_dir():
+                path.rmdir()
+        (attacker / "receipts").rmdir()
+        git_env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "normal-ff-attacker",
+            "GIT_AUTHOR_EMAIL": "attacker@example.invalid",
+            "GIT_COMMITTER_NAME": "normal-ff-attacker",
+            "GIT_COMMITTER_EMAIL": "attacker@example.invalid",
+        }
+        subprocess.run(
+            [archive.SYSTEM_GIT, "add", "-A"], cwd=attacker,
+            env=git_env, capture_output=True, check=True)
+        subprocess.run(
+            [archive.SYSTEM_GIT, "commit", "-m", "delete archived body"],
+            cwd=attacker, env=git_env, capture_output=True, check=True)
+        deletion_head = subprocess.run(
+            [archive.SYSTEM_GIT, "rev-parse", "HEAD"], cwd=attacker,
+            capture_output=True, check=True).stdout.decode().strip()
+        subprocess.run(
+            [archive.SYSTEM_GIT, "push", self.remote,
+             "HEAD:refs/heads/release-receipts"],
+            cwd=attacker, capture_output=True, check=True)
+
+        # A ZIP may carry ignored trailing bytes while preserving the same
+        # exact inner sealed plan and logical ID. This gives a genuinely
+        # different outer body that still passes production semantics.
+        replacement_body = first_body + b"normal-ff-rebinding-body"
+        replacement_ref = "gh-artifact:awebai/aweb:41:9002"
+        source = dict(
+            SOURCE,
+            artifact_id="9002",
+            anchor=rd._anchor_name(logical, sha256(plan_bytes)),
+        )
+        transport = self.transport()
+        with self.assertRaisesRegex(
+            rd.ReceiptError, "append-only|deleted|superset"
+        ):
+            archive.archive_sealed(
+                logical_id=logical,
+                kind="anchor-artifact",
+                source=source,
+                store=FakeStore({replacement_ref: replacement_body}),
+                authority=FakeAuthority({
+                    replacement_ref: sha256(replacement_body)}),
+                transport=transport,
+                recorded_head=first["archive_commit"],
+            )
+
+        self.assertEqual(transport.fetch_head(), deletion_head,
+                         "refusal must not append after the deleting head")
+        original_tree = transport.read_tree(first["archive_commit"])
+        original_path = f"receipts/{sha256(first_body)}/body.zip"
+        self.assertEqual(original_tree[original_path], first_body,
+                         "the exact original body remains addressable")
+
+    def test_history_verifier_requires_linear_exact_supersets(self):
+        base = "a" * 40
+        child = "b" * 40
+        other = "c" * 40
+        original = {"receipts/x/body.zip": ("100644", "blob", b"body")}
+
+        class History:
+            def __init__(self, parents, trees):
+                self.parents = parents
+                self.trees = trees
+
+            def parents_of(self, sha):
+                return self.parents[sha]
+
+            def read_tree_entries(self, sha):
+                return self.trees[sha]
+
+        archive._verify_append_only_history(
+            History({child: (base,)}, {
+                base: original,
+                child: {**original, "receipts/y/body.zip": (
+                    "100644", "blob", b"addition")},
+            }), base, child)
+
+        attacks = {
+            "deletion": {},
+            "replacement": {"receipts/x/body.zip": (
+                "100644", "blob", b"different")},
+            "mode": {"receipts/x/body.zip": ("100755", "blob", b"body")},
+            "type": {"receipts/x/body.zip": ("100644", "tree", b"body")},
+        }
+        for label, changed in attacks.items():
+            with self.subTest(label=label):
+                with self.assertRaises(rd.ReceiptError):
+                    archive._verify_append_only_history(
+                        History({child: (base,)}, {
+                            base: original, child: changed}), base, child)
+        with self.assertRaisesRegex(rd.ReceiptError, "linear|parent"):
+            archive._verify_append_only_history(
+                History({child: (base, other)}, {
+                    base: original, child: original}), base, child)
 
     def test_close_removes_temporary_root(self):
         t = archive.GitBranchArchive(remote=self.remote,
@@ -743,7 +888,7 @@ class NackCorrectionControlTests(unittest.TestCase):
             remote="https://github.com/awebai/aweb.git",
             reviewed_commit="a" * 40, git=FakeGit())
         with self.assertRaisesRegex(rd.ReceiptError, "not.*ancestor"):
-            authority.lookup("receipt:plan:1")
+            authority.lookup(LOGICAL_ONE)
 
     def test_reviewed_index_reads_entry_at_landed_commit(self):
         _, entry, doc = self._reviewed_fixture()
@@ -773,7 +918,7 @@ class NackCorrectionControlTests(unittest.TestCase):
     # Finding 2: production restore runs real semantic validators.
     def test_semantic_validator_refuses_bad_anchor_bundle(self):
         validate = archive.semantic_validator()
-        manifest = {"kind": "anchor-artifact", "logical_id": "x",
+        manifest = {"kind": "anchor-artifact", "logical_id": LOGICAL_ONE,
                     "source_digest": "a" * 64}
         with self.assertRaisesRegex(rd.ReceiptError, "not a valid ZIP"):
             validate(b"not a zip", manifest)
@@ -796,7 +941,7 @@ class NackCorrectionControlTests(unittest.TestCase):
         authority.digests[ref2] = sha256(body2)
         with self.assertRaisesRegex(rd.ReceiptError, "content-address"):
             do_archive(store, authority, transport, source=source2,
-                       logical_id="receipt:plan:2",
+                       logical_id=LOGICAL_TWO,
                        recorded_head=entry["archive_commit"])
 
     # Finding 4: source identity cannot be rebound at copy time.
@@ -804,7 +949,7 @@ class NackCorrectionControlTests(unittest.TestCase):
         store, authority, transport = fresh_env()
         with self.assertRaisesRegex(rd.ReceiptError, "does not equal the reference"):
             archive.archive_sealed(
-                logical_id="x", kind="anchor-artifact", source=dict(SOURCE),
+                logical_id=LOGICAL_ONE, kind="anchor-artifact", source=dict(SOURCE),
                 artifact_ref="gh-artifact:awebai/aweb:41:0000",
                 store=store, authority=authority, transport=transport,
                 recorded_head=None)
@@ -1122,7 +1267,7 @@ class ReviewedIndexRoundTwoTests(unittest.TestCase):
             remote="https://github.com/awebai/aweb.git",
             reviewed_commit="a" * 40, git=FakeGit())
 
-    def valid_entry(self, logical_id="receipt:plan:1"):
+    def valid_entry(self, logical_id=LOGICAL_ONE):
         store, auth, transport = fresh_env()
         return do_archive(store, auth, transport, logical_id=logical_id)
 
@@ -1300,46 +1445,102 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
 
     # ---- a complete, real release set -------------------------------------
     def real_release_set(self, *, source_sha=None, entry_digest=None,
-                         staged_digest=None):
+                         staged_digest=None, components=("channel",),
+                         delivery_obligation=None, receipt_partial=False,
+                         receipt_plan_digest=None,
+                         transition_kinds=("published",)):
         source_sha = source_sha or self.SOURCE_SHA
         entry_digest = entry_digest or "d" * 64
         staged_digest = staged_digest or entry_digest
-        graph, plan = real_graph_and_plan()
+        graph_data = {
+            "component": {
+                component: {
+                    "source_paths": [f"{component}/"],
+                    "version_source": {
+                        "type": "manifest", "path": f"{component}/v"},
+                    "tag_format": f"{component}-v{{version}}",
+                    "verify": {"command": "true"},
+                }
+                for component in components
+            },
+            "edge": [],
+        }
+        graph = rd.Graph.from_dict(graph_data)
+        versions = {
+            component: f"1.7.{index + 2}"
+            for index, component in enumerate(components)
+        }
+        plan = rd.compute_plan(graph, rd.FixtureState(
+            changed_components={component: True for component in components},
+            versions=versions,
+            published_versions={
+                component: f"1.7.{index + 1}"
+                for index, component in enumerate(components)
+            },
+        ))
         plan_bytes, frozen_id = rd.freeze_plan(
             plan, graph, source_sha=source_sha)
-        staged = {"channel": rd.ReceiptEntry(
-            version="1.7.2", digest=staged_digest, phase="staged")}
+        staged = {
+            component: rd.ReceiptEntry(
+                version=versions[component],
+                digest=staged_digest if component == "channel" else "d" * 64,
+                phase="staged",
+            )
+            for component in components
+        }
         manifest_bytes, manifest_digest = rd.seal_staged_manifest(
             plan, frozen_plan_id=frozen_id, source_sha=source_sha,
             entries=staged, graph=graph)
+        if delivery_obligation is not None:
+            manifest_document = json.loads(manifest_bytes)
+            manifest_document["entries"]["channel"][
+                "delivery_obligation"] = delivery_obligation
+            manifest_bytes = json.dumps(
+                manifest_document, sort_keys=True).encode()
+            manifest_digest = sha256(manifest_bytes)
         staged_id = f"staged-manifest:{frozen_id}:{manifest_digest}"
 
         transitions = []
-        for sequence, kind in ((1, "staged"), (2, "published")):
-            document = {
-                "frozen_plan_id": frozen_id,
-                "staged_manifest_id": staged_id,
-                "sequence": sequence,
-                "component": "channel",
-                "kind": kind,
-                # digest_set/lane_ref must equal the staged entry exactly;
-                # the staged ReceiptEntry below leaves both unset.
-                "entry": {"version": "1.7.2", "digest": entry_digest,
-                          "phase": kind, "pointer_state": None,
-                          "delivery_proof": None, "lane_ref": None,
-                          "digest_set": None},
-            }
-            body = json.dumps(document, sort_keys=True).encode()
-            logical = (f"transition:{frozen_id}:{sequence:03d}:{kind}:"
-                       f"channel:{sha256(body)}")
-            transitions.append((logical, body))
+        sequence = 0
+        for component in components:
+            for kind in transition_kinds:
+                sequence += 1
+                digest = entry_digest if component == "channel" else "d" * 64
+                document = {
+                    "frozen_plan_id": frozen_id,
+                    "staged_manifest_id": staged_id,
+                    "sequence": sequence,
+                    "component": component,
+                    "kind": kind,
+                    "entry": {"version": versions[component],
+                              "digest": digest,
+                              "phase": "published", "pointer_state": None,
+                              "delivery_proof": None, "lane_ref": None,
+                              "digest_set": None},
+                }
+                body = json.dumps(document, sort_keys=True).encode()
+                logical = (f"transition:{frozen_id}:{sequence:03d}:{kind}:"
+                           f"{component}:{sha256(body)}")
+                transitions.append((logical, body))
 
+        receipt_entries = {
+            component: rd.ReceiptEntry(
+                version=versions[component],
+                digest="d" * 64, phase="verified")
+            for component in components
+        }
         sealed, receipt_digest = rd.seal_receipt(
-            plan, graph, source_sha=source_sha,
-            entries={"channel": rd.ReceiptEntry(
-                version="1.7.2", digest="d" * 64, phase="verified")},
+            plan, graph, source_sha=source_sha, entries=receipt_entries,
             approvals={}, frozen_plan_id=frozen_id,
-            staged_manifest_id=staged_id)
+            staged_manifest_id=staged_id, partial=receipt_partial)
+        if receipt_plan_digest is not None:
+            outer = json.loads(sealed)
+            receipt_document = json.loads(outer["body"])
+            receipt_document["plan_digest"] = receipt_plan_digest
+            outer["body"] = json.dumps(receipt_document, sort_keys=True)
+            outer["seal"] = sha256(outer["body"].encode())
+            sealed = json.dumps(outer).encode()
+            receipt_digest = sha256(sealed)
 
         artifacts = [
             (f"plan:{source_sha}:{frozen_id}", plan_bytes),
@@ -1425,7 +1626,7 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
 
         self.assertEqual(restored["frozen_plan_id"], released["frozen_plan_id"])
         self.assertEqual([d["sequence"] for d in restored["transitions"]],
-                         [1, 2])
+                         [1])
         self.assertEqual({d["component"] for d in restored["transitions"]},
                          {"channel"})
 
@@ -1435,9 +1636,9 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
         released = self.real_release_set()
         transport, entries = self.archive_all(released["artifacts"])
         authority = self.index_authority(entries, [self.inventory(
-            released, transitions=[released["transitions"][1]])])
+            released, transitions=[])])
 
-        with self.assertRaisesRegex(rd.ReceiptError, "ordered set"):
+        with self.assertRaisesRegex(rd.ReceiptError, "no transitions"):
             archive.restore_release_set(
                 frozen_plan_id=released["frozen_plan_id"], transport=transport,
                 index_authority=authority, production=True)
@@ -1445,7 +1646,7 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
     def test_set_restore_refuses_reordered_inventory(self):
         """The reviewer's [2, 1]: every artifact is present and intact, and the
         SET is still wrong."""
-        released = self.real_release_set()
+        released = self.real_release_set(components=("channel", "pi"))
         transport, entries = self.archive_all(released["artifacts"])
         authority = self.index_authority(entries, [self.inventory(
             released, transitions=list(reversed(released["transitions"])))])
@@ -1490,7 +1691,7 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
             released["artifacts"] + other["artifacts"])
         authority = self.index_authority(entries, [self.inventory(
             released,
-            transitions=[released["transitions"][0], other["transitions"][1]])])
+            transitions=[released["transitions"][0], other["transitions"][0]])])
 
         with self.assertRaisesRegex(rd.ReceiptError, "bind the frozen plan"):
             archive.restore_release_set(
@@ -1621,7 +1822,7 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
         manifest = self.lane_manifest_for(
             body, f"lane:server:1.26.36:{'c' * 40}", source_sha="e" * 40)
         with self.assertRaisesRegex(
-            rd.ReceiptError, "lane logical id claims source"
+            rd.ReceiptError, "logical id source"
         ):
             archive.semantic_validator()(body, manifest)
 
@@ -1632,12 +1833,10 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
             archive.semantic_validator()(body, manifest)
 
     def test_archive_source_claiming_a_foreign_commit_refuses(self):
-        # A non-lane logical id skips the id-claim branch, so this isolates the
-        # archive-source-vs-manifest check rather than re-testing the id.
         body = self.pypi_lane_zip(source_sha="c" * 40)
         manifest = self.lane_manifest_for(
-            body, "staged:server:1.26.36", source_sha="d" * 40)
-        with self.assertRaisesRegex(rd.ReceiptError, "asserts source_sha"):
+            body, f"lane:server:1.26.36:{'d' * 40}", source_sha="d" * 40)
+        with self.assertRaisesRegex(rd.ReceiptError, "source"):
             archive.semantic_validator()(body, manifest)
 
     # ---- blocker 4: the output race ---------------------------------------
@@ -1802,7 +2001,89 @@ class GitEnvironmentRedirectTests(unittest.TestCase):
         self.assertEqual(sanitized.get("GIT_CONFIG_GLOBAL"), "/dev/null")
         self.assertEqual(sanitized.get("GIT_CONFIG_SYSTEM"), "/dev/null")
         self.assertEqual(sanitized.get("GIT_TERMINAL_PROMPT"), "0")
-        self.assertIn("PATH", sanitized)
+        self.assertEqual(sanitized.get("PATH"), archive.SYSTEM_PATH)
+        self.assertTrue(
+            sanitized.get("GIT_SSH_COMMAND", "").startswith(
+                archive.SYSTEM_SSH + " "),
+            "Git must dispatch SSH through the fixed reviewed executable")
+
+    def test_hostile_path_fake_git_cannot_replace_reviewed_git(self):
+        """The attack is live: bare `git` resolves to the fake, while both
+        production Git surfaces execute the fixed reviewed binary and return
+        the real local remote identity without touching the marker."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "fake-bin"
+            fake_bin.mkdir()
+            marker = root / "fake-git-ran"
+            fake = fake_bin / "git"
+            fake.write_text(
+                "#!/bin/sh\n"
+                f"echo invoked >> {marker}\n"
+                "printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\t"
+                "refs/heads/main\\n'\n")
+            fake.chmod(0o755)
+
+            attack = subprocess.run(
+                ["git", "--version"], env={"PATH": str(fake_bin)},
+                capture_output=True)
+            self.assertEqual(attack.returncode, 0)
+            self.assertTrue(marker.exists(),
+                            "control: hostile PATH must execute the fake git")
+            marker.unlink()
+
+            remote = root / "remote.git"
+            source = root / "source"
+            subprocess.run(
+                [archive.SYSTEM_GIT, "init", "--bare", str(remote)],
+                capture_output=True, check=True)
+            subprocess.run(
+                [archive.SYSTEM_GIT, "init", "--initial-branch", "main",
+                 str(source)], capture_output=True, check=True)
+            (source / "index").write_text("reviewed")
+            git_env = {
+                **os.environ,
+                "GIT_AUTHOR_NAME": "reviewed-control",
+                "GIT_AUTHOR_EMAIL": "reviewed@example.invalid",
+                "GIT_COMMITTER_NAME": "reviewed-control",
+                "GIT_COMMITTER_EMAIL": "reviewed@example.invalid",
+            }
+            subprocess.run(
+                [archive.SYSTEM_GIT, "add", "index"], cwd=source,
+                env=git_env, capture_output=True, check=True)
+            subprocess.run(
+                [archive.SYSTEM_GIT, "commit", "-m", "reviewed"], cwd=source,
+                env=git_env, capture_output=True, check=True)
+            expected = subprocess.run(
+                [archive.SYSTEM_GIT, "rev-parse", "HEAD"], cwd=source,
+                capture_output=True, check=True).stdout.decode().strip()
+            subprocess.run(
+                [archive.SYSTEM_GIT, "push", str(remote),
+                 "HEAD:refs/heads/main"], cwd=source,
+                capture_output=True, check=True)
+
+            saved_path = os.environ.get("PATH")
+            os.environ["PATH"] = str(fake_bin)
+            reader = None
+            transport = None
+            try:
+                reader = archive._GitReader(str(remote))
+                self.assertEqual(reader.ls_remote("refs/heads/main"), expected)
+                transport = archive.GitBranchArchive(
+                    remote=str(remote), branch="main")
+                self.assertEqual(transport.fetch_head(), expected)
+            finally:
+                if transport is not None:
+                    transport.close()
+                if reader is not None:
+                    reader.close()
+                if saved_path is None:
+                    os.environ.pop("PATH", None)
+                else:
+                    os.environ["PATH"] = saved_path
+            self.assertFalse(
+                marker.exists(),
+                "reviewed-index and archive Git must not execute PATH's fake")
 
     def test_reviewed_index_reader_uses_the_same_sanitized_environment(self):
         """Both surfaces the reviewer named must be covered, not just one."""
@@ -1872,12 +2153,238 @@ class UnrelatedReleaseSetTests(unittest.TestCase):
         with self.assertRaises(rd.ReceiptError):
             self.authority(body).lookup(entry["logical_id"])
 
+    def test_complete_shaped_unrelated_arbitrary_logical_ids_refuse(self):
+        unrelated = {
+            "frozen_plan_id": "b" * 64,
+            "plan": "x",
+            "staged_manifest": "y",
+            "transitions": ["z"],
+            "receipt": "q",
+        }
+        body, entry = self.index([self.good_set(), unrelated])
+        with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+            self.authority(body).release_set("a" * 64)
+
+    def test_every_logical_id_must_bind_its_record_frozen_plan(self):
+        plan = "b" * 64
+        wrong = "c" * 64
+        mutations = {
+            "plan": f"plan:{'d' * 40}:{wrong}",
+            "staged_manifest": f"staged-manifest:{wrong}:{'e' * 64}",
+            "transitions": [
+                f"transition:{wrong}:001:published:channel:{'d' * 64}"],
+            "receipt": f"receipt:{wrong}:{'f' * 64}",
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                unrelated = self.good_set(plan)
+                unrelated[field] = value
+                body, entry = self.index([self.good_set(), unrelated])
+                with self.assertRaisesRegex(rd.ReceiptError, "frozen plan"):
+                    self.authority(body).lookup(entry["logical_id"])
+
+    def test_release_set_logical_id_grammar_is_exact(self):
+        malformed = [
+            dict(self.good_set("b" * 64), plan="plan:not-a-sha:" + "b" * 64),
+            dict(self.good_set("b" * 64),
+                 staged_manifest=f"staged-manifest:{'b' * 64}:short"),
+            dict(self.good_set("b" * 64), transitions=[
+                f"transition:{'b' * 64}:1:published:channel:{'d' * 64}"]),
+            dict(self.good_set("b" * 64), transitions=[
+                f"transition:{'b' * 64}:001:unreviewed-control:channel:"
+                f"{'d' * 64}"]),
+            dict(self.good_set("b" * 64), receipt="receipt:bad"),
+        ]
+        for record in malformed:
+            with self.subTest(record=record):
+                body, entry = self.index([self.good_set(), record])
+                with self.assertRaises(rd.ReceiptError):
+                    self.authority(body).lookup(entry["logical_id"])
+
     def test_valid_sets_still_resolve(self):
         body, entry = self.index([self.good_set(), self.good_set("b" * 64)])
         resolved = self.authority(body).release_set("a" * 64)
         self.assertEqual(resolved["frozen_plan_id"], "a" * 64)
 
 
+
+
+class GlobalLogicalIdTests(unittest.TestCase):
+    """Every archive kind has one closed logical-ID namespace.
+
+    Real lane bytes must not become trusted under an arbitrary index name just
+    because their inner lane manifest is valid.
+    """
+
+    SOURCE_SHA = "c" * 40
+    VALID_LOGICAL = f"lane:server:1.26.36:{SOURCE_SHA}"
+    INVALID_LOGICALS = (
+        "arbitrary-reviewed-index-name",
+        "staged:server:1.26.36",
+        f"receipt:{'f' * 64}:{'e' * 64}",
+    )
+
+    def lane_zip(self):
+        import io
+        import zipfile
+
+        version = "1.26.36"
+        names = {
+            f"aweb-{version}-py3-none-any.whl": b"exact staged wheel",
+            f"aweb-{version}.tar.gz": b"exact staged sdist",
+        }
+        files = {name: sha256(data) for name, data in names.items()}
+        lane_manifest = {
+            "mode": "stage-only", "package": "server",
+            "tag": f"server-v{version}", "candidate_version": version,
+            "source_sha": self.SOURCE_SHA, "files": files,
+            "canonical_set_digest": sha256(
+                json.dumps(files, sort_keys=True).encode()),
+        }
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as lane:
+            lane.writestr("manifest.json", json.dumps(lane_manifest))
+            for name, data in names.items():
+                lane.writestr(f"dist/{name}", data)
+        return buffer.getvalue()
+
+    def source(self):
+        return {
+            "repo": "awebai/aweb", "run_id": "41", "artifact_id": "9001",
+            "source_sha": self.SOURCE_SHA,
+        }
+
+    def manifest(self, body, logical_id):
+        return {
+            "schema": archive.MANIFEST_SCHEMA,
+            "logical_id": logical_id,
+            "kind": "workflow-artifact",
+            "source": self.source(),
+            "source_digest": sha256(body),
+            "body_sha256": sha256(body),
+        }
+
+    def manual_entry(self, body, logical_id):
+        manifest = self.manifest(body, logical_id)
+        manifest_bytes = json.dumps(
+            manifest, sort_keys=True, separators=(",", ":")).encode()
+        transport = FakeArchiveTransport()
+        digest = sha256(body)
+        commit = transport.append(None, {
+            f"receipts/{digest}/body.zip": body,
+            f"receipts/{digest}/manifest.json": manifest_bytes,
+        }, "manual hostile fixture")
+        entry = {
+            "schema": archive.INDEX_ENTRY_SCHEMA,
+            "logical_id": logical_id,
+            "kind": "workflow-artifact",
+            "source": self.source(),
+            "source_digest": sha256(body),
+            "body_sha256": digest,
+            "manifest_sha256": sha256(manifest_bytes),
+            "archive_commit": commit,
+        }
+        return transport, entry
+
+    def reviewed_authority(self, entries):
+        document = json.dumps({
+            "schema": archive.ReviewedMainIndexAuthority.INDEX_SCHEMA,
+            "entries": entries,
+        }, sort_keys=True, separators=(",", ":")).encode()
+
+        class FakeGit:
+            def ls_remote(self, ref):
+                return "b" * 40
+
+            def is_ancestor(self, ancestor, descendant):
+                return True
+
+            def file_at(self, commit, path):
+                return document
+
+        return archive.ReviewedMainIndexAuthority(
+            remote="https://github.com/awebai/aweb.git",
+            reviewed_commit="a" * 40, git=FakeGit())
+
+    def test_non_lane_and_wrong_class_ids_refuse_before_append(self):
+        body = self.lane_zip()
+        ref = "gh-artifact:awebai/aweb:41:9001"
+        for logical_id in self.INVALID_LOGICALS:
+            with self.subTest(logical_id=logical_id):
+                transport = FakeArchiveTransport()
+                with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+                    archive.archive_sealed(
+                        logical_id=logical_id,
+                        kind="workflow-artifact",
+                        source=self.source(),
+                        store=FakeStore({ref: body}),
+                        authority=FakeAuthority({ref: sha256(body)}),
+                        transport=transport,
+                        recorded_head=None,
+                    )
+                self.assertIsNone(
+                    transport.head, "invalid identity must refuse before append")
+
+    def test_non_lane_ids_refuse_during_semantic_restore(self):
+        body = self.lane_zip()
+        for logical_id in self.INVALID_LOGICALS:
+            with self.subTest(logical_id=logical_id):
+                transport, entry = self.manual_entry(body, logical_id)
+                with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+                    archive.restore_archived(
+                        entry=entry, transport=transport, production=False,
+                        validate=archive.semantic_validator())
+
+    def test_lane_logical_source_binds_during_global_index_load(self):
+        body = self.lane_zip()
+        _, entry = self.manual_entry(body, self.VALID_LOGICAL)
+        entry = dict(entry, source=dict(entry["source"], source_sha="d" * 40))
+        with self.assertRaisesRegex(rd.ReceiptError, "source"):
+            self.reviewed_authority([entry]).lookup(self.VALID_LOGICAL)
+
+    def test_non_lane_ids_refuse_global_index_load(self):
+        body = self.lane_zip()
+        _, valid = self.manual_entry(body, self.VALID_LOGICAL)
+        for logical_id in self.INVALID_LOGICALS:
+            with self.subTest(logical_id=logical_id):
+                _, invalid = self.manual_entry(body, logical_id)
+                with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+                    self.reviewed_authority(
+                        [valid, invalid]).lookup(self.VALID_LOGICAL)
+
+    def test_malformed_unrelated_supported_class_refuses_global_index(self):
+        body = self.lane_zip()
+        _, valid = self.manual_entry(body, self.VALID_LOGICAL)
+        malformed = []
+        for logical_id in (
+            "plan:not-a-source:not-a-frozen-id",
+            f"staged-manifest:{'f' * 64}:short",
+            f"transition:{'f' * 64}:001:verify-red:server:{'e' * 64}",
+            f"receipt:{'f' * 64}:short",
+        ):
+            malformed.append(dict(
+                valid,
+                logical_id=logical_id,
+                kind="anchor-artifact",
+                source=dict(SOURCE),
+            ))
+        authority = self.reviewed_authority([valid, *malformed])
+        with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+            authority.lookup(self.VALID_LOGICAL)
+
+    def test_valid_lane_identity_still_archives_and_restores(self):
+        body = self.lane_zip()
+        ref = "gh-artifact:awebai/aweb:41:9001"
+        transport = FakeArchiveTransport()
+        entry = archive.archive_sealed(
+            logical_id=self.VALID_LOGICAL,
+            kind="workflow-artifact", source=self.source(),
+            store=FakeStore({ref: body}),
+            authority=FakeAuthority({ref: sha256(body)}),
+            transport=transport, recorded_head=None)
+        self.assertEqual(archive.restore_archived(
+            entry=entry, transport=transport, production=False,
+            validate=archive.semantic_validator()), body)
 
 
 class ReleaseSetCrossValidationTests(RoundFiveCounterexampleTests):
@@ -1897,7 +2404,7 @@ class ReleaseSetCrossValidationTests(RoundFiveCounterexampleTests):
     def test_trailing_transition_omission_refuses(self):
         """[1] of [1,2] is SELF-CONSISTENT: it satisfies 1..n for n=1. Only an
         expectation derived from the frozen plan can catch it."""
-        released = self.real_release_set()
+        released = self.real_release_set(components=("channel", "pi"))
         transport, entries = self.archive_all(released["artifacts"])
         authority = self.index_authority(entries, [self.inventory(
             released, transitions=[released["transitions"][0]])])
@@ -1936,13 +2443,41 @@ class ReleaseSetCrossValidationTests(RoundFiveCounterexampleTests):
                 entries, [self.inventory(released, plan=bad_plan)])
             self.restore(released, transport, authority)
 
+    def test_forged_staged_delivery_obligation_refuses(self):
+        released = self.real_release_set(
+            delivery_obligation="forged-delivery-obligation")
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(released)])
+        with self.assertRaisesRegex(rd.ReceiptError, "delivery obligation"):
+            self.restore(released, transport, authority)
+
+    def test_partial_receipt_cannot_be_the_final_receipt(self):
+        released = self.real_release_set(receipt_partial=True)
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(released)])
+        with self.assertRaisesRegex(rd.ReceiptError, "partial"):
+            self.restore(released, transport, authority)
+
+    def test_final_receipt_plan_digest_must_equal_the_frozen_plan(self):
+        released = self.real_release_set(receipt_plan_digest="9" * 64)
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(released)])
+        with self.assertRaisesRegex(rd.ReceiptError, "plan digest"):
+            self.restore(released, transport, authority)
+
+    def test_hidden_transition_kind_refuses(self):
+        released = self.real_release_set(
+            transition_kinds=("published", "unreviewed-control"))
+        with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+            self.archive_all(released["artifacts"])
+
     def test_complete_honest_set_still_restores(self):
         """Control: the same machinery must accept an undrifted set."""
         released = self.real_release_set()
         transport, entries = self.archive_all(released["artifacts"])
         authority = self.index_authority(entries, [self.inventory(released)])
         restored = self.restore(released, transport, authority)
-        self.assertEqual([d["sequence"] for d in restored["transitions"]], [1, 2])
+        self.assertEqual([d["sequence"] for d in restored["transitions"]], [1])
 
 
 
