@@ -1776,10 +1776,15 @@ def _fetch_npm_tarball(package: str, version: str) -> bytes | None:
 
 
 class AwLaneRuns:
-    """The aw-release.yml runs surface used for continuation correlation.
-    The listing reads the newest page, which bounds the snapshot window the
-    exactly-one-new-run check operates over; the reviewed workflow's
-    non-cancelling concurrency group serializes runs."""
+    """The workflow-run surface used for continuation correlation.
+
+    Recovery persists the newest pre-dispatch run as a high-water boundary,
+    then paginates until that exact boundary (or the empty-history terminator)
+    so a busy shared workflow cannot push the owned run out of view.
+    """
+
+    MAX_RUN_HISTORY_PAGES = 20
+    RUN_HISTORY_PAGE_SIZE = 100
 
     def __init__(self, api=None, *, repo: str = "awebai/aw",
                  workflow_file: str = "aw-release.yml"):
@@ -1787,12 +1792,75 @@ class AwLaneRuns:
         self.repo = repo
         self.workflow_file = workflow_file
 
-    def list_run_ids(self) -> list[int]:
+    def _run_ids_page(self, *, per_page: int, page: int) -> list[int]:
         body = json.loads(self._api(
             f"repos/{self.repo}/actions/workflows/{self.workflow_file}/runs"
-            "?per_page=100"
+            f"?per_page={per_page}&page={page}"
         ))
-        return [run["id"] for run in body.get("workflow_runs", [])]
+        runs = body.get("workflow_runs")
+        if not isinstance(runs, list):
+            raise ReceiptError(
+                f"{self.workflow_file}: workflow run page {page} has no "
+                "workflow_runs list"
+            )
+        run_ids = []
+        for index, run in enumerate(runs):
+            run_id = run.get("id") if isinstance(run, dict) else None
+            if (
+                not isinstance(run_id, int)
+                or isinstance(run_id, bool)
+                or run_id <= 0
+            ):
+                raise ReceiptError(
+                    f"{self.workflow_file}: workflow run page {page} entry "
+                    f"{index} has invalid id {run_id!r}"
+                )
+            run_ids.append(run_id)
+        return run_ids
+
+    def list_run_ids(self) -> list[int]:
+        """Newest page for ordinary non-recovery lane correlation."""
+        return self._run_ids_page(
+            per_page=self.RUN_HISTORY_PAGE_SIZE, page=1
+        )
+
+    def high_water_run_id(self) -> int | None:
+        run_ids = self._run_ids_page(per_page=1, page=1)
+        return run_ids[0] if run_ids else None
+
+    def list_run_ids_after(self, boundary_run_id) -> list[int]:
+        """Enumerate the complete bounded window newer than boundary."""
+        boundary = (
+            None if boundary_run_id is None else str(boundary_run_id)
+        )
+        seen: set[str] = set()
+        collected: list[int] = []
+        for page in range(1, self.MAX_RUN_HISTORY_PAGES + 1):
+            run_ids = self._run_ids_page(
+                per_page=self.RUN_HISTORY_PAGE_SIZE, page=page
+            )
+            if not run_ids:
+                if boundary is None:
+                    return collected
+                raise ReceiptError(
+                    f"{self.workflow_file}: incomplete workflow-run "
+                    f"enumeration; boundary {boundary!r} was not reached "
+                    "before empty history"
+                )
+            for run_id in run_ids:
+                identity = str(run_id)
+                if identity == boundary:
+                    return collected
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                collected.append(run_id)
+        raise ReceiptError(
+            f"{self.workflow_file}: incomplete workflow-run enumeration; "
+            f"boundary {boundary!r} was not reached within the explicit "
+            f"{self.MAX_RUN_HISTORY_PAGES}-page/"
+            f"{self.MAX_RUN_HISTORY_PAGES}-request bound"
+        )
 
     def dispatch(self, inputs: dict) -> None:
         import subprocess
@@ -2285,15 +2353,20 @@ class _WorkflowLaneBase:
         }
 
     def continuation_snapshot(self, node) -> list[str]:
-        """Stable pre-attempt run identities persisted before dispatch."""
-        return sorted(str(run_id) for run_id in self._runs.list_run_ids())
+        """Persist the stable pre-dispatch high-water run boundary."""
+        high_water = self._runs.high_water_run_id()
+        return [] if high_water is None else [str(high_water)]
 
     def _new_continuation_runs(self, before_run_ids) -> list[tuple[str, object]]:
-        before = {str(run_id) for run_id in before_run_ids}
+        if len(before_run_ids) > 1:
+            raise ReceiptError(
+                f"{self.component}: continuation snapshot must contain at "
+                "most one high-water run boundary"
+            )
+        boundary = before_run_ids[0] if before_run_ids else None
         return [
             (str(run_id), run_id)
-            for run_id in self._runs.list_run_ids()
-            if str(run_id) not in before
+            for run_id in self._runs.list_run_ids_after(boundary)
         ]
 
     def _continuation_runs_for_attempt(
@@ -4752,6 +4825,7 @@ def _validate_attempt_record(handle, artifact_id, document, store, authority):
     before = document["continuation_run_ids_before"]
     if (
         not isinstance(before, list)
+        or len(before) > 1
         or len(before) != len(set(before))
         or not all(isinstance(item, str) and item for item in before)
     ):
@@ -5192,11 +5266,12 @@ def execute_adopted_preplan_recovery(
         before = lanes.continuation_snapshot(node)
         if (
             not isinstance(before, list)
+            or len(before) > 1
             or len(set(before)) != len(before)
             or not all(isinstance(item, str) and item for item in before)
         ):
             raise ReceiptError(
-                f"{component}: continuation snapshot is not a unique run-id list"
+                f"{component}: continuation snapshot is not one high-water run id"
             )
         predecessor_attempts = _attempts(
             handle, store, authority, component

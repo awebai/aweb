@@ -220,7 +220,8 @@ class FakeRecoverySurface:
         return rd.ObservedRecoveryState(public=state, entry=entry)
 
     def continuation_snapshot(self, node):
-        return list(self.runs[node.component])
+        runs = self.runs[node.component]
+        return [] if not runs else [runs[-1]]
 
     def _complete(self, component, run_id):
         self.public[component] = {
@@ -264,7 +265,15 @@ class FakeRecoverySurface:
         self, node, staged, *, before_run_ids, attempt_artifact_id
     ):
         component = node.component
-        new_runs = [r for r in self.runs[component] if r not in before_run_ids]
+        runs = self.runs[component]
+        if before_run_ids:
+            if len(before_run_ids) != 1 or before_run_ids[0] not in runs:
+                raise rd.ReceiptError(
+                    f"{component}: incomplete run enumeration; boundary missing"
+                )
+            new_runs = runs[runs.index(before_run_ids[0]) + 1:]
+        else:
+            new_runs = list(runs)
         matching_runs = [
             run_id for run_id in new_runs
             if self.run_attempt_artifact_ids.get(run_id) == attempt_artifact_id
@@ -288,7 +297,9 @@ class FakeRecoverySurface:
         )
 
     def assert_snapshot(self, component, before_run_ids):
-        if list(before_run_ids) != self.runs[component]:
+        runs = self.runs[component]
+        current = [] if not runs else [runs[-1]]
+        if list(before_run_ids) != current:
             raise rd.ReceiptError(f"{component}: continuation snapshot drifted")
 
     def verify(self, node, published):
