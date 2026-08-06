@@ -1577,6 +1577,55 @@ class PypiWorkflowLaneTests(unittest.TestCase):
         self.assertEqual(entry.digest_set, files)
         self.assertEqual(entry.digest, rd.canonical_digest_of_set(files))
 
+    def test_required_mode_defaults_to_stage_only(self) -> None:
+        """Every existing caller passes no mode. A verify-only artifact must
+        still be refused for them, unchanged."""
+        with self.assertRaisesRegex(rd.ReceiptError, "stage-only"):
+            rd.validate_pypi_lane_artifact(
+                pypi_lane_zip(mode="verify-only"),
+                expected_source_sha="c" * 40, expected_version="1.26.36",
+                package="server", pypi_name="aweb")
+
+    def test_verify_only_mode_is_explicit_in_both_directions(self) -> None:
+        """A measurement consumes verify-only, which never continues to
+        publication; the same protocol governs both, so the mode is a parameter
+        rather than two near-copies that can drift."""
+        manifest = rd.validate_pypi_lane_artifact(
+            pypi_lane_zip(mode="verify-only"),
+            expected_source_sha="c" * 40, expected_version="1.26.36",
+            package="server", pypi_name="aweb", required_mode="verify-only")
+        self.assertEqual(manifest["mode"], "verify-only")
+        with self.assertRaisesRegex(rd.ReceiptError, "verify-only"):
+            rd.validate_pypi_lane_artifact(
+                pypi_lane_zip(mode="stage-only"),
+                expected_source_sha="c" * 40, expected_version="1.26.36",
+                package="server", pypi_name="aweb",
+                required_mode="verify-only")
+
+    def test_canonical_set_digest_recomputes_in_every_mode(self) -> None:
+        """The check the near-copy lacked. It must hold for verify-only too,
+        or parameterizing the mode would reintroduce the same hole."""
+        for mode in ("stage-only", "verify-only"):
+            with self.subTest(mode=mode):
+                buffer = io.BytesIO(pypi_lane_zip(mode=mode))
+                with zipfile.ZipFile(buffer) as z:
+                    manifest = json.loads(z.read("manifest.json"))
+                    members = {n: z.read(n) for n in z.namelist()
+                               if n != "manifest.json"}
+                manifest["canonical_set_digest"] = "0" * 64
+                forged = io.BytesIO()
+                with zipfile.ZipFile(forged, "w") as z:
+                    zip_member(z, "manifest.json", json.dumps(manifest))
+                    for name, data in members.items():
+                        zip_member(z, name, data)
+                with self.assertRaisesRegex(
+                    rd.ReceiptError, "canonical set digest"
+                ):
+                    rd.validate_pypi_lane_artifact(
+                        forged.getvalue(), expected_source_sha="c" * 40,
+                        expected_version="1.26.36", package="server",
+                        pypi_name="aweb", required_mode=mode)
+
     def test_duplicate_zip_entries_refuse(self) -> None:
         """ZipFile.read resolves one of N same-named entries; membership by
         name presence would let a duplicate smuggle different bytes."""
