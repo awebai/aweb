@@ -82,6 +82,12 @@ class FakeArchiveTransport:
     def read_tree(self, sha: str) -> dict[str, bytes]:
         return self._tree_at(sha)
 
+    def read_tree_entries(self, sha: str):
+        return {
+            path: ("100644", "blob", data)
+            for path, data in self._tree_at(sha).items()
+        }
+
     def is_ancestor(self, ancestor: str, descendant: str) -> bool:
         cursor: str | None = descendant
         while cursor is not None:
@@ -90,11 +96,16 @@ class FakeArchiveTransport:
             cursor = self.commits[cursor]["parent"]
         return False
 
-    def parent_of(self, sha: str) -> str | None:
+    def parents_of(self, sha: str) -> tuple[str, ...]:
         commit = self.commits.get(sha)
         if commit is None:
             raise rd.ReceiptError(f"archive commit {sha} does not exist")
-        return commit["parent"]
+        parent = commit["parent"]
+        return (parent,) if parent is not None else ()
+
+    def parent_of(self, sha: str) -> str | None:
+        parents = self.parents_of(sha)
+        return parents[0] if parents else None
 
     def append(self, parent: str | None, files: dict[str, bytes], subject: str) -> str:
         if parent != self.head:
@@ -654,6 +665,138 @@ class GitBranchArchiveTests(unittest.TestCase):
             do_archive(store, authority, t2, source=source2,
                        logical_id="receipt:plan:2",
                        recorded_head=first["archive_commit"])
+
+    def test_normal_fast_forward_deletion_cannot_erase_and_rebind(self):
+        """A non-force descendant is not enough: every intervening commit
+        must preserve the exact prior tree before same-ID archival can append."""
+        graph, plan = real_graph_and_plan()
+        plan_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha="a" * 40)
+        logical = f"plan:{'a' * 40}:{frozen_id}"
+        first_body, _ = anchor_bundle(logical, plan_bytes)
+        first_ref = "gh-artifact:awebai/aweb:41:9001"
+        first = archive.archive_sealed(
+            logical_id=logical,
+            kind="anchor-artifact",
+            source=dict(
+                SOURCE,
+                anchor=rd._anchor_name(logical, sha256(plan_bytes))),
+            store=FakeStore({first_ref: first_body}),
+            authority=FakeAuthority({first_ref: sha256(first_body)}),
+            transport=self.transport(),
+            recorded_head=None,
+        )
+
+        attacker = Path(self.tmp.name) / "normal-ff-delete"
+        subprocess.run(
+            [archive.SYSTEM_GIT, "clone", self.remote, str(attacker)],
+            capture_output=True, check=True)
+        subprocess.run(
+            [archive.SYSTEM_GIT, "checkout", "release-receipts"],
+            cwd=attacker, capture_output=True, check=True)
+        for path in (attacker / "receipts").rglob("*"):
+            if path.is_file():
+                path.unlink()
+        for path in sorted(
+            (attacker / "receipts").rglob("*"), reverse=True
+        ):
+            if path.is_dir():
+                path.rmdir()
+        (attacker / "receipts").rmdir()
+        git_env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "normal-ff-attacker",
+            "GIT_AUTHOR_EMAIL": "attacker@example.invalid",
+            "GIT_COMMITTER_NAME": "normal-ff-attacker",
+            "GIT_COMMITTER_EMAIL": "attacker@example.invalid",
+        }
+        subprocess.run(
+            [archive.SYSTEM_GIT, "add", "-A"], cwd=attacker,
+            env=git_env, capture_output=True, check=True)
+        subprocess.run(
+            [archive.SYSTEM_GIT, "commit", "-m", "delete archived body"],
+            cwd=attacker, env=git_env, capture_output=True, check=True)
+        deletion_head = subprocess.run(
+            [archive.SYSTEM_GIT, "rev-parse", "HEAD"], cwd=attacker,
+            capture_output=True, check=True).stdout.decode().strip()
+        subprocess.run(
+            [archive.SYSTEM_GIT, "push", self.remote,
+             "HEAD:refs/heads/release-receipts"],
+            cwd=attacker, capture_output=True, check=True)
+
+        # A ZIP may carry ignored trailing bytes while preserving the same
+        # exact inner sealed plan and logical ID. This gives a genuinely
+        # different outer body that still passes production semantics.
+        replacement_body = first_body + b"normal-ff-rebinding-body"
+        replacement_ref = "gh-artifact:awebai/aweb:41:9002"
+        source = dict(
+            SOURCE,
+            artifact_id="9002",
+            anchor=rd._anchor_name(logical, sha256(plan_bytes)),
+        )
+        transport = self.transport()
+        with self.assertRaisesRegex(
+            rd.ReceiptError, "append-only|deleted|superset"
+        ):
+            archive.archive_sealed(
+                logical_id=logical,
+                kind="anchor-artifact",
+                source=source,
+                store=FakeStore({replacement_ref: replacement_body}),
+                authority=FakeAuthority({
+                    replacement_ref: sha256(replacement_body)}),
+                transport=transport,
+                recorded_head=first["archive_commit"],
+            )
+
+        self.assertEqual(transport.fetch_head(), deletion_head,
+                         "refusal must not append after the deleting head")
+        original_tree = transport.read_tree(first["archive_commit"])
+        original_path = f"receipts/{sha256(first_body)}/body.zip"
+        self.assertEqual(original_tree[original_path], first_body,
+                         "the exact original body remains addressable")
+
+    def test_history_verifier_requires_linear_exact_supersets(self):
+        base = "a" * 40
+        child = "b" * 40
+        other = "c" * 40
+        original = {"receipts/x/body.zip": ("100644", "blob", b"body")}
+
+        class History:
+            def __init__(self, parents, trees):
+                self.parents = parents
+                self.trees = trees
+
+            def parents_of(self, sha):
+                return self.parents[sha]
+
+            def read_tree_entries(self, sha):
+                return self.trees[sha]
+
+        archive._verify_append_only_history(
+            History({child: (base,)}, {
+                base: original,
+                child: {**original, "receipts/y/body.zip": (
+                    "100644", "blob", b"addition")},
+            }), base, child)
+
+        attacks = {
+            "deletion": {},
+            "replacement": {"receipts/x/body.zip": (
+                "100644", "blob", b"different")},
+            "mode": {"receipts/x/body.zip": ("100755", "blob", b"body")},
+            "type": {"receipts/x/body.zip": ("100644", "tree", b"body")},
+        }
+        for label, changed in attacks.items():
+            with self.subTest(label=label):
+                with self.assertRaises(rd.ReceiptError):
+                    archive._verify_append_only_history(
+                        History({child: (base,)}, {
+                            base: original, child: changed}), base, child)
+        with self.assertRaisesRegex(rd.ReceiptError, "linear|parent"):
+            archive._verify_append_only_history(
+                History({child: (base, other)}, {
+                    base: original, child: original}), base, child)
 
     def test_close_removes_temporary_root(self):
         t = archive.GitBranchArchive(remote=self.remote,
