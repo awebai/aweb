@@ -302,6 +302,10 @@ export default function awebPiExtension(pi: ExtensionAPI) {
         if (!dispatcher) return Promise.reject(new Error("Pi wake dispatcher is unavailable"));
         return dispatcher.enqueue(awakening);
       },
+      // Pi's awaited dispatcher resolves only after sendMessage accepts the
+      // injection. Unlike Claude's fire-and-forget notification, that is a real
+      // presentation receipt and is the durable mark/ack boundary.
+      mailAcknowledgment: "after-presentation",
       onStreamState: (state) => {
         if (ctx.hasUI) {
           const theme = ctx.ui.theme;

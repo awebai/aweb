@@ -6,6 +6,7 @@ export {
   AgentEventScheduler,
   reconcileDurableState,
   runDurableReconcile,
+  type MailAcknowledgment,
   type ReconcileEventSink,
   type ReconcileSchedule,
 } from "./reconcile.js";

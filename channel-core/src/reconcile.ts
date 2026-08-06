@@ -46,13 +46,15 @@ export class AgentEventScheduler implements ReconcileEventSink {
   }
 }
 
+export type MailAcknowledgment = "delivery" | "after-presentation" | "manual";
+
 export interface ReconcileSchedule {
   intervalMs?: number;
   maxBackoffMs?: number;
   jitterRatio?: number;
   maxPasses?: number;
   random?: () => number;
-  mailAcknowledgment?: "delivery" | "manual";
+  mailAcknowledgment?: MailAcknowledgment;
 }
 
 interface InboxSnapshot {
