@@ -1265,5 +1265,127 @@ class MeasureSupportTests(unittest.TestCase):
 
 
 
+
+class MeasureSupportBoundaryTests(unittest.TestCase):
+    """The reviewer's three killing substitutions against `.14`.
+
+    Each one keeps every positive orchestration semantic intact and swaps a
+    boundary the entrypoint never pinned: an unrelated component's identity, an
+    unrelated component's evidence root, and an output class that claims to be
+    anchored.
+    """
+
+    staged = staticmethod(MeasureSupportTests.staged)
+
+    def harness(self, tmp, component="channel", writer_component=None):
+        return skew.ChannelPiHarness(
+            resolver=FakeResolver(), journey_factory=FakeJourney,
+            evidence=skew.evidence_writer_for(
+                writer_component or component, Path(tmp)),
+        )
+
+    def measure(self, tmp, *, component="channel", supported=None,
+                published=None, staged=None, harness=None):
+        return skew.measure_support(
+            component=component,
+            staged=staged or {
+                component: self.staged(component, "1.2.3"),
+                "server": self.staged("server", "1.26.35"),
+            },
+            staged_manifest_digest="f" * 64,
+            supported_versions=supported or {
+                component: ["1.2.2"], "server": ["1.26.34"],
+            },
+            published_versions=published or {
+                component: "1.2.2", "server": "1.26.34",
+            },
+            harness=harness if harness is not None else self.harness(
+                tmp, component),
+        )
+
+    # 1. foreign component identity must not ride along in the preimage
+    def test_extra_component_in_support_map_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(rd.ReceiptError, "exactly|extra|unrelated"):
+                self.measure(tmp, supported={
+                    "channel": ["1.2.2"], "pi": ["0.3.1"], "server": ["1.26.34"],
+                })
+
+    def test_extra_component_in_published_map_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(rd.ReceiptError, "exactly|extra|unrelated"):
+                self.measure(tmp, published={
+                    "channel": "1.2.2", "pi": "0.3.1", "server": "1.26.34",
+                })
+
+    def test_extra_staged_entry_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(rd.ReceiptError, "exactly|extra|unrelated"):
+                self.measure(tmp, staged={
+                    "channel": self.staged("channel", "1.2.3"),
+                    "pi": self.staged("pi", "0.3.1"),
+                    "server": self.staged("server", "1.26.35"),
+                })
+
+    def test_missing_component_side_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(rd.ReceiptError):
+                self.measure(tmp, supported={"server": ["1.26.34"]})
+
+    # 2. the evidence root must belong to the component being measured
+    def test_pi_measurement_into_a_channel_evidence_root_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            harness = self.harness(tmp, "pi", writer_component="channel")
+            with self.assertRaisesRegex(rd.ReceiptError, "component|evidence"):
+                self.measure(tmp, component="pi", harness=harness)
+            self.assertFalse(
+                (Path(tmp) / "channel" / "cells").exists(),
+                "the binding must be checked BEFORE any cell effect")
+
+    def test_writer_carries_its_component_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                skew.evidence_writer_for("pi", Path(tmp)).component, "pi")
+
+    # 3. only the exact unanchored output class may be re-identified
+    def mutating_harness(self, tmp, mutation):
+        base = self.harness(tmp, "channel")
+        finish = base.finish_matrix
+
+        def finish_mutated(document):
+            path = finish(document)
+            body = json.loads(Path(path).read_bytes())
+            body.update(mutation)
+            Path(path).write_text(json.dumps(body, sort_keys=True))
+            return path
+
+        base.finish_matrix = finish_mutated
+        return base
+
+    def test_output_claiming_completion_refuses(self):
+        for mutation in (
+            {"status": "complete"},
+            {"completeness": "anchored"},
+            {"support_complete": True},
+            {"anchor": {"artifact": "gh-artifact:awebai/aweb:1:1",
+                        "digest": "d" * 64}},
+            {"schema": "aweb.runtime-support-measurement.v2"},
+        ):
+            with self.subTest(mutation=mutation):
+                with tempfile.TemporaryDirectory() as tmp:
+                    with self.assertRaises(rd.ReceiptError):
+                        self.measure(
+                            tmp, harness=self.mutating_harness(tmp, mutation))
+
+    def test_unmutated_output_still_measures(self):
+        """The control for the class check: identical machinery, honest output."""
+        with tempfile.TemporaryDirectory() as tmp:
+            document = self.measure(tmp, harness=self.mutating_harness(tmp, {}))
+        self.assertEqual(document["status"], "incomplete-unanchored")
+        self.assertIs(document["support_complete"], False)
+        self.assertIsNone(document["anchor"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
