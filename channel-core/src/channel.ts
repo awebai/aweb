@@ -10,6 +10,7 @@ import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import {
   AgentEventScheduler,
   runDurableReconcile,
+  type MailAcknowledgment,
   type ReconcileSchedule,
 } from "./reconcile.js";
 import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
@@ -69,7 +70,7 @@ export interface ChannelLoopOptions {
   self: SelfIdentity;
   signal: AbortSignal;
   onAwakening: (awakening: ChannelAwakening) => Promise<void> | void;
-  mailAcknowledgment?: "delivery" | "manual";
+  mailAcknowledgment?: MailAcknowledgment;
   deliveryStore?: DeliveryStore;
   deliveryStorePath?: string;
   undeliveredLog?: UndeliveredLog;
@@ -681,7 +682,20 @@ async function dispatchMailMessages(
       meta,
       deliveryIntent: "wake",
     });
-    stagePendingMail(dispatched, key, msg.message_id);
+    if (options.mailAcknowledgment === "after-presentation") {
+      await persistDeliveryMark(options.deliveryStore, dispatched, key);
+      try {
+        await ackMessage(options.client, msg.message_id);
+      } catch (error) {
+        // A durable promoted mark remains retry authority, but the in-process
+        // shortcut must not hide the still-unacked server message from the next
+        // reconcile pass.
+        dispatched.delete(key);
+        throw error;
+      }
+    } else {
+      stagePendingMail(dispatched, key, msg.message_id);
+    }
   }
 }
 

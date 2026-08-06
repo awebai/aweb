@@ -116,6 +116,40 @@ describe("mail promotion-ack semantic", () => {
     expect(client.post).toHaveBeenCalledTimes(1);
   });
 
+  test("after-presentation marks and acks only after the awaited callback resolves", async () => {
+    const store = await DeliveryStore.load(join(await mkdtemp(join(tmpdir(), "abbv-presentation-")), "delivered.json"));
+    const messages = [message()];
+    const client = clientFor(messages);
+    const dispatched = new Set<string>();
+    let acceptPresentation: (() => void) | undefined;
+    const accepted = new Promise<void>((resolve) => { acceptPresentation = resolve; });
+    const onAwakening = vi.fn(() => accepted);
+
+    const dispatch = dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        deliveryStore: store,
+        mailAcknowledgment: "after-presentation",
+        onAwakening,
+      },
+      dispatched,
+      event(),
+    );
+    await vi.waitFor(() => expect(onAwakening).toHaveBeenCalledTimes(1));
+
+    expect(client.post).not.toHaveBeenCalled();
+    expect(store.has("mail:c1:m1")).toBe(false);
+    acceptPresentation?.();
+    await dispatch;
+
+    expect(store.has("mail:c1:m1")).toBe(true);
+    expect(client.post).toHaveBeenCalledTimes(1);
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/m1/ack");
+  });
+
   test("two concurrent later lanes claim one durable promotion and ack", async () => {
     const store = await DeliveryStore.load(join(await mkdtemp(join(tmpdir(), "abbv-concurrent-")), "delivered.json"));
     const client = clientFor([message()]);
