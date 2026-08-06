@@ -1013,5 +1013,257 @@ class RegistrationAndJourneyParameterTests(unittest.TestCase):
             self.assertEqual(edge.supported, {"policy": "additive-only"})
 
 
+
+class MeasureSupportTests(unittest.TestCase):
+    """aweb-abbe.14: the Channel and Pi measurement entrypoints.
+
+    Orchestration is freeze -> exact cells -> finish. The mark-read mutation
+    control is the single authoritative control (alice, .14 round 1): it runs
+    once, at finish, outside the support cells. Channel/Pi has no reviewed
+    negative-only version or first-supported floor, and this entrypoint must not
+    invent one.
+    """
+
+    @staticmethod
+    def staged(component, version):
+        files = {f"{component}.artifact": sha(component.encode())}
+        return rd.ReceiptEntry(
+            version=version,
+            digest=rd.canonical_digest_of_set(files),
+            digest_set=files,
+            lane_ref={
+                "artifact": "gh-artifact:awebai/aweb:17:23",
+                "aw_source_sha": "a" * 40,
+                "zip_digest": "sha256:" + "1" * 64,
+            },
+        )
+
+    def measure(self, component, tmp, *, journeys=None, supported=None):
+        def factory():
+            journey = FakeJourney()
+            if journeys is not None:
+                journeys.append(journey)
+            return journey
+
+        evidence = skew.evidence_writer_for(component, Path(tmp))
+        harness = skew.ChannelPiHarness(
+            resolver=FakeResolver(), journey_factory=factory, evidence=evidence,
+        )
+        return skew.measure_support(
+            component=component,
+            staged={
+                component: self.staged(component, "1.2.3"),
+                "server": self.staged("server", "1.26.35"),
+            },
+            staged_manifest_digest="f" * 64,
+            supported_versions=supported or {
+                component: ["1.2.2"], "server": ["1.26.34"],
+            },
+            published_versions={component: "1.2.2", "server": "1.26.34"},
+            harness=harness,
+        )
+
+    def test_measures_both_components_and_reports_incomplete_unanchored(self):
+        for component in ("channel", "pi"):
+            with tempfile.TemporaryDirectory() as tmp:
+                document = self.measure(component, tmp)
+            self.assertEqual(document["status"], "incomplete-unanchored")
+            self.assertEqual(
+                document["completeness"], "unanchored-local-measurement")
+            self.assertEqual(
+                document["supported_versions"],
+                {component: ["1.2.2"], "server": ["1.26.34"]})
+            self.assertTrue(document["measurement_id"])
+
+    def test_control_runs_exactly_once_and_only_after_every_cell(self):
+        journeys = []
+        with tempfile.TemporaryDirectory() as tmp:
+            self.measure("channel", tmp, journeys=journeys)
+        events = [event for journey in journeys for event in journey.events]
+        kinds = [event[0] for event in events]
+        self.assertEqual(kinds.count("control"), 1,
+                         "the mark-read control is the single authoritative "
+                         "control and runs once")
+        control_at = kinds.index("control")
+        self.assertNotIn("request", kinds[control_at:],
+                         "no cell may run after the control")
+        self.assertNotIn("event", kinds[control_at:])
+        self.assertGreater(control_at, 0, "the control runs at finish, not first")
+
+    def test_no_second_pre_cell_control_is_introduced(self):
+        """.14 must not duplicate or move .12's finish-time control."""
+        journeys = []
+        with tempfile.TemporaryDirectory() as tmp:
+            self.measure("pi", tmp, journeys=journeys)
+        first = [journey.events[0][0] for journey in journeys if journey.events]
+        self.assertNotIn("control", first[:-1],
+                         "no control may precede the cells")
+
+    def test_control_evidence_stays_outside_support_cells(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            document = self.measure("channel", tmp)
+            root = Path(tmp) / "channel"
+            cell_reports = sorted((root / "cells").glob("*.json"))
+            self.assertTrue(cell_reports)
+            for path in cell_reports:
+                report = json.loads(path.read_bytes())
+                self.assertNotIn("negative_control", report)
+                self.assertNotIn("control_id", report)
+            self.assertEqual(
+                len(list(root.glob("control-*.json"))), 1,
+                "exactly one control document, beside the cells not inside them")
+        self.assertNotIn("negative_control", document.get("cell_evidence", [{}])[0]
+                         if document.get("cell_evidence") else {})
+
+    def test_channel_and_pi_evidence_roots_are_separate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.measure("channel", tmp)
+            self.measure("pi", tmp)
+            channel_root = Path(tmp) / "channel"
+            pi_root = Path(tmp) / "pi"
+            self.assertTrue(channel_root.is_dir())
+            self.assertTrue(pi_root.is_dir())
+            self.assertNotEqual(
+                {p.name for p in (channel_root / "cells").glob("*.json")},
+                {p.name for p in (pi_root / "cells").glob("*.json")},
+                "each component keeps its own evidence; a shared root lets one "
+                "component's reports satisfy the other's completeness check")
+
+    def test_unknown_component_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(rd.ReceiptError, "channel.*pi|component"):
+                skew.measure_support(
+                    component="skills",
+                    staged={"skills": self.staged("skills", "1.0.0"),
+                            "server": self.staged("server", "1.26.35")},
+                    staged_manifest_digest="f" * 64,
+                    supported_versions={"skills": ["0.9.0"], "server": ["1.26.34"]},
+                    published_versions={"skills": "0.9.0", "server": "1.26.34"},
+                    harness=skew.ChannelPiHarness(
+                        resolver=FakeResolver(), journey=FakeJourney(),
+                        evidence=skew.evidence_writer_for("channel", Path(tmp)),
+                    ),
+                )
+
+    def test_harness_without_the_frozen_lifecycle_refuses(self):
+        class NoLifecycle:
+            pass
+
+        with self.assertRaisesRegex(rd.ReceiptError, "frozen matrix lifecycle"):
+            skew.measure_support(
+                component="channel",
+                staged={"channel": self.staged("channel", "1.2.3"),
+                        "server": self.staged("server", "1.26.35")},
+                staged_manifest_digest="f" * 64,
+                supported_versions={"channel": ["1.2.2"], "server": ["1.26.34"]},
+                published_versions={"channel": "1.2.2", "server": "1.26.34"},
+                harness=NoLifecycle(),
+            )
+
+    def test_tampered_cell_report_refuses_at_finish(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = skew.evidence_writer_for("channel", Path(tmp))
+            harness = skew.ChannelPiHarness(
+                resolver=FakeResolver(), journey_factory=FakeJourney,
+                evidence=evidence,
+            )
+            original = harness.run
+
+            def run_then_tamper(cell):
+                original(cell)
+                victim = sorted((evidence.root / "cells").glob("*.json"))[0]
+                victim.write_bytes(b'{"schema":"tampered"}')
+                harness.run = original
+
+            harness.run = run_then_tamper
+            with self.assertRaises(rd.ReceiptError):
+                skew.measure_support(
+                    component="channel",
+                    staged={"channel": self.staged("channel", "1.2.3"),
+                            "server": self.staged("server", "1.26.35")},
+                    staged_manifest_digest="f" * 64,
+                    supported_versions={"channel": ["1.2.2"],
+                                        "server": ["1.26.34"]},
+                    published_versions={"channel": "1.2.2",
+                                        "server": "1.26.34"},
+                    harness=harness,
+                )
+
+    def test_extra_report_in_the_evidence_root_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = skew.evidence_writer_for("channel", Path(tmp))
+            harness = skew.ChannelPiHarness(
+                resolver=FakeResolver(), journey_factory=FakeJourney,
+                evidence=evidence,
+            )
+            original = harness.run
+            state = {"done": False}
+
+            def run_then_add(cell):
+                original(cell)
+                if not state["done"]:
+                    state["done"] = True
+                    stray = (evidence.root / "cells" /
+                             "matrixzz-cellzz.json")
+                    stray.write_bytes(b'{"schema":"stray"}')
+
+            harness.run = run_then_add
+            with self.assertRaises(rd.ReceiptError):
+                skew.measure_support(
+                    component="channel",
+                    staged={"channel": self.staged("channel", "1.2.3"),
+                            "server": self.staged("server", "1.26.35")},
+                    staged_manifest_digest="f" * 64,
+                    supported_versions={"channel": ["1.2.2"],
+                                        "server": ["1.26.34"]},
+                    published_versions={"channel": "1.2.2",
+                                        "server": "1.26.34"},
+                    harness=harness,
+                )
+
+    def test_candidate_drift_between_staged_and_matrix_refuses(self):
+        """A staged entry that changes after the matrix froze must not measure."""
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = skew.evidence_writer_for("channel", Path(tmp))
+            harness = skew.ChannelPiHarness(
+                resolver=FakeResolver(), journey_factory=FakeJourney,
+                evidence=evidence,
+            )
+            frozen = harness.freeze_matrix
+            drifted = rd.freeze_skew_matrix(
+                rd.RuntimeContractEdge(
+                    a="channel", b="server", journey=skew.CHANNEL_JOURNEY,
+                    artifacts={"a": skew.CLIENT_ARTIFACTS["channel"],
+                               "b": "pypi:aweb"},
+                    direction="both", supported={"policy": "additive-only"},
+                ),
+                moving={"channel", "server"},
+                staged={"channel": self.staged("channel", "9.9.9"),
+                        "server": self.staged("server", "1.26.35")},
+                support={"supported_versions": {"channel": ["1.2.2"],
+                                                "server": ["1.26.34"]}},
+                published_versions={"channel": "1.2.2", "server": "1.26.34"},
+                staged_manifest_digest="f" * 64,
+            )
+
+            def freeze_other(document):
+                return frozen(drifted)
+
+            harness.freeze_matrix = freeze_other
+            with self.assertRaises(rd.ReceiptError):
+                skew.measure_support(
+                    component="channel",
+                    staged={"channel": self.staged("channel", "1.2.3"),
+                            "server": self.staged("server", "1.26.35")},
+                    staged_manifest_digest="f" * 64,
+                    supported_versions={"channel": ["1.2.2"],
+                                        "server": ["1.26.34"]},
+                    published_versions={"channel": "1.2.2",
+                                        "server": "1.26.34"},
+                    harness=harness,
+                )
+
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -664,6 +664,33 @@ measure-release-skew-cli-server:
 		--negative-server "$(or $(NEGATIVE_SERVER),1.26.31)" \
 		--output "$(OUTPUT)"
 
+# Channel and Pi measure separately: each edge keeps its own frozen matrix and
+# its own evidence root, so one component's reports can never satisfy the
+# other's completeness inventory. Neither declares a version floor - Channel/Pi
+# has no reviewed negative-only version, and the mark-read mutation control at
+# finish is its known-red evidence. The output is incomplete-unanchored and
+# still requires independent anchoring before its identity may be declared in
+# release/components.toml.
+measure-release-channel-skew:
+	python3 scripts/release_channel_pi_skew.py measure-channel \
+		--staged-manifest "$(STAGED_MANIFEST)" \
+		$(foreach v,$(SUPPORTED_CHANNEL),--supported-channel "$(v)") \
+		$(foreach v,$(SUPPORTED_SERVER),--supported-server "$(v)") \
+		--published-channel-latest "$(PUBLISHED_CHANNEL_LATEST)" \
+		--published-server-latest "$(PUBLISHED_SERVER_LATEST)" \
+		$(if $(EVIDENCE_ROOT),--evidence-root "$(EVIDENCE_ROOT)") \
+		--output "$(OUTPUT)"
+
+measure-release-pi-skew:
+	python3 scripts/release_channel_pi_skew.py measure-pi \
+		--staged-manifest "$(STAGED_MANIFEST)" \
+		$(foreach v,$(SUPPORTED_PI),--supported-pi "$(v)") \
+		$(foreach v,$(SUPPORTED_SERVER),--supported-server "$(v)") \
+		--published-pi-latest "$(PUBLISHED_PI_LATEST)" \
+		--published-server-latest "$(PUBLISHED_SERVER_LATEST)" \
+		$(if $(EVIDENCE_ROOT),--evidence-root "$(EVIDENCE_ROOT)") \
+		--output "$(OUTPUT)"
+
 test-release-persisted-state-skew:
 	python3 scripts/e2e/test_release_persisted_state_skew.py
 
