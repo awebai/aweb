@@ -1189,6 +1189,20 @@ def recovery_run_marker(component: str, attempt_artifact_id: str) -> str:
     )
 
 
+GH_API_DEFAULT_TIMEOUT = 60.0
+
+
+def _default_gh_api(path: str) -> bytes:
+    """Single-argument default for the artifact store/authority/run reader.
+
+    _run_gh_api takes a required keyword-only timeout, but those consumers call
+    their injected api with the path alone -- an injected fake has that
+    signature too. Storing _run_gh_api directly therefore raised TypeError on
+    every real use while every test passed, because tests inject fakes.
+    """
+    return _run_gh_api(path, timeout=GH_API_DEFAULT_TIMEOUT)
+
+
 def _run_gh_api(path: str, *, timeout: float) -> bytes:
     import subprocess
 
@@ -1283,7 +1297,7 @@ class GithubArtifactStore:
 
     def __init__(self, api=None, *, repo: str = "awebai/aw",
                  workflow_path: str = AW_LANE_WORKFLOW_PATH):
-        self._api = api or _run_gh_api
+        self._api = api or _default_gh_api
         self._repo = repo
         self._workflow_path = workflow_path
 
@@ -1318,7 +1332,7 @@ class GithubArtifactDigestAuthority:
 
     def __init__(self, api=None, *, repo: str = "awebai/aw",
                  workflow_path: str = AW_LANE_WORKFLOW_PATH):
-        self._api = api or _run_gh_api
+        self._api = api or _default_gh_api
         self._repo = repo
         self._workflow_path = workflow_path
 
@@ -1342,7 +1356,7 @@ class GithubAnchorTransport:
     workflow. Inputs reach the dispatch as literal fields, never shell."""
 
     def __init__(self, api=None, repo: str = ANCHOR_REPO):
-        self._api = api or _run_gh_api
+        self._api = api or _default_gh_api
         self.repo = repo
 
     def list_artifacts(self) -> list[dict]:
