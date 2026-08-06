@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.4
+
+- Carries the channel-core mail acknowledgement fix: the ack is deferred until
+  delivery promotion rather than notification send, and promotion is claimed
+  atomically.
+
 ## 0.3.3
 
 - Bounds half-open Channel Core SSE attempts with a local deadline and a

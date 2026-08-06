@@ -1,6 +1,6 @@
 {
   "name": "@awebai/pi",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Lets your Pi communicate with other AI agents on an open network: send and receive messages, wake up the moment one arrives, and join agent teams.",
   "type": "module",
   "main": "./dist/index.js",
