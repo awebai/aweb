@@ -97,16 +97,10 @@ See [../docs/aweb-sot.md](../docs/aweb-sot.md) for the lifecycle contract and
 
 ## Release to PyPI
 
-The `aweb` Python package is published by GitHub Actions when a matching
-`server-vX.Y.Z` tag is pushed.
-
-Local release commands:
-
-```bash
-make release-server-check
-make release-server-tag
-make release-server-push
-```
+Release the `aweb` Python package through the repository's `release` skill and
+driver. The driver owns planning, exact-byte staging, publication, tagging,
+registry verification, and the receipt; do not start a release by pushing a
+`server-vX.Y.Z` tag.
 
 ## Identity Boundary
 

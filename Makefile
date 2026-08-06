@@ -12,9 +12,8 @@
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-plan release-run release-receipt test-release-driver test-release-runnerless test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	release-plan release-run release-receipt test-release-driver test-release-runnerless test-release-repository-measurement test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	release-all-check \
-	publish-skills \
 	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
@@ -92,12 +91,14 @@ help:
 	@echo "  awid-prod-migrate   Apply pending migrations to awid prod"
 	@echo ""
 	@echo "  RELEASING - one driver owns every artifact:"
-	@echo "    release-plan                        compute and freeze the plan"
-	@echo "    release-run PLAN_ID=.. PLAN_ARTIFACT_ID=.."
-	@echo "                                        stage once, inspect exact bytes,"
-	@echo "                                        publish those bytes, tag, verify, seal"
+	@echo "    Hosted:"
+	@echo "      release-plan AUTHORITY=github-workflow-artifacts"
+	@echo "      release-run AUTHORITY=github-workflow-artifacts PLAN_ID=.. PLAN_ARTIFACT_ID=.. STAGE_ARTIFACT=.."
+	@echo "    Runnerless (explicit human risk acceptance):"
+	@echo "      release-plan AUTHORITY=local-runnerless STORE_ROOT=.."
+	@echo "      release-run AUTHORITY=local-runnerless STORE_ROOT=.. PLAN_ID=.. PLAN_ARTIFACT_ID=.. LOCAL_ADAPTER='component@sha=/abs/adapter' LOCAL_RISK_AUTHORIZATION=.."
 	@echo "    release-receipt                     read a sealed receipt"
-	@echo "    See the 'release' skill for the hazards the driver cannot state:"
+	@echo "    See the 'release' skill for exact argument forms and hazards:"
 	@echo "    publication is not delivery, publication is immutable."
 	@echo ""
 	@echo "  release-all-check   Validate ALL products before release"
@@ -106,14 +107,12 @@ help:
 	@echo "    release-server-check, release-channel-check, release-awid-check,"
 	@echo "    release-a2a-gateway-check, release-cli-version-check"
 	@echo ""
-	@echo "  RETIRED - the -tag/-push pairs below no longer publish anything."
-	@echo "  No publishing workflow triggers on a tag; they only move refs."
-	@echo "  Use release-run instead. (aw-release.yml still tag-syncs cli/go"
-	@echo "  to awebai/aw, which is legacy.) They remain only as the fallback"
-	@echo "  while G5 measurements land; do not start a release with them:"
+	@echo "  RETIRED for driver-owned components - these pairs only move refs:"
 	@echo "    release-server-tag/-push, release-channel-tag/-push,"
 	@echo "    release-awid-tag/-push, release-awid-pypi-tag/-push,"
-	@echo "    release-a2a-gateway-tag/-push, release-cli-tag/-push"
+	@echo "    release-cli-tag/-push"
+	@echo "  Use release-run instead. The aw sync and A2A gateway still have"
+	@echo "  legacy tag paths outside this graph; do not generalize them."
 	@echo ""
 	@echo "  release-awid-site                     deploy awid landing page"
 	@echo "  clean        Remove all build artifacts and caches"
@@ -512,7 +511,7 @@ release-server-check:
 
 release-server-tag:
 	@git rev-parse --verify "server-v$(SERVER_VERSION)" >/dev/null 2>&1 && (echo "Tag server-v$(SERVER_VERSION) already exists."; exit 1) || true
-	git add server/pyproject.toml server/uv.lock Makefile .claude/skills/release-pypi/SKILL.md server/README.md
+	git add server/pyproject.toml server/uv.lock Makefile server/README.md
 	git diff --cached --quiet || git commit -m "release: aweb server $(SERVER_VERSION)"
 	git tag "server-v$(SERVER_VERSION)"
 	@echo "Created tag server-v$(SERVER_VERSION)."
@@ -646,6 +645,9 @@ release-receipt:
 test-release-runnerless:
 	python3 scripts/e2e/test_release_runnerless.py
 
+test-release-repository-measurement:
+	python3 scripts/e2e/test_release_repository_measurement.py
+
 test-release-driver: test-release-adopted-preplan test-release-channel-pi-skew test-release-skew-cli-server test-release-receipt-archive test-release-persisted-state-skew test-release-federation-skew
 	python3 scripts/e2e/test_release_driver.py
 	python3 scripts/e2e/test_release_driver_cli.py
@@ -743,49 +745,6 @@ release-cli-tag: release-cli-version-check
 
 release-cli-push: release-cli-version-check
 	git push origin aw-v$(CLI_VERSION)
-
-# ── Claude skills release (bump + tag + push; GH Actions publishes) ─
-
-# Usage: make publish-skills [BUMP=patch|minor|major]
-# Bumps packages/claude-skills/package.json, syncs the plugin.json
-# version, commits, tags skills-vX.Y.Z, pushes main and tag.
-# The skills-release.yml workflow runs on the pushed tag and runs
-# `npm publish --access public` against @awebai/claude-skills.
-#
-# Pre-flight: working tree clean, on main, in sync with origin/main.
-# Contract smoke: `npm pack --dry-run` succeeds (catches the
-# sync-skills "missing canonical source" foot-gun before the tag fires).
-# Hestia owns this lane (release-channel-skill conventions).
-publish-skills: BUMP ?= patch
-publish-skills:
-	@git diff --quiet || (echo "ERROR: working tree has unstaged changes"; exit 1)
-	@git diff --cached --quiet || (echo "ERROR: staged changes pending"; exit 1)
-	@test "$$(git branch --show-current)" = "main" || (echo "ERROR: not on main"; exit 1)
-	git fetch origin
-	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" || \
-		(echo "ERROR: local main is not in sync with origin/main"; exit 1)
-	cd packages/claude-skills && npm pack --dry-run
-	cd packages/claude-skills && npm version $(BUMP) --no-git-tag-version
-	cd packages/claude-skills && npm run sync-plugin-version
-	@NEW_VERSION=$$(node -p "require('./packages/claude-skills/package.json').version") && \
-		git add packages/claude-skills/package.json packages/claude-skills/.claude-plugin/plugin.json && \
-		git commit -m "release: @awebai/claude-skills $$NEW_VERSION" && \
-		git tag "skills-v$$NEW_VERSION" && \
-		echo "Created tag skills-v$$NEW_VERSION."
-	git push origin main
-	@NEW_VERSION=$$(node -p "require('./packages/claude-skills/package.json').version") && \
-		git push origin "skills-v$$NEW_VERSION" && \
-		echo "" && \
-		echo "  Pushed skills-v$$NEW_VERSION. GH Actions will:" && \
-		echo "    - publish @awebai/claude-skills@$$NEW_VERSION to npm" && \
-		echo "    - attach 5 ZIPs to the GH Release for Claude.ai users" && \
-		echo "" && \
-		echo "  After GH Actions completes:" && \
-		echo "    1) Bump awebai/claude-plugins/.claude-plugin/marketplace.json" && \
-		echo "       version field to $$NEW_VERSION so /plugin update finds the" && \
-		echo "       new content." && \
-		echo "    2) Claude.ai users: ZIPs at" && \
-		echo "       https://github.com/awebai/aweb/releases/download/skills-v$$NEW_VERSION/{aweb-coordination,aweb-messaging,aweb-team-membership,aweb-bootstrap,aweb-identity}.zip"
 
 # ── Unified release ──────────────────────────────────────────────────
 
@@ -893,7 +852,7 @@ check-ship-invocation:
 	esac
 	@if [ -n "$$CLI_VERSION" ]; then \
 		echo "ERROR: ship refuses CLI_VERSION from the environment; the gate derives the version itself."; \
-		echo "       Intentional version bumps go through release-cli-tag."; \
+		echo "       Intentional version bumps go through the release driver."; \
 		exit 1; \
 	fi
 

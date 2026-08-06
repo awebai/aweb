@@ -32,17 +32,10 @@ discovers them automatically.
 
 ## Publish (maintainers)
 
-```bash
-cd packages/claude-skills
-npm publish --access public
-```
-
-`prepack` runs `sync-skills` first, so the published tarball contains current
-canonical bodies. Verify with `npm pack --dry-run` before publishing.
-
-After publish, bump the `version` in the marketplace entry at
-[`awebai/claude-plugins`](https://github.com/awebai/claude-plugins) and commit
-that change.
+Use the repository's `release` skill and driver. It stages the package once,
+inspects and publishes those exact bytes, and treats the marketplace pointer as
+a required graph edge rather than a manual follow-up. Do not run `npm publish`
+or bump the marketplace entry as a separate procedure.
 
 ## Versioning
 
