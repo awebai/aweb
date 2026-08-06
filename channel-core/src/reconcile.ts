@@ -13,6 +13,39 @@ export interface ReconcileEventSink {
   enqueue(event: AgentEvent): Promise<void>;
 }
 
+/** One mail lane and one lane per chat session, shared by stream and sweep. */
+export class AgentEventScheduler implements ReconcileEventSink {
+  private readonly lanes = new Map<string, Promise<void>>();
+  private readonly pending = new Set<Promise<void>>();
+
+  constructor(
+    private readonly dispatch: (event: AgentEvent) => Promise<void>,
+    private readonly log: (message: string) => void = () => {},
+  ) {}
+
+  enqueue(event: AgentEvent): Promise<void> {
+    const lane = eventDispatchLane(event);
+    const previous = lane ? this.lanes.get(lane) : undefined;
+    const job = (previous || Promise.resolve())
+      .then(() => this.dispatch(event))
+      .catch((error) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.log(`aweb: could not process an incoming event: ${detail}; it remains pending`);
+      });
+    this.pending.add(job);
+    if (lane) this.lanes.set(lane, job);
+    void job.finally(() => {
+      this.pending.delete(job);
+      if (lane && this.lanes.get(lane) === job) this.lanes.delete(lane);
+    });
+    return job;
+  }
+
+  async drain(): Promise<void> {
+    await Promise.all([...this.pending]);
+  }
+}
+
 export interface ReconcileSchedule {
   intervalMs?: number;
   maxBackoffMs?: number;
@@ -141,6 +174,17 @@ export async function runDurableReconcile(
       const detail = error instanceof Error ? error.message : String(error);
       log(`aweb: durable reconcile failed: ${detail}; retrying with bounded backoff`);
     }
+  }
+}
+
+function eventDispatchLane(event: AgentEvent): string {
+  switch (event.type) {
+    case "mail_message":
+      return "mail";
+    case "chat_message":
+      return `chat:${event.session_id || event.conversation_id || "unknown"}`;
+    default:
+      return "";
   }
 }
 

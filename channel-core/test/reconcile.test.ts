@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { APIClient } from "../src/api/client.js";
 import type { AgentEvent } from "../src/api/events.js";
 import {
+  AgentEventScheduler,
   RECONCILE_INTERVAL_MS,
   reconcileDurableState,
   runDurableReconcile,
@@ -23,6 +24,43 @@ describe("durable communication reconcile", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  test("serializes one mail lane and each chat lane without blocking other events", async () => {
+    let releaseMail: (() => void) | undefined;
+    let releaseChat: (() => void) | undefined;
+    const started: string[] = [];
+    const scheduler = new AgentEventScheduler(async (event) => {
+      const id = event.message_id || event.signal_id || "";
+      started.push(id);
+      if (id === "mail-1") {
+        await new Promise<void>((resolve) => { releaseMail = resolve; });
+      }
+      if (id === "chat-1") {
+        await new Promise<void>((resolve) => { releaseChat = resolve; });
+      }
+    });
+
+    const jobs = [
+      scheduler.enqueue({ type: "mail_message", message_id: "mail-1" }),
+      scheduler.enqueue({ type: "mail_message", message_id: "mail-2" }),
+      scheduler.enqueue({ type: "chat_message", session_id: "session-a", message_id: "chat-1" }),
+      scheduler.enqueue({ type: "chat_message", session_id: "session-a", message_id: "chat-2" }),
+      scheduler.enqueue({ type: "control_interrupt", signal_id: "control-1" }),
+    ];
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(started).toEqual(expect.arrayContaining(["mail-1", "chat-1", "control-1"]));
+    expect(started).not.toContain("mail-2");
+    expect(started).not.toContain("chat-2");
+
+    releaseMail?.();
+    releaseChat?.();
+    await Promise.all(jobs);
+    await scheduler.drain();
+    expect(started.indexOf("mail-2")).toBeGreaterThan(started.indexOf("mail-1"));
+    expect(started.indexOf("chat-2")).toBeGreaterThan(started.indexOf("chat-1"));
   });
 
   test("fetches mail and chat independently and drains bounded backlog passes", async () => {
