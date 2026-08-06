@@ -235,13 +235,17 @@ class FakeRecoverySurface:
         }
         self.run_conclusions[run_id] = "success"
 
-    def publish_recovery(self, node, staged, *, before_run_ids):
+    def publish_recovery(
+        self, node, staged, *, before_run_ids, attempt_artifact_id
+    ):
         component = node.component
         self.publish_calls.append(component)
         self.assert_snapshot(component, before_run_ids)
+        mode = self.publish_mode.get(component, "success")
+        if mode == "dispatch-failure":
+            raise rd.ReceiptError(f"{component}: dispatch failed before a run existed")
         run_id = f"continuation-{component}-{len(self.runs[component]) + 1}"
         self.runs[component].append(run_id)
-        mode = self.publish_mode.get(component, "success")
         if mode == "failure":
             self.run_conclusions[run_id] = "failure"
             raise rd.ReceiptError(f"{component}: continuation failed")
@@ -251,9 +255,12 @@ class FakeRecoverySurface:
         return rd.RecoveryContinuation(
             entry=self._entry(component, phase="published"),
             continuation_run_id=run_id,
+            attempt_artifact_id=attempt_artifact_id,
         )
 
-    def recover_recovery_attempt(self, node, staged, *, before_run_ids):
+    def recover_recovery_attempt(
+        self, node, staged, *, before_run_ids, attempt_artifact_id
+    ):
         component = node.component
         new_runs = [r for r in self.runs[component] if r not in before_run_ids]
         if not new_runs:
@@ -269,6 +276,7 @@ class FakeRecoverySurface:
         return rd.RecoveryContinuation(
             entry=observed.entry,
             continuation_run_id=run_id,
+            attempt_artifact_id=attempt_artifact_id,
         )
 
     def assert_snapshot(self, component, before_run_ids):
@@ -664,9 +672,10 @@ class AdoptedPreplanStateMachineTests(unittest.TestCase):
     def test_current_authorization_attempt_is_adopted_amid_older_history(self):
         handle = self.prepare()
         first = self.authorization(handle, authorization_id="decision-one")
-        self.surface.publish_mode["channel"] = "failure"
+        self.surface.publish_mode["channel"] = "dispatch-failure"
         with self.assertRaises(rd.ReceiptError):
             self.execute(handle, first)
+        self.assertEqual(self.surface.runs["channel"], [])
 
         second = self.authorization(handle, authorization_id="decision-two")
         second["issued_at"] = "2026-08-06T00:00:02Z"
@@ -674,9 +683,29 @@ class AdoptedPreplanStateMachineTests(unittest.TestCase):
         with self.assertRaises(SimulatedCrash):
             self.execute(handle, second)
         self.assertEqual(self.surface.publish_calls, ["channel", "channel"])
+        attempts = rd._attempts(
+            handle, self.store, self.authority, "channel"
+        )
+        self.assertEqual(
+            [document["attempt_ordinal"] for _, document in attempts],
+            [1, 2],
+        )
+        self.assertEqual(
+            attempts[1][1]["predecessor_attempt_artifact_ids"],
+            [attempts[0][0]],
+        )
 
         resumed_handle = self.prepare()
         self.surface.publish_mode["channel"] = "success"
+        with self.assertRaises(rd.ReceiptError) as caught:
+            self.execute(resumed_handle, first)
+        self.assertIn("superseded", str(caught.exception))
+        self.assertEqual(
+            self.surface.publish_calls,
+            ["channel", "channel"],
+            "superseded A must not adopt B's run or dispatch another effect",
+        )
+
         receipt = self.execute(resumed_handle, second)
         self.assertEqual(
             self.surface.publish_calls,
@@ -686,7 +715,7 @@ class AdoptedPreplanStateMachineTests(unittest.TestCase):
         self.assertEqual(receipt.document["authorization_id"], "decision-two")
         self.assertEqual(
             receipt.document["components"]["channel"]["continuation_run_id"],
-            "continuation-channel-2",
+            "continuation-channel-1",
         )
 
     def test_failure_stops_other_lane_and_same_authorization_is_spent(self):

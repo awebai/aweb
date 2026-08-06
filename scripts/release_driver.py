@@ -2175,7 +2175,8 @@ class _WorkflowLaneBase:
         return self._wait_for_continuation(before)
 
     def publish_recovery(
-        self, node, staged: "ReceiptEntry", *, before_run_ids
+        self, node, staged: "ReceiptEntry", *, before_run_ids,
+        attempt_artifact_id,
     ) -> "RecoveryContinuation":
         if self.observe(node, staged) is not None:
             raise ReceiptError(
@@ -2191,11 +2192,14 @@ class _WorkflowLaneBase:
                 f"{node.component}: successful continuation left no exact state"
             )
         return RecoveryContinuation(
-            entry=observed, continuation_run_id=run_id
+            entry=observed,
+            continuation_run_id=run_id,
+            attempt_artifact_id=attempt_artifact_id,
         )
 
     def recover_recovery_attempt(
-        self, node, staged: "ReceiptEntry", *, before_run_ids
+        self, node, staged: "ReceiptEntry", *, before_run_ids,
+        attempt_artifact_id,
     ) -> "RecoveryContinuation | None":
         new_runs = self._new_continuation_runs(before_run_ids)
         if not new_runs:
@@ -2218,7 +2222,9 @@ class _WorkflowLaneBase:
                 f"{node.component}: successful attempted run has no exact effect"
             )
         return RecoveryContinuation(
-            entry=observed, continuation_run_id=run_id
+            entry=observed,
+            continuation_run_id=run_id,
+            attempt_artifact_id=attempt_artifact_id,
         )
 
     def publish(self, node, staged: "ReceiptEntry") -> "ReceiptEntry":
@@ -2488,11 +2494,14 @@ class NpmWorkflowLane(_WorkflowLaneBase):
             return observed
         return super().publish(node, staged)
 
-    def publish_recovery(self, node, staged, *, before_run_ids):
+    def publish_recovery(
+        self, node, staged, *, before_run_ids, attempt_artifact_id
+    ):
         # Delivery remains a pre-effect gate on the dedicated recovery path.
         self._require_valid_proof(node.component)
         return super().publish_recovery(
-            node, staged, before_run_ids=before_run_ids
+            node, staged, before_run_ids=before_run_ids,
+            attempt_artifact_id=attempt_artifact_id,
         )
 
     def _read_adoptable_stage(self, node) -> "AdoptedStageEntry":
@@ -2631,14 +2640,20 @@ class WorkflowLanes:
     def continuation_snapshot(self, node):
         return self._lanes[node.component].continuation_snapshot(node)
 
-    def publish_recovery(self, node, staged, *, before_run_ids):
+    def publish_recovery(
+        self, node, staged, *, before_run_ids, attempt_artifact_id
+    ):
         return self._lanes[node.component].publish_recovery(
-            node, staged, before_run_ids=before_run_ids
+            node, staged, before_run_ids=before_run_ids,
+            attempt_artifact_id=attempt_artifact_id,
         )
 
-    def recover_recovery_attempt(self, node, staged, *, before_run_ids):
+    def recover_recovery_attempt(
+        self, node, staged, *, before_run_ids, attempt_artifact_id
+    ):
         return self._lanes[node.component].recover_recovery_attempt(
-            node, staged, before_run_ids=before_run_ids
+            node, staged, before_run_ids=before_run_ids,
+            attempt_artifact_id=attempt_artifact_id,
         )
 
 
@@ -3783,6 +3798,7 @@ class ObservedRecoveryState:
 class RecoveryContinuation:
     entry: ReceiptEntry
     continuation_run_id: str
+    attempt_artifact_id: str
 
 
 @dataclass
@@ -4419,6 +4435,7 @@ def _validate_attempt_record(handle, artifact_id, document, store, authority):
             "schema", "provenance", "exception_digest", "recovery_plan_id",
             "adopted_manifest_id", "component", "authorization_id",
             "authorization_artifact_id", "authorization_digest", "action",
+            "attempt_ordinal", "predecessor_attempt_artifact_ids",
             "continuation_run_ids_before", "public_state_before",
         },
         f"attempt {artifact_id}",
@@ -4462,6 +4479,23 @@ def _validate_attempt_record(handle, artifact_id, document, store, authority):
     }
     if document["action"] != expected_action:
         raise ReceiptError(f"{artifact_id}: attempt action identity differs")
+    ordinal = document["attempt_ordinal"]
+    predecessors = document["predecessor_attempt_artifact_ids"]
+    attempt_prefix = _record_prefix("attempt", handle, component)
+    if not isinstance(ordinal, int) or isinstance(ordinal, bool) or ordinal < 1:
+        raise ReceiptError(f"{artifact_id}: invalid attempt ordinal")
+    if (
+        not isinstance(predecessors, list)
+        or predecessors != sorted(predecessors)
+        or len(predecessors) != len(set(predecessors))
+        or any(
+            not isinstance(item, str)
+            or not item.startswith(attempt_prefix)
+            or item == artifact_id
+            for item in predecessors
+        )
+    ):
+        raise ReceiptError(f"{artifact_id}: invalid predecessor attempt set")
     before = document["continuation_run_ids_before"]
     if (
         not isinstance(before, list)
@@ -4561,6 +4595,19 @@ def _attempts(handle, store, authority, component: str,
         _validate_attempt_record(
             handle, artifact_id, document, store, authority
         )
+    records.sort(key=lambda item: (item[1]["attempt_ordinal"], item[0]))
+    predecessors: list[str] = []
+    for ordinal, (artifact_id, document) in enumerate(records, start=1):
+        if (
+            document["attempt_ordinal"] != ordinal
+            or document["predecessor_attempt_artifact_ids"]
+            != sorted(predecessors)
+        ):
+            raise ReceiptError(
+                f"{artifact_id}: attempt order/predecessor binding is not a "
+                "single immutable history"
+            )
+        predecessors.append(artifact_id)
     if authorization_digest is not None:
         records = [
             item for item in records
@@ -4657,6 +4704,7 @@ def _recover_existing_attempt(
         continuation = lanes.recover_recovery_attempt(
             node, handle.staged[component],
             before_run_ids=attempt["continuation_run_ids_before"],
+            attempt_artifact_id=attempt_id,
         )
     except ReceiptError as exc:
         raise ReceiptError(
@@ -4675,6 +4723,10 @@ def _recover_existing_attempt(
         )
     if not isinstance(continuation, RecoveryContinuation):
         raise ReceiptError(f"{component}: recovery adapter returned no run identity")
+    if continuation.attempt_artifact_id != attempt_id:
+        raise ReceiptError(
+            f"{component}: recovered run evidence belongs to a different attempt"
+        )
     if continuation.entry != observed.entry:
         raise ReceiptError(
             f"{component}: recovered run entry differs from public observation"
@@ -4784,6 +4836,11 @@ def execute_adopted_preplan_recovery(
             raise ReceiptError(
                 f"{component}: authorization has multiple attempt records"
             )
+        if current and current[0][0] != attempts[-1][0]:
+            raise ReceiptError(
+                f"{component}: current authorization attempt was irrevocably "
+                "superseded by a later anchored attempt"
+            )
         if observed.public == _expected_final_public(handle.exception, component):
             if len(current) != 1:
                 raise ReceiptError(
@@ -4888,6 +4945,9 @@ def execute_adopted_preplan_recovery(
             raise ReceiptError(
                 f"{component}: continuation snapshot is not a unique run-id list"
             )
+        predecessor_attempts = _attempts(
+            handle, store, authority, component
+        )
         attempt = {
             "schema": "aweb.release.adopted-preplan-attempt.v1",
             "provenance": "adopted-preplan",
@@ -4899,6 +4959,10 @@ def execute_adopted_preplan_recovery(
             "authorization_artifact_id": authorization_artifact_id,
             "authorization_digest": authorization_digest,
             "action": actions[component],
+            "attempt_ordinal": len(predecessor_attempts) + 1,
+            "predecessor_attempt_artifact_ids": sorted(
+                artifact_id for artifact_id, _ in predecessor_attempts
+            ),
             "continuation_run_ids_before": list(before),
             "public_state_before": handle.exception.canonical[
                 "observed_partial_state"
@@ -4914,7 +4978,8 @@ def execute_adopted_preplan_recovery(
         # This is the sole outward continuation call. The authority already
         # contains exact intent and the pre-dispatch run snapshot.
         continuation = lanes.publish_recovery(
-            node, handle.staged[component], before_run_ids=before
+            node, handle.staged[component], before_run_ids=before,
+            attempt_artifact_id=attempt_id,
         )
         if not isinstance(continuation, RecoveryContinuation):
             raise ReceiptError(
@@ -4924,6 +4989,11 @@ def execute_adopted_preplan_recovery(
             continuation.continuation_run_id,
             f"{component} continuation run id",
         )
+        if continuation.attempt_artifact_id != attempt_id:
+            raise ReceiptError(
+                f"{component}: continuation run evidence belongs to a "
+                "different attempt"
+            )
         observed = _observe_recovery_component(
             lanes, node, handle.staged[component], handle.exception, graph
         )
