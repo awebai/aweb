@@ -549,7 +549,16 @@ class FileEvidenceWriter:
         # self-describing: two components can be handed the same directory, and
         # the completeness inventory would then read one component's reports as
         # the other's. Carrying the identity lets the measurement bind it.
-        self.component = component
+        # The component is NOT a caller label: it is the resolved root's own
+        # final segment. A label lets root/channel claim to be Pi, which is
+        # exactly the mislabelling a per-component root exists to prevent.
+        derived = self.root.name
+        if component is not None and component != derived:
+            raise rd.ReceiptError(
+                f"evidence root {self.root} is {derived!r}, not the claimed "
+                f"{component!r}; the root's identity is its final segment"
+            )
+        self.component = derived
         self.root.mkdir(parents=True, exist_ok=True)
 
     def write_path(self, path: Path, document: dict) -> Path:
@@ -966,14 +975,10 @@ class SubprocessChannelPiJourney:
 
 
 def _factory(component: str):
-    configured = os.getenv("AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR")
-    base = Path(configured or (
-        Path(tempfile.gettempdir()) / "aweb-channel-pi-skew-evidence"
-    ))
     return ChannelPiHarness(
         resolver=ArtifactResolver(),
         journey_factory=lambda: SubprocessChannelPiJourney(component),
-        evidence=FileEvidenceWriter(base / component),
+        evidence=evidence_writer_for(component),
     )
 
 
@@ -1417,6 +1422,30 @@ def _require_unanchored_measurement(measurement, *, matrix_id: str) -> None:
         )
 
 
+ENVELOPE_SCHEMA = "aweb.runtime-support-measurement-envelope.v1"
+
+
+def _require_child_identity(measurement: dict) -> str:
+    """The child's own canonical identity must already be correct.
+
+    aggregate_frozen_matrix computes measurement_id over the document without
+    that key. Recomputing it here would accept any coherent post-finish edit;
+    verifying it means a mutated child is refused before anything wraps it.
+    """
+    recorded = measurement.get("measurement_id")
+    if not isinstance(recorded, str) or not recorded:
+        raise rd.ReceiptError(
+            "channel/Pi measurement output carries no canonical identity"
+        )
+    body = {k: v for k, v in measurement.items() if k != "measurement_id"}
+    if recorded != rd.canonical_json_digest(body):
+        raise rd.ReceiptError(
+            "channel/Pi measurement output does not match its own canonical "
+            "identity; the document was changed after it was finished"
+        )
+    return recorded
+
+
 def _contract_for(component: str) -> rd.RuntimeContractEdge:
     return rd.RuntimeContractEdge(
         a=component,
@@ -1482,6 +1511,12 @@ def measure_support(
     # The evidence root must belong to the component being measured, checked
     # before freeze so no cell effect lands in a foreign root.
     evidence_component = getattr(harness, "evidence_component", None)
+    evidence_root = getattr(getattr(harness, "_evidence", None), "root", None)
+    if evidence_root is not None and Path(evidence_root).name != component:
+        raise rd.ReceiptError(
+            f"channel/Pi measurement of {component} was given evidence root "
+            f"{evidence_root}, whose identity is {Path(evidence_root).name!r}"
+        )
     if evidence_component != component:
         raise rd.ReceiptError(
             f"channel/Pi measurement of {component} was given a lifecycle whose "
@@ -1502,9 +1537,37 @@ def measure_support(
         harness.run(item)
     aggregate_path = finish(matrix)
 
-    measurement = json.loads(Path(aggregate_path).read_bytes())
+    measurement_bytes = Path(aggregate_path).read_bytes()
+    measurement = json.loads(measurement_bytes)
     _require_unanchored_measurement(measurement, matrix_id=matrix["matrix_id"])
-    measurement.update({
+    child_id = _require_child_identity(measurement)
+
+    # Self-consistency is not enough: a coherent tamper recomputes the child's
+    # identity too. The authority is the EVIDENCE, so the aggregate is derived
+    # again from the frozen matrix and the written cell/control records, and
+    # what finish returned must equal it exactly.
+    root = Path(evidence_root)
+    matrix_id = matrix["matrix_id"]
+    independent = aggregate_frozen_matrix(
+        root / f"matrix-{matrix_id}.json",
+        root,
+        control_path=root / f"control-{matrix_id}.json",
+    )
+    if measurement != independent:
+        raise rd.ReceiptError(
+            "channel/Pi measurement output does not equal the aggregate "
+            "derived independently from the frozen matrix and its evidence; "
+            "the returned document is not what the lifecycle produced"
+        )
+
+    # The child document is never edited or re-signed. Erasing measurement_id
+    # and recomputing it over our own additions would mint a fresh VALID
+    # identity for any post-finish mutation -- published versions, candidate
+    # identities, evidence, control -- and the result would look pristine.
+    # Wrapper metadata therefore lives in an envelope binding the child's
+    # unchanged identity and bytes.
+    envelope = {
+        "schema": ENVELOPE_SCHEMA,
         "policy": "additive-only",
         "component": component,
         "staged_manifest_sha256": staged_manifest_digest,
@@ -1512,10 +1575,12 @@ def measure_support(
             name: list(versions)
             for name, versions in sorted(supported_versions.items())
         },
-    })
-    measurement.pop("measurement_id", None)
-    measurement["measurement_id"] = rd.canonical_json_digest(measurement)
-    return measurement
+        "measurement_id": child_id,
+        "measurement_sha256": hashlib.sha256(measurement_bytes).hexdigest(),
+        "measurement": measurement,
+    }
+    envelope["envelope_id"] = rd.canonical_json_digest(envelope)
+    return envelope
 
 
 def channel_measure_support(**kwargs) -> dict:
@@ -1563,6 +1628,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manifest = json.loads(body)
         rd.validate_staged_manifest(manifest)
+        # Projecting (component, server) out of a wider manifest would hide an
+        # unrelated component from the exact-set check the API performs, so the
+        # manifest itself must already be exactly this edge.
+        exact = {component, "server"}
+        if set(manifest["entries"]) != exact:
+            raise rd.ReceiptError(
+                f"staged manifest covers {sorted(manifest['entries'])}, not "
+                f"exactly the measured edge {sorted(exact)}"
+            )
         entries = {
             name: _entry_from_manifest(name, manifest["entries"][name])
             for name in (component, "server")
