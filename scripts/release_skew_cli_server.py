@@ -31,6 +31,9 @@ import release_channel_pi_skew as measurement_inputs
 import release_driver as rd
 
 PublishedServerAuthority = measurement_inputs.PublishedServerAuthority
+expected_published_server_authority_report = (
+    measurement_inputs.expected_published_server_authority_report
+)
 _atomic_write_text = measurement_inputs._atomic_write_text
 _require_child_identity = measurement_inputs._require_child_identity
 _require_envelope = measurement_inputs._require_envelope
@@ -1680,6 +1683,7 @@ def _require_output_envelope(
     measurement_input_id: str,
     measurement_input_digest: str,
     supported_versions: dict[str, list[str]],
+    expected_published_server_authority: dict,
 ) -> str:
     status = _require_envelope(
         document,
@@ -1688,6 +1692,14 @@ def _require_output_envelope(
         measurement_input_digest=measurement_input_digest,
         supported_versions=supported_versions,
     )
+    if (
+        document["published_server_authority"]
+        != expected_published_server_authority
+    ):
+        raise rd.ReceiptError(
+            "measurement envelope published-server authority does not exactly "
+            "equal the report derived from the validated measurement input"
+        )
     child = document["measurement"]
     _require_unanchored_measurement(child, matrix_id=child.get("matrix_id"))
     _require_child_identity(child)
@@ -1712,6 +1724,9 @@ def main(argv: list[str] | None = None) -> int:
     body = manifest_path.read_bytes()
     try:
         measurement_input = validate_measurement_input(json.loads(body))
+        expected_authority = expected_published_server_authority_report(
+            measurement_input["entries"]["server"]
+        )
         document = measure_support(
             measurement_input=measurement_input,
             measurement_input_bytes=body,
@@ -1725,6 +1740,7 @@ def main(argv: list[str] | None = None) -> int:
             measurement_input_id=measurement_input["manifest_id"],
             measurement_input_digest=_sha256(body),
             supported_versions={"server": args.supported_server},
+            expected_published_server_authority=expected_authority,
         )
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)

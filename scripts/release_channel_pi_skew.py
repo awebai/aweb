@@ -1706,6 +1706,20 @@ def _require_child_identity(measurement: dict) -> str:
     return recorded
 
 
+def expected_published_server_authority_report(published: dict) -> dict:
+    """Project a validated published-server entry to the resolver's report."""
+    authority = published["authority"]
+    return {
+        "artifact": authority["artifact"],
+        "repo": authority["repo"],
+        "workflow": authority["workflow"],
+        "source_sha": authority["source_sha"],
+        "zip_digest": authority["zip_digest"],
+        "version": published["version"],
+        "digest_set": dict(published["digest_set"]),
+    }
+
+
 class PublishedServerAuthority:
     """Resolves the published server through the reviewed verify-only lane.
 
@@ -1763,15 +1777,7 @@ class PublishedServerAuthority:
                 "server authority lane artifact digest set does not equal the "
                 "published digest set the measurement input asserts"
             )
-        return {
-            "artifact": artifact,
-            "repo": authority["repo"],
-            "workflow": authority["workflow"],
-            "source_sha": authority["source_sha"],
-            "zip_digest": authority["zip_digest"],
-            "version": published["version"],
-            "digest_set": dict(published["digest_set"]),
-        }
+        return expected_published_server_authority_report(published)
 
 
 def _contract_for(component: str) -> rd.RuntimeContractEdge:

@@ -936,6 +936,20 @@ class FakeMeasurementLifecycle:
         self.root.cleanup()
 
 
+def expected_published_authority(document):
+    published = document["entries"]["server"]
+    authority = published["authority"]
+    return {
+        "artifact": authority["artifact"],
+        "repo": authority["repo"],
+        "workflow": authority["workflow"],
+        "source_sha": authority["source_sha"],
+        "zip_digest": authority["zip_digest"],
+        "version": published["version"],
+        "digest_set": dict(published["digest_set"]),
+    }
+
+
 def measurement_envelope(document, body, child=None, authority=None):
     child = child or measurement_child()
     envelope = {
@@ -944,9 +958,10 @@ def measurement_envelope(document, body, child=None, authority=None):
         "component": "aw",
         "measurement_input_id": document["manifest_id"],
         "measurement_input_sha256": sha(body),
-        "published_server_authority": authority or {
-            "provider": "verify-only-lane"
-        },
+        "published_server_authority": (
+            expected_published_authority(document)
+            if authority is None else authority
+        ),
         "supported_versions": {"server": ["1.26.35"]},
         "measurement_id": child["measurement_id"],
         "measurement_sha256": sha(canonical_bytes(child)),
@@ -1089,6 +1104,75 @@ class MeasurementCliTests(unittest.TestCase):
             self.assertEqual(result, expected)
             self.assertEqual(result["measurement_input_id"], document["manifest_id"])
             self.assertEqual(result["measurement_input_sha256"], sha(body))
+
+    def test_output_validator_refuses_coherently_reidentified_forged_authority(self):
+        import release_skew_cli_server as subject
+
+        document = measurement_input()
+        body = canonical_bytes(document)
+        expected = expected_published_authority(document)
+        variants = {"missing-keys": {"forged": True}}
+        variants["extra-key"] = {**expected, "forged": True}
+        for key in expected:
+            changed = dict(expected)
+            changed[key] = {"forged": True} if key == "digest_set" else "forged"
+            variants[f"wrong-{key}"] = changed
+
+        for case, authority in variants.items():
+            with self.subTest(case=case):
+                forged = measurement_envelope(document, body, authority=authority)
+                before = canonical_bytes(forged)
+                with self.assertRaisesRegex(
+                    rd.ReceiptError, "published-server authority"
+                ):
+                    subject._require_output_envelope(
+                        forged,
+                        measurement_input_id=document["manifest_id"],
+                        measurement_input_digest=sha(body),
+                        supported_versions={"server": ["1.26.35"]},
+                        expected_published_server_authority=expected,
+                    )
+                self.assertEqual(canonical_bytes(forged), before)
+
+    def test_real_cli_refuses_reidentified_forged_authority_before_output(self):
+        import release_skew_cli_server as subject
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            document = measurement_input()
+            body = canonical_bytes(document)
+            manifest = root / "measurement-input.json"
+            manifest.write_bytes(body)
+            output = root / "measurement.json"
+            evidence = root / "evidence"
+            evidence.mkdir()
+            sentinel = evidence / "prior.json"
+            sentinel.write_text("prior evidence")
+            forged = measurement_envelope(
+                document, body, authority={"forged": True}
+            )
+            before = canonical_bytes(forged)
+            writer = mock.Mock(
+                side_effect=lambda path, payload: path.write_text(payload)
+            )
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    subject, "PublishedServerAuthority", return_value=object()
+                ),
+                mock.patch.object(subject, "measure_support", return_value=forged),
+                mock.patch.object(subject, "CliServerSkewHarness", return_value=object()),
+                mock.patch.object(subject, "_atomic_write_text", writer),
+                contextlib.redirect_stdout(stdout),
+            ):
+                status = subject.main(self.arguments(manifest, output))
+            self.assertEqual(status, 1)
+            self.assertIn("published-server authority", stdout.getvalue())
+            self.assertFalse(output.exists())
+            writer.assert_not_called()
+            self.assertEqual(canonical_bytes(forged), before)
+            self.assertEqual(list(evidence.iterdir()), [sentinel])
+            self.assertEqual(sentinel.read_text(), "prior evidence")
 
     def test_real_cli_refuses_forged_complete_child_before_output(self):
         import release_skew_cli_server as subject
