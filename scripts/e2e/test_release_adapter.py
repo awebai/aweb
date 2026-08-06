@@ -3009,8 +3009,10 @@ class NpmWorkflowLaneTests(unittest.TestCase):
             state["value"] = sha256(tgz)
         runs.dispatch = dispatch
         result = lane.publish_recovery(
-            self.node(), adopted.entry, before_run_ids=before)
+            self.node(), adopted.entry, before_run_ids=before,
+            attempt_artifact_id="attempt:channel:one")
         self.assertEqual(result.continuation_run_id, str(runs.run_ids[-1]))
+        self.assertEqual(result.attempt_artifact_id, "attempt:channel:one")
         self.assertEqual(result.entry.digest_set, adopted.entry.digest_set)
 
     def test_recovery_attempt_correlates_one_exact_success_without_dispatch(self) -> None:
@@ -3027,8 +3029,10 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         runs.conclusion = "success"
         state["value"] = sha256(tgz)
         recovered = lane.recover_recovery_attempt(
-            self.node(), adopted.entry, before_run_ids=before)
+            self.node(), adopted.entry, before_run_ids=before,
+            attempt_artifact_id="attempt:channel:two")
         self.assertEqual(recovered.continuation_run_id, "777")
+        self.assertEqual(recovered.attempt_artifact_id, "attempt:channel:two")
         self.assertEqual(runs.dispatched, [])
 
     def test_stage_refuses_a_profile_violation_in_the_tgz(self) -> None:
