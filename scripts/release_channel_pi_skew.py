@@ -1436,6 +1436,22 @@ _AUTHORITY_KEYS = {"provider", "verify_only_run_id", "verify_only_artifact_id"}
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"(?:sha256:)?[0-9a-f]{64}")
 _DIGITS = re.compile(r"[0-9]+")
+_VERSION = re.compile(r"[0-9]+(?:\.[0-9]+)+(?:[-+][0-9A-Za-z.+-]+)?")
+
+
+def _exact(value, pattern, label: str) -> str:
+    """Type-check before matching.
+
+    `pattern.fullmatch(non_str)` raises TypeError, which escapes as an
+    unhandled exception instead of the ReceiptError a caller can act on. A
+    malformed input must always refuse as a refusal.
+    """
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        raise rd.ReceiptError(
+            f"measurement input {label} {value!r} does not match its required "
+            "format"
+        )
+    return value
 
 
 def validate_measurement_input(document, *, component: str) -> dict:
@@ -1479,8 +1495,7 @@ def validate_measurement_input(document, *, component: str) -> dict:
             f"measurement input edge {document['edge']!r} is not the measured "
             f"{component}<->server edge"
         )
-    if not _SHA40.fullmatch(document["source_sha"] or ""):
-        raise rd.ReceiptError("measurement input source_sha is not a 40-hex sha")
+    source_sha = _exact(document["source_sha"], _SHA40, "source_sha")
 
     entries = document["entries"]
     exact = {component, "server"}
@@ -1490,7 +1505,7 @@ def validate_measurement_input(document, *, component: str) -> dict:
             f"measurement input entries must be exactly {sorted(exact)}, got "
             f"{sorted(present)}"
         )
-    _validate_candidate_entry(entries[component], component)
+    _validate_candidate_entry(entries[component], component, source_sha)
     _validate_published_entry(entries["server"])
 
     recorded = document["manifest_id"]
@@ -1514,7 +1529,7 @@ def validate_measurement_input(document, *, component: str) -> dict:
     return document
 
 
-def _validate_candidate_entry(entry, component: str) -> None:
+def _validate_candidate_entry(entry, component: str, source_sha: str) -> None:
     if not isinstance(entry, dict) or set(entry) != _CANDIDATE_KEYS:
         present = set(entry) if isinstance(entry, dict) else set()
         raise rd.ReceiptError(
@@ -1528,9 +1543,11 @@ def _validate_candidate_entry(entry, component: str) -> None:
             f"measurement input {component} kind is {entry['kind']!r}, not "
             "'candidate'"
         )
+    _exact(entry["version"], _VERSION, f"candidate {component} version")
     digest_set = entry["digest_set"]
     if not isinstance(digest_set, dict) or not digest_set or not all(
-        isinstance(k, str) and k and isinstance(v, str) and _SHA256.fullmatch(v)
+        isinstance(k, str) and k and isinstance(v, str)
+        and _SHA256.fullmatch(v)
         for k, v in digest_set.items()
     ):
         raise rd.ReceiptError(
@@ -1544,16 +1561,33 @@ def _validate_candidate_entry(entry, component: str) -> None:
         )
     # Structured, not free-form: the harness must be able to retrieve the exact
     # staged bytes, which is the whole reason a candidate needs a lane ref.
-    rd.LaneRef.from_dict(entry["lane_ref"])
+    # Parsed ONCE, and every duplicated stage fact is bound back to it -- a
+    # recomputed canonical manifest_id otherwise authorizes a document whose
+    # provenance fields contradict the lane reference they claim to describe.
+    lane = rd.LaneRef.from_dict(entry["lane_ref"])
+    _, lane_run_id, lane_artifact_id = rd._parse_gh_artifact_id(lane.artifact)
     for field, pattern in (
         ("stage_run_id", _DIGITS), ("stage_artifact_id", _DIGITS),
         ("stage_zip_digest", _SHA256),
     ):
-        value = entry[field]
-        if not isinstance(value, str) or not pattern.fullmatch(value):
+        _exact(entry[field], pattern, f"candidate {component} {field}")
+    bindings = (
+        ("source_sha", source_sha, lane.aw_source_sha,
+         "the manifest source and the lane reference source"),
+        ("stage_run_id", entry["stage_run_id"], lane_run_id,
+         "the recorded stage run and the run encoded in the lane artifact"),
+        ("stage_artifact_id", entry["stage_artifact_id"], lane_artifact_id,
+         "the recorded stage artifact and the artifact encoded in the lane "
+         "artifact"),
+        ("stage_zip_digest", entry["stage_zip_digest"], lane.zip_digest,
+         "the recorded stage ZIP digest and the lane reference ZIP digest"),
+    )
+    for field, recorded, derived, description in bindings:
+        if recorded != derived:
             raise rd.ReceiptError(
-                f"measurement input candidate {component} {field} {value!r} "
-                "does not match its required format"
+                f"measurement input candidate {component} {field} disagrees "
+                f"with its lane reference: {description} must name one stage, "
+                f"got {recorded!r} and {derived!r}"
             )
 
 
@@ -1577,8 +1611,7 @@ def _validate_published_entry(entry) -> None:
             "was never staged and inventing one is the substitution this "
             "schema exists to prevent"
         )
-    if not isinstance(entry["version"], str) or not entry["version"]:
-        raise rd.ReceiptError("measurement input server version is not a string")
+    _exact(entry["version"], _VERSION, "server version")
     digest_set = entry["digest_set"]
     if not isinstance(digest_set, dict) or not digest_set or not all(
         isinstance(k, str) and k and isinstance(v, str) and _SHA256.fullmatch(v)
@@ -1603,11 +1636,7 @@ def _validate_published_entry(entry) -> None:
             f"{authority['provider']!r} is not the reviewed verify-only lane"
         )
     for field in ("verify_only_run_id", "verify_only_artifact_id"):
-        if not _DIGITS.fullmatch(authority[field] or ""):
-            raise rd.ReceiptError(
-                f"measurement input server authority {field} is not a run/"
-                "artifact id"
-            )
+        _exact(authority[field], _DIGITS, f"server authority {field}")
 
 
 

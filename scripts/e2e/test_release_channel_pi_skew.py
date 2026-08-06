@@ -2071,5 +2071,169 @@ class EnvelopeAuthorityTests(unittest.TestCase):
 
 
 
+
+class MeasurementInputBindingTests(unittest.TestCase):
+    """One stage, one identity.
+
+    The candidate duplicates facts the lane reference already carries, so a
+    coherently re-signed manifest could name one source/run/artifact/ZIP in its
+    provenance fields and a different one in the lane reference it claims to
+    describe. Recomputing manifest_id makes such a document internally valid,
+    which is exactly why the bindings have to be checked.
+    """
+
+    @staticmethod
+    def reseal(document):
+        document.pop("manifest_id", None)
+        document["manifest_id"] = rd.canonical_json_digest(document)
+        return document
+
+    def contradiction(self, **changes):
+        doc = measurement_input("channel")
+        entry = doc["entries"]["channel"]
+        for key, value in changes.items():
+            if key == "source_sha":
+                doc["source_sha"] = value
+            elif key.startswith("lane_"):
+                entry["lane_ref"][key[len("lane_"):]] = value
+            else:
+                entry[key] = value
+        return self.reseal(doc)
+
+    def test_manifest_source_must_equal_the_lane_source(self):
+        doc = self.contradiction(source_sha="b" * 40)
+        with self.assertRaisesRegex(rd.ReceiptError, "must name one stage"):
+            skew.validate_measurement_input(doc, component="channel")
+
+    def test_stage_run_must_equal_the_run_in_the_lane_artifact(self):
+        doc = self.contradiction(stage_run_id="99")
+        with self.assertRaisesRegex(rd.ReceiptError, "must name one stage"):
+            skew.validate_measurement_input(doc, component="channel")
+
+    def test_stage_artifact_must_equal_the_artifact_in_the_lane_artifact(self):
+        doc = self.contradiction(stage_artifact_id="99")
+        with self.assertRaisesRegex(rd.ReceiptError, "must name one stage"):
+            skew.validate_measurement_input(doc, component="channel")
+
+    def test_stage_zip_digest_must_equal_the_lane_zip_digest(self):
+        doc = self.contradiction(stage_zip_digest="sha256:" + "2" * 64)
+        with self.assertRaisesRegex(rd.ReceiptError, "must name one stage"):
+            skew.validate_measurement_input(doc, component="channel")
+
+    def test_moving_the_lane_side_of_the_binding_also_refuses(self):
+        """Symmetry: contradicting from the lane_ref side is the same defect."""
+        doc = self.contradiction(lane_aw_source_sha="c" * 40)
+        with self.assertRaisesRegex(rd.ReceiptError, "must name one stage"):
+            skew.validate_measurement_input(doc, component="channel")
+
+    def test_consistent_bindings_still_validate(self):
+        """Control: the same machinery accepts one coherent stage."""
+        doc = measurement_input("channel")
+        self.assertEqual(
+            skew.validate_measurement_input(doc, component="channel"), doc)
+
+    # --- typing and grammar -------------------------------------------------
+    def test_candidate_version_must_be_a_nonempty_exact_version(self):
+        for bad in (None, "", 123, "not-a-version", ["1.2.3"]):
+            with self.subTest(version=bad):
+                doc = measurement_input("channel")
+                doc["entries"]["channel"]["version"] = bad
+                with self.assertRaises(rd.ReceiptError):
+                    skew.validate_measurement_input(
+                        self.reseal(doc), component="channel")
+
+    def test_server_version_must_be_a_nonempty_exact_version(self):
+        for bad in (None, "", 7):
+            with self.subTest(version=bad):
+                doc = measurement_input("channel")
+                doc["entries"]["server"]["version"] = bad
+                with self.assertRaises(rd.ReceiptError):
+                    skew.validate_measurement_input(
+                        self.reseal(doc), component="channel")
+
+    def test_non_string_scalars_refuse_as_receipt_errors_not_type_errors(self):
+        """A malformed input must always surface as a refusal. Matching a regex
+        against a non-string raises TypeError, which escapes unhandled."""
+        cases = [
+            ("source_sha", 12345),
+            ("authority_run", None),
+            ("authority_artifact", 99),
+            ("stage_run_id", 17),
+            ("stage_zip_digest", None),
+        ]
+        for label, value in cases:
+            with self.subTest(field=label):
+                doc = measurement_input("channel")
+                if label == "source_sha":
+                    doc["source_sha"] = value
+                elif label == "authority_run":
+                    doc["entries"]["server"]["authority"][
+                        "verify_only_run_id"] = value
+                elif label == "authority_artifact":
+                    doc["entries"]["server"]["authority"][
+                        "verify_only_artifact_id"] = value
+                else:
+                    doc["entries"]["channel"][label] = value
+                try:
+                    skew.validate_measurement_input(
+                        self.reseal(doc), component="channel")
+                except rd.ReceiptError:
+                    pass
+                except Exception as exc:  # noqa: BLE001 - that is the point
+                    self.fail(
+                        f"{label}={value!r} escaped as {type(exc).__name__}, "
+                        "not a ReceiptError")
+                else:
+                    self.fail(f"{label}={value!r} was accepted")
+
+    # --- the same substitutions through the real CLI ------------------------
+    def cli(self, tmp, document):
+        import contextlib
+        import io as _io
+
+        path = Path(tmp) / "input.json"
+        path.write_bytes(canonical_bytes(document))
+        for name, replacement in (
+            ("ArtifactResolver", lambda *a, **k: FakeResolver()),
+            ("SubprocessChannelPiJourney", lambda *a, **k: FakeJourney()),
+        ):
+            self.addCleanup(setattr, skew, name, getattr(skew, name))
+            setattr(skew, name, replacement)
+        captured = _io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            code = skew.main([
+                "measure-channel", "--measurement-input", str(path),
+                "--supported-server", "1.26.34",
+                "--evidence-root", str(Path(tmp) / "evidence"),
+                "--output", str(Path(tmp) / "out.json"),
+            ])
+        return code, captured.getvalue()
+
+    def test_cli_refuses_every_contradiction_before_any_effect(self):
+        documents = {
+            "source": self.contradiction(source_sha="b" * 40),
+            "run": self.contradiction(stage_run_id="99"),
+            "artifact": self.contradiction(stage_artifact_id="99"),
+            "zip": self.contradiction(stage_zip_digest="sha256:" + "2" * 64),
+            "version": self.reseal({
+                **measurement_input("channel"),
+            }) if False else None,
+        }
+        documents.pop("version")
+        null_version = measurement_input("channel")
+        null_version["entries"]["channel"]["version"] = None
+        documents["null-version"] = self.reseal(null_version)
+
+        for label, document in documents.items():
+            with self.subTest(case=label):
+                with tempfile.TemporaryDirectory() as tmp:
+                    code, _ = self.cli(tmp, document)
+                    self.assertEqual(code, 1)
+                    self.assertFalse((Path(tmp) / "out.json").exists())
+                    self.assertFalse((Path(tmp) / "evidence").exists(),
+                                     "refusal must precede any evidence")
+
+
+
 if __name__ == "__main__":
     unittest.main()
