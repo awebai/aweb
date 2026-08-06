@@ -27,6 +27,9 @@ const authenticatedTrustCodeMarkers = [
   "is missing certificate signing authentication",
 ];
 const unsafeDecryptMerge = "Object.assign(msg, decrypted)";
+const localStreamDeadline = "event stream local deadline reached";
+const streamInactivityWatchdog = "event stream heartbeat timed out";
+const settledBackoffCleanup = /function sleep\([^)]*\)\s*\{[\s\S]{0,1000}?signal\.removeEventListener\("abort", onAbort\);/;
 
 function validatePackageDist(candidate) {
   if (!candidate.includes(certificateFirst)) {
@@ -48,7 +51,16 @@ function validatePackageDist(candidate) {
   if (candidate.includes(unsafeDecryptMerge)) {
     throw new Error("pi-extension dist permits decrypted child output to overwrite trust fields");
   }
+  if (!candidate.includes(localStreamDeadline)) {
+    throw new Error("pi-extension dist is missing the local event-stream deadline");
+  }
+  if (!candidate.includes(streamInactivityWatchdog)) {
+    throw new Error("pi-extension dist is missing the event-stream byte-inactivity watchdog");
+  }
+  if (!settledBackoffCleanup.test(candidate)) {
+    throw new Error("pi-extension dist is missing settled backoff abort-listener cleanup");
+  }
 }
 
 validatePackageDist(dist);
-console.log("pi-extension package dist uses certificate-first stable_id resolution and app_event wake dispatch");
+console.log("pi-extension package dist preserves authenticated trust behavior and bounds half-open event streams");

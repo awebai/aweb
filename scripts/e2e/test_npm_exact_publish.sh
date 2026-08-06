@@ -158,6 +158,11 @@ msg.subject = decrypted.subject
 msg.body = decrypted.body
 ["--team", options.teamID.trim()]
 selected active team ${config.teamID} is missing certificate signing authentication
+event stream local deadline reached
+event stream heartbeat timed out
+function sleep(ms, signal) {
+  signal.removeEventListener("abort", onAbort);
+}
 { name: "aweb-channel", version: "0.1.0" }'
 SENTINEL='aweb-channel-core-security/did-log-genesis-bound-v2+full-log-v1+pinstore-fail-closed-v1'
 SKILLS='aweb-bootstrap aweb-coordination aweb-identity aweb-messaging aweb-team-membership'
@@ -179,6 +184,18 @@ make_profile_fixture() {
         ;;
       --drop-mcp-runtime-name)
         markers="$(printf '%s\n' "$markers" | grep -v 'name: "aweb-channel"')"
+        shift
+        ;;
+      --drop-local-deadline)
+        markers="$(printf '%s\n' "$markers" | grep -v 'event stream local deadline reached')"
+        shift
+        ;;
+      --drop-inactivity-watchdog)
+        markers="$(printf '%s\n' "$markers" | grep -v 'event stream heartbeat timed out')"
+        shift
+        ;;
+      --drop-backoff-cleanup)
+        markers="$(printf '%s\n' "$markers" | grep -v 'removeEventListener("abort", onAbort)')"
         shift
         ;;
       --unsafe-decrypt-merge) unsafe_merge='Object.assign(msg, decrypted)'; shift ;;
@@ -263,6 +280,9 @@ profile_case "pi profile accepts coherent fixture" pi ok ""
 profile_case "pi profile refuses missing skill dir" pi refuse "aweb-identity" --drop-skill aweb-identity
 profile_case "pi profile refuses missing authenticated trust boundary" pi refuse "encrypted_envelope" --drop-trust-boundary
 profile_case "pi profile refuses trust-field overwrite merge" pi refuse "overwrite" --unsafe-decrypt-merge
+profile_case "pi profile refuses missing local stream deadline" pi refuse "local event-stream deadline" --drop-local-deadline
+profile_case "pi profile refuses missing inactivity watchdog" pi refuse "byte-inactivity watchdog" --drop-inactivity-watchdog
+profile_case "pi profile refuses missing settled backoff cleanup" pi refuse "backoff abort-listener cleanup" --drop-backoff-cleanup
 profile_case "skills profile accepts exact five" skills ok ""
 profile_case "skills profile refuses a sixth skill dir" skills refuse "skill set" --extra-skill extra-skill
 
