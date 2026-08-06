@@ -611,6 +611,25 @@ class HarnessTests(unittest.TestCase):
             with self.assertRaisesRegex(rd.ReceiptError, "runtime"):
                 subject.aggregate_frozen_matrix(matrix_path, Path(tmp))
             cell_path.write_bytes(original)
+            tampered = json.loads(original)
+            artifact = tampered["artifacts"][0]
+            registry = {name: "0" * 64 for name in artifact["registry_digest_set"]}
+            artifact["registry_digest_set"] = registry
+            artifact["registry_set_digest"] = rd.canonical_digest_of_set(registry)
+            artifact["outer_sha256"] = registry[artifact["payload_name"]]
+            artifact["registry_sha256"] = artifact["outer_sha256"]
+            artifact["checksums_recorded_sha256"] = artifact["outer_sha256"]
+            artifact["checksums_sha256"] = registry["checksums.txt"]
+            artifact["checksums_registry_sha256"] = registry["checksums.txt"]
+            tampered["report_id"] = rd.canonical_json_digest({
+                key: value for key, value in tampered.items() if key != "report_id"
+            })
+            cell_path.write_text(json.dumps(
+                tampered, sort_keys=True, separators=(",", ":")
+            ))
+            with self.assertRaisesRegex(rd.ReceiptError, "published.*differs"):
+                subject.aggregate_frozen_matrix(matrix_path, Path(tmp))
+            cell_path.write_bytes(original)
             extra = Path(tmp) / "cells" / "stale.json"
             extra.write_text("{}")
             with self.assertRaisesRegex(rd.ReceiptError, "file set"):

@@ -1065,6 +1065,7 @@ def aggregate_frozen_matrix(matrix_path: Path, evidence_root: Path) -> dict:
             f"extra={sorted(set(actual) - set(expected))}"
         )
     candidates: dict[str, dict] = {}
+    published_identities: dict[tuple[str, str], dict] = {}
     dependency_postures = set()
     reports = []
     for filename, cell in expected.items():
@@ -1107,6 +1108,14 @@ def aggregate_frozen_matrix(matrix_path: Path, evidence_root: Path) -> dict:
                 if prior != validated:
                     raise rd.ReceiptError(
                         f"candidate {side['component']} identity differs across cells"
+                    )
+            else:
+                key = (side["component"], side["version"])
+                prior = published_identities.setdefault(key, validated)
+                if prior != validated:
+                    raise rd.ReceiptError(
+                        f"published {side['component']} {side['version']} identity "
+                        "differs across cells"
                     )
         server_artifact = next(
             artifact for artifact in artifacts if artifact["component"] == "server"
@@ -1152,6 +1161,9 @@ def aggregate_frozen_matrix(matrix_path: Path, evidence_root: Path) -> dict:
         "supported_versions": document["preimage"]["support"]["supported_versions"],
         "published_versions": document["preimage"]["published_versions"],
         "candidates": candidates,
+        "published_identities": [
+            published_identities[key] for key in sorted(published_identities)
+        ],
         "reports": reports,
     }
     measurement["measurement_id"] = rd.canonical_json_digest(measurement)

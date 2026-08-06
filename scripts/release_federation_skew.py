@@ -1019,11 +1019,10 @@ def _reload_cell_report(
         raise release_driver.ReceiptError(
             f"federation cell report {identity} dependency inventories differ"
         )
-    candidates = [
-        value for value in (alpha_identity, beta_identity)
-        if value["kind"] == "candidate"
-    ]
-    return report, body, candidates
+    identities = (alpha_identity, beta_identity)
+    candidates = [value for value in identities if value["kind"] == "candidate"]
+    published = [value for value in identities if value["kind"] != "candidate"]
+    return report, body, candidates, published
 
 
 def _matrix_aggregate(
@@ -1057,10 +1056,11 @@ def _matrix_aggregate(
 
     reports = []
     candidates = []
+    published_by_version: dict[tuple[str, str], dict] = {}
     dependency_digests = set()
     for identity, cell in zip(identities, cells):
         path = cell_dir / f"{identity}.json"
-        report, body, cell_candidates = _reload_cell_report(
+        report, body, cell_candidates, cell_published = _reload_cell_report(
             cell, path, matrix_id=matrix_id
         )
         reports.append({
@@ -1068,6 +1068,14 @@ def _matrix_aggregate(
             "sha256": hashlib.sha256(body).hexdigest(),
         })
         candidates.extend(cell_candidates)
+        for published in cell_published:
+            key = (published["kind"], published["version"])
+            prior = published_by_version.setdefault(key, published)
+            if prior != published:
+                raise release_driver.ReceiptError(
+                    f"federation published {published['version']} identity "
+                    "differs across cells"
+                )
         for runtime in report["observation"]["alpha"], report["observation"]["beta"]:
             dependency_digests.add(_identity(_dependency_inventory(runtime)))
     candidate_by_identity = {_identity(value): value for value in candidates}
@@ -1086,6 +1094,9 @@ def _matrix_aggregate(
         "candidate": candidate,
         "candidate_id": candidate_id,
         "expected_cell_ids": identities,
+        "published_identities": [
+            published_by_version[key] for key in sorted(published_by_version)
+        ],
         "reports": reports,
     }
     aggregate_id = _identity(aggregate_preimage)
@@ -1096,6 +1107,9 @@ def _matrix_aggregate(
         "candidate": candidate,
         "candidate_id": candidate_id,
         "expected_cell_ids": identities,
+        "published_identities": [
+            published_by_version[key] for key in sorted(published_by_version)
+        ],
         "reports": reports,
         "schema": AGGREGATE_SCHEMA,
         "status": "incomplete-unanchored",
