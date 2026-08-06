@@ -1347,3 +1347,184 @@ def aggregate_frozen_matrix(
     measurement.pop("measurement_id", None)
     measurement["measurement_id"] = rd.canonical_json_digest(measurement)
     return measurement
+
+
+def evidence_writer_for(component: str, root: Path | None = None) -> FileEvidenceWriter:
+    """A per-component evidence root.
+
+    Channel and Pi must never share one. The completeness inventory is derived
+    from the files present under the root, so a shared root lets one component's
+    reports satisfy the other's inventory and a partial measurement can read as
+    complete.
+    """
+    if component not in CLIENT_ARTIFACTS:
+        raise rd.ReceiptError(
+            f"channel/Pi evidence covers only {sorted(CLIENT_ARTIFACTS)}, "
+            f"got {component!r}"
+        )
+    base = root or os.getenv("AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR") or (
+        Path(tempfile.gettempdir()) / "aweb-channel-pi-skew-evidence"
+    )
+    return FileEvidenceWriter(Path(base) / component)
+
+
+def _contract_for(component: str) -> rd.RuntimeContractEdge:
+    return rd.RuntimeContractEdge(
+        a=component,
+        b="server",
+        journey=CHANNEL_JOURNEY if component == "channel" else PI_JOURNEY,
+        artifacts={"a": CLIENT_ARTIFACTS[component], "b": SERVER_ARTIFACT},
+        direction="both",
+        supported={"policy": "additive-only"},
+    )
+
+
+def measure_support(
+    *,
+    component: str,
+    staged: dict[str, rd.ReceiptEntry],
+    staged_manifest_digest: str,
+    supported_versions: dict[str, list[str]],
+    published_versions: dict[str, str],
+    harness,
+) -> dict:
+    """Measure one client-server edge over the frozen matrix lifecycle.
+
+    Orchestration is freeze -> every exact frozen cell -> finish. The mark-read
+    mutation control is the single authoritative control: it lives at finish,
+    outside the support cells, and this entrypoint neither duplicates nor moves
+    it.
+
+    Channel/Pi has no reviewed negative-only version and no first-supported
+    floor, so no version floor is claimed or refused here. A floor would need
+    real negative-version evidence, review and an anchor; G5 floors are never
+    invented locally.
+
+    The result is explicitly unanchored. Declaring measured support in
+    release/components.toml is a separate reviewed step over anchored bytes.
+    """
+    if component not in CLIENT_ARTIFACTS:
+        raise rd.ReceiptError(
+            f"channel/Pi measurement covers only {sorted(CLIENT_ARTIFACTS)}, "
+            f"got {component!r}"
+        )
+    freeze = getattr(harness, "freeze_matrix", None)
+    finish = getattr(harness, "finish_matrix", None)
+    if freeze is None or finish is None:
+        raise rd.ReceiptError(
+            "channel/Pi measurement requires the frozen matrix lifecycle"
+        )
+
+    matrix = rd.freeze_skew_matrix(
+        _contract_for(component),
+        moving={component, "server"},
+        staged=staged,
+        support={"supported_versions": supported_versions},
+        published_versions=published_versions,
+        staged_manifest_digest=staged_manifest_digest,
+    )
+    freeze(matrix)
+    for item in rd.validate_skew_matrix_document(matrix):
+        harness.run(item)
+    aggregate_path = finish(matrix)
+
+    measurement = json.loads(Path(aggregate_path).read_bytes())
+    measurement.update({
+        "policy": "additive-only",
+        "component": component,
+        "staged_manifest_sha256": staged_manifest_digest,
+        "supported_versions": {
+            name: list(versions)
+            for name, versions in sorted(supported_versions.items())
+        },
+    })
+    measurement.pop("measurement_id", None)
+    measurement["measurement_id"] = rd.canonical_json_digest(measurement)
+    return measurement
+
+
+def channel_measure_support(**kwargs) -> dict:
+    return measure_support(component="channel", **kwargs)
+
+
+def pi_measure_support(**kwargs) -> dict:
+    return measure_support(component="pi", **kwargs)
+
+
+def _entry_from_manifest(name: str, entry: dict) -> rd.ReceiptEntry:
+    return rd.ReceiptEntry(
+        version=entry["version"],
+        digest=entry["digest"],
+        digest_set=entry.get("digest_set"),
+        lane_ref=entry.get("lane_ref"),
+        pointer_state=entry.get("pointer_state"),
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="verb", required=True)
+    for component in sorted(CLIENT_ARTIFACTS):
+        measure = sub.add_parser(
+            f"measure-{component}",
+            help=f"measure the {component}<->server runtime contract",
+        )
+        measure.add_argument("--staged-manifest", required=True)
+        measure.add_argument(f"--supported-{component}", action="append",
+                             required=True, dest="supported_client")
+        measure.add_argument("--supported-server", action="append", required=True)
+        measure.add_argument(f"--published-{component}-latest", required=True,
+                             dest="published_client")
+        measure.add_argument("--published-server-latest", required=True)
+        measure.add_argument("--evidence-root", default=None)
+        measure.add_argument("--output", required=True)
+    args = parser.parse_args(argv)
+    component = args.verb.split("-", 1)[1]
+
+    manifest_path = Path(args.staged_manifest)
+    body = manifest_path.read_bytes()
+    try:
+        manifest = json.loads(body)
+        rd.validate_staged_manifest(manifest)
+        entries = {
+            name: _entry_from_manifest(name, manifest["entries"][name])
+            for name in (component, "server")
+        }
+        evidence = evidence_writer_for(
+            component,
+            Path(args.evidence_root) if args.evidence_root else None,
+        )
+        document = measure_support(
+            component=component,
+            staged=entries,
+            staged_manifest_digest=hashlib.sha256(body).hexdigest(),
+            supported_versions={
+                component: args.supported_client,
+                "server": args.supported_server,
+            },
+            published_versions={
+                component: args.published_client,
+                "server": args.published_server_latest,
+            },
+            harness=ChannelPiHarness(
+                resolver=ArtifactResolver(),
+                journey_factory=lambda: SubprocessChannelPiJourney(component),
+                evidence=evidence,
+            ),
+        )
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+        digest = hashlib.sha256(output.read_bytes()).hexdigest()
+        print(f"measurement {output} sha256:{digest}")
+        print(f"status: {document['status']}")
+        return 0
+    except (KeyError, ValueError, rd.ReceiptError) as exc:
+        print(f"BLOCKED: {exc}")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
