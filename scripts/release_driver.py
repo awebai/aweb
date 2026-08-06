@@ -982,6 +982,63 @@ def receipt_matches_run(
     return True, "receipt matches this run"
 
 
+def validate_final_receipt(
+    receipt: Receipt,
+    *,
+    plan: Plan,
+    graph: Graph,
+    frozen_plan_id: str,
+    staged_manifest_id: str,
+    source_sha: str,
+) -> None:
+    """Validate a loaded receipt against the complete final-seal contract.
+
+    Loading proves the outer digest and seal. This validator proves that the
+    loaded document is the non-partial final receipt for this exact frozen
+    plan, graph, source, staged manifest, and moving component set.
+    """
+    if receipt.partial:
+        raise ReceiptError("a partial receipt cannot authorize a final release set")
+    if receipt.frozen_plan_id != frozen_plan_id:
+        raise ReceiptError("final receipt does not bind this frozen plan")
+    if receipt.staged_manifest_id != staged_manifest_id:
+        raise ReceiptError("final receipt does not bind this staged manifest")
+    matches, reason = receipt_matches_run(
+        receipt, plan, graph, source_sha=source_sha)
+    if not matches:
+        raise ReceiptError(f"final receipt {reason}")
+
+    approvals = dict(receipt.approvals)
+    for node in plan.moving:
+        entry = receipt.entries[node.component]
+        if entry.phase != "verified":
+            raise ReceiptError(
+                f"final receipt entry {node.component} is not verified")
+        if node.reason.startswith("pointer:") and not entry.pointer_state:
+            raise ReceiptError(
+                f"{node.component}: final receipt pointer state is absent")
+        component = graph.components[node.component]
+        needs_delivery = (
+            component.delivery_restart is not None or component.lane is not None
+        )
+        if needs_delivery:
+            if not entry.delivery_proof:
+                raise ReceiptError(
+                    f"{node.component}: final receipt delivery proof is absent")
+            validate_delivery_proof(
+                entry.delivery_proof,
+                _delivery_obligation(graph, node.component),
+                node.component,
+            )
+        if component.approval_required:
+            approval = approvals.get(node.component)
+            if not isinstance(approval, dict) or not approval.get(
+                "who"
+            ) or not approval.get("when"):
+                raise ReceiptError(
+                    f"{node.component}: final receipt lacks its approval record")
+
+
 def receipt_accepts(
     receipt: Receipt, component: str, *, version: str, digest: str
 ) -> tuple[bool, str]:
@@ -3628,6 +3685,54 @@ def validate_staged_manifest(
                 )
 
 
+TRANSITION_FIELDS = (
+    "frozen_plan_id", "staged_manifest_id", "sequence", "component", "kind",
+    "entry",
+)
+TRANSITION_ENTRY_FIELDS = (
+    "version", "digest", "phase", "pointer_state", "delivery_proof",
+    "lane_ref", "digest_set",
+)
+
+
+def validate_transition_document(document) -> dict:
+    """The exact shape anchor_transition seals. One definition, used both when
+    sealing and when re-validating an archived transition, so an archived
+    transition cannot be accepted in a shape the driver would never write."""
+    if not isinstance(document, dict) or set(document) != set(TRANSITION_FIELDS):
+        present = set(document) if isinstance(document, dict) else set()
+        raise ReceiptError(
+            "transition document does not carry exactly "
+            f"{sorted(TRANSITION_FIELDS)}; missing "
+            f"{sorted(set(TRANSITION_FIELDS) - present)}, unexpected "
+            f"{sorted(present - set(TRANSITION_FIELDS))}"
+        )
+    if not isinstance(document["sequence"], int) or isinstance(
+        document["sequence"], bool
+    ):
+        raise ReceiptError("transition sequence must be an integer")
+    for field in ("frozen_plan_id", "staged_manifest_id", "component", "kind"):
+        value = document[field]
+        if not isinstance(value, str) or not value:
+            raise ReceiptError(
+                f"transition {field} must be a nonempty string"
+            )
+    entry = document["entry"]
+    if not isinstance(entry, dict) or set(entry) != set(
+        TRANSITION_ENTRY_FIELDS
+    ):
+        present = set(entry) if isinstance(entry, dict) else set()
+        raise ReceiptError(
+            "transition entry does not carry exactly "
+            f"{sorted(TRANSITION_ENTRY_FIELDS)}; missing "
+            f"{sorted(set(TRANSITION_ENTRY_FIELDS) - present)}, unexpected "
+            f"{sorted(present - set(TRANSITION_ENTRY_FIELDS))}"
+        )
+    if not isinstance(entry["version"], str) or not entry["version"]:
+        raise ReceiptError("transition entry version must be a nonempty string")
+    return document
+
+
 def load_staged_manifest(data: bytes, *, expected_digest: str) -> dict:
     if hashlib.sha256(data).hexdigest() != expected_digest:
         raise ReceiptError("staged manifest does not match its recorded digest")
@@ -3963,25 +4068,26 @@ def run_plan(
     def anchor_transition(
         component: str, entry: ReceiptEntry, sequence: int, kind: str
     ) -> None:
-        body = json.dumps(
-            {
-                "frozen_plan_id": frozen_plan_id,
-                "staged_manifest_id": manifest_id,
-                "sequence": sequence,
-                "component": component,
-                "kind": kind,
-                "entry": {
-                    "version": entry.version,
-                    "digest": entry.digest,
-                    "phase": entry.phase,
-                    "pointer_state": entry.pointer_state,
-                    "delivery_proof": entry.delivery_proof,
-                    "lane_ref": entry.lane_ref,
-                    "digest_set": entry.digest_set,
-                },
+        document = {
+            "frozen_plan_id": frozen_plan_id,
+            "staged_manifest_id": manifest_id,
+            "sequence": sequence,
+            "component": component,
+            "kind": kind,
+            "entry": {
+                "version": entry.version,
+                "digest": entry.digest,
+                "phase": entry.phase,
+                "pointer_state": entry.pointer_state,
+                "delivery_proof": entry.delivery_proof,
+                "lane_ref": entry.lane_ref,
+                "digest_set": entry.digest_set,
             },
-            sort_keys=True,
-        ).encode()
+        }
+        # The sealing path validates the same shape the archive re-validates,
+        # so a transition can never be written in a form restore would refuse.
+        validate_transition_document(document)
+        body = json.dumps(document, sort_keys=True).encode()
         digest = hashlib.sha256(body).hexdigest()
         artifact_id = (
             f"transition:{frozen_plan_id}:{sequence:03d}:{kind}:"
