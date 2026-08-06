@@ -940,12 +940,14 @@ def _ports_match_project(project: str, ports: dict) -> bool:
     return True
 
 
-def _reload_cell_report(cell, path: Path) -> tuple[dict, bytes, list[dict]]:
+def _reload_cell_report(
+    cell, path: Path, *, matrix_id: str | None = None,
+) -> tuple[dict, bytes, list[dict]]:
     identity = cell_identity(cell)
     report, body = _read_canonical_report(path)
     if not isinstance(report, dict) or set(report) != {
-        "cell", "cell_id", "observation", "observation_sha256", "resolved",
-        "schema", "status",
+        "cell", "cell_id", "matrix_id", "observation", "observation_sha256",
+        "resolved", "schema", "status",
     }:
         raise release_driver.ReceiptError(
             f"federation cell report {identity} fields are not exact"
@@ -965,6 +967,7 @@ def _reload_cell_report(cell, path: Path) -> tuple[dict, bytes, list[dict]]:
     )
     if (
         report["schema"] != CELL_REPORT_SCHEMA
+        or report["matrix_id"] != matrix_id
         or report["cell_id"] != identity
         or report["cell"] != cell_preimage(cell)
         or report["status"] != "green"
@@ -1016,14 +1019,15 @@ def _reload_cell_report(cell, path: Path) -> tuple[dict, bytes, list[dict]]:
         raise release_driver.ReceiptError(
             f"federation cell report {identity} dependency inventories differ"
         )
-    candidates = [
-        value for value in (alpha_identity, beta_identity)
-        if value["kind"] == "candidate"
-    ]
-    return report, body, candidates
+    identities = (alpha_identity, beta_identity)
+    candidates = [value for value in identities if value["kind"] == "candidate"]
+    published = [value for value in identities if value["kind"] != "candidate"]
+    return report, body, candidates, published
 
 
-def _matrix_aggregate(expected_cells, report_dir: Path) -> dict:
+def _matrix_aggregate(
+    expected_cells, report_dir: Path, *, matrix_id: str | None = None,
+) -> dict:
     cells = list(expected_cells)
     if not cells:
         raise release_driver.ReceiptError("federation aggregate requires expected cells")
@@ -1052,15 +1056,26 @@ def _matrix_aggregate(expected_cells, report_dir: Path) -> dict:
 
     reports = []
     candidates = []
+    published_by_version: dict[tuple[str, str], dict] = {}
     dependency_digests = set()
     for identity, cell in zip(identities, cells):
         path = cell_dir / f"{identity}.json"
-        report, body, cell_candidates = _reload_cell_report(cell, path)
+        report, body, cell_candidates, cell_published = _reload_cell_report(
+            cell, path, matrix_id=matrix_id
+        )
         reports.append({
             "cell_id": identity,
             "sha256": hashlib.sha256(body).hexdigest(),
         })
         candidates.extend(cell_candidates)
+        for published in cell_published:
+            key = (published["kind"], published["version"])
+            prior = published_by_version.setdefault(key, published)
+            if prior != published:
+                raise release_driver.ReceiptError(
+                    f"federation published {published['version']} identity "
+                    "differs across cells"
+                )
         for runtime in report["observation"]["alpha"], report["observation"]["beta"]:
             dependency_digests.add(_identity(_dependency_inventory(runtime)))
     candidate_by_identity = {_identity(value): value for value in candidates}
@@ -1075,18 +1090,26 @@ def _matrix_aggregate(expected_cells, report_dir: Path) -> dict:
         )
     candidate_id, candidate = next(iter(candidate_by_identity.items()))
     aggregate_preimage = {
+        "matrix_id": matrix_id,
         "candidate": candidate,
         "candidate_id": candidate_id,
         "expected_cell_ids": identities,
+        "published_identities": [
+            published_by_version[key] for key in sorted(published_by_version)
+        ],
         "reports": reports,
     }
     aggregate_id = _identity(aggregate_preimage)
     return {
         "aggregate_id": aggregate_id,
+        "matrix_id": matrix_id,
         "anchor": None,
         "candidate": candidate,
         "candidate_id": candidate_id,
         "expected_cell_ids": identities,
+        "published_identities": [
+            published_by_version[key] for key in sorted(published_by_version)
+        ],
         "reports": reports,
         "schema": AGGREGATE_SCHEMA,
         "status": "incomplete-unanchored",
@@ -1121,6 +1144,57 @@ class FederationSkewHarness:
         self._resolver = resolver or WheelResolver()
         self._journey = journey or run_federation_journey
         self._report_dir = Path(report_dir or DEFAULT_REPORT_DIR)
+        self._matrix: dict | None = None
+        self._cells: dict[str, object] = {}
+        self._cell_evidence: dict[str, dict] = {}
+        self._finished = False
+
+    def freeze_matrix(self, document: dict) -> Path:
+        cells = release_driver.validate_skew_matrix_document(document)
+        edge = document["preimage"]["edge"]
+        if edge != {
+            "a": "server", "b": "server", "journey": JOURNEY,
+            "artifacts": {"a": "pypi:aweb", "b": "pypi:aweb"},
+            "direction": "both",
+        } or any(self._cell_invalid(cell) for cell in cells):
+            raise release_driver.ReceiptError(
+                "federation child accepts only its exact frozen edge matrix"
+            )
+        if self._matrix is not None and self._matrix != document:
+            raise release_driver.ReceiptError("federation child was given two matrices")
+        path = self._report_dir / f"matrix-{document['matrix_id']}.json"
+        if path.exists():
+            stored, _ = _read_canonical_report(path)
+            if stored != document:
+                raise release_driver.ReceiptError(
+                    "federation matrix evidence is stale or tampered"
+                )
+        else:
+            _atomic_report(path, document)
+        self._matrix = json.loads(json.dumps(document))
+        self._cells = {
+            release_driver.skew_cell_identity(cell): cell for cell in cells
+        }
+        return path
+
+    def _cell_invalid(self, cell) -> bool:
+        try:
+            self._validate_cell(cell)
+        except release_driver.ReceiptError:
+            return True
+        return False
+
+    def _frozen_cell_id(self, cell) -> str:
+        if self._matrix is None:
+            raise release_driver.ReceiptError(
+                "federation cell arrived before its frozen matrix"
+            )
+        identity = release_driver.skew_cell_identity(cell)
+        if self._cells.get(identity) != cell:
+            raise release_driver.ReceiptError(
+                "federation cell is not an exact member of its frozen matrix"
+            )
+        return identity
 
     def _validate_cell(self, cell) -> None:
         expected = {
@@ -1142,6 +1216,12 @@ class FederationSkewHarness:
             )
 
     def run(self, cell) -> None:
+        identity = self._frozen_cell_id(cell)
+        target = self._report_dir / "cells" / f"{identity}.json"
+        if target.exists():
+            raise release_driver.ReceiptError(
+                "federation frozen cell already has evidence"
+            )
         self._validate_cell(cell)
         side_a = self._resolver.side(cell.a, cell.a_kind)
         side_b = self._resolver.side(cell.b, cell.b_kind)
@@ -1156,7 +1236,6 @@ class FederationSkewHarness:
             alpha, beta = side_b, side_a
             alpha_identity = _resolved_identity(side_b, cell.b, cell.b_kind)
             beta_identity = _resolved_identity(side_a, cell.a, cell.a_kind)
-        identity = cell_identity(cell)
         with tempfile.TemporaryDirectory(prefix="aweb-fed-skew-cell-") as tmp:
             environment, result = _run_reserved_journey(
                 Path(tmp),
@@ -1176,6 +1255,7 @@ class FederationSkewHarness:
         report = {
             "cell": cell_preimage(cell),
             "cell_id": identity,
+            "matrix_id": self._matrix["matrix_id"],
             "observation": observation,
             "observation_sha256": _identity(observation),
             "resolved": {
@@ -1187,4 +1267,73 @@ class FederationSkewHarness:
         }
         # subprocess completion includes the shell EXIT trap and exact-project
         # teardown. Only then may a green report become visible atomically.
-        _atomic_report(self._report_dir / "cells" / f"{identity}.json", report)
+        path = self._report_dir / "cells" / f"{identity}.json"
+        digest = _atomic_report(path, report)
+        self._cell_evidence[identity] = {"path": path, "sha256": digest}
+
+    def _validate_effect_time_evidence(self) -> None:
+        if set(self._cell_evidence) != set(self._cells):
+            raise release_driver.ReceiptError(
+                "federation effect-time evidence inventory is not exact"
+            )
+        for cell_id in self._cells:
+            expected_path = self._report_dir / "cells" / f"{cell_id}.json"
+            evidence = self._cell_evidence[cell_id]
+            if (
+                not isinstance(evidence, dict)
+                or set(evidence) != {"path", "sha256"}
+                or evidence["path"] != expected_path
+                or expected_path.is_symlink()
+            ):
+                raise release_driver.ReceiptError(
+                    f"federation effect-time evidence inventory drifted for {cell_id}"
+                )
+            try:
+                observed = hashlib.sha256(expected_path.read_bytes()).hexdigest()
+            except OSError as exc:
+                raise release_driver.ReceiptError(
+                    f"federation effect-time evidence is unreadable for {cell_id}: {exc}"
+                ) from exc
+            if observed != evidence["sha256"]:
+                raise release_driver.ReceiptError(
+                    f"federation effect-time report digest changed for {cell_id}"
+                )
+
+    def finish_matrix(self, document: dict) -> Path:
+        if document != self._matrix:
+            raise release_driver.ReceiptError(
+                "federation finish request does not equal its frozen matrix"
+            )
+        if self._finished:
+            raise release_driver.ReceiptError(
+                "federation frozen matrix already finished"
+            )
+        self._validate_effect_time_evidence()
+        matrix_path = self._report_dir / f"matrix-{document['matrix_id']}.json"
+        stored, _ = _read_canonical_report(matrix_path)
+        if stored != document:
+            raise release_driver.ReceiptError(
+                "federation persisted matrix differs from finish request"
+            )
+        cells = release_driver.validate_skew_matrix_document(document)
+        aggregate = _matrix_aggregate(
+            cells, self._report_dir, matrix_id=document["matrix_id"]
+        )
+        aggregate.update({
+            "edge": {"a": "server", "b": "server"},
+            "journey": JOURNEY,
+            "artifacts": {"a": "pypi:aweb", "b": "pypi:aweb"},
+            "direction": "both",
+            "staged_manifest_digest": document["preimage"]["staged_manifest_digest"],
+            "supported_versions": document["preimage"]["support"]["supported_versions"],
+            "published_versions": document["preimage"]["published_versions"],
+        })
+        aggregate.pop("aggregate_id", None)
+        aggregate["aggregate_id"] = _identity(aggregate)
+        path = self._report_dir / "aggregates" / f"{aggregate['aggregate_id']}.json"
+        _atomic_report(path, aggregate)
+        stored_aggregate, _ = _read_canonical_report(path)
+        if stored_aggregate != aggregate:
+            raise release_driver.ReceiptError("federation aggregate reload drifted")
+        self._finished = True
+        return path

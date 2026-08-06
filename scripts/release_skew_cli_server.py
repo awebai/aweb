@@ -578,16 +578,7 @@ def _validate_aw_version_proof(proof: object, version: str) -> dict:
 
 
 def cell_document(cell: rd.SkewCell) -> dict:
-    return {
-        "edge_id": cell.edge_id,
-        "edge": {"a": cell.edge_a, "b": cell.edge_b},
-        "journey": cell.journey,
-        "artifacts": dict(cell.artifacts),
-        "declared_direction": cell.declared_direction,
-        "direction": cell.direction,
-        "a": {"kind": cell.a_kind, **cell.a},
-        "b": {"kind": cell.b_kind, **cell.b},
-    }
+    return rd.skew_cell_preimage(cell)
 
 
 class JourneyExecutionFailure(RuntimeError):
@@ -625,11 +616,72 @@ class CliServerSkewHarness:
             )
         self._evidence_root = Path(evidence_root) if evidence_root is not None else None
         self._temporary_directory = temporary_directory
+        self._matrix: dict | None = None
+        self._cells: dict[str, rd.SkewCell] = {}
+        self._cell_evidence: dict[str, dict] = {}
+        self._finished = False
 
-    def run(self, cell: rd.SkewCell) -> None:
-        self.run_evidenced(cell)
+    def freeze_matrix(self, document: dict) -> Path:
+        cells = rd.validate_skew_matrix_document(document)
+        edge = document["preimage"]["edge"]
+        if edge != {
+            "a": "aw", "b": "server", "journey": JOURNEY,
+            "artifacts": ARTIFACTS, "direction": DIRECTION,
+        } or any(_cell_invalid(cell) for cell in cells):
+            raise rd.ReceiptError(
+                "CLI/server child accepts only its exact frozen edge matrix"
+            )
+        if self._matrix is not None and self._matrix != document:
+            raise rd.ReceiptError("CLI/server child was given two matrices")
+        if self._evidence_root is None:
+            raise rd.ReceiptError("CLI/server matrix requires an evidence root")
+        path = self._evidence_root / f"matrix-{document['matrix_id']}.json"
+        if path.exists():
+            try:
+                stored = json.loads(path.read_bytes())
+            except (OSError, json.JSONDecodeError) as exc:
+                raise rd.ReceiptError("CLI/server matrix evidence is unreadable") from exc
+            if stored != document or path.read_bytes() != _canonical_json(stored):
+                raise rd.ReceiptError("CLI/server matrix evidence is stale or tampered")
+        else:
+            self._atomic_json(path, document)
+        self._matrix = json.loads(json.dumps(document))
+        self._cells = {rd.skew_cell_identity(cell): cell for cell in cells}
+        return path
 
-    def run_evidenced(self, cell: rd.SkewCell) -> dict:
+    def _frozen_cell_id(self, cell: rd.SkewCell) -> str:
+        if self._matrix is None:
+            raise rd.ReceiptError("CLI/server cell arrived before its frozen matrix")
+        identity = rd.skew_cell_identity(cell)
+        if self._cells.get(identity) != cell:
+            raise rd.ReceiptError(
+                "CLI/server cell is not an exact member of the frozen matrix"
+            )
+        return identity
+
+    def run(self, cell: rd.SkewCell) -> dict:
+        cell_id = self._frozen_cell_id(cell)
+        target = self._evidence_root / "cells" / (
+            f"{self._matrix['matrix_id']}-{cell_id}.json"
+        )
+        if target.exists():
+            raise rd.ReceiptError("CLI/server frozen cell already has evidence")
+        evidence = self.run_evidenced(cell, publish=False)
+        report = {
+            **evidence,
+            "schema": "aweb.release.cli-server-skew-cell.v2",
+            "matrix_id": self._matrix["matrix_id"],
+            "cell_id": cell_id,
+        }
+        report["report_id"] = rd.canonical_json_digest(report)
+        path = self._write_matrix_report(report)
+        self._cell_evidence[cell_id] = {
+            "path": path,
+            "sha256": _sha256(path.read_bytes()),
+        }
+        return evidence
+
+    def run_evidenced(self, cell: rd.SkewCell, *, publish: bool = True) -> dict:
         _validate_cell(cell)
         evidence = None
         journey_error = None
@@ -670,16 +722,83 @@ class CliServerSkewHarness:
                 raise
             evidence["outcome"] = "red"
             evidence["error"] = f"artifact temporary-directory cleanup failed: {exc}"
-            self._write_evidence(evidence)
+            if publish:
+                self._write_evidence(evidence)
             raise SkewJourneyFailure(evidence["error"], evidence) from exc
 
         if journey_error is not None:
-            self._write_evidence(evidence)
+            if publish:
+                self._write_evidence(evidence)
             raise SkewJourneyFailure(str(journey_error), evidence) from journey_error
         # Green publication is deliberately outside the artifact/proof temporary
         # context: visible green evidence means its exact outer cleanup succeeded.
-        self._write_evidence(evidence)
+        if publish:
+            self._write_evidence(evidence)
         return evidence
+
+    @staticmethod
+    def _atomic_json(path: Path, document: dict) -> Path:
+        body = _canonical_json(document)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_bytes(body)
+        os.replace(temporary, path)
+        return path
+
+    def _write_matrix_report(self, report: dict) -> Path:
+        path = self._evidence_root / "cells" / (
+            f"{self._matrix['matrix_id']}-{report['cell_id']}.json"
+        )
+        return self._atomic_json(path, report)
+
+    def _validate_effect_time_evidence(self) -> None:
+        if set(self._cell_evidence) != set(self._cells):
+            raise rd.ReceiptError(
+                "CLI/server effect-time evidence inventory is not exact"
+            )
+        for cell_id in self._cells:
+            expected_path = self._evidence_root / "cells" / (
+                f"{self._matrix['matrix_id']}-{cell_id}.json"
+            )
+            evidence = self._cell_evidence[cell_id]
+            if (
+                not isinstance(evidence, dict)
+                or set(evidence) != {"path", "sha256"}
+                or evidence["path"] != expected_path
+                or expected_path.is_symlink()
+            ):
+                raise rd.ReceiptError(
+                    f"CLI/server effect-time evidence inventory drifted for {cell_id}"
+                )
+            try:
+                observed = _sha256(expected_path.read_bytes())
+            except OSError as exc:
+                raise rd.ReceiptError(
+                    f"CLI/server effect-time evidence is unreadable for {cell_id}: {exc}"
+                ) from exc
+            if observed != evidence["sha256"]:
+                raise rd.ReceiptError(
+                    f"CLI/server effect-time report digest changed for {cell_id}"
+                )
+
+    def finish_matrix(self, document: dict) -> Path:
+        if document != self._matrix:
+            raise rd.ReceiptError(
+                "CLI/server finish request does not equal its frozen matrix"
+            )
+        if self._finished:
+            raise rd.ReceiptError("CLI/server frozen matrix already finished")
+        self._validate_effect_time_evidence()
+        measurement = aggregate_frozen_matrix(
+            self._evidence_root / f"matrix-{document['matrix_id']}.json",
+            self._evidence_root,
+        )
+        path = self._evidence_root / (
+            f"aggregate-{document['matrix_id']}-{measurement['measurement_id']}.json"
+        )
+        self._atomic_json(path, measurement)
+        self._finished = True
+        return path
 
     def _write_evidence(self, evidence: dict) -> None:
         if self._evidence_root is None:
@@ -693,8 +812,8 @@ class CliServerSkewHarness:
         os.replace(temporary, target)
 
 
-def _validate_cell(cell: rd.SkewCell) -> None:
-    if (
+def _cell_invalid(cell: rd.SkewCell) -> bool:
+    return (
         cell.edge_id != EDGE_ID
         or cell.edge_a != "aw"
         or cell.edge_b != "server"
@@ -704,7 +823,11 @@ def _validate_cell(cell: rd.SkewCell) -> None:
         or cell.direction not in ("a-to-b", "b-to-a")
         or cell.a.get("component") != "aw"
         or cell.b.get("component") != "server"
-    ):
+    )
+
+
+def _validate_cell(cell: rd.SkewCell) -> None:
+    if _cell_invalid(cell):
         raise rd.ReceiptError(
             "skew cell does not bind the exact CLI/server edge preimage"
         )
@@ -846,9 +969,247 @@ def _summarize_journey_failure(returncode: int, stdout: str, stderr: str) -> str
     return (f"real-stack journey exited {returncode}\n{detail}")[:4000]
 
 
+def _validate_report_artifact(artifact: dict, side: dict, kind: str,
+                              locator: str) -> dict:
+    if not isinstance(artifact, dict):
+        raise rd.ReceiptError("CLI/server report artifact is not an object")
+    component = side.get("component")
+    common = {"component", "version", "kind", "payload_name", "payload_sha256"}
+    if (
+        artifact.get("component") != component
+        or artifact.get("version") != side.get("version")
+        or artifact.get("kind") != kind
+        or not re.fullmatch(r"[0-9a-f]{64}", artifact.get("payload_sha256", ""))
+    ):
+        raise rd.ReceiptError(
+            f"CLI/server {component} artifact does not bind its frozen side"
+        )
+    if kind == "candidate":
+        expected_fields = common | {
+            "lane_ref", "outer_sha256", "digest_set", "archive_payload_sha256",
+        }
+        digest_set = side.get("digest_set")
+        payload_digest = (
+            artifact.get("payload_sha256") if component == "server"
+            else artifact.get("archive_payload_sha256")
+        )
+        if (
+            set(artifact) != expected_fields
+            or artifact.get("lane_ref") != side.get("lane_ref")
+            or artifact.get("digest_set") != digest_set
+            or artifact.get("outer_sha256")
+                != str((side.get("lane_ref") or {}).get("zip_digest", "")).removeprefix("sha256:")
+            or not isinstance(digest_set, dict)
+            or any(not re.fullmatch(r"[0-9a-f]{64}", value or "")
+                   for value in digest_set.values())
+            or side.get("digest") != rd.canonical_digest_of_set(digest_set)
+            or digest_set.get(artifact.get("payload_name")) != payload_digest
+        ):
+            raise rd.ReceiptError(
+                f"CLI/server candidate {component} artifact identity drifted"
+            )
+        rd.LaneRef.from_dict(side.get("lane_ref"))
+        return artifact
+    registry = "github-release:awebai/aw" if component == "aw" else "pypi:aweb"
+    registry_set = artifact.get("registry_digest_set")
+    base = common | {
+        "registry", "registry_digest_set", "registry_set_digest",
+        "outer_sha256", "registry_sha256",
+    }
+    expected_fields = (
+        base | {"url"}
+        if component == "server"
+        else base | {
+            "tag", "checksums_sha256", "checksums_registry_sha256",
+            "checksums_recorded_sha256", "version_output", "module_version",
+        }
+    )
+    if component == "aw" and artifact.get("version") == DIRTY_FLEET_AW_VERSION:
+        expected_fields |= {"provenance_status", "use"}
+    safe_server_url = True
+    if component == "server":
+        parsed = urllib.parse.urlsplit(artifact.get("url", ""))
+        safe_server_url = (
+            parsed.scheme == "https"
+            and parsed.netloc == "files.pythonhosted.org"
+            and not parsed.query and not parsed.fragment
+            and Path(urllib.parse.unquote(parsed.path)).name
+                == artifact.get("payload_name")
+        )
+    expected_registry_names = (
+        set(rd.expected_lane_payload_names(artifact["version"])[0])
+        if component == "aw" else {
+            f"aweb-{artifact['version']}-py3-none-any.whl",
+            f"aweb-{artifact['version']}.tar.gz",
+        }
+    )
+    if (
+        set(artifact) != expected_fields
+        or artifact.get("registry") != registry
+        or locator != registry
+        or not isinstance(registry_set, dict) or not registry_set
+        or set(registry_set) != expected_registry_names
+        or any(not re.fullmatch(r"[0-9a-f]{64}", value or "")
+               for value in registry_set.values())
+        or not safe_server_url
+        or artifact.get("registry_set_digest")
+            != rd.canonical_digest_of_set(registry_set)
+        or registry_set.get(artifact.get("payload_name"))
+            != artifact.get("outer_sha256")
+        or artifact.get("registry_sha256") != artifact.get("outer_sha256")
+        or (component == "aw" and (
+            artifact.get("tag") != f"v{artifact['version']}"
+            or _validate_aw_version_proof({
+                "version_output": artifact.get("version_output"),
+                "module_version": artifact.get("module_version"),
+            }, artifact["version"]) is None
+        ))
+    ):
+        raise rd.ReceiptError(
+            f"CLI/server published {component} artifact identity drifted"
+        )
+    return artifact
+
+
+def aggregate_frozen_matrix(matrix_path: Path, evidence_root: Path) -> dict:
+    matrix_path = Path(matrix_path)
+    matrix_body = matrix_path.read_bytes()
+    document = json.loads(matrix_body)
+    if matrix_body != _canonical_json(document):
+        raise rd.ReceiptError("CLI/server matrix is not canonical JSON")
+    cells = rd.validate_skew_matrix_document(document)
+    matrix_id = document["matrix_id"]
+    if matrix_path.name != f"matrix-{matrix_id}.json":
+        raise rd.ReceiptError("CLI/server matrix filename does not equal its identity")
+    expected = {
+        f"{matrix_id}-{rd.skew_cell_identity(cell)}.json": cell
+        for cell in cells
+    }
+    cell_dir = Path(evidence_root) / "cells"
+    try:
+        entries = list(cell_dir.iterdir())
+    except OSError as exc:
+        raise rd.ReceiptError(f"CLI/server cell evidence is unreadable: {exc}") from exc
+    actual = {
+        item.name: item for item in entries
+        if item.is_file() and not item.is_symlink()
+    }
+    if set(actual) != set(expected) or len(entries) != len(expected):
+        raise rd.ReceiptError(
+            "CLI/server report-file set does not equal the frozen matrix; "
+            f"missing={sorted(set(expected) - set(actual))}, "
+            f"extra={sorted(set(actual) - set(expected))}"
+        )
+    candidates: dict[str, dict] = {}
+    published_identities: dict[tuple[str, str], dict] = {}
+    dependency_postures = set()
+    reports = []
+    for filename, cell in expected.items():
+        body = actual[filename].read_bytes()
+        try:
+            report = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise rd.ReceiptError(f"{filename}: report is malformed") from exc
+        if body != _canonical_json(report):
+            raise rd.ReceiptError(f"{filename}: report is not canonical JSON")
+        cell_id = rd.skew_cell_identity(cell)
+        without_id = {key: value for key, value in report.items() if key != "report_id"}
+        if (
+            not isinstance(report, dict)
+            or set(report) != {
+                "schema", "matrix_id", "cell_id", "cell", "artifacts",
+                "runtime", "outcome", "report_id",
+            }
+            or report.get("schema") != "aweb.release.cli-server-skew-cell.v2"
+            or report.get("matrix_id") != matrix_id
+            or report.get("cell_id") != cell_id
+            or report.get("cell") != rd.skew_cell_preimage(cell)
+            or report.get("outcome") != "green"
+            or report.get("report_id") != rd.canonical_json_digest(without_id)
+            or not isinstance(report.get("artifacts"), list)
+            or len(report["artifacts"]) != 2
+        ):
+            raise rd.ReceiptError(
+                f"{filename}: report does not bind its exact frozen cell"
+            )
+        artifacts = []
+        for artifact, side, kind, locator in (
+            (report["artifacts"][0], cell.a, cell.a_kind, cell.artifacts["a"]),
+            (report["artifacts"][1], cell.b, cell.b_kind, cell.artifacts["b"]),
+        ):
+            validated = _validate_report_artifact(artifact, side, kind, locator)
+            artifacts.append(validated)
+            if kind == "candidate":
+                prior = candidates.setdefault(side["component"], validated)
+                if prior != validated:
+                    raise rd.ReceiptError(
+                        f"candidate {side['component']} identity differs across cells"
+                    )
+            else:
+                key = (side["component"], side["version"])
+                prior = published_identities.setdefault(key, validated)
+                if prior != validated:
+                    raise rd.ReceiptError(
+                        f"published {side['component']} {side['version']} identity "
+                        "differs across cells"
+                    )
+        server_artifact = next(
+            artifact for artifact in artifacts if artifact["component"] == "server"
+        )
+        server = ResolvedArtifact(
+            component="server", version=server_artifact["version"],
+            path=Path(server_artifact["payload_name"]), evidence=server_artifact,
+        )
+        validate_runtime_proof(report["runtime"], server, report["cell"])
+        dependencies = {
+            name: version
+            for name, version in report["runtime"]["installed_distributions"].items()
+            if name != "aweb"
+        }
+        dependency_postures.add(_sha256(_canonical_json(dependencies)))
+        reports.append({
+            "cell_id": cell_id,
+            "report_id": report["report_id"],
+            "file_sha256": _sha256(body),
+        })
+    expected_candidates = set(document["preimage"]["staged"])
+    if set(candidates) != expected_candidates:
+        raise rd.ReceiptError(
+            f"CLI/server candidates {sorted(candidates)} do not equal frozen "
+            f"{sorted(expected_candidates)}"
+        )
+    if len(dependency_postures) != 1:
+        raise rd.ReceiptError(
+            "CLI/server runtime dependency posture differs across matrix cells"
+        )
+    edge_data = document["preimage"]["edge"]
+    measurement = {
+        "schema": "aweb.release.runtime-support-measurement.v1",
+        "status": "incomplete-unanchored",
+        "support_complete": False,
+        "anchor": None,
+        "matrix_id": matrix_id,
+        "edge": {"a": edge_data["a"], "b": edge_data["b"]},
+        "journey": edge_data["journey"],
+        "artifacts": edge_data["artifacts"],
+        "direction": edge_data["direction"],
+        "staged_manifest_digest": document["preimage"]["staged_manifest_digest"],
+        "supported_versions": document["preimage"]["support"]["supported_versions"],
+        "published_versions": document["preimage"]["published_versions"],
+        "candidates": candidates,
+        "published_identities": [
+            published_identities[key] for key in sorted(published_identities)
+        ],
+        "reports": reports,
+    }
+    measurement["measurement_id"] = rd.canonical_json_digest(measurement)
+    return measurement
+
+
 def measure_support(
     *,
     staged: dict[str, rd.ReceiptEntry],
+    staged_manifest_digest: str,
     supported_versions: dict[str, list[str]],
     published_versions: dict[str, str],
     negative_server: str,
@@ -871,6 +1232,20 @@ def measure_support(
             f"the measured server floor must start at the first published fix "
             f"{FIRST_SUPPORTED_SERVER_VERSION}, got {server_support}"
         )
+    matrix = rd.freeze_skew_matrix(
+        EDGE, moving={"aw", "server"}, staged=staged,
+        support={"supported_versions": supported_versions},
+        published_versions=published_versions,
+        staged_manifest_digest=staged_manifest_digest,
+    )
+    freeze = getattr(harness, "freeze_matrix", None)
+    finish = getattr(harness, "finish_matrix", None)
+    if freeze is None or finish is None:
+        raise rd.ReceiptError(
+            "CLI/server measurement requires the frozen matrix lifecycle"
+        )
+    freeze(matrix)
+
     negative_cells = rd.compute_skew_cells(
         EDGE,
         moving={"aw"},
@@ -896,14 +1271,8 @@ def measure_support(
                 f"{negative.direction}: {green!r}"
             )
 
-    supported_cells = rd.compute_skew_cells(
-        EDGE,
-        moving={"aw", "server"},
-        staged=staged,
-        support={"supported_versions": supported_versions},
-        published_versions=published_versions,
-    )
-    evidence = [harness.run_evidenced(item) for item in supported_cells]
+    supported_cells = rd.validate_skew_matrix_document(matrix)
+    evidence = [harness.run(item) for item in supported_cells]
     first_supported_controls = [
         row for row in evidence
         if (row.get("runtime") or {}).get("server_version")
@@ -918,13 +1287,9 @@ def measure_support(
     )
     if DIRTY_FLEET_AW_VERSION in (supported_versions.get("aw") or []):
         _require_dirty_fleet_evidence(evidence)
-    return {
-        "schema": "aweb.release.runtime-support-measurement.v1",
-        "edge_id": EDGE_ID,
-        "edge": {"a": "aw", "b": "server"},
-        "journey": JOURNEY,
-        "artifacts": dict(ARTIFACTS),
-        "direction": DIRECTION,
+    aggregate_path = finish(matrix)
+    aggregate = json.loads(Path(aggregate_path).read_bytes())
+    aggregate.update({
         "policy": "additive-only",
         "support_basis": {
             "server": {
@@ -944,8 +1309,11 @@ def measure_support(
             name: list(versions) for name, versions in sorted(supported_versions.items())
         },
         "negative_control": negative_evidence,
-        "evidence": evidence,
-    }
+        "cell_evidence": evidence,
+    })
+    aggregate.pop("measurement_id", None)
+    aggregate["measurement_id"] = rd.canonical_json_digest(aggregate)
+    return aggregate
 
 
 def _require_uniform_dependency_posture(evidence: list[dict]) -> None:
@@ -1050,6 +1418,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         document = measure_support(
             staged=entries,
+            staged_manifest_digest=_sha256(body),
             supported_versions={
                 "aw": args.supported_aw,
                 "server": args.supported_server,
@@ -1062,6 +1431,8 @@ def main(argv: list[str] | None = None) -> int:
             harness=CliServerSkewHarness(),
         )
         document["staged_manifest_sha256"] = _sha256(body)
+        document.pop("measurement_id", None)
+        document["measurement_id"] = rd.canonical_json_digest(document)
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
