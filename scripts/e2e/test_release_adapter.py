@@ -3164,15 +3164,15 @@ class WorkflowRecoveryObservationTests(unittest.TestCase):
             delivery_proofs={"channel": dict(GOOD_PROOF)})
         lanes = rd.WorkflowLanes(
             {"channel": lane},
-            recovery_tag_names={"channel": "channel-v1.7.2"},
+            recovery_tag_names={"channel": "channel-v1.7.3"},
             recovery_tag_observe=lambda name: tag["value"],
         )
         node = rd.PlanNode(component="channel", reason="adopted-preplan",
-                           version="1.7.2")
+                           version="1.7.3")
         staged = lane.adopt_preplan(node).entry
         absent = lanes.observe_recovery(node, staged)
         self.assertEqual(absent.public, {
-            "tag": {"name": "channel-v1.7.2", "status": "absent",
+            "tag": {"name": "channel-v1.7.3", "status": "absent",
                     "source_sha": None},
             "registry": {"status": "absent", "digest_set": None},
         })
