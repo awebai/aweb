@@ -711,6 +711,20 @@ class FakeAwRuns:
     def list_run_ids(self):
         return list(self.run_ids)
 
+    def high_water_run_id(self):
+        run_ids = self.list_run_ids()
+        return run_ids[-1] if run_ids else None
+
+    def list_run_ids_after(self, boundary_run_id):
+        run_ids = self.list_run_ids()
+        if boundary_run_id is None:
+            return run_ids
+        boundary = str(boundary_run_id)
+        for index, run_id in enumerate(run_ids):
+            if str(run_id) == boundary:
+                return run_ids[index + 1:]
+        raise rd.ReceiptError("incomplete fake run enumeration: boundary missing")
+
     def dispatch(self, inputs: dict):
         self.dispatched.append(dict(inputs))
         for _ in range(self.new_runs_per_dispatch):
@@ -762,6 +776,57 @@ class WorkflowRunAttemptEvidenceTests(unittest.TestCase):
         runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
                              workflow_file="npm-release.yml")
         self.assertEqual(runs.run_attempt_artifact_id(777), attempt_id)
+
+    def test_run_history_uses_high_water_and_deduplicates_page_drift(self):
+        calls = []
+        pages = {
+            1: [300, 299, 298],
+            2: [298, 297, 250, 249],
+        }
+
+        def api(path):
+            calls.append(path)
+            if path.endswith("?per_page=1&page=1"):
+                return json.dumps({"workflow_runs": [{"id": 300}]}).encode()
+            for page, run_ids in pages.items():
+                if path.endswith(f"?per_page=100&page={page}"):
+                    return json.dumps({
+                        "workflow_runs": [{"id": item} for item in run_ids]
+                    }).encode()
+            raise AssertionError(f"unexpected API path {path}")
+
+        runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        self.assertEqual(runs.high_water_run_id(), 300)
+        self.assertEqual(
+            runs.list_run_ids_after("250"),
+            [300, 299, 298, 297],
+        )
+        self.assertEqual(
+            sum(path.endswith("page=2") for path in calls), 1,
+            "pagination must continue through overlap until the boundary",
+        )
+
+    def test_missing_boundary_and_page_cap_refuse_incomplete_enumeration(self):
+        for mode in ("missing", "cap"):
+            with self.subTest(mode=mode):
+                calls = []
+
+                def api(path):
+                    calls.append(path)
+                    if mode == "missing" and path.endswith("page=2"):
+                        return json.dumps({"workflow_runs": []}).encode()
+                    return json.dumps({
+                        "workflow_runs": [{"id": 400 - len(calls)}]
+                    }).encode()
+
+                runs = rd.AwLaneRuns(api=api, repo="awebai/aweb",
+                                     workflow_file="npm-release.yml")
+                runs.MAX_RUN_HISTORY_PAGES = 2
+                with self.assertRaises(rd.ReceiptError) as caught:
+                    runs.list_run_ids_after("250")
+                self.assertIn("incomplete", str(caught.exception))
+                self.assertLessEqual(len(calls), 2)
 
     def test_npm_workflow_persists_recovery_identity_before_effects(self):
         workflow = (REPO_ROOT / ".github/workflows/npm-release.yml").read_text()
@@ -3118,6 +3183,7 @@ class NpmWorkflowLaneTests(unittest.TestCase):
             delivery_proofs={"channel": dict(GOOD_PROOF)})
         adopted = lane.adopt_preplan(self.node())
         before = lane.continuation_snapshot(self.node())
+        self.assertEqual(before, ["101"], "persist only the stable high-water run")
         original = runs.dispatch
 
         def dispatch(inputs):
@@ -3220,6 +3286,69 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         self.assertEqual(recovered.continuation_run_id, "777")
         self.assertEqual(recovered.attempt_artifact_id, "attempt:channel:two")
         self.assertEqual(runs.dispatched, [])
+
+    def test_recovery_finds_owned_run_beyond_first_history_page(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": sha256(tgz)}
+        attempt_id = "attempt:channel:beyond-page-one"
+        owned_run_id = 1101
+        boundary_run_id = 1000
+        unrelated = list(range(1201, 1101, -1))
+        evidence_body = rd.canonical_json_bytes({
+            "schema": "aweb.release.recovery-continuation-attempt.v1",
+            "attempt_artifact_id": attempt_id,
+            "continuation_run_id": str(owned_run_id),
+        })
+        evidence_buffer = io.BytesIO()
+        with zipfile.ZipFile(evidence_buffer, "w") as archive:
+            archive.writestr("recovery-attempt.json", evidence_body)
+        evidence_zip = evidence_buffer.getvalue()
+        calls = []
+        prefix = "repos/awebai/aweb/actions/workflows/npm-release.yml/runs"
+
+        def runs_api(path):
+            calls.append(path)
+            if path == prefix + "?per_page=100&page=1":
+                return json.dumps({
+                    "workflow_runs": [{"id": item} for item in unrelated]
+                }).encode()
+            if path == prefix + "?per_page=100&page=2":
+                return json.dumps({"workflow_runs": [
+                    {"id": owned_run_id}, {"id": boundary_run_id},
+                ]}).encode()
+            if path == (
+                f"repos/awebai/aweb/actions/runs/{owned_run_id}"
+                "/artifacts?per_page=100"
+            ):
+                return json.dumps({"artifacts": [{
+                    "id": 88,
+                    "name": "recovery-attempt-identity",
+                    "expired": False,
+                    "digest": "sha256:" + sha256(evidence_zip),
+                    "workflow_run": {"id": owned_run_id},
+                }]}).encode()
+            if path == "repos/awebai/aweb/actions/artifacts/88/zip":
+                return evidence_zip
+            if path == f"repos/awebai/aweb/actions/runs/{owned_run_id}":
+                return json.dumps({"conclusion": "success"}).encode()
+            if path.startswith("repos/awebai/aweb/actions/runs/"):
+                return json.dumps({"artifacts": []}).encode()
+            raise AssertionError(f"unexpected API path {path}")
+
+        runs = rd.AwLaneRuns(api=runs_api, repo="awebai/aweb",
+                             workflow_file="npm-release.yml")
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        recovered = lane.recover_recovery_attempt(
+            self.node(), adopted.entry,
+            before_run_ids=[str(boundary_run_id)],
+            attempt_artifact_id=attempt_id)
+        self.assertEqual(recovered.continuation_run_id, str(owned_run_id))
+        self.assertEqual(recovered.attempt_artifact_id, attempt_id)
+        self.assertIn(prefix + "?per_page=100&page=2", calls)
 
     def test_recovery_attempt_selects_owned_run_amid_unrelated_run(self) -> None:
         tgz = channel_tgz()
