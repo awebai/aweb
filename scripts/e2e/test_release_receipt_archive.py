@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -1262,10 +1264,9 @@ class ProductionPathControlTests(unittest.TestCase):
                          "archive and restore dispatch")
 
     # Gap 1: production restore of a receipt must enforce the complete set.
-    def test_restore_release_set_enforces_complete_ordered_transitions(self):
-        self.assertTrue(hasattr(archive, "restore_release_set"),
-                        "production must expose a release-set restore that "
-                        "reaches validate_transition_set")
+    # The end-to-end control lives in RoundFiveCounterexampleTests, which
+    # drives a real set through the real index authority; asserting the
+    # function merely exists proves nothing about whether it is reached.
 
     def test_lone_out_of_order_transition_refuses_in_set_restore(self):
         docs = [{
@@ -1279,6 +1280,346 @@ class ProductionPathControlTests(unittest.TestCase):
         }]
         with self.assertRaisesRegex(rd.ReceiptError, "ordered set"):
             archive.validate_transition_set(docs)
+
+
+class RoundFiveCounterexampleTests(unittest.TestCase):
+    """Alice's round-5 named counterexamples, built rather than asserted.
+
+    Blocker 2 shipped with its counterexamples; blockers 1, 3 and 4 shipped
+    with implementations and no adversarial test. That is the exact shape that
+    produced the round-5 sort bug: the code looked right and nothing tried the
+    input that breaks it.
+    """
+
+    SOURCE_SHA = "a" * 40
+
+    # ---- a complete, real release set -------------------------------------
+    def real_release_set(self, *, source_sha=None):
+        source_sha = source_sha or self.SOURCE_SHA
+        graph, plan = real_graph_and_plan()
+        plan_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha=source_sha)
+        staged = {"channel": rd.ReceiptEntry(
+            version="1.7.2", digest="d" * 64, phase="staged")}
+        manifest_bytes, manifest_digest = rd.seal_staged_manifest(
+            plan, frozen_plan_id=frozen_id, source_sha=source_sha,
+            entries=staged, graph=graph)
+        staged_id = f"staged-manifest:{frozen_id}:{manifest_digest}"
+
+        transitions = []
+        for sequence, kind in ((1, "staged"), (2, "published")):
+            document = {
+                "frozen_plan_id": frozen_id,
+                "staged_manifest_id": staged_id,
+                "sequence": sequence,
+                "component": "channel",
+                "kind": kind,
+                "entry": {"version": "1.7.2", "digest": "d" * 64,
+                          "phase": kind, "pointer_state": None,
+                          "delivery_proof": None, "lane_ref": None,
+                          "digest_set": {}},
+            }
+            body = json.dumps(document, sort_keys=True).encode()
+            logical = (f"transition:{frozen_id}:{sequence:03d}:{kind}:"
+                       f"channel:{sha256(body)}")
+            transitions.append((logical, body))
+
+        sealed, receipt_digest = rd.seal_receipt(
+            plan, graph, source_sha=source_sha,
+            entries={"channel": rd.ReceiptEntry(
+                version="1.7.2", digest="d" * 64, phase="verified")},
+            approvals={}, frozen_plan_id=frozen_id,
+            staged_manifest_id=staged_id)
+
+        artifacts = [
+            (f"plan:{source_sha}:{frozen_id}", plan_bytes),
+            (staged_id, manifest_bytes),
+            *transitions,
+            (f"receipt:{frozen_id}:{receipt_digest}", sealed),
+        ]
+        return {
+            "frozen_plan_id": frozen_id,
+            "plan": artifacts[0][0],
+            "staged_manifest": staged_id,
+            "transitions": [logical for logical, _ in transitions],
+            "receipt": artifacts[-1][0],
+            "artifacts": artifacts,
+        }
+
+    def archive_all(self, artifacts):
+        """Every artifact through the REAL production archive path, with the
+        default semantic validator - not a permissive one."""
+        transport = FakeArchiveTransport()
+        entries = []
+        for index, (logical, inner) in enumerate(artifacts):
+            body, _ = anchor_bundle(logical, inner)
+            # The artifact ref must be derived from the recorded source
+            # identity, so each artifact needs its own source id, not just its
+            # own ref.
+            artifact_id = str(9000 + index)
+            ref = f"gh-artifact:awebai/aweb:41:{artifact_id}"
+            entries.append(archive.archive_sealed(
+                logical_id=logical, kind="anchor-artifact",
+                source=dict(SOURCE, artifact_id=artifact_id,
+                            anchor=rd._anchor_name(
+                                logical, sha256(inner))),
+                store=FakeStore({ref: body}),
+                authority=FakeAuthority({ref: sha256(body)}),
+                transport=transport, artifact_ref=ref,
+                recorded_head=transport.head))
+        return transport, entries
+
+    def index_authority(self, entries, release_sets):
+        document = json.dumps({
+            "schema": archive.ReviewedMainIndexAuthority.INDEX_SCHEMA,
+            "entries": entries,
+            "release_sets": release_sets,
+        }, sort_keys=True, separators=(",", ":")).encode()
+
+        class FakeGit:
+            def ls_remote(self, ref):
+                return "b" * 40
+
+            def is_ancestor(self, ancestor, descendant):
+                return True
+
+            def file_at(self, commit, path):
+                return document
+
+        return archive.ReviewedMainIndexAuthority(
+            remote="https://github.com/awebai/aweb.git",
+            reviewed_commit="a" * 40, git=FakeGit())
+
+    def inventory(self, released, **overrides):
+        base = {
+            "frozen_plan_id": released["frozen_plan_id"],
+            "plan": released["plan"],
+            "staged_manifest": released["staged_manifest"],
+            "transitions": list(released["transitions"]),
+            "receipt": released["receipt"],
+        }
+        base.update(overrides)
+        return base
+
+    # ---- blocker 1: the production set restore, end to end ----------------
+    def test_real_production_set_restore_round_trips(self):
+        released = self.real_release_set()
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(
+            entries, [self.inventory(released)])
+
+        restored = archive.restore_release_set(
+            frozen_plan_id=released["frozen_plan_id"], transport=transport,
+            index_authority=authority, production=True)
+
+        self.assertEqual(restored["frozen_plan_id"], released["frozen_plan_id"])
+        self.assertEqual([d["sequence"] for d in restored["transitions"]],
+                         [1, 2])
+        self.assertEqual({d["component"] for d in restored["transitions"]},
+                         {"channel"})
+
+    def test_set_restore_refuses_an_inventory_missing_a_transition(self):
+        """Completeness is the whole point: dropping the staged transition
+        leaves a set whose sequences are [2], not 1..n."""
+        released = self.real_release_set()
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(
+            released, transitions=[released["transitions"][1]])])
+
+        with self.assertRaisesRegex(rd.ReceiptError, "ordered set"):
+            archive.restore_release_set(
+                frozen_plan_id=released["frozen_plan_id"], transport=transport,
+                index_authority=authority, production=True)
+
+    def test_set_restore_refuses_reordered_inventory(self):
+        """The reviewer's [2, 1]: every artifact is present and intact, and the
+        SET is still wrong."""
+        released = self.real_release_set()
+        transport, entries = self.archive_all(released["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(
+            released, transitions=list(reversed(released["transitions"])))])
+
+        with self.assertRaisesRegex(rd.ReceiptError, "order archived"):
+            archive.restore_release_set(
+                frozen_plan_id=released["frozen_plan_id"], transport=transport,
+                index_authority=authority, production=True)
+
+    def test_set_restore_refuses_an_index_with_no_release_sets(self):
+        released = self.real_release_set()
+        transport, entries = self.archive_all(released["artifacts"])
+        document = json.dumps({
+            "schema": archive.ReviewedMainIndexAuthority.INDEX_SCHEMA,
+            "entries": entries,
+        }, sort_keys=True, separators=(",", ":")).encode()
+
+        class FakeGit:
+            def ls_remote(self, ref):
+                return "b" * 40
+
+            def is_ancestor(self, a, d):
+                return True
+
+            def file_at(self, commit, path):
+                return document
+
+        authority = archive.ReviewedMainIndexAuthority(
+            remote="https://github.com/awebai/aweb.git",
+            reviewed_commit="a" * 40, git=FakeGit())
+        with self.assertRaisesRegex(rd.ReceiptError, "release_sets"):
+            archive.restore_release_set(
+                frozen_plan_id=released["frozen_plan_id"], transport=transport,
+                index_authority=authority, production=True)
+
+    def test_set_restore_refuses_a_transition_from_another_plan(self):
+        """Substituting a foreign-but-valid transition: it is a real sealed
+        document, correctly archived, and it belongs to a different release."""
+        released = self.real_release_set()
+        other = self.real_release_set(source_sha="b" * 40)
+        transport, entries = self.archive_all(
+            released["artifacts"] + other["artifacts"])
+        authority = self.index_authority(entries, [self.inventory(
+            released,
+            transitions=[released["transitions"][0], other["transitions"][1]])])
+
+        with self.assertRaisesRegex(rd.ReceiptError, "bind the frozen plan"):
+            archive.restore_release_set(
+                frozen_plan_id=released["frozen_plan_id"], transport=transport,
+                index_authority=authority, production=True)
+
+    # ---- blocker 3: source and lane substitution --------------------------
+    def test_plan_id_claiming_a_foreign_source_refuses(self):
+        """Source substitution. The body is a REAL frozen plan and its digest
+        matches the id, so every byte check passes; only the source claim is
+        false."""
+        graph, plan = real_graph_and_plan()
+        plan_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha="b" * 40)
+        body, manifest = anchor_bundle(
+            f"plan:{'a' * 40}:{frozen_id}", plan_bytes)
+        with self.assertRaisesRegex(rd.ReceiptError, "claims source"):
+            archive.semantic_validator()(body, manifest)
+
+    def test_plan_id_binding_its_real_source_validates(self):
+        """The control for the test above: identical machinery, true claim."""
+        graph, plan = real_graph_and_plan()
+        plan_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha="b" * 40)
+        body, manifest = anchor_bundle(
+            f"plan:{'b' * 40}:{frozen_id}", plan_bytes)
+        archive.semantic_validator()(body, manifest)
+
+    def lane_zip(self, *, package="channel", version="1.7.2",
+                 source_sha="c" * 40):
+        import io
+        import zipfile
+
+        tgz = b"exact staged tarball bytes"
+        name = f"{package}-{version}.tgz"
+        files = {name: sha256(tgz)}
+        lane_manifest = {
+            "mode": "stage-only", "package": package,
+            "tag": f"{package}-v{version}", "candidate_version": version,
+            "source_sha": source_sha, "files": files,
+            "canonical_set_digest": sha256(
+                json.dumps(files, sort_keys=True).encode()),
+        }
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("manifest.json", json.dumps(lane_manifest))
+            z.writestr(f"dist/{name}", tgz)
+        return buf.getvalue()
+
+    def lane_manifest_for(self, body, logical_id, **source_extra):
+        source = {k: v for k, v in SOURCE.items() if k != "anchor"}
+        source.update(source_extra)
+        return {
+            "schema": archive.MANIFEST_SCHEMA,
+            "logical_id": logical_id,
+            "kind": "workflow-artifact",
+            "source": source,
+            "source_digest": sha256(body),
+            "body_sha256": sha256(body),
+        }
+
+    def test_lane_id_claiming_a_foreign_package_refuses(self):
+        """Lane substitution by package: real channel bytes, labelled pi."""
+        body = self.lane_zip(package="channel", version="1.7.2")
+        manifest = self.lane_manifest_for(body, "lane:pi:1.7.2")
+        with self.assertRaisesRegex(rd.ReceiptError, "lane manifest binds"):
+            archive.semantic_validator()(body, manifest)
+
+    def test_lane_id_claiming_a_foreign_version_refuses(self):
+        """Lane substitution by version: the 1.7.1 bytes relabelled 1.7.2 is
+        precisely the swap byte-identity exists to prevent."""
+        body = self.lane_zip(package="channel", version="1.7.1")
+        manifest = self.lane_manifest_for(body, "lane:channel:1.7.2")
+        with self.assertRaisesRegex(rd.ReceiptError, "lane manifest binds"):
+            archive.semantic_validator()(body, manifest)
+
+    def test_archive_source_claiming_a_foreign_commit_refuses(self):
+        body = self.lane_zip(source_sha="c" * 40)
+        manifest = self.lane_manifest_for(
+            body, "lane:channel:1.7.2", source_sha="d" * 40)
+        with self.assertRaisesRegex(rd.ReceiptError, "asserts source_sha"):
+            archive.semantic_validator()(body, manifest)
+
+    # ---- blocker 4: the output race ---------------------------------------
+    def test_output_commit_refuses_a_target_created_after_the_check(self):
+        """The race the os.link commit exists to close: the target does not
+        exist when _atomic_write_bytes checks, and does exist by the time it
+        commits. Simulated deterministically by creating it from inside the
+        write, which is the only way to occupy that window on purpose."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "receipt.json"
+            real_fdopen = os.fdopen
+
+            def racing_fdopen(fd, mode, *args, **kwargs):
+                handle = real_fdopen(fd, mode, *args, **kwargs)
+                if not out.exists():
+                    out.write_bytes(b"written by the loser of the race")
+                return handle
+
+            with unittest.mock.patch.object(os, "fdopen", racing_fdopen):
+                with self.assertRaisesRegex(rd.ReceiptError, "concurrently"):
+                    archive._atomic_write_bytes(out, b"our bytes")
+
+            self.assertEqual(out.read_bytes(),
+                             b"written by the loser of the race",
+                             "the concurrent writer's bytes must survive; a "
+                             "replace-based commit would have clobbered them")
+            self.assertFalse((Path(tmp) / "receipt.json.part").exists(),
+                             "a failed commit must not leave .part bytes")
+
+    def test_output_commit_leaves_no_part_file_on_write_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "receipt.json"
+
+            class Exploding:
+                def write(self, data):
+                    raise OSError("disk full")
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+            with unittest.mock.patch.object(
+                os, "fdopen", lambda fd, *a, **k: (
+                    os.close(fd), Exploding())[1]
+            ):
+                with self.assertRaises(OSError):
+                    archive._atomic_write_bytes(out, b"our bytes")
+
+            self.assertFalse(out.exists())
+            self.assertFalse((Path(tmp) / "receipt.json.part").exists())
+
+    def test_successful_write_commits_exactly_the_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "receipt.json"
+            archive._atomic_write_bytes(out, b"our bytes")
+            self.assertEqual(out.read_bytes(), b"our bytes")
+            self.assertFalse((Path(tmp) / "receipt.json.part").exists())
 
 
 class GateTests(unittest.TestCase):

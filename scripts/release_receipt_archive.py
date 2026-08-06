@@ -1321,8 +1321,16 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
             handle.write(data)
         # os.replace would silently clobber a final path created concurrently
         # between the check above and here. os.link refuses when the target
-        # exists, so the commit step itself is the race check.
-        os.link(tmp, path)
+        # exists, so the commit step itself is the race check - reported as the
+        # same refusal as the up-front check, since it is the same condition
+        # observed one instant later.
+        try:
+            os.link(tmp, path)
+        except FileExistsError as exc:
+            raise ReceiptError(
+                f"refusing to overwrite existing output {path}: it was created "
+                "concurrently while this restore was writing"
+            ) from exc
     finally:
         # Unconditional: a failed commit must not leave .part bytes behind.
         try:
