@@ -1905,8 +1905,17 @@ class AwWorkflowLane:
 
 def _lane_manifest_common(
     archive, *, expected_source_sha: str, expected_version: str,
-    expected_package: str | None = None,
+    expected_package: str | None = None, required_mode: str = "stage-only",
 ) -> dict:
+    """Common lane-manifest protocol for one artifact.
+
+    `required_mode` is explicit because the same protocol governs two different
+    consumers. A stage-only artifact continues to publication; a verify-only
+    artifact never does, and is what a measurement consumes. Everything else --
+    member uniqueness, source, version, package, and the canonical set digest
+    recomputed from the exact files map -- is identical, so the two must not be
+    validated by separate near-copies that can drift.
+    """
     names = [n for n in archive.namelist() if not n.endswith("/")]
     for name in set(names):
         if names.count(name) != 1:
@@ -1917,10 +1926,14 @@ def _lane_manifest_common(
     if "manifest.json" not in names:
         raise ReceiptError("staged artifact carries no manifest.json")
     manifest = json.loads(archive.read("manifest.json"))
-    if manifest.get("mode") != "stage-only":
+    if manifest.get("mode") != required_mode:
+        detail = (
+            "only stage-only artifacts continue to publication"
+            if required_mode == "stage-only"
+            else f"this consumer requires a {required_mode} artifact"
+        )
         raise ReceiptError(
-            f"staged artifact mode is {manifest.get('mode')!r}; only "
-            "stage-only artifacts continue to publication"
+            f"staged artifact mode is {manifest.get('mode')!r}; {detail}"
         )
     if manifest.get("source_sha") != expected_source_sha:
         raise ReceiptError(
@@ -1980,7 +1993,7 @@ def _validate_lane_members(
 
 def validate_pypi_lane_artifact(
     zip_bytes: bytes, *, expected_source_sha: str, expected_version: str,
-    package: str, pypi_name: str,
+    package: str, pypi_name: str, required_mode: str = "stage-only",
 ) -> dict:
     """The PyPI lane protocol: exactly one sdist and one wheel for the
     version, members under dist/, manifest keys the two basenames."""
@@ -1991,6 +2004,7 @@ def validate_pypi_lane_artifact(
         manifest = _lane_manifest_common(
             archive, expected_source_sha=expected_source_sha,
             expected_version=expected_version, expected_package=package,
+            required_mode=required_mode,
         )
         files = manifest["files"]
         sdists = [b for b in files

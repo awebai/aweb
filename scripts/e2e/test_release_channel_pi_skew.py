@@ -1071,9 +1071,11 @@ class _Drop:
 
 
 _DROP = _Drop()
+_KEEP = _Drop()
 
 
-def server_lane_zip(version="1.26.34", source_sha="c" * 40):
+def server_lane_zip(version="1.26.34", source_sha="c" * 40,
+                    canonical_set_digest=_KEEP, mode="verify-only"):
     """A real-shaped PyPI verify-only lane artifact for package aweb."""
     names = {
         f"aweb-{version}-py3-none-any.whl": b"wheel " + version.encode(),
@@ -1081,12 +1083,17 @@ def server_lane_zip(version="1.26.34", source_sha="c" * 40):
     }
     files = {n: sha(d) for n, d in names.items()}
     manifest = {
-        "mode": "verify-only", "package": "server",
+        "mode": mode, "package": "server",
         "tag": f"server-v{version}", "candidate_version": version,
         "source_sha": source_sha, "files": files,
         "canonical_set_digest": sha(
             json.dumps(files, sort_keys=True).encode()),
     }
+    if canonical_set_digest is not _KEEP:
+        if canonical_set_digest is _DROP:
+            manifest.pop("canonical_set_digest")
+        else:
+            manifest["canonical_set_digest"] = canonical_set_digest
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         z.writestr("manifest.json", json.dumps(manifest))
@@ -1107,8 +1114,10 @@ class FakePublishedAuthority:
     """The injected resolver: no network, real semantics."""
 
     def __init__(self, *, version="1.26.34", source_sha="c" * 40,
-                 artifact="gh-artifact:awebai/aweb:41:9001"):
-        self.body, self.files = server_lane_zip(version, source_sha)
+                 artifact="gh-artifact:awebai/aweb:41:9001",
+                 canonical_set_digest=_KEEP):
+        self.body, self.files = server_lane_zip(
+            version, source_sha, canonical_set_digest)
         self.artifact = artifact
         self.calls = []
 
@@ -2451,6 +2460,72 @@ class PublishedAuthorityConsumedTests(unittest.TestCase):
                     harness=skew.ChannelPiHarness(
                         resolver=FakeResolver(), journey_factory=FakeJourney,
                         evidence=skew.evidence_writer_for("channel", Path(tmp))))
+
+
+
+
+class SharedVerifyOnlyValidatorTests(unittest.TestCase):
+    """The near-copy drifted within one round: it never recomputed
+    canonical_set_digest, so a forged one completed a measurement. The shared
+    validator does recompute it, and is now called with an explicit mode."""
+
+    def authority_for(self, **kw):
+        fake = FakePublishedAuthority(**kw)
+        return _REAL_PUBLISHED_AUTHORITY(store=fake, digest_authority=fake), fake
+
+    def input_for(self, fake):
+        doc = measurement_input("channel")
+        doc["entries"]["server"]["authority"]["zip_digest"] = (
+            "sha256:" + sha(fake.body))
+        doc["entries"]["server"]["digest_set"] = fake.files
+        doc.pop("manifest_id")
+        doc["manifest_id"] = rd.canonical_json_digest(doc)
+        return doc
+
+    def test_forged_canonical_set_digest_refuses(self):
+        """The ZIP digest and the independent authority are BOTH correct for
+        these bytes -- only the manifest's own set digest is forged."""
+        resolver, fake = self.authority_for(canonical_set_digest="0" * 64)
+        doc = self.input_for(fake)
+        with self.assertRaisesRegex(rd.ReceiptError, "canonical set digest"):
+            resolver.resolve(doc["entries"]["server"])
+
+    def test_missing_canonical_set_digest_refuses(self):
+        resolver, fake = self.authority_for(canonical_set_digest=_DROP)
+        doc = self.input_for(fake)
+        with self.assertRaisesRegex(rd.ReceiptError, "canonical set digest"):
+            resolver.resolve(doc["entries"]["server"])
+
+    def test_non_string_canonical_set_digest_refuses(self):
+        for value in (None, 12345, ["x"]):
+            with self.subTest(value=value):
+                resolver, fake = self.authority_for(canonical_set_digest=value)
+                doc = self.input_for(fake)
+                with self.assertRaises(rd.ReceiptError):
+                    resolver.resolve(doc["entries"]["server"])
+
+    def test_honest_artifact_still_resolves(self):
+        resolver, fake = self.authority_for()
+        report = resolver.resolve(self.input_for(fake)["entries"]["server"])
+        self.assertEqual(report["version"], "1.26.34")
+
+    def test_stage_only_artifact_refused_for_a_measurement(self):
+        """Mode is explicit in both directions."""
+        stage, _ = server_lane_zip(mode="stage-only")
+        with self.assertRaisesRegex(rd.ReceiptError, "verify-only"):
+            rd.validate_pypi_lane_artifact(
+                stage, expected_source_sha="c" * 40,
+                expected_version="1.26.34", package="server",
+                pypi_name="aweb", required_mode="verify-only")
+
+    def test_default_mode_is_unchanged_for_existing_callers(self):
+        """Every existing caller passes no mode and must still get stage-only."""
+        body, _ = server_lane_zip()
+        with self.assertRaisesRegex(rd.ReceiptError, "stage-only"):
+            rd.validate_pypi_lane_artifact(
+                body, expected_source_sha="c" * 40,
+                expected_version="1.26.34", package="server",
+                pypi_name="aweb")
 
 
 
