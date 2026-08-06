@@ -71,6 +71,17 @@ _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _NUMERIC_ID = re.compile(r"[0-9]+")
 _ANCHOR = re.compile(r"anchor--[0-9a-f]{64}--[0-9a-f]{64}")
 _BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9_./-]{0,62}")
+_RELEASE_PLAN_ID = re.compile(
+    r"plan:(?P<source>[0-9a-f]{40}):(?P<frozen>[0-9a-f]{64})")
+_RELEASE_STAGED_ID = re.compile(
+    r"staged-manifest:(?P<frozen>[0-9a-f]{64}):(?P<digest>[0-9a-f]{64})")
+_RELEASE_TRANSITION_ID = re.compile(
+    r"transition:(?P<frozen>[0-9a-f]{64}):"
+    r"(?P<sequence>(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})):"
+    r"(?P<kind>published):(?P<component>[A-Za-z0-9][A-Za-z0-9_.-]{0,62}):"
+    r"(?P<digest>[0-9a-f]{64})")
+_RELEASE_RECEIPT_ID = re.compile(
+    r"receipt:(?P<frozen>[0-9a-f]{64}):(?P<digest>[0-9a-f]{64})")
 PRODUCTION_REMOTES = (
     "https://github.com/awebai/aweb.git",
     "git@github.com:awebai/aweb.git",
@@ -1165,24 +1176,65 @@ def validate_release_set_inventory(inventory, *, frozen_plan_id: str) -> dict:
             f"{sorted(RELEASE_SET_KEYS - present)}, unexpected "
             f"{sorted(present - RELEASE_SET_KEYS)})"
         )
+    if not isinstance(frozen_plan_id, str) or not _HEX64.fullmatch(
+        frozen_plan_id
+    ):
+        raise ReceiptError(
+            "release-set frozen plan identity is not an exact 64-hex digest")
     if inventory["frozen_plan_id"] != frozen_plan_id:
         raise ReceiptError(
             "release-set inventory binds a different frozen plan than requested"
         )
-    for field in ("plan", "staged_manifest", "receipt"):
-        _bounded_identity(inventory[field], f"release-set {field} logical id")
+
+    exact_ids = (
+        ("plan", _RELEASE_PLAN_ID),
+        ("staged_manifest", _RELEASE_STAGED_ID),
+        ("receipt", _RELEASE_RECEIPT_ID),
+    )
+    for field, pattern in exact_ids:
+        logical = _bounded_identity(
+            inventory[field], f"release-set {field} logical id")
+        match = pattern.fullmatch(logical)
+        if match is None:
+            raise ReceiptError(
+                f"release-set {field} logical id {logical!r} does not match "
+                "its exact grammar")
+        if match.group("frozen") != frozen_plan_id:
+            raise ReceiptError(
+                f"release-set {field} logical id binds frozen plan "
+                f"{match.group('frozen')}, not record {frozen_plan_id}")
+
     transitions = inventory["transitions"]
     if not isinstance(transitions, list) or not transitions:
         raise ReceiptError(
             "release-set inventory carries no transitions; an empty ordered "
             "set cannot be complete"
         )
-    for logical in transitions:
-        _bounded_identity(logical, "release-set transition logical id")
-    if len(set(transitions)) != len(transitions):
-        raise ReceiptError(
-            "release-set inventory repeats a transition logical id"
-        )
+    components: set[str] = set()
+    for position, logical_value in enumerate(transitions, 1):
+        logical = _bounded_identity(
+            logical_value, "release-set transition logical id")
+        match = _RELEASE_TRANSITION_ID.fullmatch(logical)
+        if match is None:
+            raise ReceiptError(
+                f"release-set transition logical id {logical!r} does not "
+                "match its exact published transition grammar")
+        if match.group("frozen") != frozen_plan_id:
+            raise ReceiptError(
+                "release-set transition logical id does not bind the frozen "
+                f"plan in its record: {match.group('frozen')} != "
+                f"{frozen_plan_id}")
+        if match.group("sequence") != f"{position:03d}":
+            raise ReceiptError(
+                f"release-set transition order archived is invalid: sequence "
+                f"{match.group('sequence')} does not equal position "
+                f"{position:03d}")
+        component = match.group("component")
+        if component in components:
+            raise ReceiptError(
+                f"release-set inventory repeats published component "
+                f"{component!r}")
+        components.add(component)
     return inventory
 
 
