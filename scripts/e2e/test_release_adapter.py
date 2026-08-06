@@ -2860,7 +2860,7 @@ class CellIdentityTests(unittest.TestCase):
                 self.assertEqual(cell.declared_direction, edge.direction)
 
 
-def channel_tgz(*, version="1.7.2", plugin_version=None, sentinel=True):
+def channel_tgz(*, version="1.7.3", plugin_version=None, sentinel=True):
     """A tgz satisfying the reviewed .3 channel profile."""
     import tarfile
 
@@ -2877,6 +2877,7 @@ def channel_tgz(*, version="1.7.2", plugin_version=None, sentinel=True):
         "msg.body = decrypted.body",
         '["--team", options.teamID.trim()]',
         "selected active team ${config.teamID} is missing certificate signing authentication",
+        '{ name: "aweb-channel", version: "0.1.0" }',
     ])
     if sentinel:
         markers += ("\naweb-channel-core-security/"
@@ -2890,7 +2891,7 @@ def channel_tgz(*, version="1.7.2", plugin_version=None, sentinel=True):
         }),
         "package/dist/index.js": markers,
         "package/.mcp.json": json.dumps(
-            {"mcpServers": {"aweb": {"command": "node"}}}),
+            {"mcpServers": {"aweb-channel": {"command": "node"}}}),
         "package/.claude-plugin/plugin.json": json.dumps(
             {"name": "channel", "version": plugin_version or version}),
     }
@@ -2909,7 +2910,7 @@ def channel_tgz(*, version="1.7.2", plugin_version=None, sentinel=True):
     return buffer.getvalue()
 
 
-def npm_lane_zip(*, package="channel", version="1.7.2", mode="stage-only",
+def npm_lane_zip(*, package="channel", version="1.7.3", mode="stage-only",
                  source_sha="f" * 40, tgz=None):
     tgz = tgz if tgz is not None else channel_tgz(version=version)
     tgz_name = f"awebai-claude-channel-{version}.tgz"
@@ -2956,14 +2957,14 @@ def npm_lane(zip_bytes, *, observer, runs=None, source_sha="f" * 40,
 class NpmWorkflowLaneTests(unittest.TestCase):
     def node(self):
         return rd.PlanNode(component="channel", reason="changed",
-                           version="1.7.2")
+                           version="1.7.3")
 
     def test_stage_validates_the_lane_and_channel_profile(self) -> None:
         zip_bytes = npm_lane_zip()
         lane, _ = npm_lane(zip_bytes, observer=lambda p, v: None)
         entry = lane.stage(self.node())
         self.assertEqual(list(entry.digest_set),
-                         ["awebai-claude-channel-1.7.2.tgz"])
+                         ["awebai-claude-channel-1.7.3.tgz"])
         self.assertEqual(entry.digest,
                          rd.canonical_digest_of_set(entry.digest_set))
 
@@ -3189,14 +3190,14 @@ class NpmRegistryClassifierTests(unittest.TestCase):
         def http(url):
             return responses.pop(0)
         return rd._observe_npm_registry(
-            "@awebai/claude-channel", "1.7.2", http=http)
+            "@awebai/claude-channel", "1.7.3", http=http)
 
     def test_404_proves_absence(self) -> None:
         self.assertIsNone(self.classify([(404, b"")]))
 
     def test_present_returns_the_tarball_digest(self) -> None:
         meta = json.dumps({"dist": {
-            "tarball": "https://registry.npmjs.org/x/-/x-1.7.2.tgz"}}).encode()
+            "tarball": "https://registry.npmjs.org/x/-/x-1.7.3.tgz"}}).encode()
         digest = self.classify([(200, meta), (200, b"tgz-bytes")])
         self.assertEqual(digest, sha256(b"tgz-bytes"))
 
@@ -3300,7 +3301,7 @@ class DeliveryProofArgumentTests(unittest.TestCase):
 class NpmLaneEndToEndTests(unittest.TestCase):
     def test_channel_crash_resume_zero_restage_with_proof(self) -> None:
         transport = FakeAnchorTransport()
-        version = "1.7.2"
+        version = "1.7.3"
         graph = rd.Graph.from_dict({
             "component": {
                 "channel": {

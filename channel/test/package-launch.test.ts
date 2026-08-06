@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
@@ -7,6 +7,9 @@ import { afterEach, expect, test } from "vitest";
 import { launchPackagedMCPChild } from "./helpers/packaged_mcp.js";
 
 const channelRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const repoRoot = dirname(channelRoot);
+const channelMCPName = "aweb-channel";
+const retiredQualifiedMCPName = /plugin:aweb-channel:aweb(?![A-Za-z0-9_-])/;
 const originalHome = process.env.HOME;
 const originalIdentityHome = process.env.AWEB_IDENTITY_HOME;
 let child: ChildProcessWithoutNullStreams | undefined;
@@ -27,7 +30,46 @@ test("freshly built ESM bundle completes MCP initialization through the packaged
   child = launched.child;
 
   expect(launched.args).toEqual([join(channelRoot, "dist", "index.js")]);
+  expect(launched.declarationName).toBe(channelMCPName);
+  expect(launched.runtimeName).toBe(channelMCPName);
+
+  const plugin = JSON.parse(readFileSync(join(channelRoot, ".claude-plugin", "plugin.json"), "utf8")) as {
+    name: string;
+  };
+  expect(`plugin:${plugin.name}:${launched.declarationName}`)
+    .toBe("plugin:aweb-channel:aweb-channel");
 });
+
+test("supported source consumers do not depend on the retired qualified MCP name", () => {
+  const consumerRoots = [
+    join(repoRoot, "channel", "src"),
+    join(repoRoot, "channel-core", "src"),
+    join(repoRoot, "pi-extension", "src"),
+    join(repoRoot, "cli", "go", "cmd", "aw"),
+    join(repoRoot, "scripts", "lib"),
+  ];
+  const matches = sourceFiles(consumerRoots).filter((path) =>
+    retiredQualifiedMCPName.test(readFileSync(path, "utf8"))
+  );
+
+  expect(matches).toEqual([]);
+});
+
+function sourceFiles(roots: string[]): string[] {
+  const files: string[] = [];
+  const visit = (path: string) => {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      const child = join(path, entry.name);
+      if (entry.isDirectory()) {
+        visit(child);
+      } else if (/\.(?:go|js|mjs|sh|ts)$/.test(entry.name)) {
+        files.push(child);
+      }
+    }
+  };
+  roots.forEach(visit);
+  return files;
+}
 
 function createInitializedWorkdir(): string {
   const workdir = mkdtempSync(join(tmpdir(), "claude-channel-launch-workdir-"));
