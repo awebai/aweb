@@ -1802,6 +1802,7 @@ class _RunCorrelationBudget:
     deadline: float
     requests_remaining: int
     request_limit: int
+    per_request_timeout: float
 
     def refuse(self, reason: str) -> None:
         raise ReceiptError(
@@ -1818,11 +1819,16 @@ class _RunCorrelationBudget:
                 f"before {context}"
             )
         self.requests_remaining -= 1
-        return remaining
+        return min(remaining, self.per_request_timeout)
 
-    def check_deadline(self, context: str) -> None:
-        if self.deadline - self.clock() <= 0:
-            self.refuse(f"deadline expired during {context}")
+    def check_request(
+        self, context: str, *, started: float, timeout: float,
+    ) -> None:
+        now = self.clock()
+        if now - started >= timeout:
+            self.refuse(f"per-request deadline expired during {context}")
+        if self.deadline - now <= 0:
+            self.refuse(f"lifecycle deadline expired during {context}")
 
 
 class AwLaneRuns:
@@ -1839,6 +1845,7 @@ class AwLaneRuns:
     MAX_EVIDENCE_PASSES = 4
     MAX_CORRELATION_REQUESTS = 256
     MAX_CORRELATION_SECONDS = 30.0
+    MAX_REQUEST_SECONDS = 30.0
     RUN_HISTORY_PAGE_SIZE = 100
 
     def __init__(self, api=None, *, repo: str = "awebai/aw",
@@ -1849,19 +1856,34 @@ class AwLaneRuns:
         self.repo = repo
         self.workflow_file = workflow_file
 
-    def new_correlation_budget(self) -> _RunCorrelationBudget:
+    def new_correlation_budget(
+        self, *, max_seconds: float | None = None,
+        max_requests: int | None = None,
+    ) -> _RunCorrelationBudget:
         started = self._clock()
+        seconds = (
+            self.MAX_CORRELATION_SECONDS
+            if max_seconds is None
+            else max_seconds
+        )
+        requests = (
+            self.MAX_CORRELATION_REQUESTS
+            if max_requests is None
+            else max_requests
+        )
         return _RunCorrelationBudget(
             clock=self._clock,
-            deadline=started + self.MAX_CORRELATION_SECONDS,
-            requests_remaining=self.MAX_CORRELATION_REQUESTS,
-            request_limit=self.MAX_CORRELATION_REQUESTS,
+            deadline=started + seconds,
+            requests_remaining=requests,
+            request_limit=requests,
+            per_request_timeout=self.MAX_REQUEST_SECONDS,
         )
 
     def _request(
         self, path: str, *, budget: _RunCorrelationBudget, context: str,
     ) -> bytes:
         timeout = budget.take_request(context)
+        request_started = budget.clock()
         try:
             data = (
                 _run_gh_api(path, timeout=timeout)
@@ -1874,7 +1896,9 @@ class AwLaneRuns:
         except ReceiptError as exc:
             budget.refuse(f"{context} failed: {exc}")
             raise AssertionError("unreachable") from exc
-        budget.check_deadline(context)
+        budget.check_request(
+            context, started=request_started, timeout=timeout
+        )
         return data
 
     def _run_ids_page(
@@ -2283,6 +2307,9 @@ class AwWorkflowLane:
     re-observes. Nothing here rebuilds or repacks."""
 
     POLL_ATTEMPTS = 240
+    POLL_INTERVAL_SECONDS = 15.0
+    SYNC_REQUEST_OVERHEAD_SECONDS = 30.0
+    SYNC_CORRELATION_REQUESTS = 2048
 
     def __init__(self, *, reader, lane_authority, refs, release_fetch,
                  npm_fetch, runs, waiter=None):
@@ -2293,8 +2320,26 @@ class AwWorkflowLane:
         self._npm = NpmRegistryObserver(fetch=npm_fetch)
         self._runs = runs
         self._waiter = waiter if waiter is not None else (
-            lambda: __import__("time").sleep(15)
+            lambda: __import__("time").sleep(self.POLL_INTERVAL_SECONDS)
         )
+
+    def _new_correlation_budget(self):
+        factory = getattr(self._runs, "new_correlation_budget", None)
+        if factory is None:
+            return None
+        return factory(
+            max_seconds=(
+                self.POLL_ATTEMPTS * self.POLL_INTERVAL_SECONDS
+                + self.SYNC_REQUEST_OVERHEAD_SECONDS
+            ),
+            max_requests=self.SYNC_CORRELATION_REQUESTS,
+        )
+
+    def _run_call(self, name, *args, budget=None):
+        method = getattr(self._runs, name)
+        if budget is None:
+            return method(*args)
+        return method(*args, budget=budget)
 
     def has_lane(self, component: str) -> bool:
         return component in self._refs
@@ -2377,7 +2422,8 @@ class AwWorkflowLane:
     def publish(self, node, staged: "ReceiptEntry") -> "ReceiptEntry":
         ref = LaneRef.from_dict(staged.lane_ref)
         _, run_id, gh_artifact_id = _parse_gh_artifact_id(ref.artifact)
-        before = set(self._runs.list_run_ids())
+        budget = self._new_correlation_budget()
+        before = set(self._run_call("list_run_ids", budget=budget))
         self._runs.dispatch({
             "mode": "publish-continuation",
             "version": staged.version,
@@ -2387,22 +2433,41 @@ class AwWorkflowLane:
             "stage_zip_digest": ref.zip_digest,
         })
         new_runs: list = []
-        for _ in range(self.POLL_ATTEMPTS):
-            new_runs = [r for r in self._runs.list_run_ids() if r not in before]
+        for attempt in range(self.POLL_ATTEMPTS):
+            new_runs = [
+                run_id for run_id in self._run_call(
+                    "list_run_ids", budget=budget
+                )
+                if run_id not in before
+            ]
             if new_runs:
                 break
-            self._waiter()
+            if attempt + 1 < self.POLL_ATTEMPTS:
+                self._waiter()
+        if not new_runs:
+            raise ReceiptError(
+                f"{node.component}: incomplete workflow-run correlation; "
+                "continuation run remains uncertain after the polling window"
+            )
         if len(new_runs) != 1:
             raise ReceiptError(
                 f"{node.component}: expected exactly one new continuation run, "
                 f"identified {len(new_runs)}; refusing"
             )
         conclusion = None
-        for _ in range(self.POLL_ATTEMPTS):
-            conclusion = self._runs.run_conclusion(new_runs[0])
+        for attempt in range(self.POLL_ATTEMPTS):
+            conclusion = self._run_call(
+                "run_conclusion", new_runs[0], budget=budget
+            )
             if conclusion is not None:
                 break
-            self._waiter()
+            if attempt + 1 < self.POLL_ATTEMPTS:
+                self._waiter()
+        if conclusion is None:
+            raise ReceiptError(
+                f"{node.component}: incomplete workflow-run correlation; "
+                f"continuation run {new_runs[0]} conclusion remains uncertain"
+            )
         if conclusion != "success":
             raise ReceiptError(
                 f"{node.component}: continuation run {new_runs[0]} concluded "
@@ -2616,6 +2681,9 @@ class _WorkflowLaneBase:
     correlation, and observation from the anchored staged entry."""
 
     POLL_ATTEMPTS = 240
+    POLL_INTERVAL_SECONDS = 15.0
+    SYNC_REQUEST_OVERHEAD_SECONDS = 30.0
+    SYNC_CORRELATION_REQUESTS = 2048
 
     def __init__(self, *, component, reader, lane_authority, refs, runs,
                  waiter=None):
@@ -2625,7 +2693,7 @@ class _WorkflowLaneBase:
         self._refs = refs
         self._runs = runs
         self._waiter = waiter if waiter is not None else (
-            lambda: __import__("time").sleep(15)
+            lambda: __import__("time").sleep(self.POLL_INTERVAL_SECONDS)
         )
 
     def has_lane(self, component: str) -> bool:
@@ -2664,9 +2732,19 @@ class _WorkflowLaneBase:
         high_water = self._runs.high_water_run_id()
         return [] if high_water is None else [str(high_water)]
 
-    def _new_correlation_budget(self):
+    def _new_correlation_budget(self, *, synchronous=False):
         factory = getattr(self._runs, "new_correlation_budget", None)
-        return None if factory is None else factory()
+        if factory is None:
+            return None
+        if not synchronous:
+            return factory()
+        return factory(
+            max_seconds=(
+                self.POLL_ATTEMPTS * self.POLL_INTERVAL_SECONDS
+                + self.SYNC_REQUEST_OVERHEAD_SECONDS
+            ),
+            max_requests=self.SYNC_CORRELATION_REQUESTS,
+        )
 
     def _run_call(self, name, *args, budget=None):
         method = getattr(self._runs, name)
@@ -2753,13 +2831,13 @@ class _WorkflowLaneBase:
     def _wait_for_continuation(
         self, before_run_ids, *, expected_attempt_artifact_id=None
     ) -> tuple[str, str | None]:
-        budget = self._new_correlation_budget()
+        budget = self._new_correlation_budget(synchronous=True)
         if expected_attempt_artifact_id is not None:
             evidence_cache = {}
             marker_cache = {}
             matching_runs: list[tuple[str, object, str]] = []
             evidence_pending = False
-            for _ in range(self.POLL_ATTEMPTS):
+            for attempt in range(self.POLL_ATTEMPTS):
                 matching_runs, evidence_pending = (
                     self._continuation_runs_for_attempt(
                         before_run_ids,
@@ -2789,26 +2867,33 @@ class _WorkflowLaneBase:
                                 f"{conclusion!r}, not success"
                             )
                         return run_id, observed_attempt_artifact_id
-                self._waiter()
+                if attempt + 1 < self.POLL_ATTEMPTS:
+                    self._waiter()
             if evidence_pending:
                 raise ReceiptError(
                     f"{self.component}: incomplete workflow-run correlation; "
                     "exact recovery marker evidence remains uncertain"
                 )
             raise ReceiptError(
-                f"{self.component}: expected exactly one continuation run "
-                f"owned by attempt {expected_attempt_artifact_id!r} within "
-                f"the bounded polling window, identified {len(matching_runs)}"
+                f"{self.component}: incomplete workflow-run correlation; "
+                f"owned run for attempt {expected_attempt_artifact_id!r} "
+                "remains uncertain after the polling window"
             )
 
         new_runs: list[tuple[str, object]] = []
-        for _ in range(self.POLL_ATTEMPTS):
+        for attempt in range(self.POLL_ATTEMPTS):
             new_runs = self._new_continuation_runs(
                 before_run_ids, budget=budget
             )
             if new_runs:
                 break
-            self._waiter()
+            if attempt + 1 < self.POLL_ATTEMPTS:
+                self._waiter()
+        if not new_runs:
+            raise ReceiptError(
+                f"{self.component}: incomplete workflow-run correlation; "
+                "continuation run remains uncertain after the polling window"
+            )
         if len(new_runs) != 1:
             raise ReceiptError(
                 f"{self.component}: expected exactly one new continuation "
@@ -2816,13 +2901,19 @@ class _WorkflowLaneBase:
             )
         run_id, native_run_id = new_runs[0]
         conclusion = None
-        for _ in range(self.POLL_ATTEMPTS):
+        for attempt in range(self.POLL_ATTEMPTS):
             conclusion = self._run_call(
                 "run_conclusion", native_run_id, budget=budget
             )
             if conclusion is not None:
                 break
-            self._waiter()
+            if attempt + 1 < self.POLL_ATTEMPTS:
+                self._waiter()
+        if conclusion is None:
+            raise ReceiptError(
+                f"{self.component}: incomplete workflow-run correlation; "
+                f"continuation run {run_id} conclusion remains uncertain"
+            )
         if conclusion != "success":
             raise ReceiptError(
                 f"{self.component}: continuation run {run_id} concluded "
@@ -2893,7 +2984,7 @@ class _WorkflowLaneBase:
         marker_cache = {}
         matching_runs = []
         evidence_pending = False
-        for _ in range(self.POLL_ATTEMPTS):
+        for attempt in range(self.POLL_ATTEMPTS):
             matching_runs, evidence_pending = (
                 self._continuation_runs_for_attempt(
                     before_run_ids,
@@ -2905,7 +2996,8 @@ class _WorkflowLaneBase:
             )
             if matching_runs or not evidence_pending:
                 break
-            self._waiter()
+            if attempt + 1 < self.POLL_ATTEMPTS:
+                self._waiter()
         if not matching_runs:
             if evidence_pending:
                 raise ReceiptError(
