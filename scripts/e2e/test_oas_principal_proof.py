@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,7 @@ from oas_principal_proof import (
     assert_resident_session,
     assert_unchanged,
     capture_structure,
+    parse_oas_doctor_output,
     scan_instance,
     scan_sensitive_material,
     write_snapshot,
@@ -49,6 +51,7 @@ class PrincipalProofHarnessTests(unittest.TestCase):
             'assert_clean_git_subject',
             'capture_execution_subject',
             'npm --prefix "$PI_EXTENSION_DIR" ci',
+            'normalize-oas-doctor',
             'scan_provisioned_sensitive_material',
             'scan_final_known_material',
             'independent developers did not exercise duplicate local instance names',
@@ -144,6 +147,104 @@ class PrincipalProofHarnessTests(unittest.TestCase):
             '"oas_kernel_sha"',
         ):
             self.assertNotIn(forbidden, text)
+
+
+class OASDoctorOutputTests(unittest.TestCase):
+    DOCTOR = {
+        "schemaVersion": 1,
+        "context": "/fixture",
+        "layers": {"messaging": {"integration": "aweb.identity-attach"}},
+        "capabilities": [{"id": "aweb.identity-attach", "trust": {"trusted": True}}],
+    }
+
+    def test_direct_doctor_document_is_not_mistaken_for_a_result_envelope(self) -> None:
+        self.assertEqual(
+            parse_oas_doctor_output(json.dumps(self.DOCTOR), source="fake doctor"),
+            self.DOCTOR,
+        )
+
+    def test_enveloped_doctor_result_remains_supported(self) -> None:
+        envelope = {"schemaVersion": 1, "ok": True, "result": self.DOCTOR}
+        self.assertEqual(
+            parse_oas_doctor_output(json.dumps(envelope), source="fake doctor"),
+            self.DOCTOR,
+        )
+
+    def test_error_envelope_is_a_precise_harness_failure(self) -> None:
+        envelope = {
+            "schemaVersion": 1,
+            "ok": False,
+            "error": {"code": "E_MODULE_LOAD", "message": "cannot load Pi module"},
+        }
+        with self.assertRaisesRegex(
+            ValueError,
+            r"fake doctor returned OAS error E_MODULE_LOAD: cannot load Pi module",
+        ):
+            parse_oas_doctor_output(json.dumps(envelope), source="fake doctor")
+
+    def test_unstructured_success_is_a_precise_harness_failure(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            r"fake doctor has no structured doctor result",
+        ):
+            parse_oas_doctor_output(
+                json.dumps({"schemaVersion": 1, "context": "/fixture"}),
+                source="fake doctor",
+            )
+
+    def test_cli_normalizes_direct_doctor_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "doctor.json"
+            output = Path(temporary) / "normalized.json"
+            source.write_text(json.dumps(self.DOCTOR), encoding="utf-8")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/e2e/oas_principal_proof.py",
+                    "normalize-oas-doctor",
+                    "--input",
+                    str(source),
+                    "--output",
+                    str(output),
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), self.DOCTOR)
+
+    def test_cli_reports_error_envelope_without_traceback_or_key_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "doctor.json"
+            output = Path(temporary) / "normalized.json"
+            source.write_text(
+                json.dumps({
+                    "schemaVersion": 1,
+                    "ok": False,
+                    "error": {"code": "E_MODULE_LOAD", "message": "cannot load Pi module"},
+                }),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/e2e/oas_principal_proof.py",
+                    "normalize-oas-doctor",
+                    "--input",
+                    str(source),
+                    "--output",
+                    str(output),
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("returned OAS error E_MODULE_LOAD: cannot load Pi module", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertNotIn("KeyError", result.stderr)
+            self.assertFalse(output.exists())
 
 
 class ResidentSessionEvidenceTests(unittest.TestCase):
