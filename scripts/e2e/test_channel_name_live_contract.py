@@ -28,6 +28,20 @@ class ChannelNameLiveHarnessContractTests(unittest.TestCase):
             "ANTHROPIC_API_KEY", {"ANTHROPIC_API_KEY": "dedicated", "PATH": "/exact"}
         )
 
+    def test_credential_selector_refuses_isolation_and_executable_injection_names(self):
+        for name in (
+            "HOME", "PATH", "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "TMPDIR",
+            "NODE_OPTIONS", "NODE_PATH", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD",
+        ):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "approved credential"):
+                harness.reject_ambient_configuration(name, {name: "caller-controlled"})
+            with self.subTest(build=name), tempfile.TemporaryDirectory() as raw, self.assertRaisesRegex(
+                ValueError, "approved credential"
+            ):
+                harness.build_allowlisted_env(
+                    Path(raw), name, "caller-controlled", [Path("/bin")], Path(raw) / "config.json"
+                )
+
     def test_allowlisted_environment_has_only_isolated_state_and_exact_credential(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -109,6 +123,8 @@ class ChannelNameLiveHarnessContractTests(unittest.TestCase):
             '"--dangerously-load-development-channels"',
             'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME',
             'XDG_STATE_HOME', 'plugin:aweb-channel:aweb-channel',
+            'detached: true', 'stopOwnedProcessGroup',
+            'process_group_termination_proven: processGroupProof.termination_proven',
             'child_cleanup_complete: true', 'server_cleanup_complete = true',
         ):
             self.assertIn(marker, source)

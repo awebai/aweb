@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -11,6 +11,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { NotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v4";
+import { stopOwnedProcessGroup, type OwnedProcessMember } from "./helpers/owned_process_group.js";
 
 const execFileAsync = promisify(execFile);
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -367,6 +368,7 @@ describe.sequential("channel integration", () => {
     ];
     const claude = spawn(config.claude_binary, args, {
       cwd: bobDir,
+      detached: true,
       env,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -405,7 +407,13 @@ describe.sequential("channel integration", () => {
       expect(stdout.match(new RegExp(marker, "g"))?.length).toBe(1);
       expect(stdout).not.toMatch(/plugin:aweb-channel:aweb(?![A-Za-z0-9_-])/);
 
-      await stopExactChild(claude);
+      const processGroupProof = await stopOwnedProcessGroup(claude);
+      requireObservedMCPChildren(
+        processGroupProof.observed_members,
+        claude.pid,
+        config.collision_fixture,
+        join(config.plugin_root, "dist", "index.js"),
+      );
       childCleaned = true;
       await writeFile(config.evidence_path, `${JSON.stringify({
         schema: "aweb.channel-name-live-proof.v1",
@@ -419,10 +427,13 @@ describe.sequential("channel integration", () => {
         plugin_initialize_observed: true,
         message_id: mail.message_id,
         marker,
+        owned_process_pids: processGroupProof.observed_pids,
+        process_group_sigkill_required: processGroupProof.sigkill_required,
+        process_group_termination_proven: processGroupProof.termination_proven,
         child_cleanup_complete: true,
       }, null, 2)}\n`);
     } finally {
-      if (!childCleaned) await stopExactChild(claude).catch(() => {});
+      if (!childCleaned) await stopOwnedProcessGroup(claude).catch(() => {});
     }
   }, 180_000);
 
@@ -483,17 +494,21 @@ async function waitUntil(
   throw new Error(failure());
 }
 
-async function stopExactChild(child: ChildProcessWithoutNullStreams): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-  child.kill("SIGTERM");
-  const graceful = await Promise.race([
-    exited.then(() => true),
-    delay(2_000).then(() => false),
-  ]);
-  if (!graceful && child.exitCode === null && child.signalCode === null) {
-    child.kill("SIGKILL");
-    await exited;
+function requireObservedMCPChildren(
+  members: OwnedProcessMember[],
+  leaderPID: number | undefined,
+  collisionFixture: string,
+  pluginEntry: string,
+): void {
+  if (!leaderPID || !members.some(({ pid }) => pid === leaderPID)) {
+    throw new Error(`owned process group did not contain Claude leader ${leaderPID}`);
+  }
+  const commands = members.map(({ command }) => command);
+  if (!commands.some((command) => command.includes(resolve(collisionFixture)))) {
+    throw new Error(`owned process group did not contain collision fixture: ${JSON.stringify(commands)}`);
+  }
+  if (!commands.some((command) => command.includes(resolve(pluginEntry)))) {
+    throw new Error(`owned process group did not contain packaged Channel MCP: ${JSON.stringify(commands)}`);
   }
 }
 

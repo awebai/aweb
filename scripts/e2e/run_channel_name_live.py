@@ -20,6 +20,10 @@ import tempfile
 
 FINAL_MCP_NAME = "aweb-channel"
 FINAL_SOURCE = "plugin:aweb-channel:aweb-channel"
+APPROVED_CREDENTIAL_ENV_NAMES = frozenset({
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+})
 LIVE_TEST_NAME = "fresh isolated Claude session wakes through the exact distinct MCP name beside an aweb fixture"
 REJECTED_ENV_PREFIXES = ("ANTHROPIC", "CLAUDE", "MCP_", "PLUGIN_")
 
@@ -42,7 +46,16 @@ def require_exact_file(path: str, expected_sha256: str, label: str) -> Path:
     return candidate
 
 
+def require_approved_credential_env(credential_env: str) -> None:
+    if credential_env not in APPROVED_CREDENTIAL_ENV_NAMES:
+        approved = ", ".join(sorted(APPROVED_CREDENTIAL_ENV_NAMES))
+        raise ValueError(
+            f"credential selector must name an approved credential variable ({approved})"
+        )
+
+
 def reject_ambient_configuration(credential_env: str, environ: dict[str, str]) -> None:
+    require_approved_credential_env(credential_env)
     unsafe = sorted(
         name for name in environ
         if name != credential_env and name.startswith(REJECTED_ENV_PREFIXES)
@@ -98,6 +111,7 @@ def build_allowlisted_env(
     path_dirs: list[Path],
     live_config: Path,
 ) -> dict[str, str]:
+    require_approved_credential_env(credential_env)
     locations = {
         "HOME": root / "runner-home",
         "CLAUDE_CONFIG_DIR": root / "runner-claude-config",
@@ -124,7 +138,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--claude-bin", required=True)
     result.add_argument("--claude-sha256", required=True)
     result.add_argument("--claude-version", required=True)
-    result.add_argument("--credential-env", required=True)
+    result.add_argument(
+        "--credential-env", required=True, choices=sorted(APPROVED_CREDENTIAL_ENV_NAMES)
+    )
     result.add_argument("--channel-load-spec", required=True)
     result.add_argument("--path-dir", action="append", required=True)
     return result
@@ -195,11 +211,19 @@ def main(argv: list[str] | None = None) -> int:
             "server_cleanup_complete": True,
             "collision_initialize_observed": True,
             "plugin_initialize_observed": True,
+            "process_group_termination_proven": True,
             "channel_source": FINAL_SOURCE,
         }
         for key, expected in required.items():
             if evidence.get(key) != expected:
                 raise ValueError(f"live evidence {key}={evidence.get(key)!r}, expected {expected!r}")
+        owned_pids = evidence.get("owned_process_pids")
+        if (
+            not isinstance(owned_pids, list)
+            or len(owned_pids) < 3
+            or any(not isinstance(pid, int) or pid <= 0 for pid in owned_pids)
+        ):
+            raise ValueError(f"live evidence lacks Claude and both MCP process PIDs: {owned_pids!r}")
     finally:
         shutil.rmtree(root, ignore_errors=False)
     if root.exists():
