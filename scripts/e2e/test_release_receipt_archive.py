@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -1620,6 +1621,121 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
             archive._atomic_write_bytes(out, b"our bytes")
             self.assertEqual(out.read_bytes(), b"our bytes")
             self.assertFalse((Path(tmp) / "receipt.json.part").exists())
+
+
+
+class GitEnvironmentRedirectTests(unittest.TestCase):
+    """Reviewer blocker 4: ambient git configuration could redirect the
+    canonical remote to an attacker-controlled repository.
+
+    GIT_CONFIG_GLOBAL=/dev/null and GIT_CONFIG_SYSTEM=/dev/null do NOT stop
+    GIT_CONFIG_COUNT/KEY/VALUE: those inject configuration directly, so an
+    ambient insteadOf rewrite survived into every git invocation.
+
+    `git ls-remote --get-url` resolves insteadOf and prints the result without
+    touching the network, so the redirect is provable deterministically.
+    """
+
+    CANONICAL = "ssh://git@ssh.github.com:443/awebai/aweb.git"
+
+    def resolved_url(self, env):
+        result = subprocess.run(
+            ["git", "ls-remote", "--get-url", self.CANONICAL],
+            capture_output=True, env=env)
+        return result.stdout.decode().strip()
+
+    def hostile_ambient(self, attacker):
+        return {
+            **os.environ,
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": f"url.{attacker}.insteadOf",
+            "GIT_CONFIG_VALUE_0": "ssh://git@ssh.github.com:443/",
+        }
+
+    def test_ambient_insteadof_redirects_when_unsanitized(self):
+        """Positive control: without this the negative proves nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            attacker = f"{tmp}/attacker/"
+            resolved = self.resolved_url(self.hostile_ambient(attacker))
+            self.assertTrue(
+                resolved.startswith(tmp),
+                f"the attack must actually work unsanitized, got {resolved!r}")
+
+    def test_sanitized_environment_refuses_the_redirect(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            attacker = f"{tmp}/attacker/"
+            hostile = self.hostile_ambient(attacker)
+            saved = {k: os.environ.get(k) for k in (
+                "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0")}
+            try:
+                os.environ.update({k: v for k, v in hostile.items()
+                                   if k.startswith("GIT_CONFIG_")})
+                sanitized = archive.GitBranchArchive._sanitized_env()
+                resolved = self.resolved_url(sanitized)
+            finally:
+                for key, value in saved.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+            self.assertEqual(
+                resolved, self.CANONICAL,
+                "the canonical remote must survive an ambient insteadOf")
+
+    def test_sanitized_environment_drops_ambient_git_and_ssh_controls(self):
+        hostile = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "url.https://evil.invalid/.insteadOf",
+            "GIT_CONFIG_VALUE_0": "https://github.com/",
+            "GIT_SSH": "/tmp/evil-ssh",
+            "GIT_SSH_COMMAND": "/tmp/evil-ssh",
+            "GIT_PROXY_COMMAND": "/tmp/evil-proxy",
+            "GIT_ASKPASS": "/tmp/evil-askpass",
+            "GIT_EXTERNAL_DIFF": "/tmp/evil-diff",
+            "GIT_DIR": "/tmp/evil-dir",
+            "GIT_WORK_TREE": "/tmp/evil-tree",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/tmp/evil-objects",
+            "GIT_NAMESPACE": "evil",
+            "GIT_INDEX_FILE": "/tmp/evil-index",
+            "GIT_TEMPLATE_DIR": "/tmp/evil-template",
+            "ALL_PROXY": "socks5://evil.invalid:1080",
+            "HTTPS_PROXY": "http://evil.invalid:8080",
+        }
+        saved = {k: os.environ.get(k) for k in hostile}
+        try:
+            os.environ.update(hostile)
+            sanitized = archive.GitBranchArchive._sanitized_env()
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        leaked = {
+            key: sanitized[key] for key in hostile
+            if key in sanitized and sanitized[key] == hostile[key]
+        }
+        self.assertEqual(
+            leaked, {},
+            f"ambient git/ssh/proxy controls reached the child: {leaked}")
+
+    def test_sanitized_environment_keeps_only_what_transport_needs(self):
+        sanitized = archive.GitBranchArchive._sanitized_env()
+        self.assertNotIn("GIT_CONFIG_KEY_0", sanitized)
+        self.assertEqual(sanitized.get("GIT_CONFIG_COUNT"), "0")
+        self.assertEqual(sanitized.get("GIT_CONFIG_GLOBAL"), "/dev/null")
+        self.assertEqual(sanitized.get("GIT_CONFIG_SYSTEM"), "/dev/null")
+        self.assertEqual(sanitized.get("GIT_TERMINAL_PROMPT"), "0")
+        self.assertIn("PATH", sanitized)
+
+    def test_reviewed_index_reader_uses_the_same_sanitized_environment(self):
+        """Both surfaces the reviewer named must be covered, not just one."""
+        source = Path(archive.__file__).read_text()
+        reader = source.split("class _GitReader")[1].split("class ")[0]
+        self.assertIn("_sanitized_env", reader,
+                      "the reviewed-index reader must sanitize identically to "
+                      "the archive transport")
+
 
 
 class GateTests(unittest.TestCase):
