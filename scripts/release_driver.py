@@ -1156,10 +1156,17 @@ RECOVERY_ATTEMPT_EVIDENCE_MEMBER = "recovery-attempt.json"
 RECOVERY_ATTEMPT_EVIDENCE_SCHEMA = (
     "aweb.release.recovery-continuation-attempt.v1"
 )
+RECOVERY_RUN_MARKER_PREFIX = "aweb-npm|publish-continuation"
 # GitHub bounds the TOTAL workflow-dispatch payload at 65,535 characters;
 # the check bounds the ENCODED body plus the other input fields with margin,
 # both here before dispatch and again inside the workflow.
 ANCHOR_DISPATCH_LIMIT = 64000
+
+
+def recovery_run_marker(component: str, attempt_artifact_id: str) -> str:
+    return (
+        f"{RECOVERY_RUN_MARKER_PREFIX}|{component}|{attempt_artifact_id}"
+    )
 
 
 def _run_gh_api(path: str, *, timeout: float) -> bytes:
@@ -1828,6 +1835,8 @@ class AwLaneRuns:
 
     MAX_RUN_HISTORY_PAGES_PER_PASS = 20
     MAX_RUN_HISTORY_PASSES = 4
+    MAX_EVIDENCE_PAGES_PER_PASS = 20
+    MAX_EVIDENCE_PASSES = 4
     MAX_CORRELATION_REQUESTS = 256
     MAX_CORRELATION_SECONDS = 30.0
     RUN_HISTORY_PAGE_SIZE = 100
@@ -2041,6 +2050,135 @@ class AwLaneRuns:
             )
         return body.get("conclusion")
 
+    def run_display_title(
+        self, run_id, *, budget: _RunCorrelationBudget | None = None,
+    ) -> str:
+        budget = budget or self.new_correlation_budget()
+        body = json.loads(self._request(
+            f"repos/{self.repo}/actions/runs/{run_id}",
+            budget=budget,
+            context=f"continuation run {run_id} display title",
+        ))
+        title = body.get("display_title") if isinstance(body, dict) else None
+        if not isinstance(title, str) or not title:
+            raise ReceiptError(
+                f"continuation run {run_id} has no display title"
+            )
+        return title
+
+    def _artifact_listing_pass(
+        self, run_id, *, budget: _RunCorrelationBudget,
+        name_filter: str | None,
+    ) -> list[dict] | None:
+        expected_total = None
+        artifacts_by_id: dict[int, dict] = {}
+        ordered_ids: list[int] = []
+        for page in range(1, self.MAX_EVIDENCE_PAGES_PER_PASS + 1):
+            query = ""
+            if name_filter is not None:
+                query = f"name={name_filter}&"
+            path = (
+                f"repos/{self.repo}/actions/runs/{run_id}/artifacts?"
+                f"{query}per_page=100&page={page}"
+            )
+            body = json.loads(self._request(
+                path,
+                budget=budget,
+                context=(
+                    f"continuation run {run_id} artifact listing page {page}"
+                ),
+            ))
+            if not isinstance(body, dict):
+                raise ReceiptError(
+                    f"continuation run {run_id} artifact page {page} is not "
+                    "an object"
+                )
+            total = body.get("total_count")
+            page_artifacts = body.get("artifacts")
+            if (
+                not isinstance(total, int)
+                or isinstance(total, bool)
+                or total < 0
+                or not isinstance(page_artifacts, list)
+            ):
+                raise ReceiptError(
+                    f"continuation run {run_id} artifact page {page} has "
+                    "invalid total_count/artifacts"
+                )
+            if expected_total is None:
+                expected_total = total
+            elif total != expected_total:
+                raise ReceiptError(
+                    f"continuation run {run_id} artifact total_count drifted"
+                )
+            for index, artifact in enumerate(page_artifacts):
+                if not isinstance(artifact, dict):
+                    raise ReceiptError(
+                        f"continuation run {run_id} artifact page {page} "
+                        f"entry {index} is not an object"
+                    )
+                if (
+                    name_filter is not None
+                    and artifact.get("name") != name_filter
+                ):
+                    return None
+                artifact_id = artifact.get("id")
+                if (
+                    not isinstance(artifact_id, int)
+                    or isinstance(artifact_id, bool)
+                    or artifact_id <= 0
+                ):
+                    raise ReceiptError(
+                        f"continuation run {run_id} artifact page {page} "
+                        f"entry {index} has invalid id {artifact_id!r}"
+                    )
+                prior = artifacts_by_id.get(artifact_id)
+                if prior is not None:
+                    if prior != artifact:
+                        raise ReceiptError(
+                            f"continuation run {run_id} artifact {artifact_id} "
+                            "changed across duplicate page entries"
+                        )
+                    continue
+                artifacts_by_id[artifact_id] = artifact
+                ordered_ids.append(artifact_id)
+            if len(ordered_ids) > expected_total:
+                raise ReceiptError(
+                    f"continuation run {run_id} artifact listing exceeds "
+                    f"total_count {expected_total}"
+                )
+            if len(ordered_ids) == expected_total:
+                return [artifacts_by_id[item] for item in ordered_ids]
+            if not page_artifacts:
+                raise ReceiptError(
+                    f"continuation run {run_id} artifact listing ended before "
+                    f"total_count {expected_total}"
+                )
+        raise ReceiptError(
+            f"continuation run {run_id} artifact listing did not complete "
+            f"within {self.MAX_EVIDENCE_PAGES_PER_PASS} pages"
+        )
+
+    def _stable_artifact_listing(
+        self, run_id, *, budget: _RunCorrelationBudget,
+        name_filter: str | None,
+    ) -> list[dict] | None:
+        previous_ids = None
+        for _pass in range(self.MAX_EVIDENCE_PASSES):
+            artifacts = self._artifact_listing_pass(
+                run_id, budget=budget, name_filter=name_filter
+            )
+            if artifacts is None:
+                return None
+            artifact_ids = [artifact["id"] for artifact in artifacts]
+            if previous_ids == artifact_ids:
+                return artifacts
+            previous_ids = artifact_ids
+        raise ReceiptError(
+            f"continuation run {run_id} artifact listing did not stabilize "
+            f"within {self.MAX_EVIDENCE_PASSES} passes"
+        )
+
     def run_attempt_artifact_id(
         self, run_id, *, budget: _RunCorrelationBudget | None = None,
     ) -> str | None:
@@ -2048,19 +2186,18 @@ class AwLaneRuns:
         import zipfile
 
         budget = budget or self.new_correlation_budget()
-        body = json.loads(self._request(
-            f"repos/{self.repo}/actions/runs/{run_id}/artifacts?per_page=100",
-            budget=budget,
-            context=f"continuation run {run_id} attempt-evidence listing",
-        ))
-        if not isinstance(body, dict):
-            raise ReceiptError(
-                f"continuation run {run_id} artifact response is not an object"
+        artifacts = self._stable_artifact_listing(
+            run_id, budget=budget,
+            name_filter=RECOVERY_ATTEMPT_EVIDENCE_NAME,
+        )
+        if artifacts is None:
+            artifacts = self._stable_artifact_listing(
+                run_id, budget=budget, name_filter=None
             )
-        artifacts = [
-            artifact for artifact in body.get("artifacts", [])
-            if artifact.get("name") == RECOVERY_ATTEMPT_EVIDENCE_NAME
-        ]
+            artifacts = [
+                artifact for artifact in artifacts
+                if artifact.get("name") == RECOVERY_ATTEMPT_EVIDENCE_NAME
+            ]
         if not artifacts:
             return None
         if len(artifacts) != 1:
@@ -2555,47 +2692,63 @@ class _WorkflowLaneBase:
 
     def _continuation_runs_for_attempt(
         self, before_run_ids, expected_attempt_artifact_id,
-        *, evidence_cache=None, terminal_missing_cache=None, budget=None,
-    ) -> list[tuple[str, object, str]]:
-        """Filter the complete post-snapshot window by run-owned evidence.
+        *, evidence_cache=None, marker_cache=None, budget=None,
+    ) -> tuple[list[tuple[str, object, str]], bool]:
+        """Filter a complete run window by marker, then owned evidence.
 
-        Digest-verified identities are immutable. Missing evidence is cached
-        only after the run is terminal; a running workflow may still upload
-        it. Every history, evidence and terminal-state request consumes the
-        one caller-owned correlation budget.
+        The immutable GitHub-observed display title cheaply excludes ordinary
+        stage/verify runs. An exact title is only a prefilter: ownership still
+        requires the unique digest-verified run artifact, whose absence is
+        pending and is never cached as unrelated.
         """
-        cache = evidence_cache if evidence_cache is not None else {}
-        terminal_missing = (
-            terminal_missing_cache
-            if terminal_missing_cache is not None
-            else set()
-        )
-        matching = []
-        for run_id, native_run_id in self._new_continuation_runs(
+        evidence = evidence_cache if evidence_cache is not None else {}
+        markers = marker_cache if marker_cache is not None else {}
+        candidates = self._new_continuation_runs(
             before_run_ids, budget=budget
-        ):
-            if native_run_id in terminal_missing:
+        )
+        marker_method = getattr(self._runs, "run_display_title", None)
+        expected_marker = recovery_run_marker(
+            self.component, expected_attempt_artifact_id
+        )
+        exact_marker_runs = []
+        for run_id, native_run_id in candidates:
+            if marker_method is None:
+                exact_marker_runs.append((run_id, native_run_id))
                 continue
-            if native_run_id in cache:
-                observed_attempt_artifact_id = cache[native_run_id]
-            else:
-                observed_attempt_artifact_id = self._run_call(
-                    "run_attempt_artifact_id", native_run_id, budget=budget
+            if native_run_id not in markers:
+                markers[native_run_id] = self._run_call(
+                    "run_display_title", native_run_id, budget=budget
                 )
-                if observed_attempt_artifact_id is not None:
-                    cache[native_run_id] = observed_attempt_artifact_id
-                else:
-                    conclusion = self._run_call(
-                        "run_conclusion", native_run_id, budget=budget
-                    )
-                    if conclusion is not None:
-                        terminal_missing.add(native_run_id)
-                    continue
-            if observed_attempt_artifact_id == expected_attempt_artifact_id:
-                matching.append((
-                    run_id, native_run_id, observed_attempt_artifact_id
-                ))
-        return matching
+            if markers[native_run_id] == expected_marker:
+                exact_marker_runs.append((run_id, native_run_id))
+        if len(exact_marker_runs) > 1:
+            raise ReceiptError(
+                f"{self.component}: expected exactly one or zero exact "
+                f"recovery run marker {expected_marker!r}, identified "
+                f"{len(exact_marker_runs)}; refusing"
+            )
+        if not exact_marker_runs:
+            return [], False
+
+        run_id, native_run_id = exact_marker_runs[0]
+        if native_run_id in evidence:
+            observed_attempt_artifact_id = evidence[native_run_id]
+        else:
+            observed_attempt_artifact_id = self._run_call(
+                "run_attempt_artifact_id", native_run_id, budget=budget
+            )
+            if observed_attempt_artifact_id is None:
+                return [], True
+            evidence[native_run_id] = observed_attempt_artifact_id
+        if observed_attempt_artifact_id != expected_attempt_artifact_id:
+            raise ReceiptError(
+                f"{self.component}: exact recovery run marker binds attempt "
+                f"{expected_attempt_artifact_id!r}, but run-owned evidence "
+                f"binds {observed_attempt_artifact_id!r}"
+            )
+        return [(
+            run_id, native_run_id, observed_attempt_artifact_id
+        )], False
 
     def _wait_for_continuation(
         self, before_run_ids, *, expected_attempt_artifact_id=None
@@ -2603,15 +2756,18 @@ class _WorkflowLaneBase:
         budget = self._new_correlation_budget()
         if expected_attempt_artifact_id is not None:
             evidence_cache = {}
-            terminal_missing_cache = set()
+            marker_cache = {}
             matching_runs: list[tuple[str, object, str]] = []
+            evidence_pending = False
             for _ in range(self.POLL_ATTEMPTS):
-                matching_runs = self._continuation_runs_for_attempt(
-                    before_run_ids,
-                    expected_attempt_artifact_id,
-                    evidence_cache=evidence_cache,
-                    terminal_missing_cache=terminal_missing_cache,
-                    budget=budget,
+                matching_runs, evidence_pending = (
+                    self._continuation_runs_for_attempt(
+                        before_run_ids,
+                        expected_attempt_artifact_id,
+                        evidence_cache=evidence_cache,
+                        marker_cache=marker_cache,
+                        budget=budget,
+                    )
                 )
                 if len(matching_runs) > 1:
                     raise ReceiptError(
@@ -2634,6 +2790,11 @@ class _WorkflowLaneBase:
                             )
                         return run_id, observed_attempt_artifact_id
                 self._waiter()
+            if evidence_pending:
+                raise ReceiptError(
+                    f"{self.component}: incomplete workflow-run correlation; "
+                    "exact recovery marker evidence remains uncertain"
+                )
             raise ReceiptError(
                 f"{self.component}: expected exactly one continuation run "
                 f"owned by attempt {expected_attempt_artifact_id!r} within "
@@ -2728,10 +2889,29 @@ class _WorkflowLaneBase:
         attempt_artifact_id,
     ) -> "RecoveryContinuation | None":
         budget = self._new_correlation_budget()
-        matching_runs = self._continuation_runs_for_attempt(
-            before_run_ids, attempt_artifact_id, budget=budget
-        )
+        evidence_cache = {}
+        marker_cache = {}
+        matching_runs = []
+        evidence_pending = False
+        for _ in range(self.POLL_ATTEMPTS):
+            matching_runs, evidence_pending = (
+                self._continuation_runs_for_attempt(
+                    before_run_ids,
+                    attempt_artifact_id,
+                    evidence_cache=evidence_cache,
+                    marker_cache=marker_cache,
+                    budget=budget,
+                )
+            )
+            if matching_runs or not evidence_pending:
+                break
+            self._waiter()
         if not matching_runs:
+            if evidence_pending:
+                raise ReceiptError(
+                    f"{node.component}: incomplete workflow-run correlation; "
+                    "exact recovery marker evidence remains uncertain"
+                )
             return None
         if len(matching_runs) != 1:
             raise ReceiptError(
