@@ -130,6 +130,8 @@ BODY = b"sealed-anchor-zip-bytes"
 REF = "gh-artifact:awebai/aweb:41:9001"
 SOURCE = {"repo": "awebai/aweb", "run_id": "41", "artifact_id": "9001",
           "anchor": "anchor--" + "a" * 64 + "--" + "b" * 64}
+LOGICAL_ONE = f"receipt:{'f' * 64}:{'1' * 64}"
+LOGICAL_TWO = f"receipt:{'f' * 64}:{'2' * 64}"
 
 
 def fresh_env(body: bytes = BODY, ref: str = REF):
@@ -149,7 +151,7 @@ def _permissive(body, manifest):
     return None
 
 
-def do_archive(store, authority, transport, *, logical_id="receipt:plan:1",
+def do_archive(store, authority, transport, *, logical_id=LOGICAL_ONE,
                ref=REF, recorded_head=None, kind="anchor-artifact",
                source=None, semantic=_permissive):
     src = dict(source) if source is not None else dict(SOURCE)
@@ -168,7 +170,7 @@ class ArchiveWriteTests(unittest.TestCase):
         store, authority, transport = fresh_env()
         entry = do_archive(store, authority, transport)
         self.assertEqual(entry["schema"], archive.INDEX_ENTRY_SCHEMA)
-        self.assertEqual(entry["logical_id"], "receipt:plan:1")
+        self.assertEqual(entry["logical_id"], LOGICAL_ONE)
         self.assertEqual(entry["source"], SOURCE)
         self.assertEqual(entry["source_digest"], sha256(BODY))
         self.assertEqual(entry["body_sha256"], sha256(BODY))
@@ -178,7 +180,7 @@ class ArchiveWriteTests(unittest.TestCase):
         manifest_path = f"receipts/{sha256(BODY)}/manifest.json"
         self.assertEqual(tree[body_path], BODY)
         manifest = json.loads(tree[manifest_path])
-        self.assertEqual(manifest["logical_id"], "receipt:plan:1")
+        self.assertEqual(manifest["logical_id"], LOGICAL_ONE)
         self.assertEqual(
             entry["manifest_sha256"], sha256(tree[manifest_path])
         )
@@ -213,7 +215,7 @@ class ArchiveWriteTests(unittest.TestCase):
         authority.digests[ref2] = sha256(body2)
         with self.assertRaisesRegex(rd.ReceiptError, "descend"):
             do_archive(store, authority, transport, source=source2,
-                       logical_id="receipt:plan:2",
+                       logical_id=LOGICAL_TWO,
                        recorded_head=entry["archive_commit"])
 
     def test_unrecorded_prior_content_refuses(self):
@@ -248,7 +250,7 @@ class ArchiveWriteTests(unittest.TestCase):
         tree = transport.read_tree(transport.head)
         manifest_path = f"receipts/{sha256(BODY)}/manifest.json"
         broken = json.loads(tree[manifest_path])
-        broken["logical_id"] = "receipt:other"
+        broken["logical_id"] = LOGICAL_TWO
         transport.commits[transport.head]["files"][manifest_path] = (
             json.dumps(broken, sort_keys=True).encode()
         )
@@ -267,7 +269,7 @@ class ArchiveWriteTests(unittest.TestCase):
         authority.digests[ref2] = sha256(body2)
         with self.assertRaisesRegex(rd.ReceiptError, "unexpected|stray"):
             do_archive(store, authority, transport, source=source2,
-                       logical_id="receipt:plan:2",
+                       logical_id=LOGICAL_TWO,
                        recorded_head=entry["archive_commit"])
 
 
@@ -424,12 +426,12 @@ class ReviewedIndexAuthorityTests(unittest.TestCase):
 
     def test_archive_branch_content_never_substitutes_authority(self):
         transport, entry = self.archived()
-        forged = dict(entry, logical_id="receipt:forged")
+        forged = dict(entry, logical_id=LOGICAL_TWO)
         files = transport.commits[entry["archive_commit"]]["files"]
         files["index.json"] = json.dumps({"entries": [forged]}).encode()
         with self.assertRaisesRegex(rd.ReceiptError, "not recorded"):
             self.restore(transport, None, FakeIndexAuthority([]),
-                         logical_id="receipt:forged")
+                         logical_id=LOGICAL_TWO)
 
     def test_index_file_authority_reads_reviewed_file_only(self):
         import tempfile
@@ -446,7 +448,7 @@ class ReviewedIndexAuthorityTests(unittest.TestCase):
             with self.assertRaisesRegex(rd.ReceiptError, "not recorded"):
                 self.restore(transport, None,
                              archive.IndexFileAuthority(index),
-                             logical_id="receipt:absent")
+                             logical_id=LOGICAL_TWO)
             missing = Path(tmp) / "absent.json"
             with self.assertRaisesRegex(rd.ReceiptError, "does not exist"):
                 self.restore(transport, None,
@@ -590,7 +592,7 @@ class GitBranchArchiveTests(unittest.TestCase):
         store.artifacts[ref2] = body2
         authority.digests[ref2] = sha256(body2)
         second = do_archive(store, authority, t1, source=source2,
-                            logical_id="receipt:plan:2",
+                            logical_id=LOGICAL_TWO,
                             recorded_head=first["archive_commit"])
         self.assertNotEqual(second["archive_commit"], first["archive_commit"])
 
@@ -625,7 +627,7 @@ class GitBranchArchiveTests(unittest.TestCase):
         store.artifacts[ref2] = body2
         authority.digests[ref2] = sha256(body2)
         do_archive(store, authority, t2, source=source2,
-                   logical_id="receipt:plan:2",
+                   logical_id=LOGICAL_TWO,
                    recorded_head=first["archive_commit"])
         head = t1.fetch_head()
         body3 = b"concurrent-three"
@@ -663,7 +665,7 @@ class GitBranchArchiveTests(unittest.TestCase):
         authority.digests[ref2] = sha256(body2)
         with self.assertRaisesRegex(rd.ReceiptError, "descend|does not exist"):
             do_archive(store, authority, t2, source=source2,
-                       logical_id="receipt:plan:2",
+                       logical_id=LOGICAL_TWO,
                        recorded_head=first["archive_commit"])
 
     def test_normal_fast_forward_deletion_cannot_erase_and_rebind(self):
@@ -886,7 +888,7 @@ class NackCorrectionControlTests(unittest.TestCase):
             remote="https://github.com/awebai/aweb.git",
             reviewed_commit="a" * 40, git=FakeGit())
         with self.assertRaisesRegex(rd.ReceiptError, "not.*ancestor"):
-            authority.lookup("receipt:plan:1")
+            authority.lookup(LOGICAL_ONE)
 
     def test_reviewed_index_reads_entry_at_landed_commit(self):
         _, entry, doc = self._reviewed_fixture()
@@ -916,7 +918,7 @@ class NackCorrectionControlTests(unittest.TestCase):
     # Finding 2: production restore runs real semantic validators.
     def test_semantic_validator_refuses_bad_anchor_bundle(self):
         validate = archive.semantic_validator()
-        manifest = {"kind": "anchor-artifact", "logical_id": "x",
+        manifest = {"kind": "anchor-artifact", "logical_id": LOGICAL_ONE,
                     "source_digest": "a" * 64}
         with self.assertRaisesRegex(rd.ReceiptError, "not a valid ZIP"):
             validate(b"not a zip", manifest)
@@ -939,7 +941,7 @@ class NackCorrectionControlTests(unittest.TestCase):
         authority.digests[ref2] = sha256(body2)
         with self.assertRaisesRegex(rd.ReceiptError, "content-address"):
             do_archive(store, authority, transport, source=source2,
-                       logical_id="receipt:plan:2",
+                       logical_id=LOGICAL_TWO,
                        recorded_head=entry["archive_commit"])
 
     # Finding 4: source identity cannot be rebound at copy time.
@@ -947,7 +949,7 @@ class NackCorrectionControlTests(unittest.TestCase):
         store, authority, transport = fresh_env()
         with self.assertRaisesRegex(rd.ReceiptError, "does not equal the reference"):
             archive.archive_sealed(
-                logical_id="x", kind="anchor-artifact", source=dict(SOURCE),
+                logical_id=LOGICAL_ONE, kind="anchor-artifact", source=dict(SOURCE),
                 artifact_ref="gh-artifact:awebai/aweb:41:0000",
                 store=store, authority=authority, transport=transport,
                 recorded_head=None)
@@ -1265,7 +1267,7 @@ class ReviewedIndexRoundTwoTests(unittest.TestCase):
             remote="https://github.com/awebai/aweb.git",
             reviewed_commit="a" * 40, git=FakeGit())
 
-    def valid_entry(self, logical_id="receipt:plan:1"):
+    def valid_entry(self, logical_id=LOGICAL_ONE):
         store, auth, transport = fresh_env()
         return do_archive(store, auth, transport, logical_id=logical_id)
 
@@ -1820,7 +1822,7 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
         manifest = self.lane_manifest_for(
             body, f"lane:server:1.26.36:{'c' * 40}", source_sha="e" * 40)
         with self.assertRaisesRegex(
-            rd.ReceiptError, "lane logical id claims source"
+            rd.ReceiptError, "logical id source"
         ):
             archive.semantic_validator()(body, manifest)
 
@@ -1831,12 +1833,10 @@ class RoundFiveCounterexampleTests(unittest.TestCase):
             archive.semantic_validator()(body, manifest)
 
     def test_archive_source_claiming_a_foreign_commit_refuses(self):
-        # A non-lane logical id skips the id-claim branch, so this isolates the
-        # archive-source-vs-manifest check rather than re-testing the id.
         body = self.pypi_lane_zip(source_sha="c" * 40)
         manifest = self.lane_manifest_for(
-            body, "staged:server:1.26.36", source_sha="d" * 40)
-        with self.assertRaisesRegex(rd.ReceiptError, "asserts source_sha"):
+            body, f"lane:server:1.26.36:{'d' * 40}", source_sha="d" * 40)
+        with self.assertRaisesRegex(rd.ReceiptError, "source"):
             archive.semantic_validator()(body, manifest)
 
     # ---- blocker 4: the output race ---------------------------------------
@@ -2209,6 +2209,184 @@ class UnrelatedReleaseSetTests(unittest.TestCase):
 
 
 
+class GlobalLogicalIdTests(unittest.TestCase):
+    """Every archive kind has one closed logical-ID namespace.
+
+    Real lane bytes must not become trusted under an arbitrary index name just
+    because their inner lane manifest is valid.
+    """
+
+    SOURCE_SHA = "c" * 40
+    VALID_LOGICAL = f"lane:server:1.26.36:{SOURCE_SHA}"
+    INVALID_LOGICALS = (
+        "arbitrary-reviewed-index-name",
+        "staged:server:1.26.36",
+        f"receipt:{'f' * 64}:{'e' * 64}",
+    )
+
+    def lane_zip(self):
+        import io
+        import zipfile
+
+        version = "1.26.36"
+        names = {
+            f"aweb-{version}-py3-none-any.whl": b"exact staged wheel",
+            f"aweb-{version}.tar.gz": b"exact staged sdist",
+        }
+        files = {name: sha256(data) for name, data in names.items()}
+        lane_manifest = {
+            "mode": "stage-only", "package": "server",
+            "tag": f"server-v{version}", "candidate_version": version,
+            "source_sha": self.SOURCE_SHA, "files": files,
+            "canonical_set_digest": sha256(
+                json.dumps(files, sort_keys=True).encode()),
+        }
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as lane:
+            lane.writestr("manifest.json", json.dumps(lane_manifest))
+            for name, data in names.items():
+                lane.writestr(f"dist/{name}", data)
+        return buffer.getvalue()
+
+    def source(self):
+        return {
+            "repo": "awebai/aweb", "run_id": "41", "artifact_id": "9001",
+            "source_sha": self.SOURCE_SHA,
+        }
+
+    def manifest(self, body, logical_id):
+        return {
+            "schema": archive.MANIFEST_SCHEMA,
+            "logical_id": logical_id,
+            "kind": "workflow-artifact",
+            "source": self.source(),
+            "source_digest": sha256(body),
+            "body_sha256": sha256(body),
+        }
+
+    def manual_entry(self, body, logical_id):
+        manifest = self.manifest(body, logical_id)
+        manifest_bytes = json.dumps(
+            manifest, sort_keys=True, separators=(",", ":")).encode()
+        transport = FakeArchiveTransport()
+        digest = sha256(body)
+        commit = transport.append(None, {
+            f"receipts/{digest}/body.zip": body,
+            f"receipts/{digest}/manifest.json": manifest_bytes,
+        }, "manual hostile fixture")
+        entry = {
+            "schema": archive.INDEX_ENTRY_SCHEMA,
+            "logical_id": logical_id,
+            "kind": "workflow-artifact",
+            "source": self.source(),
+            "source_digest": sha256(body),
+            "body_sha256": digest,
+            "manifest_sha256": sha256(manifest_bytes),
+            "archive_commit": commit,
+        }
+        return transport, entry
+
+    def reviewed_authority(self, entries):
+        document = json.dumps({
+            "schema": archive.ReviewedMainIndexAuthority.INDEX_SCHEMA,
+            "entries": entries,
+        }, sort_keys=True, separators=(",", ":")).encode()
+
+        class FakeGit:
+            def ls_remote(self, ref):
+                return "b" * 40
+
+            def is_ancestor(self, ancestor, descendant):
+                return True
+
+            def file_at(self, commit, path):
+                return document
+
+        return archive.ReviewedMainIndexAuthority(
+            remote="https://github.com/awebai/aweb.git",
+            reviewed_commit="a" * 40, git=FakeGit())
+
+    def test_non_lane_and_wrong_class_ids_refuse_before_append(self):
+        body = self.lane_zip()
+        ref = "gh-artifact:awebai/aweb:41:9001"
+        for logical_id in self.INVALID_LOGICALS:
+            with self.subTest(logical_id=logical_id):
+                transport = FakeArchiveTransport()
+                with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+                    archive.archive_sealed(
+                        logical_id=logical_id,
+                        kind="workflow-artifact",
+                        source=self.source(),
+                        store=FakeStore({ref: body}),
+                        authority=FakeAuthority({ref: sha256(body)}),
+                        transport=transport,
+                        recorded_head=None,
+                    )
+                self.assertIsNone(
+                    transport.head, "invalid identity must refuse before append")
+
+    def test_non_lane_ids_refuse_during_semantic_restore(self):
+        body = self.lane_zip()
+        for logical_id in self.INVALID_LOGICALS:
+            with self.subTest(logical_id=logical_id):
+                transport, entry = self.manual_entry(body, logical_id)
+                with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+                    archive.restore_archived(
+                        entry=entry, transport=transport, production=False,
+                        validate=archive.semantic_validator())
+
+    def test_lane_logical_source_binds_during_global_index_load(self):
+        body = self.lane_zip()
+        _, entry = self.manual_entry(body, self.VALID_LOGICAL)
+        entry = dict(entry, source=dict(entry["source"], source_sha="d" * 40))
+        with self.assertRaisesRegex(rd.ReceiptError, "source"):
+            self.reviewed_authority([entry]).lookup(self.VALID_LOGICAL)
+
+    def test_non_lane_ids_refuse_global_index_load(self):
+        body = self.lane_zip()
+        _, valid = self.manual_entry(body, self.VALID_LOGICAL)
+        for logical_id in self.INVALID_LOGICALS:
+            with self.subTest(logical_id=logical_id):
+                _, invalid = self.manual_entry(body, logical_id)
+                with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+                    self.reviewed_authority(
+                        [valid, invalid]).lookup(self.VALID_LOGICAL)
+
+    def test_malformed_unrelated_supported_class_refuses_global_index(self):
+        body = self.lane_zip()
+        _, valid = self.manual_entry(body, self.VALID_LOGICAL)
+        malformed = []
+        for logical_id in (
+            "plan:not-a-source:not-a-frozen-id",
+            f"staged-manifest:{'f' * 64}:short",
+            f"transition:{'f' * 64}:001:verify-red:server:{'e' * 64}",
+            f"receipt:{'f' * 64}:short",
+        ):
+            malformed.append(dict(
+                valid,
+                logical_id=logical_id,
+                kind="anchor-artifact",
+                source=dict(SOURCE),
+            ))
+        authority = self.reviewed_authority([valid, *malformed])
+        with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+            authority.lookup(self.VALID_LOGICAL)
+
+    def test_valid_lane_identity_still_archives_and_restores(self):
+        body = self.lane_zip()
+        ref = "gh-artifact:awebai/aweb:41:9001"
+        transport = FakeArchiveTransport()
+        entry = archive.archive_sealed(
+            logical_id=self.VALID_LOGICAL,
+            kind="workflow-artifact", source=self.source(),
+            store=FakeStore({ref: body}),
+            authority=FakeAuthority({ref: sha256(body)}),
+            transport=transport, recorded_head=None)
+        self.assertEqual(archive.restore_archived(
+            entry=entry, transport=transport, production=False,
+            validate=archive.semantic_validator()), body)
+
+
 class ReleaseSetCrossValidationTests(RoundFiveCounterexampleTests):
     """Reviewer blocker 1: the relationship checks were optional and unreached.
 
@@ -2290,10 +2468,8 @@ class ReleaseSetCrossValidationTests(RoundFiveCounterexampleTests):
     def test_hidden_transition_kind_refuses(self):
         released = self.real_release_set(
             transition_kinds=("published", "unreviewed-control"))
-        transport, entries = self.archive_all(released["artifacts"])
-        authority = self.index_authority(entries, [self.inventory(released)])
-        with self.assertRaisesRegex(rd.ReceiptError, "published transition"):
-            self.restore(released, transport, authority)
+        with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+            self.archive_all(released["artifacts"])
 
     def test_complete_honest_set_still_restores(self):
         """Control: the same machinery must accept an undrifted set."""
