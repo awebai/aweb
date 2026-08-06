@@ -1738,6 +1738,71 @@ class GitEnvironmentRedirectTests(unittest.TestCase):
 
 
 
+
+class UnrelatedReleaseSetTests(unittest.TestCase):
+    """Reviewer blocker 3: every release-set record must validate, not only the
+    one a caller asks for. A corrupt index that serves one good answer while
+    hiding malformed or duplicated neighbours is still a corrupt index."""
+
+    def authority(self, document_bytes):
+        class FakeGit:
+            def ls_remote(self, ref):
+                return "b" * 40
+
+            def is_ancestor(self, a, d):
+                return True
+
+            def file_at(self, commit, path):
+                return document_bytes
+
+        return archive.ReviewedMainIndexAuthority(
+            remote="https://github.com/awebai/aweb.git",
+            reviewed_commit="a" * 40, git=FakeGit())
+
+    def index(self, sets):
+        store, auth, transport = fresh_env()
+        entry = do_archive(store, auth, transport)
+        return json.dumps({
+            "schema": archive.ReviewedMainIndexAuthority.INDEX_SCHEMA,
+            "entries": [entry],
+            "release_sets": sets,
+        }, sort_keys=True, separators=(",", ":")).encode(), entry
+
+    def good_set(self, plan="a" * 64):
+        return {
+            "frozen_plan_id": plan,
+            "plan": f"plan:{'c' * 40}:{plan}",
+            "staged_manifest": f"staged-manifest:{plan}:{'e' * 64}",
+            "transitions": [
+                f"transition:{plan}:001:published:channel:{'d' * 64}"],
+            "receipt": f"receipt:{plan}:{'f' * 64}",
+        }
+
+    def test_malformed_unrelated_set_refuses(self):
+        body, entry = self.index([self.good_set(), {"frozen_plan_id": "b" * 64}])
+        with self.assertRaises(rd.ReceiptError):
+            self.authority(body).release_set("a" * 64)
+
+    def test_duplicate_unrelated_plan_refuses(self):
+        other = self.good_set("b" * 64)
+        body, entry = self.index([self.good_set(), other, dict(other)])
+        with self.assertRaisesRegex(rd.ReceiptError, "more than once"):
+            self.authority(body).release_set("a" * 64)
+
+    def test_unrelated_defect_also_refuses_plain_entry_lookup(self):
+        """The index is validated as a whole, so a single-artifact lookup must
+        not quietly succeed against a corrupt index either."""
+        body, entry = self.index([{"frozen_plan_id": "b" * 64}])
+        with self.assertRaises(rd.ReceiptError):
+            self.authority(body).lookup(entry["logical_id"])
+
+    def test_valid_sets_still_resolve(self):
+        body, entry = self.index([self.good_set(), self.good_set("b" * 64)])
+        resolved = self.authority(body).release_set("a" * 64)
+        self.assertEqual(resolved["frozen_plan_id"], "a" * 64)
+
+
+
 class GateTests(unittest.TestCase):
     def test_focused_target_is_part_of_the_release_driver_gate(self):
         makefile = (SCRIPTS.parent / "Makefile").read_text()
