@@ -70,6 +70,8 @@ export async function stopOwnedProcessTree(
 function listProcessTable(): OwnedProcessMember[] {
   const output = execFileSync("/bin/ps", ["-ww", "-axo", "pid=,ppid=,pgid=,command="], {
     encoding: "utf8",
+    killSignal: "SIGKILL",
+    timeout: 2_000,
   });
   const members: OwnedProcessMember[] = [];
   for (const line of output.split("\n")) {

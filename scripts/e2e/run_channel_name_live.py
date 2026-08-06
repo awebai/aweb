@@ -8,6 +8,7 @@ installs a plugin, edits a marketplace, or reads ambient Claude configuration.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -97,6 +98,75 @@ def validate_package_identity(package_root: Path) -> None:
         raise ValueError("tgz lacks dist/index.js")
 
 
+def atomic_write_resource_plan(path: Path, plan: dict[str, object]) -> None:
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=path.parent, prefix=f".{path.name}.", delete=False
+        ) as stream:
+            temporary_path = Path(stream.name)
+            os.fchmod(stream.fileno(), 0o600)
+            json.dump(plan, stream, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def persist_cleanup_failure(
+    path: Path,
+    plan: dict[str, object],
+    error: BaseException,
+) -> None:
+    failed_plan = {
+        **plan,
+        "cleanup_status": "ambiguous",
+        "cleanup_error_type": type(error).__name__,
+        "cleanup_error": str(error),
+    }
+    atomic_write_resource_plan(path, failed_plan)
+
+
+def start_gated_owned_process_group(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    gate_script: Path,
+) -> tuple[subprocess.Popen[bytes], int]:
+    read_fd, write_fd = os.pipe()
+    try:
+        runner = subprocess.Popen(
+            [sys.executable, str(gate_script), str(read_fd), "--", *command],
+            cwd=cwd,
+            env=env,
+            pass_fds=(read_fd,),
+            start_new_session=True,
+        )
+    except BaseException:
+        os.close(write_fd)
+        raise
+    finally:
+        os.close(read_fd)
+    return runner, write_fd
+
+
+def release_gated_runner(write_fd: int) -> None:
+    try:
+        if os.write(write_fd, b"1") != 1:
+            raise RuntimeError("could not release supervised runner gate")
+    finally:
+        os.close(write_fd)
+
+
 def start_owned_process_group(
     command: list[str],
     *,
@@ -116,13 +186,72 @@ def process_group_exists(process_group_id: int) -> bool:
         return True
 
 
-def list_process_group_members(process_group_id: int) -> list[dict[str, object]]:
-    output = subprocess.run(
-        ["/bin/ps", "-ww", "-axo", "pid=,pgid=,command="],
-        check=True,
+def terminate_bounded_helper(
+    helper: subprocess.Popen[str],
+    *,
+    term_grace_seconds: float = 0.5,
+) -> None:
+    process_group_id = helper.pid
+    if process_group_exists(process_group_id):
+        try:
+            os.killpg(process_group_id, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    try:
+        helper.communicate(timeout=term_grace_seconds)
+    except subprocess.TimeoutExpired:
+        pass
+    if process_group_exists(process_group_id):
+        try:
+            os.killpg(process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        helper.communicate(timeout=2.0)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(f"cleanup helper {process_group_id} could not be reaped") from error
+    if not wait_for_process_group_exit(process_group_id, 2.0):
+        raise RuntimeError(f"cleanup helper process group {process_group_id} survived SIGKILL")
+
+
+def run_bounded_cleanup_command(
+    command: list[str],
+    *,
+    env: dict[str, str],
+    timeout_seconds: float,
+) -> subprocess.CompletedProcess[str]:
+    helper = subprocess.Popen(
+        command,
+        env=env,
+        start_new_session=True,
         text=True,
         stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = helper.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as error:
+        terminate_bounded_helper(
+            helper, term_grace_seconds=min(0.5, max(0.05, timeout_seconds))
+        )
+        raise RuntimeError(
+            f"cleanup command timed out after {timeout_seconds}s: {command!r}"
+        ) from error
+    if process_group_exists(helper.pid):
+        terminate_bounded_helper(helper)
+        raise RuntimeError(f"cleanup command left descendant processes: {command!r}")
+    if helper.returncode != 0:
+        raise subprocess.CalledProcessError(
+            helper.returncode, command, output=stdout, stderr=stderr
+        )
+    return subprocess.CompletedProcess(command, helper.returncode, stdout, stderr)
+
+
+def list_process_group_members(process_group_id: int) -> list[dict[str, object]]:
+    output = run_bounded_cleanup_command(
+        ["/bin/ps", "-ww", "-axo", "pid=,pgid=,command="],
         env={"PATH": os.defpath},
+        timeout_seconds=2.0,
     ).stdout
     members: list[dict[str, object]] = []
     for line in output.splitlines():
@@ -152,21 +281,25 @@ def cleanup_owned_process_group(
             os.killpg(process_group_id, signal.SIGTERM)
         except ProcessLookupError:
             pass
-        if not wait_for_process_group_exit(process_group_id, term_grace_seconds):
+        try:
+            runner.wait(timeout=term_grace_seconds)
+        except subprocess.TimeoutExpired:
+            pass
+        if process_group_exists(process_group_id):
             sigkill_required = True
             try:
                 os.killpg(process_group_id, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            if not wait_for_process_group_exit(process_group_id, 10.0):
+            try:
+                runner.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                pass
+            if not wait_for_process_group_exit(process_group_id, 2.0):
                 raise RuntimeError(
                     f"owned runner process group {process_group_id} survived SIGKILL: "
                     f"{list_process_group_members(process_group_id)!r}"
                 )
-    try:
-        runner.wait(timeout=1)
-    except subprocess.TimeoutExpired:
-        pass
     surviving = [
         member["pid"] for member in members
         if isinstance(member["pid"], int) and pid_exists(member["pid"])
@@ -204,48 +337,60 @@ def pid_exists(pid: int) -> bool:
         return True
 
 
-def docker_project_resource_ids(
+def observe_docker_project_resources(
     docker: Path,
     project_name: str,
     docker_env: dict[str, str],
-) -> dict[str, list[str]]:
+    command_timeout_seconds: float,
+) -> tuple[dict[str, list[str]], list[BaseException]]:
     label = f"label=com.docker.compose.project={project_name}"
     commands = {
         "containers": [str(docker), "ps", "-aq", "--filter", label],
         "networks": [str(docker), "network", "ls", "-q", "--filter", label],
         "volumes": [str(docker), "volume", "ls", "-q", "--filter", label],
     }
-    return {
-        kind: subprocess.run(
-            command, check=True, text=True, stdout=subprocess.PIPE, env=docker_env
-        ).stdout.split()
-        for kind, command in commands.items()
-    }
+    resources: dict[str, list[str]] = {}
+    failures: list[BaseException] = []
+    for kind, command in commands.items():
+        try:
+            resources[kind] = run_bounded_cleanup_command(
+                command, env=docker_env, timeout_seconds=command_timeout_seconds
+            ).stdout.split()
+        except BaseException as error:
+            resources[kind] = []
+            failures.append(error)
+    return resources, failures
 
 
 def cleanup_compose_project(
     docker: Path,
     project_name: str,
     docker_env: dict[str, str],
+    *,
+    command_timeout_seconds: float = 10.0,
 ) -> dict[str, object]:
-    observed = docker_project_resource_ids(docker, project_name, docker_env)
+    observed, failures = observe_docker_project_resources(
+        docker, project_name, docker_env, command_timeout_seconds
+    )
     removals = (
         ("containers", [str(docker), "rm", "-f"]),
         ("networks", [str(docker), "network", "rm"]),
         ("volumes", [str(docker), "volume", "rm"]),
     )
-    failures: list[BaseException] = []
     for kind, command in removals:
         if observed[kind]:
             try:
-                subprocess.run([*command, *observed[kind]], check=True, env=docker_env)
+                run_bounded_cleanup_command(
+                    [*command, *observed[kind]],
+                    env=docker_env,
+                    timeout_seconds=command_timeout_seconds,
+                )
             except BaseException as error:
                 failures.append(error)
-    remaining: dict[str, list[str]] = {}
-    try:
-        remaining = docker_project_resource_ids(docker, project_name, docker_env)
-    except BaseException as error:
-        failures.append(error)
+    remaining, verification_failures = observe_docker_project_resources(
+        docker, project_name, docker_env, command_timeout_seconds
+    )
+    failures.extend(verification_failures)
     if failures or any(remaining.values()):
         detail = f"; removal errors: {[str(error) for error in failures]!r}" if failures else ""
         raise RuntimeError(
@@ -264,6 +409,8 @@ def cleanup_supervised_resources(
     compose_project: str,
     docker_env: dict[str, str],
     integration_root: Path,
+    *,
+    command_timeout_seconds: float = 10.0,
 ) -> tuple[dict[str, object] | None, dict[str, object]]:
     process_proof: dict[str, object] | None = None
     compose_proof: dict[str, object] | None = None
@@ -274,7 +421,12 @@ def cleanup_supervised_resources(
         except BaseException as error:
             failures.append(error)
     try:
-        compose_proof = cleanup_compose_project(docker, compose_project, docker_env)
+        compose_proof = cleanup_compose_project(
+            docker,
+            compose_project,
+            docker_env,
+            command_timeout_seconds=command_timeout_seconds,
+        )
     except BaseException as error:
         failures.append(error)
     if not failures:
@@ -313,6 +465,14 @@ class RunnerSignalGuard:
         for signum in self.handled:
             signal.signal(signum, self._interrupted)
         return self
+
+    @contextmanager
+    def block_handoff(self):
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, set(self.handled))
+        try:
+            yield
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
     def protect_cleanup(self) -> None:
         for signum in self.handled:
@@ -456,20 +616,29 @@ def main(argv: list[str] | None = None) -> int:
             "compose_project": compose_project,
             "integration_root": str(integration_root),
             "runner_process_group_id": None,
+            "cleanup_status": "pending",
         }
-        resource_plan_path.write_text(json.dumps(resource_plan, indent=2) + "\n")
-        resource_plan_path.chmod(0o600)
+        atomic_write_resource_plan(resource_plan_path, resource_plan)
+        gate_script = repo / "scripts" / "e2e" / "supervised_exec.py"
+        if not gate_script.is_file():
+            raise ValueError("supervised runner gate is missing")
         runner: subprocess.Popen[bytes] | None = None
         process_cleanup_proof: dict[str, object] | None = None
         compose_cleanup_proof: dict[str, object] | None = None
         with RunnerSignalGuard() as signal_guard:
             try:
-                runner = start_owned_process_group([
-                    str(vitest), "run", "test/integration.test.ts", "-t", LIVE_TEST_NAME,
-                ], cwd=repo / "channel", env=env)
-                resource_plan["runner_process_group_id"] = runner.pid
-                resource_plan_path.write_text(json.dumps(resource_plan, indent=2) + "\n")
-                resource_plan_path.chmod(0o600)
+                with signal_guard.block_handoff():
+                    runner, gate_fd = start_gated_owned_process_group([
+                        str(vitest), "run", "test/integration.test.ts", "-t", LIVE_TEST_NAME,
+                    ], cwd=repo / "channel", env=env, gate_script=gate_script)
+                    try:
+                        resource_plan["runner_process_group_id"] = runner.pid
+                        atomic_write_resource_plan(resource_plan_path, resource_plan)
+                        release_gated_runner(gate_fd)
+                        gate_fd = -1
+                    finally:
+                        if gate_fd >= 0:
+                            os.close(gate_fd)
                 returncode = runner.wait()
                 if returncode != 0:
                     raise subprocess.CalledProcessError(returncode, runner.args)
@@ -479,8 +648,14 @@ def main(argv: list[str] | None = None) -> int:
                     process_cleanup_proof, compose_cleanup_proof = cleanup_supervised_resources(
                         runner, docker, compose_project, docker_env, integration_root
                     )
-                except BaseException:
+                except BaseException as error:
                     preserve_root = True
+                    try:
+                        persist_cleanup_failure(resource_plan_path, resource_plan, error)
+                    except BaseException as plan_error:
+                        raise RuntimeError(
+                            f"cleanup failed and recovery-plan update failed: {plan_error}"
+                        ) from error
                     raise
 
         if process_cleanup_proof is None or compose_cleanup_proof is None:

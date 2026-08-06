@@ -7,7 +7,9 @@ import os
 from pathlib import Path
 import signal
 import shutil
+import stat
 import subprocess
+import sys
 import time
 import tarfile
 import tempfile
@@ -198,6 +200,96 @@ state_path.write_text(json.dumps(state))
             self.assertTrue(filters)
             self.assertEqual(set(filters), {f"label=com.docker.compose.project={project}"})
 
+    def test_blocking_docker_cleanup_times_out_reaps_and_refuses(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            pid_path = root / "docker.pid"
+            blocking_docker = root / "docker"
+            blocking_docker.write_text(f"""#!{sys.executable}
+import os, pathlib, signal, time
+pathlib.Path(os.environ['FAKE_DOCKER_PID']).write_text(str(os.getpid()))
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+time.sleep(30)
+""")
+            blocking_docker.chmod(0o755)
+            started = time.monotonic()
+
+            with self.assertRaisesRegex(RuntimeError, "timed out|ambiguous"):
+                harness.cleanup_compose_project(
+                    blocking_docker,
+                    "aweb-channel-name-live-deadbeef",
+                    {"PATH": os.defpath, "FAKE_DOCKER_PID": str(pid_path)},
+                    command_timeout_seconds=0.1,
+                )
+
+            self.assertLess(time.monotonic() - started, 3)
+            deadline = time.monotonic() + 2
+            while not pid_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(pid_path.exists())
+            self.assertFalse(harness.pid_exists(int(pid_path.read_text())))
+
+    def test_signal_at_gated_handoff_preserves_exact_plan_on_cleanup_failure(self):
+        fixture = ROOT / "scripts" / "e2e" / "fixtures" / "stubborn-process-tree.mjs"
+        gate = ROOT / "scripts" / "e2e" / "supervised_exec.py"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            plan_path = root / "supervisor-resources.json"
+            marker = root / "pids.json"
+            integration_root = root / "integration"
+            integration_root.mkdir()
+            failing_docker = root / "docker"
+            failing_docker.write_text("#!/bin/sh\nexit 19\n")
+            failing_docker.chmod(0o755)
+            node = shutil.which("node")
+            self.assertIsNotNone(node)
+            runner = None
+            gate_fd = None
+            with self.assertRaisesRegex(RuntimeError, "interrupted by signal"):
+                with harness.RunnerSignalGuard() as signal_guard:
+                    with signal_guard.block_handoff():
+                        runner, gate_fd = harness.start_gated_owned_process_group(
+                            [str(node), str(fixture), str(marker)],
+                            cwd=ROOT,
+                            env={"PATH": os.defpath},
+                            gate_script=gate,
+                        )
+                        plan = {
+                            "compose_project": "aweb-channel-name-live-deadbeef",
+                            "integration_root": str(integration_root),
+                            "runner_process_group_id": runner.pid,
+                        }
+                        harness.atomic_write_resource_plan(plan_path, plan)
+                        os.kill(os.getpid(), signal.SIGTERM)
+                        harness.release_gated_runner(gate_fd)
+                        gate_fd = None
+            self.assertIsNotNone(runner)
+            try:
+                persisted = json.loads(plan_path.read_text())
+                self.assertEqual(stat.S_IMODE(plan_path.stat().st_mode), 0o600)
+                self.assertEqual(persisted["runner_process_group_id"], runner.pid)
+                with self.assertRaisesRegex(RuntimeError, "supervisor cleanup failed") as caught:
+                    harness.cleanup_supervised_resources(
+                        runner,
+                        failing_docker,
+                        persisted["compose_project"],
+                        {"PATH": os.defpath},
+                        integration_root,
+                        command_timeout_seconds=0.2,
+                    )
+                harness.persist_cleanup_failure(plan_path, persisted, caught.exception)
+                failed_plan = json.loads(plan_path.read_text())
+                self.assertEqual(failed_plan["runner_process_group_id"], runner.pid)
+                self.assertEqual(failed_plan["cleanup_status"], "ambiguous")
+                self.assertIn("supervisor cleanup failed", failed_plan["cleanup_error"])
+                self.assertTrue(integration_root.exists())
+                self.assertFalse(harness.process_group_exists(runner.pid))
+            finally:
+                if gate_fd is not None:
+                    os.close(gate_fd)
+                if runner is not None and harness.process_group_exists(runner.pid):
+                    os.killpg(runner.pid, signal.SIGKILL)
+
     def test_supervisor_preserves_integration_state_when_resource_cleanup_is_ambiguous(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -251,8 +343,10 @@ state_path.write_text(json.dumps(state))
         self.assertNotIn("tmux", source)
         supervisor = HARNESS_PATH.read_text()
         for marker in (
-            "start_owned_process_group", "cleanup_owned_process_group",
-            "cleanup_compose_project", "supervisor_integration_root_cleanup_complete",
+            "start_gated_owned_process_group", "atomic_write_resource_plan",
+            "block_handoff", "run_bounded_cleanup_command",
+            "cleanup_owned_process_group", "cleanup_compose_project",
+            "supervisor_integration_root_cleanup_complete",
         ):
             self.assertIn(marker, supervisor)
 
