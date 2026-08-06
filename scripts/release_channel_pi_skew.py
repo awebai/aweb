@@ -540,11 +540,25 @@ def cell_identity(cell) -> str:
 
 
 class FileEvidenceWriter:
-    def __init__(self, root: Path | None = None):
+    def __init__(self, root: Path | None = None, *, component: str | None = None):
         configured = os.getenv("AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR")
         self.root = Path(root or configured or (
             Path(tempfile.gettempdir()) / "aweb-channel-pi-skew-evidence"
         )).resolve()
+        # Which component's evidence this root holds. A root is not
+        # self-describing: two components can be handed the same directory, and
+        # the completeness inventory would then read one component's reports as
+        # the other's. Carrying the identity lets the measurement bind it.
+        # The component is NOT a caller label: it is the resolved root's own
+        # final segment. A label lets root/channel claim to be Pi, which is
+        # exactly the mislabelling a per-component root exists to prevent.
+        derived = self.root.name
+        if component is not None and component != derived:
+            raise rd.ReceiptError(
+                f"evidence root {self.root} is {derived!r}, not the claimed "
+                f"{component!r}; the root's identity is its final segment"
+            )
+        self.component = derived
         self.root.mkdir(parents=True, exist_ok=True)
 
     def write_path(self, path: Path, document: dict) -> Path:
@@ -583,6 +597,11 @@ class ChannelPiHarness:
 
     def _new_journey(self):
         return self._journey if self._journey is not None else self._journey_factory()
+
+    @property
+    def evidence_component(self) -> str | None:
+        """The component whose evidence root this lifecycle writes into."""
+        return getattr(self._evidence, "component", None)
 
     def freeze_matrix(self, document: dict) -> Path:
         cells = rd.validate_skew_matrix_document(document)
@@ -956,14 +975,10 @@ class SubprocessChannelPiJourney:
 
 
 def _factory(component: str):
-    configured = os.getenv("AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR")
-    base = Path(configured or (
-        Path(tempfile.gettempdir()) / "aweb-channel-pi-skew-evidence"
-    ))
     return ChannelPiHarness(
         resolver=ArtifactResolver(),
         journey_factory=lambda: SubprocessChannelPiJourney(component),
-        evidence=FileEvidenceWriter(base / component),
+        evidence=evidence_writer_for(component),
     )
 
 
@@ -1347,3 +1362,888 @@ def aggregate_frozen_matrix(
     measurement.pop("measurement_id", None)
     measurement["measurement_id"] = rd.canonical_json_digest(measurement)
     return measurement
+
+
+def evidence_writer_for(component: str, root: Path | None = None) -> FileEvidenceWriter:
+    """A per-component evidence root.
+
+    Channel and Pi must never share one. The completeness inventory is derived
+    from the files present under the root, so a shared root lets one component's
+    reports satisfy the other's inventory and a partial measurement can read as
+    complete.
+    """
+    if component not in CLIENT_ARTIFACTS:
+        raise rd.ReceiptError(
+            f"channel/Pi evidence covers only {sorted(CLIENT_ARTIFACTS)}, "
+            f"got {component!r}"
+        )
+    base = root or os.getenv("AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR") or (
+        Path(tempfile.gettempdir()) / "aweb-channel-pi-skew-evidence"
+    )
+    return FileEvidenceWriter(Path(base) / component, component=component)
+
+
+UNANCHORED_MEASUREMENT_CLASS = {
+    "schema": "aweb.runtime-support-measurement.v1",
+    "completeness": "unanchored-local-measurement",
+    "status": "incomplete-unanchored",
+}
+
+
+def _require_unanchored_measurement(measurement, *, matrix_id: str) -> None:
+    """The only output class this entrypoint may extend and re-identify.
+
+    Re-computing measurement_id over whatever finish returned would re-sign a
+    document that claims to be complete or anchored. The class is checked
+    BEFORE any wrapper field is added, so a forged completion can never acquire
+    a fresh identity from this code path.
+    """
+    if not isinstance(measurement, dict):
+        raise rd.ReceiptError("channel/Pi measurement output is not a document")
+    for key, expected in UNANCHORED_MEASUREMENT_CLASS.items():
+        if measurement.get(key) != expected:
+            raise rd.ReceiptError(
+                f"channel/Pi measurement output {key}={measurement.get(key)!r} "
+                f"is not the only permitted unanchored class {expected!r}"
+            )
+    if measurement.get("support_complete") is not False:
+        raise rd.ReceiptError(
+            "channel/Pi measurement output must carry support_complete=false; "
+            "this entrypoint never produces a complete support claim"
+        )
+    if measurement.get("anchor") is not None:
+        raise rd.ReceiptError(
+            "channel/Pi measurement output carries an anchor; anchoring is a "
+            "separate reviewed step and is never asserted by measurement"
+        )
+    if measurement.get("matrix_id") != matrix_id:
+        raise rd.ReceiptError(
+            "channel/Pi measurement output binds a different frozen matrix"
+        )
+
+
+ENVELOPE_SCHEMA = "aweb.runtime-support-measurement-envelope.v1"
+
+MEASUREMENT_INPUT_SCHEMA = "aweb.measurement-input-manifest.v1"
+MEASUREMENT_GRANTS = "measurement-only"
+_INPUT_KEYS = {"schema", "edge", "source_sha", "entries", "grants", "manifest_id"}
+_CANDIDATE_KEYS = {
+    "kind", "version", "digest", "digest_set", "lane_ref",
+    "stage_run_id", "stage_artifact_id", "stage_zip_digest",
+}
+_PUBLISHED_KEYS = {"kind", "version", "digest_set", "authority"}
+_AUTHORITY_KEYS = {
+    "provider", "repo", "workflow", "artifact", "source_sha", "zip_digest",
+}
+SERVER_LANE_REPO = "awebai/aweb"
+SERVER_LANE_WORKFLOW = ".github/workflows/pypi-release.yml"
+_GH_ID = re.compile(r"[1-9][0-9]*")
+
+
+def _parse_artifact(artifact, label: str) -> tuple[str, str, str]:
+    """rd's parse plus canonical GitHub id grammar.
+
+    GitHub ids are positive integers. `0` and leading zeros are not real ids and
+    would otherwise pass a digit-shaped check while naming nothing.
+    """
+    if not isinstance(artifact, str):
+        raise rd.ReceiptError(f"{label} artifact reference is not a string")
+    repo, run_id, artifact_id = rd._parse_gh_artifact_id(artifact)
+    for name, value in (("run", run_id), ("artifact", artifact_id)):
+        if not _GH_ID.fullmatch(value):
+            raise rd.ReceiptError(
+                f"{label} {name} id {value!r} is not a canonical positive "
+                "integer GitHub id"
+            )
+    return repo, run_id, artifact_id
+_SHA40 = re.compile(r"[0-9a-f]{40}")
+_SHA256 = re.compile(r"(?:sha256:)?[0-9a-f]{64}")
+_DIGITS = re.compile(r"[0-9]+")
+_VERSION = re.compile(r"[0-9]+(?:\.[0-9]+)+(?:[-+][0-9A-Za-z.+-]+)?")
+
+
+def _exact(value, pattern, label: str) -> str:
+    """Type-check before matching.
+
+    `pattern.fullmatch(non_str)` raises TypeError, which escapes as an
+    unhandled exception instead of the ReceiptError a caller can act on. A
+    malformed input must always refuse as a refusal.
+    """
+    if not isinstance(value, str) or not pattern.fullmatch(value):
+        raise rd.ReceiptError(
+            f"measurement input {label} {value!r} does not match its required "
+            "format"
+        )
+    return value
+
+
+def validate_measurement_input(document, *, component: str) -> dict:
+    """The canonical measurement input, which is NOT a release staged manifest.
+
+    A release staged manifest asserts that components moved and were staged
+    under a frozen plan, and it carries publish authority through the receipt
+    chain. A measurement moves nothing and publishes nothing: it binds one
+    already-staged candidate client and the already-published server it is
+    measured against. Representing the second as "staged" would require
+    inventing a lane reference for bytes that were never staged, so the two
+    documents are deliberately different types and neither validator accepts
+    the other's shape.
+    """
+    if component not in CLIENT_ARTIFACTS:
+        raise rd.ReceiptError(
+            f"measurement input covers only {sorted(CLIENT_ARTIFACTS)}, got "
+            f"{component!r}"
+        )
+    if not isinstance(document, dict) or set(document) != _INPUT_KEYS:
+        present = set(document) if isinstance(document, dict) else set()
+        raise rd.ReceiptError(
+            f"measurement input does not carry exactly {sorted(_INPUT_KEYS)}; "
+            f"missing {sorted(_INPUT_KEYS - present)}, unexpected "
+            f"{sorted(present - _INPUT_KEYS)}"
+        )
+    if document["schema"] != MEASUREMENT_INPUT_SCHEMA:
+        raise rd.ReceiptError(
+            f"measurement input schema {document['schema']!r} is not "
+            f"{MEASUREMENT_INPUT_SCHEMA!r}; a release staged manifest is not a "
+            "measurement authorization"
+        )
+    if document["grants"] != MEASUREMENT_GRANTS:
+        raise rd.ReceiptError(
+            f"measurement input grants {document['grants']!r}, not "
+            f"{MEASUREMENT_GRANTS!r}; this document never carries publish or "
+            "receipt authority"
+        )
+    if document["edge"] != {"a": component, "b": "server"}:
+        raise rd.ReceiptError(
+            f"measurement input edge {document['edge']!r} is not the measured "
+            f"{component}<->server edge"
+        )
+    source_sha = _exact(document["source_sha"], _SHA40, "source_sha")
+
+    entries = document["entries"]
+    exact = {component, "server"}
+    if not isinstance(entries, dict) or set(entries) != exact:
+        present = set(entries) if isinstance(entries, dict) else set()
+        raise rd.ReceiptError(
+            f"measurement input entries must be exactly {sorted(exact)}, got "
+            f"{sorted(present)}"
+        )
+    _validate_candidate_entry(entries[component], component, source_sha)
+    _validate_published_entry(entries["server"])
+
+    recorded = document["manifest_id"]
+    body = {k: v for k, v in document.items() if k != "manifest_id"}
+    if recorded != rd.canonical_json_digest(body):
+        raise rd.ReceiptError(
+            "measurement input manifest_id is not the canonical identity of "
+            "its own contents"
+        )
+
+    moving = {
+        name for name, entry in entries.items()
+        if entry.get("kind") == "candidate"
+    }
+    if moving != {component}:
+        raise rd.ReceiptError(
+            f"measurement input declares candidates {sorted(moving)}; these "
+            f"entrypoints measure exactly one candidate client {{{component!r}}} "
+            "against the published server"
+        )
+    return document
+
+
+def _validate_candidate_entry(entry, component: str, source_sha: str) -> None:
+    if not isinstance(entry, dict) or set(entry) != _CANDIDATE_KEYS:
+        present = set(entry) if isinstance(entry, dict) else set()
+        raise rd.ReceiptError(
+            f"measurement input candidate {component} does not carry exactly "
+            f"{sorted(_CANDIDATE_KEYS)}; missing "
+            f"{sorted(_CANDIDATE_KEYS - present)}, unexpected "
+            f"{sorted(present - _CANDIDATE_KEYS)}"
+        )
+    if entry["kind"] != "candidate":
+        raise rd.ReceiptError(
+            f"measurement input {component} kind is {entry['kind']!r}, not "
+            "'candidate'"
+        )
+    _exact(entry["version"], _VERSION, f"candidate {component} version")
+    digest_set = entry["digest_set"]
+    if not isinstance(digest_set, dict) or not digest_set or not all(
+        isinstance(k, str) and k and isinstance(v, str)
+        and _SHA256.fullmatch(v)
+        for k, v in digest_set.items()
+    ):
+        raise rd.ReceiptError(
+            f"measurement input candidate {component} needs a complete "
+            "digest_set of exact sha256 values"
+        )
+    if entry["digest"] != rd.canonical_digest_of_set(digest_set):
+        raise rd.ReceiptError(
+            f"measurement input candidate {component} digest is not the "
+            "canonical digest of its complete set"
+        )
+    # Structured, not free-form: the harness must be able to retrieve the exact
+    # staged bytes, which is the whole reason a candidate needs a lane ref.
+    # Parsed ONCE, and every duplicated stage fact is bound back to it -- a
+    # recomputed canonical manifest_id otherwise authorizes a document whose
+    # provenance fields contradict the lane reference they claim to describe.
+    lane = rd.LaneRef.from_dict(entry["lane_ref"])
+    _, lane_run_id, lane_artifact_id = _parse_artifact(
+        lane.artifact, f"candidate {component} lane")
+    for field, pattern in (
+        ("stage_run_id", _DIGITS), ("stage_artifact_id", _DIGITS),
+        ("stage_zip_digest", _SHA256),
+    ):
+        _exact(entry[field], pattern, f"candidate {component} {field}")
+    bindings = (
+        ("source_sha", source_sha, lane.aw_source_sha,
+         "the manifest source and the lane reference source"),
+        ("stage_run_id", entry["stage_run_id"], lane_run_id,
+         "the recorded stage run and the run encoded in the lane artifact"),
+        ("stage_artifact_id", entry["stage_artifact_id"], lane_artifact_id,
+         "the recorded stage artifact and the artifact encoded in the lane "
+         "artifact"),
+        ("stage_zip_digest", entry["stage_zip_digest"], lane.zip_digest,
+         "the recorded stage ZIP digest and the lane reference ZIP digest"),
+    )
+    for field, recorded, derived, description in bindings:
+        if recorded != derived:
+            raise rd.ReceiptError(
+                f"measurement input candidate {component} {field} disagrees "
+                f"with its lane reference: {description} must name one stage, "
+                f"got {recorded!r} and {derived!r}"
+            )
+
+
+def _validate_published_entry(entry) -> None:
+    if not isinstance(entry, dict) or set(entry) != _PUBLISHED_KEYS:
+        present = set(entry) if isinstance(entry, dict) else set()
+        raise rd.ReceiptError(
+            f"measurement input server does not carry exactly "
+            f"{sorted(_PUBLISHED_KEYS)}; missing "
+            f"{sorted(_PUBLISHED_KEYS - present)}, unexpected "
+            f"{sorted(present - _PUBLISHED_KEYS)}"
+        )
+    if entry["kind"] != "published":
+        raise rd.ReceiptError(
+            f"measurement input server kind is {entry['kind']!r}, not "
+            "'published'; the server is never staged for a measurement"
+        )
+    if "lane_ref" in entry:
+        raise rd.ReceiptError(
+            "measurement input server carries a lane_ref; a published artifact "
+            "was never staged and inventing one is the substitution this "
+            "schema exists to prevent"
+        )
+    _exact(entry["version"], _VERSION, "server version")
+    digest_set = entry["digest_set"]
+    if not isinstance(digest_set, dict) or not digest_set or not all(
+        isinstance(k, str) and k and isinstance(v, str) and _SHA256.fullmatch(v)
+        for k, v in digest_set.items()
+    ):
+        raise rd.ReceiptError(
+            "measurement input server needs a complete digest_set of exact "
+            "sha256 values"
+        )
+    authority = entry["authority"]
+    if not isinstance(authority, dict) or set(authority) != _AUTHORITY_KEYS:
+        present = set(authority) if isinstance(authority, dict) else set()
+        raise rd.ReceiptError(
+            "measurement input server authority does not carry exactly "
+            f"{sorted(_AUTHORITY_KEYS)}; missing "
+            f"{sorted(_AUTHORITY_KEYS - present)}, unexpected "
+            f"{sorted(present - _AUTHORITY_KEYS)}"
+        )
+    if authority["provider"] != "verify-only-lane":
+        raise rd.ReceiptError(
+            f"measurement input server authority provider "
+            f"{authority['provider']!r} is not the reviewed verify-only lane"
+        )
+    # One immutable workflow-artifact reference, not duplicated labels: the
+    # repo is bound to the repo encoded in the artifact reference, so the two
+    # cannot name different places.
+    repo, _, _ = _parse_artifact(authority["artifact"], "server authority")
+    if authority["repo"] != repo:
+        raise rd.ReceiptError(
+            f"measurement input server authority repo {authority['repo']!r} "
+            f"disagrees with the repo encoded in its artifact reference {repo!r}"
+        )
+    if authority["repo"] != SERVER_LANE_REPO:
+        raise rd.ReceiptError(
+            f"measurement input server authority repo {authority['repo']!r} is "
+            f"not the reviewed server lane repo {SERVER_LANE_REPO!r}"
+        )
+    if authority["workflow"] != SERVER_LANE_WORKFLOW:
+        raise rd.ReceiptError(
+            f"measurement input server authority workflow "
+            f"{authority['workflow']!r} is not the reviewed verify-only lane "
+            f"{SERVER_LANE_WORKFLOW!r}"
+        )
+    _exact(authority["source_sha"], _SHA40, "server authority source_sha")
+    _exact(authority["zip_digest"], _SHA256, "server authority zip_digest")
+
+
+
+def _require_child_identity(measurement: dict) -> str:
+    """The child's own canonical identity must already be correct.
+
+    aggregate_frozen_matrix computes measurement_id over the document without
+    that key. Recomputing it here would accept any coherent post-finish edit;
+    verifying it means a mutated child is refused before anything wraps it.
+    """
+    recorded = measurement.get("measurement_id")
+    if not isinstance(recorded, str) or not recorded:
+        raise rd.ReceiptError(
+            "channel/Pi measurement output carries no canonical identity"
+        )
+    body = {k: v for k, v in measurement.items() if k != "measurement_id"}
+    if recorded != rd.canonical_json_digest(body):
+        raise rd.ReceiptError(
+            "channel/Pi measurement output does not match its own canonical "
+            "identity; the document was changed after it was finished"
+        )
+    return recorded
+
+
+class PublishedServerAuthority:
+    """Resolves the published server through the reviewed verify-only lane.
+
+    A declared authority that nothing consumes is decorative: any digit-shaped
+    run/artifact id would re-identify a manifest and the measurement would
+    complete anyway, because the cells only ever observe PyPI. This downloads
+    the exact verify-only artifact through the reviewed store and an
+    independent digest authority, validates it as a PyPI lane artifact for
+    `aweb`, and requires it to equal the published entry the manifest asserts --
+    all before any evidence is written or any cell runs.
+    """
+
+    def __init__(self, *, store=None, digest_authority=None):
+        self._store = store if store is not None else rd.GithubArtifactStore(
+            repo=SERVER_LANE_REPO, workflow_path=SERVER_LANE_WORKFLOW)
+        self._authority = (
+            digest_authority if digest_authority is not None
+            else rd.GithubArtifactDigestAuthority(
+                repo=SERVER_LANE_REPO, workflow_path=SERVER_LANE_WORKFLOW)
+        )
+
+    def resolve(self, published: dict) -> dict:
+        authority = published["authority"]
+        artifact = authority["artifact"]
+        # The independent authority first: its digest must equal what the
+        # manifest claims BEFORE the bytes are fetched, so a substituted
+        # artifact is refused without being downloaded.
+        expected = self._authority.expected_digest(artifact)
+        if expected != authority["zip_digest"]:
+            raise rd.ReceiptError(
+                f"server authority {artifact}: independent digest {expected!r} "
+                f"does not equal the recorded {authority['zip_digest']!r}"
+            )
+        body = self._store.get(artifact)
+        observed = "sha256:" + hashlib.sha256(body).hexdigest()
+        if observed != authority["zip_digest"]:
+            raise rd.ReceiptError(
+                f"server authority {artifact}: retrieved bytes hash {observed} "
+                f"and not the recorded {authority['zip_digest']}"
+            )
+        # The SHARED validator, with the mode made explicit. A near-copy here
+        # drifted within one round: it never recomputed canonical_set_digest,
+        # so a forged one completed a measurement.
+        manifest = rd.validate_pypi_lane_artifact(
+            body,
+            expected_source_sha=authority["source_sha"],
+            expected_version=published["version"],
+            package="server",
+            pypi_name="aweb",
+            required_mode="verify-only",
+        )
+        files = manifest.get("files")
+        if files != published["digest_set"]:
+            raise rd.ReceiptError(
+                "server authority lane artifact digest set does not equal the "
+                "published digest set the measurement input asserts"
+            )
+        return {
+            "artifact": artifact,
+            "repo": authority["repo"],
+            "workflow": authority["workflow"],
+            "source_sha": authority["source_sha"],
+            "zip_digest": authority["zip_digest"],
+            "version": published["version"],
+            "digest_set": dict(published["digest_set"]),
+        }
+
+
+def _contract_for(component: str) -> rd.RuntimeContractEdge:
+    return rd.RuntimeContractEdge(
+        a=component,
+        b="server",
+        journey=CHANNEL_JOURNEY if component == "channel" else PI_JOURNEY,
+        artifacts={"a": CLIENT_ARTIFACTS[component], "b": SERVER_ARTIFACT},
+        direction="both",
+        supported={"policy": "additive-only"},
+    )
+
+
+def measure_support(
+    *,
+    component: str,
+    measurement_input: dict,
+    measurement_input_bytes: bytes,
+    supported_versions: dict[str, list[str]],
+    harness,
+    published_authority=None,
+) -> dict:
+    """Measure one client-server edge over the frozen matrix lifecycle.
+
+    Orchestration is freeze -> every exact frozen cell -> finish. The mark-read
+    mutation control is the single authoritative control: it lives at finish,
+    outside the support cells, and this entrypoint neither duplicates nor moves
+    it.
+
+    Channel/Pi has no reviewed negative-only version and no first-supported
+    floor, so no version floor is claimed or refused here. A floor would need
+    real negative-version evidence, review and an anchor; G5 floors are never
+    invented locally.
+
+    The result is explicitly unanchored. Declaring measured support in
+    release/components.toml is a separate reviewed step over anchored bytes.
+    """
+    document = validate_measurement_input(measurement_input, component=component)
+    if measurement_input_bytes != json.dumps(
+        document, sort_keys=True, separators=(",", ":")
+    ).encode():
+        raise rd.ReceiptError(
+            "measurement input bytes are not the canonical encoding of the "
+            "validated document"
+        )
+    measurement_input_digest = hashlib.sha256(measurement_input_bytes).hexdigest()
+
+    entries = document["entries"]
+    # Resolve the published server through the reviewed verify-only lane BEFORE
+    # freezing, running any cell, or writing any evidence.
+    if published_authority is None:
+        raise rd.ReceiptError(
+            "channel/Pi measurement requires the published-server authority "
+            "resolver; a declared authority that is never consumed proves "
+            "nothing"
+        )
+    published_report = published_authority.resolve(entries["server"])
+    candidate = entries[component]
+    published = entries["server"]
+    # moving is DERIVED from candidate-kind entries, never passed in. A
+    # published entry cannot become a candidate, so no server lane_ref can be
+    # invented and no server can appear as staged in the frozen matrix.
+    moving = {
+        name for name, entry in entries.items()
+        if entry["kind"] == "candidate"
+    }
+    staged = {component: rd.ReceiptEntry(
+        version=candidate["version"],
+        digest=candidate["digest"],
+        digest_set=candidate["digest_set"],
+        lane_ref=candidate["lane_ref"],
+    )}
+    published_versions = {"server": published["version"]}
+    if (supported_versions.get("server") or [None])[-1] != published["version"]:
+        raise rd.ReceiptError(
+            "measured server support set must end at the published server "
+            f"{published['version']!r} bound by the measurement input"
+        )
+    if set(supported_versions) != {"server"}:
+        raise rd.ReceiptError(
+            "a candidate-client measurement takes a supported set for the "
+            f"server only, got {sorted(supported_versions)}"
+        )
+
+    freeze = getattr(harness, "freeze_matrix", None)
+    finish = getattr(harness, "finish_matrix", None)
+    if freeze is None or finish is None:
+        raise rd.ReceiptError(
+            "channel/Pi measurement requires the frozen matrix lifecycle"
+        )
+
+    # The evidence root must belong to the component being measured, checked
+    # before freeze so no cell effect lands in a foreign root.
+    evidence_component = getattr(harness, "evidence_component", None)
+    evidence_root = getattr(getattr(harness, "_evidence", None), "root", None)
+    if evidence_root is not None and Path(evidence_root).name != component:
+        raise rd.ReceiptError(
+            f"channel/Pi measurement of {component} was given evidence root "
+            f"{evidence_root}, whose identity is {Path(evidence_root).name!r}"
+        )
+    if evidence_component != component:
+        raise rd.ReceiptError(
+            f"channel/Pi measurement of {component} was given a lifecycle whose "
+            f"evidence root belongs to {evidence_component!r}; each component "
+            "measures into its own root"
+        )
+
+    matrix = rd.freeze_skew_matrix(
+        _contract_for(component),
+        moving=moving,
+        staged=staged,
+        support={"supported_versions": supported_versions},
+        published_versions=published_versions,
+        staged_manifest_digest=measurement_input_digest,
+    )
+    freeze(matrix)
+    for item in rd.validate_skew_matrix_document(matrix):
+        harness.run(item)
+    aggregate_path = finish(matrix)
+
+    measurement_bytes = Path(aggregate_path).read_bytes()
+    measurement = json.loads(measurement_bytes)
+    _require_unanchored_measurement(measurement, matrix_id=matrix["matrix_id"])
+    child_id = _require_child_identity(measurement)
+
+    # Self-consistency is not enough: a coherent tamper recomputes the child's
+    # identity too. The authority is the EVIDENCE, so the aggregate is derived
+    # again from the frozen matrix and the written cell/control records, and
+    # what finish returned must equal it exactly.
+    root = Path(evidence_root)
+    matrix_id = matrix["matrix_id"]
+    independent = aggregate_frozen_matrix(
+        root / f"matrix-{matrix_id}.json",
+        root,
+        control_path=root / f"control-{matrix_id}.json",
+    )
+    # Byte-exact, not dict-equal. A pretty-printed rewrite is semantically
+    # identical and keeps the canonical measurement_id, so a dict comparison
+    # accepts it -- and the envelope would then bless the changed bytes with a
+    # fresh measurement_sha256. The bytes are the artifact.
+    canonical_child = json.dumps(
+        independent, sort_keys=True, separators=(",", ":")
+    ).encode()
+    if measurement_bytes != canonical_child:
+        raise rd.ReceiptError(
+            "channel/Pi measurement bytes do not equal the canonical bytes "
+            "derived independently from the frozen matrix and its evidence; "
+            "the returned document is not what the lifecycle produced"
+        )
+
+    # The child document is never edited or re-signed. Erasing measurement_id
+    # and recomputing it over our own additions would mint a fresh VALID
+    # identity for any post-finish mutation -- published versions, candidate
+    # identities, evidence, control -- and the result would look pristine.
+    # Wrapper metadata therefore lives in an envelope binding the child's
+    # unchanged identity and bytes.
+    envelope = {
+        "schema": ENVELOPE_SCHEMA,
+        "policy": "additive-only",
+        "component": component,
+        "measurement_input_id": document["manifest_id"],
+        "measurement_input_sha256": measurement_input_digest,
+        "published_server_authority": published_report,
+        "supported_versions": {
+            name: list(versions)
+            for name, versions in sorted(supported_versions.items())
+        },
+        "measurement_id": child_id,
+        "measurement_sha256": hashlib.sha256(measurement_bytes).hexdigest(),
+        "measurement": measurement,
+    }
+    envelope["envelope_id"] = rd.canonical_json_digest(envelope)
+    return envelope
+
+
+def channel_measure_support(**kwargs) -> dict:
+    return measure_support(component="channel", **kwargs)
+
+
+def pi_measure_support(**kwargs) -> dict:
+    return measure_support(component="pi", **kwargs)
+
+
+ENVELOPE_KEYS = {
+    "schema", "policy", "component", "measurement_input_id",
+    "measurement_input_sha256", "published_server_authority",
+    "supported_versions", "measurement_id", "measurement_sha256",
+    "measurement", "envelope_id",
+}
+
+
+def _atomic_write_text(path: Path, payload: str) -> None:
+    """Exclusive create of both the temporary and the final path.
+
+    write_text() truncates an existing output and can leave a partial final
+    file if the write fails midway. Here the temp is created O_EXCL in the
+    DESTINATION directory (so the commit is a same-filesystem link), fully
+    written and fsynced, then committed with os.link, which refuses when the
+    target exists -- so the commit step is itself the race check. The temp is
+    removed unconditionally, and the directory entry is synced so the commit
+    survives a crash.
+    """
+    data = payload.encode()
+    if path.exists() or path.is_symlink():
+        raise rd.ReceiptError(f"refusing to overwrite existing output {path}")
+    tmp = path.with_name(path.name + ".part")
+    if tmp.exists() or tmp.is_symlink():
+        raise rd.ReceiptError(
+            f"refusing to write through pre-existing temporary path {tmp}"
+        )
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    linked_identity = None
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        # Captured BEFORE the temp entry goes away: it is how rollback proves the
+        # final link is the one THIS call created rather than a racer's file.
+        temp_stat = os.stat(tmp)
+        try:
+            os.link(tmp, path)
+        except FileExistsError as exc:
+            raise rd.ReceiptError(
+                f"refusing to overwrite existing output {path}: it was created "
+                "concurrently while this measurement was writing"
+            ) from exc
+        linked_identity = (temp_stat.st_dev, temp_stat.st_ino)
+
+        # Post-link protocol, ENTIRELY inside the rollback boundary. Once the
+        # final link exists, every subsequent operation can fail, and any of
+        # them reporting an error while the final survives would leave output
+        # behind on a failed call. Removing the temp before the directory fsync
+        # means one sync makes both the final link and the cleanup durable;
+        # syncing first would leave a .part entry that can survive a crash.
+        try:
+            os.unlink(tmp)
+            _fsync_directory(path.parent)
+        except Exception as exc:
+            _rollback_link(path, tmp, linked_identity)
+            raise rd.ReceiptError(
+                f"refusing {path}: the commit could not be completed durably, "
+                "so the write was rolled back"
+            ) from exc
+    finally:
+        # Conditional on never having committed. Once a final link exists the
+        # post-link path owns cleanup and fails closed on its own, so a
+        # redundant unlink here can only mask that outcome -- and an exception
+        # of ANY class escaping here would report a failure while the committed
+        # final survives. Pre-link, the temp is ours alone and a cleanup failure
+        # is a real problem, so those errors stay strict.
+        if linked_identity is None:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Make the directory's own entries durable, not just file contents."""
+    handle = os.open(str(directory), os.O_RDONLY)
+    try:
+        os.fsync(handle)
+    finally:
+        os.close(handle)
+
+
+def _rollback_link(path: Path, tmp: Path, linked_identity) -> None:
+    """Undo only the final link this invocation created.
+
+    A racer may have replaced the path between the commit and the failure. Its
+    file is not ours to delete, so the inode identity captured before the temp
+    was unlinked decides. Rollback that cannot be made durable fails closed:
+    silently leaving a possibly-resurrectable final entry is the failure mode
+    this whole protocol exists to prevent.
+    """
+    try:
+        current = os.lstat(path)
+    except FileNotFoundError:
+        current = None
+    if current is not None and (
+        current.st_dev, current.st_ino
+    ) == linked_identity:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            raise rd.ReceiptError(
+                f"rollback could not remove the final output {path}; failing "
+                "closed rather than reporting a refusal that left it behind"
+            ) from exc
+    # The temp removal may be what failed in the first place, so retry it here
+    # and treat a still-present temp as an uncertain outcome rather than a
+    # cosmetic leftover: a reported refusal must leave neither final nor temp.
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        raise rd.ReceiptError(
+            f"rollback could not remove the temporary path {tmp}; failing "
+            "closed rather than reporting a refusal that left state behind"
+        ) from exc
+    try:
+        _fsync_directory(path.parent)
+    except Exception as exc:
+        # Any exception type, not just OSError: an unexpected one escaping here
+        # would replace the refusal and lose the rollback guarantee with it.
+        raise rd.ReceiptError(
+            f"rollback of {path} could not be made durable; failing closed "
+            "rather than leaving an uncertain output"
+        ) from exc
+
+
+def _require_envelope(document, *, component: str,
+                      measurement_input_id: str,
+                      measurement_input_digest: str,
+                      supported_versions: dict | None = None) -> str:
+    """The envelope's own contract, checked before anything reaches disk.
+
+    The measurement status lives on the nested child, not at the top level;
+    reading it from the envelope raised KeyError on the HONEST path, after the
+    output had already been written.
+    """
+    if not isinstance(document, dict) or set(document) != ENVELOPE_KEYS:
+        present = set(document) if isinstance(document, dict) else set()
+        raise rd.ReceiptError(
+            "measurement envelope does not carry exactly "
+            f"{sorted(ENVELOPE_KEYS)}; missing "
+            f"{sorted(ENVELOPE_KEYS - present)}, unexpected "
+            f"{sorted(present - ENVELOPE_KEYS)}"
+        )
+    if document["schema"] != ENVELOPE_SCHEMA:
+        raise rd.ReceiptError(
+            f"measurement envelope schema {document['schema']!r} is not "
+            f"{ENVELOPE_SCHEMA!r}"
+        )
+    if document["component"] != component:
+        raise rd.ReceiptError(
+            f"measurement envelope binds component {document['component']!r}, "
+            f"not the measured {component!r}"
+        )
+    if document["measurement_input_id"] != measurement_input_id:
+        raise rd.ReceiptError(
+            "measurement envelope binds a different measurement input identity"
+        )
+    if document["measurement_input_sha256"] != measurement_input_digest:
+        raise rd.ReceiptError(
+            "measurement envelope binds different measurement input bytes"
+        )
+    child = document["measurement"]
+    if not isinstance(child, dict):
+        raise rd.ReceiptError("measurement envelope carries no child document")
+    if document["measurement_id"] != child.get("measurement_id"):
+        raise rd.ReceiptError(
+            "measurement envelope does not bind the child's own identity"
+        )
+    canonical = json.dumps(child, sort_keys=True, separators=(",", ":")).encode()
+    if document["measurement_sha256"] != hashlib.sha256(canonical).hexdigest():
+        raise rd.ReceiptError(
+            "measurement envelope does not bind the child's exact bytes"
+        )
+    if document["policy"] != "additive-only":
+        raise rd.ReceiptError(
+            f"measurement envelope policy {document['policy']!r} is not "
+            "additive-only"
+        )
+    # The envelope's supported set must equal BOTH the child's and the frozen
+    # input's. Checking only one lets the envelope advertise a support set the
+    # measurement never exercised.
+    envelope_support = document["supported_versions"]
+    child_support = child.get("supported_versions")
+    if child_support is not None and envelope_support != child_support:
+        raise rd.ReceiptError(
+            "measurement envelope supported_versions does not equal the "
+            "child's"
+        )
+    if supported_versions is not None:
+        expected = {
+            name: list(versions)
+            for name, versions in sorted(supported_versions.items())
+        }
+        if envelope_support != expected:
+            raise rd.ReceiptError(
+                "measurement envelope supported_versions does not equal the "
+                "frozen measurement input"
+            )
+    # envelope_id is canonical over every other field, so it is recomputed
+    # rather than trusted.
+    recorded = document["envelope_id"]
+    body = {k: v for k, v in document.items() if k != "envelope_id"}
+    if recorded != rd.canonical_json_digest(body):
+        raise rd.ReceiptError(
+            "measurement envelope_id is not the canonical identity of its own "
+            "contents"
+        )
+    status = child.get("status")
+    if status != "incomplete-unanchored":
+        raise rd.ReceiptError(
+            f"measurement child status {status!r} is not incomplete-unanchored"
+        )
+    return status
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="verb", required=True)
+    for component in sorted(CLIENT_ARTIFACTS):
+        measure = sub.add_parser(
+            f"measure-{component}",
+            help=f"measure the {component}<->server runtime contract",
+        )
+        measure.add_argument(
+            "--measurement-input", required=True,
+            help="canonical aweb.measurement-input-manifest.v1 for this edge; "
+                 "NOT a release staged manifest")
+        measure.add_argument(
+            "--supported-server", action="append", required=True,
+            help="the reviewed measured support set for the server; its last "
+                 "entry must equal the published server the input binds")
+        measure.add_argument("--evidence-root", default=None)
+        measure.add_argument("--output", required=True)
+    args = parser.parse_args(argv)
+    component = args.verb.split("-", 1)[1]
+
+    manifest_path = Path(args.measurement_input)
+    body = manifest_path.read_bytes()
+    try:
+        # Deliberately NOT rd.validate_staged_manifest: a release staged
+        # manifest asserts a frozen plan, staging and publish authority, none of
+        # which a measurement has. The full edge, entry kinds and the published
+        # side's independent authority are checked before any effect.
+        document = validate_measurement_input(
+            json.loads(body), component=component)
+        evidence = evidence_writer_for(
+            component,
+            Path(args.evidence_root) if args.evidence_root else None,
+        )
+        envelope = measure_support(
+            component=component,
+            measurement_input=document,
+            measurement_input_bytes=body,
+            supported_versions={"server": args.supported_server},
+            published_authority=PublishedServerAuthority(),
+            harness=ChannelPiHarness(
+                resolver=ArtifactResolver(),
+                journey_factory=lambda: SubprocessChannelPiJourney(component),
+                evidence=evidence,
+            ),
+        )
+        # Validate BEFORE anything is committed to disk. Reading the status
+        # after writing left a half-finished output behind on the honest path.
+        status = _require_envelope(
+            envelope, component=component,
+            measurement_input_id=document["manifest_id"],
+            measurement_input_digest=hashlib.sha256(body).hexdigest(),
+            supported_versions={"server": args.supported_server},
+        )
+        payload = json.dumps(envelope, indent=2, sort_keys=True) + "\n"
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_text(output, payload)
+        digest = hashlib.sha256(output.read_bytes()).hexdigest()
+        print(f"measurement {output} sha256:{digest}")
+        print(f"status: {status}")
+        return 0
+    except (KeyError, ValueError, rd.ReceiptError) as exc:
+        print(f"BLOCKED: {exc}")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
