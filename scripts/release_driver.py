@@ -4362,11 +4362,16 @@ class MatrixSkewRunner:
 def _validate_measurement_document(body: bytes, edge, *, require_schema=False):
     try:
         doc = json.loads(body)
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise ReceiptError(
             f"runtime-contract {edge.a}<->{edge.b}: measurement body is "
-            f"not valid JSON ({exc})"
+            f"not valid UTF-8 JSON ({exc})"
         ) from exc
+    if not isinstance(doc, dict):
+        raise ReceiptError(
+            f"runtime-contract {edge.a}<->{edge.b}: measurement body must be "
+            "a JSON object"
+        )
     if (
         require_schema
         and doc.get("schema") != "aweb.runtime-support-measurement.v1"

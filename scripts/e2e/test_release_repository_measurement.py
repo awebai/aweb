@@ -44,7 +44,9 @@ class RepositoryMeasurementTests(unittest.TestCase):
         relative = Path("release/measurements/evidence.json")
         path = root / relative
         path.parent.mkdir(parents=True)
-        body = rd.canonical_json_bytes(document or self.document)
+        body = rd.canonical_json_bytes(
+            self.document if document is None else document
+        )
         path.write_bytes(body)
         subprocess.run(["git", "-C", str(root), "add", str(relative)], check=True)
         subprocess.run(
@@ -99,23 +101,31 @@ class RepositoryMeasurementTests(unittest.TestCase):
             ):
                 resolver.resolve(record, self.edge)
 
-    def test_refuses_wrong_repository_measurement_schema(self):
-        document = {**self.document, "schema": "aweb.runtime-support-measurement.v0"}
-        temporary, root, relative, body, source_sha = self.committed_repository(
-            document
-        )
-        self.addCleanup(temporary.cleanup)
-        resolver = rd.RepositoryMeasurementAuthority(
-            repo_root=root, source_sha=source_sha
-        )
-        record = {
-            "authority": "repository",
-            "artifact_id": "support:server-federation:1.26.35",
-            "path": relative,
-            "digest": hashlib.sha256(body).hexdigest(),
-        }
-        with self.assertRaisesRegex(rd.ReceiptError, "schema"):
-            resolver.resolve(record, self.edge)
+    def test_refuses_wrong_schema_and_non_object_measurement(self):
+        cases = [
+            (
+                {**self.document, "schema": "aweb.runtime-support-measurement.v0"},
+                "schema",
+            ),
+            ([], "JSON object"),
+        ]
+        for document, message in cases:
+            with self.subTest(message=message):
+                temporary, root, relative, body, source_sha = (
+                    self.committed_repository(document)
+                )
+                self.addCleanup(temporary.cleanup)
+                resolver = rd.RepositoryMeasurementAuthority(
+                    repo_root=root, source_sha=source_sha
+                )
+                record = {
+                    "authority": "repository",
+                    "artifact_id": "support:server-federation:1.26.35",
+                    "path": relative,
+                    "digest": hashlib.sha256(body).hexdigest(),
+                }
+                with self.assertRaisesRegex(rd.ReceiptError, message):
+                    resolver.resolve(record, self.edge)
 
     def test_current_graph_make_release_plan_prints_json(self):
         with tempfile.TemporaryDirectory() as tmp:
