@@ -39,6 +39,7 @@ import argparse
 import hashlib
 import os
 import json
+import pwd
 import re
 import shutil
 import subprocess
@@ -89,6 +90,19 @@ PRODUCTION_REMOTES = (
     "ssh://git@ssh.github.com:443/awebai/aweb.git",
 )
 PRODUCTION_BRANCH = "release-receipts"
+
+# Release authority must not depend on whichever executable an operator's
+# ambient PATH happens to name. These are reviewed system-policy binaries on
+# the supported production POSIX hosts; Git's compiled exec-path supplies its
+# own remote helpers, while the fixed PATH permits only system helpers.
+SYSTEM_GIT = "/usr/bin/git"
+SYSTEM_SSH = "/usr/bin/ssh"
+SYSTEM_PATH = "/usr/bin:/bin"
+SYSTEM_SSH_COMMAND = (
+    f"{SYSTEM_SSH} -F /dev/null -oBatchMode=yes "
+    "-oCanonicalizeHostname=no -oClearAllForwardings=yes "
+    "-oPermitLocalCommand=no -oProxyCommand=none -oProxyJump=none"
+)
 
 
 def _sha256(data: bytes) -> str:
@@ -668,7 +682,7 @@ class _GitReader:
 
     def _run(self, *args, cwd=None, check=False):
         result = subprocess.run(
-            ["git", *args], cwd=str(cwd or self._local),
+            [SYSTEM_GIT, *args], cwd=str(cwd or self._local),
             capture_output=True, env=GitBranchArchive._sanitized_env())
         if check and result.returncode != 0:
             raise ReceiptError(
@@ -740,6 +754,9 @@ class GitBranchArchive:
         # url.<attacker>.insteadOf rewrite would redirect the canonical remote.
         "GIT_CONFIG_COUNT": "0",
         "GIT_TERMINAL_PROMPT": "0",
+        "GIT_ASKPASS": "/bin/false",
+        "SSH_ASKPASS": "/bin/false",
+        "GIT_SSH_COMMAND": SYSTEM_SSH_COMMAND,
         # ext:: runs an arbitrary command as a transport.
         "GIT_ALLOW_PROTOCOL": "file:git:http:https:ssh",
     }
@@ -748,8 +765,6 @@ class GitBranchArchive:
     # that stays correct as git grows new configuration entry points: a
     # deny-list silently readmits whatever it has not heard of yet.
     _PRESERVED_ENV = (
-        "PATH",
-        "HOME",           # ~/.ssh/known_hosts; global git config is /dev/null
         "SSH_AUTH_SOCK",  # agent auth for the canonical ssh remote
         "LANG",
         "LC_ALL",
@@ -774,19 +789,24 @@ class GitBranchArchive:
 
     @classmethod
     def _sanitized_env(cls):
-        import os
-
         env = {
             name: os.environ[name]
             for name in cls._PRESERVED_ENV
             if name in os.environ
         }
+        # HOME comes from the OS account database, never ambient input. SSH's
+        # fixed -F /dev/null policy ignores user/system config while retaining
+        # that account's known_hosts and agent credential path.
+        env.update({
+            "HOME": pwd.getpwuid(os.getuid()).pw_dir,
+            "PATH": SYSTEM_PATH,
+        })
         env.update(cls._ENV)
         return env
 
     def _git_raw(self, *args, cwd=None, input_bytes=None):
         return subprocess.run(
-            ["git", *args], cwd=str(cwd or self._local),
+            [SYSTEM_GIT, *args], cwd=str(cwd or self._local),
             input=input_bytes, capture_output=True,
             env=self._sanitized_env(),
         )
