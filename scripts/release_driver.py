@@ -1162,9 +1162,11 @@ RECOVERY_ATTEMPT_EVIDENCE_SCHEMA = (
 ANCHOR_DISPATCH_LIMIT = 64000
 
 
-def _run_gh_api(path: str, *, timeout: float | None = None) -> bytes:
+def _run_gh_api(path: str, *, timeout: float) -> bytes:
     import subprocess
 
+    if timeout <= 0:
+        raise ValueError("gh api timeout must be positive")
     try:
         result = subprocess.run(
             ["gh", "api", path], capture_output=True, timeout=timeout
@@ -1787,6 +1789,35 @@ def _fetch_npm_tarball(package: str, version: str) -> bytes | None:
         return response.read()
 
 
+@dataclass
+class _RunCorrelationBudget:
+    clock: object
+    deadline: float
+    requests_remaining: int
+    request_limit: int
+
+    def refuse(self, reason: str) -> None:
+        raise ReceiptError(
+            "incomplete workflow-run correlation; state is uncertain: " + reason
+        )
+
+    def take_request(self, context: str) -> float:
+        remaining = self.deadline - self.clock()
+        if remaining <= 0:
+            self.refuse(f"deadline expired before {context}")
+        if self.requests_remaining <= 0:
+            self.refuse(
+                f"total request bound of {self.request_limit} was exhausted "
+                f"before {context}"
+            )
+        self.requests_remaining -= 1
+        return remaining
+
+    def check_deadline(self, context: str) -> None:
+        if self.deadline - self.clock() <= 0:
+            self.refuse(f"deadline expired during {context}")
+
+
 class AwLaneRuns:
     """The workflow-run surface used for continuation correlation.
 
@@ -1797,31 +1828,58 @@ class AwLaneRuns:
 
     MAX_RUN_HISTORY_PAGES_PER_PASS = 20
     MAX_RUN_HISTORY_PASSES = 4
-    MAX_RUN_HISTORY_REQUESTS = 80
-    MAX_RUN_HISTORY_SECONDS = 30.0
+    MAX_CORRELATION_REQUESTS = 256
+    MAX_CORRELATION_SECONDS = 30.0
     RUN_HISTORY_PAGE_SIZE = 100
 
     def __init__(self, api=None, *, repo: str = "awebai/aw",
                  workflow_file: str = "aw-release.yml", clock=None):
-        self._api = api or _run_gh_api
+        self._api = api
         self._uses_default_api = api is None
         self._clock = time.monotonic if clock is None else clock
         self.repo = repo
         self.workflow_file = workflow_file
 
+    def new_correlation_budget(self) -> _RunCorrelationBudget:
+        started = self._clock()
+        return _RunCorrelationBudget(
+            clock=self._clock,
+            deadline=started + self.MAX_CORRELATION_SECONDS,
+            requests_remaining=self.MAX_CORRELATION_REQUESTS,
+            request_limit=self.MAX_CORRELATION_REQUESTS,
+        )
+
+    def _request(
+        self, path: str, *, budget: _RunCorrelationBudget, context: str,
+    ) -> bytes:
+        timeout = budget.take_request(context)
+        try:
+            data = (
+                _run_gh_api(path, timeout=timeout)
+                if self._uses_default_api
+                else self._api(path)
+            )
+        except _GitHubApiTimeout as exc:
+            budget.refuse(f"{context} exceeded the correlation deadline")
+            raise AssertionError("unreachable") from exc
+        except ReceiptError as exc:
+            budget.refuse(f"{context} failed: {exc}")
+            raise AssertionError("unreachable") from exc
+        budget.check_deadline(context)
+        return data
+
     def _run_ids_page(
-        self, *, per_page: int, page: int, timeout: float | None = None,
+        self, *, per_page: int, page: int,
+        budget: _RunCorrelationBudget | None = None,
     ) -> list[int]:
+        budget = budget or self.new_correlation_budget()
         path = (
             f"repos/{self.repo}/actions/workflows/{self.workflow_file}/runs"
             f"?per_page={per_page}&page={page}"
         )
-        data = (
-            _run_gh_api(path, timeout=timeout)
-            if self._uses_default_api and timeout is not None
-            else self._api(path)
-        )
-        body = json.loads(data)
+        body = json.loads(self._request(
+            path, budget=budget, context=f"workflow run history page {page}"
+        ))
         if not isinstance(body, dict):
             raise ReceiptError(
                 f"{self.workflow_file}: workflow run page {page} is not "
@@ -1848,17 +1906,21 @@ class AwLaneRuns:
             run_ids.append(run_id)
         return run_ids
 
-    def list_run_ids(self) -> list[int]:
+    def list_run_ids(
+        self, *, budget: _RunCorrelationBudget | None = None,
+    ) -> list[int]:
         """Newest page for ordinary non-recovery lane correlation."""
         return self._run_ids_page(
-            per_page=self.RUN_HISTORY_PAGE_SIZE, page=1
+            per_page=self.RUN_HISTORY_PAGE_SIZE, page=1, budget=budget
         )
 
     def high_water_run_id(self) -> int | None:
         run_ids = self._run_ids_page(per_page=1, page=1)
         return run_ids[0] if run_ids else None
 
-    def list_run_ids_after(self, boundary_run_id) -> list[int]:
+    def list_run_ids_after(
+        self, boundary_run_id, *, budget: _RunCorrelationBudget | None = None,
+    ) -> list[int]:
         """Return a stable, completely enumerated window newer than boundary.
 
         GitHub's workflow-run listing is mutable and offset-paginated. Each
@@ -1886,8 +1948,7 @@ class AwLaneRuns:
                 f"boundary {boundary_run_id!r} is not a canonical numeric ID"
             )
 
-        started = self._clock()
-        requests = 0
+        budget = budget or self.new_correlation_budget()
         previous: list[int] | None = None
 
         def refuse(reason: str) -> None:
@@ -1896,45 +1957,17 @@ class AwLaneRuns:
                 + reason
             )
 
-        def check_budget() -> None:
-            if requests >= self.MAX_RUN_HISTORY_REQUESTS:
-                refuse(
-                    "the explicit total request bound of "
-                    f"{self.MAX_RUN_HISTORY_REQUESTS} was reached"
-                )
-            if self._clock() - started >= self.MAX_RUN_HISTORY_SECONDS:
-                refuse(
-                    "the explicit time bound of "
-                    f"{self.MAX_RUN_HISTORY_SECONDS:g} seconds was reached"
-                )
-
         for _pass in range(1, self.MAX_RUN_HISTORY_PASSES + 1):
             seen: set[int] = set()
             collected: list[int] = []
             last_unique: int | None = None
             complete = False
             for page in range(1, self.MAX_RUN_HISTORY_PAGES_PER_PASS + 1):
-                check_budget()
-                elapsed = self._clock() - started
-                try:
-                    run_ids = self._run_ids_page(
-                        per_page=self.RUN_HISTORY_PAGE_SIZE,
-                        page=page,
-                        timeout=max(
-                            self.MAX_RUN_HISTORY_SECONDS - elapsed, 0.001
-                        ),
-                    )
-                except _GitHubApiTimeout:
-                    refuse(
-                        "the explicit time bound of "
-                        f"{self.MAX_RUN_HISTORY_SECONDS:g} seconds was reached"
-                    )
-                requests += 1
-                if self._clock() - started >= self.MAX_RUN_HISTORY_SECONDS:
-                    refuse(
-                        "the explicit time bound of "
-                        f"{self.MAX_RUN_HISTORY_SECONDS:g} seconds was reached"
-                    )
+                run_ids = self._run_ids_page(
+                    per_page=self.RUN_HISTORY_PAGE_SIZE,
+                    page=page,
+                    budget=budget,
+                )
                 if not run_ids:
                     if boundary is None:
                         complete = True
@@ -1974,8 +2007,8 @@ class AwLaneRuns:
         refuse(
             "two consecutive complete passes did not agree within the "
             f"explicit {self.MAX_RUN_HISTORY_PASSES}-pass/"
-            f"{self.MAX_RUN_HISTORY_REQUESTS}-request/"
-            f"{self.MAX_RUN_HISTORY_SECONDS:g}-second bounds"
+            f"{self.MAX_CORRELATION_REQUESTS}-request/"
+            f"{self.MAX_CORRELATION_SECONDS:g}-second bounds"
         )
         raise AssertionError("unreachable")
 
@@ -1993,19 +2026,37 @@ class AwLaneRuns:
                 + result.stderr.decode(errors="replace").strip()
             )
 
-    def run_conclusion(self, run_id) -> str | None:
-        body = json.loads(self._api(
-            f"repos/{self.repo}/actions/runs/{run_id}"
+    def run_conclusion(
+        self, run_id, *, budget: _RunCorrelationBudget | None = None,
+    ) -> str | None:
+        budget = budget or self.new_correlation_budget()
+        body = json.loads(self._request(
+            f"repos/{self.repo}/actions/runs/{run_id}",
+            budget=budget,
+            context=f"continuation run {run_id} conclusion",
         ))
+        if not isinstance(body, dict):
+            raise ReceiptError(
+                f"continuation run {run_id} response is not an object"
+            )
         return body.get("conclusion")
 
-    def run_attempt_artifact_id(self, run_id) -> str | None:
+    def run_attempt_artifact_id(
+        self, run_id, *, budget: _RunCorrelationBudget | None = None,
+    ) -> str | None:
         """Read immutable attempt identity from an artifact owned by this run."""
         import zipfile
 
-        body = json.loads(self._api(
-            f"repos/{self.repo}/actions/runs/{run_id}/artifacts?per_page=100"
+        budget = budget or self.new_correlation_budget()
+        body = json.loads(self._request(
+            f"repos/{self.repo}/actions/runs/{run_id}/artifacts?per_page=100",
+            budget=budget,
+            context=f"continuation run {run_id} attempt-evidence listing",
         ))
+        if not isinstance(body, dict):
+            raise ReceiptError(
+                f"continuation run {run_id} artifact response is not an object"
+            )
         artifacts = [
             artifact for artifact in body.get("artifacts", [])
             if artifact.get("name") == RECOVERY_ATTEMPT_EVIDENCE_NAME
@@ -2032,8 +2083,10 @@ class AwLaneRuns:
                 f"continuation run {run_id} attempt evidence has invalid "
                 f"API digest {digest!r}"
             )
-        data = self._api(
-            f"repos/{self.repo}/actions/artifacts/{artifact.get('id')}/zip"
+        data = self._request(
+            f"repos/{self.repo}/actions/artifacts/{artifact.get('id')}/zip",
+            budget=budget,
+            context=f"continuation run {run_id} attempt-evidence ZIP",
         )
         actual = hashlib.sha256(data).hexdigest()
         if f"sha256:{actual}" != digest:
@@ -2474,7 +2527,19 @@ class _WorkflowLaneBase:
         high_water = self._runs.high_water_run_id()
         return [] if high_water is None else [str(high_water)]
 
-    def _new_continuation_runs(self, before_run_ids) -> list[tuple[str, object]]:
+    def _new_correlation_budget(self):
+        factory = getattr(self._runs, "new_correlation_budget", None)
+        return None if factory is None else factory()
+
+    def _run_call(self, name, *args, budget=None):
+        method = getattr(self._runs, name)
+        if budget is None:
+            return method(*args)
+        return method(*args, budget=budget)
+
+    def _new_continuation_runs(
+        self, before_run_ids, *, budget=None,
+    ) -> list[tuple[str, object]]:
         if len(before_run_ids) > 1:
             raise ReceiptError(
                 f"{self.component}: continuation snapshot must contain at "
@@ -2483,31 +2548,49 @@ class _WorkflowLaneBase:
         boundary = before_run_ids[0] if before_run_ids else None
         return [
             (str(run_id), run_id)
-            for run_id in self._runs.list_run_ids_after(boundary)
+            for run_id in self._run_call(
+                "list_run_ids_after", boundary, budget=budget
+            )
         ]
 
     def _continuation_runs_for_attempt(
         self, before_run_ids, expected_attempt_artifact_id,
-        *, evidence_cache=None,
+        *, evidence_cache=None, terminal_missing_cache=None, budget=None,
     ) -> list[tuple[str, object, str]]:
         """Filter the complete post-snapshot window by run-owned evidence.
 
-        Missing evidence is not cached because a running workflow may not have
-        uploaded it yet. Once observed, the digest-verified artifact identity
-        is immutable and can be reused while the complete run window is
-        re-enumerated.
+        Digest-verified identities are immutable. Missing evidence is cached
+        only after the run is terminal; a running workflow may still upload
+        it. Every history, evidence and terminal-state request consumes the
+        one caller-owned correlation budget.
         """
         cache = evidence_cache if evidence_cache is not None else {}
+        terminal_missing = (
+            terminal_missing_cache
+            if terminal_missing_cache is not None
+            else set()
+        )
         matching = []
-        for run_id, native_run_id in self._new_continuation_runs(before_run_ids):
+        for run_id, native_run_id in self._new_continuation_runs(
+            before_run_ids, budget=budget
+        ):
+            if native_run_id in terminal_missing:
+                continue
             if native_run_id in cache:
                 observed_attempt_artifact_id = cache[native_run_id]
             else:
-                observed_attempt_artifact_id = (
-                    self._runs.run_attempt_artifact_id(native_run_id)
+                observed_attempt_artifact_id = self._run_call(
+                    "run_attempt_artifact_id", native_run_id, budget=budget
                 )
                 if observed_attempt_artifact_id is not None:
                     cache[native_run_id] = observed_attempt_artifact_id
+                else:
+                    conclusion = self._run_call(
+                        "run_conclusion", native_run_id, budget=budget
+                    )
+                    if conclusion is not None:
+                        terminal_missing.add(native_run_id)
+                    continue
             if observed_attempt_artifact_id == expected_attempt_artifact_id:
                 matching.append((
                     run_id, native_run_id, observed_attempt_artifact_id
@@ -2517,14 +2600,18 @@ class _WorkflowLaneBase:
     def _wait_for_continuation(
         self, before_run_ids, *, expected_attempt_artifact_id=None
     ) -> tuple[str, str | None]:
+        budget = self._new_correlation_budget()
         if expected_attempt_artifact_id is not None:
             evidence_cache = {}
+            terminal_missing_cache = set()
             matching_runs: list[tuple[str, object, str]] = []
             for _ in range(self.POLL_ATTEMPTS):
                 matching_runs = self._continuation_runs_for_attempt(
                     before_run_ids,
                     expected_attempt_artifact_id,
                     evidence_cache=evidence_cache,
+                    terminal_missing_cache=terminal_missing_cache,
+                    budget=budget,
                 )
                 if len(matching_runs) > 1:
                     raise ReceiptError(
@@ -2535,7 +2622,9 @@ class _WorkflowLaneBase:
                 if matching_runs:
                     (run_id, native_run_id,
                      observed_attempt_artifact_id) = matching_runs[0]
-                    conclusion = self._runs.run_conclusion(native_run_id)
+                    conclusion = self._run_call(
+                        "run_conclusion", native_run_id, budget=budget
+                    )
                     if conclusion is not None:
                         if conclusion != "success":
                             raise ReceiptError(
@@ -2553,7 +2642,9 @@ class _WorkflowLaneBase:
 
         new_runs: list[tuple[str, object]] = []
         for _ in range(self.POLL_ATTEMPTS):
-            new_runs = self._new_continuation_runs(before_run_ids)
+            new_runs = self._new_continuation_runs(
+                before_run_ids, budget=budget
+            )
             if new_runs:
                 break
             self._waiter()
@@ -2565,7 +2656,9 @@ class _WorkflowLaneBase:
         run_id, native_run_id = new_runs[0]
         conclusion = None
         for _ in range(self.POLL_ATTEMPTS):
-            conclusion = self._runs.run_conclusion(native_run_id)
+            conclusion = self._run_call(
+                "run_conclusion", native_run_id, budget=budget
+            )
             if conclusion is not None:
                 break
             self._waiter()
@@ -2634,8 +2727,9 @@ class _WorkflowLaneBase:
         self, node, staged: "ReceiptEntry", *, before_run_ids,
         attempt_artifact_id,
     ) -> "RecoveryContinuation | None":
+        budget = self._new_correlation_budget()
         matching_runs = self._continuation_runs_for_attempt(
-            before_run_ids, attempt_artifact_id
+            before_run_ids, attempt_artifact_id, budget=budget
         )
         if not matching_runs:
             return None
@@ -2647,7 +2741,9 @@ class _WorkflowLaneBase:
             )
         (run_id, native_run_id,
          observed_attempt_artifact_id) = matching_runs[0]
-        conclusion = self._runs.run_conclusion(native_run_id)
+        conclusion = self._run_call(
+            "run_conclusion", native_run_id, budget=budget
+        )
         if conclusion != "success":
             raise ReceiptError(
                 f"{node.component}: attempted continuation run {run_id} "
