@@ -1014,11 +1014,14 @@ class RealAnchorSemanticsTests(unittest.TestCase):
 
 class TransitionSetTests(unittest.TestCase):
     @staticmethod
-    def document(sequence, component="channel", plan="f" * 64):
+    def document(sequence, component="channel", plan="f" * 64, kind=None):
+        # (component, kind) is the unique identity; a plan legitimately has
+        # several transitions for one component across kinds.
+        kind = kind or f"kind-{sequence}"
         return {
             "frozen_plan_id": plan,
             "staged_manifest_id": f"staged-manifest:{plan}:{'e' * 64}",
-            "sequence": sequence, "component": component, "kind": "published",
+            "sequence": sequence, "component": component, "kind": kind,
             "entry": {
                 "version": "1.7.2", "digest": "d" * 64, "phase": "published",
                 "pointer_state": None, "delivery_proof": None,
@@ -1029,6 +1032,39 @@ class TransitionSetTests(unittest.TestCase):
     def test_complete_ordered_set_validates(self):
         archive.validate_transition_set(
             [self.document(1), self.document(2), self.document(3)])
+
+    def test_reordered_sequence_refuses(self):
+        """Reviewer counterexample: [2, 1] contains 1..n but is not archived in
+        order. Sorting before comparing would accept it."""
+        with self.assertRaisesRegex(rd.ReceiptError, "order archived"):
+            archive.validate_transition_set(
+                [self.document(2), self.document(1)])
+
+    def test_component_inventory_must_match_the_plan(self):
+        docs = [self.document(1, component="channel"),
+                self.document(2, component="pi")]
+        archive.validate_transition_set(
+            docs, expected_components={"channel", "pi"})
+        with self.assertRaisesRegex(rd.ReceiptError, "component inventory"):
+            archive.validate_transition_set(
+                docs, expected_components={"channel", "pi", "server"})
+
+    def test_entry_mismatch_against_staged_or_receipt_refuses(self):
+        docs = [self.document(1, component="channel")]
+        good = {"channel": dict(docs[0]["entry"])}
+        archive.validate_transition_set(
+            docs, staged_entries=good, receipt_entries=good)
+        drifted = {"channel": dict(docs[0]["entry"], digest="0" * 64)}
+        with self.assertRaisesRegex(rd.ReceiptError, "field for field"):
+            archive.validate_transition_set(docs, staged_entries=drifted)
+        with self.assertRaisesRegex(rd.ReceiptError, "field for field"):
+            archive.validate_transition_set(docs, receipt_entries=drifted)
+
+    def test_duplicate_component_kind_refuses(self):
+        with self.assertRaisesRegex(rd.ReceiptError, "repeats a component"):
+            archive.validate_transition_set(
+                [self.document(1, kind="published"),
+                 self.document(2, kind="published")])
 
     def test_duplicate_sequence_refuses(self):
         with self.assertRaisesRegex(rd.ReceiptError, "ordered set"):

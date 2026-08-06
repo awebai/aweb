@@ -523,7 +523,7 @@ class ReviewedMainIndexAuthority:
         self._main_ref = main_ref
         self._git = git or _GitReader(remote)
 
-    def _entries(self) -> list[dict]:
+    def _document(self) -> dict:
         main_tip = self._git.ls_remote(self._main_ref)
         if main_tip is None:
             raise ReceiptError(
@@ -548,7 +548,7 @@ class ReviewedMainIndexAuthority:
             raise ReceiptError("reviewed index blob is malformed") from exc
         if (
             not isinstance(document, dict)
-            or set(document) != {"schema", "entries"}
+            or set(document) - {"release_sets"} != {"schema", "entries"}
             or document.get("schema") != self.INDEX_SCHEMA
             or not isinstance(document.get("entries"), list)
         ):
@@ -567,7 +567,10 @@ class ReviewedMainIndexAuthority:
                     "once; refusing ambiguity"
                 )
             seen.add(logical)
-        return entries
+        return document
+
+    def _entries(self) -> list[dict]:
+        return self._document()["entries"]
 
     def lookup(self, logical_id: str) -> dict | None:
         matches = [
@@ -580,6 +583,34 @@ class ReviewedMainIndexAuthority:
                 "once; refusing ambiguity"
             )
         return matches[0] if matches else None
+
+    def release_set(self, frozen_plan_id: str) -> dict:
+        """The canonical complete inventory for one frozen plan, part of the
+        reviewed-main index contract. Without this on the AUTHORITY, a
+        complete-set restore has nothing fail-closed to compare against."""
+        document = self._document()
+        sets = document.get("release_sets")
+        if not isinstance(sets, list):
+            raise ReceiptError(
+                "reviewed index carries no release_sets inventory; a "
+                "single-artifact index cannot prove set completeness"
+            )
+        matches = [
+            s for s in sets
+            if isinstance(s, dict) and s.get("frozen_plan_id") == frozen_plan_id
+        ]
+        if not matches:
+            raise ReceiptError(
+                f"reviewed index has no release set for frozen plan "
+                f"{frozen_plan_id}"
+            )
+        if len(matches) > 1:
+            raise ReceiptError(
+                f"reviewed index records frozen plan {frozen_plan_id} more "
+                "than once; refusing ambiguity"
+            )
+        return validate_release_set_inventory(
+            matches[0], frozen_plan_id=frozen_plan_id)
 
 
 class _GitReader:
@@ -859,7 +890,14 @@ def semantic_validator(providers=None):
                     "plan logical id frozen identity does not equal the "
                     "recorded body digest"
                 )
-            rd.load_frozen_plan(inner, expected_id=frozen_id)
+            plan = rd.load_frozen_plan(inner, expected_id=frozen_id)
+            claimed_source = parts[1]
+            actual_source = getattr(plan, "source_sha", None)
+            if actual_source != claimed_source:
+                raise ReceiptError(
+                    f"plan logical id claims source {claimed_source!r} but the "
+                    f"frozen plan binds {actual_source!r}"
+                )
         elif klass == "staged-manifest":
             parts = logical_id.split(":")
             if len(parts) != 3:
@@ -978,6 +1016,25 @@ def semantic_validator(providers=None):
         package = lane_manifest.get("package")
         source_sha = lane_manifest.get("source_sha")
         version = lane_manifest.get("candidate_version")
+        # A lane logical id of the form lane:<package>:<version> is a CLAIM;
+        # it is checked against the real lane manifest rather than used to
+        # derive the expectations it is then compared to.
+        logical = manifest.get("logical_id", "")
+        if logical.startswith("lane:"):
+            claim = logical.split(":")
+            if len(claim) != 3:
+                raise ReceiptError(f"lane logical id {logical!r} is malformed")
+            if claim[1] != package or claim[2] != version:
+                raise ReceiptError(
+                    f"lane logical id claims {claim[1]!r}/{claim[2]!r} but the "
+                    f"lane manifest binds {package!r}/{version!r}"
+                )
+        claimed_source = (manifest.get("source") or {}).get("source_sha")
+        if claimed_source is not None and claimed_source != source_sha:
+            raise ReceiptError(
+                f"archive source asserts source_sha {claimed_source!r} but the "
+                f"lane manifest binds {source_sha!r}"
+            )
         if package in ("channel", "pi", "skills"):
             rd.validate_npm_lane_artifact(
                 body, expected_source_sha=source_sha,
@@ -1163,10 +1220,22 @@ def restore_release_set(
     }
 
 
-def validate_transition_set(documents: list) -> None:
+def validate_transition_set(
+    documents: list, *, expected_components=None, staged_entries=None,
+    receipt_entries=None,
+) -> None:
     """An archived transition SET must be the complete ordered sequence for one
-    frozen plan: sequences strictly increasing from 1 with no gaps, no repeats,
-    and one frozen plan throughout."""
+    frozen plan, IN THE ORDER GIVEN.
+
+    Sorting before comparing would accept [2, 1] as complete, which is exactly
+    the reordering this is supposed to refuse: the archived order is the claim,
+    so it is compared as given, not normalised first.
+
+    When the plan's component set and the staged/receipt entries are supplied,
+    the set must also cover every planned component exactly once, and each
+    transition's entry must equal the staged entry and the receipt entry for
+    that component field for field - digest, digest_set, lane_ref,
+    pointer_state and delivery_proof included."""
     import release_driver as rd
 
     if not documents:
@@ -1179,11 +1248,60 @@ def validate_transition_set(documents: list) -> None:
     for document in documents:
         rd.validate_transition_document(document)
     sequences = [d["sequence"] for d in documents]
-    if sorted(sequences) != list(range(1, len(sequences) + 1)):
+    if sequences != list(range(1, len(sequences) + 1)):
         raise ReceiptError(
-            f"transition sequences are not the complete ordered set 1..n: "
-            f"{sequences}"
+            "transition sequences are not the complete ordered set 1..n in "
+            f"the order archived: {sequences}"
         )
+    # A component legitimately has SEVERAL transitions in one plan (one per
+    # kind, e.g. published then verified), so the identity that must be unique
+    # is (component, kind), not the component alone.
+    pairs = [(d["component"], d["kind"]) for d in documents]
+    if len(set(pairs)) != len(pairs):
+        duplicates = sorted({p for p in pairs if pairs.count(p) > 1})
+        raise ReceiptError(
+            f"transition set repeats a component/kind transition: {duplicates}"
+        )
+    components = [d["component"] for d in documents]
+    if expected_components is not None:
+        expected = set(expected_components)
+        actual = set(components)
+        if actual != expected:
+            raise ReceiptError(
+                "transition set does not cover the plan's exact component "
+                f"inventory: missing {sorted(expected - actual)}, unexpected "
+                f"{sorted(actual - expected)}"
+            )
+    for document in documents:
+        component = document["component"]
+        entry = document["entry"]
+        for label, table in (("staged", staged_entries),
+                             ("receipt", receipt_entries)):
+            if table is None:
+                continue
+            if component not in table:
+                raise ReceiptError(
+                    f"{label} entries have no record for component "
+                    f"{component!r} that the transition set claims"
+                )
+            other = _entry_fields(table[component])
+            if _entry_fields(entry) != other:
+                raise ReceiptError(
+                    f"transition entry for {component} does not equal the "
+                    f"{label} entry field for field"
+                )
+
+
+def _entry_fields(entry) -> dict:
+    """The comparable identity of a receipt/transition entry. Compared as a
+    whole so a digest, digest set, lane reference, pointer state or delivery
+    proof cannot differ silently between the staged manifest, the archived
+    transition, and the receipt."""
+    fields = ("version", "digest", "digest_set", "lane_ref", "pointer_state",
+              "delivery_proof")
+    if isinstance(entry, dict):
+        return {f: entry.get(f) for f in fields}
+    return {f: getattr(entry, f, None) for f in fields}
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
@@ -1201,10 +1319,16 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
-    except BaseException:
-        os.unlink(tmp)
-        raise
-    os.replace(tmp, path)
+        # os.replace would silently clobber a final path created concurrently
+        # between the check above and here. os.link refuses when the target
+        # exists, so the commit step itself is the race check.
+        os.link(tmp, path)
+    finally:
+        # Unconditional: a failed commit must not leave .part bytes behind.
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
 
 
 def main(argv=None) -> int:
@@ -1224,6 +1348,17 @@ def main(argv=None) -> int:
     arch.add_argument("--workflow-path", required=True)
     arch.add_argument("--recorded-head")
     arch.add_argument("--entry-out", required=True, type=Path)
+
+    rset = sub.add_parser(
+        "release-restore-set",
+        help="restore a COMPLETE release set (plan, staged manifest, every "
+             "ordered transition, receipt) and enforce the relationships "
+             "between them")
+    rset.add_argument("--remote", required=True)
+    rset.add_argument("--branch", required=True)
+    rset.add_argument("--frozen-plan-id", required=True)
+    rset.add_argument("--reviewed-commit", required=True)
+    rset.add_argument("--out-dir", required=True, type=Path)
 
     rest = sub.add_parser("release-restore")
     rest.add_argument("--remote", required=True)
@@ -1261,6 +1396,27 @@ def main(argv=None) -> int:
             print(f"{args.entry_out} sha256:{_sha256(encoded)}")
             print("record this entry through the reviewed main-branch "
                   "index before any restore may call the copy trusted")
+            return 0
+        if args.verb == "release-restore-set":
+            authority = ReviewedMainIndexAuthority(
+                remote=args.remote, reviewed_commit=args.reviewed_commit)
+            reader = authority._git
+            restored = restore_release_set(
+                frozen_plan_id=args.frozen_plan_id, transport=transport,
+                index_authority=authority, production=True)
+            args.out_dir.mkdir(parents=True, exist_ok=True)
+            for name, payload in (
+                ("plan.json", restored["plan"]),
+                ("staged-manifest.json", restored["staged_manifest"]),
+                ("receipt.json", restored["receipt"]),
+            ):
+                _atomic_write_bytes(args.out_dir / name, payload)
+            _atomic_write_bytes(
+                args.out_dir / "transitions.json",
+                _canonical(restored["transitions"]))
+            print(f"{args.out_dir} restored complete release set for "
+                  f"{args.frozen_plan_id}: "
+                  f"{len(restored['transitions'])} transitions")
             return 0
         authority = ReviewedMainIndexAuthority(
             remote=args.remote, reviewed_commit=args.reviewed_commit)
