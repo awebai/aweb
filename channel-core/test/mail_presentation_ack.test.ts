@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import {
+  consumeAgentEvents,
   DeliveryStore,
   dispatchAgentEvent,
   PinStore,
@@ -113,6 +114,45 @@ describe("mail promotion-ack semantic", () => {
     await dispatchAgentEvent(opts, dispatched, event());
     expect(awakenings).toHaveLength(1);
     expect(client.post).toHaveBeenCalledTimes(1);
+  });
+
+  test("two concurrent later lanes claim one durable promotion and ack", async () => {
+    const store = await DeliveryStore.load(join(await mkdtemp(join(tmpdir(), "abbv-concurrent-")), "delivered.json"));
+    const client = clientFor([message()]);
+    const dispatched = new Set<string>();
+    let laterCallbacks = 0;
+    let releaseLater: (() => void) | undefined;
+    const laterBarrier = new Promise<void>((resolve) => { releaseLater = resolve; });
+    const onAwakening = vi.fn(async (awakening: ChannelAwakening) => {
+      if (awakening.kind === "mail") return;
+      laterCallbacks += 1;
+      if (laterCallbacks === 2) releaseLater?.();
+      await laterBarrier;
+    });
+    async function* events(): AsyncGenerator<AgentEvent> {
+      yield event();
+      await vi.waitFor(() => expect(onAwakening).toHaveBeenCalledTimes(1));
+      yield { type: "control_resume", signal_id: "resume-1" };
+      yield { type: "work_available", task_id: "task-1", title: "work" };
+    }
+
+    await consumeAgentEvents(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        deliveryStore: store,
+        onAwakening,
+      },
+      dispatched,
+      events(),
+    );
+
+    expect(laterCallbacks).toBe(2);
+    expect(client.post).toHaveBeenCalledTimes(1);
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/m1/ack");
+    expect(store.has("mail:c1:m1")).toBe(true);
   });
 
   test("a promoted durable mark deduplicates without re-notifying", async () => {
