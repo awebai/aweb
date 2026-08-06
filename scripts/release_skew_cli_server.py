@@ -31,6 +31,11 @@ import release_channel_pi_skew as measurement_inputs
 import release_driver as rd
 
 PublishedServerAuthority = measurement_inputs.PublishedServerAuthority
+_atomic_write_text = measurement_inputs._atomic_write_text
+_require_child_identity = measurement_inputs._require_child_identity
+_require_envelope = measurement_inputs._require_envelope
+_require_unanchored_measurement = measurement_inputs._require_unanchored_measurement
+ENVELOPE_SCHEMA = measurement_inputs.ENVELOPE_SCHEMA
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 JOURNEY = "make cli-e2e"
@@ -48,6 +53,7 @@ EDGE_ID = rd.edge_identity(EDGE)
 NEGATIVE_SERVER_VERSION = "1.26.31"
 FIRST_SUPPORTED_SERVER_VERSION = "1.26.35"
 DIRTY_FLEET_AW_VERSION = "1.34.2"
+CONTROL_SCHEMA = "aweb.release.cli-server-skew-control.v1"
 NEGATIVE_FEATURE_MARKERS = (
     "workspace and agent identifiers were not distinct",
     "workspace status locks",
@@ -599,6 +605,25 @@ class SkewJourneyFailure(Exception):
 _DEFAULT_EVIDENCE = object()
 
 
+def _negative_control_cells(matrix: dict) -> list[rd.SkewCell]:
+    rd.validate_skew_matrix_document(matrix)
+    preimage = matrix["preimage"]
+    if preimage["moving"] != ["aw"] or set(preimage["staged"]) != {"aw"}:
+        raise rd.ReceiptError(
+            "CLI/server negative controls require the frozen candidate-aw matrix"
+        )
+    staged = {"aw": rd.ReceiptEntry(**preimage["staged"]["aw"])}
+    return rd.compute_skew_cells(
+        EDGE,
+        moving={"aw"},
+        staged=staged,
+        support={"supported_versions": {
+            "server": [NEGATIVE_SERVER_VERSION]
+        }},
+        published_versions={"server": NEGATIVE_SERVER_VERSION},
+    )
+
+
 class CliServerSkewHarness:
     """Small child invocation contract consumed by ``SkewHarnessRouter``."""
 
@@ -622,6 +647,7 @@ class CliServerSkewHarness:
         self._matrix: dict | None = None
         self._cells: dict[str, rd.SkewCell] = {}
         self._cell_evidence: dict[str, dict] = {}
+        self._control_evidence: dict[str, dict] = {}
         self._finished = False
 
     def freeze_matrix(self, document: dict) -> Path:
@@ -661,6 +687,56 @@ class CliServerSkewHarness:
                 "CLI/server cell is not an exact member of the frozen matrix"
             )
         return identity
+
+    def record_control(
+        self, matrix: dict, cell: rd.SkewCell, evidence: dict
+    ) -> Path:
+        if matrix != self._matrix:
+            raise rd.ReceiptError(
+                "CLI/server control does not bind the frozen matrix"
+            )
+        expected = {
+            rd.skew_cell_identity(item): item
+            for item in _negative_control_cells(matrix)
+        }
+        cell_id = rd.skew_cell_identity(cell)
+        if expected.get(cell_id) != cell:
+            raise rd.ReceiptError(
+                "CLI/server control is not an exact negative cell"
+            )
+        if (
+            not isinstance(evidence, dict)
+            or evidence.get("schema")
+                != "aweb.release.skew-cell-evidence.v1"
+            or evidence.get("cell") != rd.skew_cell_preimage(cell)
+            or evidence.get("outcome") != "red"
+            or not any(
+                marker in str(evidence.get("error", ""))
+                for marker in NEGATIVE_FEATURE_MARKERS
+            )
+        ):
+            raise rd.ReceiptError(
+                "CLI/server negative control evidence is not the reviewed red class"
+            )
+        report = {
+            key: value for key, value in evidence.items() if key != "schema"
+        }
+        report.update({
+            "schema": CONTROL_SCHEMA,
+            "matrix_id": matrix["matrix_id"],
+            "cell_id": cell_id,
+        })
+        report["control_id"] = rd.canonical_json_digest(report)
+        path = self._evidence_root / "controls" / (
+            f"{matrix['matrix_id']}-{cell_id}.json"
+        )
+        self._atomic_json(path, report)
+        self._control_evidence[cell_id] = {
+            "path": path,
+            "sha256": _sha256(path.read_bytes()),
+            "cell": cell,
+        }
+        return path
 
     def run(self, cell: rd.SkewCell) -> dict:
         cell_id = self._frozen_cell_id(cell)
@@ -784,6 +860,34 @@ class CliServerSkewHarness:
                     f"CLI/server effect-time report digest changed for {cell_id}"
                 )
 
+    def _validate_effect_time_controls(self) -> list[rd.SkewCell]:
+        if not self._control_evidence:
+            return []
+        expected = {
+            rd.skew_cell_identity(cell): cell
+            for cell in _negative_control_cells(self._matrix)
+        }
+        if set(self._control_evidence) != set(expected):
+            raise rd.ReceiptError(
+                "CLI/server effect-time control inventory is not exact"
+            )
+        for cell_id, cell in expected.items():
+            path = self._evidence_root / "controls" / (
+                f"{self._matrix['matrix_id']}-{cell_id}.json"
+            )
+            recorded = self._control_evidence[cell_id]
+            if (
+                set(recorded) != {"path", "sha256", "cell"}
+                or recorded["path"] != path
+                or recorded["cell"] != cell
+                or path.is_symlink()
+                or _sha256(path.read_bytes()) != recorded["sha256"]
+            ):
+                raise rd.ReceiptError(
+                    f"CLI/server effect-time control evidence drifted for {cell_id}"
+                )
+        return [expected[cell_id] for cell_id in sorted(expected)]
+
     def finish_matrix(self, document: dict) -> Path:
         if document != self._matrix:
             raise rd.ReceiptError(
@@ -792,9 +896,11 @@ class CliServerSkewHarness:
         if self._finished:
             raise rd.ReceiptError("CLI/server frozen matrix already finished")
         self._validate_effect_time_evidence()
+        control_cells = self._validate_effect_time_controls()
         measurement = aggregate_frozen_matrix(
             self._evidence_root / f"matrix-{document['matrix_id']}.json",
             self._evidence_root,
+            control_cells=control_cells,
         )
         path = self._evidence_root / (
             f"aggregate-{document['matrix_id']}-{measurement['measurement_id']}.json"
@@ -1074,7 +1180,12 @@ def _validate_report_artifact(artifact: dict, side: dict, kind: str,
     return artifact
 
 
-def aggregate_frozen_matrix(matrix_path: Path, evidence_root: Path) -> dict:
+def aggregate_frozen_matrix(
+    matrix_path: Path,
+    evidence_root: Path,
+    *,
+    control_cells: list[rd.SkewCell] | None = None,
+) -> dict:
     matrix_path = Path(matrix_path)
     matrix_body = matrix_path.read_bytes()
     document = json.loads(matrix_body)
@@ -1175,6 +1286,103 @@ def aggregate_frozen_matrix(matrix_path: Path, evidence_root: Path) -> dict:
             "report_id": report["report_id"],
             "file_sha256": _sha256(body),
         })
+    controls = []
+    expected_controls = {
+        f"{matrix_id}-{rd.skew_cell_identity(cell)}.json": cell
+        for cell in (control_cells or [])
+    }
+    if expected_controls:
+        control_dir = Path(evidence_root) / "controls"
+        try:
+            control_entries = list(control_dir.iterdir())
+        except OSError as exc:
+            raise rd.ReceiptError(
+                f"CLI/server control evidence is unreadable: {exc}"
+            ) from exc
+        actual_controls = {
+            item.name: item for item in control_entries
+            if item.is_file() and not item.is_symlink()
+        }
+        if (
+            set(actual_controls) != set(expected_controls)
+            or len(control_entries) != len(expected_controls)
+        ):
+            raise rd.ReceiptError(
+                "CLI/server control-file set is not exact; "
+                f"missing={sorted(set(expected_controls) - set(actual_controls))}, "
+                f"extra={sorted(set(actual_controls) - set(expected_controls))}"
+            )
+        for filename in sorted(expected_controls):
+            cell = expected_controls[filename]
+            body = actual_controls[filename].read_bytes()
+            try:
+                report = json.loads(body)
+            except json.JSONDecodeError as exc:
+                raise rd.ReceiptError(
+                    f"{filename}: control report is malformed"
+                ) from exc
+            cell_id = rd.skew_cell_identity(cell)
+            without_id = {
+                key: value for key, value in report.items()
+                if key != "control_id"
+            }
+            if (
+                body != _canonical_json(report)
+                or set(report) != {
+                    "schema", "matrix_id", "cell_id", "cell", "artifacts",
+                    "runtime", "outcome", "error", "control_id",
+                }
+                or report.get("schema") != CONTROL_SCHEMA
+                or report.get("matrix_id") != matrix_id
+                or report.get("cell_id") != cell_id
+                or report.get("cell") != rd.skew_cell_preimage(cell)
+                or report.get("outcome") != "red"
+                or not any(
+                    marker in str(report.get("error", ""))
+                    for marker in NEGATIVE_FEATURE_MARKERS
+                )
+                or report.get("control_id")
+                    != rd.canonical_json_digest(without_id)
+                or not isinstance(report.get("artifacts"), list)
+                or len(report["artifacts"]) != 2
+            ):
+                raise rd.ReceiptError(
+                    f"{filename}: control does not bind the exact reviewed red cell"
+                )
+            artifacts = []
+            for artifact, side, kind, locator in (
+                (report["artifacts"][0], cell.a, cell.a_kind, cell.artifacts["a"]),
+                (report["artifacts"][1], cell.b, cell.b_kind, cell.artifacts["b"]),
+            ):
+                artifacts.append(
+                    _validate_report_artifact(artifact, side, kind, locator)
+                )
+            server_artifact = next(
+                artifact for artifact in artifacts
+                if artifact["component"] == "server"
+            )
+            server = ResolvedArtifact(
+                component="server",
+                version=server_artifact["version"],
+                path=Path(server_artifact["payload_name"]),
+                evidence=server_artifact,
+            )
+            validate_runtime_proof(report["runtime"], server, report["cell"])
+            dependencies = {
+                name: version
+                for name, version in report["runtime"][
+                    "installed_distributions"
+                ].items()
+                if name != "aweb"
+            }
+            dependency_postures.add(_sha256(_canonical_json(dependencies)))
+            controls.append({
+                "cell_id": cell_id,
+                "control_id": report["control_id"],
+                "file_sha256": _sha256(body),
+                "error": report["error"],
+            })
+
     expected_candidates = set(document["preimage"]["staged"])
     if set(candidates) != expected_candidates:
         raise rd.ReceiptError(
@@ -1187,7 +1395,8 @@ def aggregate_frozen_matrix(matrix_path: Path, evidence_root: Path) -> dict:
         )
     edge_data = document["preimage"]["edge"]
     measurement = {
-        "schema": "aweb.release.runtime-support-measurement.v1",
+        "schema": "aweb.runtime-support-measurement.v1",
+        "completeness": "unanchored-local-measurement",
         "status": "incomplete-unanchored",
         "support_complete": False,
         "anchor": None,
@@ -1204,6 +1413,7 @@ def aggregate_frozen_matrix(matrix_path: Path, evidence_root: Path) -> dict:
             published_identities[key] for key in sorted(published_identities)
         ],
         "reports": reports,
+        "controls": controls,
     }
     measurement["measurement_id"] = rd.canonical_json_digest(measurement)
     return measurement
@@ -1297,8 +1507,9 @@ def measure_support(
         staged_manifest_digest=measurement_input_digest,
     )
     freeze = getattr(harness, "freeze_matrix", None)
+    record_control = getattr(harness, "record_control", None)
     finish = getattr(harness, "finish_matrix", None)
-    if freeze is None or finish is None:
+    if freeze is None or record_control is None or finish is None:
         raise rd.ReceiptError(
             "CLI/server measurement requires the frozen matrix lifecycle"
         )
@@ -1314,7 +1525,7 @@ def measure_support(
     negative_evidence = []
     for negative in negative_cells:
         try:
-            green = harness.run_evidenced(negative)
+            green = harness.run_evidenced(negative, publish=False)
         except SkewJourneyFailure as exc:
             failure = exc.evidence.get("error", "")
             if not any(marker in failure for marker in NEGATIVE_FEATURE_MARKERS):
@@ -1323,6 +1534,7 @@ def measure_support(
                     f"on the required distinct-ID/lock feature: {failure}"
                 ) from exc
             negative_evidence.append(exc.evidence)
+            record_control(matrix, negative, exc.evidence)
         else:
             raise rd.ReceiptError(
                 f"negative control server {negative_server} was green for "
@@ -1344,28 +1556,54 @@ def measure_support(
         negative_evidence + first_supported_controls
     )
     aggregate_path = finish(matrix)
-    aggregate = json.loads(Path(aggregate_path).read_bytes())
-    aggregate.update({
+    measurement_bytes = Path(aggregate_path).read_bytes()
+    measurement = json.loads(measurement_bytes)
+    _require_unanchored_measurement(
+        measurement, matrix_id=matrix["matrix_id"]
+    )
+    child_id = _require_child_identity(measurement)
+    if measurement_bytes != _canonical_json(measurement):
+        raise rd.ReceiptError(
+            "CLI/server measurement child is not canonical bytes"
+        )
+
+    evidence_root = getattr(harness, "_evidence_root", None)
+    if evidence_root is None:
+        raise rd.ReceiptError(
+            "CLI/server measurement cannot independently reaggregate without "
+            "its exact evidence root"
+        )
+    root = Path(evidence_root)
+    independent = aggregate_frozen_matrix(
+        root / f"matrix-{matrix['matrix_id']}.json",
+        root,
+        control_cells=negative_cells,
+    )
+    canonical_child = _canonical_json(independent)
+    if measurement_bytes != canonical_child:
+        raise rd.ReceiptError(
+            "CLI/server measurement bytes do not equal the canonical bytes "
+            "independently reaggregated from the frozen matrix, cell reports, "
+            "and negative-control inventory"
+        )
+
+    envelope = {
+        "schema": ENVELOPE_SCHEMA,
         "policy": "additive-only",
-        "support_basis": {
-            "server": {
-                "negative_only": NEGATIVE_SERVER_VERSION,
-                "first_supported": FIRST_SUPPORTED_SERVER_VERSION,
-                "required_feature": "distinct workspace/agent lock and presence identity",
-            },
-        },
-        "supported_versions": {
-            name: list(versions) for name, versions in sorted(supported_versions.items())
-        },
+        "component": "aw",
         "measurement_input_id": document["manifest_id"],
         "measurement_input_sha256": measurement_input_digest,
         "published_server_authority": published_report,
-        "negative_control": negative_evidence,
-        "cell_evidence": evidence,
-    })
-    aggregate.pop("measurement_id", None)
-    aggregate["measurement_id"] = rd.canonical_json_digest(aggregate)
-    return aggregate
+        "supported_versions": {
+            name: list(versions)
+            for name, versions in sorted(supported_versions.items())
+        },
+        "measurement_id": child_id,
+        "measurement_sha256": _sha256(measurement_bytes),
+        "measurement": measurement,
+    }
+    envelope["envelope_id"] = rd.canonical_json_digest(envelope)
+    return envelope
 
 
 def _require_uniform_dependency_posture(evidence: list[dict]) -> None:
@@ -1436,6 +1674,26 @@ def _require_dirty_fleet_evidence(evidence: list[dict]) -> None:
             )
 
 
+def _require_output_envelope(
+    document: dict,
+    *,
+    measurement_input_id: str,
+    measurement_input_digest: str,
+    supported_versions: dict[str, list[str]],
+) -> str:
+    status = _require_envelope(
+        document,
+        component="aw",
+        measurement_input_id=measurement_input_id,
+        measurement_input_digest=measurement_input_digest,
+        supported_versions=supported_versions,
+    )
+    child = document["measurement"]
+    _require_unanchored_measurement(child, matrix_id=child.get("matrix_id"))
+    _require_child_identity(child)
+    return status
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="verb", required=True)
@@ -1462,12 +1720,19 @@ def main(argv: list[str] | None = None) -> int:
             published_authority=PublishedServerAuthority(),
             harness=CliServerSkewHarness(),
         )
-        document.pop("measurement_id", None)
-        document["measurement_id"] = rd.canonical_json_digest(document)
+        status = _require_output_envelope(
+            document,
+            measurement_input_id=measurement_input["manifest_id"],
+            measurement_input_digest=_sha256(body),
+            supported_versions={"server": args.supported_server},
+        )
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+        _atomic_write_text(
+            output, json.dumps(document, indent=2, sort_keys=True) + "\n"
+        )
         print(f"measurement {output} sha256:{_sha256(output.read_bytes())}")
+        print(f"status: {status}")
         return 0
     except (KeyError, ValueError, rd.ReceiptError, SkewJourneyFailure) as exc:
         print(f"BLOCKED: {exc}")

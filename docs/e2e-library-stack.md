@@ -210,8 +210,11 @@ consumes an `aweb.measurement-input-manifest.v1` that binds that candidate and
 the published server's verify-only lane authority. It derives the moving set as
 exactly `{aw}`; the server is never represented as staged and carries no invented
 LaneRef. The target runs the known-red server 1.26.31 control and the
-runner-defined supported matrix, then writes a digest-bearing JSON support
-document. Server 1.26.31 is negative-only: it filters lock-holder agent IDs as
+runner-defined supported matrix, independently reaggregates the exact frozen
+cell/control inventory, and preserves that canonical incomplete-unanchored
+child unchanged inside a separately identified input/authority envelope. The
+final envelope is committed with the shared no-clobber, fsynced atomic-output
+protocol. Server 1.26.31 is negative-only: it filters lock-holder agent IDs as
 workspace IDs. Server 1.26.35 is the first published fix and the initial measured
 floor. The document does not become release authority merely by existing
 locally: it must later be independently anchored as a workflow artifact,

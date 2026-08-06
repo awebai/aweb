@@ -869,6 +869,93 @@ def canonical_bytes(document):
     return json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
 
 
+def measurement_child(matrix_id="6" * 64, **overrides):
+    child = {
+        "schema": "aweb.runtime-support-measurement.v1",
+        "completeness": "unanchored-local-measurement",
+        "status": "incomplete-unanchored",
+        "support_complete": False,
+        "anchor": None,
+        "matrix_id": matrix_id,
+        "supported_versions": {"server": ["1.26.35"]},
+        "reports": [],
+        "controls": [],
+    }
+    child.update(overrides)
+    child.pop("measurement_id", None)
+    child["measurement_id"] = rd.canonical_json_digest(child)
+    return child
+
+
+class FakeMeasurementLifecycle:
+    def __init__(self, child_factory):
+        self.root = tempfile.TemporaryDirectory()
+        self._evidence_root = Path(self.root.name)
+        self.child_factory = child_factory
+        self.matrix = None
+        self.child = None
+        self.controls = []
+
+    def freeze_matrix(self, matrix):
+        self.matrix = matrix
+
+    def record_control(self, matrix, cell, evidence):
+        self.controls.append((matrix, cell, evidence))
+
+    def run_evidenced(self, cell, *, publish=False):
+        import release_skew_cli_server as subject
+
+        identity = subject.cell_document(cell)
+        evidence = {
+            "outcome": "red",
+            "cell": identity,
+            "artifacts": [{"payload_sha256": "a" * 64}],
+            "runtime": runtime_proof(cell.b["version"], "a" * 64, identity),
+            "error": "server status locks = [], want one lock",
+        }
+        raise subject.SkewJourneyFailure(evidence["error"], evidence)
+
+    def run(self, cell):
+        import release_skew_cli_server as subject
+
+        identity = subject.cell_document(cell)
+        return {
+            "outcome": "green",
+            "cell": identity,
+            "artifacts": [{"payload_sha256": "b" * 64}],
+            "runtime": runtime_proof(cell.b["version"], "a" * 64, identity),
+        }
+
+    def finish_matrix(self, matrix):
+        self.child = self.child_factory(matrix["matrix_id"])
+        path = self._evidence_root / "aggregate.json"
+        path.write_bytes(canonical_bytes(self.child))
+        return path
+
+    def cleanup(self):
+        self.root.cleanup()
+
+
+def measurement_envelope(document, body, child=None, authority=None):
+    child = child or measurement_child()
+    envelope = {
+        "schema": "aweb.runtime-support-measurement-envelope.v1",
+        "policy": "additive-only",
+        "component": "aw",
+        "measurement_input_id": document["manifest_id"],
+        "measurement_input_sha256": sha(body),
+        "published_server_authority": authority or {
+            "provider": "verify-only-lane"
+        },
+        "supported_versions": {"server": ["1.26.35"]},
+        "measurement_id": child["measurement_id"],
+        "measurement_sha256": sha(canonical_bytes(child)),
+        "measurement": child,
+    }
+    envelope["envelope_id"] = rd.canonical_json_digest(envelope)
+    return envelope
+
+
 class MeasurementCliTests(unittest.TestCase):
     @staticmethod
     def arguments(manifest: Path, output: Path) -> list[str]:
@@ -971,20 +1058,11 @@ class MeasurementCliTests(unittest.TestCase):
             observed = {}
             harness = object()
             authority = object()
+            expected = measurement_envelope(document, body)
 
             def measure_success(**kwargs):
                 observed.update(kwargs)
-                result = {
-                    "schema": "aweb.release.runtime-support-measurement.v1",
-                    "status": "incomplete-unanchored",
-                    "support_complete": False,
-                    "anchor": None,
-                    "measurement_input_id": document["manifest_id"],
-                    "measurement_input_sha256": sha(body),
-                    "published_server_authority": {"provider": "verify-only-lane"},
-                }
-                result["measurement_id"] = rd.canonical_json_digest(result)
-                return result
+                return json.loads(json.dumps(expected))
 
             stdout = io.StringIO()
             with (
@@ -1008,8 +1086,61 @@ class MeasurementCliTests(unittest.TestCase):
             self.assertIs(observed["harness"], harness)
             self.assertNotIn("staged", observed)
             result = json.loads(output.read_text())
+            self.assertEqual(result, expected)
             self.assertEqual(result["measurement_input_id"], document["manifest_id"])
             self.assertEqual(result["measurement_input_sha256"], sha(body))
+
+    def test_real_cli_refuses_forged_complete_child_before_output(self):
+        import release_skew_cli_server as subject
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            document = measurement_input()
+            body = canonical_bytes(document)
+            manifest = root / "measurement-input.json"
+            manifest.write_bytes(body)
+            output = root / "measurement.json"
+            forged = measurement_child(schema="forged.child")
+            envelope = measurement_envelope(document, body, child=forged)
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    subject, "PublishedServerAuthority", return_value=object()
+                ),
+                mock.patch.object(subject, "measure_support", return_value=envelope),
+                mock.patch.object(subject, "CliServerSkewHarness", return_value=object()),
+                contextlib.redirect_stdout(stdout),
+            ):
+                status = subject.main(self.arguments(manifest, output))
+            self.assertEqual(status, 1)
+            self.assertIn("BLOCKED", stdout.getvalue())
+            self.assertFalse(output.exists())
+
+    def test_real_cli_refuses_preexisting_output_without_clobbering(self):
+        import release_skew_cli_server as subject
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            document = measurement_input()
+            body = canonical_bytes(document)
+            manifest = root / "measurement-input.json"
+            manifest.write_bytes(body)
+            output = root / "measurement.json"
+            output.write_text("prior contents")
+            envelope = measurement_envelope(document, body)
+            stdout = io.StringIO()
+            with (
+                mock.patch.object(
+                    subject, "PublishedServerAuthority", return_value=object()
+                ),
+                mock.patch.object(subject, "measure_support", return_value=envelope),
+                mock.patch.object(subject, "CliServerSkewHarness", return_value=object()),
+                contextlib.redirect_stdout(stdout),
+            ):
+                status = subject.main(self.arguments(manifest, output))
+            self.assertEqual(status, 1)
+            self.assertIn("existing output", stdout.getvalue())
+            self.assertEqual(output.read_text(), "prior contents")
 
     def test_make_target_accepts_only_the_measurement_input(self):
         makefile = (SCRIPTS.parent / "Makefile").read_text()
@@ -1020,6 +1151,147 @@ class MeasurementCliTests(unittest.TestCase):
         self.assertNotIn("--staged-manifest", block)
         self.assertNotIn("--supported-aw", block)
         self.assertNotIn("--published-aw", block)
+
+
+class AtomicOutputReuseTests(unittest.TestCase):
+    def primitive(self):
+        import release_skew_cli_server as subject
+
+        self.assertIs(
+            subject._atomic_write_text,
+            subject.measurement_inputs._atomic_write_text,
+            "CLI/server must reuse the reviewed .14 primitive exactly",
+        )
+        return subject, subject.measurement_inputs
+
+    def test_preexisting_temp_refuses_without_final(self):
+        subject, _ = self.primitive()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "measurement.json"
+            output.with_name(output.name + ".part").write_text("squatted")
+            with self.assertRaisesRegex(rd.ReceiptError, "temporary"):
+                subject._atomic_write_text(output, "payload")
+            self.assertFalse(output.exists())
+
+    def test_raced_target_refuses_and_preserves_winner(self):
+        subject, shared = self.primitive()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "measurement.json"
+            real_fdopen = shared.os.fdopen
+
+            def racing(fd, mode, *args, **kwargs):
+                handle = real_fdopen(fd, mode, *args, **kwargs)
+                output.write_text("winner")
+                return handle
+
+            with mock.patch.object(shared.os, "fdopen", racing):
+                with self.assertRaisesRegex(rd.ReceiptError, "concurrently"):
+                    subject._atomic_write_text(output, "loser")
+            self.assertEqual(output.read_text(), "winner")
+            self.assertFalse(output.with_name(output.name + ".part").exists())
+
+    def test_mid_write_failure_leaves_no_output_or_temp(self):
+        subject, shared = self.primitive()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "measurement.json"
+
+            class Exploding:
+                def write(self, data):
+                    raise OSError("disk full")
+
+                def flush(self):
+                    pass
+
+                def fileno(self):
+                    return 0
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+            with mock.patch.object(
+                shared.os, "fdopen",
+                lambda fd, *args, **kwargs: (shared.os.close(fd), Exploding())[1],
+            ):
+                with self.assertRaises(OSError):
+                    subject._atomic_write_text(output, "payload")
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_name(output.name + ".part").exists())
+
+    def test_post_link_durability_failure_rolls_back(self):
+        subject, shared = self.primitive()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "measurement.json"
+            calls = []
+            real = shared._fsync_directory
+
+            def failing(directory):
+                calls.append(directory)
+                if len(calls) == 1:
+                    raise OSError("directory fsync failed")
+                return real(directory)
+
+            with mock.patch.object(shared, "_fsync_directory", failing):
+                with self.assertRaisesRegex(rd.ReceiptError, "rolled back"):
+                    subject._atomic_write_text(output, "payload")
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_name(output.name + ".part").exists())
+            self.assertEqual(len(calls), 2)
+
+    def test_post_link_cleanup_failure_rolls_back(self):
+        subject, shared = self.primitive()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "measurement.json"
+            part = output.with_name(output.name + ".part")
+            real_unlink = shared.os.unlink
+            failed = {"value": False}
+
+            def failing(target):
+                if str(target) == str(part) and not failed["value"]:
+                    failed["value"] = True
+                    raise OSError("temp unlink failed")
+                return real_unlink(target)
+
+            with mock.patch.object(shared.os, "unlink", failing):
+                with self.assertRaisesRegex(rd.ReceiptError, "rolled back"):
+                    subject._atomic_write_text(output, "payload")
+            self.assertTrue(failed["value"])
+            self.assertFalse(output.exists())
+            self.assertFalse(part.exists())
+
+    def test_any_post_link_exception_rolls_back(self):
+        subject, shared = self.primitive()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "measurement.json"
+            with mock.patch.object(
+                shared, "_fsync_directory",
+                side_effect=RuntimeError("unexpected post-link exception"),
+            ):
+                with self.assertRaises(rd.ReceiptError):
+                    subject._atomic_write_text(output, "payload")
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_name(output.name + ".part").exists())
+
+    def test_success_has_no_redundant_finalizer(self):
+        subject, shared = self.primitive()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "measurement.json"
+            real_unlink = shared.os.unlink
+            calls = {"count": 0}
+
+            def unlink_once(target):
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    return real_unlink(target)
+                raise RuntimeError("redundant finalizer ran")
+
+            with mock.patch.object(shared.os, "unlink", unlink_once):
+                subject._atomic_write_text(output, "exact\n")
+            self.assertEqual(output.read_bytes(), b"exact\n")
+            self.assertEqual(calls["count"], 1)
+            self.assertFalse(output.with_name(output.name + ".part").exists())
 
 
 class MeasurementTests(unittest.TestCase):
@@ -1044,32 +1316,29 @@ class MeasurementTests(unittest.TestCase):
         class Harness:
             def __init__(self):
                 self.root = tempfile.TemporaryDirectory()
+                self._evidence_root = Path(self.root.name)
                 self.matrix = None
+                self.child = None
 
             def freeze_matrix(self, frozen):
                 events.append("freeze")
                 self.matrix = frozen
 
+            def record_control(self, frozen, cell, evidence):
+                events.append("record-control")
+
             def finish_matrix(self, frozen):
                 events.append("finish")
                 path = Path(self.root.name) / "aggregate.json"
-                path.write_text(json.dumps({
-                    "schema": "aweb.release.runtime-support-measurement.v1",
-                    "status": "incomplete-unanchored",
-                    "support_complete": False,
-                    "anchor": None,
-                    "matrix_id": frozen["matrix_id"],
-                    "edge": {"a": "aw", "b": "server"},
-                    "journey": "make cli-e2e",
-                    "direction": "both",
-                }))
+                self.child = measurement_child(frozen["matrix_id"])
+                path.write_bytes(canonical_bytes(self.child))
                 return path
 
             def run(self, value):
                 events.append("run")
                 return self._evidence(value)
 
-            def run_evidenced(self, value):
+            def run_evidenced(self, value, *, publish=False):
                 events.append("control")
                 return self._evidence(value)
 
@@ -1090,14 +1359,22 @@ class MeasurementTests(unittest.TestCase):
 
         authority = Authority()
         harness = Harness()
-        result = subject.measure_support(
-            measurement_input=document,
-            measurement_input_bytes=body,
-            supported_versions={"server": ["1.26.35"]},
-            negative_server="1.26.31",
-            published_authority=authority,
-            harness=harness,
-        )
+
+        def reaggregate(*args, **kwargs):
+            events.append("reaggregate")
+            return json.loads(json.dumps(harness.child))
+
+        with mock.patch.object(
+            subject, "aggregate_frozen_matrix", side_effect=reaggregate
+        ):
+            result = subject.measure_support(
+                measurement_input=document,
+                measurement_input_bytes=body,
+                supported_versions={"server": ["1.26.35"]},
+                negative_server="1.26.31",
+                published_authority=authority,
+                harness=harness,
+            )
         self.assertEqual(events[0], "authority")
         self.assertLess(events.index("authority"), events.index("freeze"))
         preimage = harness.matrix["preimage"]
@@ -1108,21 +1385,207 @@ class MeasurementTests(unittest.TestCase):
         )
         self.assertNotIn("lane_ref", document["entries"]["server"])
         self.assertEqual(authority.entry, document["entries"]["server"])
-        self.assertEqual(result["status"], "incomplete-unanchored")
+        self.assertIn("record-control", events)
+        self.assertLess(events.index("finish"), events.index("reaggregate"))
+        self.assertEqual(result["schema"],
+                         "aweb.runtime-support-measurement-envelope.v1")
+        self.assertEqual(result["component"], "aw")
         self.assertEqual(result["supported_versions"], {"server": ["1.26.35"]})
         self.assertEqual(result["measurement_input_id"], document["manifest_id"])
         self.assertEqual(result["measurement_input_sha256"], sha(body))
         self.assertEqual(result["published_server_authority"]["provider"],
                          "verify-only-lane")
-        self.assertEqual(result["support_basis"]["server"]["first_supported"],
-                         "1.26.35")
-        self.assertEqual(result["support_basis"]["server"]["negative_only"],
-                         "1.26.31")
-        self.assertEqual({row["outcome"] for row in result["negative_control"]},
-                         {"red"})
-        self.assertEqual({row["outcome"] for row in result["cell_evidence"]},
-                         {"green"})
+        self.assertEqual(result["measurement"], harness.child)
+        self.assertEqual(result["measurement_id"], harness.child["measurement_id"])
+        self.assertEqual(result["measurement"]["status"], "incomplete-unanchored")
+        expected_envelope = dict(result)
+        envelope_id = expected_envelope.pop("envelope_id")
+        self.assertEqual(envelope_id, rd.canonical_json_digest(expected_envelope))
         harness.root.cleanup()
+
+    def test_real_lifecycle_reaggregates_exact_cells_and_controls(self):
+        import release_skew_cli_server as subject
+
+        document = measurement_input()
+
+        class Resolver:
+            def resolve(self, side, kind, locator, root):
+                component = side["component"]
+                version = side["version"]
+                if component == "aw":
+                    payload_name = next(iter(side["digest_set"]))
+                    evidence = {
+                        "component": "aw",
+                        "version": version,
+                        "kind": "candidate",
+                        "payload_name": payload_name,
+                        "payload_sha256": "9" * 64,
+                        "lane_ref": side["lane_ref"],
+                        "outer_sha256": side["lane_ref"]["zip_digest"].removeprefix(
+                            "sha256:"
+                        ),
+                        "digest_set": side["digest_set"],
+                        "archive_payload_sha256": side["digest_set"][payload_name],
+                    }
+                    path = root / "aw"
+                else:
+                    wheel = f"aweb-{version}-py3-none-any.whl"
+                    sdist = f"aweb-{version}.tar.gz"
+                    registry = {
+                        wheel: "2" * 64 if version == "1.26.35" else "7" * 64,
+                        sdist: "3" * 64 if version == "1.26.35" else "8" * 64,
+                    }
+                    evidence = {
+                        "component": "server",
+                        "version": version,
+                        "kind": kind,
+                        "registry": "pypi:aweb",
+                        "registry_digest_set": registry,
+                        "registry_set_digest": rd.canonical_digest_of_set(registry),
+                        "url": f"https://files.pythonhosted.org/{wheel}",
+                        "payload_name": wheel,
+                        "outer_sha256": registry[wheel],
+                        "registry_sha256": registry[wheel],
+                        "payload_sha256": registry[wheel],
+                    }
+                    path = root / wheel
+                path.write_bytes(b"fixture")
+                return subject.ResolvedArtifact(component, version, path, evidence)
+
+        def journey(aw, server, direction, identity):
+            proof = runtime_proof(
+                server.version, server.evidence["payload_sha256"], identity
+            )
+            if server.version == subject.NEGATIVE_SERVER_VERSION:
+                raise subject.JourneyExecutionFailure(
+                    "server status locks = [], want one lock", proof
+                )
+            return proof
+
+        authority = mock.Mock(resolve=mock.Mock(return_value={
+            "provider": "verify-only-lane",
+            "artifact": document["entries"]["server"]["authority"]["artifact"],
+            "version": "1.26.35",
+            "digest_set": document["entries"]["server"]["digest_set"],
+        }))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            harness = subject.CliServerSkewHarness(
+                resolver=Resolver(), journey=journey, evidence_root=root
+            )
+            envelope = subject.measure_support(
+                measurement_input=document,
+                measurement_input_bytes=canonical_bytes(document),
+                supported_versions={"server": ["1.26.35"]},
+                negative_server="1.26.31",
+                published_authority=authority,
+                harness=harness,
+            )
+            child = envelope["measurement"]
+            self.assertEqual(len(child["reports"]), 2)
+            self.assertEqual(len(child["controls"]), 2)
+            self.assertEqual(
+                {item["error"] for item in child["controls"]},
+                {"server status locks = [], want one lock"},
+            )
+            matrix_path = next(root.glob("matrix-*.json"))
+            matrix = json.loads(matrix_path.read_bytes())
+            control_cells = subject._negative_control_cells(matrix)
+            extra = root / "controls" / "extra.json"
+            extra.write_text("{}")
+            with self.assertRaisesRegex(rd.ReceiptError, "control-file set"):
+                subject.aggregate_frozen_matrix(
+                    matrix_path, root, control_cells=control_cells
+                )
+
+    def test_forged_complete_finish_child_is_never_reidentified(self):
+        import release_skew_cli_server as subject
+
+        document = measurement_input()
+        harness = FakeMeasurementLifecycle(lambda matrix_id: measurement_child(
+            matrix_id,
+            schema="forged.child",
+            status="complete-anchored",
+            support_complete=True,
+            anchor={"forged": True},
+        ))
+        authority = mock.Mock(resolve=mock.Mock(return_value={
+            "provider": "verify-only-lane"
+        }))
+        reaggregate = mock.Mock()
+        try:
+            with mock.patch.object(subject, "aggregate_frozen_matrix", reaggregate):
+                with self.assertRaisesRegex(rd.ReceiptError, "schema|status"):
+                    subject.measure_support(
+                        measurement_input=document,
+                        measurement_input_bytes=canonical_bytes(document),
+                        supported_versions={"server": ["1.26.35"]},
+                        negative_server="1.26.31",
+                        published_authority=authority,
+                        harness=harness,
+                    )
+            reaggregate.assert_not_called()
+        finally:
+            harness.cleanup()
+
+    def test_finish_child_must_equal_independent_reaggregation_bytes(self):
+        import release_skew_cli_server as subject
+
+        document = measurement_input()
+        harness = FakeMeasurementLifecycle(measurement_child)
+        authority = mock.Mock(resolve=mock.Mock(return_value={
+            "provider": "verify-only-lane"
+        }))
+
+        def mismatched(*args, **kwargs):
+            return measurement_child(harness.matrix["matrix_id"], reports=[{
+                "forged": True
+            }])
+
+        try:
+            with mock.patch.object(
+                subject, "aggregate_frozen_matrix", side_effect=mismatched
+            ):
+                with self.assertRaisesRegex(rd.ReceiptError, "canonical bytes"):
+                    subject.measure_support(
+                        measurement_input=document,
+                        measurement_input_bytes=canonical_bytes(document),
+                        supported_versions={"server": ["1.26.35"]},
+                        negative_server="1.26.31",
+                        published_authority=authority,
+                        harness=harness,
+                    )
+        finally:
+            harness.cleanup()
+
+    def test_noncanonical_finish_child_bytes_refuse(self):
+        import release_skew_cli_server as subject
+
+        document = measurement_input()
+        harness = FakeMeasurementLifecycle(measurement_child)
+        original_finish = harness.finish_matrix
+
+        def pretty_finish(matrix):
+            path = original_finish(matrix)
+            path.write_text(json.dumps(harness.child, indent=2))
+            return path
+
+        harness.finish_matrix = pretty_finish
+        authority = mock.Mock(resolve=mock.Mock(return_value={
+            "provider": "verify-only-lane"
+        }))
+        try:
+            with self.assertRaisesRegex(rd.ReceiptError, "canonical bytes"):
+                subject.measure_support(
+                    measurement_input=document,
+                    measurement_input_bytes=canonical_bytes(document),
+                    supported_versions={"server": ["1.26.35"]},
+                    negative_server="1.26.31",
+                    published_authority=authority,
+                    harness=harness,
+                )
+        finally:
+            harness.cleanup()
 
     def test_noncanonical_input_refuses_before_authority_or_matrix(self):
         import release_skew_cli_server as subject
@@ -1219,13 +1682,16 @@ class MeasurementTests(unittest.TestCase):
             def freeze_matrix(self, document):
                 pass
 
+            def record_control(self, matrix, cell, evidence):
+                pass
+
             def finish_matrix(self, document):
                 raise AssertionError("negative control must refuse first")
 
             def run(self, value):
                 raise AssertionError("negative control must refuse first")
 
-            def run_evidenced(self, value):
+            def run_evidenced(self, value, *, publish=False):
                 evidence = {
                     "outcome": "red",
                     "cell": subject.cell_document(value),
@@ -1255,13 +1721,16 @@ class MeasurementTests(unittest.TestCase):
             def freeze_matrix(self, document):
                 pass
 
+            def record_control(self, matrix, cell, evidence):
+                pass
+
             def finish_matrix(self, document):
                 raise AssertionError("negative control must refuse first")
 
             def run(self, value):
                 raise AssertionError("negative control must refuse first")
 
-            def run_evidenced(self, value):
+            def run_evidenced(self, value, *, publish=False):
                 return {"outcome": "green", "cell": subject.cell_document(value), "artifacts": []}
 
         document = measurement_input()
