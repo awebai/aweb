@@ -1928,6 +1928,54 @@ class UnrelatedReleaseSetTests(unittest.TestCase):
         with self.assertRaises(rd.ReceiptError):
             self.authority(body).lookup(entry["logical_id"])
 
+    def test_complete_shaped_unrelated_arbitrary_logical_ids_refuse(self):
+        unrelated = {
+            "frozen_plan_id": "b" * 64,
+            "plan": "x",
+            "staged_manifest": "y",
+            "transitions": ["z"],
+            "receipt": "q",
+        }
+        body, entry = self.index([self.good_set(), unrelated])
+        with self.assertRaisesRegex(rd.ReceiptError, "logical id"):
+            self.authority(body).release_set("a" * 64)
+
+    def test_every_logical_id_must_bind_its_record_frozen_plan(self):
+        plan = "b" * 64
+        wrong = "c" * 64
+        mutations = {
+            "plan": f"plan:{'d' * 40}:{wrong}",
+            "staged_manifest": f"staged-manifest:{wrong}:{'e' * 64}",
+            "transitions": [
+                f"transition:{wrong}:001:published:channel:{'d' * 64}"],
+            "receipt": f"receipt:{wrong}:{'f' * 64}",
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                unrelated = self.good_set(plan)
+                unrelated[field] = value
+                body, entry = self.index([self.good_set(), unrelated])
+                with self.assertRaisesRegex(rd.ReceiptError, "frozen plan"):
+                    self.authority(body).lookup(entry["logical_id"])
+
+    def test_release_set_logical_id_grammar_is_exact(self):
+        malformed = [
+            dict(self.good_set("b" * 64), plan="plan:not-a-sha:" + "b" * 64),
+            dict(self.good_set("b" * 64),
+                 staged_manifest=f"staged-manifest:{'b' * 64}:short"),
+            dict(self.good_set("b" * 64), transitions=[
+                f"transition:{'b' * 64}:1:published:channel:{'d' * 64}"]),
+            dict(self.good_set("b" * 64), transitions=[
+                f"transition:{'b' * 64}:001:unreviewed-control:channel:"
+                f"{'d' * 64}"]),
+            dict(self.good_set("b" * 64), receipt="receipt:bad"),
+        ]
+        for record in malformed:
+            with self.subTest(record=record):
+                body, entry = self.index([self.good_set(), record])
+                with self.assertRaises(rd.ReceiptError):
+                    self.authority(body).lookup(entry["logical_id"])
+
     def test_valid_sets_still_resolve(self):
         body, entry = self.index([self.good_set(), self.good_set("b" * 64)])
         resolved = self.authority(body).release_set("a" * 64)
