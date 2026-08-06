@@ -11,7 +11,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { NotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v4";
-import { stopOwnedProcessGroup, type OwnedProcessMember } from "./helpers/owned_process_group.js";
+import {
+  processGroupIDForPID,
+  stopOwnedProcessTree,
+  type OwnedProcessMember,
+} from "./helpers/owned_process_group.js";
 
 const execFileAsync = promisify(execFile);
 const testDir = dirname(fileURLToPath(import.meta.url));
@@ -169,7 +173,16 @@ describe.sequential("channel integration", () => {
   let liveNameEvidencePath = "";
 
   beforeAll(async () => {
-    tempRoot = await mkdtemp(join(tmpdir(), "channel-e2e-"));
+    const supervisedRoot = process.env.AWEB_CHANNEL_LIVE_INTEGRATION_ROOT;
+    if (supervisedRoot) {
+      tempRoot = resolve(supervisedRoot);
+      if (dirname(tempRoot) !== resolve(tmpdir())) {
+        throw new Error(`supervised integration root must be directly under TMPDIR: ${tempRoot}`);
+      }
+      await mkdir(tempRoot);
+    } else {
+      tempRoot = await mkdtemp(join(tmpdir(), "channel-e2e-"));
+    }
     homeDir = join(tempRoot, "home");
     aliceDir = join(tempRoot, "alice");
     bobDir = join(tempRoot, "bob");
@@ -366,9 +379,10 @@ describe.sequential("channel integration", () => {
       "--plugin-dir", config.plugin_root,
       "--dangerously-load-development-channels", config.channel_load_spec,
     ];
+    const supervisorProcessGroupID = processGroupIDForPID(process.pid);
+    if (!supervisorProcessGroupID) throw new Error("live runner has no supervisor process group");
     const claude = spawn(config.claude_binary, args, {
       cwd: bobDir,
-      detached: true,
       env,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -407,9 +421,9 @@ describe.sequential("channel integration", () => {
       expect(stdout.match(new RegExp(marker, "g"))?.length).toBe(1);
       expect(stdout).not.toMatch(/plugin:aweb-channel:aweb(?![A-Za-z0-9_-])/);
 
-      const processGroupProof = await stopOwnedProcessGroup(claude);
+      const processTreeProof = await stopOwnedProcessTree(claude, supervisorProcessGroupID);
       requireObservedMCPChildren(
-        processGroupProof.observed_members,
+        processTreeProof.observed_members,
         claude.pid,
         config.collision_fixture,
         join(config.plugin_root, "dist", "index.js"),
@@ -427,13 +441,15 @@ describe.sequential("channel integration", () => {
         plugin_initialize_observed: true,
         message_id: mail.message_id,
         marker,
-        owned_process_pids: processGroupProof.observed_pids,
-        process_group_sigkill_required: processGroupProof.sigkill_required,
-        process_group_termination_proven: processGroupProof.termination_proven,
+        owned_process_pids: processTreeProof.observed_pids,
+        process_tree_sigkill_required: processTreeProof.sigkill_required,
+        process_tree_termination_proven: processTreeProof.termination_proven,
         child_cleanup_complete: true,
       }, null, 2)}\n`);
     } finally {
-      if (!childCleaned) await stopOwnedProcessGroup(claude).catch(() => {});
+      if (!childCleaned) {
+        await stopOwnedProcessTree(claude, supervisorProcessGroupID).catch(() => {});
+      }
     }
   }, 180_000);
 
@@ -501,14 +517,14 @@ function requireObservedMCPChildren(
   pluginEntry: string,
 ): void {
   if (!leaderPID || !members.some(({ pid }) => pid === leaderPID)) {
-    throw new Error(`owned process group did not contain Claude leader ${leaderPID}`);
+    throw new Error(`owned process tree did not contain Claude leader ${leaderPID}`);
   }
   const commands = members.map(({ command }) => command);
   if (!commands.some((command) => command.includes(resolve(collisionFixture)))) {
-    throw new Error(`owned process group did not contain collision fixture: ${JSON.stringify(commands)}`);
+    throw new Error(`owned process tree did not contain collision fixture: ${JSON.stringify(commands)}`);
   }
   if (!commands.some((command) => command.includes(resolve(pluginEntry)))) {
-    throw new Error(`owned process group did not contain packaged Channel MCP: ${JSON.stringify(commands)}`);
+    throw new Error(`owned process tree did not contain packaged Channel MCP: ${JSON.stringify(commands)}`);
   }
 }
 

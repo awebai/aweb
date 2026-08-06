@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { processGroupExists, stopOwnedProcessGroup } from "./helpers/owned_process_group.js";
+import {
+  processGroupExists,
+  processGroupIDForPID,
+  stopOwnedProcessTree,
+} from "./helpers/owned_process_group.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixture = path.resolve(__dirname, "../../scripts/e2e/fixtures/stubborn-process-tree.mjs");
@@ -34,7 +38,9 @@ describe.skipIf(process.platform === "win32")("owned process-group cleanup", () 
     };
     expect(pids.parent_pid).toBe(parent.pid);
 
-    const proof = await stopOwnedProcessGroup(parent, 500);
+    const processGroupID = processGroupIDForPID(parent.pid!);
+    expect(processGroupID).toBe(parent.pid);
+    const proof = await stopOwnedProcessTree(parent, processGroupID!, 500);
 
     expect(proof.observed_pids).toContain(pids.parent_pid);
     expect(proof.observed_pids).toContain(pids.descendant_pid);

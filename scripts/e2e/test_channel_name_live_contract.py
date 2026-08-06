@@ -3,8 +3,12 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
+import signal
+import shutil
 import subprocess
+import time
 import tarfile
 import tempfile
 import unittest
@@ -54,11 +58,16 @@ class ChannelNameLiveHarnessContractTests(unittest.TestCase):
             )
         self.assertEqual(set(env), {
             "HOME", "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
-            "XDG_STATE_HOME", "TMPDIR", "PATH", "ANTHROPIC_API_KEY",
-            "AWEB_CHANNEL_NAME_LIVE_CONFIG",
+            "XDG_STATE_HOME", "TMPDIR", "DOCKER_CONFIG", "PATH", "ANTHROPIC_API_KEY",
+            "AWEB_CHANNEL_NAME_LIVE_CONFIG", "AWEB_CHANNEL_LIVE_INTEGRATION_ROOT",
+            "AWEB_SKEW_PROJECT_TOKEN",
         })
         self.assertEqual(env["ANTHROPIC_API_KEY"], "dedicated")
         self.assertNotIn("AWEB_URL", env)
+        self.assertEqual(
+            Path(env["AWEB_CHANNEL_LIVE_INTEGRATION_ROOT"]).parent,
+            Path(env["TMPDIR"]),
+        )
 
     def test_tgz_extraction_requires_safe_exact_channel_package(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -100,6 +109,117 @@ class ChannelNameLiveHarnessContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "escapes|link"):
                     harness.safe_extract_tgz(tgz, root / "out")
 
+    def test_supervisor_converts_handled_termination_into_cleanup_control_flow(self):
+        with self.assertRaisesRegex(RuntimeError, "interrupted by signal"):
+            with harness.RunnerSignalGuard():
+                os.kill(os.getpid(), signal.SIGTERM)
+
+    def test_supervisor_cleans_owned_group_after_runner_dies_before_its_descendant(self):
+        fixture = ROOT / "scripts" / "e2e" / "fixtures" / "stubborn-process-tree.mjs"
+        with tempfile.TemporaryDirectory() as raw:
+            marker = Path(raw) / "pids.json"
+            node = shutil.which("node")
+            self.assertIsNotNone(node)
+            runner = harness.start_owned_process_group(
+                [str(node), str(fixture), str(marker)], cwd=ROOT, env={"PATH": os.defpath}
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(marker.exists())
+                pids = json.loads(marker.read_text())
+                self.assertEqual(pids["parent_pid"], runner.pid)
+                os.kill(runner.pid, signal.SIGTERM)
+                runner.wait(timeout=5)
+                self.assertTrue(harness.process_group_exists(runner.pid))
+
+                proof = harness.cleanup_owned_process_group(runner, term_grace_seconds=0.2)
+
+                self.assertIn(pids["descendant_pid"], proof["observed_pids"])
+                self.assertTrue(proof["sigkill_required"])
+                self.assertTrue(proof["termination_proven"])
+                self.assertFalse(harness.process_group_exists(runner.pid))
+            finally:
+                if harness.process_group_exists(runner.pid):
+                    os.killpg(runner.pid, signal.SIGKILL)
+
+    def test_supervisor_removes_only_its_exact_compose_project_resources(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            state = root / "state.json"
+            log = root / "docker.jsonl"
+            state.write_text(json.dumps({
+                "containers": ["container-1"],
+                "networks": ["network-1"],
+                "volumes": ["volume-1"],
+            }))
+            fake = root / "docker"
+            fake.write_text("""#!/usr/bin/env python3
+import json, os, pathlib, sys
+state_path = pathlib.Path(os.environ['FAKE_DOCKER_STATE'])
+log_path = pathlib.Path(os.environ['FAKE_DOCKER_LOG'])
+args = sys.argv[1:]
+with log_path.open('a') as stream:
+    stream.write(json.dumps(args) + '\\n')
+state = json.loads(state_path.read_text())
+if args[:2] == ['ps', '-aq']:
+    print('\\n'.join(state['containers']))
+elif args[:3] == ['network', 'ls', '-q']:
+    print('\\n'.join(state['networks']))
+elif args[:3] == ['volume', 'ls', '-q']:
+    print('\\n'.join(state['volumes']))
+elif args[:2] == ['rm', '-f']:
+    state['containers'] = []
+elif args[:2] == ['network', 'rm']:
+    state['networks'] = []
+elif args[:2] == ['volume', 'rm']:
+    state['volumes'] = []
+else:
+    raise SystemExit(f'unexpected docker args: {args}')
+state_path.write_text(json.dumps(state))
+""")
+            fake.chmod(0o755)
+            project = "aweb-channel-name-live-deadbeef"
+
+            proof = harness.cleanup_compose_project(fake, project, {
+                "PATH": os.defpath,
+                "FAKE_DOCKER_STATE": str(state),
+                "FAKE_DOCKER_LOG": str(log),
+            })
+
+            self.assertTrue(proof["termination_proven"])
+            self.assertEqual(proof["observed_resources"]["containers"], ["container-1"])
+            self.assertEqual(json.loads(state.read_text()), {
+                "containers": [], "networks": [], "volumes": [],
+            })
+            calls = [json.loads(line) for line in log.read_text().splitlines()]
+            filters = [arg for call in calls for arg in call if arg.startswith("label=")]
+            self.assertTrue(filters)
+            self.assertEqual(set(filters), {f"label=com.docker.compose.project={project}"})
+
+    def test_supervisor_preserves_integration_state_when_resource_cleanup_is_ambiguous(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            integration_root = root / "integration"
+            integration_root.mkdir()
+            identity = integration_root / "resource-identity"
+            identity.write_text("keep for exact recovery\n")
+            failing_docker = root / "docker"
+            failing_docker.write_text("#!/bin/sh\nexit 17\n")
+            failing_docker.chmod(0o755)
+
+            with self.assertRaisesRegex(RuntimeError, "supervisor cleanup failed"):
+                harness.cleanup_supervised_resources(
+                    None,
+                    failing_docker,
+                    "aweb-channel-name-live-deadbeef",
+                    {"PATH": os.defpath},
+                    integration_root,
+                )
+
+            self.assertEqual(identity.read_text(), "keep for exact recovery\n")
+
     def test_collision_fixture_records_initialize_as_bare_aweb(self):
         fixture = ROOT / "scripts" / "e2e" / "fixtures" / "aweb-name-collision-mcp.mjs"
         with tempfile.TemporaryDirectory() as raw:
@@ -123,12 +243,18 @@ class ChannelNameLiveHarnessContractTests(unittest.TestCase):
             '"--dangerously-load-development-channels"',
             'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME',
             'XDG_STATE_HOME', 'plugin:aweb-channel:aweb-channel',
-            'detached: true', 'stopOwnedProcessGroup',
-            'process_group_termination_proven: processGroupProof.termination_proven',
+            'AWEB_CHANNEL_LIVE_INTEGRATION_ROOT', 'stopOwnedProcessTree',
+            'process_tree_termination_proven: processTreeProof.termination_proven',
             'child_cleanup_complete: true', 'server_cleanup_complete = true',
         ):
             self.assertIn(marker, source)
         self.assertNotIn("tmux", source)
+        supervisor = HARNESS_PATH.read_text()
+        for marker in (
+            "start_owned_process_group", "cleanup_owned_process_group",
+            "cleanup_compose_project", "supervisor_integration_root_cleanup_complete",
+        ):
+            self.assertIn(marker, supervisor)
 
 
 if __name__ == "__main__":
