@@ -6,6 +6,30 @@ argument-hint: [version]
 
 # Release awid Docker image
 
+> **STALE PROCESS WARNING — corrected 2026-08-05 (aweb-abbe.8).**
+> The steps below describe the retired tag-triggered process. **A tag push now
+> publishes nothing:** `.github/workflows/awid-image-release.yml` is `workflow_dispatch`-only, in three modes
+> (`stage-only` builds and inspects, `publish-continuation` publishes the exact
+> bytes a prior stage produced, `verify-only` re-inspects a released version).
+> A pushed tag runs no code at all. This is deliberate — a tag trigger meant CI
+> rebuilt from source and published whatever it produced, which is how five of
+> six aw releases shipped wrong stamps.
+>
+> **Use the driver instead:** `make release-plan` then
+> `make release-run PLAN_ID=<id> PLAN_ARTIFACT_ID=<id>`. It stages once,
+> inspects the exact bytes, publishes those same bytes, tags, verifies, and
+> seals a receipt.
+>
+> The hazards below are still true and worth reading: publication is immutable
+> (never overwrite, delete, re-stamp, or move a tag; fix forward), and
+> publication is not delivery.
+>
+> Note the driver refuses lanes whose runtime-contract edges have no measured
+> support; until the G5 measurements land (epic `aweb-abbe`), a release needs an
+> explicitly authorized exception — the precedent is recorded on `aweb-abbt`.
+> The full reduction of this skill follows once those measurements land.
+
+
 The Docker release is triggered by pushing an `awid-vX.Y.Z` tag.
 GitHub Actions runs `.github/workflows/awid-release.yml`, which runs
 `make release-awid-image-gate` against the tagged commit and only then
