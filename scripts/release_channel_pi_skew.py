@@ -1643,24 +1643,28 @@ def _atomic_write_text(path: Path, payload: str) -> None:
             ) from exc
         linked_identity = (temp_stat.st_dev, temp_stat.st_ino)
 
-        # Post-link protocol. Removing the temp BEFORE the directory fsync means
-        # one sync makes both the final link and the cleanup durable; syncing
-        # first would leave a .part entry that can survive a crash.
-        os.unlink(tmp)
+        # Post-link protocol, ENTIRELY inside the rollback boundary. Once the
+        # final link exists, every subsequent operation can fail, and any of
+        # them reporting an error while the final survives would leave output
+        # behind on a failed call. Removing the temp before the directory fsync
+        # means one sync makes both the final link and the cleanup durable;
+        # syncing first would leave a .part entry that can survive a crash.
         try:
+            os.unlink(tmp)
             _fsync_directory(path.parent)
-        except OSError as exc:
-            # The final link already exists, so reporting an error without
-            # undoing it would leave output behind on a failed call.
+        except Exception as exc:
             _rollback_link(path, tmp, linked_identity)
             raise rd.ReceiptError(
-                f"refusing {path}: directory durability failed after the commit, "
+                f"refusing {path}: the commit could not be completed durably, "
                 "so the write was rolled back"
             ) from exc
     finally:
+        # Last-resort cleanup only. The post-link path already fails closed on
+        # its own cleanup, and raising here would mask that ReceiptError with a
+        # bare OSError, losing both the diagnosis and the rollback guarantee.
         try:
             os.unlink(tmp)
-        except FileNotFoundError:
+        except OSError:
             pass
 
 
@@ -1693,13 +1697,28 @@ def _rollback_link(path: Path, tmp: Path, linked_identity) -> None:
             os.unlink(path)
         except FileNotFoundError:
             pass
+        except Exception as exc:
+            raise rd.ReceiptError(
+                f"rollback could not remove the final output {path}; failing "
+                "closed rather than reporting a refusal that left it behind"
+            ) from exc
+    # The temp removal may be what failed in the first place, so retry it here
+    # and treat a still-present temp as an uncertain outcome rather than a
+    # cosmetic leftover: a reported refusal must leave neither final nor temp.
     try:
         os.unlink(tmp)
     except FileNotFoundError:
         pass
+    except Exception as exc:
+        raise rd.ReceiptError(
+            f"rollback could not remove the temporary path {tmp}; failing "
+            "closed rather than reporting a refusal that left state behind"
+        ) from exc
     try:
         _fsync_directory(path.parent)
-    except OSError as exc:
+    except Exception as exc:
+        # Any exception type, not just OSError: an unexpected one escaping here
+        # would replace the refusal and lose the rollback guarantee with it.
         raise rd.ReceiptError(
             f"rollback of {path} could not be made durable; failing closed "
             "rather than leaving an uncertain output"
