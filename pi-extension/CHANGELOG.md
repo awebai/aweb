@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.3
+
+- Bounds half-open Channel Core SSE attempts with a local deadline and a
+  byte-inactivity watchdog derived from the server heartbeat; heartbeat comments
+  count as liveness and reconnect continues through the existing bounded backoff.
+- Removes each completed backoff's parent abort listener, preventing listener
+  accumulation across repeated reconnect cycles.
+- Preserves the 0.3.2 selected-team authentication and trust boundary: child
+  reads remain certificate-authenticated, and decrypted child output cannot
+  overwrite sender identity, signature, or trust fields.
+
 ## 0.3.2
 
 - Keeps plaintext mail with a null encrypted envelope on the authenticated

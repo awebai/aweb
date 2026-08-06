@@ -105,4 +105,84 @@ expect_checker_failure "pi-extension certificate-first resolution" \
   node "$ROOT/pi-extension/scripts/check-package-dist.mjs" \
     --dist "$TMP/pi-extension/dist/index.js"
 
-echo "self-test passed: clean TypeScript builds pass and source-level security reverts fail"
+# Restore the isolated core source before each Pi mutation. The release profile
+# must prove the package contains the local absolute deadline, the byte-liveness
+# watchdog, and the settled-backoff abort-listener cleanup rather than merely
+# trusting that the source checkout had them.
+rm -rf "$TMP/channel-core/src"
+cp -R "$ROOT/channel-core/src" "$TMP/channel-core/src"
+python3 - "$TMP/channel-core/src/api/events.ts" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+current = '''    const deadlineTimer = setTimeout(() => {
+      deadlineReached = true;
+      attemptAbort.abort(new Error("event stream local deadline reached"));
+    }, EVENT_STREAM_DEADLINE_MS);
+'''
+stale = '''    const deadlineTimer = setTimeout(() => {}, EVENT_STREAM_DEADLINE_MS);
+'''
+if text.count(current) != 1:
+    raise SystemExit(f"expected one local deadline guard, found {text.count(current)}")
+path.write_text(text.replace(current, stale), encoding="utf-8")
+PY
+build_pi_extension
+expect_checker_failure "pi-extension local stream deadline" \
+  "local event-stream deadline" \
+  node "$ROOT/pi-extension/scripts/check-package-dist.mjs" \
+    --dist "$TMP/pi-extension/dist/index.js"
+
+rm -rf "$TMP/channel-core/src"
+cp -R "$ROOT/channel-core/src" "$TMP/channel-core/src"
+python3 - "$TMP/channel-core/src/api/events.ts" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+current = '''    timer = setTimeout(() => {
+      const error = new Error("event stream heartbeat timed out");
+      cancelReader(error);
+      settle(() => reject(error));
+    }, EVENT_STREAM_INACTIVITY_MS);
+'''
+stale = '''    timer = setTimeout(() => {}, EVENT_STREAM_INACTIVITY_MS);
+'''
+if text.count(current) != 1:
+    raise SystemExit(f"expected one inactivity watchdog, found {text.count(current)}")
+path.write_text(text.replace(current, stale), encoding="utf-8")
+PY
+build_pi_extension
+expect_checker_failure "pi-extension event-stream inactivity watchdog" \
+  "event-stream byte-inactivity watchdog" \
+  node "$ROOT/pi-extension/scripts/check-package-dist.mjs" \
+    --dist "$TMP/pi-extension/dist/index.js"
+
+rm -rf "$TMP/channel-core/src"
+cp -R "$ROOT/channel-core/src" "$TMP/channel-core/src"
+python3 - "$TMP/channel-core/src/api/events.ts" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+current = '''      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+'''
+stale = '''      clearTimeout(timer);
+      resolve();
+'''
+if text.count(current) != 1:
+    raise SystemExit(f"expected one settled sleep listener cleanup, found {text.count(current)}")
+path.write_text(text.replace(current, stale), encoding="utf-8")
+PY
+build_pi_extension
+expect_checker_failure "pi-extension settled backoff cleanup" \
+  "settled backoff abort-listener cleanup" \
+  node "$ROOT/pi-extension/scripts/check-package-dist.mjs" \
+    --dist "$TMP/pi-extension/dist/index.js"
+
+echo "self-test passed: clean TypeScript builds pass and guarded source regressions fail"

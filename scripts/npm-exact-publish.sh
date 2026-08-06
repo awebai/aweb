@@ -35,9 +35,10 @@
 # bytes (channel: package-dist markers + sentinel via
 # channel/scripts/check-package-dist.mjs, plus the .mcp.json mcpServers
 # wrapper with the exact aweb-channel server name; pi:
-# pi-extension/scripts/check-package-dist.mjs markers - the
-# bundled channel-core freshness gate for pi, whose bundle does not carry
-# the channel sentinel constant - plus the five skill directories; skills:
+# pi-extension/scripts/check-package-dist.mjs markers - including the
+# authenticated trust boundary and the bundled channel-core deadline,
+# byte-inactivity watchdog, and settled-backoff listener cleanup - plus the five
+# skill directories; skills:
 # plugin version equals the package version and exactly the five skill
 # directories).
 
