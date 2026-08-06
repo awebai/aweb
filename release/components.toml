@@ -192,7 +192,7 @@ b = "server"
 journey = "make test-federation-e2e (both request directions)"
 artifacts = { a = "pypi:aweb", b = "pypi:aweb" }
 direction = "both"
-supported = { policy = "additive-only" }
+supported = { policy = "additive-only", set = "measured:93675cc26aa05661daa86bcc7f9c80503b8421f6290edd25cd0237105c060f5e", record = { authority = "local-development", artifact_id = "support:server-federation:1.26.35", digest = "6e65e483e83552f4524758437bcec72cb9c2931b6cda2b1a4b2e0f4c59944825" } }
 
 [[edge]]
 type = "runtime-contract"
