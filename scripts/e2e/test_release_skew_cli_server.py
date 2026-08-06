@@ -513,6 +513,159 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(calls[0][3]["direction"], "a-to-b")
         self.assertEqual(calls[1][3]["direction"], "b-to-a")
 
+    def test_frozen_lifecycle_persists_first_and_finishes_incomplete(self):
+        import release_skew_cli_server as subject
+
+        server_zip, server_manifest = staged_server_zip()
+        server_entry = rd.ReceiptEntry(
+            version="1.26.36", digest=server_manifest["canonical_set_digest"],
+            digest_set=server_manifest["files"],
+            lane_ref=candidate_side(
+                "server", "1.26.36", server_zip, server_manifest, "b" * 40
+            )["lane_ref"],
+        )
+        document = rd.freeze_skew_matrix(
+            edge(), moving={"server"}, staged={"server": server_entry},
+            support={"supported_versions": {
+                "aw": ["1.34.3"], "server": ["1.26.35"],
+            }},
+            published_versions={"aw": "1.34.3", "server": "1.26.35"},
+            staged_manifest_digest="f" * 64,
+        )
+        cells = rd.validate_skew_matrix_document(document)
+        calls = []
+
+        class Resolver:
+            def resolve(self, side, kind, locator, root):
+                component = side["component"]
+                path = root / ("aw" if component == "aw" else "server.whl")
+                path.write_bytes(component.encode())
+                if component == "server":
+                    wheel_name = next(
+                        name for name in side["digest_set"] if name.endswith(".whl")
+                    )
+                    evidence = {
+                        "component": "server", "version": side["version"],
+                        "kind": "candidate", "lane_ref": side["lane_ref"],
+                        "outer_sha256": side["lane_ref"]["zip_digest"].removeprefix("sha256:"),
+                        "digest_set": side["digest_set"],
+                        "payload_name": wheel_name,
+                        "payload_sha256": side["digest_set"][wheel_name],
+                        "archive_payload_sha256": side["digest_set"][wheel_name],
+                    }
+                else:
+                    names = rd.expected_lane_payload_names(side["version"])[0]
+                    selected = f"aw_{side['version']}_darwin_arm64.tar.gz"
+                    registry = {name: ("a" * 64) for name in names}
+                    evidence = {
+                        "component": "aw", "version": side["version"],
+                        "kind": kind, "registry": "github-release:awebai/aw",
+                        "tag": f"v{side['version']}",
+                        "registry_digest_set": registry,
+                        "registry_set_digest": rd.canonical_digest_of_set(registry),
+                        "checksums_sha256": registry["checksums.txt"],
+                        "checksums_registry_sha256": registry["checksums.txt"],
+                        "payload_name": selected, "outer_sha256": registry[selected],
+                        "registry_sha256": registry[selected],
+                        "checksums_recorded_sha256": registry[selected],
+                        "payload_sha256": sha(b"aw"),
+                        **aw_version_proof(side["version"]),
+                    }
+                return subject.ResolvedArtifact(
+                    component, side["version"], path, evidence
+                )
+
+        def journey(aw, server, direction, identity):
+            calls.append(direction)
+            return runtime_proof(
+                server.version, server.evidence["payload_sha256"], identity
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            harness = subject.CliServerSkewHarness(
+                resolver=Resolver(), journey=journey, evidence_root=Path(tmp)
+            )
+            with self.assertRaisesRegex(rd.ReceiptError, "before.*matrix"):
+                harness.run(cells[0])
+            matrix_path = harness.freeze_matrix(document)
+            self.assertTrue(matrix_path.is_file())
+            self.assertEqual(calls, [])
+            for value in cells:
+                harness.run(value)
+            report_paths = sorted((Path(tmp) / "cells").iterdir())
+            originals = {path: path.read_bytes() for path in report_paths}
+            for path in report_paths:
+                rewritten = json.loads(originals[path])
+                published = next(
+                    artifact for artifact in rewritten["artifacts"]
+                    if artifact["kind"] != "candidate"
+                )
+                registry = {
+                    name: "0" * 64 for name in published["registry_digest_set"]
+                }
+                published["registry_digest_set"] = registry
+                published["registry_set_digest"] = rd.canonical_digest_of_set(registry)
+                published["outer_sha256"] = registry[published["payload_name"]]
+                published["registry_sha256"] = published["outer_sha256"]
+                published["checksums_recorded_sha256"] = published["outer_sha256"]
+                published["checksums_sha256"] = registry["checksums.txt"]
+                published["checksums_registry_sha256"] = registry["checksums.txt"]
+                rewritten["report_id"] = rd.canonical_json_digest({
+                    key: value for key, value in rewritten.items()
+                    if key != "report_id"
+                })
+                path.write_text(json.dumps(
+                    rewritten, sort_keys=True, separators=(",", ":")
+                ))
+            with self.assertRaisesRegex(
+                rd.ReceiptError, "effect-time.*digest"
+            ):
+                harness.finish_matrix(document)
+            for path, original in originals.items():
+                path.write_bytes(original)
+            aggregate_path = harness.finish_matrix(document)
+            aggregate = json.loads(aggregate_path.read_text())
+            self.assertEqual(aggregate["status"], "incomplete-unanchored")
+            self.assertFalse(aggregate["support_complete"])
+            self.assertIsNone(aggregate["anchor"])
+            self.assertEqual(aggregate["matrix_id"], document["matrix_id"])
+            cell_path = next((Path(tmp) / "cells").iterdir())
+            original = cell_path.read_bytes()
+            tampered = json.loads(original)
+            tampered["runtime"]["server_version"] = "9.9.9"
+            tampered["report_id"] = rd.canonical_json_digest({
+                key: value for key, value in tampered.items() if key != "report_id"
+            })
+            cell_path.write_text(json.dumps(
+                tampered, sort_keys=True, separators=(",", ":")
+            ))
+            with self.assertRaisesRegex(rd.ReceiptError, "runtime"):
+                subject.aggregate_frozen_matrix(matrix_path, Path(tmp))
+            cell_path.write_bytes(original)
+            tampered = json.loads(original)
+            artifact = tampered["artifacts"][0]
+            registry = {name: "0" * 64 for name in artifact["registry_digest_set"]}
+            artifact["registry_digest_set"] = registry
+            artifact["registry_set_digest"] = rd.canonical_digest_of_set(registry)
+            artifact["outer_sha256"] = registry[artifact["payload_name"]]
+            artifact["registry_sha256"] = artifact["outer_sha256"]
+            artifact["checksums_recorded_sha256"] = artifact["outer_sha256"]
+            artifact["checksums_sha256"] = registry["checksums.txt"]
+            artifact["checksums_registry_sha256"] = registry["checksums.txt"]
+            tampered["report_id"] = rd.canonical_json_digest({
+                key: value for key, value in tampered.items() if key != "report_id"
+            })
+            cell_path.write_text(json.dumps(
+                tampered, sort_keys=True, separators=(",", ":")
+            ))
+            with self.assertRaisesRegex(rd.ReceiptError, "published.*differs"):
+                subject.aggregate_frozen_matrix(matrix_path, Path(tmp))
+            cell_path.write_bytes(original)
+            extra = Path(tmp) / "cells" / "stale.json"
+            extra.write_text("{}")
+            with self.assertRaisesRegex(rd.ReceiptError, "file set"):
+                subject.aggregate_frozen_matrix(matrix_path, Path(tmp))
+
     def test_runtime_server_proof_refuses_version_or_wheel_mismatch(self):
         import release_skew_cli_server as subject
 
@@ -620,7 +773,7 @@ class HarnessTests(unittest.TestCase):
             resolver=Resolver(), journey=lambda *args: None, evidence_root=None
         )
         with self.assertRaisesRegex(rd.ReceiptError, "exact CLI/server edge"):
-            harness.run(bad)
+            harness.run_evidenced(bad)
 
     def test_red_journey_preserves_exact_digests_in_failure_evidence(self):
         import release_skew_cli_server as subject
@@ -679,7 +832,37 @@ class MeasurementTests(unittest.TestCase):
         }
 
         class Harness:
+            def __init__(self):
+                self.root = tempfile.TemporaryDirectory()
+                self.events = []
+
+            def freeze_matrix(self, document):
+                self.events.append("freeze")
+
+            def finish_matrix(self, document):
+                self.events.append("finish")
+                path = Path(self.root.name) / "aggregate.json"
+                path.write_text(json.dumps({
+                    "schema": "aweb.release.runtime-support-measurement.v1",
+                    "status": "incomplete-unanchored",
+                    "support_complete": False,
+                    "anchor": None,
+                    "matrix_id": document["matrix_id"],
+                    "edge": {"a": "aw", "b": "server"},
+                    "journey": "make cli-e2e",
+                    "direction": "both",
+                }))
+                return path
+
+            def run(self, value):
+                self.events.append("run")
+                return self._evidence(value)
+
             def run_evidenced(self, value):
+                self.events.append("control")
+                return self._evidence(value)
+
+            def _evidence(self, value):
                 identity = subject.cell_document(value)
                 runtime = runtime_proof(
                     value.b["version"], "a" * 64, identity
@@ -718,14 +901,17 @@ class MeasurementTests(unittest.TestCase):
                     "artifacts": artifacts, "runtime": runtime,
                 }
 
+        harness = Harness()
         document = subject.measure_support(
             staged=staged,
+            staged_manifest_digest="f" * 64,
             supported_versions={"aw": ["1.34.2", "1.34.3"], "server": ["1.26.35"]},
             published_versions={"aw": "1.34.3", "server": "1.26.35"},
             negative_server="1.26.31",
-            harness=Harness(),
+            harness=harness,
         )
-        self.assertEqual(document["edge"], {"a": "aw", "b": "server"})
+        self.assertEqual(harness.events[0], "freeze")
+        self.assertEqual(document["status"], "incomplete-unanchored")
         self.assertEqual(document["journey"], "make cli-e2e")
         self.assertEqual(document["direction"], "both")
         self.assertEqual(document["supported_versions"]["aw"], ["1.34.2", "1.34.3"])
@@ -736,11 +922,12 @@ class MeasurementTests(unittest.TestCase):
             "rejected-dirty",
         )
         self.assertEqual({row["outcome"] for row in document["negative_control"]}, {"red"})
-        self.assertEqual({row["outcome"] for row in document["evidence"]}, {"green"})
+        self.assertEqual({row["outcome"] for row in document["cell_evidence"]}, {"green"})
         self.assertEqual(
-            {row["cell"]["direction"] for row in document["evidence"]},
+            {row["cell"]["direction"] for row in document["cell_evidence"]},
             {"a-to-b", "b-to-a"},
         )
+        harness.root.cleanup()
 
     def test_controls_refuse_dependency_resolution_drift_beyond_server_wheel(self):
         import release_skew_cli_server as subject
@@ -767,7 +954,7 @@ class MeasurementTests(unittest.TestCase):
 
         with self.assertRaisesRegex(rd.ReceiptError, "negative-only.*supported_versions"):
             subject.measure_support(
-                staged={},
+                staged={}, staged_manifest_digest="f" * 64,
                 supported_versions={"aw": ["1.34.2", "1.34.3"], "server": ["1.26.31", "1.26.35"]},
                 published_versions={"aw": "1.34.3", "server": "1.26.35"},
                 negative_server="1.26.31",
@@ -778,6 +965,15 @@ class MeasurementTests(unittest.TestCase):
         import release_skew_cli_server as subject
 
         class BrokenDownload:
+            def freeze_matrix(self, document):
+                pass
+
+            def finish_matrix(self, document):
+                raise AssertionError("negative control must refuse first")
+
+            def run(self, value):
+                raise AssertionError("negative control must refuse first")
+
             def run_evidenced(self, value):
                 evidence = {
                     "outcome": "red",
@@ -796,7 +992,7 @@ class MeasurementTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(rd.ReceiptError, "did not fail on the required.*feature"):
             subject.measure_support(
-                staged=staged,
+                staged=staged, staged_manifest_digest="f" * 64,
                 supported_versions={"aw": ["1.34.3"], "server": ["1.26.35"]},
                 published_versions={"aw": "1.34.3", "server": "1.26.35"},
                 negative_server="1.26.31",
@@ -807,6 +1003,15 @@ class MeasurementTests(unittest.TestCase):
         import release_skew_cli_server as subject
 
         class Green:
+            def freeze_matrix(self, document):
+                pass
+
+            def finish_matrix(self, document):
+                raise AssertionError("negative control must refuse first")
+
+            def run(self, value):
+                raise AssertionError("negative control must refuse first")
+
             def run_evidenced(self, value):
                 return {"outcome": "green", "cell": subject.cell_document(value), "artifacts": []}
 
@@ -819,7 +1024,7 @@ class MeasurementTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(rd.ReceiptError, "negative control.*green"):
             subject.measure_support(
-                staged=staged,
+                staged=staged, staged_manifest_digest="f" * 64,
                 supported_versions={"aw": ["1.34.3"], "server": ["1.26.35"]},
                 published_versions={"aw": "1.34.3", "server": "1.26.35"},
                 negative_server="1.26.31",
