@@ -79,6 +79,42 @@ class RunnerlessTests(unittest.TestCase):
         self.assertEqual(risk["risk"], "GitHub unavailable")
         self.assertTrue(risk["g5_deferred"])
 
+    def test_local_measurement_resolves_without_g5_deferral(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = rd.FileArtifactStore(root)
+            authority = rd.FileDigestAuthority(root)
+            edge = rd.RuntimeContractEdge(
+                a="server", b="server", journey="federation",
+                artifacts={"a": "pypi:aweb", "b": "pypi:aweb"},
+                direction="both",
+                supported={"set": "measured:local", "record": {}},
+            )
+            body = rd.canonical_json_bytes({
+                "edge": {"a": "server", "b": "server"},
+                "journey": "federation",
+                "artifacts": edge.artifacts,
+                "direction": "both",
+                "supported_versions": {"server": ["1.26.35"]},
+            })
+            digest = __import__("hashlib").sha256(body).hexdigest()
+            artifact_id = "measurement:local"
+            store.put(artifact_id, body)
+            authority.record(artifact_id, digest)
+            resolver = rd.AnchoredMeasurementAuthority(
+                store=store, authority=authority,
+                accepted_authorities=("local-development",),
+            )
+            record = {
+                "authority": "local-development",
+                "artifact_id": artifact_id,
+                "digest": digest,
+            }
+            self.assertEqual(
+                resolver.resolve(record, edge)["supported_versions"],
+                {"server": ["1.26.35"]},
+            )
+
     def test_ship_gate_status_is_informational_and_never_blocks(self):
         with mock.patch.object(rd.subprocess, "run", side_effect=OSError("offline")):
             self.assertEqual(rd.ship_gate_warning("a" * 40)["status"], "unknown")

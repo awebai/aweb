@@ -4352,14 +4352,18 @@ class AnchoredMeasurementAuthority:
     store-bytes + digest-authority capabilities as every other anchor -
     then schema-binds to the exact edge, journey, and support set."""
 
-    def __init__(self, *, store, authority):
+    def __init__(
+        self, *, store, authority,
+        accepted_authorities=("workflow-artifacts",),
+    ):
         self._store = store
         self._authority = authority
+        self._accepted_authorities = frozenset(accepted_authorities)
 
     def resolve(self, record, edge):
         if (
             not isinstance(record, dict)
-            or record.get("authority") != "workflow-artifacts"
+            or record.get("authority") not in self._accepted_authorities
             or not record.get("artifact_id")
             or not isinstance(record.get("artifact_id"), str)
             or not record.get("digest")
@@ -4367,8 +4371,8 @@ class AnchoredMeasurementAuthority:
         ):
             raise ReceiptError(
                 f"runtime-contract {edge.a}<->{edge.b}: support record must "
-                "name authority workflow-artifacts with a nonempty "
-                f"artifact_id and digest, got {record!r}"
+                f"name one of {sorted(self._accepted_authorities)} with a "
+                f"nonempty artifact_id and digest, got {record!r}"
             )
         recorded = self._authority.expected_digest(record["artifact_id"])
         if recorded is None:
@@ -7891,6 +7895,11 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     args.local_risk_authorization, defer_g5=args.defer_g5
                 )
                 providers.defer_g5 = args.defer_g5
+                providers.measurement = AnchoredMeasurementAuthority(
+                    store=store,
+                    authority=authority,
+                    accepted_authorities=("local-development",),
+                )
                 providers.lanes = parse_local_adapters(
                     args.local_adapter,
                     root=root / "local-stages",
