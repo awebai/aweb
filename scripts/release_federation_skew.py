@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import io
 import json
@@ -35,6 +36,7 @@ CONTROL_RUNTIME_SCHEMA = "aweb.release.federation-skew-control-runtime.v1"
 CELL_REPORT_SCHEMA = "aweb.release.federation-skew-cell-report.v1"
 AGGREGATE_SCHEMA = "aweb.release.federation-skew-aggregate.v1"
 CONTROL_SCHEMA = "aweb.release.federation-skew-control.v1"
+SUPPORT_SCHEMA = "aweb.runtime-support-measurement.v1"
 DEFAULT_REPORT_DIR = REPO_ROOT / ".release-runs/federation-skew"
 REQUIRED_OUTCOMES = {
     "encrypted_chat": True,
@@ -666,6 +668,103 @@ def prove_route_controls(
     }
     _atomic_report(Path(report_dir) / "control.json", report)
     return report
+
+
+def measure_current_published_support(
+    version: str,
+    *,
+    output: Path,
+    store_root: Path,
+    artifact_id: str,
+    resolver=None,
+    journey=run_federation_journey,
+) -> dict:
+    """Measure both federation directions from exact published registry bytes.
+
+    This is the runnerless support-declaration path: it reuses the existing
+    wheel journey, records canonical evidence in the existing local immutable
+    store/digest authority, and creates no workflow artifact or anchor.
+    """
+
+    if not re.fullmatch(r"\d+(?:\.\d+)+", version or ""):
+        raise release_driver.ReceiptError(
+            f"federation support version must be dotted numeric, got {version!r}"
+        )
+    if not artifact_id or artifact_id.strip() != artifact_id:
+        raise release_driver.ReceiptError(
+            "federation support artifact id must be nonempty and canonical"
+        )
+    resolver = resolver or WheelResolver()
+    wheel = resolver.published(version)
+    side = {"component": "server", "kind": "published", "version": version}
+    resolved = _resolved_identity(wheel, side, "published")
+    cells = []
+    dependency_digests = set()
+    for direction in ("a-to-b", "b-to-a"):
+        cell_id = _identity({
+            "artifact": _wheel_identity(wheel),
+            "direction": direction,
+            "journey": JOURNEY,
+        })
+        with tempfile.TemporaryDirectory(prefix="aweb-fed-current-support-") as tmp:
+            environment, result = _run_reserved_journey(
+                Path(tmp),
+                wheel,
+                wheel,
+                direction=direction,
+                cell_id=cell_id,
+                journey=journey,
+            )
+        combined = (result.stdout or "") + (result.stderr or "")
+        if result.returncode != 0:
+            raise release_driver.ReceiptError(
+                f"current federation support {direction} red: "
+                f"exit={result.returncode}, output={combined[-2000:]}"
+            )
+        observation = _parse_observation(combined, environment)
+        for runtime in (observation["alpha"], observation["beta"]):
+            dependency_digests.add(_identity(_dependency_inventory(runtime)))
+        cells.append({
+            "cell_id": cell_id,
+            "direction": direction,
+            "observation": observation,
+            "observation_sha256": _identity(observation),
+            "resolved": {"alpha": resolved, "beta": resolved},
+        })
+    if len(dependency_digests) != 1:
+        raise release_driver.ReceiptError(
+            "current federation support dependency inventories differ across directions"
+        )
+
+    document = {
+        "artifacts": {"a": "pypi:aweb", "b": "pypi:aweb"},
+        "cells": cells,
+        "completeness": "recorded-local-authority",
+        "direction": "both",
+        "edge": {"a": "server", "b": "server"},
+        "journey": JOURNEY,
+        "published_identity": resolved,
+        "schema": SUPPORT_SCHEMA,
+        "supported_versions": {"server": [version]},
+    }
+    document["measurement_id"] = _identity(document)
+    digest = _atomic_report(Path(output), document)
+    body = Path(output).read_bytes()
+    store = release_driver.FileArtifactStore(Path(store_root))
+    authority = release_driver.FileDigestAuthority(Path(store_root))
+    store.put(artifact_id, body)
+    authority.record(artifact_id, digest)
+    return {
+        "artifact_id": artifact_id,
+        "digest": digest,
+        "measurement": document,
+        "record": {
+            "authority": "local-development",
+            "artifact_id": artifact_id,
+            "digest": digest,
+        },
+        "set": f"measured:{document['measurement_id']}",
+    }
 
 
 def _expected_observation(environment: dict[str, str]) -> dict:
@@ -1337,3 +1436,36 @@ class FederationSkewHarness:
             raise release_driver.ReceiptError("federation aggregate reload drifted")
         self._finished = True
         return path
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="verb", required=True)
+    measure = subparsers.add_parser(
+        "measure-current",
+        help="run both federation directions from one exact published server wheel",
+    )
+    measure.add_argument("--version", required=True)
+    measure.add_argument("--output", required=True)
+    measure.add_argument("--store-root", required=True)
+    measure.add_argument("--artifact-id", required=True)
+    args = parser.parse_args(argv)
+    if args.verb == "measure-current":
+        result = measure_current_published_support(
+            args.version,
+            output=Path(args.output),
+            store_root=Path(args.store_root),
+            artifact_id=args.artifact_id,
+        )
+        print(json.dumps({
+            "artifact_id": result["artifact_id"],
+            "digest": result["digest"],
+            "measurement_id": result["measurement"]["measurement_id"],
+            "set": result["set"],
+        }, sort_keys=True))
+        return 0
+    raise AssertionError(args.verb)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
