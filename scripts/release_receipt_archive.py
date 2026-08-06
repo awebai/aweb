@@ -694,7 +694,28 @@ class GitBranchArchive:
         "GIT_COMMITTER_EMAIL": "release-archive@aweb.invalid",
         "GIT_CONFIG_GLOBAL": "/dev/null",
         "GIT_CONFIG_SYSTEM": "/dev/null",
+        # GIT_CONFIG_GLOBAL/SYSTEM do NOT neutralize GIT_CONFIG_COUNT/KEY/VALUE:
+        # those inject configuration directly, so an ambient
+        # url.<attacker>.insteadOf rewrite would redirect the canonical remote.
+        "GIT_CONFIG_COUNT": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+        # ext:: runs an arbitrary command as a transport.
+        "GIT_ALLOW_PROTOCOL": "file:git:http:https:ssh",
     }
+
+    # The environment is BUILT, not inherited. An allow-list is the only form
+    # that stays correct as git grows new configuration entry points: a
+    # deny-list silently readmits whatever it has not heard of yet.
+    _PRESERVED_ENV = (
+        "PATH",
+        "HOME",           # ~/.ssh/known_hosts; global git config is /dev/null
+        "SSH_AUTH_SOCK",  # agent auth for the canonical ssh remote
+        "LANG",
+        "LC_ALL",
+        "TZ",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+    )
 
     def __init__(self, *, remote: str, branch: str):
         self._remote = _bounded_identity(remote, "archive remote")
@@ -714,7 +735,13 @@ class GitBranchArchive:
     def _sanitized_env(cls):
         import os
 
-        return {**os.environ, **cls._ENV}
+        env = {
+            name: os.environ[name]
+            for name in cls._PRESERVED_ENV
+            if name in os.environ
+        }
+        env.update(cls._ENV)
+        return env
 
     def _git_raw(self, *args, cwd=None, input_bytes=None):
         return subprocess.run(
