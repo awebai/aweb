@@ -1706,6 +1706,108 @@ class AtomicOutputTests(unittest.TestCase):
             self.assertEqual(out.read_text(), "payload")
             self.assertFalse(part.exists())
 
+    def test_post_link_temp_unlink_failure_rolls_back(self):
+        """The reviewer's kill: the temp unlink sat OUTSIDE the rollback
+        boundary, so its failure reported an error while the final survived."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            part = Path(tmp) / "out.json.part"
+            real_unlink = os.unlink
+            state = {"failed": False}
+
+            def failing_unlink(target):
+                # Fail the FIRST post-link temp removal only; the rollback's
+                # retry must then succeed, leaving neither final nor temp.
+                if str(target) == str(part) and not state["failed"]:
+                    state["failed"] = True
+                    raise OSError("temp unlink failed")
+                return real_unlink(target)
+
+            with unittest.mock.patch.object(os, "unlink", failing_unlink):
+                with self.assertRaisesRegex(rd.ReceiptError, "rolled back"):
+                    skew._atomic_write_text(out, "payload")
+            self.assertTrue(state["failed"], "the injection must have fired")
+            self.assertFalse(out.exists(), "no final may survive a refusal")
+            self.assertFalse(part.exists(), "no temp may survive a refusal")
+
+    def test_post_link_unlink_failure_preserves_a_racers_file(self):
+        """Ownership rule holds on the unlink path too, not just fsync."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            part = Path(tmp) / "out.json.part"
+            real_unlink = os.unlink
+            state = {"failed": False}
+
+            def failing_unlink(target):
+                if str(target) == str(part) and not state["failed"]:
+                    state["failed"] = True
+                    real_unlink(out)
+                    out.write_text("racer wins")
+                    raise OSError("temp unlink failed")
+                return real_unlink(target)
+
+            with unittest.mock.patch.object(os, "unlink", failing_unlink):
+                with self.assertRaises(rd.ReceiptError):
+                    skew._atomic_write_text(out, "payload")
+            self.assertEqual(out.read_text(), "racer wins")
+
+    def test_unremovable_temp_fails_closed(self):
+        """If cleanup cannot be completed, refuse loudly rather than report a
+        refusal that quietly left state behind."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            part = Path(tmp) / "out.json.part"
+            real_unlink = os.unlink
+
+            def always_failing(target):
+                if str(target) == str(part):
+                    raise OSError("temp is unremovable")
+                return real_unlink(target)
+
+            with unittest.mock.patch.object(os, "unlink", always_failing):
+                with self.assertRaisesRegex(rd.ReceiptError, "failing"):
+                    skew._atomic_write_text(out, "payload")
+            self.assertFalse(out.exists(), "the final must still be rolled back")
+
+    def test_any_post_link_error_is_translated_and_rolled_back(self):
+        """Not just OSError: any post-link exception must hit the same
+        ownership-scoped rollback and be reported as a ReceiptError."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+
+            def exploding(directory):
+                raise RuntimeError("something unexpected after the link")
+
+            with unittest.mock.patch.object(
+                skew, "_fsync_directory", exploding
+            ):
+                with self.assertRaises(rd.ReceiptError):
+                    skew._atomic_write_text(out, "payload")
+            self.assertFalse(out.exists())
+            self.assertFalse((Path(tmp) / "out.json.part").exists())
+
+    def test_unremovable_final_fails_closed(self):
+        """The rollback cannot remove the final it owns. That is the worst
+        case: refuse loudly rather than report a refusal with output present."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out.json"
+            real_unlink = os.unlink
+
+            def failing_final(target):
+                if str(target) == str(out):
+                    raise OSError("final is unremovable")
+                return real_unlink(target)
+
+            def bad_sync(directory):
+                raise OSError("durability failed")
+
+            with unittest.mock.patch.object(os, "unlink", failing_final), \
+                    unittest.mock.patch.object(skew, "_fsync_directory", bad_sync):
+                with self.assertRaisesRegex(
+                    rd.ReceiptError, "could not remove the final output"
+                ):
+                    skew._atomic_write_text(out, "payload")
+
     def test_successful_write_commits_exact_bytes_and_cleans_up(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "out.json"
