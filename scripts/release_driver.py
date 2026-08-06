@@ -4568,6 +4568,47 @@ def _attempts(handle, store, authority, component: str,
     return records
 
 
+def _require_authorization_id_continuity(
+    *, handle, authorization, authorization_digest, store, authority
+) -> None:
+    """One human decision id has exactly one canonical byte identity.
+
+    issued_at and other signed/recorded fields may change a document digest,
+    but they must never mint a second attempt budget for the same one-shot
+    authorization_id.
+    """
+    authorization_id = authorization["authorization_id"]
+    observed: set[str] = set()
+    prefix = f"adopted-preplan-authorization:{handle.plan_id}:"
+    for artifact_id in authority.recorded_ids():
+        if not artifact_id.startswith(prefix):
+            continue
+        document = _load_canonical_authority_document(
+            store, authority, artifact_id
+        )
+        _, digest = _load_adopted_authorization(
+            canonical_json_bytes(document), handle=handle
+        )
+        if document["authorization_id"] == authorization_id:
+            observed.add(digest)
+    for component in handle.exception.components:
+        for _, attempt in _attempts(handle, store, authority, component):
+            if attempt["authorization_id"] == authorization_id:
+                observed.add(attempt["authorization_digest"])
+    for _, transition in _successful_transitions(
+        handle, store, authority
+    ).values():
+        if transition["authorization_id"] == authorization_id:
+            observed.add(transition["authorization_digest"])
+    conflicts = observed - {authorization_digest}
+    if conflicts:
+        raise ReceiptError(
+            f"authorization_id {authorization_id!r} is already bound to "
+            f"different canonical bytes/digest(s) {sorted(conflicts)}; a "
+            "spent one-shot decision requires a genuinely distinct id"
+        )
+
+
 def _anchor_recovery_transition(
     *, handle, component, continuation, attempt_id, authorization,
     authorization_digest, public, store, authority,
@@ -4696,6 +4737,13 @@ def execute_adopted_preplan_recovery(
     authorization_artifact_id = (
         f"adopted-preplan-authorization:{handle.plan_id}:"
         f"{authorization_digest}"
+    )
+    _require_authorization_id_continuity(
+        handle=handle,
+        authorization=authorization,
+        authorization_digest=authorization_digest,
+        store=store,
+        authority=authority,
     )
     actions = {item["component"]: item for item in authorization["actions"]}
 

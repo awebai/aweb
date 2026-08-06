@@ -629,6 +629,38 @@ class AdoptedPreplanStateMachineTests(unittest.TestCase):
             self.execute(handle, authorization)
         self.assertEqual(self.surface.publish_calls, [])
 
+    def test_same_authorization_id_cannot_be_reencoded_for_a_retry(self):
+        handle = self.prepare()
+        authorization = self.authorization(handle)
+        self.surface.publish_mode["channel"] = "failure"
+        with self.assertRaises(rd.ReceiptError):
+            self.execute(handle, authorization)
+        self.assertEqual(self.surface.publish_calls, ["channel"])
+
+        reencoded = copy.deepcopy(authorization)
+        reencoded["issued_at"] = "2026-08-06T00:00:01Z"
+        self.surface.publish_mode["channel"] = "success"
+        with self.assertRaises(rd.ReceiptError) as caught:
+            self.execute(handle, reencoded)
+        self.assertIn("authorization_id", str(caught.exception))
+        self.assertEqual(
+            self.surface.publish_calls, ["channel"],
+            "same human decision identity must not dispatch under new bytes",
+        )
+
+    def test_genuinely_distinct_authorization_id_can_authorize_a_new_attempt(self):
+        handle = self.prepare()
+        first = self.authorization(handle, authorization_id="decision-one")
+        self.surface.publish_mode["channel"] = "failure"
+        with self.assertRaises(rd.ReceiptError):
+            self.execute(handle, first)
+        second = self.authorization(handle, authorization_id="decision-two")
+        second["issued_at"] = "2026-08-06T00:00:02Z"
+        self.surface.publish_mode["channel"] = "success"
+        receipt = self.execute(handle, second)
+        self.assertEqual(self.surface.publish_calls, ["channel", "channel", "pi"])
+        self.assertEqual(receipt.document["authorization_id"], "decision-two")
+
     def test_failure_stops_other_lane_and_same_authorization_is_spent(self):
         handle = self.prepare()
         authorization = self.authorization(handle)
