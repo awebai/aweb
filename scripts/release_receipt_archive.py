@@ -1278,32 +1278,23 @@ def restore_release_set(
         )
     manifest = rd.load_staged_manifest(
         inner(inventory["staged_manifest"]), expected_digest=manifest_id[2])
-    if manifest.get("frozen_plan_id") != frozen_plan_id:
-        raise ReceiptError(
-            "release-set staged manifest binds a different frozen plan"
-        )
-    if manifest.get("source_sha") != plan.source_sha:
-        raise ReceiptError(
-            f"release-set staged manifest binds source "
-            f"{manifest.get('source_sha')!r}, not the frozen plan's "
-            f"{plan.source_sha!r}"
-        )
+    rd.validate_staged_manifest(
+        manifest,
+        plan=plan.plan,
+        graph=plan.graph,
+        frozen_plan_id=frozen_plan_id,
+        source_sha=plan.source_sha,
+    )
     receipt = rd.load_sealed_receipt(
         inner(inventory["receipt"]), expected_digest=receipt_id[2])
-    if getattr(receipt, "frozen_plan_id", None) != frozen_plan_id:
-        raise ReceiptError(
-            "restored receipt binds a frozen plan outside this release set"
-        )
-    if getattr(receipt, "staged_manifest_id", None) != staged_manifest_id:
-        raise ReceiptError(
-            "restored receipt binds a staged manifest outside this release set"
-        )
-    receipt_source = getattr(receipt, "source_sha", None)
-    if receipt_source is not None and receipt_source != plan.source_sha:
-        raise ReceiptError(
-            f"restored receipt binds source {receipt_source!r}, not the frozen "
-            f"plan's {plan.source_sha!r}"
-        )
+    rd.validate_final_receipt(
+        receipt,
+        plan=plan.plan,
+        graph=plan.graph,
+        frozen_plan_id=frozen_plan_id,
+        staged_manifest_id=staged_manifest_id,
+        source_sha=plan.source_sha,
+    )
 
     validate_transition_set(
         documents,
@@ -1377,14 +1368,16 @@ def validate_transition_set(
         # component and whose sequences still satisfy 1..n. The release path
         # anchors one published transition per moving component, so its absence
         # is the discriminating evidence.
-        published = {
-            d["component"] for d in documents if d["kind"] == "published"
-        }
-        if published != expected:
+        published = [
+            d["component"] for d in documents
+            if d["kind"] == "published" and d["entry"].get("phase") == "published"
+        ]
+        if len(documents) != len(expected) or set(published) != expected or len(
+            published
+        ) != len(set(published)):
             raise ReceiptError(
-                "transition set has no published transition for "
-                f"{sorted(expected - published)}; a set missing the effect "
-                "anchor is incomplete even when its sequences are contiguous"
+                "transition set must contain exactly one published transition "
+                "per moving component and no other kind or phase"
             )
     # The staged manifest declares a delivery OBLIGATION and carries no proof,
     # and an early-kind transition has not earned one yet, so staged identity is
