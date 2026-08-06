@@ -30,16 +30,16 @@ export class APIClient {
       && this.auth.signingKey.length > 0;
   }
 
-  async get<T>(path: string): Promise<T> {
-    return this.request("GET", path);
+  async get<T>(path: string, signal?: AbortSignal): Promise<T> {
+    return this.request("GET", path, undefined, false, signal);
   }
 
-  async getFresh<T>(path: string): Promise<T> {
-    return this.request("GET", path, undefined, true);
+  async getFresh<T>(path: string, signal?: AbortSignal): Promise<T> {
+    return this.request("GET", path, undefined, true, signal);
   }
 
-  async post<T>(path: string, body?: unknown): Promise<T> {
-    return this.request("POST", path, body);
+  async post<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+    return this.request("POST", path, body, false, signal);
   }
 
   private async request<T>(
@@ -47,6 +47,7 @@ export class APIClient {
     path: string,
     body?: unknown,
     noCache: boolean = false,
+    signal?: AbortSignal,
   ): Promise<T> {
     const url = this.baseURL + path;
     const bodyText = body === undefined ? "" : JSON.stringify(body);
@@ -55,11 +56,12 @@ export class APIClient {
       ...this.authHeaders(path, bodyText),
     };
     if (noCache) headers["Cache-Control"] = "no-cache";
+    const timeout = AbortSignal.timeout(30_000);
     const init: RequestInit = {
       method,
       headers,
       redirect: "error",
-      signal: AbortSignal.timeout(30_000),
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     };
 
     if (body !== undefined) {
