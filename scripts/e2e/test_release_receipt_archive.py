@@ -1858,7 +1858,89 @@ class GitEnvironmentRedirectTests(unittest.TestCase):
         self.assertEqual(sanitized.get("GIT_CONFIG_GLOBAL"), "/dev/null")
         self.assertEqual(sanitized.get("GIT_CONFIG_SYSTEM"), "/dev/null")
         self.assertEqual(sanitized.get("GIT_TERMINAL_PROMPT"), "0")
-        self.assertIn("PATH", sanitized)
+        self.assertEqual(sanitized.get("PATH"), archive.SYSTEM_PATH)
+        self.assertTrue(
+            sanitized.get("GIT_SSH_COMMAND", "").startswith(
+                archive.SYSTEM_SSH + " "),
+            "Git must dispatch SSH through the fixed reviewed executable")
+
+    def test_hostile_path_fake_git_cannot_replace_reviewed_git(self):
+        """The attack is live: bare `git` resolves to the fake, while both
+        production Git surfaces execute the fixed reviewed binary and return
+        the real local remote identity without touching the marker."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "fake-bin"
+            fake_bin.mkdir()
+            marker = root / "fake-git-ran"
+            fake = fake_bin / "git"
+            fake.write_text(
+                "#!/bin/sh\n"
+                f"echo invoked >> {marker}\n"
+                "printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\t"
+                "refs/heads/main\\n'\n")
+            fake.chmod(0o755)
+
+            attack = subprocess.run(
+                ["git", "--version"], env={"PATH": str(fake_bin)},
+                capture_output=True)
+            self.assertEqual(attack.returncode, 0)
+            self.assertTrue(marker.exists(),
+                            "control: hostile PATH must execute the fake git")
+            marker.unlink()
+
+            remote = root / "remote.git"
+            source = root / "source"
+            subprocess.run(
+                [archive.SYSTEM_GIT, "init", "--bare", str(remote)],
+                capture_output=True, check=True)
+            subprocess.run(
+                [archive.SYSTEM_GIT, "init", "--initial-branch", "main",
+                 str(source)], capture_output=True, check=True)
+            (source / "index").write_text("reviewed")
+            git_env = {
+                **os.environ,
+                "GIT_AUTHOR_NAME": "reviewed-control",
+                "GIT_AUTHOR_EMAIL": "reviewed@example.invalid",
+                "GIT_COMMITTER_NAME": "reviewed-control",
+                "GIT_COMMITTER_EMAIL": "reviewed@example.invalid",
+            }
+            subprocess.run(
+                [archive.SYSTEM_GIT, "add", "index"], cwd=source,
+                env=git_env, capture_output=True, check=True)
+            subprocess.run(
+                [archive.SYSTEM_GIT, "commit", "-m", "reviewed"], cwd=source,
+                env=git_env, capture_output=True, check=True)
+            expected = subprocess.run(
+                [archive.SYSTEM_GIT, "rev-parse", "HEAD"], cwd=source,
+                capture_output=True, check=True).stdout.decode().strip()
+            subprocess.run(
+                [archive.SYSTEM_GIT, "push", str(remote),
+                 "HEAD:refs/heads/main"], cwd=source,
+                capture_output=True, check=True)
+
+            saved_path = os.environ.get("PATH")
+            os.environ["PATH"] = str(fake_bin)
+            reader = None
+            transport = None
+            try:
+                reader = archive._GitReader(str(remote))
+                self.assertEqual(reader.ls_remote("refs/heads/main"), expected)
+                transport = archive.GitBranchArchive(
+                    remote=str(remote), branch="main")
+                self.assertEqual(transport.fetch_head(), expected)
+            finally:
+                if transport is not None:
+                    transport.close()
+                if reader is not None:
+                    reader.close()
+                if saved_path is None:
+                    os.environ.pop("PATH", None)
+                else:
+                    os.environ["PATH"] = saved_path
+            self.assertFalse(
+                marker.exists(),
+                "reviewed-index and archive Git must not execute PATH's fake")
 
     def test_reviewed_index_reader_uses_the_same_sanitized_environment(self):
         """Both surfaces the reviewer named must be covered, not just one."""
