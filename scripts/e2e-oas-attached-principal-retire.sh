@@ -1226,13 +1226,20 @@ run_oas_in "$FIXTURE_REPO" trust aweb.identity-attach --dir "$FIXTURE_REPO" > "$
   git add .
   git commit -qm "onboard the external OAS workspace"
 )
-run_oas_in "$FIXTURE_REPO" doctor "$FIXTURE_REPO" --soul proof-resident --json > "$EVIDENCE/oas-doctor-attach.json"
-python3 - "$EVIDENCE/oas-doctor-attach.json" <<'PY'
+if run_oas_in "$FIXTURE_REPO" doctor "$FIXTURE_REPO" --soul proof-resident --json \
+  > "$EVIDENCE/oas-doctor-attach.json"; then
+  OAS_DOCTOR_STATUS=0
+else
+  OAS_DOCTOR_STATUS=$?
+fi
+python3 "$PROOF_HELPER" normalize-oas-doctor \
+  --input "$EVIDENCE/oas-doctor-attach.json" \
+  --output "$EVIDENCE/oas-doctor-attach-result.json"
+[[ "$OAS_DOCTOR_STATUS" == "0" ]] \
+  || fail "OAS doctor exited $OAS_DOCTOR_STATUS despite returning a structured result"
+python3 - "$EVIDENCE/oas-doctor-attach-result.json" <<'PY'
 import json, sys
-text = open(sys.argv[1], encoding="utf-8").read()
-doc, _ = json.JSONDecoder().raw_decode(text[text.find("{"):])
-if doc.get("schemaVersion") == 1:
-    doc = doc["result"]
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
 assert doc["layers"]["messaging"]["integration"] == "aweb.identity-attach", doc
 assert any(cap["id"] == "aweb.identity-attach" and cap["trust"]["trusted"] for cap in doc["capabilities"]), doc
 PY

@@ -252,16 +252,52 @@ def _content_text(content: Any) -> str:
     )
 
 
-def _json_object_from_text(text: str) -> dict[str, Any]:
+def parse_oas_json_object(text: str, *, source: str) -> dict[str, Any]:
     start = text.find("{")
     if start < 0:
-        raise ValueError("tool result contains no JSON object")
-    document, _ = json.JSONDecoder().raw_decode(text[start:])
+        raise ValueError(f"{source} contains no JSON object")
+    try:
+        document, _ = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{source} contains invalid JSON: {error.msg}") from error
     if not isinstance(document, dict):
-        raise ValueError("tool result JSON is not an object")
-    if document.get("schemaVersion") == 1 and isinstance(document.get("result"), dict):
-        return document["result"]
+        raise ValueError(f"{source} JSON is not an object")
+    if document.get("schemaVersion") == 1:
+        if isinstance(document.get("result"), dict):
+            return document["result"]
+        error = document.get("error")
+        if document.get("ok") is False or isinstance(error, (dict, str)):
+            if isinstance(error, dict):
+                code = error.get("code") or "unknown"
+                message = error.get("message") or "no error message"
+            else:
+                code = "unknown"
+                message = error or "no error message"
+            raise ValueError(f"{source} returned OAS error {code}: {message}")
     return document
+
+
+def parse_oas_doctor_output(text: str, *, source: str) -> dict[str, Any]:
+    document = parse_oas_json_object(text, source=source)
+    if not isinstance(document.get("layers"), dict) or not isinstance(
+        document.get("capabilities"), list
+    ):
+        raise ValueError(f"{source} has no structured doctor result")
+    return document
+
+
+def write_oas_doctor_output(input_value: str, output_value: str) -> None:
+    source = Path(input_value)
+    document = parse_oas_doctor_output(
+        source.read_text(encoding="utf-8"), source=f"OAS doctor output {source}"
+    )
+    Path(output_value).write_text(
+        json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def _json_object_from_text(text: str) -> dict[str, Any]:
+    return parse_oas_json_object(text, source="tool result")
 
 
 def _resident_session_entries(session_path: str, expected_session_cwd: str) -> list[dict[str, Any]]:
@@ -485,6 +521,10 @@ def main() -> int:
     sensitive_parser.add_argument("--principal-snapshot", required=True)
     sensitive_parser.add_argument("--instance", required=True)
 
+    doctor_parser = subparsers.add_parser("normalize-oas-doctor")
+    doctor_parser.add_argument("--input", required=True)
+    doctor_parser.add_argument("--output", required=True)
+
     readiness_parser = subparsers.add_parser("verify-resident-readiness")
     readiness_parser.add_argument("--session", required=True)
     readiness_parser.add_argument("--expected-address", required=True)
@@ -521,6 +561,8 @@ def main() -> int:
         scan_instance(args.principal_snapshot, args.instance)
     elif args.command == "scan-sensitive-material":
         scan_sensitive_material(args.principal_snapshot, args.instance)
+    elif args.command == "normalize-oas-doctor":
+        write_oas_doctor_output(args.input, args.output)
     elif args.command in ("verify-resident-readiness", "verify-resident-session"):
         common = {
             "expected_address": args.expected_address,

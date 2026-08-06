@@ -23,8 +23,10 @@ export const DEFAULT_DELIVERY_STORE_PATH = join(homedir(), ".config", "aw", "cha
 export const DEFAULT_UNDELIVERED_LOG_PATH = join(homedir(), ".config", "aw", "channel-undelivered.jsonl");
 const MAX_DISPATCHED_IDS = 2000;
 const MAX_DELIVERED_IDS = 5000;
+const PROMOTED_DELIVERY_KEY_PREFIX = "__aweb_promoted__:";
 const DELIVERED_IDS_TTL_MS = 24 * 60 * 60 * 1000;
 const MAIL_FETCH_LIMIT = 200;
+const MAIL_STARTUP_CATCH_UP_LIMIT = 20;
 const CHAT_FETCH_LIMIT = 2000;
 const APP_EVENT_SUMMARY_SEPARATOR = " — ";
 const MAX_APP_EVENT_VALUE_LENGTH = 160;
@@ -46,6 +48,13 @@ export interface ChannelAwakening {
   meta: Record<string, string>;
   deliveryIntent: ChannelDeliveryIntent;
 }
+
+interface PendingMailDelivery {
+  key: string;
+  messageID: string;
+}
+
+const pendingMailDeliveries = new WeakMap<Set<string>, Map<string, PendingMailDelivery>>();
 
 export interface ChannelLoopOptions {
   client: APIClient;
@@ -111,10 +120,15 @@ export async function loadSessionPinStore(
   }
 }
 
+interface DeliveryStoreEntry {
+  timestamp: number;
+  promoted: boolean;
+}
+
 export class DeliveryStore {
   private constructor(
     private readonly path: string,
-    private entries: Map<string, number>,
+    private entries: Map<string, DeliveryStoreEntry>,
   ) {}
 
   static async load(path: string = DEFAULT_DELIVERY_STORE_PATH): Promise<DeliveryStore> {
@@ -124,7 +138,7 @@ export class DeliveryStore {
   // Read the on-disk marks, dropping expired ones. Only an absent file is a
   // fresh empty store; unreadable or malformed state must remain visible so a
   // later save cannot silently overwrite every durable delivery mark.
-  private static async readEntries(path: string): Promise<Map<string, number>> {
+  private static async readEntries(path: string): Promise<Map<string, DeliveryStoreEntry>> {
     let content: string;
     try {
       content = await readFile(path, "utf-8");
@@ -144,17 +158,30 @@ export class DeliveryStore {
       return DeliveryStore.quarantine(path, "it does not contain a JSON object");
     }
 
-    const entries = new Map<string, number>();
+    const entries = new Map<string, DeliveryStoreEntry>();
+    const promoted = new Map<string, number>();
     const now = Date.now();
-    for (const [key, value] of Object.entries(raw)) {
+    for (const [storedKey, value] of Object.entries(raw)) {
       let timestamp: number;
       if (typeof value === "number") timestamp = value;
       else if (typeof value === "string") timestamp = Date.parse(value);
       else timestamp = Number.NaN;
       if (!Number.isFinite(timestamp)) {
-        return DeliveryStore.quarantine(path, `mark ${JSON.stringify(key)} has an invalid timestamp`);
+        return DeliveryStore.quarantine(path, `mark ${JSON.stringify(storedKey)} has an invalid timestamp`);
       }
-      if (now - timestamp <= DELIVERED_IDS_TTL_MS) entries.set(key, timestamp);
+      if (now - timestamp > DELIVERED_IDS_TTL_MS) continue;
+      if (storedKey.startsWith(PROMOTED_DELIVERY_KEY_PREFIX)) {
+        promoted.set(storedKey.slice(PROMOTED_DELIVERY_KEY_PREFIX.length), timestamp);
+      } else {
+        entries.set(storedKey, { timestamp, promoted: false });
+      }
+    }
+    for (const [key, promotedAt] of promoted) {
+      const entry = entries.get(key);
+      if (entry) {
+        entry.timestamp = Math.max(entry.timestamp, promotedAt);
+        entry.promoted = true;
+      }
     }
     return entries;
   }
@@ -186,8 +213,18 @@ export class DeliveryStore {
     return this.entries.has(key);
   }
 
+  isLegacy(key: string): boolean {
+    this.prune();
+    return this.entries.get(key)?.promoted === false;
+  }
+
+  hasLegacyEntries(): boolean {
+    this.prune();
+    return [...this.entries.values()].some((entry) => !entry.promoted);
+  }
+
   mark(key: string): void {
-    this.entries.set(key, Date.now());
+    this.entries.set(key, { timestamp: Date.now(), promoted: true });
     this.prune();
   }
 
@@ -227,7 +264,14 @@ export class DeliveryStore {
       const merged = await DeliveryStore.readEntries(this.path);
       for (const [key, value] of own) {
         const existing = merged.get(key);
-        if (existing === undefined || value > existing) merged.set(key, value);
+        if (existing === undefined) {
+          merged.set(key, value);
+        } else {
+          merged.set(key, {
+            timestamp: Math.max(existing.timestamp, value.timestamp),
+            promoted: existing.promoted || value.promoted,
+          });
+        }
       }
       this.entries = merged;
       this.prune();
@@ -239,9 +283,16 @@ export class DeliveryStore {
   }
 
   private async writeAtomic(): Promise<void> {
-    const payload = Object.fromEntries(
-      [...this.entries.entries()].map(([key, value]) => [key, new Date(value).toISOString()]),
-    );
+    // Keep every value in the historical timestamp-string shape so an older
+    // channel process sharing this store can still load and deduplicate it. A
+    // reserved companion key carries the new promoted state; old readers simply
+    // retain that harmless extra mark instead of quarantining the whole store.
+    const payload: Record<string, string> = {};
+    for (const [key, value] of this.entries) {
+      const timestamp = new Date(value.timestamp).toISOString();
+      payload[key] = timestamp;
+      if (value.promoted) payload[`${PROMOTED_DELIVERY_KEY_PREFIX}${key}`] = timestamp;
+    }
     const data = `${JSON.stringify(payload, null, 2)}\n`;
     // O_EXCL temp + atomic rename, symlink-safe, mode 0600 — matching the pin
     // store (aajc.2), so a crash mid-write cannot corrupt the store.
@@ -265,10 +316,10 @@ export class DeliveryStore {
   private prune(): void {
     const now = Date.now();
     for (const [key, value] of this.entries) {
-      if (now - value > DELIVERED_IDS_TTL_MS) this.entries.delete(key);
+      if (now - value.timestamp > DELIVERED_IDS_TTL_MS) this.entries.delete(key);
     }
     if (this.entries.size <= MAX_DELIVERED_IDS) return;
-    const sorted = [...this.entries.entries()].sort((a, b) => a[1] - b[1]);
+    const sorted = [...this.entries.entries()].sort((a, b) => a[1].timestamp - b[1].timestamp);
     for (const [key] of sorted.slice(0, this.entries.size - MAX_DELIVERED_IDS)) {
       this.entries.delete(key);
     }
@@ -360,15 +411,18 @@ export async function startChannelLoop(options: ChannelLoopOptions & { teamID: s
       teamID: options.teamID,
     }) : undefined
   );
+  const wiredOptions = { ...options, deliveryStore, undeliveredLog, localDecrypt };
+  const log = options.log || (() => {});
+  await catchUpLegacyMail(wiredOptions, dispatched, log);
   await consumeAgentEvents(
     // UNGUARDED: no test covers this function, so removing any dependency from
     // this spread silently disables it rather than failing. Deleting
     // undeliveredLog here leaves all 281 tests passing while the channel stops
     // recording dropped messages entirely. See aweb-aayl.
-    { ...options, deliveryStore, undeliveredLog, localDecrypt },
+    wiredOptions,
     dispatched,
     streamAgentEvents(options.client, options.signal, options.onStreamState),
-    options.log || (() => {}),
+    log,
   );
 }
 
@@ -421,6 +475,7 @@ export async function dispatchAgentEvent(
   event: AgentEvent,
   log: (message: string) => void = (message) => console.error(message),
 ): Promise<void> {
+  const promotable = [...(pendingMailDeliveries.get(dispatched)?.values() || [])];
   switch (event.type) {
     case "mail_message":
       await dispatchMailEvent(options, dispatched, event, log);
@@ -483,6 +538,7 @@ export async function dispatchAgentEvent(
     default:
       break;
   }
+  await promotePendingMail(options, dispatched, promotable);
 }
 
 async function dispatchAppEvent(
@@ -512,6 +568,29 @@ async function dispatchAppEvent(
   await persistDeliveryMark(options.deliveryStore, dispatched, key);
 }
 
+async function catchUpLegacyMail(
+  options: Omit<ChannelLoopOptions, "signal" | "log">,
+  dispatched: Set<string>,
+  log: (message: string) => void,
+): Promise<void> {
+  if (!options.deliveryStore?.hasLegacyEntries()) return;
+  const messages = await fetchInbox(
+    options.client,
+    false,
+    MAIL_STARTUP_CATCH_UP_LIMIT,
+    undefined,
+    log,
+  );
+  await dispatchMailMessages(
+    options,
+    dispatched,
+    {},
+    messages.slice(0, MAIL_STARTUP_CATCH_UP_LIMIT),
+    log,
+    true,
+  );
+}
+
 async function dispatchMailEvent(
   options: Omit<ChannelLoopOptions, "signal" | "log">,
   dispatched: Set<string>,
@@ -519,6 +598,17 @@ async function dispatchMailEvent(
   log: (message: string) => void,
 ): Promise<void> {
   const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log);
+  await dispatchMailMessages(options, dispatched, event, messages, log, false);
+}
+
+async function dispatchMailMessages(
+  options: Omit<ChannelLoopOptions, "signal" | "log">,
+  dispatched: Set<string>,
+  event: Pick<AgentEvent, "conversation_id">,
+  messages: InboxMessage[],
+  log: (message: string) => void,
+  legacyOnly: boolean,
+): Promise<void> {
   for (const msg of messages) {
     if (msg.verification_error) {
       // An audit write must never fail the delivery it observes. This message is
@@ -543,7 +633,10 @@ async function dispatchMailEvent(
     if (isSelfSender(msg.from_alias, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
     const conversationID = msg.conversation_id || event.conversation_id;
     const key = dispatchKey("mail", conversationID, msg.message_id);
-    if (dispatched.has(key) || options.deliveryStore?.has(key)) {
+    const legacy = options.deliveryStore?.isLegacy(key) === true;
+    if (legacyOnly && !legacy) continue;
+    if (dispatched.has(key)) continue;
+    if (options.deliveryStore?.has(key) && !legacy) {
       if (options.mailAcknowledgment !== "manual" && !msg.read_at) {
         await ackMessage(options.client, msg.message_id);
       }
@@ -588,10 +681,7 @@ async function dispatchMailEvent(
       meta,
       deliveryIntent: "wake",
     });
-    await persistDeliveryMark(options.deliveryStore, dispatched, key);
-    if (options.mailAcknowledgment !== "manual") {
-      await ackMessage(options.client, msg.message_id);
-    }
+    stagePendingMail(dispatched, key, msg.message_id);
   }
 }
 
@@ -699,6 +789,47 @@ async function normalizeAndPersistMessageTrust(
     }
     return trust;
   });
+}
+
+function stagePendingMail(
+  dispatched: Set<string>,
+  key: string,
+  messageID: string,
+): void {
+  let pending = pendingMailDeliveries.get(dispatched);
+  if (!pending) {
+    pending = new Map();
+    pendingMailDeliveries.set(dispatched, pending);
+  }
+  pending.set(key, { key, messageID });
+  dispatched.add(key);
+}
+
+async function promotePendingMail(
+  options: Pick<ChannelLoopOptions, "client" | "deliveryStore" | "mailAcknowledgment">,
+  dispatched: Set<string>,
+  promotable: PendingMailDelivery[],
+): Promise<void> {
+  const pending = pendingMailDeliveries.get(dispatched);
+  for (const delivery of promotable) {
+    if (pending?.get(delivery.key) !== delivery) continue;
+    // Claim promotion synchronously before the first await. Different event
+    // lanes can finish together; leaving the entry visible until after save/ack
+    // lets both lanes promote and acknowledge the same mail.
+    pending.delete(delivery.key);
+    try {
+      await persistDeliveryMark(options.deliveryStore, dispatched, delivery.key);
+      if (options.mailAcknowledgment !== "manual") {
+        await ackMessage(options.client, delivery.messageID);
+      }
+    } catch (error) {
+      // A genuinely later loop iteration must be able to retry a failed durable
+      // save or ack. Restore a new identity so racers that snapshotted the old
+      // claim before this attempt cannot steal the retry in the same iteration.
+      if (!pending.has(delivery.key)) pending.set(delivery.key, { ...delivery });
+      throw error;
+    }
+  }
 }
 
 async function persistDeliveryMark(
