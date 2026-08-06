@@ -34,9 +34,11 @@
 # <repo root>: package-specific contract checks against the unpacked tgz
 # bytes (channel: package-dist markers + sentinel via
 # channel/scripts/check-package-dist.mjs, plus the .mcp.json mcpServers
-# wrapper; pi: pi-extension/scripts/check-package-dist.mjs markers - the
-# bundled channel-core freshness gate for pi, whose bundle does not carry
-# the channel sentinel constant - plus the five skill directories; skills:
+# wrapper with the exact aweb-channel server name; pi:
+# pi-extension/scripts/check-package-dist.mjs markers - including the
+# authenticated trust boundary and the bundled channel-core deadline,
+# byte-inactivity watchdog, and settled-backoff listener cleanup - plus the five
+# skill directories; skills:
 # plugin version equals the package version and exactly the five skill
 # directories).
 
@@ -73,6 +75,27 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# npm treats a relative path containing a slash as a package/git spec in some
+# call contexts. Resolve every caller-supplied tgz once, before mode dispatch,
+# so all npm operations receive the exact existing file by physical absolute
+# path. realpath resolves directory and final-component symlinks without
+# reading or rewriting the artifact bytes.
+if [[ -n "$TGZ" ]]; then
+  supplied_tgz="$TGZ"
+  if ! TGZ="$(python3 - "$supplied_tgz" <<'PYTGZ'
+import os
+import sys
+
+path = os.path.realpath(sys.argv[1])
+if not os.path.isfile(path):
+    raise SystemExit(1)
+print(path)
+PYTGZ
+  )"; then
+    fail "--tgz must name an existing regular file: $supplied_tgz"
+  fi
+fi
+
 EXPECTED_SKILLS="aweb-bootstrap aweb-coordination aweb-identity aweb-messaging aweb-team-membership"
 
 profile_inspect() {
@@ -92,8 +115,8 @@ try:
 except FileNotFoundError:
     sys.exit("REFUSE: channel tgz lacks .mcp.json")
 servers = doc.get("mcpServers")
-if not isinstance(servers, dict) or not servers:
-    sys.exit("REFUSE: channel .mcp.json lacks a nonempty mcpServers wrapper")
+if not isinstance(servers, dict) or set(servers) != {"aweb-channel"}:
+    sys.exit("REFUSE: channel .mcp.json must declare exactly the distinct aweb-channel MCP server")
 PYMCP
       # The plugin manifest ships in the tgz; the version coherence must
       # hold in the SHIPPED bytes, not only in the source tree the

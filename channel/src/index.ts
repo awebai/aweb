@@ -52,7 +52,7 @@ async function main() {
   );
 
   const mcp = new Server(
-    { name: "aweb", version: "0.1.0" },
+    { name: "aweb-channel", version: "0.1.0" },
     {
       capabilities: {
         experimental: { "claude/channel": {} },
@@ -86,6 +86,7 @@ Control events (type="control") are operational signals. On "pause", stop curren
       stableID: config.stableID,
     },
     signal: abort.signal,
+    teamID: config.teamID,
     workdir,
     onAwakening: (awakening) => mcp.notification({
       method: "notifications/claude/channel",

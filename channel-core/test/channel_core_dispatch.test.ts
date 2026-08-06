@@ -627,6 +627,7 @@ describe("channel-core dispatchAgentEvent", () => {
       trust,
       self,
       signal: controller.signal,
+      teamID: "backend:acme.com",
       workdir,
       onAwakening,
     });
@@ -756,6 +757,157 @@ describe("channel-core dispatchAgentEvent", () => {
     finishDelivery?.();
     await dispatch;
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-pending-injection/ack");
+  });
+
+  test("keeps captured null-envelope plaintext on the authenticated channel trust path", async () => {
+    const onAwakening = vi.fn();
+    const env: MessageEnvelope = {
+      from: "acme.com/alice",
+      from_did: vectors.did,
+      to: self.address,
+      to_did: self.did,
+      to_stable_id: self.stableID,
+      type: "mail",
+      subject: "plaintext",
+      body: "preserved plaintext body",
+      timestamp: "2026-05-26T00:00:00Z",
+      message_id: "mail-plaintext-null-envelope",
+    };
+    const signature = await signMessage(b64ToBytes(vectors.seed), env);
+    const localDecrypt = { mailMessage: vi.fn(async () => { throw new Error("must not run"); }) };
+    const client = {
+      hasTeamCertificateAuth: (teamID: string) => teamID === "backend:acme.com",
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: env.message_id,
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: env.from,
+          from_did: env.from_did,
+          to_alias: self.alias,
+          to_address: self.address,
+          to_did: self.did,
+          to_stable_id: self.stableID,
+          subject: env.subject,
+          body: env.body,
+          priority: "normal",
+          created_at: env.timestamp,
+          signature,
+          signing_key_id: vectors.did,
+          signed_payload: canonicalJSON(env),
+          content_mode: "legacy_plaintext_v1",
+          message_version: 1,
+          encrypted_envelope: null,
+        }],
+      }),
+      getFresh: vi.fn().mockResolvedValue({
+        team_id: "backend:acme.com",
+        agents: [{ alias: "alice", did_key: vectors.did, identity_scope: "local" }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const authenticatedTrust = new SenderTrustManager(
+      client as never,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      self.did,
+      self.stableID,
+    );
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust: authenticatedTrust,
+        self,
+        onAwakening,
+        localDecrypt,
+      },
+      new Set(),
+      { type: "mail_message", message_id: env.message_id } satisfies AgentEvent,
+    );
+
+    expect(localDecrypt.mailMessage).not.toHaveBeenCalled();
+    expect(client.getFresh).toHaveBeenCalledWith("/v1/agents");
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "mail",
+      content: env.body,
+      meta: expect.objectContaining({ trust_status: "verified", verified: "true" }),
+    }));
+  });
+
+  test("imports only decrypted mail content from local aw", async () => {
+    const onAwakening = vi.fn();
+    const normalizeTrust = vi.fn(async (_store: PinStore, status: string) => ({ status, stored: false }));
+    const localDecrypt = {
+      mailMessage: vi.fn(async () => ({
+        message_id: "mail-e2ee-trust-boundary",
+        subject: "decrypted subject",
+        body: "decrypted body",
+        verification_status: "verified",
+        from_address: "attacker.example/mallory",
+        from_did: "did:key:attacker",
+        from_stable_id: "did:aw:attacker",
+        signed_payload: "attacker payload",
+        signature: "attacker signature",
+      })),
+    };
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-e2ee-trust-boundary",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          from_did: "did:key:original",
+          from_stable_id: "did:aw:original",
+          to_alias: "eve",
+          subject: "",
+          body: "",
+          priority: "normal",
+          created_at: "2026-05-26T00:00:00Z",
+          content_mode: "encrypted_v2",
+          message_version: 2,
+          encrypted_envelope: {},
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust: { normalizeTrust } as unknown as SenderTrustManager,
+        self,
+        onAwakening,
+        localDecrypt,
+      },
+      new Set(),
+      { type: "mail_message", message_id: "mail-e2ee-trust-boundary" } satisfies AgentEvent,
+    );
+
+    expect(normalizeTrust).toHaveBeenCalledWith(
+      expect.any(PinStore),
+      "unverified",
+      "acme.com/alice",
+      "did:key:original",
+      "did:aw:original",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "acme.com/alice",
+    );
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "mail",
+      content: "decrypted body",
+      meta: expect.objectContaining({
+        from: "acme.com/alice",
+        subject: "decrypted subject",
+        trust_status: "unverified",
+      }),
+    }));
   });
 
   test("decrypts encrypted mail locally before channel delivery", async () => {
@@ -939,6 +1091,76 @@ describe("channel-core dispatchAgentEvent", () => {
       content: "follow-up",
     }));
     expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-1/read", { message_ids: ["chat-1", "chat-2"] });
+  });
+
+  test("imports only decrypted chat content from local aw", async () => {
+    const onAwakening = vi.fn();
+    const normalizeTrust = vi.fn(async (_store: PinStore, status: string) => ({ status, stored: false }));
+    const localDecrypt = {
+      chatMessage: vi.fn(async () => ({
+        message_id: "chat-e2ee-trust-boundary",
+        body: "decrypted chat body",
+        verification_status: "verified",
+        from_address: "attacker.example/mallory",
+        from_did: "did:key:attacker",
+        from_stable_id: "did:aw:attacker",
+      })),
+    };
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "chat-e2ee-trust-boundary",
+          conversation_id: "sess-e2ee-trust-boundary",
+          from_agent: "alice",
+          from_address: "acme.com/alice",
+          from_did: "did:key:original",
+          from_stable_id: "did:aw:original",
+          body: "",
+          timestamp: "2026-05-26T00:00:00Z",
+          sender_leaving: false,
+          content_mode: "encrypted_v2",
+          message_version: 2,
+          encrypted_envelope: {},
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust: { normalizeTrust } as unknown as SenderTrustManager,
+        self,
+        onAwakening,
+        localDecrypt,
+      },
+      new Set(),
+      {
+        type: "chat_message",
+        session_id: "sess-e2ee-trust-boundary",
+        conversation_id: "sess-e2ee-trust-boundary",
+        message_id: "chat-e2ee-trust-boundary",
+      } satisfies AgentEvent,
+    );
+
+    expect(normalizeTrust).toHaveBeenCalledWith(
+      expect.any(PinStore),
+      "unverified",
+      "acme.com/alice",
+      "did:key:original",
+      "did:aw:original",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "acme.com/alice",
+    );
+    expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
+      kind: "chat",
+      content: "decrypted chat body",
+      meta: expect.objectContaining({ from: "acme.com/alice", trust_status: "unverified" }),
+    }));
   });
 
   test("decrypts encrypted chat locally before channel delivery", async () => {
