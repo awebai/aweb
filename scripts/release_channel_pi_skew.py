@@ -555,15 +555,14 @@ class FileEvidenceWriter:
         os.replace(temporary, path)
         return path
 
-    def write(self, report: dict) -> None:
+    def write(self, report: dict) -> dict:
         path = self.root / "cells" / (
             f"{report['matrix_id']}-{report['cell_id']}.json"
         )
         self.write_path(path, report)
-        print(
-            f"channel/Pi skew evidence: {path} "
-            f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
-        )
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        print(f"channel/Pi skew evidence: {path} sha256:{digest}")
+        return {"path": path, "sha256": digest}
 
 
 class ChannelPiHarness:
@@ -579,6 +578,7 @@ class ChannelPiHarness:
         self._evidence = evidence
         self._matrix: dict | None = None
         self._cells: dict[str, object] = {}
+        self._cell_evidence: dict[str, dict] = {}
         self._control_path: Path | None = None
 
     def _new_journey(self):
@@ -712,7 +712,37 @@ class ChannelPiHarness:
         finally:
             journey.close()
         report["report_id"] = rd.canonical_json_digest(report)
-        self._evidence.write(report)
+        self._cell_evidence[frozen_cell_id] = self._evidence.write(report)
+
+    def _validate_effect_time_evidence(self) -> None:
+        if set(self._cell_evidence) != set(self._cells):
+            raise rd.ReceiptError(
+                "channel/Pi effect-time evidence inventory is not exact"
+            )
+        for cell_id in self._cells:
+            expected_path = self._evidence.root / "cells" / (
+                f"{self._matrix['matrix_id']}-{cell_id}.json"
+            )
+            evidence = self._cell_evidence[cell_id]
+            if (
+                not isinstance(evidence, dict)
+                or set(evidence) != {"path", "sha256"}
+                or evidence["path"] != expected_path
+                or expected_path.is_symlink()
+            ):
+                raise rd.ReceiptError(
+                    f"channel/Pi effect-time evidence inventory drifted for {cell_id}"
+                )
+            try:
+                observed = hashlib.sha256(expected_path.read_bytes()).hexdigest()
+            except OSError as exc:
+                raise rd.ReceiptError(
+                    f"channel/Pi effect-time evidence is unreadable for {cell_id}: {exc}"
+                ) from exc
+            if observed != evidence["sha256"]:
+                raise rd.ReceiptError(
+                    f"channel/Pi effect-time report digest changed for {cell_id}"
+                )
 
     def finish_matrix(self, document: dict) -> Path:
         if document != self._matrix:
@@ -721,6 +751,7 @@ class ChannelPiHarness:
             )
         if self._control_path is not None:
             raise rd.ReceiptError("channel/Pi control ran more than once")
+        self._validate_effect_time_evidence()
         _require_channel_report_files(document, self._evidence.root)
         journey = self._new_journey()
         try:

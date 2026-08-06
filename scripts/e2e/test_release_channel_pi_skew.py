@@ -663,6 +663,42 @@ class MatrixCoverageTests(unittest.TestCase):
             self.assertFalse(any(
                 event[0] == "control" for journey in journeys for event in journey.events
             ))
+            report_paths = sorted((Path(tmp) / "cells").iterdir())
+            originals = {path: path.read_bytes() for path in report_paths}
+            for path in report_paths:
+                rewritten = json.loads(originals[path])
+                for artifact_name, kind_name in (
+                    ("client_artifact", "client_kind"),
+                    ("server_artifact", "server_kind"),
+                ):
+                    if rewritten[kind_name] == "candidate":
+                        continue
+                    artifact = rewritten[artifact_name]
+                    digest_set = {
+                        name: "0" * 64
+                        for name in artifact["source"]["digest_set"]
+                    }
+                    artifact["source"]["digest_set"] = digest_set
+                    artifact["source"]["canonical_set_digest"] = (
+                        rd.canonical_digest_of_set(digest_set)
+                    )
+                    artifact["sha256"] = digest_set[artifact["filename"]]
+                rewritten["report_id"] = rd.canonical_json_digest({
+                    key: value for key, value in rewritten.items()
+                    if key != "report_id"
+                })
+                path.write_text(json.dumps(
+                    rewritten, sort_keys=True, separators=(",", ":")
+                ))
+            with self.assertRaisesRegex(
+                rd.ReceiptError, "effect-time.*digest"
+            ):
+                harness.finish_matrix(document)
+            self.assertFalse(any(
+                event[0] == "control" for journey in journeys for event in journey.events
+            ), "tampered reports must refuse before the one-time control")
+            for path, original in originals.items():
+                path.write_bytes(original)
             aggregate_path = harness.finish_matrix(document)
             aggregate = json.loads(aggregate_path.read_text())
             self.assertEqual(aggregate["status"], "incomplete-unanchored")
