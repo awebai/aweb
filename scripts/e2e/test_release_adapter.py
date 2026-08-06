@@ -3135,6 +3135,49 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         )
         self.assertEqual(result.entry.digest_set, adopted.entry.digest_set)
 
+    def test_recovery_publish_ignores_unrelated_run_until_owned_run_appears(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": None}
+
+        class InterleavedRuns(FakeAwRuns):
+            def __init__(self):
+                super().__init__(new_runs_per_dispatch=0)
+                self.dispatch_started = False
+                self.polls = 0
+                self.expected_attempt = None
+
+            def dispatch(self, inputs):
+                self.dispatched.append(dict(inputs))
+                self.expected_attempt = inputs["recovery_attempt_artifact_id"]
+                self.dispatch_started = True
+                state["value"] = sha256(tgz)
+
+            def list_run_ids(self):
+                if self.dispatch_started:
+                    self.polls += 1
+                    if self.polls == 1:
+                        self.run_ids.append(200)
+                        self.run_attempt_artifact_ids[200] = "unrelated-attempt"
+                    elif self.polls == 2:
+                        self.run_ids.append(201)
+                        self.run_attempt_artifact_ids[201] = self.expected_attempt
+                return list(self.run_ids)
+
+        runs = InterleavedRuns()
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        before = lane.continuation_snapshot(self.node())
+        recovered = lane.publish_recovery(
+            self.node(), adopted.entry, before_run_ids=before,
+            attempt_artifact_id="attempt:channel:expected")
+        self.assertEqual(recovered.continuation_run_id, "201")
+        self.assertEqual(recovered.attempt_artifact_id,
+                         "attempt:channel:expected")
+        self.assertEqual(len(runs.dispatched), 1)
+
     def test_recovery_publish_refuses_run_with_different_attempt_evidence(self) -> None:
         tgz = channel_tgz()
         zip_bytes = npm_lane_zip(tgz=tgz)
@@ -3178,7 +3221,55 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         self.assertEqual(recovered.attempt_artifact_id, "attempt:channel:two")
         self.assertEqual(runs.dispatched, [])
 
-    def test_recovery_attempt_refuses_unowned_success_without_dispatch(self) -> None:
+    def test_recovery_attempt_selects_owned_run_amid_unrelated_run(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": None}
+        runs = FakeAwRuns()
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        before = lane.continuation_snapshot(self.node())
+        runs.run_ids.extend([777, 778])
+        runs.run_attempt_artifact_ids.update({
+            777: "unrelated-attempt",
+            778: "attempt:channel:expected",
+        })
+        state["value"] = sha256(tgz)
+
+        recovered = lane.recover_recovery_attempt(
+            self.node(), adopted.entry, before_run_ids=before,
+            attempt_artifact_id="attempt:channel:expected")
+        self.assertEqual(recovered.continuation_run_id, "778")
+        self.assertEqual(recovered.attempt_artifact_id,
+                         "attempt:channel:expected")
+        self.assertEqual(runs.dispatched, [])
+
+    def test_recovery_attempt_refuses_multiple_owned_runs(self) -> None:
+        tgz = channel_tgz()
+        zip_bytes = npm_lane_zip(tgz=tgz)
+        state = {"value": sha256(tgz)}
+        runs = FakeAwRuns()
+        lane, _ = npm_lane(
+            zip_bytes, observer=lambda p, v: state["value"], runs=runs,
+            delivery_proofs={"channel": dict(GOOD_PROOF)})
+        adopted = lane.adopt_preplan(self.node())
+        before = lane.continuation_snapshot(self.node())
+        runs.run_ids.extend([777, 778])
+        runs.run_attempt_artifact_ids.update({
+            777: "attempt:channel:expected",
+            778: "attempt:channel:expected",
+        })
+
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.recover_recovery_attempt(
+                self.node(), adopted.entry, before_run_ids=before,
+                attempt_artifact_id="attempt:channel:expected")
+        self.assertIn("exactly one", str(caught.exception))
+        self.assertEqual(runs.dispatched, [])
+
+    def test_recovery_attempt_ignores_unowned_success_without_dispatch(self) -> None:
         for observed_attempt_id in (None, "different-attempt"):
             with self.subTest(observed_attempt_id=observed_attempt_id):
                 tgz = channel_tgz()
@@ -3196,11 +3287,10 @@ class NpmWorkflowLaneTests(unittest.TestCase):
                     runs.run_attempt_artifact_ids[777] = observed_attempt_id
                 state["value"] = sha256(tgz)
 
-                with self.assertRaises(rd.ReceiptError) as caught:
-                    lane.recover_recovery_attempt(
-                        self.node(), adopted.entry, before_run_ids=before,
-                        attempt_artifact_id="attempt:channel:expected")
-                self.assertIn("attempt", str(caught.exception))
+                recovered = lane.recover_recovery_attempt(
+                    self.node(), adopted.entry, before_run_ids=before,
+                    attempt_artifact_id="attempt:channel:expected")
+                self.assertIsNone(recovered)
                 self.assertEqual(runs.dispatched, [])
 
     def test_stage_refuses_a_profile_violation_in_the_tgz(self) -> None:

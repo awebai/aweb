@@ -265,11 +265,17 @@ class FakeRecoverySurface:
     ):
         component = node.component
         new_runs = [r for r in self.runs[component] if r not in before_run_ids]
-        if not new_runs:
+        matching_runs = [
+            run_id for run_id in new_runs
+            if self.run_attempt_artifact_ids.get(run_id) == attempt_artifact_id
+        ]
+        if not matching_runs:
             return None
-        if len(new_runs) != 1:
-            raise rd.ReceiptError(f"{component}: ambiguous continuation runs")
-        run_id = new_runs[0]
+        if len(matching_runs) != 1:
+            raise rd.ReceiptError(
+                f"{component}: expected exactly one owned continuation run"
+            )
+        run_id = matching_runs[0]
         if self.run_conclusions.get(run_id) != "success":
             raise rd.ReceiptError(f"{component}: prior continuation was not successful")
         observed = self.observe_recovery(node, staged)
@@ -719,6 +725,70 @@ class AdoptedPreplanStateMachineTests(unittest.TestCase):
             receipt.document["components"]["channel"]["continuation_run_id"],
             "continuation-channel-1",
         )
+
+    def test_owned_crash_run_is_adopted_amid_unrelated_run(self):
+        handle = self.prepare()
+        authorization = self.authorization(handle)
+        self.surface.publish_mode["channel"] = "dispatch-failure"
+        with self.assertRaises(rd.ReceiptError):
+            self.execute(handle, authorization)
+        attempt_id = rd._attempts(
+            handle, self.store, self.authority, "channel"
+        )[0][0]
+
+        self.surface.runs["channel"].extend([
+            "unrelated-success", "owned-success",
+        ])
+        self.surface.run_conclusions.update({
+            "unrelated-success": "success",
+            "owned-success": "success",
+        })
+        self.surface.run_attempt_artifact_ids.update({
+            "unrelated-success": "unrelated-attempt",
+            "owned-success": attempt_id,
+        })
+        self.surface._complete("channel", "owned-success")
+
+        resumed_handle = self.prepare()
+        receipt = self.execute(resumed_handle, authorization)
+        self.assertEqual(
+            self.surface.publish_calls, ["channel", "pi"],
+            "owned Channel effect is adopted and Pi completes once",
+        )
+        self.assertEqual(
+            receipt.document["components"]["channel"]["continuation_run_id"],
+            "owned-success",
+        )
+
+    def test_multiple_owned_runs_refuse_before_transition_or_other_lane(self):
+        handle = self.prepare()
+        authorization = self.authorization(handle)
+        self.surface.publish_mode["channel"] = "dispatch-failure"
+        with self.assertRaises(rd.ReceiptError):
+            self.execute(handle, authorization)
+        attempt_id = rd._attempts(
+            handle, self.store, self.authority, "channel"
+        )[0][0]
+
+        self.surface.runs["channel"].extend(["owned-one", "owned-two"])
+        self.surface.run_conclusions.update({
+            "owned-one": "success", "owned-two": "success",
+        })
+        self.surface.run_attempt_artifact_ids.update({
+            "owned-one": attempt_id, "owned-two": attempt_id,
+        })
+        self.surface._complete("channel", "owned-one")
+
+        resumed_handle = self.prepare()
+        with self.assertRaises(rd.ReceiptError) as caught:
+            self.execute(resumed_handle, authorization)
+        self.assertIn("exactly one", str(caught.exception))
+        self.assertEqual(self.surface.publish_calls, ["channel"])
+        self.assertFalse(any(
+            artifact_id.startswith("adopted-preplan-transition:")
+            or artifact_id.startswith("adopted-preplan-receipt:")
+            for artifact_id in self.authority.records
+        ))
 
     def test_unowned_successful_run_cannot_be_adopted_as_current_attempt(self):
         for observed_attempt_id in (None, "different-attempt"):

@@ -2296,9 +2296,71 @@ class _WorkflowLaneBase:
             if str(run_id) not in before
         ]
 
+    def _continuation_runs_for_attempt(
+        self, before_run_ids, expected_attempt_artifact_id,
+        *, evidence_cache=None,
+    ) -> list[tuple[str, object, str]]:
+        """Filter the complete post-snapshot window by run-owned evidence.
+
+        Missing evidence is not cached because a running workflow may not have
+        uploaded it yet. Once observed, the digest-verified artifact identity
+        is immutable and can be reused while the complete run window is
+        re-enumerated.
+        """
+        cache = evidence_cache if evidence_cache is not None else {}
+        matching = []
+        for run_id, native_run_id in self._new_continuation_runs(before_run_ids):
+            if native_run_id in cache:
+                observed_attempt_artifact_id = cache[native_run_id]
+            else:
+                observed_attempt_artifact_id = (
+                    self._runs.run_attempt_artifact_id(native_run_id)
+                )
+                if observed_attempt_artifact_id is not None:
+                    cache[native_run_id] = observed_attempt_artifact_id
+            if observed_attempt_artifact_id == expected_attempt_artifact_id:
+                matching.append((
+                    run_id, native_run_id, observed_attempt_artifact_id
+                ))
+        return matching
+
     def _wait_for_continuation(
         self, before_run_ids, *, expected_attempt_artifact_id=None
     ) -> tuple[str, str | None]:
+        if expected_attempt_artifact_id is not None:
+            evidence_cache = {}
+            matching_runs: list[tuple[str, object, str]] = []
+            for _ in range(self.POLL_ATTEMPTS):
+                matching_runs = self._continuation_runs_for_attempt(
+                    before_run_ids,
+                    expected_attempt_artifact_id,
+                    evidence_cache=evidence_cache,
+                )
+                if len(matching_runs) > 1:
+                    raise ReceiptError(
+                        f"{self.component}: expected exactly one continuation "
+                        f"run owned by attempt {expected_attempt_artifact_id!r}, "
+                        f"identified {len(matching_runs)}; refusing"
+                    )
+                if matching_runs:
+                    (run_id, native_run_id,
+                     observed_attempt_artifact_id) = matching_runs[0]
+                    conclusion = self._runs.run_conclusion(native_run_id)
+                    if conclusion is not None:
+                        if conclusion != "success":
+                            raise ReceiptError(
+                                f"{self.component}: continuation run {run_id} "
+                                f"owned by the attempt concluded "
+                                f"{conclusion!r}, not success"
+                            )
+                        return run_id, observed_attempt_artifact_id
+                self._waiter()
+            raise ReceiptError(
+                f"{self.component}: expected exactly one continuation run "
+                f"owned by attempt {expected_attempt_artifact_id!r} within "
+                f"the bounded polling window, identified {len(matching_runs)}"
+            )
+
         new_runs: list[tuple[str, object]] = []
         for _ in range(self.POLL_ATTEMPTS):
             new_runs = self._new_continuation_runs(before_run_ids)
@@ -2322,18 +2384,7 @@ class _WorkflowLaneBase:
                 f"{self.component}: continuation run {run_id} concluded "
                 f"{conclusion!r}, not success"
             )
-        observed_attempt_artifact_id = None
-        if expected_attempt_artifact_id is not None:
-            observed_attempt_artifact_id = (
-                self._runs.run_attempt_artifact_id(native_run_id)
-            )
-            if observed_attempt_artifact_id != expected_attempt_artifact_id:
-                raise ReceiptError(
-                    f"{self.component}: continuation run {run_id} observed "
-                    f"attempt identity {observed_attempt_artifact_id!r}, not "
-                    f"{expected_attempt_artifact_id!r}"
-                )
-        return run_id, observed_attempt_artifact_id
+        return run_id, None
 
     def _dispatch_and_wait(
         self, inputs: dict, *, before_run_ids=None,
@@ -2393,29 +2444,24 @@ class _WorkflowLaneBase:
         self, node, staged: "ReceiptEntry", *, before_run_ids,
         attempt_artifact_id,
     ) -> "RecoveryContinuation | None":
-        new_runs = self._new_continuation_runs(before_run_ids)
-        if not new_runs:
+        matching_runs = self._continuation_runs_for_attempt(
+            before_run_ids, attempt_artifact_id
+        )
+        if not matching_runs:
             return None
-        if len(new_runs) != 1:
+        if len(matching_runs) != 1:
             raise ReceiptError(
-                f"{node.component}: attempted continuation correlates to "
-                f"{len(new_runs)} runs, not exactly one"
+                f"{node.component}: expected exactly one attempted "
+                f"continuation run owned by {attempt_artifact_id!r}, "
+                f"identified {len(matching_runs)}"
             )
-        run_id, native_run_id = new_runs[0]
+        (run_id, native_run_id,
+         observed_attempt_artifact_id) = matching_runs[0]
         conclusion = self._runs.run_conclusion(native_run_id)
         if conclusion != "success":
             raise ReceiptError(
                 f"{node.component}: attempted continuation run {run_id} "
                 f"concluded {conclusion!r}, not success"
-            )
-        observed_attempt_artifact_id = self._runs.run_attempt_artifact_id(
-            native_run_id
-        )
-        if observed_attempt_artifact_id != attempt_artifact_id:
-            raise ReceiptError(
-                f"{node.component}: attempted continuation run {run_id} "
-                f"observed attempt identity {observed_attempt_artifact_id!r}, "
-                f"not {attempt_artifact_id!r}"
             )
         observed = self.observe(node, staged)
         if observed is None:
