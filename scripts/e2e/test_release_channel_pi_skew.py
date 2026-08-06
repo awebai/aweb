@@ -1463,6 +1463,24 @@ class MeasureSupportBoundaryTests(unittest.TestCase):
                 tmp, component),
         )
 
+    def test_shared_entrypoint_refuses_aw_before_any_effect(self):
+        document = measurement_input("aw")
+        authority = unittest.mock.Mock()
+        harness = unittest.mock.Mock()
+        with self.assertRaisesRegex(rd.ReceiptError, "supports only.*channel.*pi"):
+            skew.measure_support(
+                component="aw",
+                measurement_input=document,
+                measurement_input_bytes=canonical_bytes(document),
+                supported_versions={"server": ["1.26.34"]},
+                published_authority=authority,
+                harness=harness,
+            )
+        authority.resolve.assert_not_called()
+        harness.freeze_matrix.assert_not_called()
+        harness.run.assert_not_called()
+        harness.finish_matrix.assert_not_called()
+
     # 1. the measurement input is not a release staged manifest
     def test_release_staged_manifest_is_refused(self):
         """The whole point of the seam: a document that asserts a frozen plan,
@@ -2444,7 +2462,7 @@ class PublishedAuthorityConsumedTests(unittest.TestCase):
     def test_missing_resolver_refuses(self):
         document = measurement_input("channel")
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(rd.ReceiptError, "never consumed"):
+            with self.assertRaisesRegex(rd.ReceiptError, "must be consumed"):
                 skew.measure_support(
                     component="channel",
                     measurement_input=document,

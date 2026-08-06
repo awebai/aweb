@@ -1844,6 +1844,12 @@ def measure_support(
     The result is explicitly unanchored. Declaring measured support in
     release/components.toml is a separate reviewed step over anchored bytes.
     """
+    if component not in CLIENT_ARTIFACTS:
+        raise rd.ReceiptError(
+            "shared Channel/Pi measurement entrypoint supports only "
+            f"{sorted(CLIENT_ARTIFACTS)}, got {component!r}; aw uses its "
+            "dedicated journey"
+        )
     document = validate_measurement_input(measurement_input, component=component)
     if measurement_input_bytes != json.dumps(
         document, sort_keys=True, separators=(",", ":")
