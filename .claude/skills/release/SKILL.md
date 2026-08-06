@@ -23,13 +23,16 @@ explicit human risk acceptance:
 make release-plan AUTHORITY=local-runnerless STORE_ROOT=<durable-local-dir>
 make release-run AUTHORITY=local-runnerless \
   STORE_ROOT=<same-dir> PLAN_ID=<id> PLAN_ARTIFACT_ID=<id> \
-  LOCAL_ADAPTER='<component>=/absolute/path/to/adapter' \
-  LOCAL_RISK_AUTHORIZATION='<who>:<when>:<risk accepted>'
+  LOCAL_ADAPTER='<component>@<exact-reviewed-source-sha>=/absolute/path/to/direct-adapter' \
+  LOCAL_RISK_AUTHORIZATION='<who>,<when>,<risk accepted>'
 ```
 
-Add `DEFER_G5=1` only when that same authorization accepts deferring runtime
-compatibility measurement. The local adapter follows the driver's protocol; do
-not replace it with a hand-maintained stage or publish sequence.
+Append `EXTERNAL_CONTEXT='<repo>=/absolute/checkout'` to planning when the
+graph names an external pin. Add `DEFER_G5=1` only when that same authorization
+accepts deferring runtime compatibility measurement. Resume with `RESUME=1 MANIFEST_ID=<id>` when the
+driver reports a deferred continuation. The local adapter follows the protocol
+in `docs/runnerless-release.md`; do not replace it with a hand-maintained stage
+or publish sequence.
 
 The driver reads the component graph (`release/components.toml`), works out
 what moves and in what order, stages each artifact **once**, inspects the exact

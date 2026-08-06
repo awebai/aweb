@@ -97,7 +97,7 @@ help:
 	@echo "      release-run AUTHORITY=github-workflow-artifacts PLAN_ID=.. PLAN_ARTIFACT_ID=.. STAGE_ARTIFACT=.."
 	@echo "    Runnerless (explicit human risk acceptance):"
 	@echo "      release-plan AUTHORITY=local-runnerless STORE_ROOT=.."
-	@echo "      release-run AUTHORITY=local-runnerless STORE_ROOT=.. PLAN_ID=.. PLAN_ARTIFACT_ID=.. LOCAL_ADAPTER=.. LOCAL_RISK_AUTHORIZATION=.."
+	@echo "      release-run AUTHORITY=local-runnerless STORE_ROOT=.. PLAN_ID=.. PLAN_ARTIFACT_ID=.. LOCAL_ADAPTER='component@sha=/abs/adapter' LOCAL_RISK_AUTHORIZATION=.."
 	@echo "    release-receipt                     read a sealed receipt"
 	@echo "    See the 'release' skill for exact argument forms and hazards:"
 	@echo "    publication is not delivery, publication is immutable."
