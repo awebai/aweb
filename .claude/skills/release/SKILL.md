@@ -7,18 +7,35 @@ allowed-tools: Bash(make *), Bash(git *), Bash(gh run *), Bash(npm view *), Bash
 
 # Release an aweb artifact
 
-There is one way to release, for every artifact:
+One driver releases every artifact. Use the hosted workflow lane normally:
 
 ```
-make release-plan
-make release-run PLAN_ID=<id> PLAN_ARTIFACT_ID=<id>
+make release-plan AUTHORITY=github-workflow-artifacts
+make release-run AUTHORITY=github-workflow-artifacts \
+  PLAN_ID=<id> PLAN_ARTIFACT_ID=<id> \
+  STAGE_ARTIFACT='component=<name>,ref=<ref>,source=<source>,digest=<digest>'
 ```
+
+When hosted runners are unavailable, use the first-class local lane with an
+explicit human risk acceptance:
+
+```
+make release-plan AUTHORITY=local-runnerless STORE_ROOT=<durable-local-dir>
+make release-run AUTHORITY=local-runnerless \
+  STORE_ROOT=<same-dir> PLAN_ID=<id> PLAN_ARTIFACT_ID=<id> \
+  LOCAL_ADAPTER='<component>=/absolute/path/to/adapter' \
+  LOCAL_RISK_AUTHORIZATION='<who>:<when>:<risk accepted>'
+```
+
+Add `DEFER_G5=1` only when that same authorization accepts deferring runtime
+compatibility measurement. The local adapter follows the driver's protocol; do
+not replace it with a hand-maintained stage or publish sequence.
 
 The driver reads the component graph (`release/components.toml`), works out
 what moves and in what order, stages each artifact **once**, inspects the exact
 bytes, refuses unless every guarantee holds, publishes those same bytes, tags,
 verifies what landed, and seals a receipt. Components: `aw`, `server`,
-`awid-pypi`, `awid-image`, `channel`, `pi`, `skills`.
+`awid-pypi`, `awid-image`, `channel`, `pi`, `skills`, and `sites`.
 
 There is no per-artifact step list any more. The driver performs the steps; a
 human maintaining a parallel list is how the steps drift from reality.
@@ -82,32 +99,10 @@ another's - in particular the aw CLI version is not the server version. The
 monotonicity guard refuses a proposal that is not strictly greater than the
 latest published version for that artifact.
 
-## Current gate state (delete this section when it stops being true)
+## Human risk acceptance
 
-The driver refuses any release whose runtime-contract edges have no measured
-support. The G5 measurements are not yet anchored (epic `aweb-abbe`: `.12`
-adaptation, then per-edge measurement), so lanes touching unmeasured edges will
-refuse.
-
-Until then a release needs an explicitly authorized exception. G1
-build-once/exact-bytes still holds in full; only the G5 orchestration is
-bypassed. The precedent - authorization structure, joint barrier across two
-surfaces, and adopting existing staged artifacts rather than rebuilding - is
-recorded on `aweb-abbt` (channel 1.7.2 + pi 0.3.2, 2026-08-05). Reuse that
-shape; do not invent a new bypass, and never assume the exception.
-
-## Verify what actually landed
-
-Do not trust "the workflow said success". Check the bytes:
-
-```
-# npm
-curl -s https://registry.npmjs.org/<pkg>/-/<file>.tgz | shasum -a 256
-# PyPI: compare the release file digests to the staged manifest
-# tags
-git ls-remote origin refs/tags/<tag>
-```
-
-The published digest must equal the staged digest the driver recorded, and the
-tag must dereference to the exact reviewed source commit. Byte identity is the
-entire point of the lane.
+A runner outage or urgent release must not turn the fallback into a ceremony.
+One explicit human authorization records who accepted which risk and lets the
+runnerless driver proceed. It does not weaken build-once/exact-bytes: the local
+adapter stages once, publication consumes that exact inventory, and the driver
+records the result.
