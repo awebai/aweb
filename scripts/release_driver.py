@@ -4265,9 +4265,10 @@ def prepare_adopted_preplan_recovery(
     # The frozen state is checked only after both artifacts crossed the joint
     # semantic barrier. On a fresh preparation it must equal the exception.
     # A restarted process may also see one exact final component, but only when
-    # a unique pre-effect attempt is already authority-recorded for it. This
-    # admits the crash window without admitting a retrospective receipt for an
-    # unrelated/direct publication.
+    # pre-effect attempt history is already authority-recorded for it. Execution
+    # must then correlate the unique eligible attempt to the authorization being
+    # resumed. This admits the crash window without admitting a retrospective
+    # receipt for an unrelated/direct publication.
     for name, expected in exception.canonical["observed_partial_state"].items():
         observed = _observe_recovery_component(
             lanes,
@@ -4282,13 +4283,13 @@ def prepare_adopted_preplan_recovery(
         attempts = _attempts(handle, store, authority, name)
         if (
             observed.public == _expected_final_public(exception, name)
-            and len(attempts) == 1
+            and attempts
         ):
             continue
         raise ReceiptError(
             f"{name}: public state drifted from the exception's exact "
-            f"partial-state preimage without one persisted attempt: expected "
-            f"{expected!r}, observed {observed.public!r}"
+            f"partial-state preimage without persisted attempt history: "
+            f"expected {expected!r}, observed {observed.public!r}"
         )
 
     return handle
@@ -4772,20 +4773,26 @@ def execute_adopted_preplan_recovery(
         attempts = _attempts(handle, store, authority, component)
         current = [
             item for item in attempts
-            if item[1].get("authorization_digest") == authorization_digest
+            if (
+                item[1].get("authorization_id")
+                == authorization["authorization_id"]
+                and item[1].get("authorization_digest")
+                == authorization_digest
+            )
         ]
         if len(current) > 1:
             raise ReceiptError(
                 f"{component}: authorization has multiple attempt records"
             )
         if observed.public == _expected_final_public(handle.exception, component):
-            if len(attempts) != 1:
+            if len(current) != 1:
                 raise ReceiptError(
-                    f"{component}: exact effect has no unique persisted attempt"
+                    f"{component}: exact effect has no unique persisted attempt "
+                    "for the current authorization"
                 )
             transitions[component] = _recover_existing_attempt(
                 handle=handle, component=component,
-                attempt_id=attempts[0][0], attempt=attempts[0][1],
+                attempt_id=current[0][0], attempt=current[0][1],
                 lanes=lanes, graph=graph, store=store, authority=authority,
             )
         elif current:
