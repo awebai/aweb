@@ -1067,13 +1067,18 @@ class MeasureSupportTests(unittest.TestCase):
         for component in ("channel", "pi"):
             with tempfile.TemporaryDirectory() as tmp:
                 document = self.measure(component, tmp)
-            self.assertEqual(document["status"], "incomplete-unanchored")
+            child = document["measurement"]
+            self.assertEqual(document["schema"], skew.ENVELOPE_SCHEMA)
+            self.assertEqual(child["status"], "incomplete-unanchored")
             self.assertEqual(
-                document["completeness"], "unanchored-local-measurement")
+                child["completeness"], "unanchored-local-measurement")
             self.assertEqual(
                 document["supported_versions"],
                 {component: ["1.2.2"], "server": ["1.26.34"]})
-            self.assertTrue(document["measurement_id"])
+            self.assertEqual(document["measurement_id"],
+                             child["measurement_id"],
+                             "the envelope binds the CHILD's identity")
+            self.assertTrue(document["envelope_id"])
 
     def test_control_runs_exactly_once_and_only_after_every_cell(self):
         journeys = []
@@ -1114,6 +1119,18 @@ class MeasureSupportTests(unittest.TestCase):
                 "exactly one control document, beside the cells not inside them")
         self.assertNotIn("negative_control", document.get("cell_evidence", [{}])[0]
                          if document.get("cell_evidence") else {})
+
+    def test_mislabelled_evidence_root_refuses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(rd.ReceiptError, "final segment"):
+                skew.FileEvidenceWriter(Path(tmp) / "channel", component="pi")
+
+    def test_real_factories_carry_their_component(self):
+        for component in ("channel", "pi"):
+            harness = (skew.channel_factory() if component == "channel"
+                       else skew.pi_factory())
+            self.assertEqual(harness.evidence_component, component)
+            self.assertEqual(Path(harness._evidence.root).name, component)
 
     def test_channel_and_pi_evidence_roots_are_separate(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1349,18 +1366,35 @@ class MeasureSupportBoundaryTests(unittest.TestCase):
 
     # 3. only the exact unanchored output class may be re-identified
     def mutating_harness(self, tmp, mutation):
+        return self.mutating_harness_fn(tmp, lambda d: {**d, **mutation})
+
+    def mutating_harness_fn(self, tmp, transform):
         base = self.harness(tmp, "channel")
         finish = base.finish_matrix
 
         def finish_mutated(document):
             path = finish(document)
-            body = json.loads(Path(path).read_bytes())
-            body.update(mutation)
+            body = transform(json.loads(Path(path).read_bytes()))
             Path(path).write_text(json.dumps(body, sort_keys=True))
             return path
 
         base.finish_matrix = finish_mutated
         return base
+
+    def test_coherent_post_finish_tamper_refuses(self):
+        """The reviewer's kill: mutate the finished document AND recompute its
+        identity so it is self-consistent. Only re-deriving from the evidence
+        catches it."""
+        def coherent(document):
+            body = dict(document)
+            body["supported_versions"] = {"server": ["9.9.9"]}
+            body.pop("measurement_id", None)
+            body["measurement_id"] = rd.canonical_json_digest(body)
+            return body
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(rd.ReceiptError, "derived independently"):
+                self.measure(tmp, harness=self.mutating_harness_fn(tmp, coherent))
 
     def test_output_claiming_completion_refuses(self):
         for mutation in (
@@ -1381,9 +1415,73 @@ class MeasureSupportBoundaryTests(unittest.TestCase):
         """The control for the class check: identical machinery, honest output."""
         with tempfile.TemporaryDirectory() as tmp:
             document = self.measure(tmp, harness=self.mutating_harness(tmp, {}))
-        self.assertEqual(document["status"], "incomplete-unanchored")
-        self.assertIs(document["support_complete"], False)
-        self.assertIsNone(document["anchor"])
+        child = document["measurement"]
+        self.assertEqual(child["status"], "incomplete-unanchored")
+        self.assertIs(child["support_complete"], False)
+        self.assertIsNone(child["anchor"])
+
+
+
+
+class CliExactManifestTests(unittest.TestCase):
+    """Reviewer defect 3: the CLI projected (component, server) out of a wider
+    staged manifest, so an unrelated component never reached the API's
+    exact-set check."""
+
+    def manifest_bytes(self, components):
+        graph = rd.Graph.from_dict({"component": {
+            name: {
+                "source_paths": [f"{name}/"],
+                "version_source": {"type": "manifest", "path": f"{name}/v"},
+                "tag_format": name + "-v{version}",
+                "verify": {"command": "true"},
+            } for name in components
+        }, "edge": []})
+        state = rd.FixtureState(
+            changed_components={n: True for n in components},
+            versions={n: "1.2.3" for n in components},
+            published_versions={n: "1.2.2" for n in components},
+        )
+        plan = rd.compute_plan(graph, state)
+        entries = {}
+        for name in components:
+            files = {f"{name}.artifact": sha(name.encode())}
+            entries[name] = rd.ReceiptEntry(
+                version="1.2.3", digest=rd.canonical_digest_of_set(files),
+                digest_set=files,
+                lane_ref={"artifact": "gh-artifact:awebai/aweb:17:23",
+                          "aw_source_sha": "a" * 40,
+                          "zip_digest": "sha256:" + "1" * 64})
+        body, _ = rd.seal_staged_manifest(
+            plan, frozen_plan_id="f" * 64, source_sha="a" * 40,
+            entries=entries, graph=graph)
+        return body
+
+    def run_cli(self, components, tmp):
+        path = Path(tmp) / "staged.json"
+        path.write_bytes(self.manifest_bytes(components))
+        return skew.main([
+            "measure-channel", "--staged-manifest", str(path),
+            "--supported-channel", "1.2.2", "--supported-server", "1.26.34",
+            "--published-channel-latest", "1.2.2",
+            "--published-server-latest", "1.26.34",
+            "--evidence-root", str(Path(tmp) / "evidence"),
+            "--output", str(Path(tmp) / "out.json"),
+        ])
+
+    def test_cli_refuses_extra_staged_entry(self):
+        import contextlib
+        import io as _io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            captured = _io.StringIO()
+            with contextlib.redirect_stdout(captured):
+                code = self.run_cli(["channel", "pi", "server"], tmp)
+            self.assertEqual(code, 1)
+            self.assertIn("not \nexactly the measured edge".replace("\n", ""),
+                          captured.getvalue().replace("\n", " "))
+            self.assertFalse((Path(tmp) / "out.json").exists(),
+                             "a refused measurement writes no output")
 
 
 
