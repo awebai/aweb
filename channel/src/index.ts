@@ -59,7 +59,7 @@ async function main() {
       },
       instructions: `Events from the aweb channel are coordination messages from other agents in your team. Use the aw CLI to respond, not MCP tools.
 
-Mail events (type="mail") are async. A notification becomes durable delivery only after the channel survives a later successful loop iteration; a bridge that dies earlier leaves the message unread for recovery. Once promoted, you will not be re-notified. Reply when a reply is warranted: aw mail reply <message_id> --body "<reply>". You do not need to run aw mail ack to prevent redelivery; ack is only a courtesy read-receipt for the sender.
+Mail events (type="mail") are async. Mail is marked read when it is presented to you (this notification is that presentation), so you will not be re-notified for the same message. Reply when a reply is warranted: aw mail reply <message_id> --body "<reply>". You do not need to run aw mail ack to prevent redelivery; ack is only a courtesy read-receipt for the sender.
 
 Chat events (type="chat") may have sender_waiting="true", meaning the sender is blocked waiting for your reply. Respond promptly with: aw chat send-and-wait <from> "<reply>"
 If you need more time, send a status update the same way.
@@ -92,11 +92,15 @@ Control events (type="control") are operational signals. On "pause", stop curren
       method: "notifications/claude/channel",
       params: { content: awakening.content, meta: awakening.meta },
     }),
-    // Claude's MCP notification has no presentation receipt. The first callback
-    // is process-local pending; a later successful loop iteration promotes it to
-    // durable delivery and acks. A bridge that dies first leaves the message
-    // unread for the next process, while promoted marks prevent aajy's replay
-    // burst.
+    // On Claude the MCP notification IS the presentation of the mail to the
+    // agent (Claude presents at the first tool boundary), so mail is marked read
+    // at presentation — matching the honest semantic "presented = read". If the
+    // transport send fails, the ack is skipped and reconnect re-fetches the still
+    // -unread message; if the send succeeds but the process dies before
+    // presentation, the message is already read and is reachable only via
+    // aw mail show / a read-inclusive view (default-aaka), not by unread-only
+    // reconnect. Never acking is not the fix: it left mail unread and caused a
+    // replay burst on reconnect (default-aajy).
     mailAcknowledgment: "delivery",
     onStreamState: (state) => {
       if (state.state === "connected") return;
@@ -132,7 +136,7 @@ export async function dispatchEvent(
         method: "notifications/claude/channel",
         params: { content: awakening.content, meta: awakening.meta },
       }),
-      // A later successful dispatch promotes and acks; see startChannelLoop.
+      // Presented (notification) = read; see startChannelLoop above (aajy).
       mailAcknowledgment: "delivery",
     },
     dispatched,

@@ -377,12 +377,10 @@ describe("dispatchEvent", () => {
       "/v1/messages/inbox?unread_only=true&limit=200&message_id=msg-windowed",
     );
     expect(notification).toHaveBeenCalledTimes(1);
-    // The exact message-id fetch is the first delivery iteration. It stages the
-    // notification process-locally but cannot ack before a later iteration.
-    expect(client.post).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/msg-windowed/ack");
   });
 
-  test("acks mail only on a later dispatch after the Claude notification resolves", async () => {
+  test("acks mail only after the Claude notification (presentation) resolves", async () => {
     let finishNotification: (() => void) | undefined;
     const notification = vi.fn(() => new Promise<void>((resolve) => {
       finishNotification = resolve;
@@ -396,30 +394,22 @@ describe("dispatchEvent", () => {
       normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
 
-    const pinStore = new PinStore();
-    const dispatched = new Set<string>();
-    const event = { type: "mail_message", message_id: "msg-claude-pending" } satisfies AgentEvent;
     const dispatch = dispatchEvent(
       mcp as never,
       client as never,
-      pinStore,
+      new PinStore(),
       trust,
       self,
-      dispatched,
-      event,
+      new Set(),
+      { type: "mail_message", message_id: "msg-claude-pending" } satisfies AgentEvent,
     );
     await vi.waitFor(() => expect(notification).toHaveBeenCalledTimes(1));
 
-    // Notification completion alone cannot prove the host presented the mail.
+    // Not acked while presentation (the notification) is still pending...
     expect(client.post).not.toHaveBeenCalled();
     finishNotification?.();
     await dispatch;
-    expect(client.post).not.toHaveBeenCalled();
-
-    // A genuinely later dispatch in the same process promotes and acks the
-    // pending delivery without sending a duplicate notification.
-    await dispatchEvent(mcp as never, client as never, pinStore, trust, self, dispatched, event);
-    expect(notification).toHaveBeenCalledTimes(1);
+    // ...acked once presentation completes.
     expect(client.post).toHaveBeenCalledWith("/v1/messages/msg-claude-pending/ack");
   });
 

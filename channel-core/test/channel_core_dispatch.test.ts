@@ -89,12 +89,10 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).not.toHaveBeenCalled();
     finishMail?.();
     await consuming;
-    // The concurrent control event began before mail became pending, so it
-    // cannot promote that delivery. A genuinely later iteration must do so.
-    expect(client.post).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-lane-1/ack");
   });
 
-  test("stages mail without acknowledging on its first successful delivery", async () => {
+  test("acks mail after channel delivery succeeds", async () => {
     const onAwakening = vi.fn();
     const client = {
       get: vi.fn().mockResolvedValue({
@@ -129,10 +127,10 @@ describe("channel-core dispatchAgentEvent", () => {
       kind: "mail",
       content: "world",
     }));
-    expect(client.post).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-1/ack");
   });
 
-  test("delivery-store lock failure keeps a promoted mail pending without acknowledgment", { timeout: 15_000 }, async () => {
+  test("delivery-store lock failure rejects without creating an in-memory acknowledgment path", { timeout: 15_000 }, async () => {
     const storePath = join(await mkdtemp(join(tmpdir(), "aweb-channel-lock-fail-")), "delivered.json");
     const deliveryStore = await DeliveryStore.load(storePath);
     await mkdir(`${storePath}.lock`);
@@ -156,19 +154,14 @@ describe("channel-core dispatchAgentEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
 
-    const lockFailureOptions = {
-      client: client as never, pinStore: new PinStore(), trust, self, deliveryStore, onAwakening,
-    };
-    const lockFailureEvent = { type: "mail_message", message_id: "mail-lock-fail" } satisfies AgentEvent;
-    await dispatchAgentEvent(lockFailureOptions, dispatched, lockFailureEvent);
     await expect(dispatchAgentEvent(
-      lockFailureOptions,
+      { client: client as never, pinStore: new PinStore(), trust, self, deliveryStore, onAwakening },
       dispatched,
-      lockFailureEvent,
+      { type: "mail_message", message_id: "mail-lock-fail" } satisfies AgentEvent,
     )).rejects.toMatchObject({ code: "ELOCKED" });
 
     expect(onAwakening).toHaveBeenCalledTimes(1);
-    expect(dispatched).toHaveLength(1);
+    expect(dispatched).toHaveLength(0);
     expect(deliveryStore.has("mail:conv-lock-fail:mail-lock-fail")).toBe(false);
     expect(client.post).not.toHaveBeenCalled();
   });
@@ -197,7 +190,6 @@ describe("channel-core dispatchAgentEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     async function* events(): AsyncGenerator<AgentEvent> {
-      yield { type: "mail_message", message_id: "mail-corrupt-store" };
       yield { type: "mail_message", message_id: "mail-corrupt-store" };
     }
 
@@ -512,7 +504,7 @@ describe("channel-core dispatchAgentEvent", () => {
       content: "still delivered",
     }));
     expect(client.post).not.toHaveBeenCalledWith("/v1/messages/mail-poison/ack");
-    expect(client.post).not.toHaveBeenCalledWith("/v1/messages/mail-good/ack");
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-good/ack");
     expect(log).toHaveBeenCalledWith(expect.stringContaining("mail-poison"));
     expect(log).toHaveBeenCalledWith(
       "aweb: skipped verification for 1 inbox message; it remains unread",
@@ -764,7 +756,7 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).not.toHaveBeenCalled();
     finishDelivery?.();
     await dispatch;
-    expect(client.post).not.toHaveBeenCalled();
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-pending-injection/ack");
   });
 
   test("keeps captured null-envelope plaintext on the authenticated channel trust path", async () => {
@@ -966,7 +958,7 @@ describe("channel-core dispatchAgentEvent", () => {
       content: "decrypted mail body",
       meta: expect.objectContaining({ subject: "decrypted subject" }),
     }));
-    expect(client.post).not.toHaveBeenCalledWith("/v1/messages/mail-e2ee/ack");
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-e2ee/ack");
   });
 
   test("does not ack encrypted mail when local decrypt fails", async () => {
@@ -1275,7 +1267,7 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).not.toHaveBeenCalled();
   });
 
-  test("retries a promoted mail ack without re-delivering when the first ack fails", async () => {
+  test("retries mail ack without re-delivering when previous ack failed after delivery", async () => {
     const onAwakening = vi.fn();
     const deliveryStore = await DeliveryStore.load(join(await mkdtemp(join(tmpdir(), "aweb-channel-test-")), "delivered.json"));
     const dispatched = new Set<string>();
@@ -1308,7 +1300,6 @@ describe("channel-core dispatchAgentEvent", () => {
     };
     const event = { type: "mail_message", message_id: "mail-retry" } satisfies AgentEvent;
 
-    await dispatchAgentEvent(options, dispatched, event);
     await expect(dispatchAgentEvent(options, dispatched, event)).rejects.toThrow("503");
     await dispatchAgentEvent(options, dispatched, event);
 
@@ -1348,10 +1339,8 @@ describe("channel-core dispatchAgentEvent", () => {
       onAwakening,
     };
     const event = { type: "mail_message", message_id: "mail-manual" } satisfies AgentEvent;
-    const liveProcess = new Set<string>();
 
-    await dispatchAgentEvent(options, liveProcess, event);
-    await dispatchAgentEvent(options, liveProcess, event);
+    await dispatchAgentEvent(options, new Set(), event);
     await dispatchAgentEvent(options, new Set(), event);
 
     expect(onAwakening).toHaveBeenCalledTimes(1);
@@ -1480,7 +1469,7 @@ describe("channel-core dispatchAgentEvent", () => {
         verified: "true",
       }),
     }));
-    expect(client.post).not.toHaveBeenCalledWith("/v1/messages/mail-stable-envelope/ack");
+    expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-stable-envelope/ack");
   });
 
   test("live verified-legacy projected local address uses authenticated fresh-roster equality", async () => {
