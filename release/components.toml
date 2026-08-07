@@ -74,6 +74,24 @@ tag_format = "skills-v{version}"
 publish_lane = { workflow = ".github/workflows/npm-release.yml", repository = "awebai/aweb", provider = "github-workflow-artifacts", modes = ["stage-only", "publish-continuation", "verify-only"], registry = { type = "npm", package = "@awebai/claude-skills" } }
 verify = { command = "npm view @awebai/claude-skills@{version} version" }
 
+[component.server-image-payload]
+source_paths = [
+    "server/pyproject.toml",
+    "server/README.md",
+    "server/src",
+]
+publishable = false
+# Exactly what awid/Dockerfile.release copies into the published image
+# (lines 15 and 20), and nothing else. The image bytes depend on these three
+# paths even though awid-image's own source path is awid/.
+#
+# Naming the three rather than the whole server component is the difference
+# between a truthful declaration and a costly one: a change confined to
+# server/tests/ or to unrelated server docs would otherwise force an immutable
+# production image release, and publication cannot be undone. The image lane is
+# the only consumer - server's own PyPI release continues to move on any change
+# under server/, through the server component.
+
 [component.agent-skills]
 source_paths = [
     "skills/aweb-bootstrap",
@@ -138,15 +156,9 @@ type = "bundled-build-input"
 from = "agent-skills"
 to = ["pi", "skills"]
 
-# awid/Dockerfile.release copies server/pyproject.toml, server/README.md and
-# server/src into the published image, so the image bytes depend on the server
-# tree even though awid-image's own source path is awid/. Declared against the
-# whole server component: a change confined to server tests moves the image
-# needlessly, which costs a release nobody needed, while the reverse would ship
-# an image whose contents changed with nothing saying so.
 [[edge]]
 type = "bundled-build-input"
-from = "server"
+from = "server-image-payload"
 to = ["awid-image"]
 
 [[edge]]

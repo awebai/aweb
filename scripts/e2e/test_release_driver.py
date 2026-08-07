@@ -1050,16 +1050,59 @@ class GraphContractTests(unittest.TestCase):
                     f"{consumer} copies a different set than the graph declares",
                 )
 
-    def test_awid_image_moves_when_the_server_tree_it_bakes_in_changes(self) -> None:
-        """awid/Dockerfile.release copies server/ into the published image, so
-        a server change alters the image bytes even though awid-image's own
-        source path is awid/."""
+    def test_image_payload_declares_exactly_what_the_dockerfile_copies(self) -> None:
+        """The published image bakes in three server paths, so those move it.
+        Declaring the whole server component instead would force an immutable
+        production image release for a change confined to server tests."""
         dockerfile = (REPO_ROOT / "awid" / "Dockerfile.release").read_text()
-        self.assertIn("COPY server/", dockerfile, "the image still bakes in server/")
+        copied = set()
+        for line in dockerfile.splitlines():
+            if not line.startswith("COPY "):
+                continue
+            # COPY <src>... <dest>: the last token is the destination.
+            for token in line.split()[1:-1]:
+                if token.startswith("server/"):
+                    copied.add(token)
+        self.assertTrue(copied, "the image no longer copies server paths")
+
+        declared = set(self.graph.components["server-image-payload"].source_paths)
+        self.assertEqual(
+            declared,
+            copied,
+            "the declared image payload must equal what the Dockerfile copies",
+        )
         self.assertIn(
             "awid-image",
+            self.graph.bundled_into.get("server-image-payload", ()),
+            "a change to a copied path must move the image",
+        )
+
+        # Positive control per copied input: each one is genuinely covered by a
+        # declared path, so none of the three can silently stop moving the image.
+        for path in sorted(copied):
+            with self.subTest(copied=path):
+                self.assertTrue(
+                    any(path == d or path.startswith(d + "/") for d in declared),
+                    f"{path} is copied into the image but not declared",
+                )
+
+        # Negative control: what the image does NOT bake in must not move it.
+        # server/tests is the case that motivated naming three paths rather
+        # than the whole component.
+        for unrelated in ("server/tests", "server/CHANGELOG.md"):
+            with self.subTest(unrelated=unrelated):
+                self.assertFalse(
+                    any(
+                        unrelated == d or unrelated.startswith(d + "/")
+                        for d in declared
+                    ),
+                    f"{unrelated} does not reach the image and must not move it",
+                )
+        self.assertNotIn(
+            "awid-image",
             self.graph.bundled_into.get("server", ()),
-            "a server change must move the image it is baked into",
+            "the whole server component must not move the image; only its "
+            "copied payload does",
         )
 
     def test_unrelated_plan_does_not_require_a_sites_baseline(self) -> None:
