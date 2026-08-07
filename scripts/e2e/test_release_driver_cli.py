@@ -2598,8 +2598,14 @@ class SitePlanTests(unittest.TestCase):
         # every plan: the driver cannot say whether the site is current. It
         # does not block an unrelated release - that made every plan of every
         # component unsatisfiable - but it is never silent either, which is
-        # what turns a no-op plan into a false all-clear.
-        disclosures = rd.check_delivery_observability(graph, state)
+        # what turns a no-op plan into a false all-clear. The disclosure is
+        # read out of frozen truth, so it is the sealed value rather than a
+        # second computation that could disagree with it.
+        frozen_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha=SOURCE_SHA, state=state,
+        )
+        frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+        disclosures = rd.delivery_disclosures(frozen.resolved)
         self.assertTrue(
             any("baseline" in d for d in disclosures),
             f"the unobservable baseline must be disclosed: {disclosures}",

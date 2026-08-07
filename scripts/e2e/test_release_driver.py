@@ -1105,6 +1105,59 @@ class GraphContractTests(unittest.TestCase):
             "copied payload does",
         )
 
+    def _frozen_for_sites_baseline(self, baseline: str | None):
+        """Freeze the same server-only plan with sites observable or not."""
+        state = rd.FixtureState(
+            changed_components={"server": True},
+            delivery_baselines={"sites": baseline} if baseline else {},
+        )
+        plan = rd.compute_plan(self.graph, state)
+        self.assertNotIn("sites", {n.component for n in plan.moving})
+        return rd.freeze_plan(
+            plan, self.graph, source_sha=SOURCE_SHA, state=state,
+            measurement=AllRecordsResolve(),
+        )
+
+    def test_delivery_observability_is_bound_into_frozen_truth(self) -> None:
+        """The reviewer's counterexample: an undecidable delivery node is not in
+        plan.moving, so recording baselines only for moving nodes left the
+        frozen bytes identical whether sites was observable or not. A disclosure
+        that exists only on transient CLI output is decoration - it cannot be
+        what a later reader verifies against."""
+        missing_bytes, missing_id = self._frozen_for_sites_baseline(None)
+        observed_bytes, observed_id = self._frozen_for_sites_baseline("deploy-ref")
+
+        self.assertNotEqual(
+            missing_bytes, observed_bytes, "frozen bytes must record observability"
+        )
+        self.assertNotEqual(
+            missing_id, observed_id, "the frozen id must change with it"
+        )
+
+        loaded = rd.load_frozen_plan(missing_bytes, expected_id=missing_id)
+        self.assertIn(
+            "sites",
+            loaded.resolved.get("delivery", {}),
+            "frozen truth must name the undecidable delivery node",
+        )
+        self.assertIsNone(loaded.resolved["delivery"]["sites"])
+
+    def test_cli_disclosures_are_derived_from_frozen_truth(self) -> None:
+        """What the operator reads must be the sealed value, not a second
+        computation against live state that could disagree with it."""
+        missing_bytes, missing_id = self._frozen_for_sites_baseline(None)
+        loaded = rd.load_frozen_plan(missing_bytes, expected_id=missing_id)
+        disclosures = rd.delivery_disclosures(loaded.resolved)
+        self.assertTrue(any(d.startswith("sites:") for d in disclosures))
+
+        observed_bytes, observed_id = self._frozen_for_sites_baseline("deploy-ref")
+        observed = rd.load_frozen_plan(observed_bytes, expected_id=observed_id)
+        self.assertEqual(
+            rd.delivery_disclosures(observed.resolved),
+            [],
+            "an observable delivery node discloses nothing",
+        )
+
     def test_unrelated_plan_does_not_require_a_sites_baseline(self) -> None:
         """A delivery node nobody is releasing must not block someone else's
         release. sites ships without a baseline_ref, so a global check made

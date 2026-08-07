@@ -447,36 +447,6 @@ def compute_plan(graph: Graph, state) -> Plan:
     return Plan(moving=moving, runtime_contract_edges=contracts)
 
 
-def check_delivery_observability(graph: Graph, state) -> list[str]:
-    """Delivery nodes whose movement the driver cannot decide.
-
-    A delivery node reaches its users through a lane rather than a registry, so
-    its baseline is a delivered ref rather than a version tag. Without one,
-    `component_changed` refuses to fabricate movement and the node silently
-    never moves - so a real change to its sources produces a plan that says
-    nothing about it, which reads as an all-clear.
-
-    This is a standing property of the graph, not of any one plan, so it is
-    disclosed rather than blocking: requiring it of every component made every
-    plan of every component unsatisfiable. Releasing such a node still refuses
-    in check_declared_inputs, where the node is actually in the moving set.
-    """
-    disclosures: list[str] = []
-    for component in graph.components.values():
-        if component.lane is None or not component.source_paths:
-            continue
-        baseline = None
-        if hasattr(state, "delivery_baseline"):
-            baseline = state.delivery_baseline(component)
-        if baseline is None:
-            disclosures.append(
-                f"{component.name}: delivered baseline is unobservable; this "
-                "plan cannot tell you whether it is current, and movement is "
-                "never fabricated from its absence"
-            )
-    return disclosures
-
-
 def check_declared_inputs(
     graph: Graph, plan: Plan, state, adopted: set | None = None
 ) -> list[str]:
@@ -653,7 +623,7 @@ def _resolved_snapshot(plan: Plan, graph: Graph, state) -> dict:
     public metadata, credential contents never flow through state."""
     if state is None:
         return {}
-    snapshot: dict = {"components": {}, "pins": {}, "baselines": {}, "tags": {}}
+    snapshot: dict = {"components": {}, "pins": {}, "baselines": {}, "tags": {}, "delivery": {}}
     if hasattr(state, "remote_tag_shas"):
         tags = state.remote_tag_shas()
         for node in plan.moving:
@@ -686,7 +656,36 @@ def _resolved_snapshot(plan: Plan, graph: Graph, state) -> dict:
             snapshot["pins"][key] = record
         if component.lane is not None and hasattr(state, "delivery_baseline"):
             snapshot["baselines"][node.component] = state.delivery_baseline(component)
+
+    # Delivery observability for EVERY lane component, not only the moving
+    # ones. An undecidable delivery node is by definition absent from
+    # plan.moving, so recording it per moving node left frozen bytes identical
+    # whether the node was observable or not - and a disclosure that does not
+    # change the sealed artifact is decoration, not something a later reader
+    # can verify against. None means "could not be decided at freeze time".
+    if hasattr(state, "delivery_baseline"):
+        for name, component in sorted(graph.components.items()):
+            if component.lane is not None and component.source_paths:
+                snapshot["delivery"][name] = state.delivery_baseline(component)
     return snapshot
+
+
+def delivery_disclosures(resolved: dict) -> list[str]:
+    """Delivery nodes the frozen plan could not decide, read from frozen truth.
+
+    Derived from the sealed snapshot rather than recomputed against live state,
+    so what an operator reads is what the artifact records. A second computation
+    could disagree with the thing it claims to describe.
+    """
+    disclosures = []
+    for name, baseline in sorted((resolved or {}).get("delivery", {}).items()):
+        if baseline is None:
+            disclosures.append(
+                f"{name}: delivered baseline is unobservable; this plan cannot "
+                "tell you whether it is current, and movement is never "
+                "fabricated from its absence"
+            )
+    return disclosures
 
 
 def freeze_plan(
@@ -8134,6 +8133,9 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         problems = check_declared_inputs(graph, plan, state)
         frozen_id = None
         plan_artifact_id = None
+        # Read back out of the sealed artifact, so what the operator is shown
+        # is what was frozen rather than a second look at live state.
+        disclosures: list[str] = []
         try:
             frozen_bytes, frozen_id = freeze_plan(
                 plan, graph, source_sha=source_sha, state=state,
@@ -8143,6 +8145,9 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             _put_content_addressed(
                 providers.store, providers.authority, plan_artifact_id,
                 frozen_bytes, frozen_id,
+            )
+            disclosures = delivery_disclosures(
+                load_frozen_plan(frozen_bytes, expected_id=frozen_id).resolved
             )
         except (BlockedByDeclaredInputs, ReceiptError) as exc:
             problems.append(str(exc))
@@ -8171,9 +8176,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                         for e in plan.runtime_contract_edges
                     ],
                     "declared_input_problems": problems,
-                    "delivery_disclosures": check_delivery_observability(
-                        graph, providers.state
-                    ),
+                    "delivery_disclosures": disclosures,
                     "ship_gate": ship_gate_warning(source_sha),
                     "plan_digest": plan_digest(plan, graph),
                 },
