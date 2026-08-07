@@ -670,6 +670,7 @@ test-release-runnerless:
 # nobody, so the round trip is the thing worth proving.
 test-pointer-adapter:
 	python3 scripts/e2e/test_pointer_adapter_marketplace.py
+	python3 scripts/e2e/test_pointer_adapter_ac_pin.py
 
 test-release-repository-measurement:
 	python3 scripts/e2e/test_release_repository_measurement.py

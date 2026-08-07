@@ -1322,6 +1322,30 @@ class GraphContractTests(unittest.TestCase):
         self.assertNotIn("ac-gate", self.graph.components)
         self.assertNotIn("ac-gate", self.graph.pointer_targets.get("ac-pin", ()))
 
+    def test_a_pointer_advertises_what_its_pin_actually_holds(self) -> None:
+        """ac-pin holds a git SHA for server and a package version for awid.
+        Advertising a version into a git_sha field would write a value the pin
+        cannot mean, so what is advertised follows the pin, not one rule."""
+        state = rd.FixtureState(
+            changed_components={"server": True, "awid-pypi": True},
+            versions={"server": "1.26.36", "awid-pypi": "0.5.15"},
+        )
+        plan = rd.compute_plan(self.graph, state)
+        updates = rd.pointer_updates(plan, self.graph, source_sha=SOURCE_SHA)
+        self.assertEqual(
+            updates["ac-pin"],
+            {"server": SOURCE_SHA, "awid-pypi": "0.5.15"},
+            "the server pin holds a commit, the awid pin holds a version",
+        )
+
+    def test_a_version_pointer_still_advertises_the_version(self) -> None:
+        state = rd.FixtureState(
+            changed_components={"channel": True}, versions={"channel": "1.7.4"}
+        )
+        plan = rd.compute_plan(self.graph, state)
+        updates = rd.pointer_updates(plan, self.graph, source_sha=SOURCE_SHA)
+        self.assertEqual(updates["marketplace-pointer"], {"channel": "1.7.4"})
+
     def test_every_forced_pointer_can_be_performed(self) -> None:
         """A forced node with no way to perform its effect is not a graph
         constraint, it is a dead end: it made every channel, skills, server and

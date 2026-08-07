@@ -3815,22 +3815,42 @@ class SubprocessPointerAdapter:
         return self._run("read", component)
 
 
-def pointer_updates(plan: Plan, graph: Graph) -> dict[str, dict]:
-    """What each moving pointer node must advertise: the planned versions of
-    the sources that forced it. A pointer forced by channel@1.7.4 advertises
-    exactly that, so the record cannot claim more than the release published."""
+def pointer_updates(
+    plan: Plan, graph: Graph, *, source_sha: str | None = None
+) -> dict[str, dict]:
+    """What each moving pointer node must advertise for the sources that forced it.
+
+    Usually the planned version - a marketplace entry forced by channel@1.7.4
+    advertises exactly that, so the record cannot claim more than the release
+    published. But a pin holds whatever that pin means: AC's release-pin.toml
+    holds a commit for aweb, not a version, and writing a version into a
+    git_sha field would put a value there that the field cannot mean.
+    """
     moving = {n.component: n for n in plan.moving}
     updates: dict[str, dict] = {}
     for source, targets in graph.pointer_targets.items():
         if source not in moving:
             continue
-        version = moving[source].version
-        if version is None:
-            continue
         for target in targets:
-            if target in moving:
-                updates.setdefault(target, {})[source] = version
+            if target not in moving:
+                continue
+            advertised = _advertised_value(
+                graph.components[target], source, moving[source], source_sha
+            )
+            if advertised is not None:
+                updates.setdefault(target, {})[source] = advertised
     return updates
+
+
+def _advertised_value(target: Component, source: str, node: PlanNode, source_sha):
+    """A commit-valued pin gets the source commit; everything else the version."""
+    for pin in target.sibling_pins:
+        if pin.get("component") != source:
+            continue
+        if pin.get("field") == "git_sha" or pin.get("kind") == "sha-pin":
+            return source_sha
+        return node.version
+    return node.version
 
 
 class SubprocessLocalAdapter:
@@ -8285,14 +8305,16 @@ def _pointer_repository(component: Component) -> str:
     return (component.lane or {}).get("repository") or component.name
 
 
-def parse_pointer_adapters(raw: list[str], *, plan: Plan, graph: Graph) -> dict:
+def parse_pointer_adapters(
+    raw: list[str], *, plan: Plan, graph: Graph, source_sha: str | None = None
+) -> dict:
     """component=/absolute/pointer-adapter -> {component: PointerLane}.
 
     What each pointer advertises is derived from the plan, never supplied on
     the command line: an operator who could type the version could advertise a
     version the release did not publish.
     """
-    updates = pointer_updates(plan, graph)
+    updates = pointer_updates(plan, graph, source_sha=source_sha)
     lanes = {}
     for item in raw:
         component, separator, executable = item.partition("=")
@@ -8880,7 +8902,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         try:
             pointer_lanes = parse_pointer_adapters(
                 getattr(args, "pointer_adapter", []),
-                plan=plan, graph=frozen_graph,
+                plan=plan, graph=frozen_graph, source_sha=frozen.source_sha,
             )
         except ReceiptError as exc:
             print(f"BLOCKED: {exc}")
