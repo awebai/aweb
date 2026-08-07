@@ -572,29 +572,64 @@ def check_declared_inputs(
     return problems
 
 
-def require_runtime_support(plan: Plan, *, defer_g5: bool, authorization) -> None:
+def require_runtime_support(
+    plan: Plan,
+    *,
+    defer_g5: bool,
+    authorization,
+    source_sha: str | None = None,
+    frozen_plan_id: str | None = None,
+) -> None:
     """Measured support, or a human who accepted its absence, before publishing.
 
     Deferral never declares support: the edge stays declared-incomplete in the
     frozen plan and the receipt records who accepted the risk. A bare flag is
-    not an authorization - without a record naming someone, there is nothing to
+    not an authorization - without a record naming someone there is nothing to
     hold, so an unrecorded deferral is refused rather than honored.
+
+    The record is bound to this source, this frozen plan and exactly the edges
+    being deferred, so it cannot be reused for another release or stretched
+    over an edge nobody read. Every mismatch refuses before any effect.
     """
     incomplete = [e for e in plan.runtime_contract_edges if e.declared_incomplete]
     if not incomplete:
         return
-    named = ", ".join(f"{e.a}<->{e.b}" for e in incomplete)
+    touched = frozenset(edge_identity(e) for e in incomplete)
+    named = ", ".join(sorted(touched))
     if not defer_g5:
         raise BlockedByDeclaredInputs(
             f"runtime-contract {named}: support is declared-incomplete (no "
             "fleet measurement or approved deprecation). Measure it, or accept "
-            "the risk explicitly with DEFER_G5=1 and an authorization record"
+            "the risk explicitly with DEFER_G5=1 and a G5 authorization record"
         )
-    if not isinstance(authorization, Approval) or not authorization.g5_deferred:
+    if not isinstance(authorization, G5Authorization):
         raise ReceiptError(
-            f"deferring runtime support for {named} requires an explicit human "
-            "authorization recording who accepted the risk and when; DEFER_G5 "
-            "alone records nothing"
+            f"deferring runtime support for {named} requires an explicit G5 "
+            "authorization recording who accepted the risk and when. DEFER_G5 "
+            "alone records nothing, and a risk record that accepted something "
+            "else - a runner outage - is not acceptance of an unmeasured "
+            "runtime contract"
+        )
+    if source_sha is not None and authorization.source_sha != source_sha:
+        raise ReceiptError(
+            "G5 authorization is bound to source "
+            f"{authorization.source_sha} and this release is {source_sha}"
+        )
+    if frozen_plan_id is not None and authorization.frozen_plan_id != frozen_plan_id:
+        raise ReceiptError(
+            "G5 authorization is bound to frozen plan "
+            f"{authorization.frozen_plan_id} and this release is {frozen_plan_id}"
+        )
+    if authorization.edges != touched:
+        missing = sorted(touched - authorization.edges)
+        extra = sorted(authorization.edges - touched)
+        detail = []
+        if missing:
+            detail.append("does not cover " + ", ".join(missing))
+        if extra:
+            detail.append("names unrelated " + ", ".join(extra))
+        raise ReceiptError(
+            "G5 authorization " + "; ".join(detail) + f" (this release defers {named})"
         )
 
 
@@ -865,6 +900,85 @@ class Approval:
     g5_deferred: bool = False
 
 
+@dataclass(frozen=True)
+class G5Authorization:
+    """A human accepting unmeasured runtime support, for one exact release.
+
+    Bound to the source, the frozen plan and the exact set of incomplete edges
+    being deferred, so the record cannot be carried to a different release or
+    stretched to cover an edge nobody read. Deliberately not an Approval: a
+    record that accepted a runner outage is not G5 acceptance, and the type
+    keeps the two from being substituted for one another by accident.
+    """
+
+    who: str
+    when: str
+    source_sha: str
+    frozen_plan_id: str
+    edges: frozenset
+    risk: str
+
+    def as_record(self) -> dict:
+        return {
+            "who": self.who,
+            "when": self.when,
+            "source_sha": self.source_sha,
+            "frozen_plan_id": self.frozen_plan_id,
+            "edges": sorted(self.edges),
+            "risk": self.risk,
+        }
+
+
+def edge_identity(edge) -> str:
+    """How an incomplete edge is named in a G5 authorization."""
+    return f"{edge.a}<->{edge.b}"
+
+
+def parse_g5_authorization(value: str | None) -> G5Authorization | None:
+    """--g5-authorization who=<w>,when=<t>,source=<40hex>,plan=<64hex>,
+    edges=<a><->b[+<c><->d],risk=<text>
+
+    Authority-independent: hosted, local-development and local-runnerless all
+    accept the same record, because who may defer runtime support is a question
+    about the human, not about which runner built the artifact.
+    """
+    if not value:
+        return None
+    fields: dict[str, str] = {}
+    for part in value.split(","):
+        key, _, item = part.partition("=")
+        key = key.strip()
+        if key in fields:
+            raise ReceiptError(f"--g5-authorization repeats field {key!r}")
+        fields[key] = item.strip()
+    required = {"who", "when", "source", "plan", "edges", "risk"}
+    if set(fields) != required or not all(fields.values()):
+        raise ReceiptError(
+            "--g5-authorization must be who=<w>,when=<t>,source=<40hex>,"
+            f"plan=<64hex>,edges=<a><->b[+<c><->d],risk=<text>, got {value!r}"
+        )
+    if not re.fullmatch(r"[0-9a-f]{40}", fields["source"]):
+        raise ReceiptError(
+            f"--g5-authorization source must be a 40-hex SHA, got {fields['source']!r}"
+        )
+    if not re.fullmatch(r"[0-9a-f]{64}", fields["plan"]):
+        raise ReceiptError(
+            "--g5-authorization plan must be a 64-hex frozen plan id, got "
+            f"{fields['plan']!r}"
+        )
+    edges = frozenset(e for e in fields["edges"].split("+") if e)
+    if not edges:
+        raise ReceiptError("--g5-authorization must name the deferred edges")
+    return G5Authorization(
+        who=fields["who"],
+        when=fields["when"],
+        source_sha=fields["source"],
+        frozen_plan_id=fields["plan"],
+        edges=edges,
+        risk=fields["risk"],
+    )
+
+
 def runnerless_risk_approval(value: str | None, *, defer_g5: bool) -> Approval:
     """One explicit human record selects local authority and any G5 deferral."""
     parts = value.split(",", 2) if value else []
@@ -923,6 +1037,7 @@ def seal_receipt(
     frozen_plan_id: str = "",
     staged_manifest_id: str = "",
     partial: bool = False,
+    g5_authorization=None,
 ) -> tuple[bytes, str]:
     """Returns (sealed bytes, digest). The digest MUST be recorded with an
     external authority; beside the receipt it is only a checksum. Entries
@@ -1009,6 +1124,14 @@ def seal_receipt(
                 }
                 for component, a in sorted(approvals.items())
             },
+            # Who accepted unmeasured runtime support for this exact release.
+            # Sealed, so the acceptance is auditable afterwards rather than
+            # living only in the shell history of whoever ran the release.
+            **(
+                {"g5_authorization": g5_authorization.as_record()}
+                if g5_authorization is not None
+                else {}
+            ),
         },
         sort_keys=True,
     )
@@ -4804,6 +4927,9 @@ class Providers:
     measurement: object = None
     runnerless_risk: Approval | None = None
     defer_g5: bool = False
+    # Authority-independent: who may defer runtime support is a question
+    # about the human, not about which runner built the artifact.
+    g5_authorization: object = None
     # Established by trusted composition (build_providers with an allowlisted
     # registration), never by an attribute a caller-writable implementation
     # asserts about itself.
@@ -6852,8 +6978,13 @@ def run_plan(
         raise ReceiptError(
             "runnerless local authority requires explicit risk authorization"
         )
+    g5_authorization = providers.g5_authorization if providers is not None else None
     require_runtime_support(
-        plan, defer_g5=defer_g5, authorization=runnerless_risk
+        plan,
+        defer_g5=defer_g5,
+        authorization=g5_authorization,
+        source_sha=source_sha,
+        frozen_plan_id=frozen.frozen_id if frozen is not None else None,
     )
     complete_edges = [
         e for e in plan.runtime_contract_edges if not e.declared_incomplete
@@ -7115,6 +7246,7 @@ def run_plan(
         approvals=receipt_approvals,
         frozen_plan_id=frozen_plan_id,
         staged_manifest_id=manifest_id,
+        g5_authorization=g5_authorization,
     )
     receipt_id = f"receipt:{frozen_plan_id}:{digest}"
     _put_content_addressed(store, authority, receipt_id, sealed, digest)
@@ -7139,6 +7271,7 @@ def resume_plan(
     manifest_id: str | None = None,
     runnerless_risk: Approval | None = None,
     defer_g5: bool = False,
+    g5_authorization=None,
 ) -> dict[str, ReceiptEntry]:
     """Resume from the ORIGINAL anchored staged manifest: fetch it by id,
     verify it through the authority, stage NOTHING, observe every claimed
@@ -7334,6 +7467,7 @@ def resume_plan(
             authority_trust=authority_trust,
             runnerless_risk=runnerless_risk,
             defer_g5=defer_g5,
+            g5_authorization=g5_authorization,
         ),
         _resume_manifest=manifest,
         _resume_published=published,
@@ -7892,6 +8026,13 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         help="record an explicit human-authorized G5 deferral",
     )
     run_parser.add_argument(
+        "--g5-authorization",
+        help=(
+            "who=<w>,when=<t>,source=<40hex>,plan=<64hex>,"
+            "edges=<a><->b[+<c><->d],risk=<text> - accepted on every authority"
+        ),
+    )
+    run_parser.add_argument(
         "--manifest-id",
         help="explicit full staged-manifest artifact id for resume binding",
     )
@@ -8066,6 +8207,17 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         # release is a loud refusal rather than a silent no-op.
         if args.verb == "release-run":
             providers.defer_g5 = args.defer_g5
+            # Authority-independent by construction: parsed here, outside the
+            # runnerless branch, so hosted and local-development reach the same
+            # record. Coupling it to the runner-risk authorization would make
+            # accepting an outage double as accepting an unmeasured contract.
+            try:
+                providers.g5_authorization = parse_g5_authorization(
+                    args.g5_authorization
+                )
+            except ReceiptError as exc:
+                print(f"BLOCKED: {exc}")
+                return 1
         if registration.kind == "local-runnerless" and args.verb == "release-run":
             try:
                 providers.runnerless_risk = runnerless_risk_approval(
@@ -8337,6 +8489,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     manifest_id=args.manifest_id,
                     runnerless_risk=providers.runnerless_risk,
                     defer_g5=providers.defer_g5,
+                    g5_authorization=providers.g5_authorization,
                 )
             else:
                 run_plan(

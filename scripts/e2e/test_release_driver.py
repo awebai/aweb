@@ -1325,41 +1325,148 @@ class GraphContractTests(unittest.TestCase):
         self.assertIn("authorization", str(caught.exception))
         self.assertEqual(lanes.calls, [])
 
+    def _g5_plan(self):
+        state = rd.FixtureState(changed_components={"aw": True})
+        plan = rd.compute_plan(self.graph, state)
+        incomplete = [
+            rd.edge_identity(e)
+            for e in plan.runtime_contract_edges
+            if e.declared_incomplete
+        ]
+        self.assertTrue(incomplete, "the fixture must touch an incomplete edge")
+        return plan, frozenset(incomplete)
+
+    def _g5_record(self, **overrides):
+        _, edges = self._g5_plan()
+        fields = {
+            "who": "juan",
+            "when": "2026-08-07T00:00:00Z",
+            "source_sha": SOURCE_SHA,
+            "frozen_plan_id": "c" * 64,
+            "edges": edges,
+            "risk": "unmeasured runtime support accepted for this release",
+        }
+        fields.update(overrides)
+        return rd.G5Authorization(**fields)
+
     def test_authorized_deferral_proceeds_without_declaring_support(self) -> None:
         """An authorized deferral lets execution continue; it never turns an
         unmeasured edge into a supported one."""
-        state = rd.FixtureState(changed_components={"aw": True})
-        plan = rd.compute_plan(self.graph, state)
-        self.assertTrue(
-            any(e.declared_incomplete for e in plan.runtime_contract_edges)
-        )
+        plan, _ = self._g5_plan()
         rd.require_runtime_support(
             plan,
             defer_g5=True,
-            authorization=rd.Approval(
-                who="juan", when="2026-08-07T00:00:00Z",
-                risk="G5 deferred", g5_deferred=True,
-            ),
+            authorization=self._g5_record(),
+            source_sha=SOURCE_SHA,
+            frozen_plan_id="c" * 64,
         )
         self.assertTrue(
             all(e.declared_incomplete for e in plan.runtime_contract_edges),
             "deferral must never declare support",
         )
 
-    def test_deferral_authorization_must_itself_record_the_deferral(self) -> None:
-        """A runnerless risk record that accepted an outage, not a measurement
-        gap, does not silently become G5 acceptance."""
-        state = rd.FixtureState(changed_components={"aw": True})
-        plan = rd.compute_plan(self.graph, state)
-        with self.assertRaises(rd.ReceiptError):
+    def test_runner_risk_approval_is_not_g5_acceptance(self) -> None:
+        """A record that accepted an outage is not acceptance of an unmeasured
+        runtime contract, however adjacent the two are in the same release."""
+        plan, _ = self._g5_plan()
+        with self.assertRaises(rd.ReceiptError) as caught:
             rd.require_runtime_support(
                 plan,
                 defer_g5=True,
                 authorization=rd.Approval(
                     who="juan", when="2026-08-07T00:00:00Z",
-                    risk="runner outage", g5_deferred=False,
+                    risk="runner outage", g5_deferred=True,
                 ),
+                source_sha=SOURCE_SHA,
             )
+        self.assertIn("runner outage", str(caught.exception))
+
+    def test_missing_g5_authorization_refuses(self) -> None:
+        plan, _ = self._g5_plan()
+        with self.assertRaises(rd.ReceiptError):
+            rd.require_runtime_support(
+                plan, defer_g5=True, authorization=None, source_sha=SOURCE_SHA
+            )
+
+    def test_g5_authorization_bound_to_another_release_refuses(self) -> None:
+        """The record names one source and one frozen plan, so it cannot be
+        carried to a different release."""
+        plan, _ = self._g5_plan()
+        for label, kwargs, call in (
+            (
+                "wrong source",
+                {"source_sha": OTHER_SOURCE_SHA},
+                {"source_sha": SOURCE_SHA, "frozen_plan_id": "c" * 64},
+            ),
+            (
+                "wrong frozen plan",
+                {"frozen_plan_id": "d" * 64},
+                {"source_sha": SOURCE_SHA, "frozen_plan_id": "c" * 64},
+            ),
+        ):
+            with self.subTest(case=label):
+                with self.assertRaises(rd.ReceiptError):
+                    rd.require_runtime_support(
+                        plan, defer_g5=True,
+                        authorization=self._g5_record(**kwargs), **call,
+                    )
+
+    def test_g5_authorization_must_name_exactly_the_deferred_edges(self) -> None:
+        """Partial coverage is the dangerous case: an edge nobody read would
+        ship under a record that never mentioned it."""
+        plan, edges = self._g5_plan()
+        for label, named in (
+            ("covers nothing relevant", frozenset({"ghost<->server"})),
+            ("names an unrelated extra", edges | {"ghost<->server"}),
+            ("omits a deferred edge", frozenset(sorted(edges)[:-1]) if len(edges) > 1 else frozenset()),
+        ):
+            with self.subTest(case=label):
+                with self.assertRaises(rd.ReceiptError):
+                    rd.require_runtime_support(
+                        plan, defer_g5=True,
+                        authorization=self._g5_record(edges=named),
+                        source_sha=SOURCE_SHA,
+                    )
+
+    def test_g5_authorization_is_accepted_on_every_authority(self) -> None:
+        """Deferral is a judgment about accepting unmeasured support, so it
+        cannot depend on which runner built the artifact. Previously the record
+        existed only for local-runnerless, which made hosted deferral
+        impossible however it was invoked."""
+        plan, _ = self._g5_plan()
+        for trust in ("github-workflow-artifacts", "local-development",
+                      "local-runnerless"):
+            with self.subTest(authority=trust, case="authorized"):
+                rd.require_runtime_support(
+                    plan, defer_g5=True, authorization=self._g5_record(),
+                    source_sha=SOURCE_SHA, frozen_plan_id="c" * 64,
+                )
+            with self.subTest(authority=trust, case="unauthorized"):
+                with self.assertRaises(rd.ReceiptError):
+                    rd.require_runtime_support(
+                        plan, defer_g5=True, authorization=None,
+                        source_sha=SOURCE_SHA, frozen_plan_id="c" * 64,
+                    )
+
+    def test_g5_authorization_parsing_refuses_malformed_records(self) -> None:
+        good = (
+            f"who=juan,when=2026-08-07T00:00:00Z,source={SOURCE_SHA},"
+            f"plan={'c' * 64},edges=aw<->server,risk=accepted"
+        )
+        parsed = rd.parse_g5_authorization(good)
+        self.assertEqual(parsed.edges, frozenset({"aw<->server"}))
+        self.assertEqual(parsed.source_sha, SOURCE_SHA)
+
+        for label, value in (
+            ("short source", good.replace(SOURCE_SHA, "s1")),
+            ("short plan", good.replace("c" * 64, "abc")),
+            ("missing risk", good.replace(",risk=accepted", "")),
+            ("empty edges", good.replace("edges=aw<->server", "edges=")),
+        ):
+            with self.subTest(case=label):
+                with self.assertRaises(rd.ReceiptError):
+                    rd.parse_g5_authorization(value)
+        self.assertIsNone(rd.parse_g5_authorization(None))
 
 
 if __name__ == "__main__":

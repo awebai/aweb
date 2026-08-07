@@ -632,13 +632,19 @@ release-plan:
 # require before they publish - publication is not delivery, so a component
 # whose users keep running old code until a restart cannot publish without it:
 #   DELIVERY_PROOF='component=channel,obligation=delivery-restart-proof,evidence_id=<id>,digest=<sha256>'
+# G5_AUTHORIZATION records a human accepting unmeasured runtime support for
+# this exact release. Accepted on every authority - who may defer is a question
+# about the human, not about which runner built the artifact - and bound to the
+# source, the frozen plan and exactly the edges being deferred, so it cannot be
+# reused for another release:
+#   G5_AUTHORIZATION='who=<w>,when=<t>,source=<40hex>,plan=<64hex>,edges=aw<->server,risk=<text>'
 # Runnerless mode is first-class and needs no GitHub identity:
 #   AUTHORITY=local-runnerless STORE_ROOT=<durable-dir>
 #   LOCAL_ADAPTER='component@<reviewed-source-sha>=/absolute/direct-adapter'
 #   LOCAL_RISK_AUTHORIZATION='who,when,risk accepted' [DEFER_G5=1]
 # See docs/runnerless-release.md.
 release-run:
-	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(if $(MANIFEST_ID),--manifest-id "$(MANIFEST_ID)") $(if $(ALLOW_LOCAL_AUTHORITY),--allow-local-authority) $(foreach a,$(APPROVAL),--approval "$(a)") $(foreach s,$(STAGE_ARTIFACT),--stage-artifact "$(s)") $(foreach d,$(DELIVERY_PROOF),--delivery-proof "$(d)") $(foreach a,$(LOCAL_ADAPTER),--local-adapter "$(a)") $(if $(LOCAL_RISK_AUTHORIZATION),--local-risk-authorization "$(LOCAL_RISK_AUTHORIZATION)") $(if $(DEFER_G5),--defer-g5)
+	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(if $(MANIFEST_ID),--manifest-id "$(MANIFEST_ID)") $(if $(ALLOW_LOCAL_AUTHORITY),--allow-local-authority) $(foreach a,$(APPROVAL),--approval "$(a)") $(foreach s,$(STAGE_ARTIFACT),--stage-artifact "$(s)") $(foreach d,$(DELIVERY_PROOF),--delivery-proof "$(d)") $(foreach a,$(LOCAL_ADAPTER),--local-adapter "$(a)") $(if $(LOCAL_RISK_AUTHORIZATION),--local-risk-authorization "$(LOCAL_RISK_AUTHORIZATION)") $(if $(DEFER_G5),--defer-g5) $(if $(G5_AUTHORIZATION),--g5-authorization "$(G5_AUTHORIZATION)")
 
 # Verifies an anchored receipt against its anchored frozen plan. ARTIFACT_ID,
 # PLAN_ID and PLAN_ARTIFACT_ID are required; digests resolve through the
