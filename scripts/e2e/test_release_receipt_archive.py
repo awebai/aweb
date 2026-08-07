@@ -1106,6 +1106,24 @@ class RealAnchorSemanticsTests(unittest.TestCase):
         body, manifest = self.transition_anchor(self.transition_document())
         self.validate(body, manifest)
 
+    def test_driver_verify_red_transition_archives_and_restores(self):
+        document = self.transition_document(kind="verify-red")
+        body, manifest = self.transition_anchor(document)
+        transport = FakeArchiveTransport()
+        entry = archive.archive_sealed(
+            logical_id=manifest["logical_id"], kind="anchor-artifact",
+            source=manifest["source"], store=FakeStore({REF: body}),
+            authority=FakeAuthority({REF: sha256(body)}),
+            transport=transport, recorded_head=None)
+
+        restored = archive.restore_archived(
+            entry=entry, transport=transport, production=False,
+            validate=self.validate)
+
+        self.assertEqual(restored, body)
+        self.assertEqual(document["kind"], "verify-red")
+        self.assertEqual(document["entry"]["phase"], "published")
+
     def test_transition_whose_logical_id_lies_refuses(self):
         document = self.transition_document()
         inner = json.dumps(document, sort_keys=True).encode()
@@ -1118,6 +1136,15 @@ class RealAnchorSemanticsTests(unittest.TestCase):
 
     def test_transition_with_wrong_sequence_in_id_refuses(self):
         document = self.transition_document(sequence=2)
+        inner = json.dumps(document, sort_keys=True).encode()
+        logical = (f"transition:{self.frozen_id}:001:published:channel:"
+                   f"{sha256(inner)}")
+        body, manifest = anchor_bundle(logical, inner)
+        with self.assertRaisesRegex(rd.ReceiptError, "disagrees"):
+            self.validate(body, manifest)
+
+    def test_verify_red_body_cannot_forge_a_published_logical_id(self):
+        document = self.transition_document(kind="verify-red")
         inner = json.dumps(document, sort_keys=True).encode()
         logical = (f"transition:{self.frozen_id}:001:published:channel:"
                    f"{sha256(inner)}")
@@ -1198,6 +1225,12 @@ class TransitionSetTests(unittest.TestCase):
         with self.assertRaisesRegex(rd.ReceiptError, "component inventory"):
             archive.validate_transition_set(
                 docs, expected_components={"channel", "pi", "server"})
+
+    def test_verify_red_with_published_phase_gets_no_publication_credit(self):
+        with self.assertRaisesRegex(rd.ReceiptError, "published transition"):
+            archive.validate_transition_set(
+                [self.document(1, kind="verify-red")],
+                expected_components={"channel"})
 
     def test_entry_mismatch_against_staged_or_receipt_refuses(self):
         docs = [self.document(1, component="channel")]
@@ -2201,6 +2234,14 @@ class UnrelatedReleaseSetTests(unittest.TestCase):
                 with self.assertRaises(rd.ReceiptError):
                     self.authority(body).lookup(entry["logical_id"])
 
+    def test_verify_red_is_not_a_published_release_set_transition(self):
+        record = self.good_set()
+        record["transitions"] = [
+            f"transition:{'a' * 64}:001:verify-red:channel:{'d' * 64}"]
+        with self.assertRaisesRegex(rd.ReceiptError, "published"):
+            archive.validate_release_set_inventory(
+                record, frozen_plan_id="a" * 64)
+
     def test_valid_sets_still_resolve(self):
         body, entry = self.index([self.good_set(), self.good_set("b" * 64)])
         resolved = self.authority(body).release_set("a" * 64)
@@ -2359,7 +2400,8 @@ class GlobalLogicalIdTests(unittest.TestCase):
         for logical_id in (
             "plan:not-a-source:not-a-frozen-id",
             f"staged-manifest:{'f' * 64}:short",
-            f"transition:{'f' * 64}:001:verify-red:server:{'e' * 64}",
+            f"transition:{'f' * 64}:001:unreviewed-control:server:"
+            f"{'e' * 64}",
             f"receipt:{'f' * 64}:short",
         ):
             malformed.append(dict(
