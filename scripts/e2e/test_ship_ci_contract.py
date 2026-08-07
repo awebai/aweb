@@ -30,17 +30,57 @@ class ShipCIContractTests(unittest.TestCase):
             "jobs.ship.name must preserve the required status context",
         )
 
-    def test_workflow_runs_the_canonical_ship_gate_on_main_and_on_demand(self) -> None:
-        workflow = WORKFLOW.read_text(encoding="utf-8")
+    def ship_trigger_events(self, workflow: str) -> list:
+        """The events in ship.yml's `on:` block, in order.
 
-        self.assertRegex(workflow, r"(?m)^  push:\s*$")
+        Read structurally rather than by searching the whole file, so a trigger
+        named in a comment is not mistaken for one that fires - and so an added
+        trigger is visible as an extra element rather than hidden behind a
+        passing search for the ones that were expected.
+        """
+        body = workflow.split("\njobs:", 1)[0]
+        start = re.search(r"(?m)^on:\s*$", body)
+        self.assertIsNotNone(start, "ship.yml must declare an on: block")
+        events = []
+        for line in body[start.end() :].splitlines():
+            if line.strip().startswith("#") or not line.strip():
+                continue
+            if not line.startswith("  "):
+                break
+            event = re.match(r"^  ([A-Za-z_]+):", line)
+            if event:
+                events.append(event.group(1))
+        return events
+
+    def assert_exact_ship_triggers(self, workflow: str) -> None:
+        # Exactly these, and nothing else. Asserting only that push and
+        # workflow_dispatch are present would pass with pull_request added
+        # back, which is the regression this contract exists to prevent.
+        self.assertEqual(self.ship_trigger_events(workflow), ["push", "workflow_dispatch"])
         self.assertRegex(workflow, r"(?m)^    branches: \[main\]\s*$")
-        # A release reads this gate at an exact source SHA, so an operator has
-        # to be able to produce that evidence without pushing something.
-        self.assertRegex(workflow, r"(?m)^  workflow_dispatch:\s*$")
         # No path filter: a release proof that skipped itself for touching the
         # wrong directory would prove nothing about the commit being released.
         self.assertNotRegex(workflow, r"(?m)^  push:\n\s+branches: \[main\]\n\s+paths:")
+
+    def test_workflow_runs_the_canonical_ship_gate_on_main_and_on_demand(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assert_exact_ship_triggers(workflow)
+        trigger_mutations = {
+            "pull_request re-added": workflow.replace(
+                "on:\n  push:", "on:\n  pull_request:\n  push:", 1
+            ),
+            "schedule added": workflow.replace(
+                "  workflow_dispatch:", "  workflow_dispatch:\n  schedule:", 1
+            ),
+            "dispatch removed": workflow.replace("\n  workflow_dispatch:", "", 1),
+        }
+        for name, mutation in trigger_mutations.items():
+            with self.subTest(mutation=name):
+                self.assertNotEqual(mutation, workflow, f"the {name} mutation changed nothing")
+                with self.assertRaises(AssertionError):
+                    self.assert_exact_ship_triggers(mutation)
+
         self.assertIn("run: make ship", workflow)
         self.assertNotIn("run: make release-all-check", workflow)
         self.assert_ship_job_context(workflow)
