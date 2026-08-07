@@ -7647,6 +7647,12 @@ def run_plan(
                 manifest_entry["delivery_obligation"],
                 node.component,
             )
+            # And the evidence must exist where an independent authority can
+            # see it. The lane observes by echoing the operator's own record,
+            # so without this the check compares the proof to itself.
+            resolve_delivery_evidence(
+                result.delivery_proof, node.component, authority=authority
+            )
         entry = ReceiptEntry(
             version=result.version,
             digest=result.digest,
@@ -7976,6 +7982,42 @@ def validate_delivery_proof(proof, obligation: str, component: str) -> None:
                 f"{component}: delivery proof field {field_name} must be a "
                 f"nonempty string, got {type(value).__name__}"
             )
+    # The digest must be a real content digest. Accepting any nonempty string
+    # let a human type two words and have the system record that it verified
+    # them; a proof whose digest cannot address anything proves nothing.
+    if not re.fullmatch(r"[0-9a-f]{64}", proof["digest"]):
+        raise ReceiptError(
+            f"{component}: delivery proof digest must be a sha256 of the "
+            f"recorded evidence, got {proof['digest']!r}"
+        )
+
+
+def resolve_delivery_evidence(proof, component: str, *, authority) -> None:
+    """The evidence must exist where an independent authority can see it.
+
+    Without this the proof is self-attesting in both directions: the operator
+    supplies the record, the lane echoes that same record back as its
+    observation, and verification compares it to itself and always agrees. The
+    digest is checked against the authority the same way a measurement record
+    is, so the operator must have recorded evidence somewhere rather than
+    invented an identity at the command line.
+    """
+    if authority is None or not hasattr(authority, "expected_digest"):
+        raise ReceiptError(
+            f"{component}: delivery evidence cannot be resolved without an "
+            "authority; an unverifiable proof is not a proof"
+        )
+    recorded = authority.expected_digest(proof["evidence_id"])
+    if recorded is None:
+        raise ReceiptError(
+            f"{component}: delivery evidence {proof['evidence_id']} is not "
+            "recorded with the authority; nothing attests that it exists"
+        )
+    if recorded != proof["digest"]:
+        raise ReceiptError(
+            f"{component}: delivery evidence {proof['evidence_id']} is recorded "
+            f"as {recorded}, the proof claims {proof['digest']}"
+        )
 
 
 def canonical_digest_of_set(digest_set: dict) -> str:

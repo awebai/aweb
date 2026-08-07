@@ -3427,8 +3427,13 @@ def npm_lane_zip(*, package="channel", version="1.7.3", mode="stage-only",
     return buffer.getvalue()
 
 
+# Real evidence bytes, so the proof addresses something an authority can
+# confirm. A digest that resolves to nothing proves nothing.
+EVIDENCE_BYTES = b'restart proof: host-1 pid-9 running @awebai/claude-channel 1.7.3\n'
+EVIDENCE_ID = "restart:host-1:pid-9"
+EVIDENCE_DIGEST = "76b5a1d399c985b3e7fc118123c10c8278b1423e0188a58b821a3e9859945232"
 GOOD_PROOF = {"obligation": "delivery-restart-proof",
-              "evidence_id": "restart:host-1:pid-9", "digest": "sha-evidence"}
+              "evidence_id": EVIDENCE_ID, "digest": EVIDENCE_DIGEST}
 
 
 def npm_lane(zip_bytes, *, observer, runs=None, source_sha="f" * 40,
@@ -4526,7 +4531,7 @@ class DeliveryProofArgumentTests(unittest.TestCase):
     def test_well_formed_proof_parses_and_malformed_refuses(self) -> None:
         proofs = rd.parse_delivery_proof_arguments([
             "component=channel,obligation=delivery-restart-proof,"
-            "evidence_id=restart:h1:p9,digest=sha-evidence",
+            "evidence_id=restart:h1:p9,digest=b7d3f0a1c25e48d9a6f01b8e3c74d5209fa6e13b8c07d24e5f9a1b306c8d47e2",
         ])
         self.assertEqual(proofs["channel"]["obligation"],
                          "delivery-restart-proof")
@@ -4608,6 +4613,10 @@ class NpmLaneEndToEndTests(unittest.TestCase):
             store, authority, f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes, frozen_id)
         frozen = rd.load_frozen_plan(
             store.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
+        # The operator must have recorded the restart evidence; the release
+        # resolves it rather than taking the record's word for it.
+        rd._put_content_addressed(
+            store, authority, EVIDENCE_ID, EVIDENCE_BYTES, EVIDENCE_DIGEST)
         with self.assertRaises(rd.ReceiptError):
             rd.run_plan(
                 plan, graph, lane_factory(publish_ok=False),

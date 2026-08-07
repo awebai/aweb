@@ -1360,7 +1360,7 @@ class StructuredProofTests(unittest.TestCase):
         }
         return rd.Graph.from_dict(data)
 
-    def run_with_proof(self, proof):
+    def run_with_proof(self, proof, *, record_evidence=True):
         graph = self.delivery_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
@@ -1381,10 +1381,16 @@ class StructuredProofTests(unittest.TestCase):
 
         with tf.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            authority = rd.FileDigestAuthority(root)
+            # Record the restart evidence the way an operator must: the release
+            # resolves it against the authority instead of trusting the record.
+            if record_evidence and isinstance(proof, dict) and isinstance(proof.get("evidence_id"), str):
+                if isinstance(proof.get("digest"), str):
+                    authority.record(proof["evidence_id"], proof["digest"])
             rd.run_plan(
                 plan, graph, lanes,
                 skew=FixtureSkew(),
-                authority=rd.FileDigestAuthority(root),
+                authority=authority,
                 store=rd.FileArtifactStore(root),
                 source_sha=SOURCE_SHA, approvals={}, state=state,
                 providers=rd.Providers(
@@ -1400,10 +1406,37 @@ class StructuredProofTests(unittest.TestCase):
             {
                 "obligation": "delivery-restart-proof",
                 "evidence_id": "restart:host-1:pid-42",
-                "digest": "sha-evidence",
+                "digest": "b7d3f0a1c25e48d9a6f01b8e3c74d5209fa6e13b8c07d24e5f9a1b306c8d47e2",
             }
         )
         self.assertIn(("publish", "plugin"), lanes.calls)
+
+    def test_unrecorded_evidence_refuses_at_publish(self) -> None:
+        """The check used to compare the operator's record against the lane's
+        echo of that same record, so it always agreed. The evidence must exist
+        where an independent authority can see it."""
+        with self.assertRaises(rd.ReceiptError) as caught:
+            self.run_with_proof(
+                {
+                    "obligation": "delivery-restart-proof",
+                    "evidence_id": "restart:never-recorded",
+                    "digest": "a" * 64,
+                },
+                record_evidence=False,
+            )
+        self.assertIn("not recorded with the authority", str(caught.exception))
+
+    def test_invented_digest_refuses_at_publish(self) -> None:
+        """A digest that addresses nothing proves nothing."""
+        with self.assertRaises(rd.ReceiptError) as caught:
+            self.run_with_proof(
+                {
+                    "obligation": "delivery-restart-proof",
+                    "evidence_id": "restart:host-1:pid-42",
+                    "digest": "restarted-i-promise",
+                }
+            )
+        self.assertIn("must be a sha256", str(caught.exception))
 
     def test_free_text_proof_refuses_at_publish(self) -> None:
         """alice's refinement: nonempty free text is not delivery evidence."""
