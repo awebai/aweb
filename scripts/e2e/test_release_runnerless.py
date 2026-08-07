@@ -161,6 +161,67 @@ class PointerAdapterFake:
         return {"advertised": dict(self.remote)}
 
 
+class PointerLaneThroughRunPlanTests(unittest.TestCase):
+    """Drive run_plan with a REAL PointerLane.
+
+    The lane tests below use a fake adapter, and the fake lane in
+    test_release_driver returns the staged entry unchanged - so they agreed with
+    the implementation instead of with run_plan's contract, and every one passed
+    while a real pointer release could not publish at all.
+    """
+
+    def graph(self):
+        return rd.Graph.from_dict({
+            "component": {
+                "client": {
+                    "source_paths": ["client/"],
+                    "version_source": {"type": "manifest", "path": "v"},
+                    "tag_format": "client-v{version}",
+                    "publish_lane": {"workflow": "wf/client.yml"},
+                    "verify": {"command": "true"},
+                },
+                "pointer": {"publishable": False},
+            },
+            "edge": [{"type": "pointer", "from": "client", "to": ["pointer"]}],
+        })
+
+    def test_a_real_pointer_lane_publishes_and_seals(self):
+        import sys as _sys, pathlib as _pathlib
+        _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))
+        from test_release_driver import (
+            FixtureLanes, FixtureSkew, FixtureAuthority, SOURCE_SHA,
+        )
+
+        graph = self.graph()
+        state = rd.FixtureState(
+            changed_components={"client": True}, versions={"client": "1.1.0"},
+            published_versions={"client": "1.0.0"},
+        )
+        plan = rd.compute_plan(graph, state)
+        self.assertIn("pointer", {n.component for n in plan.moving})
+
+        adapter = PointerAdapterFake()
+        pointer_lane = rd.PointerLane(
+            "pointer", adapter=adapter,
+            updates=rd.pointer_updates(plan, graph)["pointer"],
+            repository="github.com/example/plugins",
+        )
+        lanes = FixtureLanes(available={"client"})
+        lanes._lanes = getattr(lanes, "_lanes", {})
+        combined = rd.WorkflowLanes({"client": lanes, "pointer": pointer_lane})
+
+        rd.run_plan(
+            plan, graph, combined, skew=FixtureSkew(),
+            authority=FixtureAuthority(),
+            providers=rd.Providers(
+                store=rd._MemoryStore(), authority=FixtureAuthority(),
+            ),
+            source_sha=SOURCE_SHA, approvals={}, state=state,
+        )
+        self.assertEqual(adapter.applied, {"client": "1.1.0"},
+                         "the pointer effect must actually have been performed")
+
+
 class PointerLaneTests(unittest.TestCase):
     """Publishing bytes is not delivering them: Claude Code re-resolves an npm
     plugin only when the marketplace entry advertises the new version. So the
@@ -178,11 +239,17 @@ class PointerLaneTests(unittest.TestCase):
             repository="github.com/awebai/claude-plugins",
         )
 
-    def test_stage_records_the_intended_advertisement(self):
+    def test_stage_and_publish_agree_on_pointer_state(self):
+        """run_plan requires the published entry to equal the staged one, so a
+        state that changes between them refuses every pointer release - after
+        the push has already landed. This asserts the contract, not the value."""
         lane = self.lane(PointerAdapterFake())
-        staged = lane.stage(self.node())
-        self.assertEqual(staged.pointer_state, "intended")
+        node = self.node()
+        staged = lane.stage(node)
         self.assertTrue(staged.digest)
+        published = lane.publish(node, staged)
+        self.assertEqual(published.pointer_state, staged.pointer_state)
+        self.assertEqual(published.digest, staged.digest)
 
     def test_publish_applies_exactly_the_staged_intent_and_verifies(self):
         adapter = PointerAdapterFake()

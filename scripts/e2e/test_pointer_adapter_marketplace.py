@@ -107,6 +107,70 @@ class MarketplaceAdapterTests(unittest.TestCase):
             {"channel": "1.7.4"},
         )
 
+    def test_run_plan_publishes_through_the_real_adapter(self):
+        """The test whose absence let four independent blockers ship: a real
+        PointerLane, driving the real adapter as an executable, through
+        run_plan, against a real git remote. Every earlier test either used a
+        fake that agreed with the implementation or invoked the script through
+        sys.executable, so none of them touched the path an operator uses."""
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import release_driver as rd
+        from test_release_driver import (
+            FixtureLanes, FixtureSkew, FixtureAuthority, SOURCE_SHA,
+        )
+
+        graph = rd.Graph.from_dict({
+            "component": {
+                "channel": {
+                    "source_paths": ["channel/"],
+                    "version_source": {"type": "manifest", "path": "v"},
+                    "tag_format": "channel-v{version}",
+                    "publish_lane": {"workflow": "w"},
+                    "verify": {"command": "true"},
+                },
+                "marketplace-pointer": {"publishable": False},
+            },
+            "edge": [{"type": "pointer", "from": "channel",
+                      "to": ["marketplace-pointer"]}],
+        })
+        state = rd.FixtureState(
+            changed_components={"channel": True}, versions={"channel": "1.7.4"},
+            published_versions={"channel": "1.7.3"},
+        )
+        plan = rd.compute_plan(graph, state)
+        os.environ["MARKETPLACE_REMOTE"] = str(self.remote)
+        self.addCleanup(os.environ.pop, "MARKETPLACE_REMOTE", None)
+
+        lane = rd.PointerLane(
+            "marketplace-pointer",
+            adapter=rd.SubprocessPointerAdapter(ADAPTER),
+            updates=rd.pointer_updates(plan, graph)["marketplace-pointer"],
+            repository="github.com/awebai/claude-plugins",
+        )
+        rd.run_plan(
+            plan, graph,
+            rd.WorkflowLanes({
+                "channel": FixtureLanes(available={"channel"}),
+                "marketplace-pointer": lane,
+            }),
+            skew=FixtureSkew(), authority=FixtureAuthority(),
+            providers=rd.Providers(
+                store=rd._MemoryStore(), authority=FixtureAuthority(),
+            ),
+            source_sha=SOURCE_SHA, approvals={}, state=state,
+        )
+
+        after = self.run_adapter("read")["advertised"]
+        self.assertEqual(after["channel"], "1.7.4")
+        self.assertEqual(after["skills"], "0.2.12",
+                         "a partial update must leave other entries alone")
+
+    def test_the_adapter_is_executable(self):
+        """SubprocessPointerAdapter execs the path directly. Committed 100644,
+        the first thing a real release did was raise PermissionError."""
+        self.assertTrue(os.access(ADAPTER, os.X_OK), f"{ADAPTER} must be executable")
+
     def test_a_component_the_marketplace_does_not_list_is_refused(self):
         """Silently advertising nothing is how a release looks complete and
         reaches nobody."""

@@ -3797,7 +3797,14 @@ class SubprocessPointerAdapter:
         command = [self.executable, operation, "--component", component]
         if updates is not None:
             command += ["--updates", json.dumps(updates, sort_keys=True)]
-        result = subprocess.run(command, capture_output=True, text=True)
+        try:
+            result = subprocess.run(command, capture_output=True, text=True)
+        except OSError as exc:
+            raise ReceiptError(
+                f"{component}: pointer adapter {self.executable} is not "
+                f"executable ({exc}); a release must refuse by name rather "
+                "than raise mid-publication"
+            ) from exc
         if result.returncode != 0:
             raise ReceiptError(
                 f"{component}: pointer adapter {operation} failed: "
@@ -3947,7 +3954,12 @@ class PointerLane:
             version=self._label(),
             digest=self._digest(advertised),
             phase="staged",
-            pointer_state="intended",
+            # One stable state across stage and publish: run_plan requires the
+            # published entry to equal the staged one, so a state that changed
+            # between them refused every pointer release - after the push had
+            # already landed. What actually proves the effect is the read-back
+            # in publish and the digest, not a changing label.
+            pointer_state="advertised",
         )
 
     def publish(self, node, staged) -> "ReceiptEntry":
@@ -3957,7 +3969,11 @@ class PointerLane:
                 f"{self.component}: intent changed between stage and publish"
             )
         self.adapter.apply(self.component, self.updates, advertised)
-        landed = (self.adapter.read(self.component) or {}).get("advertised")
+        # Compare only the keys this release advertises. A pointer file holds
+        # entries for components this release is not touching, so demanding
+        # whole-file equality failed a partial update whose push had succeeded.
+        observed = (self.adapter.read(self.component) or {}).get("advertised") or {}
+        landed = {key: observed.get(key) for key in advertised}
         if landed != advertised:
             raise ReceiptError(
                 f"{self.component}: {self.repository} advertises {landed!r} "
@@ -3971,7 +3987,8 @@ class PointerLane:
         )
 
     def observe(self, node, staged=None) -> "ReceiptEntry":
-        landed = (self.adapter.read(self.component) or {}).get("advertised") or {}
+        observed = (self.adapter.read(self.component) or {}).get("advertised") or {}
+        landed = {key: observed.get(key) for key in self.updates}
         matches = landed == self.updates
         return ReceiptEntry(
             version=",".join(f"{k}={v}" for k, v in sorted(landed.items())),
