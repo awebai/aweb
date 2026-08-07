@@ -76,10 +76,13 @@ _RELEASE_PLAN_ID = re.compile(
     r"plan:(?P<source>[0-9a-f]{40}):(?P<frozen>[0-9a-f]{64})")
 _RELEASE_STAGED_ID = re.compile(
     r"staged-manifest:(?P<frozen>[0-9a-f]{64}):(?P<digest>[0-9a-f]{64})")
+_ARCHIVABLE_TRANSITION_KINDS = ("published", "verify-red")
+_PUBLICATION_TRANSITION_KIND = "published"
 _RELEASE_TRANSITION_ID = re.compile(
     r"transition:(?P<frozen>[0-9a-f]{64}):"
     r"(?P<sequence>(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})):"
-    r"(?P<kind>published):(?P<component>[A-Za-z0-9][A-Za-z0-9_.-]{0,62}):"
+    rf"(?P<kind>{'|'.join(_ARCHIVABLE_TRANSITION_KINDS)}):"
+    r"(?P<component>[A-Za-z0-9][A-Za-z0-9_.-]{0,62}):"
     r"(?P<digest>[0-9a-f]{64})")
 _RELEASE_RECEIPT_ID = re.compile(
     r"receipt:(?P<frozen>[0-9a-f]{64}):(?P<digest>[0-9a-f]{64})")
@@ -1349,6 +1352,12 @@ def validate_release_set_inventory(inventory, *, frozen_plan_id: str) -> dict:
                 "release-set transition logical id does not bind the frozen "
                 f"plan in its record: {match.group('frozen')} != "
                 f"{frozen_plan_id}")
+        if match.group("kind") != _PUBLICATION_TRANSITION_KIND:
+            raise ReceiptError(
+                "release-set inventory accepts only published transitions; "
+                f"{match.group('kind')!r} is evidence without publication "
+                "credit"
+            )
         if match.group("sequence") != f"{position:03d}":
             raise ReceiptError(
                 f"release-set transition order archived is invalid: sequence "
@@ -1547,7 +1556,8 @@ def validate_transition_set(
         # is the discriminating evidence.
         published = [
             d["component"] for d in documents
-            if d["kind"] == "published" and d["entry"].get("phase") == "published"
+            if d["kind"] == _PUBLICATION_TRANSITION_KIND
+            and d["entry"].get("phase") == "published"
         ]
         if len(documents) != len(expected) or set(published) != expected or len(
             published
