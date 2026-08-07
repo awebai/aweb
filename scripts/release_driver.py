@@ -3705,6 +3705,60 @@ class NpmWorkflowLane(_WorkflowLaneBase):
         )
 
 
+class SubprocessPointerAdapter:
+    """The pointer protocol, as an executable, so the driver never pushes to
+    another repository itself.
+
+      <exe> intent --component C --updates '{"channel":"1.7.4"}'
+      <exe> apply  --component C --updates '{...}'
+      <exe> read   --component C
+
+    Each prints JSON; intent and read print {"advertised": {component: version}}.
+    """
+
+    def __init__(self, executable: Path):
+        self.executable = str(Path(executable).resolve())
+
+    def _run(self, operation, component, updates=None):
+        command = [self.executable, operation, "--component", component]
+        if updates is not None:
+            command += ["--updates", json.dumps(updates, sort_keys=True)]
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise ReceiptError(
+                f"{component}: pointer adapter {operation} failed: "
+                f"{result.stderr.strip()}"
+            )
+        return json.loads(result.stdout or "{}")
+
+    def intent(self, component, updates):
+        return self._run("intent", component, updates)
+
+    def apply(self, component, updates, intent):
+        return self._run("apply", component, updates)
+
+    def read(self, component):
+        return self._run("read", component)
+
+
+def pointer_updates(plan: Plan, graph: Graph) -> dict[str, dict]:
+    """What each moving pointer node must advertise: the planned versions of
+    the sources that forced it. A pointer forced by channel@1.7.4 advertises
+    exactly that, so the record cannot claim more than the release published."""
+    moving = {n.component: n for n in plan.moving}
+    updates: dict[str, dict] = {}
+    for source, targets in graph.pointer_targets.items():
+        if source not in moving:
+            continue
+        version = moving[source].version
+        if version is None:
+            continue
+        for target in targets:
+            if target in moving:
+                updates.setdefault(target, {})[source] = version
+    return updates
+
+
 class SubprocessLocalAdapter:
     """Tiny checked-in protocol for existing component/direct release scripts."""
 
@@ -3737,6 +3791,114 @@ class SubprocessLocalAdapter:
     def observe(self, node, stage, files):
         result = self._run("observe", node, stage)
         return result.get("files")
+
+
+class PointerLane:
+    """Advertise published versions in another repository's pointer file.
+
+    Publishing bytes is not delivering them. Claude Code re-resolves an npm
+    plugin only when the marketplace entry advertises the new version, and
+    aweb-cloud picks up a server only when its pin moves - so a release that
+    publishes the package and stops has not finished, and the pointer is a real
+    effect with a real lane rather than a note to do something later.
+
+    The git work lives in a small adapter with three operations, so the driver
+    never shells out to another repository itself:
+
+      intent(component, updates)          what the pointer should say
+      apply(component, updates, intent)   edit, commit, push
+      read(component)                     what the remote says now
+
+    publish re-reads the remote and refuses unless it advertises exactly what
+    was staged. The failure this exists to catch is silent: the package is on
+    the registry, the pointer was never updated, and nothing said so.
+    """
+
+    def __init__(self, component: str, *, adapter, updates: dict, repository: str):
+        self.component = component
+        self.adapter = adapter
+        self.updates = dict(updates)
+        self.repository = repository
+
+    def has_lane(self, component):
+        return component == self.component
+
+    @staticmethod
+    def _digest(advertised: dict) -> str:
+        return hashlib.sha256(
+            json.dumps(advertised, sort_keys=True).encode()
+        ).hexdigest()
+
+    def _label(self) -> str:
+        return ",".join(f"{k}={v}" for k, v in sorted(self.updates.items()))
+
+    def _intent(self) -> dict:
+        if not self.updates:
+            raise ReceiptError(
+                f"{self.component}: a pointer with nothing to advertise is not "
+                "a release effect; the moving set names no source version"
+            )
+        intent = self.adapter.intent(self.component, self.updates)
+        advertised = (intent or {}).get("advertised")
+        if advertised != self.updates:
+            raise ReceiptError(
+                f"{self.component}: adapter intent {advertised!r} does not equal "
+                f"the planned advertisement {self.updates!r}"
+            )
+        return advertised
+
+    def stage(self, node) -> "ReceiptEntry":
+        advertised = self._intent()
+        return ReceiptEntry(
+            version=self._label(),
+            digest=self._digest(advertised),
+            phase="staged",
+            pointer_state="intended",
+        )
+
+    def publish(self, node, staged) -> "ReceiptEntry":
+        advertised = self._intent()
+        if self._digest(advertised) != staged.digest:
+            raise ReceiptError(
+                f"{self.component}: intent changed between stage and publish"
+            )
+        self.adapter.apply(self.component, self.updates, advertised)
+        landed = (self.adapter.read(self.component) or {}).get("advertised")
+        if landed != advertised:
+            raise ReceiptError(
+                f"{self.component}: {self.repository} advertises {landed!r} "
+                f"after publishing, expected {advertised!r}"
+            )
+        return ReceiptEntry(
+            version=self._label(),
+            digest=staged.digest,
+            phase="published",
+            pointer_state="advertised",
+        )
+
+    def observe(self, node, staged=None) -> "ReceiptEntry":
+        landed = (self.adapter.read(self.component) or {}).get("advertised") or {}
+        matches = landed == self.updates
+        return ReceiptEntry(
+            version=",".join(f"{k}={v}" for k, v in sorted(landed.items())),
+            digest=self._digest(landed),
+            phase="published" if matches else "staged",
+            pointer_state="advertised" if matches else "stale",
+        )
+
+    def verify(self, node, published) -> "ReceiptEntry":
+        observed = self.observe(node)
+        if observed.pointer_state != "advertised":
+            raise ReceiptError(
+                f"{self.component}: {self.repository} does not advertise the "
+                f"published versions ({observed.version or 'nothing'})"
+            )
+        return ReceiptEntry(
+            version=published.version,
+            digest=published.digest,
+            phase="verified",
+            pointer_state="advertised",
+        )
 
 
 class LocalRunnerlessLane:
@@ -8026,6 +8188,44 @@ class RegistryProviders:
         )
 
 
+def _pointer_repository(component: Component) -> str:
+    """Where the pointer lives, for refusal messages. ac-pin names it on its
+    sibling pins; marketplace-pointer declares it directly."""
+    for pin in component.sibling_pins:
+        repository = pin.get("pin_repository")
+        if repository:
+            return repository
+    return (component.lane or {}).get("repository") or component.name
+
+
+def parse_pointer_adapters(raw: list[str], *, plan: Plan, graph: Graph) -> dict:
+    """component=/absolute/pointer-adapter -> {component: PointerLane}.
+
+    What each pointer advertises is derived from the plan, never supplied on
+    the command line: an operator who could type the version could advertise a
+    version the release did not publish.
+    """
+    updates = pointer_updates(plan, graph)
+    lanes = {}
+    for item in raw:
+        component, separator, executable = item.partition("=")
+        if not separator or not component or not Path(executable).is_absolute():
+            raise ReceiptError(
+                "--pointer-adapter must be component=/absolute/path/to/adapter"
+            )
+        if component in lanes:
+            raise ReceiptError(f"duplicate pointer adapter for {component}")
+        if component not in graph.components:
+            raise ReceiptError(f"--pointer-adapter names unknown component {component}")
+        lanes[component] = PointerLane(
+            component,
+            adapter=SubprocessPointerAdapter(Path(executable)),
+            updates=updates.get(component, {}),
+            repository=_pointer_repository(graph.components[component]),
+        )
+    return lanes
+
+
 def parse_local_adapters(raw: list[str], *, root: Path):
     lanes = {}
     for item in raw:
@@ -8150,6 +8350,13 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
     run_parser.add_argument(
         "--defer-g5", action="store_true",
         help="record an explicit human-authorized G5 deferral",
+    )
+    run_parser.add_argument(
+        "--pointer-adapter", action="append", default=[],
+        help=(
+            "component=/absolute/pointer-adapter - performs the pointer effect "
+            "(edit, commit, push, read back) in the target repository"
+        ),
     )
     run_parser.add_argument(
         "--g5-authorization",
@@ -8579,6 +8786,26 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         plan = frozen.plan
         frozen_graph = frozen.graph
         lanes = providers.lanes if providers.lanes is not None else NoLanes()
+        # Pointer lanes are composed here rather than with the publish lanes,
+        # because what a pointer advertises is derived from the frozen plan and
+        # the frozen plan is only loaded now. A pointer node without a lane is
+        # the reason channel and skills could not be released at all.
+        try:
+            pointer_lanes = parse_pointer_adapters(
+                getattr(args, "pointer_adapter", []),
+                plan=plan, graph=frozen_graph,
+            )
+        except ReceiptError as exc:
+            print(f"BLOCKED: {exc}")
+            return 1
+        if pointer_lanes:
+            lanes = WorkflowLanes({
+                **{
+                    name: lanes._lanes[name]
+                    for name in getattr(lanes, "_lanes", {})
+                },
+                **pointer_lanes,
+            })
         # Ordinary production release-run composes the G5 matrix runner; a
         # touched runtime edge with no registered harness or measured
         # support REFUSES rather than silently selecting NoSkew.

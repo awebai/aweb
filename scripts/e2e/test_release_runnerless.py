@@ -139,5 +139,85 @@ class RunnerlessTests(unittest.TestCase):
             self.assertEqual(lane.receipt_metadata()["server"]["continuation"], "tag-and-release")
 
 
+
+
+class PointerAdapterFake:
+    """Stands in for the executable that touches the other repository."""
+
+    def __init__(self, *, drift=None):
+        self.applied = None
+        self.remote = {}
+        self.drift = drift
+
+    def intent(self, component, updates):
+        return {"advertised": dict(updates)}
+
+    def apply(self, component, updates, intent):
+        self.applied = dict(updates)
+        self.remote = dict(self.drift) if self.drift is not None else dict(updates)
+        return {"ref": "commit-sha"}
+
+    def read(self, component):
+        return {"advertised": dict(self.remote)}
+
+
+class PointerLaneTests(unittest.TestCase):
+    """Publishing bytes is not delivering them: Claude Code re-resolves an npm
+    plugin only when the marketplace entry advertises the new version. So the
+    pointer is a real effect with a real lane, and a release that publishes the
+    package and stops has not finished."""
+
+    def node(self):
+        return rd.PlanNode(component="marketplace-pointer", reason="pointer:channel")
+
+    def lane(self, adapter):
+        return rd.PointerLane(
+            "marketplace-pointer",
+            adapter=adapter,
+            updates={"channel": "1.7.4"},
+            repository="github.com/awebai/claude-plugins",
+        )
+
+    def test_stage_records_the_intended_advertisement(self):
+        lane = self.lane(PointerAdapterFake())
+        staged = lane.stage(self.node())
+        self.assertEqual(staged.pointer_state, "intended")
+        self.assertTrue(staged.digest)
+
+    def test_publish_applies_exactly_the_staged_intent_and_verifies(self):
+        adapter = PointerAdapterFake()
+        lane = self.lane(adapter)
+        staged = lane.stage(self.node())
+        published = lane.publish(self.node(), staged)
+        self.assertEqual(adapter.applied, {"channel": "1.7.4"})
+        self.assertEqual(published.pointer_state, "advertised")
+        self.assertEqual(published.digest, staged.digest)
+        lane.verify(self.node(), published)
+
+    def test_a_pointer_that_did_not_land_is_refused(self):
+        """The failure this lane exists to catch: the package is on the
+        registry, the pointer was not updated, and nothing said so."""
+        adapter = PointerAdapterFake(drift={"channel": "1.7.3"})
+        lane = self.lane(adapter)
+        staged = lane.stage(self.node())
+        with self.assertRaises(rd.ReceiptError) as caught:
+            lane.publish(self.node(), staged)
+        self.assertIn("1.7.3", str(caught.exception))
+
+    def test_observe_reads_the_remote_not_the_intent(self):
+        adapter = PointerAdapterFake(drift={"channel": "0.0.1"})
+        lane = self.lane(adapter)
+        staged = lane.stage(self.node())
+        observed = lane.observe(self.node(), staged)
+        self.assertEqual(observed.pointer_state, "stale")
+
+    def test_a_pointer_with_nothing_to_advertise_is_refused(self):
+        lane = rd.PointerLane(
+            "marketplace-pointer", adapter=PointerAdapterFake(),
+            updates={}, repository="github.com/awebai/claude-plugins",
+        )
+        with self.assertRaises(rd.ReceiptError):
+            lane.stage(self.node())
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,10 +14,15 @@
 # measures - floors are never invented here).
 #
 # aweb-cloud's lock/pin state (ac-pin) is a forced pointer consumer of server
-# and awid: publishing either makes the pin stale by definition. Its declared
-# inputs are the exact external source pins alone; the production credential
-# and human approval live on the separate downstream ac-gate boundary. The AC
-# release itself is cut from its own repository.
+# and awid: publishing either makes the pin stale by definition, and updating it
+# is an effect this release performs.
+#
+# AC's production deploy is NOT in this graph. It is cut from AC's own
+# repository, behind AC's credentials and AC's approval, and an aweb release has
+# no business demanding it: publishing a server makes AC's pin stale and says
+# so, and when AC deploys is AC's decision. Modelling that deploy here forced
+# every server and awid release to drag in a node this repository cannot
+# perform, which blocked both of them entirely.
 
 [component.server]
 source_paths = ["server/"]
@@ -111,8 +116,14 @@ publishable = false
 
 [component.marketplace-pointer]
 publishable = false
+lane = { repository = "github.com/awebai/claude-plugins", pointer_file = ".claude-plugin/marketplace.json" }
 # Explicit bump of awebai/claude-plugins marketplace.json; the caret-range
 # experiment is deferred task aweb-abbf.
+#
+# This is a delivery effect, not a follow-up: Claude Code re-resolves an npm
+# source only when the marketplace entry advertises a version, so publishing
+# channel or skills without moving this pointer reaches nobody. It is served by
+# a PointerLane through --pointer-adapter.
 
 [component.ac-pin]
 publishable = false
@@ -124,17 +135,6 @@ sibling_pins = [
 # both living in the AC repository (pin_repository) and resolved only from a
 # declared external context - never relative to this repository. Updating
 # them needs no production credentials; that boundary belongs to ac-gate.
-
-[component.ac-gate]
-publishable = false
-approval_required = true
-credential_paths = [
-    { env = "MIGRATION_GATE_ENV_FILE", purpose = "non-bypass production migration immutability" },
-]
-# The downstream AC gate/deploy boundary: canonical make release-ready with
-# the non-bypass production migration-immutability credential path, behind an
-# explicit structured human approval. Kept separate from ac-pin so a source
-# pointer update cannot demand production credentials.
 
 [component.sites]
 source_paths = ["docs/identity-guide.md", "docs/trust-model.md", "awid/site/"]
@@ -190,11 +190,6 @@ to = ["ac-pin"]
 type = "pointer"
 from = "awid-pypi"
 to = ["ac-pin"]
-
-[[edge]]
-type = "pointer"
-from = "ac-pin"
-to = ["ac-gate"]
 
 # The .7.1 child emits this edge's measured support document through
 # `make measure-release-skew-cli-server`. Keep the declaration incomplete until

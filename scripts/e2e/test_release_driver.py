@@ -1233,18 +1233,33 @@ class GraphContractTests(unittest.TestCase):
             "a sites release without a baseline must refuse",
         )
 
-    def test_ac_gate_carries_approval_and_credentials_ac_pin_does_not(self) -> None:
-        """The source pointer update (ac-pin) must not demand production
-        credentials; the downstream gate boundary (ac-gate) does."""
+    def test_updating_the_ac_pin_needs_no_production_credentials(self) -> None:
+        """Updating AC's source pointer is an effect this release performs, and
+        it needs no production credentials. AC's deploy is deliberately not in
+        this graph: an aweb release makes AC's pin stale and says so, it does
+        not demand that AC deploy."""
         ac_pin = self.graph.components["ac-pin"]
         self.assertFalse(ac_pin.approval_required)
         self.assertFalse(ac_pin.credential_paths)
         self.assertEqual(len(ac_pin.sibling_pins), 2, "server AND awid pins declared")
-        ac_gate = self.graph.components["ac-gate"]
-        self.assertTrue(ac_gate.approval_required)
-        self.assertTrue(
-            any(c["env"] == "MIGRATION_GATE_ENV_FILE" for c in ac_gate.credential_paths)
-        )
+        self.assertNotIn("ac-gate", self.graph.components)
+        self.assertNotIn("ac-gate", self.graph.pointer_targets.get("ac-pin", ()))
+
+    def test_every_forced_pointer_can_be_performed(self) -> None:
+        """A forced node with no way to perform its effect is not a graph
+        constraint, it is a dead end: it made every channel, skills, server and
+        awid release unexecutable. Each pointer target must therefore either
+        publish or declare where its pointer lives."""
+        for source, targets in self.graph.pointer_targets.items():
+            for target in targets:
+                with self.subTest(pointer=f"{source}->{target}"):
+                    component = self.graph.components[target]
+                    self.assertTrue(
+                        component.publish_lane
+                        or rd._pointer_repository(component) != target,
+                        f"{target} is forced by {source} but names no repository "
+                        "to advertise in, so no lane can serve it",
+                    )
 
     def test_aw_lane_declares_the_reviewed_external_surface(self) -> None:
         """aweb-abbe.2.1: the aw lane points at the aw repository's reviewed
