@@ -389,8 +389,15 @@ class InputSatisfactionTests(unittest.TestCase):
         graph = rd.Graph.from_dict(data)
         state = rd.FixtureState(changed_components={"client": True})
         plan = rd.compute_plan(graph, state)
-        problems = rd.check_declared_inputs(graph, plan, state)
-        self.assertTrue(any("declared-incomplete" in p for p in problems))
+        # The plan stays freezable and says the edge is incomplete; execution
+        # is what refuses, so an operator can see what measurement is owed.
+        self.assertFalse(
+            [p for p in rd.check_declared_inputs(graph, plan, state)
+             if "declared-incomplete" in p]
+        )
+        with self.assertRaises(rd.BlockedByDeclaredInputs) as caught:
+            rd.require_runtime_support(plan, defer_g5=False, authorization=None)
+        self.assertIn("declared-incomplete", str(caught.exception))
 
 
 class ApprovalTests(unittest.TestCase):
@@ -1126,19 +1133,85 @@ class GraphContractTests(unittest.TestCase):
         )
 
     def test_incomplete_contracts_block_execution_but_not_the_plan(self) -> None:
+        """A diagnostic plan must be freezable with incomplete edges - that is
+        how an operator sees what measurement is owed. Execution is where
+        measured support or an explicit recorded deferral is required."""
         state = rd.FixtureState(changed_components={"aw": True})
         plan = rd.compute_plan(self.graph, state)
         self.assertTrue(plan.moving, "diagnostic plan still computes")
         problems = rd.check_declared_inputs(self.graph, plan, state)
-        self.assertTrue(any("declared-incomplete" in p for p in problems))
+        self.assertFalse(
+            [p for p in problems if "declared-incomplete" in p],
+            "an incomplete edge is not a declared-input problem; it blocks at "
+            f"execution: {problems}",
+        )
+        self.assertTrue(
+            any(e.declared_incomplete for e in plan.runtime_contract_edges),
+            "the plan must still say the edge is incomplete",
+        )
         lanes = FixtureLanes(available={"aw"})
         with self.assertRaises(rd.BlockedByDeclaredInputs):
             rd.run_plan(
                 plan, self.graph, lanes,
                 skew=FixtureSkew(), authority=FixtureAuthority(), providers=rd.Providers(store=rd._MemoryStore(), authority=FixtureAuthority(), measurement=AllRecordsResolve()),
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
             )
         self.assertEqual(lanes.calls, [])
+
+    def test_deferral_requires_an_explicit_recorded_authorization(self) -> None:
+        """Deferral is a human accepting a risk, so it is refused unless a
+        record says who accepted it. A bare flag is not an authorization."""
+        state = rd.FixtureState(changed_components={"aw": True})
+        plan = rd.compute_plan(self.graph, state)
+        lanes = FixtureLanes(available={"aw"})
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.run_plan(
+                plan, self.graph, lanes,
+                skew=FixtureSkew(), authority=FixtureAuthority(),
+                providers=rd.Providers(
+                    store=rd._MemoryStore(), authority=FixtureAuthority(),
+                    measurement=AllRecordsResolve(), defer_g5=True,
+                ),
+                source_sha=SOURCE_SHA, approvals={}, state=state,
+            )
+        self.assertIn("authorization", str(caught.exception))
+        self.assertEqual(lanes.calls, [])
+
+    def test_authorized_deferral_proceeds_without_declaring_support(self) -> None:
+        """An authorized deferral lets execution continue; it never turns an
+        unmeasured edge into a supported one."""
+        state = rd.FixtureState(changed_components={"aw": True})
+        plan = rd.compute_plan(self.graph, state)
+        self.assertTrue(
+            any(e.declared_incomplete for e in plan.runtime_contract_edges)
+        )
+        rd.require_runtime_support(
+            plan,
+            defer_g5=True,
+            authorization=rd.Approval(
+                who="juan", when="2026-08-07T00:00:00Z",
+                risk="G5 deferred", g5_deferred=True,
+            ),
+        )
+        self.assertTrue(
+            all(e.declared_incomplete for e in plan.runtime_contract_edges),
+            "deferral must never declare support",
+        )
+
+    def test_deferral_authorization_must_itself_record_the_deferral(self) -> None:
+        """A runnerless risk record that accepted an outage, not a measurement
+        gap, does not silently become G5 acceptance."""
+        state = rd.FixtureState(changed_components={"aw": True})
+        plan = rd.compute_plan(self.graph, state)
+        with self.assertRaises(rd.ReceiptError):
+            rd.require_runtime_support(
+                plan,
+                defer_g5=True,
+                authorization=rd.Approval(
+                    who="juan", when="2026-08-07T00:00:00Z",
+                    risk="runner outage", g5_deferred=False,
+                ),
+            )
 
 
 if __name__ == "__main__":

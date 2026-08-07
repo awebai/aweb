@@ -594,14 +594,38 @@ def check_declared_inputs(
                     "movement is never fabricated from its absence"
                 )
 
-    for edge in plan.runtime_contract_edges:
-        if edge.declared_incomplete:
-            problems.append(
-                f"runtime-contract {edge.a}<->{edge.b}: support is "
-                "declared-incomplete (no fleet measurement or approved "
-                "deprecation); execution is blocked until aweb-abbe.7 measures"
-            )
+    # An incomplete runtime edge is deliberately NOT a declared-input problem.
+    # A plan is the diagnostic that tells an operator which measurement is
+    # owed, so it has to be freezable while the answer is still "unmeasured".
+    # Execution is where support must be measured or its absence explicitly
+    # accepted - see require_runtime_support.
     return problems
+
+
+def require_runtime_support(plan: Plan, *, defer_g5: bool, authorization) -> None:
+    """Measured support, or a human who accepted its absence, before publishing.
+
+    Deferral never declares support: the edge stays declared-incomplete in the
+    frozen plan and the receipt records who accepted the risk. A bare flag is
+    not an authorization - without a record naming someone, there is nothing to
+    hold, so an unrecorded deferral is refused rather than honored.
+    """
+    incomplete = [e for e in plan.runtime_contract_edges if e.declared_incomplete]
+    if not incomplete:
+        return
+    named = ", ".join(f"{e.a}<->{e.b}" for e in incomplete)
+    if not defer_g5:
+        raise BlockedByDeclaredInputs(
+            f"runtime-contract {named}: support is declared-incomplete (no "
+            "fleet measurement or approved deprecation). Measure it, or accept "
+            "the risk explicitly with DEFER_G5=1 and an authorization record"
+        )
+    if not isinstance(authorization, Approval) or not authorization.g5_deferred:
+        raise ReceiptError(
+            f"deferring runtime support for {named} requires an explicit human "
+            "authorization recording who accepted the risk and when; DEFER_G5 "
+            "alone records nothing"
+        )
 
 
 def plan_digest(plan: Plan, graph: Graph) -> str:
@@ -6829,6 +6853,9 @@ def run_plan(
         raise ReceiptError(
             "runnerless local authority requires explicit risk authorization"
         )
+    require_runtime_support(
+        plan, defer_g5=defer_g5, authorization=runnerless_risk
+    )
     complete_edges = [
         e for e in plan.runtime_contract_edges if not e.declared_incomplete
     ]
@@ -8032,12 +8059,19 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 capture_output=True,
                 text=True,
             ).stdout.strip()
+        # Carried on every lane, not only the runnerless one. Assigned inside
+        # the runnerless branch alone, a hosted --defer-g5 reached nothing and
+        # was silently ignored: the operator asked to defer, the driver did not
+        # defer, and neither said so. require_runtime_support refuses a
+        # deferral with no authorization record behind it, which on a hosted
+        # release is a loud refusal rather than a silent no-op.
+        if args.verb == "release-run":
+            providers.defer_g5 = args.defer_g5
         if registration.kind == "local-runnerless" and args.verb == "release-run":
             try:
                 providers.runnerless_risk = runnerless_risk_approval(
                     args.local_risk_authorization, defer_g5=args.defer_g5
                 )
-                providers.defer_g5 = args.defer_g5
                 providers.measurement = AnchoredMeasurementAuthority(
                     store=store,
                     authority=authority,
