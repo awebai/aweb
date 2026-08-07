@@ -103,6 +103,12 @@ class AcPinAdapterTests(unittest.TestCase):
         stderr = self.run_adapter("apply", {"server": "1.26.36"}, expect_failure=True)
         self.assertIn("holds a commit", stderr)
 
+    def test_the_adapter_is_executable(self):
+        """The driver execs this path. It writes aweb-cloud's production pins,
+        and its sibling adapter already shipped once as 100644, so a silent mode
+        regression here has to be caught by something."""
+        self.assertTrue(os.access(ADAPTER, os.X_OK), f"{ADAPTER} must be executable")
+
     def test_an_unknown_component_is_refused(self):
         stderr = self.run_adapter("apply", {"channel": "1.7.4"}, expect_failure=True)
         self.assertIn("channel", stderr)

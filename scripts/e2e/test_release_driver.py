@@ -1809,6 +1809,78 @@ class GraphContractTests(unittest.TestCase):
         }
         return graph, plan, incomplete, entries
 
+    def test_an_outstanding_debt_survives_every_later_reader(self) -> None:
+        """The debt was accepted at seal and rejected everywhere a finished
+        receipt is later read, so a correctly sealed published-not-delivered
+        receipt was unverifiable, unresumable and unrestorable. One assertion in
+        one test is why three call sites went unchecked."""
+        graph = rd.Graph.from_dict({
+            "component": {
+                "client": {
+                    "source_paths": ["client/"],
+                    "version_source": {"type": "manifest", "path": "v"},
+                    "tag_format": "client-v{version}",
+                    "publish_lane": {"workflow": "w"},
+                    "verify": {"command": "true"},
+                    "delivery_restart": {"proof": "restart per host"},
+                },
+            },
+            "edge": [],
+        })
+        state = rd.FixtureState(
+            changed_components={"client": True}, versions={"client": "1.1.0"},
+            published_versions={"client": "1.0.0"},
+        )
+        plan = rd.compute_plan(graph, state)
+        obligation = rd._delivery_obligation(graph, "client")
+        entries = {
+            "client": rd.ReceiptEntry(
+                version="1.1.0", digest="d", phase="verified",
+                delivery_outstanding=obligation,
+            )
+        }
+        sealed, digest = rd.seal_receipt(
+            plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={},
+            frozen_plan_id="c" * 64, staged_manifest_id="staged",
+        )
+        receipt = rd.load_sealed_receipt(sealed, expected_digest=digest)
+        self.assertEqual(receipt.entries["client"].delivery_outstanding, obligation)
+
+        # The reader that rejected it.
+        rd.validate_final_receipt(
+            receipt, plan=plan, graph=graph, frozen_plan_id="c" * 64,
+            staged_manifest_id="staged", source_sha=SOURCE_SHA,
+        )
+
+    def test_a_delivery_node_owing_nothing_and_proving_nothing_refuses(self) -> None:
+        """Accepting the debt must not become accepting silence."""
+        graph = rd.Graph.from_dict({
+            "component": {
+                "client": {
+                    "source_paths": ["client/"],
+                    "version_source": {"type": "manifest", "path": "v"},
+                    "tag_format": "client-v{version}",
+                    "publish_lane": {"workflow": "w"},
+                    "verify": {"command": "true"},
+                    "delivery_restart": {"proof": "restart per host"},
+                },
+            },
+            "edge": [],
+        })
+        state = rd.FixtureState(
+            changed_components={"client": True}, versions={"client": "1.1.0"},
+            published_versions={"client": "1.0.0"},
+        )
+        plan = rd.compute_plan(graph, state)
+        entries = {
+            "client": rd.ReceiptEntry(version="1.1.0", digest="d", phase="verified")
+        }
+        with self.assertRaises(rd.ReceiptError):
+            rd.seal_receipt(
+                plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={},
+                frozen_plan_id="c" * 64, staged_manifest_id="staged",
+            )
+
     def test_receipt_for_deferred_edges_must_carry_the_authorization(self) -> None:
         """Enforced at seal, and again on the way back in. The reviewer's
         counterexample was a final receipt for an incomplete runtime edge that

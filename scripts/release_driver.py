@@ -1469,14 +1469,19 @@ def validate_final_receipt(
             component.delivery_restart is not None or component.lane is not None
         )
         if needs_delivery:
-            if not entry.delivery_proof:
+            obligation = _delivery_obligation(graph, node.component)
+            # Same two honest states the seal accepts: evidence, or a recorded
+            # debt. Demanding evidence here made a correctly sealed
+            # published-not-yet-delivered receipt unverifiable, unresumable and
+            # unrestorable - the receipt was right and every later reader
+            # refused it.
+            if entry.delivery_proof:
+                validate_delivery_proof(entry.delivery_proof, obligation, node.component)
+            elif entry.delivery_outstanding != obligation:
                 raise ReceiptError(
-                    f"{node.component}: final receipt delivery proof is absent")
-            validate_delivery_proof(
-                entry.delivery_proof,
-                _delivery_obligation(graph, node.component),
-                node.component,
-            )
+                    f"{node.component}: final receipt has neither delivery "
+                    f"evidence nor an outstanding {obligation}"
+                )
         if component.approval_required:
             approval = approvals.get(node.component)
             if not isinstance(approval, dict) or not approval.get(
@@ -7917,13 +7922,11 @@ def resume_plan(
                     f"{node.component}: observed digest set does not equal the "
                     "anchored staged manifest set"
                 )
-        if manifest_entry.get("delivery_obligation"):
-            if not observed.delivery_proof:
-                raise ReceiptError(
-                    f"{node.component}: adoption requires observed delivery "
-                    f"evidence for its declared "
-                    f"{manifest_entry['delivery_obligation']}"
-                )
+        if manifest_entry.get("delivery_obligation") and observed.delivery_proof:
+            # An already-published node whose delivery is still owed is the
+            # normal case on resume: the restart evidence could not have existed
+            # when it published. Demanding it here made every interrupted
+            # channel or pi release unresumable.
             validate_delivery_proof(
                 observed.delivery_proof,
                 manifest_entry["delivery_obligation"],
@@ -9303,10 +9306,15 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     "staged manifest's immutable candidate identity"
                 )
                 return 1
-            if manifest_entry.get("delivery_obligation") and not entry.delivery_proof:
+            obligation = manifest_entry.get("delivery_obligation")
+            if (
+                obligation
+                and not entry.delivery_proof
+                and entry.delivery_outstanding != obligation
+            ):
                 print(
-                    f"MISMATCH: {node.component} carries no post-publication "
-                    f"proof for its declared {manifest_entry['delivery_obligation']}"
+                    f"MISMATCH: {node.component} carries neither post-publication "
+                    f"proof nor an outstanding {obligation}"
                 )
                 return 1
             if component.approval_required:
