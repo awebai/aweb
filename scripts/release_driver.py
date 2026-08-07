@@ -7940,6 +7940,17 @@ def resume_plan(
             delivery_proof=observed.delivery_proof,
             digest_set=observed.digest_set,
             lane_ref=observed.lane_ref,
+            # An adopted node whose delivery is still owed must carry the debt
+            # forward. Dropping the raise without recording the obligation only
+            # moved the refusal to seal time: the entry said neither evidence
+            # nor debt, which is the one thing a delivery node may not say.
+            delivery_outstanding=(
+                None if observed.delivery_proof
+                else (
+                    manifest_entry.get("delivery_obligation")
+                    or _delivery_obligation(graph, node.component)
+                )
+            ),
         )
     return run_plan(
         plan,
@@ -9398,6 +9409,14 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     print(f"MISMATCH: {exc}")
                     return 1
                 if observed.delivery_proof is None:
+                    # A node whose delivery is still owed observes no proof,
+                    # and that is the honest state, not an observer failure.
+                    # The receipt's own outstanding record is what says so, and
+                    # validate_final_receipt has already checked it.
+                    if entry.delivery_outstanding == manifest_entry[
+                        "delivery_obligation"
+                    ]:
+                        continue
                     print(
                         f"BLOCKED: {node.component}: the observer cannot "
                         "produce the required delivery state for its declared "

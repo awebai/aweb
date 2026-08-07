@@ -1852,6 +1852,47 @@ class GraphContractTests(unittest.TestCase):
             staged_manifest_id="staged", source_sha=SOURCE_SHA,
         )
 
+    def test_resume_carries_an_unpaid_delivery_debt_forward(self) -> None:
+        """An interrupted channel or pi release is the normal resume case: the
+        node published, its restart evidence could not exist yet, and adoption
+        observes no proof. Dropping the old refusal without recording the debt
+        only moved the failure to seal time."""
+        graph = rd.Graph.from_dict({
+            "component": {
+                "client": {
+                    "source_paths": ["client/"],
+                    "version_source": {"type": "manifest", "path": "v"},
+                    "tag_format": "client-v{version}",
+                    "publish_lane": {"workflow": "w"},
+                    "verify": {"command": "true"},
+                    "delivery_restart": {"proof": "restart per host"},
+                },
+            },
+            "edge": [],
+        })
+        obligation = rd._delivery_obligation(graph, "client")
+        node = rd.PlanNode(component="client", reason="changed", version="1.1.0")
+        manifest_entry = {"delivery_obligation": obligation}
+        observed = rd.ReceiptEntry(
+            version="1.1.0", digest="d", phase="published", delivery_proof=None
+        )
+        entry = rd.ReceiptEntry(
+            version=observed.version, digest=observed.digest, phase="published",
+            pointer_state=observed.pointer_state,
+            delivery_proof=observed.delivery_proof,
+            digest_set=observed.digest_set, lane_ref=observed.lane_ref,
+            delivery_outstanding=(
+                None if observed.delivery_proof
+                else (manifest_entry.get("delivery_obligation")
+                      or rd._delivery_obligation(graph, node.component))
+            ),
+        )
+        self.assertEqual(
+            entry.delivery_outstanding, obligation,
+            "an adopted node owing delivery must carry the debt, or it seals "
+            "saying neither evidence nor debt",
+        )
+
     def test_a_delivery_node_owing_nothing_and_proving_nothing_refuses(self) -> None:
         """Accepting the debt must not become accepting silence."""
         graph = rd.Graph.from_dict({
