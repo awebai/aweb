@@ -47,9 +47,16 @@ class ShipCIContractTests(unittest.TestCase):
                 continue
             if not line.startswith("  "):
                 break
-            event = re.match(r"^  ([A-Za-z_]+):", line)
-            if event:
-                events.append(event.group(1))
+            if line.startswith("   "):
+                continue  # nested under an event, not an event itself
+            # Quoted keys are real keys to YAML: "pull_request": is a trigger.
+            # A bare-identifier regex silently ignored them, so the exact-set
+            # assertion could be bypassed by quoting. Anything at this
+            # indentation that is not a comment must be recognised or refused.
+            event = re.match(r'^  "?([A-Za-z_][A-Za-z_-]*)"?:', line)
+            if not event:
+                raise AssertionError(f"unparsed trigger line: {line!r}")
+            events.append(event.group(1))
         return events
 
     def ship_push_keys(self, workflow: str) -> list:
@@ -63,9 +70,12 @@ class ShipCIContractTests(unittest.TestCase):
                 continue
             if not line.startswith("    "):
                 break
-            key = re.match(r"^    ([A-Za-z_-]+):", line)
-            if key:
-                keys.append(key.group(1))
+            if line.startswith("     "):
+                continue  # nested under a push key, not a push key itself
+            key = re.match(r'^    "?([A-Za-z_][A-Za-z_-]*)"?:', line)
+            if not key:
+                raise AssertionError(f"unparsed push key line: {line!r}")
+            keys.append(key.group(1))
         return keys
 
     def assert_exact_ship_triggers(self, workflow: str) -> None:
@@ -97,6 +107,13 @@ class ShipCIContractTests(unittest.TestCase):
             "tag filter added": workflow.replace(
                 "  push:\n    branches: [main]",
                 '  push:\n    branches: [main]\n    tags: ["*"]', 1
+            ),
+            "quoted pull_request added": workflow.replace(
+                "on:\n  push:", 'on:\n  "pull_request":\n  push:', 1
+            ),
+            "quoted tag filter added": workflow.replace(
+                "  push:\n    branches: [main]",
+                '  push:\n    branches: [main]\n    "tags": ["*"]', 1
             ),
             "path filter added": workflow.replace(
                 "  push:\n    branches: [main]",

@@ -1191,6 +1191,79 @@ class GraphContractTests(unittest.TestCase):
                     "an absent capability must disclose, not report all-clear",
                 )
 
+    def test_a_raising_observer_does_not_escape_out_of_freeze(self) -> None:
+        """A moving lane component was read without the guard, so a raising
+        observer propagated out of freeze_plan: no frozen truth, no disclosure,
+        just the exception. Failing closed means recording None, not exploding."""
+        graph = rd.Graph.from_dict(
+            {
+                "component": {
+                    "site": {
+                        "source_paths": ["docs/x.md"],
+                        "lane": {"command": "deploy"},
+                        "publishable": False,
+                    }
+                }
+            }
+        )
+
+        class Raising(rd.FixtureState):
+            def delivery_baseline(self, component):
+                raise RuntimeError("observer failed")
+
+        state = Raising(changed_components={"site": True})
+        plan = rd.compute_plan(graph, state)
+        frozen_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha=SOURCE_SHA, state=state,
+        )
+        loaded = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+        self.assertEqual(loaded.resolved["delivery"], {"site": None})
+        self.assertTrue(rd.delivery_disclosures(loaded.resolved))
+
+    def test_source_less_lane_components_are_in_frozen_truth(self) -> None:
+        """A forced pointer node has a lane and no source paths - its movement
+        is forced by an edge, not detected from a directory. Keying inclusion on
+        source_paths dropped exactly those nodes, so the artifact stayed silent
+        about the ones most likely to be undecidable."""
+        graph = rd.Graph.from_dict(
+            {
+                "component": {
+                    "pointer": {
+                        "publishable": False,
+                        "lane": {"repository": "github.com/example/plugins"},
+                    }
+                }
+            }
+        )
+        snapshot = rd._resolved_snapshot(
+            rd.Plan(moving=[], runtime_contract_edges=[]), graph, None
+        )
+        self.assertEqual(snapshot["delivery"], {"pointer": None})
+        self.assertTrue(rd.delivery_disclosures(snapshot))
+
+    def test_a_raising_provider_records_unobservable_not_an_exception(self) -> None:
+        """A lookup that blows up is not evidence the node is fine."""
+        graph = rd.Graph.from_dict(
+            {
+                "component": {
+                    "site": {
+                        "source_paths": ["docs/x.md"],
+                        "lane": {"command": "deploy"},
+                        "publishable": False,
+                    }
+                }
+            }
+        )
+
+        class Raising:
+            def delivery_baseline(self, component):
+                raise RuntimeError("remote unreachable")
+
+        snapshot = rd._resolved_snapshot(
+            rd.Plan(moving=[], runtime_contract_edges=[]), graph, Raising()
+        )
+        self.assertEqual(snapshot["delivery"], {"site": None})
+
     def test_cli_disclosures_are_derived_from_frozen_truth(self) -> None:
         """What the operator reads must be the sealed value, not a second
         computation against live state that could disagree with it."""
@@ -1201,10 +1274,14 @@ class GraphContractTests(unittest.TestCase):
 
         observed_bytes, observed_id = self._frozen_for_sites_baseline("deploy-ref")
         observed = rd.load_frozen_plan(observed_bytes, expected_id=observed_id)
+        # Specific to sites: the committed graph also carries marketplace-pointer,
+        # a source-less lane node that is legitimately undecidable at plan time,
+        # so the whole list is not expected to be empty.
         self.assertEqual(
-            rd.delivery_disclosures(observed.resolved),
+            [d for d in rd.delivery_disclosures(observed.resolved)
+             if d.startswith("sites:")],
             [],
-            "an observable delivery node discloses nothing",
+            "an observable delivery node discloses nothing about itself",
         )
 
     def test_unrelated_plan_does_not_require_a_sites_baseline(self) -> None:
@@ -1551,6 +1628,29 @@ class GraphContractTests(unittest.TestCase):
                 source_sha=SOURCE_SHA, approvals={}, state=state,
             )
 
+    def test_deferral_still_executes_the_measured_matrix(self) -> None:
+        """Positive control. The previous tests proved only that an UNAVAILABLE
+        matrix blocks; they never made one available and checked it ran, so the
+        execute block could skip every edge under deferral and stay green."""
+        graph = fixture_graph()  # client<->server is measured
+        state = rd.FixtureState(changed_components={"client": True})
+        plan = rd.compute_plan(graph, state)
+        skew = FixtureSkew(available=True)
+        rd.run_plan(
+            plan, graph, FixtureLanes(available={"client", "plugin", "pointer"}),
+            skew=skew, authority=FixtureAuthority(),
+            providers=rd.Providers(
+                store=rd._MemoryStore(), authority=FixtureAuthority(),
+                measurement=AllRecordsResolve(), defer_g5=True,
+            ),
+            source_sha=SOURCE_SHA, approvals={}, state=state,
+        )
+        self.assertIn(
+            ("client", "server"), skew.executed,
+            "a measured edge's matrix must run even when something else was "
+            "deferred; nothing about it was deferred",
+        )
+
     def test_deferral_in_a_mixed_plan_covers_only_the_incomplete_edges(self) -> None:
         """With one measured and one unmeasured edge, an authorization for the
         unmeasured one must not silently excuse the measured one."""
@@ -1618,16 +1718,40 @@ class GraphContractTests(unittest.TestCase):
         return graph, plan, incomplete, entries
 
     def test_receipt_for_deferred_edges_must_carry_the_authorization(self) -> None:
-        """The reviewer's counterexample: a final receipt for an incomplete
-        runtime edge sealed with no G5 authorization loaded and validated
-        clean. A receipt recording a release of unmeasured support without
-        naming who accepted it is exactly the artifact an audit needs."""
+        """Enforced at seal, and again on the way back in. The reviewer's
+        counterexample was a final receipt for an incomplete runtime edge that
+        sealed with no authorization and validated clean; sealing now refuses,
+        and a receipt forged past the sealer still fails validation."""
         graph, plan, incomplete, entries = self._incomplete_plan_and_receipt_parts()
-        sealed, digest = rd.seal_receipt(
+
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.seal_receipt(
+                plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={},
+                frozen_plan_id="c" * 64, staged_manifest_id="staged",
+            )
+        self.assertIn("G5 authorization", str(caught.exception))
+
+        # Forged past the sealer, as a hostile or older writer would produce.
+        import hashlib as _hashlib, json as _json
+        authorized, _ = rd.seal_receipt(
             plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={},
             frozen_plan_id="c" * 64, staged_manifest_id="staged",
+            g5_authorization=rd.G5Authorization(
+                who="juan", when="t", source_sha=SOURCE_SHA,
+                frozen_plan_id="c" * 64, edges=incomplete, risk="accepted",
+            ),
         )
-        receipt = rd.load_sealed_receipt(sealed, expected_digest=digest)
+        body = _json.loads(_json.loads(authorized)["body"])
+        body.pop("g5_authorization")
+        forged_body = _json.dumps(body, sort_keys=True)
+        forged = _json.dumps({
+            "body": forged_body,
+            "seal": _hashlib.sha256(forged_body.encode()).hexdigest(),
+        }).encode()
+        self.assertNotEqual(forged, authorized, "the forgery changed nothing")
+        receipt = rd.load_sealed_receipt(
+            forged, expected_digest=_hashlib.sha256(forged).hexdigest()
+        )
         self.assertIsNone(receipt.g5_authorization)
         with self.assertRaises(rd.ReceiptError) as caught:
             rd.validate_final_receipt(
@@ -1635,6 +1759,54 @@ class GraphContractTests(unittest.TestCase):
                 staged_manifest_id="staged", source_sha=SOURCE_SHA,
             )
         self.assertIn("G5 authorization", str(caught.exception))
+
+    def test_sealed_record_fields_are_type_checked(self) -> None:
+        """A key-set check is not a schema. who=42, when=[] and risk={} loaded
+        and validated clean."""
+        graph, plan, incomplete, entries = self._incomplete_plan_and_receipt_parts()
+        good = {
+            "who": "juan", "when": "2026-08-07T00:00:00Z",
+            "source_sha": SOURCE_SHA, "frozen_plan_id": "c" * 64,
+            "edges": sorted(incomplete), "risk": "accepted",
+        }
+        self.assertIsNotNone(rd._g5_from_record(good))
+        for label, mutation in (
+            ("who is a number", {"who": 42}),
+            ("when is a list", {"when": []}),
+            ("risk is an object", {"risk": {}}),
+            ("who is blank", {"who": "   "}),
+            ("source is short", {"source_sha": "s1"}),
+            ("plan id is short", {"frozen_plan_id": "abc"}),
+            ("edges repeat", {"edges": sorted(incomplete) * 2}),
+            ("edges are display form", {"edges": ["aw<->server"]}),
+        ):
+            with self.subTest(case=label):
+                with self.assertRaises(rd.ReceiptError):
+                    rd._g5_from_record({**good, **mutation})
+
+    def test_authorization_without_a_deferral_is_refused(self) -> None:
+        """An acceptance for a deferral that did not happen is a claim about
+        the release that is not true of it."""
+        graph = fixture_graph()  # only a measured edge
+        state = rd.FixtureState(changed_components={"client": True})
+        plan = rd.compute_plan(graph, state)
+        self.assertFalse(
+            [e for e in plan.runtime_contract_edges if e.declared_incomplete]
+        )
+        entries = {
+            n.component: rd.ReceiptEntry(version="1.0.0", digest="d", phase="verified")
+            for n in plan.moving
+        }
+        with self.assertRaises(rd.ReceiptError):
+            rd.seal_receipt(
+                plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={},
+                frozen_plan_id="c" * 64, staged_manifest_id="staged",
+                g5_authorization=rd.G5Authorization(
+                    who="juan", when="t", source_sha=SOURCE_SHA,
+                    frozen_plan_id="c" * 64, edges=frozenset({"e" * 64}),
+                    risk="unrelated",
+                ),
+            )
 
     def test_sealed_g5_authorization_round_trips_and_binds(self) -> None:
         graph, plan, incomplete, entries = self._incomplete_plan_and_receipt_parts()
@@ -1654,6 +1826,7 @@ class GraphContractTests(unittest.TestCase):
             staged_manifest_id="staged", source_sha=SOURCE_SHA,
         )
 
+        # Refused at seal, so these bytes cannot be produced by the driver...
         for label, bad in (
             ("wrong source", rd.G5Authorization(
                 who="juan", when="t", source_sha=OTHER_SOURCE_SHA,
@@ -1665,18 +1838,38 @@ class GraphContractTests(unittest.TestCase):
                 who="juan", when="t", source_sha=SOURCE_SHA,
                 frozen_plan_id="c" * 64, edges=frozenset({"f" * 64}), risk="x")),
         ):
-            with self.subTest(case=label):
-                bad_sealed, bad_digest = rd.seal_receipt(
-                    plan, graph, source_sha=SOURCE_SHA, entries=entries,
-                    approvals={}, frozen_plan_id="c" * 64,
-                    staged_manifest_id="staged", g5_authorization=bad,
-                )
-                bad_receipt = rd.load_sealed_receipt(
-                    bad_sealed, expected_digest=bad_digest
+            with self.subTest(case=label, layer="seal"):
+                with self.assertRaises(rd.ReceiptError):
+                    rd.seal_receipt(
+                        plan, graph, source_sha=SOURCE_SHA, entries=entries,
+                        approvals={}, frozen_plan_id="c" * 64,
+                        staged_manifest_id="staged", g5_authorization=bad,
+                    )
+
+        # ...and refused again on the way back in, for bytes forged past it.
+        import hashlib as _hashlib, json as _json
+        for label, record in (
+            ("wrong source", {**authorization.as_record(),
+                              "source_sha": OTHER_SOURCE_SHA}),
+            ("wrong frozen plan", {**authorization.as_record(),
+                                   "frozen_plan_id": "d" * 64}),
+            ("wrong edges", {**authorization.as_record(), "edges": ["f" * 64]}),
+        ):
+            with self.subTest(case=label, layer="validate"):
+                body = _json.loads(_json.loads(sealed)["body"])
+                body["g5_authorization"] = record
+                forged_body = _json.dumps(body, sort_keys=True)
+                forged = _json.dumps({
+                    "body": forged_body,
+                    "seal": _hashlib.sha256(forged_body.encode()).hexdigest(),
+                }).encode()
+                self.assertNotEqual(forged, sealed, "the forgery changed nothing")
+                forged_receipt = rd.load_sealed_receipt(
+                    forged, expected_digest=_hashlib.sha256(forged).hexdigest()
                 )
                 with self.assertRaises(rd.ReceiptError):
                     rd.validate_final_receipt(
-                        bad_receipt, plan=plan, graph=graph,
+                        forged_receipt, plan=plan, graph=graph,
                         frozen_plan_id="c" * 64, staged_manifest_id="staged",
                         source_sha=SOURCE_SHA,
                     )
@@ -1707,6 +1900,36 @@ class GraphContractTests(unittest.TestCase):
             rd.load_sealed_receipt(
                 tampered, expected_digest=_hashlib.sha256(tampered).hexdigest()
             )
+
+    def test_a_refused_binding_leaves_no_anchor_behind(self) -> None:
+        """A store write is an effect even when no lane was called. The plan
+        was anchored before the first check that knew the real frozen id, so a
+        run that refused still left a plan record behind - contradicting
+        "every mismatch refuses before any effect"."""
+        plan, edges = self._g5_plan()
+        store = rd._MemoryStore()
+        authority = FixtureAuthority()
+        with self.assertRaises(rd.ReceiptError):
+            rd.run_plan(
+                plan, self.graph, FixtureLanes(available={"aw"}),
+                skew=FixtureSkew(), authority=authority,
+                providers=rd.Providers(
+                    store=store, authority=authority,
+                    measurement=AllRecordsResolve(), defer_g5=True,
+                    g5_authorization=self._g5_record(frozen_plan_id="d" * 64),
+                ),
+                source_sha=SOURCE_SHA, approvals={}, state=rd.FixtureState(
+                    changed_components={"aw": True}
+                ),
+            )
+        self.assertEqual(
+            [k for k in getattr(store, "_data", {})], [],
+            "no artifact may be stored by a run that refused",
+        )
+        self.assertEqual(
+            authority.recorded, {},
+            "no digest may be recorded by a run that refused",
+        )
 
     def test_g5_authorization_parsing_refuses_malformed_records(self) -> None:
         edge_id = "e" * 64

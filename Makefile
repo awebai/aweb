@@ -12,7 +12,7 @@
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-plan release-run release-receipt test-release-driver test-release-runnerless test-release-repository-measurement test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	release-plan release-run release-receipt test-release-driver test-release-runnerless test-pointer-adapter test-release-repository-measurement test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	release-all-check \
 	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
 
@@ -135,7 +135,7 @@ build:
 # check-cli-go-tidy is here rather than behind test-cli by a deliberate reversal: it was placed
 # after it to inherit a warm module cache, and moving it forward reattributes that fetch rather
 # than adding one - about a second for 85MB when cold.
-test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-release-driver test-release-runnerless test-release-repository-measurement test-release-skew-cli-server test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-release-driver test-release-runnerless test-pointer-adapter test-release-repository-measurement test-release-skew-cli-server test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 # Editable AWID metadata is repeated in both committed Python locks. Check both
 # without repair, then prove a missing dependent-lock dependency is rejected.
@@ -632,6 +632,11 @@ release-plan:
 # require before they publish - publication is not delivery, so a component
 # whose users keep running old code until a restart cannot publish without it:
 #   DELIVERY_PROOF='component=channel,obligation=delivery-restart-proof,evidence_id=<id>,digest=<sha256>'
+# POINTER_ADAPTER (repeatable) performs a forced pointer's effect - the
+# marketplace version bump, or the AC pin update - in the target repository:
+#   POINTER_ADAPTER='marketplace-pointer=/abs/scripts/pointer-adapter-marketplace.py'
+# Without it a channel or skills release stops at the pointer node, because
+# publishing to npm reaches nobody until the marketplace advertises the version.
 # G5_AUTHORIZATION records a human accepting unmeasured runtime support for
 # this exact release. Accepted on every authority - who may defer is a question
 # about the human, not about which runner built the artifact - and bound to the
@@ -644,10 +649,12 @@ release-plan:
 # Runnerless mode is first-class and needs no GitHub identity:
 #   AUTHORITY=local-runnerless STORE_ROOT=<durable-dir>
 #   LOCAL_ADAPTER='component@<reviewed-source-sha>=/absolute/direct-adapter'
-#   LOCAL_RISK_AUTHORIZATION='who,when,risk accepted' [DEFER_G5=1]
+#   LOCAL_RISK_AUTHORIZATION='who,when,risk accepted'
+# DEFER_G5 is NOT a companion to that record and never travels with it in
+# shorthand: it needs its own G5_AUTHORIZATION below, on any authority.
 # See docs/runnerless-release.md.
 release-run:
-	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(if $(MANIFEST_ID),--manifest-id "$(MANIFEST_ID)") $(if $(ALLOW_LOCAL_AUTHORITY),--allow-local-authority) $(foreach a,$(APPROVAL),--approval "$(a)") $(foreach s,$(STAGE_ARTIFACT),--stage-artifact "$(s)") $(foreach d,$(DELIVERY_PROOF),--delivery-proof "$(d)") $(foreach a,$(LOCAL_ADAPTER),--local-adapter "$(a)") $(if $(LOCAL_RISK_AUTHORIZATION),--local-risk-authorization "$(LOCAL_RISK_AUTHORIZATION)") $(if $(DEFER_G5),--defer-g5) $(if $(G5_AUTHORIZATION),--g5-authorization "$(G5_AUTHORIZATION)")
+	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(if $(MANIFEST_ID),--manifest-id "$(MANIFEST_ID)") $(if $(ALLOW_LOCAL_AUTHORITY),--allow-local-authority) $(foreach a,$(APPROVAL),--approval "$(a)") $(foreach s,$(STAGE_ARTIFACT),--stage-artifact "$(s)") $(foreach d,$(DELIVERY_PROOF),--delivery-proof "$(d)") $(foreach p,$(POINTER_ADAPTER),--pointer-adapter "$(p)") $(foreach a,$(LOCAL_ADAPTER),--local-adapter "$(a)") $(if $(LOCAL_RISK_AUTHORIZATION),--local-risk-authorization "$(LOCAL_RISK_AUTHORIZATION)") $(if $(DEFER_G5),--defer-g5) $(if $(G5_AUTHORIZATION),--g5-authorization "$(G5_AUTHORIZATION)")
 
 # Verifies an anchored receipt against its anchored frozen plan. ARTIFACT_ID,
 # PLAN_ID and PLAN_ARTIFACT_ID are required; digests resolve through the
@@ -657,6 +664,12 @@ release-receipt:
 
 test-release-runnerless:
 	python3 scripts/e2e/test_release_runnerless.py
+
+# The marketplace pointer adapter against a real local git remote: clone,
+# commit, push and read back. Publishing without moving this pointer reaches
+# nobody, so the round trip is the thing worth proving.
+test-pointer-adapter:
+	python3 scripts/e2e/test_pointer_adapter_marketplace.py
 
 test-release-repository-measurement:
 	python3 scripts/e2e/test_release_repository_measurement.py

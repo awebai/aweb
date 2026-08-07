@@ -75,6 +75,17 @@ only when the user is running the new code:
   forced edge in the component graph, not an optional follow-up: Claude Code
   only re-resolves an npm source when the marketplace entry advertises a
   version, so publishing alone is invisible to existing installs.
+
+  The driver performs it. Pass the adapter and it stages the intended
+  advertisement, applies it, and re-reads the repository, refusing unless it
+  advertises exactly what was published:
+
+  ```
+  make release-run ... \
+    POINTER_ADAPTER='marketplace-pointer=$PWD/scripts/pointer-adapter-marketplace.py'
+  ```
+
+  What it advertises comes from the frozen plan, never from the command line.
 - **installed plugins** — an installed plugin keeps its loaded code until the
   session restarts. The `delivery_restart` obligation requires proof per host:
   plugin updated **and** process restarted on the published version. `claude

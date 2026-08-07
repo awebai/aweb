@@ -2,14 +2,25 @@
 
 GitHub Actions is optional for release execution. The normal hosted lane remains
 available. During an outage, an explicit human risk authorization selects the
-local lane:
+local lane.
+
+**The examples below show a `server` release, which needs more inputs than the
+runnerless lane itself.** The committed graph gives server four
+declared-incomplete runtime contracts and a forced `ac-pin` pointer, so a server
+release also needs a G5 authorization and a pointer adapter. `aw`, `pi` and
+`awid-image` force no pointer, which makes them the smallest real exercise of
+this lane. Every required input is shown; none of these commands is a subset
+that will run.
 
 ```sh
 make release-plan AUTHORITY=local-runnerless STORE_ROOT="$PWD/.release-runs"
 make release-run AUTHORITY=local-runnerless STORE_ROOT="$PWD/.release-runs" \
   PLAN_ID=<id> PLAN_ARTIFACT_ID=<artifact-id> \
   LOCAL_ADAPTER='server@<exact-reviewed-source-sha>=/absolute/path/to/direct-adapter' \
-  LOCAL_RISK_AUTHORIZATION='juan,2026-08-06T12:00:00Z,runnerless risk accepted'
+  LOCAL_RISK_AUTHORIZATION='juan,2026-08-06T12:00:00Z,runnerless risk accepted' \
+  DEFER_G5=1 \
+  G5_AUTHORIZATION='who=juan,when=2026-08-06T12:00:00Z,source=<40hex>,plan=<64hex>,edges=<64hex>+<64hex>+<64hex>+<64hex>,risk=unmeasured runtime support accepted' \
+  POINTER_ADAPTER='ac-pin=/absolute/path/to/ac-pin-adapter'
 ```
 
 `LOCAL_RISK_AUTHORIZATION` accepts the risk of releasing without a hosted

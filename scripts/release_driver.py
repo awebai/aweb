@@ -447,6 +447,23 @@ def compute_plan(graph: Graph, state) -> Plan:
     return Plan(moving=moving, runtime_contract_edges=contracts)
 
 
+def observed_delivery_baseline(state, component) -> str | None:
+    """One fail-closed read for every delivery-baseline lookup.
+
+    Absent provider, absent capability, absent result and a raised lookup all
+    mean the same thing - it could not be decided - and all record None. Callers
+    that read the provider directly turned a raising observer into an exception
+    escaping out of freeze_plan, so no frozen truth and no disclosure were
+    produced at all.
+    """
+    if state is None or not hasattr(state, "delivery_baseline"):
+        return None
+    try:
+        return state.delivery_baseline(component)
+    except Exception:
+        return None
+
+
 def check_declared_inputs(
     graph: Graph, plan: Plan, state, adopted: set | None = None
 ) -> list[str]:
@@ -554,9 +571,7 @@ def check_declared_inputs(
     for node in plan.moving:
         component = graph.components[node.component]
         if component.lane is not None and component.source_paths:
-            baseline = None
-            if hasattr(state, "delivery_baseline"):
-                baseline = state.delivery_baseline(component)
+            baseline = observed_delivery_baseline(state, component)
             if baseline is None:
                 problems.append(
                     f"{component.name}: delivered baseline is unobservable; a "
@@ -693,8 +708,10 @@ def _resolved_snapshot(plan: Plan, graph: Graph, state) -> dict:
                 record["declared_repository"] = pin.get("repository")
             record["pin_repository"] = pin.get("pin_repository")
             snapshot["pins"][key] = record
-        if component.lane is not None and hasattr(state, "delivery_baseline"):
-            snapshot["baselines"][node.component] = state.delivery_baseline(component)
+        if component.lane is not None:
+            snapshot["baselines"][node.component] = observed_delivery_baseline(
+                state, component
+            )
 
     # Delivery observability for EVERY lane component, not only the moving
     # ones. An undecidable delivery node is by definition absent from
@@ -717,15 +734,13 @@ def _delivery_observability(graph: Graph, state) -> dict:
     """
     observability: dict = {}
     for name, component in sorted(graph.components.items()):
-        if component.lane is None or not component.source_paths:
+        # Keyed on HAVING a lane, not on how movement is detected. Filtering on
+        # source_paths dropped every source-less lane component - which is
+        # exactly what the forced pointer nodes are - so the artifact stayed
+        # silent about the nodes most likely to be undecidable.
+        if component.lane is None:
             continue
-        baseline = None
-        if state is not None and hasattr(state, "delivery_baseline"):
-            try:
-                baseline = state.delivery_baseline(component)
-            except Exception:
-                baseline = None
-        observability[name] = baseline
+        observability[name] = observed_delivery_baseline(state, component)
     return observability
 
 
@@ -1077,6 +1092,19 @@ def _g5_from_record(record) -> "G5Authorization | None":
             "sealed g5_authorization fields must be exactly "
             f"{sorted(required)}, got {sorted(record)}"
         )
+    for field in ("who", "when", "source_sha", "risk"):
+        value = record[field]
+        if not isinstance(value, str) or not value.strip():
+            raise ReceiptError(
+                f"sealed g5_authorization {field} must be a nonempty string, "
+                f"got {value!r}"
+            )
+    if not re.fullmatch(r"[0-9a-f]{40}", record["source_sha"]):
+        raise ReceiptError("sealed g5_authorization source_sha must be 40-hex")
+    if not isinstance(record["frozen_plan_id"], str) or not re.fullmatch(
+        r"[0-9a-f]{64}", record["frozen_plan_id"]
+    ):
+        raise ReceiptError("sealed g5_authorization frozen_plan_id must be 64-hex")
     edges = record["edges"]
     if not isinstance(edges, list) or not edges or not all(
         isinstance(e, str) and re.fullmatch(r"[0-9a-f]{64}", e) for e in edges
@@ -1084,6 +1112,8 @@ def _g5_from_record(record) -> "G5Authorization | None":
         raise ReceiptError(
             "sealed g5_authorization edges must be canonical 64-hex identities"
         )
+    if len(set(edges)) != len(edges):
+        raise ReceiptError("sealed g5_authorization repeats an edge identity")
     return G5Authorization(
         who=record["who"], when=record["when"],
         source_sha=record["source_sha"],
@@ -1105,9 +1135,16 @@ def require_sealed_g5_authorization(
     incomplete = frozenset(
         edge_identity(e) for e in plan.runtime_contract_edges if e.declared_incomplete
     )
-    if not incomplete:
-        return
     record = receipt.g5_authorization
+    if not incomplete:
+        # An acceptance for a deferral that did not happen is a claim about the
+        # release that is not true of it.
+        if record is not None:
+            raise ReceiptError(
+                "receipt carries a G5 authorization but the plan defers no "
+                "runtime contract"
+            )
+        return
     if record is None:
         raise ReceiptError(
             "receipt covers a plan with declared-incomplete runtime contracts "
@@ -1158,6 +1195,43 @@ def seal_receipt(
         )
     if partial and not entries:
         raise ReceiptError("a partial receipt with no entries records nothing")
+    if not partial:
+        incomplete = frozenset(
+            edge_identity(e)
+            for e in plan.runtime_contract_edges if e.declared_incomplete
+        )
+        if incomplete and g5_authorization is None:
+            raise ReceiptError(
+                "a final receipt for a plan with declared-incomplete runtime "
+                "contracts must seal the G5 authorization that accepted them"
+            )
+        if incomplete and g5_authorization is not None:
+            # Bound at seal, not only when someone later reads it back. Sealing
+            # any object exposing as_record() let a record for a different
+            # source, plan or edge set be written into the receipt it does not
+            # describe.
+            if not isinstance(g5_authorization, G5Authorization):
+                raise ReceiptError("g5_authorization must be a G5Authorization")
+            if g5_authorization.source_sha != source_sha:
+                raise ReceiptError(
+                    "G5 authorization names source "
+                    f"{g5_authorization.source_sha}, receipt seals {source_sha}"
+                )
+            if frozen_plan_id and g5_authorization.frozen_plan_id != frozen_plan_id:
+                raise ReceiptError(
+                    "G5 authorization names frozen plan "
+                    f"{g5_authorization.frozen_plan_id}, receipt seals "
+                    f"{frozen_plan_id}"
+                )
+            if g5_authorization.edges != incomplete:
+                raise ReceiptError(
+                    "G5 authorization does not name exactly the deferred edges"
+                )
+        if not incomplete and g5_authorization is not None:
+            raise ReceiptError(
+                "a G5 authorization was supplied but the plan defers no "
+                "runtime contract"
+            )
     if not partial:
         unverified = [n for n, e in entries.items() if e.phase != "verified"]
         if unverified:
@@ -7306,6 +7380,14 @@ def run_plan(
             measurement=measurement,
         )
         plan_artifact_id = f"plan:{source_sha}:{frozen_plan_id}"
+        # The binding is checked BEFORE the anchor is written. Persisting first
+        # left a plan record behind on a run that refused, which contradicts
+        # "every mismatch refuses before any effect" - a store write is an
+        # effect even when no lane was called.
+        require_runtime_support(
+            plan, defer_g5=defer_g5, authorization=g5_authorization,
+            source_sha=source_sha, frozen_plan_id=frozen_plan_id,
+        )
         _put_content_addressed(
             store, authority, plan_artifact_id, frozen_bytes, frozen_plan_id
         )
@@ -7392,15 +7474,20 @@ def run_plan(
         )
         manifest["_artifact_id"] = manifest_id
 
-    if not defer_g5:
-        freeze_matrix = getattr(skew, "freeze_matrix", None)
-        if freeze_matrix is not None:
-            for edge in plan.runtime_contract_edges:
-                freeze_matrix(
-                    edge, staged, staged_manifest_digest=manifest_digest
-                )
-        for edge in plan.runtime_contract_edges:
-            skew.execute(edge, staged)
+    # The same partition the preflight uses, applied where the matrices
+    # actually run. Guarding this whole block on defer_g5 meant one accepted
+    # gap skipped every measured edge's matrix at execution, including on a
+    # complete-only plan where nothing was deferred at all.
+    executable_edges = [
+        e for e in plan.runtime_contract_edges
+        if not (defer_g5 and e.declared_incomplete)
+    ]
+    freeze_matrix = getattr(skew, "freeze_matrix", None)
+    if freeze_matrix is not None:
+        for edge in executable_edges:
+            freeze_matrix(edge, staged, staged_manifest_digest=manifest_digest)
+    for edge in executable_edges:
+        skew.execute(edge, staged)
 
     def anchor_transition(
         component: str, entry: ReceiptEntry, sequence: int, kind: str
@@ -8809,9 +8896,10 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         # Ordinary production release-run composes the G5 matrix runner; a
         # touched runtime edge with no registered harness or measured
         # support REFUSES rather than silently selecting NoSkew.
-        if providers.defer_g5:
-            skew = NoSkew()
-        elif providers.skew is not None:
+        # Production skew is composed regardless of deferral: a deferred
+        # incomplete edge has no matrix to run, but the measured edges in the
+        # same plan still do, and NoSkew would have silently skipped them.
+        if providers.skew is not None:
             skew = providers.skew
         else:
             try:
@@ -8943,6 +9031,16 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             validate_staged_manifest(
                 manifest, plan=frozen.plan, graph=frozen.graph,
                 frozen_plan_id=args.plan_id, source_sha=frozen.source_sha,
+            )
+            # The complete final contract, including the sealed G5 acceptance.
+            # This command reimplemented the individual checks and never called
+            # the validator, so a receipt for an unmeasured release with no
+            # authorization could still have reached MATCH.
+            validate_final_receipt(
+                receipt, plan=frozen.plan, graph=frozen.graph,
+                frozen_plan_id=args.plan_id,
+                staged_manifest_id=receipt.staged_manifest_id,
+                source_sha=frozen.source_sha,
             )
         except ReceiptError as exc:
             print(f"MISMATCH: {exc}")
