@@ -12,6 +12,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ship.yml"
+TEST_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test.yml"
 CONTRIBUTING = REPO_ROOT / "docs" / "contributing.md"
 
 
@@ -29,12 +30,17 @@ class ShipCIContractTests(unittest.TestCase):
             "jobs.ship.name must preserve the required status context",
         )
 
-    def test_workflow_runs_the_canonical_ship_gate_on_every_change(self) -> None:
+    def test_workflow_runs_the_canonical_ship_gate_on_main_and_on_demand(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertRegex(workflow, r"(?m)^  pull_request:\s*$")
         self.assertRegex(workflow, r"(?m)^  push:\s*$")
-        self.assertNotRegex(workflow, r"(?m)^  pull_request:\n\s+paths:")
+        self.assertRegex(workflow, r"(?m)^    branches: \[main\]\s*$")
+        # A release reads this gate at an exact source SHA, so an operator has
+        # to be able to produce that evidence without pushing something.
+        self.assertRegex(workflow, r"(?m)^  workflow_dispatch:\s*$")
+        # No path filter: a release proof that skipped itself for touching the
+        # wrong directory would prove nothing about the commit being released.
+        self.assertNotRegex(workflow, r"(?m)^  push:\n\s+branches: \[main\]\n\s+paths:")
         self.assertIn("run: make ship", workflow)
         self.assertNotIn("run: make release-all-check", workflow)
         self.assert_ship_job_context(workflow)
@@ -50,6 +56,25 @@ class ShipCIContractTests(unittest.TestCase):
             with self.subTest(mutation=mutation_name):
                 with self.assertRaises(AssertionError):
                     self.assert_ship_job_context(mutation)
+
+    def test_pull_requests_still_run_the_test_suite(self) -> None:
+        """Ship stopped running on pull requests, so something else has to run
+        `make test` there. Without this the trigger diet reads as a saving and
+        is a silent loss of every unit suite on every pull request."""
+        workflow = TEST_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertRegex(workflow, r"(?m)^  pull_request:\s*$")
+        self.assertNotRegex(workflow, r"(?m)^  pull_request:\n\s+paths:")
+        self.assertIn("run: make test", workflow)
+        # Cheapness is the point, so assert on what it runs rather than on what
+        # it says: the expensive suites are covered by ship and by the focused
+        # workflows, and adding one here would rebuild what they already run.
+        executable = "\n".join(
+            line for line in workflow.splitlines() if not line.lstrip().startswith("#")
+        )
+        for target in ("make ship", "test-e2e", "test-federation-e2e", "cli-e2e"):
+            with self.subTest(target=target):
+                self.assertNotIn(target, executable)
 
     def assert_release_all_checks_cli_vcs_stamps(self, makefile: str) -> None:
         target = self.require_match(

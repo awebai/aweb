@@ -1,9 +1,19 @@
 name: Comprehensive ship gate
 
+# Main and on demand, not every pull request. This job is ~120 minutes and was
+# cancelled on 54% of runs, and it gates nothing mechanically: aweb main is the
+# shared sync branch and cannot be protected, publishing is dispatch-only, and
+# the release driver reads this signal as information rather than as a gate. Its
+# expensive half also duplicated cli-e2e, federation-e2e and library-ci, each of
+# which runs its own Docker journey on pull requests. `make test` - the part
+# that was uniquely ship's on a pull request - runs in test.yml instead.
+#
+# workflow_dispatch is load-bearing, not a convenience: a release reads this
+# gate's state at an exact source SHA, so an operator must be able to produce
+# that evidence on demand.
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
