@@ -10,6 +10,7 @@ import { decodeRawStdBase64 } from "./base64.js";
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
 const ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const AGENT_META_CACHE_TTL_MS = 60 * 60 * 1000;
 
 export interface RotationAnnouncement {
   old_did: string;
@@ -59,6 +60,11 @@ interface AgentMeta {
   resolutionError?: "not_found" | "unavailable";
 }
 
+interface AgentMetaCacheEntry {
+  meta: AgentMeta;
+  expiresAt: number;
+}
+
 export interface TrustResult {
   status: VerificationStatus | undefined;
   stored: boolean;
@@ -80,7 +86,7 @@ export function normalizeIdentityScope(
 }
 
 export class SenderTrustManager {
-  private readonly metaCache = new Map<string, AgentMeta>();
+  private readonly metaCache = new Map<string, AgentMetaCacheEntry>();
 
   constructor(
     private readonly client: APIClient,
@@ -88,6 +94,7 @@ export class SenderTrustManager {
     private readonly teamID: string,
     private readonly selfDid: string,
     private readonly selfStableID: string = "",
+    private readonly now: () => number = () => Date.now(),
   ) {}
 
   async normalizeTrust(
@@ -129,7 +136,7 @@ export class SenderTrustManager {
       && this.teamRosterAliasReference(rawAddress.trim()) !== undefined
       && fromDID
     ) {
-      const fresh = await this.resolveAgentMeta(rawAddress, true);
+      const fresh = await this.resolveAgentMeta(rawAddress);
       if (!fresh.resolved) {
         return {
           status: fresh.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
@@ -180,7 +187,7 @@ export class SenderTrustManager {
       && this.teamRosterAliasReference(rawAddress.trim()) !== undefined
       && !fromStableID?.startsWith("did:aw:")
     ) {
-      return this.verifyLocalSenderAgainstCurrentRoster(store, rawAddress.trim(), trustAddress, fromDID);
+      return this.verifyLocalSenderAgainstCachedRoster(store, rawAddress.trim(), trustAddress, fromDID);
     }
     return checkpointAdvanced ? { ...pinResult, stored: true } : pinResult;
   }
@@ -499,13 +506,13 @@ export class SenderTrustManager {
     return this.teamID ? `${this.teamID}/${trimmed}` : trimmed;
   }
 
-  private async verifyLocalSenderAgainstCurrentRoster(
+  private async verifyLocalSenderAgainstCachedRoster(
     store: PinStore,
     rawAddress: string,
     trustAddress: string,
     fromDID: string,
   ): Promise<TrustResult> {
-    const fresh = await this.resolveAgentMeta(rawAddress, true);
+    const fresh = await this.resolveAgentMeta(rawAddress);
     if (!fresh.resolved) {
       return {
         status: fresh.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
@@ -539,17 +546,17 @@ export class SenderTrustManager {
     return { status: acceptedStatus, stored: removed };
   }
 
-  private async resolveAgentMeta(address: string, forceRefresh: boolean = false): Promise<AgentMeta> {
+  private async resolveAgentMeta(address: string): Promise<AgentMeta> {
     const rawAddress = address.trim();
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     if (!trustAddress) {
       return { identityScope: "global", custody: "self", resolved: false };
     }
     const cached = this.metaCache.get(trustAddress);
-    if (!forceRefresh && cached) return cached;
+    if (cached && this.now() <= cached.expiresAt) return cached.meta;
 
     try {
-      const identity = await this.resolveIdentity(rawAddress, forceRefresh);
+      const identity = await this.resolveIdentity(rawAddress);
       const meta: AgentMeta = {
         did: identity.did,
         identityScope: identity.identityScope,
@@ -557,7 +564,10 @@ export class SenderTrustManager {
         controllerDid: identity.controllerDid,
         resolved: true,
       };
-      this.metaCache.set(trustAddress, meta);
+      this.metaCache.set(trustAddress, {
+        meta,
+        expiresAt: this.now() + AGENT_META_CACHE_TTL_MS,
+      });
       return meta;
     } catch (error) {
       const statusCode = (error as { statusCode?: unknown } | undefined)?.statusCode;
@@ -579,7 +589,7 @@ export class SenderTrustManager {
     );
   }
 
-  private async resolveIdentity(address: string, forceRefresh: boolean = false): Promise<ResolvedIdentity> {
+  private async resolveIdentity(address: string): Promise<ResolvedIdentity> {
     const trimmed = address.trim();
     if (!trimmed) {
       throw new Error("missing address");
@@ -596,9 +606,7 @@ export class SenderTrustManager {
     }
 
     const path = "/v1/agents";
-    const roster = forceRefresh
-      ? await this.client.getFresh<LocalAgentsResponse>(path)
-      : await this.client.get<LocalAgentsResponse>(path);
+    const roster = await this.client.get<LocalAgentsResponse>(path);
     if ((roster.team_id || "").trim() !== this.teamID) {
       throw new Error("team roster response does not match the authenticated team");
     }
