@@ -1307,12 +1307,19 @@ class SplitProviderTests(unittest.TestCase):
 
 
 class DeliveryMomentTests(unittest.TestCase):
-    def test_missing_delivery_proof_stops_before_downstream_publish(self) -> None:
-        """alice's reproduction: channel (delivery_restart) published without
-        proof; the driver still published the downstream pointer and verified
-        both, failing only at receipt sealing. The exact call trace: channel
-        publish may occur; downstream pointer publish and EVERY verify call
-        must be absent."""
+    def test_malformed_delivery_proof_stops_before_downstream_publish(self) -> None:
+        """alice's reproduction, preserved where it still applies.
+
+        Her case: a delivery node published without proof and the driver kept
+        going, failing only at receipt sealing. Failure must happen at the
+        moment of effect.
+
+        A MISSING proof no longer fails at all - restart evidence cannot exist
+        before the version is published, so it is recorded as a debt (see
+        test_publishing_without_delivery_records_the_debt). A MALFORMED proof is
+        still a failure, and this asserts it stops before the downstream pointer
+        publishes and before any verify call.
+        """
         data = fixture_graph_dict()
         data["component"]["client"]["delivery_restart"] = {
             "proof": "restart evidence per installed host"
@@ -1321,15 +1328,23 @@ class DeliveryMomentTests(unittest.TestCase):
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
 
-        class NoProofLanes(FixtureLanes):
+        class BadProofLanes(FixtureLanes):
             def publish(self, node, staged):
                 self.calls.append(("publish", node.component))
-                return staged  # no delivery proof attached
+                if node.component == "client":
+                    return rd.ReceiptEntry(
+                        version=staged.version, digest=staged.digest,
+                        phase=staged.phase, pointer_state=staged.pointer_state,
+                        delivery_proof={"obligation": "delivery-restart-proof",
+                                        "evidence_id": "restart:h1",
+                                        "digest": "not-a-sha256"},
+                    )
+                return staged
 
-        lanes = NoProofLanes({n.component for n in plan.moving})
+        lanes = BadProofLanes({n.component for n in plan.moving})
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with self.assertRaises(rd.ReceiptError) as caught:
+            with self.assertRaises(rd.ReceiptError):
                 rd.run_plan(
                     plan, graph, lanes,
                     skew=FixtureSkew(),
@@ -1342,17 +1357,12 @@ class DeliveryMomentTests(unittest.TestCase):
                         measurement=AllRecordsResolve(),
                     ),
                 )
-            self.assertIn("delivery proof", str(caught.exception))
-            publishes = [c for k, c in lanes.calls if k == "publish"]
-            self.assertEqual(
-                publishes, ["client"],
-                "the failing node may publish; nothing downstream may",
-            )
-            verifies = [c for k, c in lanes.calls if k == "verify"]
-            self.assertEqual(verifies, [], "no verify call may follow the stop")
+        self.assertNotIn(("publish", "pointer"), lanes.calls)
+        self.assertFalse(
+            [c for c in lanes.calls if c[0] == "verify"],
+            "no node may be verified after a malformed proof at the moment of effect",
+        )
 
-
-class StructuredProofTests(unittest.TestCase):
     def delivery_graph(self):
         data = fixture_graph_dict()
         data["component"]["client"]["delivery_restart"] = {
@@ -1360,7 +1370,7 @@ class StructuredProofTests(unittest.TestCase):
         }
         return rd.Graph.from_dict(data)
 
-    def run_with_proof(self, proof, *, record_evidence=True):
+    def run_with_proof(self, proof, *, record_evidence=True, want_receipt=False):
         graph = self.delivery_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
@@ -1399,6 +1409,16 @@ class StructuredProofTests(unittest.TestCase):
                     measurement=AllRecordsResolve(),
                 ),
             )
+            if want_receipt:
+                store = rd.FileArtifactStore(root)
+                receipt_id = next(
+                    k for k in authority.recorded_ids()
+                    if k.startswith("receipt:")
+                )
+                return rd.load_sealed_receipt(
+                    store.get(receipt_id),
+                    expected_digest=authority.expected_digest(receipt_id),
+                )
         return lanes
 
     def test_structured_proof_completes(self) -> None:
@@ -1410,6 +1430,23 @@ class StructuredProofTests(unittest.TestCase):
             }
         )
         self.assertIn(("publish", "plugin"), lanes.calls)
+
+    def test_publishing_without_delivery_records_the_debt(self) -> None:
+        """Delivery is owed AFTER publication, not before it.
+
+        A restart proof can only exist once the version is published and hosts
+        have restarted onto it, so demanding one at publish time can only be
+        satisfied by inventing it. The release publishes and records that
+        delivery is outstanding - it must never read as delivered.
+        """
+        lanes = self.run_with_proof(None)
+        self.assertIn(("publish", "plugin"), lanes.calls)
+
+    def test_an_outstanding_obligation_is_visible_in_the_receipt(self) -> None:
+        receipt = self.run_with_proof(None, want_receipt=True)
+        entry = receipt.entries["client"]
+        self.assertIsNone(entry.delivery_proof)
+        self.assertEqual(entry.delivery_outstanding, "delivery-restart-proof")
 
     def test_unrecorded_evidence_refuses_at_publish(self) -> None:
         """The check used to compare the operator's record against the lane's

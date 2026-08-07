@@ -1101,6 +1101,11 @@ class ReceiptEntry:
     digest: str
     phase: str = "staged"  # staged | published | verified
     pointer_state: str | None = None
+    # What this publication still owes. Delivery happens after publication -
+    # a restart proof cannot exist until the version is published and hosts
+    # restart onto it - so an unsatisfied obligation is recorded, not demanded
+    # up front. A receipt carrying this has published and NOT delivered.
+    delivery_outstanding: str | None = None
     # The structured delivery proof validate_delivery_proof enforces:
     # {"obligation": str, "evidence_id": str, "digest": str, ...extensions}.
     delivery_proof: dict | None = None
@@ -1299,15 +1304,20 @@ def seal_receipt(
             component.delivery_restart is not None or component.lane is not None
         )
         if needs_delivery:
-            if not entry.delivery_proof:
-                raise ReceiptError(
-                    f"{node.component}: delivery node sealed without delivery_proof"
+            obligation = _delivery_obligation(graph, node.component)
+            # A delivery node says one of two things and never neither: here is
+            # the evidence, or delivery is still owed. Silence would let a
+            # published-not-delivered release read as complete.
+            if entry.delivery_proof:
+                validate_delivery_proof(
+                    entry.delivery_proof, obligation, node.component
                 )
-            validate_delivery_proof(
-                entry.delivery_proof,
-                _delivery_obligation(graph, node.component),
-                node.component,
-            )
+            elif entry.delivery_outstanding != obligation:
+                raise ReceiptError(
+                    f"{node.component}: delivery node sealed with neither "
+                    f"delivery_proof nor an outstanding {obligation}; a "
+                    "publication that has not been delivered must say so"
+                )
         if component is not None and component.approval_required:
             approval = approvals.get(node.component)
             if (
@@ -1333,6 +1343,8 @@ def seal_receipt(
                     "digest_set": e.digest_set,
                     "phase": e.phase,
                     "pointer_state": e.pointer_state,
+                    **({"delivery_outstanding": e.delivery_outstanding}
+                       if e.delivery_outstanding else {}),
                     "delivery_proof": e.delivery_proof,
                     "lane_ref": e.lane_ref,
                 }
@@ -1387,6 +1399,7 @@ def load_sealed_receipt(data: bytes, *, expected_digest: str) -> Receipt:
                 digest=e["digest"],
                 phase=e.get("phase", "staged"),
                 pointer_state=e.get("pointer_state"),
+                delivery_outstanding=e.get("delivery_outstanding"),
                 delivery_proof=e.get("delivery_proof"),
                 digest_set=e.get("digest_set"),
                 lane_ref=e.get("lane_ref"),
@@ -7633,19 +7646,23 @@ def run_plan(
                     f"{node.component}: published digest set does not equal the "
                     "anchored staged manifest set"
                 )
-        if manifest_entry.get("delivery_obligation"):
-            # Delivery evidence at the moment of effect: missing or malformed
-            # proof stops the run BEFORE this node anchors or any downstream
-            # node publishes - never discovered at final sealing.
-            if not result.delivery_proof:
-                raise ReceiptError(
-                    f"{node.component}: publish produced no delivery proof for "
-                    f"its declared {manifest_entry['delivery_obligation']}"
-                )
+        # The graph is the authority on what a component owes. Reading it from
+        # the staged manifest here and from the graph at seal let the two
+        # disagree, so a node could publish owing nothing and then fail to seal
+        # owing something.
+        obligation = (
+            manifest_entry.get("delivery_obligation")
+            or _delivery_obligation(graph, node.component)
+        )
+        outstanding = None
+        if obligation and not result.delivery_proof:
+            # Not a refusal: demanding restart evidence before the version
+            # exists can only be satisfied by inventing it, which is how a gate
+            # becomes a signature. The debt is recorded instead.
+            outstanding = obligation
+        if obligation and result.delivery_proof:
             validate_delivery_proof(
-                result.delivery_proof,
-                manifest_entry["delivery_obligation"],
-                node.component,
+                result.delivery_proof, obligation, node.component
             )
             # And the evidence must exist where an independent authority can
             # see it. The lane observes by echoing the operator's own record,
@@ -7659,6 +7676,7 @@ def run_plan(
             phase="published",
             pointer_state=result.pointer_state,
             delivery_proof=result.delivery_proof,
+            delivery_outstanding=outstanding,
             digest_set=result.digest_set,
             lane_ref=result.lane_ref,
         )
@@ -7682,6 +7700,10 @@ def run_plan(
             phase="verified",
             pointer_state=published[node.component].pointer_state,
             delivery_proof=published[node.component].delivery_proof,
+            # Verification confirms what was published; it does not discharge
+            # what is still owed. Dropping this here would let a verified
+            # receipt read as delivered.
+            delivery_outstanding=published[node.component].delivery_outstanding,
             digest_set=published[node.component].digest_set,
             lane_ref=published[node.component].lane_ref,
         )
