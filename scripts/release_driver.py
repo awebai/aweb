@@ -464,6 +464,53 @@ def observed_delivery_baseline(state, component) -> str | None:
         return None
 
 
+def scope_plan(plan: Plan, graph: Graph, only) -> Plan:
+    """Narrow a plan to the named components and the effects they force.
+
+    Everything with unreleased changes moves by default, which is truthful and
+    unusable: shipping one npm fix also shipped the server, AWID, the CLI and
+    the skills package, needing seven version bumps and a frozen main. A
+    process that can only release everything at once releases nothing.
+
+    Forced pointers come along and cannot be dropped - they are what makes a
+    publication reach users. Publication order among the survivors is
+    preserved. Components left behind simply keep their unreleased changes for
+    a later release, which is what would have happened anyway had they not
+    shared a repository.
+    """
+    named = list(dict.fromkeys(only or ()))
+    if not named:
+        return plan
+    moving = {node.component for node in plan.moving}
+    unknown = [name for name in named if name not in graph.components]
+    if unknown:
+        raise ReceiptError(f"--only names unknown components: {sorted(unknown)}")
+    idle = [name for name in named if name not in moving]
+    if idle:
+        raise ReceiptError(
+            f"--only names components with nothing to release: {sorted(idle)}; "
+            "releasing nothing must not look like releasing something"
+        )
+
+    keep = set(named)
+    frontier = list(named)
+    while frontier:
+        nxt = []
+        for source in frontier:
+            for target in graph.pointer_targets.get(source, ()):  # forced
+                if target in moving and target not in keep:
+                    keep.add(target)
+                    nxt.append(target)
+        frontier = nxt
+    return Plan(
+        moving=[n for n in plan.moving if n.component in keep],
+        runtime_contract_edges=[
+            edge for edge in plan.runtime_contract_edges
+            if edge.a in keep or edge.b in keep
+        ],
+    )
+
+
 def check_declared_inputs(
     graph: Graph, plan: Plan, state, adopted: set | None = None
 ) -> list[str]:
@@ -8300,6 +8347,8 @@ class RegistryProviders:
                             f"github release for {registry['repo']} has no assets"
                         )
                     return data["tag_name"].removeprefix("v"), digests
+            if kind == "ghcr":
+                return self._ghcr_published(registry["package"])
         except RegistryUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001 - named unavailability
@@ -8307,9 +8356,66 @@ class RegistryProviders:
                 f"{kind} read failed for {component.name}: {exc}"
             ) from exc
         raise RegistryUnavailable(
-            f"no registry reader for kind {kind!r} ({component.name}); "
-            "aweb-abbe.4 provides the image lane's digest authority"
+            f"no registry reader for kind {kind!r} ({component.name})"
         )
+
+    @staticmethod
+    def _ghcr_published(package: str) -> tuple[str, dict]:
+        """Latest published image version and its immutable manifest digest.
+
+        Through skopeo, the same mechanism the image lane already observes tags
+        with, so there is one story about how image truth is read. Without this
+        every plan failed: awid-image is in the moving set whenever awid or the
+        server payload changes, and an unreadable registry is a declared-input
+        problem that blocks the whole release, not just that component.
+        """
+        import subprocess
+
+        repository = f"ghcr.io/{package}"
+        try:
+            listing = subprocess.run(
+                ["skopeo", "list-tags", f"docker://{repository}"],
+                capture_output=True, text=True,
+            )
+        except FileNotFoundError as exc:
+            raise RegistryUnavailable(
+                "skopeo is required to read image truth for "
+                f"{repository} and is not installed"
+            ) from exc
+        if listing.returncode != 0:
+            raise RegistryUnavailable(
+                f"{repository}: tag listing unavailable "
+                f"({listing.stderr.strip()[:120]}); an outage is never proof "
+                "of absence"
+            )
+        tags = json.loads(listing.stdout or "{}").get("Tags") or []
+        released = []
+        for tag in tags:
+            try:
+                released.append((tuple(int(p) for p in tag.split(".")), tag))
+            except ValueError:
+                continue  # latest, sha-*, and other non-version tags
+        if not released:
+            raise RegistryUnavailable(
+                f"{repository}: no dotted-numeric version tags published"
+            )
+        version = max(released)[1]
+        inspected = subprocess.run(
+            ["skopeo", "inspect", f"docker://{repository}:{version}"],
+            capture_output=True, text=True,
+        )
+        if inspected.returncode != 0:
+            raise RegistryUnavailable(
+                f"{repository}:{version}: manifest unavailable "
+                f"({inspected.stderr.strip()[:120]})"
+            )
+        digest = json.loads(inspected.stdout or "{}").get("Digest")
+        if not digest:
+            raise RegistryUnavailable(
+                f"{repository}:{version}: manifest carries no digest; a version "
+                "without an immutable digest is unavailable, never acceptable"
+            )
+        return version, {version: digest}
 
 
 def _pointer_repository(component: Component) -> str:
@@ -8458,7 +8564,13 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         "lane tasks and are the only production-acceptable ones",
     )
     sub = parser.add_subparsers(dest="verb", required=True)
-    sub.add_parser("plan", help="freeze and anchor a diagnostic plan")
+    plan_parser = sub.add_parser(
+        "plan", help="freeze and anchor a diagnostic plan"
+    )
+    plan_parser.add_argument(
+        "--only", action="append", default=[],
+        help="restrict the release to these components and the pointers they force",
+    )
     run_parser = sub.add_parser("release-run")
     run_parser.add_argument("--plan-id")
     run_parser.add_argument("--plan-artifact-id")
@@ -8742,6 +8854,11 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
 
     if args.verb == "plan":
         plan = compute_plan(graph, state)
+        try:
+            plan = scope_plan(plan, graph, getattr(args, "only", []))
+        except ReceiptError as exc:
+            print(f"BLOCKED: {exc}")
+            return 1
         problems = check_declared_inputs(graph, plan, state)
         frozen_id = None
         plan_artifact_id = None

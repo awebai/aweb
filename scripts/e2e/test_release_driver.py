@@ -1347,6 +1347,58 @@ class GraphContractTests(unittest.TestCase):
         updates = rd.pointer_updates(plan, self.graph, source_sha=SOURCE_SHA)
         self.assertEqual(updates["marketplace-pointer"], {"channel": "1.7.4"})
 
+    def test_a_release_can_be_scoped_to_one_artifact(self) -> None:
+        """Without this, shipping the channel fix also ships server, awid, aw
+        and skills - nine nodes, seven version bumps and a frozen main. A
+        process that can only release everything at once releases nothing."""
+        state = rd.FixtureState(
+            changed_components={
+                "channel": True, "server": True, "awid-pypi": True, "skills": True
+            },
+            versions={"channel": "1.7.4", "server": "1.26.36",
+                      "awid-pypi": "0.5.15", "skills": "0.2.13"},
+        )
+        plan = rd.compute_plan(self.graph, state)
+        self.assertGreater(len(plan.moving), 4, "the unscoped plan is broad")
+
+        scoped = rd.scope_plan(plan, self.graph, ["channel"])
+        self.assertEqual(
+            [n.component for n in scoped.moving],
+            ["channel", "marketplace-pointer"],
+            "a scoped release keeps its forced pointer and drops the rest",
+        )
+
+    def test_scoping_cannot_drop_a_forced_pointer(self) -> None:
+        """The pointer is what makes the publication reach users, so it is not
+        optional even when the operator names only the package."""
+        state = rd.FixtureState(
+            changed_components={"channel": True}, versions={"channel": "1.7.4"}
+        )
+        plan = rd.compute_plan(self.graph, state)
+        scoped = rd.scope_plan(plan, self.graph, ["channel"])
+        self.assertIn("marketplace-pointer", [n.component for n in scoped.moving])
+
+    def test_scoping_to_something_not_moving_is_refused(self) -> None:
+        """Silently releasing nothing looks exactly like success."""
+        state = rd.FixtureState(
+            changed_components={"channel": True}, versions={"channel": "1.7.4"}
+        )
+        plan = rd.compute_plan(self.graph, state)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.scope_plan(plan, self.graph, ["server"])
+        self.assertIn("server", str(caught.exception))
+
+    def test_scoping_preserves_publication_order(self) -> None:
+        state = rd.FixtureState(
+            changed_components={"aw": True, "pi": True},
+            versions={"aw": "1.35.0", "pi": "0.3.4"},
+        )
+        plan = rd.compute_plan(self.graph, state)
+        scoped = rd.scope_plan(plan, self.graph, ["aw", "pi"])
+        order = [n.component for n in scoped.moving]
+        self.assertLess(order.index("aw"), order.index("pi"),
+                        "aw is a publication prerequisite of pi")
+
     def test_every_forced_pointer_can_be_performed(self) -> None:
         """A forced node with no way to perform its effect is a dead end: it
         made every channel, skills, server and awid release unexecutable.

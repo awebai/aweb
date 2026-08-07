@@ -623,7 +623,7 @@ release-channel-push:
 # durable artifact store; EXTERNAL_CONTEXT repeatable repository=checkout
 # mappings for external pin contexts.
 release-plan:
-	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") plan
+	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") plan $(foreach o,$(ONLY),--only "$(o)")
 
 # Executes an anchored frozen plan over available publish lanes; fails closed
 # naming every gap. PLAN_ID and PLAN_ARTIFACT_ID are required.
