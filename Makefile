@@ -637,7 +637,10 @@ release-plan:
 # about the human, not about which runner built the artifact - and bound to the
 # source, the frozen plan and exactly the edges being deferred, so it cannot be
 # reused for another release:
-#   G5_AUTHORIZATION='who=<w>,when=<t>,source=<40hex>,plan=<64hex>,edges=aw<->server,risk=<text>'
+#   G5_AUTHORIZATION='who=<w>,when=<t>,source=<40hex>,plan=<64hex>,edges=<64hex>[+<64hex>],risk=<text>'
+# The edge ids are the canonical identities release-plan prints under
+# deferrable_runtime_contracts. They are content hashes, not display
+# strings: a<->b would alias the two server<->server edges.
 # Runnerless mode is first-class and needs no GitHub identity:
 #   AUTHORITY=local-runnerless STORE_ROOT=<durable-dir>
 #   LOCAL_ADAPTER='component@<reviewed-source-sha>=/absolute/direct-adapter'

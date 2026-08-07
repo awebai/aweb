@@ -53,11 +53,14 @@ class RunnerlessTests(unittest.TestCase):
 
     def test_runnerless_mode_requires_one_explicit_risk_authorization(self):
         with self.assertRaisesRegex(rd.ReceiptError, "risk authorization"):
-            rd.runnerless_risk_approval(None, defer_g5=False)
+            rd.runnerless_risk_approval(None)
         approval = rd.runnerless_risk_approval(
-            "juan,2026-08-06T12:00:00Z,GitHub unavailable", defer_g5=True)
-        self.assertTrue(approval.g5_deferred)
+            "juan,2026-08-06T12:00:00Z,GitHub unavailable")
         self.assertIn("GitHub unavailable", approval.risk)
+        # Accepting a runner outage is not accepting an unmeasured runtime
+        # contract. The two arrive in the same troubled release, which is
+        # exactly why one must not be recorded as the other.
+        self.assertFalse(approval.g5_deferred)
         graph = rd.Graph.from_dict({
             "component": {"server": {
                 "source_paths": ["server/"],
@@ -77,7 +80,10 @@ class RunnerlessTests(unittest.TestCase):
         receipt = rd.load_sealed_receipt(sealed, expected_digest=digest)
         risk = dict(receipt.approvals)["runnerless-local-authority"]
         self.assertEqual(risk["risk"], "GitHub unavailable")
-        self.assertTrue(risk["g5_deferred"])
+        self.assertNotIn(
+            "g5_deferred", risk,
+            "a runner-outage record must not be sealed as G5 acceptance",
+        )
 
     def test_local_measurement_resolves_without_g5_deferral(self):
         with tempfile.TemporaryDirectory() as tmp:

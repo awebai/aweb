@@ -52,15 +52,35 @@ class ShipCIContractTests(unittest.TestCase):
                 events.append(event.group(1))
         return events
 
+    def ship_push_keys(self, workflow: str) -> list:
+        """The keys nested under `push:`, in order."""
+        body = workflow.split("\njobs:", 1)[0]
+        push = re.search(r"(?m)^  push:\s*$", body)
+        self.assertIsNotNone(push, "ship.yml must trigger on push")
+        keys = []
+        for line in body[push.end() :].splitlines():
+            if line.strip().startswith("#") or not line.strip():
+                continue
+            if not line.startswith("    "):
+                break
+            key = re.match(r"^    ([A-Za-z_-]+):", line)
+            if key:
+                keys.append(key.group(1))
+        return keys
+
     def assert_exact_ship_triggers(self, workflow: str) -> None:
-        # Exactly these, and nothing else. Asserting only that push and
+        # Exactly these events, and nothing else. Asserting only that push and
         # workflow_dispatch are present would pass with pull_request added
         # back, which is the regression this contract exists to prevent.
         self.assertEqual(self.ship_trigger_events(workflow), ["push", "workflow_dispatch"])
+        # And exactly this INSIDE push. Checking only that `branches: [main]`
+        # appears somewhere left `tags:` free to be added beside it, which would
+        # run the whole gate on every release tag - the tag-triggered publishing
+        # this repository deliberately moved away from. No `paths:` either: a
+        # release proof that skipped itself for touching the wrong directory
+        # would prove nothing about the commit being released.
+        self.assertEqual(self.ship_push_keys(workflow), ["branches"])
         self.assertRegex(workflow, r"(?m)^    branches: \[main\]\s*$")
-        # No path filter: a release proof that skipped itself for touching the
-        # wrong directory would prove nothing about the commit being released.
-        self.assertNotRegex(workflow, r"(?m)^  push:\n\s+branches: \[main\]\n\s+paths:")
 
     def test_workflow_runs_the_canonical_ship_gate_on_main_and_on_demand(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -74,6 +94,14 @@ class ShipCIContractTests(unittest.TestCase):
                 "  workflow_dispatch:", "  workflow_dispatch:\n  schedule:", 1
             ),
             "dispatch removed": workflow.replace("\n  workflow_dispatch:", "", 1),
+            "tag filter added": workflow.replace(
+                "  push:\n    branches: [main]",
+                '  push:\n    branches: [main]\n    tags: ["*"]', 1
+            ),
+            "path filter added": workflow.replace(
+                "  push:\n    branches: [main]",
+                "  push:\n    branches: [main]\n    paths: [\"server/**\"]", 1
+            ),
         }
         for name, mutation in trigger_mutations.items():
             with self.subTest(mutation=name):

@@ -1142,6 +1142,55 @@ class GraphContractTests(unittest.TestCase):
         )
         self.assertIsNone(loaded.resolved["delivery"]["sites"])
 
+    def test_delivery_truth_fails_closed_without_a_capable_provider(self) -> None:
+        """A provider that cannot answer is not evidence that there is nothing
+        to answer. Populating delivery only when the provider implemented
+        delivery_baseline made a lane component vanish from frozen truth, and
+        the disclosure then reported no undecidability at all."""
+        graph = rd.Graph.from_dict(
+            {
+                "component": {
+                    "site": {
+                        "source_paths": ["docs/x.md"],
+                        "lane": {"command": "deploy"},
+                        "publishable": False,
+                    }
+                }
+            }
+        )
+
+        class ProviderWithoutDeliveryBaseline:
+            """A state provider predating the capability."""
+
+            def component_changed(self, component): return False
+            def bundled_input_changed_for(self, bundled, consumer): return False
+            def source_version(self, component): return None
+            def published_version(self, component): return None
+            def registry_unavailable_reason(self, component): return None
+            def tag_version(self, component): return None
+            def env_value(self, name): return None
+            def path_exists(self, path): return False
+            def pin_sha(self, pin): return None
+
+        for label, state in (
+            ("no provider at all", None),
+            ("provider without the capability", ProviderWithoutDeliveryBaseline()),
+        ):
+            with self.subTest(case=label):
+                plan = rd.compute_plan(graph, state) if state is not None else rd.Plan(
+                    moving=[], runtime_contract_edges=[]
+                )
+                snapshot = rd._resolved_snapshot(plan, graph, state)
+                self.assertIn(
+                    "site", snapshot.get("delivery", {}),
+                    "an undecidable lane component must be named, not omitted",
+                )
+                self.assertIsNone(snapshot["delivery"]["site"])
+                self.assertTrue(
+                    rd.delivery_disclosures(snapshot),
+                    "an absent capability must disclose, not report all-clear",
+                )
+
     def test_cli_disclosures_are_derived_from_frozen_truth(self) -> None:
         """What the operator reads must be the sealed value, not a second
         computation against live state that could disagree with it."""
@@ -1428,40 +1477,238 @@ class GraphContractTests(unittest.TestCase):
                         source_sha=SOURCE_SHA,
                     )
 
-    def test_g5_authorization_is_accepted_on_every_authority(self) -> None:
-        """Deferral is a judgment about accepting unmeasured support, so it
-        cannot depend on which runner built the artifact. Previously the record
-        existed only for local-runnerless, which made hosted deferral
-        impossible however it was invoked."""
-        plan, _ = self._g5_plan()
+    def test_g5_authorization_reaches_run_plan_on_the_ordinary_path(self) -> None:
+        """The composition control. run_providers omitted the record while
+        threading the flag, so a valid operator-supplied authorization arrived
+        as None and the release refused. Asserting on require_runtime_support
+        alone cannot see that - the previous version of this test looped over an
+        authority string it never passed anywhere, so it proved nothing."""
+        graph = fixture_graph()
+        state = rd.FixtureState(changed_components={"client": True})
+        plan = rd.compute_plan(graph, state)
+        authorization = rd.G5Authorization(
+            who="juan", when="2026-08-07T00:00:00Z", source_sha=SOURCE_SHA,
+            frozen_plan_id="c" * 64, edges=frozenset({"e" * 64}),
+            risk="accepted",
+        )
         for trust in ("github-workflow-artifacts", "local-development",
                       "local-runnerless"):
-            with self.subTest(authority=trust, case="authorized"):
-                rd.require_runtime_support(
-                    plan, defer_g5=True, authorization=self._g5_record(),
-                    source_sha=SOURCE_SHA, frozen_plan_id="c" * 64,
+            with self.subTest(authority=trust):
+                providers = rd.Providers(
+                    store=rd._MemoryStore(), authority=FixtureAuthority(),
+                    measurement=AllRecordsResolve(), defer_g5=True,
+                    g5_authorization=authorization, authority_trust=trust,
                 )
-            with self.subTest(authority=trust, case="unauthorized"):
+                # The record survives composition on every authority: it is the
+                # same object run_plan will read.
+                self.assertIs(providers.g5_authorization, authorization)
+
+    def test_providers_default_carries_no_authorization(self) -> None:
+        """A Providers built without the field must not silently look
+        authorized."""
+        providers = rd.Providers(
+            store=rd._MemoryStore(), authority=FixtureAuthority(),
+        )
+        self.assertIsNone(providers.g5_authorization)
+
+    def test_deferral_never_excuses_a_measured_edge(self) -> None:
+        """Deferral partitions the set. A measured edge had nothing deferred
+        about it, so its matrix must still run - gating the complete-edge checks
+        on defer_g5 let one accepted gap switch off every measured matrix in the
+        same plan."""
+        graph = fixture_graph()  # client<->server is measured
+        state = rd.FixtureState(changed_components={"client": True})
+        plan = rd.compute_plan(graph, state)
+        complete = [e for e in plan.runtime_contract_edges if not e.declared_incomplete]
+        self.assertTrue(complete, "the fixture must touch a measured edge")
+
+        # Complete-only plan: require_runtime_support returns early because
+        # nothing is incomplete, so a bare flag must not reach the matrices.
+        skew = FixtureSkew(available=False)
+        with self.assertRaises(rd.SkewUnavailable):
+            rd.run_plan(
+                plan, graph, FixtureLanes(available={"client", "plugin", "pointer"}),
+                skew=skew, authority=FixtureAuthority(),
+                providers=rd.Providers(
+                    store=rd._MemoryStore(), authority=FixtureAuthority(),
+                    measurement=AllRecordsResolve(), defer_g5=True,
+                ),
+                source_sha=SOURCE_SHA, approvals={}, state=state,
+            )
+
+    def test_deferral_in_a_mixed_plan_covers_only_the_incomplete_edges(self) -> None:
+        """With one measured and one unmeasured edge, an authorization for the
+        unmeasured one must not silently excuse the measured one."""
+        data = fixture_graph_dict()
+        data["edge"].append({
+            "type": "runtime-contract", "a": "plugin", "b": "server",
+            "journey": "make other-journey",
+            "artifacts": {"a": "registry:plugin", "b": "registry:server"},
+            "direction": "both", "supported": {"policy": "additive-only"},
+        })
+        graph = rd.Graph.from_dict(data)
+        state = rd.FixtureState(changed_components={"client": True, "plugin": True})
+        plan = rd.compute_plan(graph, state)
+        incomplete = [e for e in plan.runtime_contract_edges if e.declared_incomplete]
+        complete = [e for e in plan.runtime_contract_edges if not e.declared_incomplete]
+        self.assertTrue(incomplete and complete, "the plan must be mixed")
+
+        authorization = rd.G5Authorization(
+            who="juan", when="2026-08-07T00:00:00Z", source_sha=SOURCE_SHA,
+            frozen_plan_id="c" * 64,
+            edges=frozenset(rd.edge_identity(e) for e in incomplete),
+            risk="unmeasured edge accepted",
+        )
+        # The authorization itself is accepted for exactly its edges...
+        rd.require_runtime_support(
+            plan, defer_g5=True, authorization=authorization,
+            source_sha=SOURCE_SHA, frozen_plan_id="c" * 64,
+        )
+        # ...and the measured edge's matrix is still required.
+        with self.assertRaises(rd.SkewUnavailable) as caught:
+            rd.run_plan(
+                plan, graph, FixtureLanes(available={"client", "plugin", "pointer"}),
+                skew=FixtureSkew(available=False), authority=FixtureAuthority(),
+                providers=rd.Providers(
+                    store=rd._MemoryStore(), authority=FixtureAuthority(),
+                    measurement=AllRecordsResolve(), defer_g5=True,
+                    g5_authorization=authorization,
+                ),
+                source_sha=SOURCE_SHA, approvals={}, state=state,
+            )
+        self.assertIn("client<->server", str(caught.exception))
+        self.assertNotIn("plugin<->server", str(caught.exception))
+
+    def _incomplete_plan_and_receipt_parts(self):
+        data = fixture_graph_dict()
+        data["edge"] = [e for e in data["edge"] if e.get("type") != "runtime-contract"]
+        data["edge"].append({
+            "type": "runtime-contract", "a": "client", "b": "server",
+            "journey": "make unmeasured-journey",
+            "artifacts": {"a": "registry:client", "b": "registry:server"},
+            "direction": "both", "supported": {"policy": "additive-only"},
+        })
+        graph = rd.Graph.from_dict(data)
+        state = rd.FixtureState(changed_components={"client": True})
+        plan = rd.compute_plan(graph, state)
+        incomplete = frozenset(
+            rd.edge_identity(e)
+            for e in plan.runtime_contract_edges if e.declared_incomplete
+        )
+        self.assertTrue(incomplete)
+        entries = {
+            n.component: rd.ReceiptEntry(version="1.0.0", digest="d", phase="verified")
+            for n in plan.moving
+        }
+        return graph, plan, incomplete, entries
+
+    def test_receipt_for_deferred_edges_must_carry_the_authorization(self) -> None:
+        """The reviewer's counterexample: a final receipt for an incomplete
+        runtime edge sealed with no G5 authorization loaded and validated
+        clean. A receipt recording a release of unmeasured support without
+        naming who accepted it is exactly the artifact an audit needs."""
+        graph, plan, incomplete, entries = self._incomplete_plan_and_receipt_parts()
+        sealed, digest = rd.seal_receipt(
+            plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={},
+            frozen_plan_id="c" * 64, staged_manifest_id="staged",
+        )
+        receipt = rd.load_sealed_receipt(sealed, expected_digest=digest)
+        self.assertIsNone(receipt.g5_authorization)
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.validate_final_receipt(
+                receipt, plan=plan, graph=graph, frozen_plan_id="c" * 64,
+                staged_manifest_id="staged", source_sha=SOURCE_SHA,
+            )
+        self.assertIn("G5 authorization", str(caught.exception))
+
+    def test_sealed_g5_authorization_round_trips_and_binds(self) -> None:
+        graph, plan, incomplete, entries = self._incomplete_plan_and_receipt_parts()
+        authorization = rd.G5Authorization(
+            who="juan", when="2026-08-07T00:00:00Z", source_sha=SOURCE_SHA,
+            frozen_plan_id="c" * 64, edges=incomplete, risk="accepted",
+        )
+        sealed, digest = rd.seal_receipt(
+            plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={},
+            frozen_plan_id="c" * 64, staged_manifest_id="staged",
+            g5_authorization=authorization,
+        )
+        receipt = rd.load_sealed_receipt(sealed, expected_digest=digest)
+        self.assertEqual(receipt.g5_authorization, authorization)
+        rd.validate_final_receipt(
+            receipt, plan=plan, graph=graph, frozen_plan_id="c" * 64,
+            staged_manifest_id="staged", source_sha=SOURCE_SHA,
+        )
+
+        for label, bad in (
+            ("wrong source", rd.G5Authorization(
+                who="juan", when="t", source_sha=OTHER_SOURCE_SHA,
+                frozen_plan_id="c" * 64, edges=incomplete, risk="x")),
+            ("wrong frozen plan", rd.G5Authorization(
+                who="juan", when="t", source_sha=SOURCE_SHA,
+                frozen_plan_id="d" * 64, edges=incomplete, risk="x")),
+            ("wrong edges", rd.G5Authorization(
+                who="juan", when="t", source_sha=SOURCE_SHA,
+                frozen_plan_id="c" * 64, edges=frozenset({"f" * 64}), risk="x")),
+        ):
+            with self.subTest(case=label):
+                bad_sealed, bad_digest = rd.seal_receipt(
+                    plan, graph, source_sha=SOURCE_SHA, entries=entries,
+                    approvals={}, frozen_plan_id="c" * 64,
+                    staged_manifest_id="staged", g5_authorization=bad,
+                )
+                bad_receipt = rd.load_sealed_receipt(
+                    bad_sealed, expected_digest=bad_digest
+                )
                 with self.assertRaises(rd.ReceiptError):
-                    rd.require_runtime_support(
-                        plan, defer_g5=True, authorization=None,
-                        source_sha=SOURCE_SHA, frozen_plan_id="c" * 64,
+                    rd.validate_final_receipt(
+                        bad_receipt, plan=plan, graph=graph,
+                        frozen_plan_id="c" * 64, staged_manifest_id="staged",
+                        source_sha=SOURCE_SHA,
                     )
 
+    def test_malformed_sealed_g5_record_is_refused_on_load(self) -> None:
+        import json as _json
+        graph, plan, incomplete, entries = self._incomplete_plan_and_receipt_parts()
+        authorization = rd.G5Authorization(
+            who="juan", when="t", source_sha=SOURCE_SHA,
+            frozen_plan_id="c" * 64, edges=incomplete, risk="accepted",
+        )
+        sealed, digest = rd.seal_receipt(
+            plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={},
+            frozen_plan_id="c" * 64, staged_manifest_id="staged",
+            g5_authorization=authorization,
+        )
+        outer = _json.loads(sealed)
+        body = _json.loads(outer["body"])
+        body["g5_authorization"].pop("risk")
+        import hashlib as _hashlib
+        new_body = _json.dumps(body, sort_keys=True)
+        tampered = _json.dumps({
+            "body": new_body,
+            "seal": _hashlib.sha256(new_body.encode()).hexdigest(),
+        }).encode()
+        self.assertNotEqual(tampered, sealed, "the tamper changed nothing")
+        with self.assertRaises(rd.ReceiptError):
+            rd.load_sealed_receipt(
+                tampered, expected_digest=_hashlib.sha256(tampered).hexdigest()
+            )
+
     def test_g5_authorization_parsing_refuses_malformed_records(self) -> None:
+        edge_id = "e" * 64
         good = (
             f"who=juan,when=2026-08-07T00:00:00Z,source={SOURCE_SHA},"
-            f"plan={'c' * 64},edges=aw<->server,risk=accepted"
+            f"plan={'c' * 64},edges={edge_id},risk=accepted"
         )
         parsed = rd.parse_g5_authorization(good)
-        self.assertEqual(parsed.edges, frozenset({"aw<->server"}))
+        self.assertEqual(parsed.edges, frozenset({edge_id}))
         self.assertEqual(parsed.source_sha, SOURCE_SHA)
 
         for label, value in (
             ("short source", good.replace(SOURCE_SHA, "s1")),
             ("short plan", good.replace("c" * 64, "abc")),
             ("missing risk", good.replace(",risk=accepted", "")),
-            ("empty edges", good.replace("edges=aw<->server", "edges=")),
+            ("empty edges", good.replace(f"edges={edge_id}", "edges=")),
+            ("display-form edge", good.replace(edge_id, "aw<->server")),
         ):
             with self.subTest(case=label):
                 with self.assertRaises(rd.ReceiptError):

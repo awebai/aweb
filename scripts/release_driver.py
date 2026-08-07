@@ -656,8 +656,12 @@ def _resolved_snapshot(plan: Plan, graph: Graph, state) -> dict:
     registry versions and digest sets, pin values and checkout identities,
     delivery baselines. Secrets are never included - pins and baselines are
     public metadata, credential contents never flow through state."""
+    # Delivery observability is recorded even with no state provider at all.
+    # Returning {} here reported "nothing undecidable" for a graph whose lane
+    # components had never been looked at - the false all-clear this record
+    # exists to prevent.
     if state is None:
-        return {}
+        return {"delivery": _delivery_observability(graph, None)}
     snapshot: dict = {"components": {}, "pins": {}, "baselines": {}, "tags": {}, "delivery": {}}
     if hasattr(state, "remote_tag_shas"):
         tags = state.remote_tag_shas()
@@ -698,11 +702,31 @@ def _resolved_snapshot(plan: Plan, graph: Graph, state) -> dict:
     # whether the node was observable or not - and a disclosure that does not
     # change the sealed artifact is decoration, not something a later reader
     # can verify against. None means "could not be decided at freeze time".
-    if hasattr(state, "delivery_baseline"):
-        for name, component in sorted(graph.components.items()):
-            if component.lane is not None and component.source_paths:
-                snapshot["delivery"][name] = state.delivery_baseline(component)
+    snapshot["delivery"] = _delivery_observability(graph, state)
     return snapshot
+
+
+def _delivery_observability(graph: Graph, state) -> dict:
+    """Every lane component, always, whether or not it could be decided.
+
+    A provider that cannot answer is not evidence that there is nothing to
+    answer, so an absent capability, an absent result and a raised lookup all
+    record None - explicitly unobservable - rather than omitting the component.
+    Omission and "observed fine" were previously indistinguishable in the
+    frozen artifact, and the disclosure derived from it reported neither.
+    """
+    observability: dict = {}
+    for name, component in sorted(graph.components.items()):
+        if component.lane is None or not component.source_paths:
+            continue
+        baseline = None
+        if state is not None and hasattr(state, "delivery_baseline"):
+            try:
+                baseline = state.delivery_baseline(component)
+            except Exception:
+                baseline = None
+        observability[name] = baseline
+    return observability
 
 
 def delivery_disclosures(resolved: dict) -> list[str]:
@@ -929,14 +953,14 @@ class G5Authorization:
         }
 
 
-def edge_identity(edge) -> str:
-    """How an incomplete edge is named in a G5 authorization."""
-    return f"{edge.a}<->{edge.b}"
-
-
 def parse_g5_authorization(value: str | None) -> G5Authorization | None:
     """--g5-authorization who=<w>,when=<t>,source=<40hex>,plan=<64hex>,
-    edges=<a><->b[+<c><->d],risk=<text>
+    edges=<64hex>[+<64hex>],risk=<text>
+
+    Edges are canonical edge identities - the sha256 of an edge's structured
+    preimage, as `release-plan` prints under deferrable_runtime_contracts. A
+    display string like a<->b would alias the two server<->server edges, which
+    is exactly the confusion an authorization must not permit.
 
     Authority-independent: hosted, local-development and local-runnerless all
     accept the same record, because who may defer runtime support is a question
@@ -955,7 +979,7 @@ def parse_g5_authorization(value: str | None) -> G5Authorization | None:
     if set(fields) != required or not all(fields.values()):
         raise ReceiptError(
             "--g5-authorization must be who=<w>,when=<t>,source=<40hex>,"
-            f"plan=<64hex>,edges=<a><->b[+<c><->d],risk=<text>, got {value!r}"
+            f"plan=<64hex>,edges=<64hex>[+<64hex>],risk=<text>, got {value!r}"
         )
     if not re.fullmatch(r"[0-9a-f]{40}", fields["source"]):
         raise ReceiptError(
@@ -969,6 +993,12 @@ def parse_g5_authorization(value: str | None) -> G5Authorization | None:
     edges = frozenset(e for e in fields["edges"].split("+") if e)
     if not edges:
         raise ReceiptError("--g5-authorization must name the deferred edges")
+    malformed = sorted(e for e in edges if not re.fullmatch(r"[0-9a-f]{64}", e))
+    if malformed:
+        raise ReceiptError(
+            "--g5-authorization edges must be canonical 64-hex edge identities "
+            f"as printed by release-plan, got {malformed}"
+        )
     return G5Authorization(
         who=fields["who"],
         when=fields["when"],
@@ -979,17 +1009,20 @@ def parse_g5_authorization(value: str | None) -> G5Authorization | None:
     )
 
 
-def runnerless_risk_approval(value: str | None, *, defer_g5: bool) -> Approval:
-    """One explicit human record selects local authority and any G5 deferral."""
+def runnerless_risk_approval(value: str | None) -> Approval:
+    """One explicit human record selecting local authority.
+
+    It does NOT carry G5 acceptance. Accepting a runner outage and accepting an
+    unmeasured runtime contract are different judgments that happen to arrive in
+    the same troubled release; G5Authorization is the record for the second.
+    """
     parts = value.split(",", 2) if value else []
     if len(parts) != 3 or not all(parts):
         raise ReceiptError(
             "runnerless local authority requires one explicit risk authorization "
             "as who,when,risk"
         )
-    return Approval(
-        who=parts[0], when=parts[1], risk=parts[2], g5_deferred=defer_g5
-    )
+    return Approval(who=parts[0], when=parts[1], risk=parts[2])
 
 
 def require_approval(node: PlanNode, *, approval) -> None:
@@ -1025,6 +1058,75 @@ class Receipt:
     frozen_plan_id: str = ""
     staged_manifest_id: str = ""
     partial: bool = False
+    # Typed, so the sealed acceptance can be checked rather than merely
+    # carried. Written into the body but dropped on load, it was bytes nobody
+    # read - and validation that never asks for it is not validation.
+    g5_authorization: G5Authorization | None = None
+
+
+def _g5_from_record(record) -> "G5Authorization | None":
+    """Exact schema on the way back in: a malformed or partial record is a
+    refusal, never a silently weaker acceptance."""
+    if record is None:
+        return None
+    if not isinstance(record, dict):
+        raise ReceiptError("sealed g5_authorization must be an object")
+    required = {"who", "when", "source_sha", "frozen_plan_id", "edges", "risk"}
+    if set(record) != required:
+        raise ReceiptError(
+            "sealed g5_authorization fields must be exactly "
+            f"{sorted(required)}, got {sorted(record)}"
+        )
+    edges = record["edges"]
+    if not isinstance(edges, list) or not edges or not all(
+        isinstance(e, str) and re.fullmatch(r"[0-9a-f]{64}", e) for e in edges
+    ):
+        raise ReceiptError(
+            "sealed g5_authorization edges must be canonical 64-hex identities"
+        )
+    return G5Authorization(
+        who=record["who"], when=record["when"],
+        source_sha=record["source_sha"],
+        frozen_plan_id=record["frozen_plan_id"],
+        edges=frozenset(edges), risk=record["risk"],
+    )
+
+
+def require_sealed_g5_authorization(
+    plan: Plan, receipt: "Receipt", *, source_sha: str, frozen_plan_id: str
+) -> None:
+    """A receipt for a plan with incomplete edges must carry the acceptance.
+
+    Checked wherever a receipt is trusted - final validation, release-receipt,
+    resume and archive restore - because a receipt that records a release of
+    unmeasured support without naming who accepted it is exactly the artifact
+    an audit needs and would not find.
+    """
+    incomplete = frozenset(
+        edge_identity(e) for e in plan.runtime_contract_edges if e.declared_incomplete
+    )
+    if not incomplete:
+        return
+    record = receipt.g5_authorization
+    if record is None:
+        raise ReceiptError(
+            "receipt covers a plan with declared-incomplete runtime contracts "
+            f"({len(incomplete)}) but carries no G5 authorization"
+        )
+    if source_sha and record.source_sha != source_sha:
+        raise ReceiptError(
+            f"sealed G5 authorization names source {record.source_sha}, "
+            f"receipt is for {source_sha}"
+        )
+    if frozen_plan_id and record.frozen_plan_id != frozen_plan_id:
+        raise ReceiptError(
+            f"sealed G5 authorization names frozen plan {record.frozen_plan_id}, "
+            f"receipt is for {frozen_plan_id}"
+        )
+    if record.edges != incomplete:
+        raise ReceiptError(
+            "sealed G5 authorization does not name exactly the deferred edges"
+        )
 
 
 def seal_receipt(
@@ -1157,6 +1259,7 @@ def load_sealed_receipt(data: bytes, *, expected_digest: str) -> Receipt:
         frozen_plan_id=parsed.get("frozen_plan_id", ""),
         staged_manifest_id=parsed.get("staged_manifest_id", ""),
         partial=parsed.get("partial", False),
+        g5_authorization=_g5_from_record(parsed.get("g5_authorization")),
         entries={
             name: ReceiptEntry(
                 version=e["version"],
@@ -1208,6 +1311,9 @@ def validate_final_receipt(
         raise ReceiptError("a partial receipt cannot authorize a final release set")
     if receipt.frozen_plan_id != frozen_plan_id:
         raise ReceiptError("final receipt does not bind this frozen plan")
+    require_sealed_g5_authorization(
+        plan, receipt, source_sha=source_sha, frozen_plan_id=frozen_plan_id
+    )
     if receipt.staged_manifest_id != staged_manifest_id:
         raise ReceiptError("final receipt does not bind this staged manifest")
     matches, reason = receipt_matches_run(
@@ -6989,7 +7095,13 @@ def run_plan(
     complete_edges = [
         e for e in plan.runtime_contract_edges if not e.declared_incomplete
     ]
-    if complete_edges and not defer_g5:
+    # Deferral partitions the edge set: it excuses only the incomplete edges an
+    # authorization names. A measured edge is never skipped, because nothing was
+    # deferred about it - its measurement exists and must still resolve. Gating
+    # this on defer_g5 let one accepted gap switch off every measured matrix in
+    # the same plan, and on a complete-only plan a bare flag switched them off
+    # with no authorization involved at all.
+    if complete_edges:
         if measurement is None:
             raise BlockedByDeclaredInputs(
                 "runtime-contract support records are declared complete but no "
@@ -7007,10 +7119,12 @@ def run_plan(
             + ", ".join(missing_lanes)
             + " (lanes arrive with aweb-abbe.2-.4)"
         )
+    # Same partition for the matrices: a deferred incomplete edge has no matrix
+    # to run, but every complete edge still needs one.
     missing_skew = [
         f"{e.a}<->{e.b}"
         for e in plan.runtime_contract_edges
-        if not defer_g5 and not skew.has_matrix(e)
+        if not (defer_g5 and e.declared_incomplete) and not skew.has_matrix(e)
     ]
     if missing_skew:
         raise SkewUnavailable(
@@ -7033,6 +7147,18 @@ def run_plan(
         _put_content_addressed(
             store, authority, plan_artifact_id, frozen_bytes, frozen_plan_id
         )
+
+    # Re-checked against the frozen id that now exists. The earlier call runs
+    # before any work so a missing or wrong-risk record refuses early, but on
+    # the path that freezes here there was no id to bind to yet, so the plan
+    # binding it claimed to check was not checked at all.
+    require_runtime_support(
+        plan,
+        defer_g5=defer_g5,
+        authorization=g5_authorization,
+        source_sha=source_sha,
+        frozen_plan_id=frozen_plan_id,
+    )
 
     if _resume_manifest is not None:
         manifest = _resume_manifest
@@ -8029,7 +8155,8 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         "--g5-authorization",
         help=(
             "who=<w>,when=<t>,source=<40hex>,plan=<64hex>,"
-            "edges=<a><->b[+<c><->d],risk=<text> - accepted on every authority"
+            "edges=<64hex>[+<64hex>],risk=<text> - edge ids as printed by "
+            "release-plan; accepted on every authority"
         ),
     )
     run_parser.add_argument(
@@ -8221,7 +8348,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         if registration.kind == "local-runnerless" and args.verb == "release-run":
             try:
                 providers.runnerless_risk = runnerless_risk_approval(
-                    args.local_risk_authorization, defer_g5=args.defer_g5
+                    args.local_risk_authorization
                 )
                 providers.measurement = AnchoredMeasurementAuthority(
                     store=store,
@@ -8324,9 +8451,20 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                             "b": e.b,
                             "journey": e.journey,
                             "declared_incomplete": e.declared_incomplete,
+                            "edge_id": edge_identity(e),
                         }
                         for e in plan.runtime_contract_edges
                     ],
+                    # Exactly the ids a G5 authorization must name to defer this
+                    # plan. Without them an operator cannot construct the record
+                    # at all: the identity is a content hash, not a display
+                    # string, because a<->b would alias the two server<->server
+                    # edges.
+                    "deferrable_runtime_contracts": sorted(
+                        edge_identity(e)
+                        for e in plan.runtime_contract_edges
+                        if e.declared_incomplete
+                    ),
                     "declared_input_problems": problems,
                     "delivery_disclosures": disclosures,
                     "ship_gate": ship_gate_warning(source_sha),
@@ -8466,6 +8604,11 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             authority_trust=providers.authority_trust,
             runnerless_risk=providers.runnerless_risk,
             defer_g5=providers.defer_g5,
+            # Carried on the ordinary path too, not only resume. Omitted here,
+            # a valid operator-supplied record reached run_plan as None and the
+            # release refused - the flag was threaded and the authorization it
+            # requires was not.
+            g5_authorization=providers.g5_authorization,
         )
         try:
             if args.resume:
