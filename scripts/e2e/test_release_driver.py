@@ -8,6 +8,7 @@ provider interfaces the real driver uses, filled from fixtures.
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -1009,6 +1010,52 @@ class GraphContractTests(unittest.TestCase):
         state = rd.FixtureState(changed_components={"sites": True})
         plan = rd.compute_plan(self.graph, state)
         self.assertIn("sites", {n.component for n in plan.moving})
+
+    def _sync_skills_sources(self, package_json: Path) -> set:
+        """The skill directories a package's build actually copies in."""
+        scripts = json.loads(package_json.read_text())["scripts"]
+        command = scripts["sync-skills"]
+        return {
+            "skills/" + part.rsplit("/", 1)[1]
+            for part in command.split()
+            if "skills/aweb-" in part
+        }
+
+    def test_bundled_skill_sources_match_what_the_packages_copy(self) -> None:
+        """Root skills/ reaches users only by being copied into the Pi and
+        claude-skills tarballs at build time; neither package commits one. A
+        change there changes published bytes, so it has to move both consumers.
+        Declared paths are compared against the copy commands so the graph
+        cannot drift from the build."""
+        declared = set(self.graph.components["agent-skills"].source_paths)
+        self.assertTrue(declared, "the bundled skill sources must be declared")
+        for consumer, package_json in (
+            ("pi", REPO_ROOT / "pi-extension" / "package.json"),
+            ("skills", REPO_ROOT / "packages" / "claude-skills" / "package.json"),
+        ):
+            with self.subTest(consumer=consumer):
+                self.assertIn(
+                    consumer,
+                    self.graph.bundled_into.get("agent-skills", ()),
+                    f"{consumer} must move when a bundled skill changes",
+                )
+                self.assertEqual(
+                    declared,
+                    self._sync_skills_sources(package_json),
+                    f"{consumer} copies a different set than the graph declares",
+                )
+
+    def test_awid_image_moves_when_the_server_tree_it_bakes_in_changes(self) -> None:
+        """awid/Dockerfile.release copies server/ into the published image, so
+        a server change alters the image bytes even though awid-image's own
+        source path is awid/."""
+        dockerfile = (REPO_ROOT / "awid" / "Dockerfile.release").read_text()
+        self.assertIn("COPY server/", dockerfile, "the image still bakes in server/")
+        self.assertIn(
+            "awid-image",
+            self.graph.bundled_into.get("server", ()),
+            "a server change must move the image it is baked into",
+        )
 
     def test_unrelated_plan_does_not_require_a_sites_baseline(self) -> None:
         """A delivery node nobody is releasing must not block someone else's
