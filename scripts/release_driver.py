@@ -447,6 +447,36 @@ def compute_plan(graph: Graph, state) -> Plan:
     return Plan(moving=moving, runtime_contract_edges=contracts)
 
 
+def check_delivery_observability(graph: Graph, state) -> list[str]:
+    """Delivery nodes whose movement the driver cannot decide.
+
+    A delivery node reaches its users through a lane rather than a registry, so
+    its baseline is a delivered ref rather than a version tag. Without one,
+    `component_changed` refuses to fabricate movement and the node silently
+    never moves - so a real change to its sources produces a plan that says
+    nothing about it, which reads as an all-clear.
+
+    This is a standing property of the graph, not of any one plan, so it is
+    disclosed rather than blocking: requiring it of every component made every
+    plan of every component unsatisfiable. Releasing such a node still refuses
+    in check_declared_inputs, where the node is actually in the moving set.
+    """
+    disclosures: list[str] = []
+    for component in graph.components.values():
+        if component.lane is None or not component.source_paths:
+            continue
+        baseline = None
+        if hasattr(state, "delivery_baseline"):
+            baseline = state.delivery_baseline(component)
+        if baseline is None:
+            disclosures.append(
+                f"{component.name}: delivered baseline is unobservable; this "
+                "plan cannot tell you whether it is current, and movement is "
+                "never fabricated from its absence"
+            )
+    return disclosures
+
+
 def check_declared_inputs(
     graph: Graph, plan: Plan, state, adopted: set | None = None
 ) -> list[str]:
@@ -546,7 +576,13 @@ def check_declared_inputs(
 
 
 
-    for component in graph.components.values():
+    # Scoped to the moving set. A delivery node nobody is releasing must not
+    # block someone else's release: sites declares a lane and no baseline_ref,
+    # so asking this of every component made every plan of every component
+    # unsatisfiable. Releasing such a node still refuses - absence of a
+    # baseline is never movement.
+    for node in plan.moving:
+        component = graph.components[node.component]
         if component.lane is not None and component.source_paths:
             baseline = None
             if hasattr(state, "delivery_baseline"):
@@ -8101,6 +8137,9 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                         for e in plan.runtime_contract_edges
                     ],
                     "declared_input_problems": problems,
+                    "delivery_disclosures": check_delivery_observability(
+                        graph, providers.state
+                    ),
                     "ship_gate": ship_gate_warning(source_sha),
                     "plan_digest": plan_digest(plan, graph),
                 },

@@ -2594,10 +2594,20 @@ class SitePlanTests(unittest.TestCase):
         self.assertEqual(
             plan.moving, [], "no observed change and no baseline is not movement"
         )
-        problems = rd.check_declared_inputs(graph, plan, state)
+        # Undecidability is disclosed on every plan, because it is true on
+        # every plan: the driver cannot say whether the site is current. It
+        # does not block an unrelated release - that made every plan of every
+        # component unsatisfiable - but it is never silent either, which is
+        # what turns a no-op plan into a false all-clear.
+        disclosures = rd.check_delivery_observability(graph, state)
         self.assertTrue(
-            any("baseline" in p for p in problems),
-            f"the unobservable baseline must be a named problem: {problems}",
+            any("baseline" in d for d in disclosures),
+            f"the unobservable baseline must be disclosed: {disclosures}",
+        )
+        self.assertEqual(
+            rd.check_declared_inputs(graph, plan, state),
+            [],
+            "an undecidable delivery node must not block a plan that omits it",
         )
 
 

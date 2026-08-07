@@ -1003,6 +1003,32 @@ class GraphContractTests(unittest.TestCase):
         plan = rd.compute_plan(self.graph, state)
         self.assertIn("sites", {n.component for n in plan.moving})
 
+    def test_unrelated_plan_does_not_require_a_sites_baseline(self) -> None:
+        """A delivery node nobody is releasing must not block someone else's
+        release. sites ships without a baseline_ref, so a global check made
+        every plan of every component unsatisfiable."""
+        state = rd.FixtureState(changed_components={"server": True})
+        plan = rd.compute_plan(self.graph, state)
+        self.assertNotIn("sites", {n.component for n in plan.moving})
+        problems = rd.check_declared_inputs(self.graph, plan, state)
+        self.assertEqual(
+            [p for p in problems if p.startswith("sites:")],
+            [],
+            "an unrelated plan must not demand a sites baseline",
+        )
+
+    def test_moving_sites_still_refuses_without_an_observable_baseline(self) -> None:
+        """Scoping the check must not delete it: releasing sites itself still
+        needs an authoritative delivered ref, and absence is never movement."""
+        state = rd.FixtureState(changed_components={"sites": True})
+        plan = rd.compute_plan(self.graph, state)
+        self.assertIn("sites", {n.component for n in plan.moving})
+        problems = rd.check_declared_inputs(self.graph, plan, state)
+        self.assertTrue(
+            any(p.startswith("sites:") for p in problems),
+            "a sites release without a baseline must refuse",
+        )
+
     def test_ac_gate_carries_approval_and_credentials_ac_pin_does_not(self) -> None:
         """The source pointer update (ac-pin) must not demand production
         credentials; the downstream gate boundary (ac-gate) does."""
