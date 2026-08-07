@@ -263,72 +263,72 @@ class AnchorStoreTests(unittest.TestCase):
     def test_put_dispatches_once_and_get_returns_the_body(self) -> None:
         transport = FakeAnchorTransport(latency=1)
         store, _ = anchor_pair(transport)
-        store.put("plan:s1:abc", b"body-bytes")
+        store.put(f"plan:{SOURCE_SHA}:abc", b"body-bytes")
         self.assertEqual(len(transport.dispatches), 1)
-        self.assertEqual(store.get("plan:s1:abc"), b"body-bytes")
+        self.assertEqual(store.get(f"plan:{SOURCE_SHA}:abc"), b"body-bytes")
 
     def test_repeated_put_reconciles_without_a_second_dispatch(self) -> None:
         transport = FakeAnchorTransport()
         store, _ = anchor_pair(transport)
-        store.put("plan:s1:abc", b"body-bytes")
-        store.put("plan:s1:abc", b"body-bytes")
+        store.put(f"plan:{SOURCE_SHA}:abc", b"body-bytes")
+        store.put(f"plan:{SOURCE_SHA}:abc", b"body-bytes")
         self.assertEqual(len(transport.dispatches), 1)
 
     def test_different_bytes_for_an_anchored_id_refuse(self) -> None:
         transport = FakeAnchorTransport()
         store, _ = anchor_pair(transport)
-        store.put("plan:s1:abc", b"body-bytes")
+        store.put(f"plan:{SOURCE_SHA}:abc", b"body-bytes")
         with self.assertRaises(rd.ReceiptError):
-            store.put("plan:s1:abc", b"DIFFERENT")
+            store.put(f"plan:{SOURCE_SHA}:abc", b"DIFFERENT")
 
     def test_conflicting_anchor_artifacts_refuse(self) -> None:
         transport = FakeAnchorTransport()
-        transport.seed("plan:s1:abc", b"one")
+        transport.seed(f"plan:{SOURCE_SHA}:abc", b"one")
         transport.artifacts.append(
-            {**transport._materialize("plan:s1:abc", b"two"),
+            {**transport._materialize(f"plan:{SOURCE_SHA}:abc", b"two"),
              "name": transport.artifacts[0]["name"].rsplit("--", 1)[0]
              + "--" + sha256(b"two")}
         )
         store, authority = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError):
-            store.get("plan:s1:abc")
+            store.get(f"plan:{SOURCE_SHA}:abc")
         with self.assertRaises(rd.ReceiptError):
-            authority.expected_digest("plan:s1:abc")
+            authority.expected_digest(f"plan:{SOURCE_SHA}:abc")
 
     def test_matching_expired_identity_refuses_reads_and_writes(self) -> None:
         """An identity whose anchor expired is compromised evidence: reads
         refuse naming expiry, and put must NOT re-anchor it."""
         transport = FakeAnchorTransport()
-        transport.seed("plan:s1:abc", b"body", expired=True)
+        transport.seed(f"plan:{SOURCE_SHA}:abc", b"body", expired=True)
         store, authority = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError) as caught:
-            store.get("plan:s1:abc")
+            store.get(f"plan:{SOURCE_SHA}:abc")
         self.assertIn("expired", str(caught.exception))
         with self.assertRaises(rd.ReceiptError):
-            authority.expected_digest("plan:s1:abc")
+            authority.expected_digest(f"plan:{SOURCE_SHA}:abc")
         with self.assertRaises(rd.ReceiptError):
-            store.put("plan:s1:abc", b"body")
+            store.put(f"plan:{SOURCE_SHA}:abc", b"body")
         self.assertEqual(transport.dispatches, [])
 
     def test_anchor_from_a_foreign_workflow_refuses(self) -> None:
         transport = FakeAnchorTransport(run_path=".github/workflows/other.yml")
-        transport.seed("plan:s1:abc", b"body")
+        transport.seed(f"plan:{SOURCE_SHA}:abc", b"body")
         store, authority = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError) as caught:
-            store.get("plan:s1:abc")
+            store.get(f"plan:{SOURCE_SHA}:abc")
         self.assertIn("release-anchor.yml", str(caught.exception))
         with self.assertRaises(rd.ReceiptError):
-            authority.expected_digest("plan:s1:abc")
+            authority.expected_digest(f"plan:{SOURCE_SHA}:abc")
         _, fresh = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError):
             fresh.recorded_ids()
 
     def test_anchor_from_a_failed_run_refuses(self) -> None:
         transport = FakeAnchorTransport(run_conclusion="failure")
-        transport.seed("plan:s1:abc", b"body")
+        transport.seed(f"plan:{SOURCE_SHA}:abc", b"body")
         store, _ = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError):
-            store.get("plan:s1:abc")
+            store.get(f"plan:{SOURCE_SHA}:abc")
 
     def test_encoded_dispatch_payload_is_bounded(self) -> None:
         """GitHub bounds the TOTAL dispatch payload at 65,535 characters; an
@@ -346,34 +346,34 @@ class AnchorStoreTests(unittest.TestCase):
 
     def test_zip_bytes_must_match_the_api_digest(self) -> None:
         transport = FakeAnchorTransport()
-        transport.seed("plan:s1:abc", b"body")
+        transport.seed(f"plan:{SOURCE_SHA}:abc", b"body")
         transport.artifacts[0]["digest"] = "sha256:" + "0" * 64
         store, _ = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError) as caught:
-            store.get("plan:s1:abc")
+            store.get(f"plan:{SOURCE_SHA}:abc")
         self.assertIn("digest", str(caught.exception))
 
     def test_record_verifies_and_never_dispatches(self) -> None:
         transport = FakeAnchorTransport()
         store, authority = anchor_pair(transport)
-        store.put("plan:s1:abc", b"body-bytes")
+        store.put(f"plan:{SOURCE_SHA}:abc", b"body-bytes")
         before = len(transport.dispatches)
-        authority.record("plan:s1:abc", sha256(b"body-bytes"))
+        authority.record(f"plan:{SOURCE_SHA}:abc", sha256(b"body-bytes"))
         self.assertEqual(len(transport.dispatches), before)
         with self.assertRaises(rd.ReceiptError):
-            authority.record("plan:s1:abc", "0" * 64)
+            authority.record(f"plan:{SOURCE_SHA}:abc", "0" * 64)
         with self.assertRaises(rd.ReceiptError):
             authority.record("plan:never-uploaded", sha256(b"x"))
 
     def test_recorded_ids_enumerate_after_a_fresh_process(self) -> None:
         transport = FakeAnchorTransport()
         store, _ = anchor_pair(transport)
-        store.put("plan:s1:abc", b"one-body")
+        store.put(f"plan:{SOURCE_SHA}:abc", b"one-body")
         store.put("staged-manifest:f:d", b"two-body")
         _, fresh_authority = anchor_pair(transport)
         self.assertEqual(
             sorted(fresh_authority.recorded_ids()),
-            ["plan:s1:abc", "staged-manifest:f:d"],
+            [f"plan:{SOURCE_SHA}:abc", "staged-manifest:f:d"],
         )
 
     def test_real_transport_paginates(self) -> None:
@@ -1407,7 +1407,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
         frozen_bytes, frozen_id = rd.freeze_plan(
             plan, graph, source_sha=SOURCE_SHA
         )
-        plan_artifact_id = f"plan:s1:{frozen_id}"
+        plan_artifact_id = f"plan:{SOURCE_SHA}:{frozen_id}"
         rd._put_content_addressed(
             store, authority, plan_artifact_id, frozen_bytes, frozen_id
         )
@@ -2271,9 +2271,9 @@ class PypiOciEndToEndTests(unittest.TestCase):
         plan = rd.compute_plan(graph, state)
         frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA)
         rd._put_content_addressed(
-            store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
+            store, authority, f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes, frozen_id)
         frozen = rd.load_frozen_plan(
-            store.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+            store.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
 
         crash_lane = lane_factory(publish_ok=False)
         with self.assertRaises(rd.ReceiptError):
@@ -2288,7 +2288,7 @@ class PypiOciEndToEndTests(unittest.TestCase):
         resume_lane = lane_factory(publish_ok=True)
         plan2 = rd.compute_plan(graph, state)
         frozen2 = rd.load_frozen_plan(
-            store2.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+            store2.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
         entries = rd.resume_plan(
             plan2, graph,
             lanes=resume_lane, skew=NoRuntimeSkew(),
@@ -2380,9 +2380,9 @@ class PypiOciEndToEndTests(unittest.TestCase):
         plan = rd.compute_plan(graph, state)
         frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA)
         rd._put_content_addressed(
-            store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
+            store, authority, f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes, frozen_id)
         frozen = rd.load_frozen_plan(
-            store.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+            store.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
         with self.assertRaises(rd.ReceiptError):
             rd.run_plan(
                 plan, graph, lane_factory(publish_ok=False),
@@ -2394,7 +2394,7 @@ class PypiOciEndToEndTests(unittest.TestCase):
         authority2 = rd.GithubAnchorDigestAuthority(transport=transport)
         resume_lane = lane_factory(publish_ok=True)
         frozen2 = rd.load_frozen_plan(
-            store2.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+            store2.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
         entries = rd.resume_plan(
             rd.compute_plan(graph, state), graph,
             lanes=resume_lane, skew=NoRuntimeSkew(),
@@ -2843,7 +2843,7 @@ class ProductionSkewCompositionTests(unittest.TestCase):
             authority = rd.FileDigestAuthority(root)
             frozen_bytes, frozen_id = rd.freeze_plan(
                 plan, graph, source_sha=SOURCE_SHA, state=state, measurement=support)
-            plan_artifact_id = f"plan:s1:{frozen_id}"
+            plan_artifact_id = f"plan:{SOURCE_SHA}:{frozen_id}"
             rd._put_content_addressed(
                 store, authority, plan_artifact_id, frozen_bytes, frozen_id)
             code = rd.main(
@@ -2920,7 +2920,7 @@ class SkewMatrixVerbTests(unittest.TestCase):
             frozen_bytes, frozen_id = rd.freeze_plan(
                 plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=support)
-            plan_artifact_id = f"plan:s1:{frozen_id}"
+            plan_artifact_id = f"plan:{SOURCE_SHA}:{frozen_id}"
             rd._put_content_addressed(
                 store, authority, plan_artifact_id, frozen_bytes, frozen_id)
             entries = {
@@ -4605,9 +4605,9 @@ class NpmLaneEndToEndTests(unittest.TestCase):
         plan = rd.compute_plan(graph, state)
         frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA)
         rd._put_content_addressed(
-            store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
+            store, authority, f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes, frozen_id)
         frozen = rd.load_frozen_plan(
-            store.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+            store.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
         with self.assertRaises(rd.ReceiptError):
             rd.run_plan(
                 plan, graph, lane_factory(publish_ok=False),
@@ -4619,7 +4619,7 @@ class NpmLaneEndToEndTests(unittest.TestCase):
         authority2 = rd.GithubAnchorDigestAuthority(transport=transport)
         resume_lane = lane_factory(publish_ok=True)
         frozen2 = rd.load_frozen_plan(
-            store2.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+            store2.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
         entries = rd.resume_plan(
             rd.compute_plan(graph, state), graph,
             lanes=resume_lane, skew=NoRuntimeSkew(),

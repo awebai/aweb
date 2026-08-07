@@ -435,11 +435,11 @@ class ReceiptTests(unittest.TestCase):
     def test_seal_refuses_entry_set_mismatch(self) -> None:
         graph, plan = self.make_plan()
         with self.assertRaises(rd.ReceiptError):
-            rd.seal_receipt(plan, graph, source_sha="s1", entries={}, approvals={})
+            rd.seal_receipt(plan, graph, source_sha=SOURCE_SHA, entries={}, approvals={})
         extra = self.entries_for(plan)
         extra["stowaway"] = rd.ReceiptEntry(version="1.0.0", digest="dx")
         with self.assertRaises(rd.ReceiptError):
-            rd.seal_receipt(plan, graph, source_sha="s1", entries=extra, approvals={})
+            rd.seal_receipt(plan, graph, source_sha=SOURCE_SHA, entries=extra, approvals={})
 
     def test_load_requires_external_expected_digest(self) -> None:
         """The seal is not self-contained: load verifies against a digest the
@@ -447,15 +447,16 @@ class ReceiptTests(unittest.TestCase):
         beside an edited body must not pass."""
         graph, plan = self.make_plan()
         sealed, digest = rd.seal_receipt(
-            plan, graph, source_sha="s1", entries=self.entries_for(plan), approvals={}
+            plan, graph, source_sha=SOURCE_SHA, entries=self.entries_for(plan), approvals={}
         )
         loaded = rd.load_sealed_receipt(sealed, expected_digest=digest)
-        self.assertEqual(loaded.source_sha, "s1")
+        self.assertEqual(loaded.source_sha, SOURCE_SHA)
 
         import hashlib, json
 
         outer = json.loads(sealed)
-        body = outer["body"].replace("s1", "s2")
+        body = outer["body"].replace(SOURCE_SHA, OTHER_SOURCE_SHA)
+        self.assertNotEqual(body, outer["body"], "the tamper changed nothing")
         forged = json.dumps(
             {"body": body, "seal": hashlib.sha256(body.encode()).hexdigest()}
         ).encode()
@@ -465,10 +466,10 @@ class ReceiptTests(unittest.TestCase):
     def test_receipt_matches_run_compares_plan_and_source(self) -> None:
         graph, plan = self.make_plan()
         sealed, digest = rd.seal_receipt(
-            plan, graph, source_sha="s1", entries=self.entries_for(plan), approvals={}
+            plan, graph, source_sha=SOURCE_SHA, entries=self.entries_for(plan), approvals={}
         )
         receipt = rd.load_sealed_receipt(sealed, expected_digest=digest)
-        ok, _ = rd.receipt_matches_run(receipt, plan, graph, source_sha="s1")
+        ok, _ = rd.receipt_matches_run(receipt, plan, graph, source_sha=SOURCE_SHA)
         self.assertTrue(ok)
         ok, why = rd.receipt_matches_run(receipt, plan, graph, source_sha="other")
         self.assertFalse(ok)
@@ -568,7 +569,7 @@ class FourPhaseProtocolTests(unittest.TestCase):
             lanes,
             skew=skew,
             authority=authority,
-            source_sha="s1",
+            source_sha=SOURCE_SHA,
             approvals=approvals or {},
             state=state,
             providers=rd.Providers(
@@ -617,7 +618,7 @@ class FourPhaseProtocolTests(unittest.TestCase):
                 skew=FixtureSkew(available=False),
                 authority=FixtureAuthority(),
                 providers=rd.Providers(store=rd._MemoryStore(), authority=FixtureAuthority(), measurement=AllRecordsResolve()),
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
             )
         self.assertEqual(lanes.calls, [])
 
@@ -641,7 +642,7 @@ class FourPhaseProtocolTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lanes,
                 skew=FixtureSkew(), authority=FixtureAuthority(), providers=rd.Providers(store=rd._MemoryStore(), authority=FixtureAuthority(), measurement=AllRecordsResolve()),
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
             )
         self.assertEqual(lanes.calls, [], "nothing may run before approvals check out")
 
@@ -664,7 +665,7 @@ class FourPhaseProtocolTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lanes,
                 skew=FixtureSkew(), authority=FixtureAuthority(), providers=rd.Providers(store=rd._MemoryStore(), authority=FixtureAuthority(), measurement=AllRecordsResolve()),
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
             )
         self.assertIn("digest", str(caught.exception))
 
@@ -682,7 +683,7 @@ class FourPhaseProtocolTests(unittest.TestCase):
             entries = rd.run_plan(
                 plan, graph, lanes,
                 skew=FixtureSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
                 providers=rd.Providers(store=store, authority=authority, measurement=AllRecordsResolve()),
             )
             self.assertEqual(set(entries), {n.component for n in plan.moving})
@@ -700,7 +701,7 @@ class FourPhaseProtocolTests(unittest.TestCase):
                 store.get(receipt_id),
                 expected_digest=authority.expected_digest(receipt_id),
             )
-            ok, why = rd.receipt_matches_run(receipt, plan, graph, source_sha="s1")
+            ok, why = rd.receipt_matches_run(receipt, plan, graph, source_sha=SOURCE_SHA)
             self.assertTrue(ok, why)
             self.assertTrue(receipt.frozen_plan_id)
             self.assertTrue(receipt.staged_manifest_id)
@@ -734,7 +735,7 @@ class FourPhaseProtocolTests(unittest.TestCase):
                 rd.run_plan(
                     plan, graph, lanes,
                     skew=FixtureSkew(), authority=authority, store=store,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     providers=rd.Providers(
                         store=store, authority=authority,
                         measurement=AllRecordsResolve(),
@@ -759,7 +760,7 @@ class ResumeTests(unittest.TestCase):
         graph = complete_fixture_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1", measurement=AllRecordsResolve())
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA, measurement=AllRecordsResolve())
         moved_state = orchestration_state(
             changed_components={"plugin": True},
         )
@@ -773,9 +774,13 @@ class ResumeTests(unittest.TestCase):
     def test_tampered_frozen_plan_is_refused(self) -> None:
         graph = complete_fixture_graph()
         plan = rd.compute_plan(graph, orchestration_state())
-        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1", measurement=AllRecordsResolve())
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA, measurement=AllRecordsResolve())
+        tampered = frozen_bytes.replace(
+            SOURCE_SHA.encode("ascii"), OTHER_SOURCE_SHA.encode("ascii")
+        )
+        self.assertNotEqual(tampered, frozen_bytes, "the tamper changed nothing")
         with self.assertRaises(rd.ReceiptError):
-            rd.load_frozen_plan(frozen_bytes.replace(b"s1", b"s2"), expected_id=frozen_id)
+            rd.load_frozen_plan(tampered, expected_id=frozen_id)
 
     def test_partial_receipt_resume_skips_exact_matches_only(self) -> None:
         graph = complete_fixture_graph()
@@ -805,7 +810,7 @@ class SealValidationTests(unittest.TestCase):
             for n in plan.moving
         }
         with self.assertRaises(rd.ReceiptError) as caught:
-            rd.seal_receipt(plan, graph, source_sha="s1", entries=entries, approvals={})
+            rd.seal_receipt(plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={})
         self.assertIn("pointer_state", str(caught.exception))
 
     def test_seal_refuses_approval_required_node_without_approvals(self) -> None:
@@ -827,7 +832,7 @@ class SealValidationTests(unittest.TestCase):
             for n in plan.moving
         }
         with self.assertRaises(rd.ReceiptError) as caught:
-            rd.seal_receipt(plan, graph, source_sha="s1", entries=entries, approvals={})
+            rd.seal_receipt(plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={})
         self.assertIn("approval", str(caught.exception))
 
 

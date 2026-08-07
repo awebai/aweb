@@ -973,8 +973,8 @@ class PostPublicationResumeTests(unittest.TestCase):
                 plan, graph, source_sha=SOURCE_SHA, state=before,
                 measurement=AllRecordsResolve(),
             )
-            store.put(f"plan:s1:{frozen_id}", frozen_bytes)
-            authority.record(f"plan:s1:{frozen_id}", frozen_id)
+            store.put(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes)
+            authority.record(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_id)
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
 
             class CrashSecondPublish(FixtureLanes):
@@ -1282,7 +1282,7 @@ class SplitProviderTests(unittest.TestCase):
                 plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
-            plan_artifact_id = f"plan:s1:{frozen_id}"
+            plan_artifact_id = f"plan:{SOURCE_SHA}:{frozen_id}"
             store.put(plan_artifact_id, frozen_bytes)
             authority.record(plan_artifact_id, frozen_id)
 
@@ -1665,11 +1665,11 @@ class TagDeltaTests(unittest.TestCase):
 
     def test_expected_candidate_tag_alone_is_allowed(self) -> None:
         frozen_resolved, current = self.frozen_and_current(
-            {"client-v1.0.0": "sha-old", "client-v1.1.0": "s1"}
+            {"client-v1.0.0": "sha-old", "client-v1.1.0": SOURCE_SHA}
         )
         drift = rd._frozen_drift(
             frozen_resolved, current, {"client"},
-            allowed_tag_transitions={"client": {"client-v1.1.0": "s1"}},
+            allowed_tag_transitions={"client": {"client-v1.1.0": SOURCE_SHA}},
         )
         self.assertEqual(drift, [])
 
@@ -1679,13 +1679,13 @@ class TagDeltaTests(unittest.TestCase):
         frozen_resolved, current = self.frozen_and_current(
             {
                 "client-v1.0.0": "sha-old",
-                "client-v1.1.0": "s1",
+                "client-v1.1.0": SOURCE_SHA,
                 "client-v999.0.0": "sha-evil",
             }
         )
         drift = rd._frozen_drift(
             frozen_resolved, current, {"client"},
-            allowed_tag_transitions={"client": {"client-v1.1.0": "s1"}},
+            allowed_tag_transitions={"client": {"client-v1.1.0": SOURCE_SHA}},
         )
         self.assertTrue(any("999" in d for d in drift), drift)
 
@@ -1695,7 +1695,7 @@ class TagDeltaTests(unittest.TestCase):
         )
         drift = rd._frozen_drift(
             frozen_resolved, current, {"client"},
-            allowed_tag_transitions={"client": {"client-v1.1.0": "s1"}},
+            allowed_tag_transitions={"client": {"client-v1.1.0": SOURCE_SHA}},
         )
         self.assertTrue(drift)
 
@@ -1767,8 +1767,8 @@ class StageBoundaryTests(unittest.TestCase):
                 plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
-            store.put(f"plan:s1:{frozen_id}", frozen_bytes)
-            authority.record(f"plan:s1:{frozen_id}", frozen_id)
+            store.put(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes)
+            authority.record(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_id)
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
             crash = RegistryLanes({n.component for n in plan.moving})
             with self.assertRaises(KeyboardInterrupt):
@@ -1958,8 +1958,8 @@ class RerunIdempotencyTests(unittest.TestCase):
                 plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
-            store.put(f"plan:s1:{frozen_id}", frozen_bytes)
-            authority.record(f"plan:s1:{frozen_id}", frozen_id)
+            store.put(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes)
+            authority.record(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_id)
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
             lanes = FixtureLanes({n.component for n in plan.moving})
             first = rd.run_plan(
@@ -2303,8 +2303,8 @@ class ResumeManifestTests(unittest.TestCase):
                 plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
-            store.put(f"plan:s1:{frozen_id}", frozen_bytes)
-            authority.record(f"plan:s1:{frozen_id}", frozen_id)
+            store.put(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes)
+            authority.record(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_id)
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
             crash_lanes = CrashSecondPublish({n.component for n in plan.moving})
             with self.assertRaises(KeyboardInterrupt):
