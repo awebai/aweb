@@ -82,7 +82,7 @@ only when the user is running the new code:
 
   ```
   make release-run ... \
-    POINTER_ADAPTER='marketplace-pointer=$PWD/scripts/pointer-adapter-marketplace.py'
+    POINTER_ADAPTER='marketplace-pointer=$PWD/scripts/pointer-adapter-marketplace-pointer.py'
   ```
 
   What it advertises comes from the frozen plan, never from the command line.

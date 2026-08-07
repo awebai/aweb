@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ADAPTER = REPO_ROOT / "scripts" / "pointer-adapter-marketplace.py"
+ADAPTER = REPO_ROOT / "scripts" / "pointer-adapter-marketplace-pointer.py"
 POINTER_FILE = ".claude-plugin/marketplace.json"
 
 MARKETPLACE = {

@@ -9,6 +9,7 @@ provider interfaces the real driver uses, filled from fixtures.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -1347,19 +1348,34 @@ class GraphContractTests(unittest.TestCase):
         self.assertEqual(updates["marketplace-pointer"], {"channel": "1.7.4"})
 
     def test_every_forced_pointer_can_be_performed(self) -> None:
-        """A forced node with no way to perform its effect is not a graph
-        constraint, it is a dead end: it made every channel, skills, server and
-        awid release unexecutable. Each pointer target must therefore either
-        publish or declare where its pointer lives."""
+        """A forced node with no way to perform its effect is a dead end: it
+        made every channel, skills, server and awid release unexecutable.
+
+        Asserts the three things that actually blocked publication, not a proxy
+        for them: an adapter exists, the node carries no delivery obligation
+        nothing can satisfy, and it is not accidentally a delivery node.
+        """
+        import release_driver as _rd
         for source, targets in self.graph.pointer_targets.items():
             for target in targets:
                 with self.subTest(pointer=f"{source}->{target}"):
                     component = self.graph.components[target]
+                    if component.publish_lane:
+                        continue
+                    adapter = REPO_ROOT / "scripts" / f"pointer-adapter-{target}.py"
                     self.assertTrue(
-                        component.publish_lane
-                        or rd._pointer_repository(component) != target,
-                        f"{target} is forced by {source} but names no repository "
-                        "to advertise in, so no lane can serve it",
+                        adapter.is_file(),
+                        f"{target} is forced by {source} but has no adapter at "
+                        f"{adapter.name}, so no lane can perform its effect",
+                    )
+                    self.assertTrue(
+                        os.access(adapter, os.X_OK),
+                        f"{adapter.name} must be executable; the driver execs it",
+                    )
+                    self.assertIsNone(
+                        _rd._delivery_obligation(self.graph, target),
+                        f"{target} carries a delivery obligation no pointer lane "
+                        "can produce, so it could never publish",
                     )
 
     def test_aw_lane_declares_the_reviewed_external_surface(self) -> None:

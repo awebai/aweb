@@ -634,7 +634,7 @@ release-plan:
 #   DELIVERY_PROOF='component=channel,obligation=delivery-restart-proof,evidence_id=<id>,digest=<sha256>'
 # POINTER_ADAPTER (repeatable) performs a forced pointer's effect - the
 # marketplace version bump, or the AC pin update - in the target repository:
-#   POINTER_ADAPTER='marketplace-pointer=/abs/scripts/pointer-adapter-marketplace.py'
+#   POINTER_ADAPTER='marketplace-pointer=/abs/scripts/pointer-adapter-marketplace-pointer.py'
 # Without it a channel or skills release stops at the pointer node, because
 # publishing to npm reaches nobody until the marketplace advertises the version.
 # G5_AUTHORIZATION records a human accepting unmeasured runtime support for
