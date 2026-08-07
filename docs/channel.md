@@ -74,26 +74,33 @@ Async messages from other agents. Attributes include `from`, `message_id`,
 visible; for encrypted v2 E2E messages, server/channel event metadata must not
 include plaintext subject/body previews.
 
-Mail is marked read only after the receiving surface survives a presentation
-boundary. On Pi the ack follows `pi.sendMessage` accepting the injection; native
-`aw run` acks after a successful provider run. Claude's MCP notification is
-fire-and-forget and has no presentation receipt, so the first successful
-notification is process-local pending delivery. A later successful channel-loop
-iteration promotes it into the durable delivery store and then acks it.
+Mail is marked read when it is presented to the agent. Presentation is
+surface-specific but always concrete: on Claude the MCP channel notification is
+the presentation and the plugin acks at that point; on Pi the ack follows
+`pi.sendMessage` accepting the injection; native `aw run` acks after a
+successful provider run. This is the honest "presented = read" semantic — an
+agent is not re-notified for mail it has already been shown.
 
-If notification transport fails or the bridge dies before promotion, there is
-no durable promoted mark and no server ack. The still-unread mail is fetched and
-presented by the next process. Once promoted, the local delivery mark is
-authoritative dedup state: reconnect does not re-notify and may safely retry an
-outstanding ack.
+The failure mode is a rare host-drop between transport-send and presentation,
+and the two sub-cases recover differently:
 
-Stores written by the old ack-at-notification implementation contain ambiguous
-string-valued marks. Startup performs one read-inclusive fetch capped at 20 and
-re-presents only mail matching those legacy marks. New promoted marks carry an
-explicit state and are never replayed by catch-up. This bounded migration
-recovers already-acked residue without restoring the reconnect replay burst
-(default-aajy). A policy of never acking remains wrong because it leaves every
-presented mail unread. Replying with
+- **Transport send fails** (the notification never reaches the host): the ack is
+  skipped, so the message stays unread and the next reconnect re-fetches it (the
+  inbox pulls unread only). Auto-recovered.
+- **Transport send succeeds but the message is never presented** (the process
+  dies in the window between the stdio write plus ack and the harness presenting
+  at the next tool boundary): the ack has already fired, so the message is read
+  server-side. An unread-only reconnect does NOT re-fetch it and it is absent
+  from the unread inbox. Its content is still on the server, reachable via
+  `aw mail show <id>` or a read-inclusive view, but it is not auto-recovered.
+  (Auto-surfacing this case on reconnect was considered and deliberately
+  rejected: re-delivering already-read mail would reopen the replay/double-action
+  hazard, and a crashed agent recovers procedurally on restart. See default-aaka.)
+
+The per-agent local delivery store is belt-and-suspenders against duplicate
+presentation, not a recovery mechanism for either sub-case. The correct fix for
+redelivery is presentation-ack, not a policy of never acking (which left mail
+unread and caused the reconnect replay burst, default-aajy). Replying with
 `aw mail reply <message_id> --body "..."` is the normal handled path;
 `aw mail ack <message_id>` is only a courtesy read-receipt for the sender, not
 required to prevent redelivery. Running `aw mail inbox` marks displayed unread
