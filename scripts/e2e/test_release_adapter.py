@@ -20,6 +20,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import release_driver as rd
 from test_release_driver import (
+    SOURCE_SHA,
     FixtureAuthority,
     FixtureLanes,
     fixture_graph_dict,
@@ -595,26 +596,26 @@ class LaneRefThreadingTests(unittest.TestCase):
     def test_staged_manifest_carries_and_validates_lane_ref(self) -> None:
         plan, graph = self.plan_and_graph()
         body, digest = rd.seal_staged_manifest(
-            plan, frozen_plan_id="F", source_sha="s1",
+            plan, frozen_plan_id="F", source_sha=SOURCE_SHA,
             entries=self.fixture_entries(plan), graph=graph,
         )
         manifest = rd.load_staged_manifest(body, expected_digest=digest)
         self.assertEqual(manifest["entries"]["client"]["lane_ref"], GOOD_REF)
         rd.validate_staged_manifest(
             manifest, plan=plan, graph=graph,
-            frozen_plan_id="F", source_sha="s1",
+            frozen_plan_id="F", source_sha=SOURCE_SHA,
         )
         manifest["entries"]["client"]["lane_ref"] = {"artifact": "not-a-ref"}
         with self.assertRaises(rd.ReceiptError):
             rd.validate_staged_manifest(
                 manifest, plan=plan, graph=graph,
-                frozen_plan_id="F", source_sha="s1",
+                frozen_plan_id="F", source_sha=SOURCE_SHA,
             )
 
     def test_adoption_requires_the_exact_lane_ref(self) -> None:
         plan, graph = self.plan_and_graph()
         body, digest = rd.seal_staged_manifest(
-            plan, frozen_plan_id="F", source_sha="s1",
+            plan, frozen_plan_id="F", source_sha=SOURCE_SHA,
             entries=self.fixture_entries(plan), graph=graph,
         )
         manifest = rd.load_staged_manifest(body, expected_digest=digest)
@@ -644,7 +645,7 @@ class LaneRefThreadingTests(unittest.TestCase):
             for name, e in self.fixture_entries(plan).items()
         }
         sealed, digest = rd.seal_receipt(
-            plan, graph, source_sha="s1", entries=entries, approvals={},
+            plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={},
         )
         receipt = rd.load_sealed_receipt(sealed, expected_digest=digest)
         self.assertEqual(receipt.entries["client"].lane_ref, GOOD_REF)
@@ -1404,7 +1405,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
         )
         plan = rd.compute_plan(graph, state)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1"
+            plan, graph, source_sha=SOURCE_SHA
         )
         plan_artifact_id = f"plan:s1:{frozen_id}"
         rd._put_content_addressed(
@@ -1428,7 +1429,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lane,
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         fresh_authority = rd.GithubAnchorDigestAuthority(transport=transport)
@@ -1453,7 +1454,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             plan2, graph2,
             lanes=lane2, skew=NoRuntimeSkew(),
             store=store2, authority=authority2,
-            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
             require_external_authority=True,
             authority_trust="external-immutable",
         )
@@ -1480,7 +1481,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             store3.get(receipt_ids[0]),
             expected_digest=authority3.expected_digest(receipt_ids[0]),
         )
-        ok, why = rd.receipt_matches_run(receipt, plan2, graph2, source_sha="s1")
+        ok, why = rd.receipt_matches_run(receipt, plan2, graph2, source_sha=SOURCE_SHA)
         self.assertTrue(ok, why)
         self.assertEqual(receipt.entries["aw"].lane_ref["artifact"],
                          "gh-artifact:awebai/aw:30977506589:8918869285")
@@ -1507,7 +1508,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lane,
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         runs = FakeAwRuns()
@@ -1519,7 +1520,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             plan2, graph2,
             lanes=lane2, skew=NoRuntimeSkew(),
             store=store2, authority=authority2,
-            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
             require_external_authority=True,
             authority_trust="external-immutable",
         )
@@ -1540,7 +1541,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lane,
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         manifest_id = next(
@@ -1579,7 +1580,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
                 plan2, graph2,
                 lanes=lane2, skew=NoRuntimeSkew(),
                 store=store2, authority=authority2,
-                source_sha="s1", approvals={}, state=None, frozen=frozen2,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
                 require_external_authority=True,
                 authority_trust="external-immutable",
             )
@@ -1598,7 +1599,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lane,
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         manifest_id = next(
@@ -1638,7 +1639,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
                 plan2, graph2,
                 lanes=lane2, skew=NoRuntimeSkew(),
                 store=store2, authority=authority2,
-                source_sha="s1", approvals={}, state=None, frozen=frozen2,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
                 require_external_authority=True,
                 authority_trust="external-immutable",
             )
@@ -1654,7 +1655,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lane,
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         remote = remote_state()
@@ -1668,7 +1669,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
                 plan2, graph2,
                 lanes=lane2, skew=NoRuntimeSkew(),
                 store=store2, authority=authority2,
-                source_sha="s1", approvals={}, state=None, frozen=frozen2,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
                 require_external_authority=True,
                 authority_trust="external-immutable",
             )
@@ -2268,7 +2269,7 @@ class PypiOciEndToEndTests(unittest.TestCase):
 
         store, authority = compose()
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA)
         rd._put_content_addressed(
             store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
         frozen = rd.load_frozen_plan(
@@ -2279,7 +2280,7 @@ class PypiOciEndToEndTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, crash_lane,
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
 
@@ -2292,7 +2293,7 @@ class PypiOciEndToEndTests(unittest.TestCase):
             plan2, graph,
             lanes=resume_lane, skew=NoRuntimeSkew(),
             store=store2, authority=authority2,
-            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
             require_external_authority=True,
             authority_trust="external-immutable",
         )
@@ -2377,7 +2378,7 @@ class PypiOciEndToEndTests(unittest.TestCase):
         store = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
         authority = rd.GithubAnchorDigestAuthority(transport=transport)
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA)
         rd._put_content_addressed(
             store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
         frozen = rd.load_frozen_plan(
@@ -2386,7 +2387,7 @@ class PypiOciEndToEndTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lane_factory(publish_ok=False),
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         store2 = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
@@ -2398,7 +2399,7 @@ class PypiOciEndToEndTests(unittest.TestCase):
             rd.compute_plan(graph, state), graph,
             lanes=resume_lane, skew=NoRuntimeSkew(),
             store=store2, authority=authority2,
-            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
             require_external_authority=True,
             authority_trust="external-immutable",
         )
@@ -2777,7 +2778,7 @@ class MatrixSkewRunnerTests(unittest.TestCase):
                 providers=rd.Providers(
                     store=rd._MemoryStore(), authority=FixtureAuthority(),
                     measurement=AllRecordsResolve()),
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
             )
         publishes = [c for k, c in lanes.calls if k == "publish"]
         self.assertEqual(publishes, [],
@@ -2841,7 +2842,7 @@ class ProductionSkewCompositionTests(unittest.TestCase):
             store = rd.FileArtifactStore(root)
             authority = rd.FileDigestAuthority(root)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state, measurement=support)
+                plan, graph, source_sha=SOURCE_SHA, state=state, measurement=support)
             plan_artifact_id = f"plan:s1:{frozen_id}"
             rd._put_content_addressed(
                 store, authority, plan_artifact_id, frozen_bytes, frozen_id)
@@ -2852,7 +2853,7 @@ class ProductionSkewCompositionTests(unittest.TestCase):
                  "--allow-local-authority"],
                 providers=rd.Providers(
                     store=store, authority=authority, lanes=lanes,
-                    state=state, source_sha="s1", measurement=support,
+                    state=state, source_sha=SOURCE_SHA, measurement=support,
                 ),
             )
         return code, lanes
@@ -2917,7 +2918,7 @@ class SkewMatrixVerbTests(unittest.TestCase):
             store = rd.FileArtifactStore(root)
             authority = rd.FileDigestAuthority(root)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=support)
             plan_artifact_id = f"plan:s1:{frozen_id}"
             rd._put_content_addressed(
@@ -2937,7 +2938,7 @@ class SkewMatrixVerbTests(unittest.TestCase):
                 for n in plan.moving
             }
             body, digest = rd.seal_staged_manifest(
-                plan, frozen_plan_id=frozen_id, source_sha="s1",
+                plan, frozen_plan_id=frozen_id, source_sha=SOURCE_SHA,
                 entries=entries, graph=graph)
             manifest_id = f"staged-manifest:{frozen_id}:{digest}"
             rd._put_content_addressed(
@@ -2950,7 +2951,7 @@ class SkewMatrixVerbTests(unittest.TestCase):
                      "--plan-artifact-id", plan_artifact_id],
                     providers=rd.Providers(
                         store=store, authority=authority,
-                        state=state, source_sha="s1", measurement=support,
+                        state=state, source_sha=SOURCE_SHA, measurement=support,
                     ),
                 )
         self.assertEqual(code, 0, "server is untouched: a one-side matrix")
@@ -3077,7 +3078,7 @@ class FrozenTruthSkewTests(unittest.TestCase):
         live = Support(support_versions or {"client": ["1.0.0"],
                                             "server": ["3.0.0"]})
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state, measurement=live)
+            plan, graph, source_sha=SOURCE_SHA, state=state, measurement=live)
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
         return frozen, state, live
 
@@ -3198,7 +3199,7 @@ class EdgeIdentityTests(unittest.TestCase):
             "persisted-state fixture": {"server": ["2.9.0", "3.0.0"]},
         })
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state, measurement=support)
+            plan, graph, source_sha=SOURCE_SHA, state=state, measurement=support)
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
         sealed = frozen.resolved["measurements"]
         self.assertEqual(len(sealed), 2, "one sealed record per edge")
@@ -3214,7 +3215,7 @@ class EdgeIdentityTests(unittest.TestCase):
         }
         support = self.support_for(versions)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state, measurement=support)
+            plan, graph, source_sha=SOURCE_SHA, state=state, measurement=support)
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
         harness = RecordingHarness(
             journeys=("make federation-journey", "persisted-state fixture"))
@@ -3245,7 +3246,7 @@ class EdgeIdentityTests(unittest.TestCase):
         }
         support = self.support_for(versions)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state, measurement=support)
+            plan, graph, source_sha=SOURCE_SHA, state=state, measurement=support)
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
         versions["make federation-journey"] = {"server": ["9.9.9"]}
         harness = RecordingHarness(
@@ -4602,7 +4603,7 @@ class NpmLaneEndToEndTests(unittest.TestCase):
         store = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
         authority = rd.GithubAnchorDigestAuthority(transport=transport)
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA)
         rd._put_content_addressed(
             store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
         frozen = rd.load_frozen_plan(
@@ -4611,7 +4612,7 @@ class NpmLaneEndToEndTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lane_factory(publish_ok=False),
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         store2 = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
@@ -4623,7 +4624,7 @@ class NpmLaneEndToEndTests(unittest.TestCase):
             rd.compute_plan(graph, state), graph,
             lanes=resume_lane, skew=NoRuntimeSkew(),
             store=store2, authority=authority2,
-            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
             require_external_authority=True,
             authority_trust="external-immutable",
         )

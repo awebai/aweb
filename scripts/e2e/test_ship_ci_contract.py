@@ -525,14 +525,18 @@ class ShipCIContractTests(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     self.assert_ship_runs_every_suite_independently(mutation)
 
-    def test_docs_state_that_hosted_success_must_be_required(self) -> None:
+    # Branch protection is not asserted here. aweb main is the shared sync
+    # branch and cannot be protected - the protection endpoint returns 404, as
+    # .github/workflows/library-ci.yml records against the same check name in
+    # awebai/library, where it IS enforced. Where protection is enforceable the
+    # GitHub API is the thing to query; prose cannot stand in for it, and
+    # pinning a policy this repository cannot have made writing the truth the
+    # failing action.
+    def test_docs_name_the_canonical_ship_gate(self) -> None:
         contributing = CONTRIBUTING.read_text(encoding="utf-8")
 
         self.assertIn("make ship", contributing)
         self.assertIn("Comprehensive ship gate", contributing)
-        self.assertIn("required status check", contributing)
-        self.assertIn("strict up-to-date", contributing)
-        self.assertIn("administrators", contributing)
 
 
 if __name__ == "__main__":

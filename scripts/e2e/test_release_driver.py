@@ -17,6 +17,13 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import release_driver as rd
 
+# A source SHA is a real 40-hex commit id everywhere the driver reads one: plan
+# identities embed it and the repository measurement authority refuses anything
+# else. Fixtures use these two so a test never asserts against a shape the
+# production path would reject.
+SOURCE_SHA = "3f7a1c9e4b02d85617fa03cc9b1e4d7a5806e2f1"
+OTHER_SOURCE_SHA = "b28d4e6017ca395fbe7d10428af35c96d0e7b143"
+
 
 def fixture_graph_dict() -> dict:
     return {
@@ -1066,17 +1073,31 @@ class GraphContractTests(unittest.TestCase):
         self.assertEqual(pins["server"]["field"], "git_sha")
         self.assertEqual(pins["server"]["section"], "aweb")
 
-    def test_committed_runtime_contracts_are_honestly_incomplete(self) -> None:
-        """No fleet measurement exists yet, so every committed edge must carry
-        declared_incomplete — the expected state until aweb-abbe.7 measures.
-        Fabricating a floor or a measurement to look green is the defect."""
+    def test_committed_runtime_contracts_are_honestly_declared(self) -> None:
+        """An edge either names a measurement backed by a resolvable record, or
+        says it is incomplete. Fabricating a floor, or claiming support with no
+        record behind it, is the defect. The server<->server federation journey
+        is measured; the rest are honestly incomplete until they are measured."""
         self.assertTrue(self.graph.runtime_contracts, "edges must be declared")
+        measured = set()
         for edge in self.graph.runtime_contracts:
             self.assertNotIn("floor", edge.supported, f"{edge.a}->{edge.b}")
-            self.assertTrue(
-                edge.declared_incomplete,
-                f"{edge.a}->{edge.b} claims measured support that does not exist",
+            if edge.declared_incomplete:
+                continue
+            measured.add((edge.a, edge.b, edge.journey))
+            record = edge.supported.get("record")
+            self.assertIsInstance(
+                record, dict, f"{edge.a}->{edge.b} claims support with no record"
             )
+            self.assertTrue(
+                record.get("path") and record.get("digest"),
+                f"{edge.a}->{edge.b} record names no bytes to resolve",
+            )
+
+        self.assertEqual(
+            measured,
+            {("server", "server", "make test-federation-e2e (both request directions)")},
+        )
 
     def test_incomplete_contracts_block_execution_but_not_the_plan(self) -> None:
         state = rd.FixtureState(changed_components={"aw": True})

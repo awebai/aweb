@@ -19,6 +19,8 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import release_driver as rd
 from test_release_driver import (
+    SOURCE_SHA,
+    OTHER_SOURCE_SHA,
     AllRecordsResolve,
     FixtureAuthority,
     FixtureLanes,
@@ -99,7 +101,7 @@ class TransitionAnchoringTests(unittest.TestCase):
             )
             rd.run_plan(
                 plan, graph, providers=providers,
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
             )
         self.assertTrue(anchored_when_second_publish_ran)
         self.assertGreaterEqual(
@@ -124,7 +126,7 @@ class TransitionAnchoringTests(unittest.TestCase):
             )
             rd.run_plan(
                 plan, graph, providers=providers,
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
             )
             transitions = [
                 k for k in authority.recorded_ids() if k.startswith("transition:")
@@ -156,7 +158,7 @@ class TransitionAnchoringTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                 )
             reds = [
                 k for k in authority.recorded_ids() if "verify-red" in k
@@ -209,7 +211,7 @@ class CliPathTests(unittest.TestCase):
             lanes=lanes,
             skew=FixtureSkew(),
             state=state,
-            source_sha="s1",
+            source_sha=SOURCE_SHA,
             measurement=AllRecordsResolve(),
         )
 
@@ -417,7 +419,7 @@ class TrustClassTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError) as caught:
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     require_external_authority=True,
                 )
             self.assertIn("trust", str(caught.exception))
@@ -448,14 +450,17 @@ class TrustClassTests(unittest.TestCase):
             )
             rd.run_plan(
                 plan, graph, providers=providers,
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
                 require_external_authority=True,
             )
             receipt_id = next(
                 k for k in authority.recorded_ids() if k.startswith("receipt:")
             )
             genuine = providers.store.get(receipt_id)
-            forged = genuine.replace(b"s1", b"s2")
+            forged = genuine.replace(
+                SOURCE_SHA.encode("ascii"), OTHER_SOURCE_SHA.encode("ascii")
+            )
+            self.assertNotEqual(forged, genuine, "the forgery changed nothing")
             import hashlib
 
             with tempfile.TemporaryDirectory() as attacker_tmp:
@@ -512,7 +517,7 @@ class StagedManifestTests(unittest.TestCase):
             )
             rd.run_plan(
                 plan, graph, providers=providers,
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
             )
         last_stage = max(i for i, e in enumerate(events) if e == "stage")
         manifest = events.index("manifest")
@@ -533,7 +538,7 @@ class StagedManifestTests(unittest.TestCase):
             state = orchestration_state()
             plan = rd.compute_plan(graph, state)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
             manifest_entries = {
@@ -546,7 +551,7 @@ class StagedManifestTests(unittest.TestCase):
                 for n in plan.moving
             }
             manifest_bytes, manifest_digest = rd.seal_staged_manifest(
-                plan, frozen_plan_id=frozen_id, source_sha="s1",
+                plan, frozen_plan_id=frozen_id, source_sha=SOURCE_SHA,
                 entries=manifest_entries,
             )
             good = rd.ReceiptEntry(
@@ -588,7 +593,7 @@ class FrozenEnforcementTests(unittest.TestCase):
         frozen_state = self.pin_state("aaaa")
         plan = rd.compute_plan(graph, frozen_state)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=frozen_state,
+            plan, graph, source_sha=SOURCE_SHA, state=frozen_state,
             measurement=AllRecordsResolve(),
         )
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
@@ -606,7 +611,7 @@ class FrozenEnforcementTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError) as caught:
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1",
+                    source_sha=SOURCE_SHA,
                     approvals={"cloud-pin": rd.Approval("juan", "now")},
                     state=drifted, frozen=frozen,
                 )
@@ -619,14 +624,14 @@ class FrozenEnforcementTests(unittest.TestCase):
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
         with self.assertRaises(rd.BlockedByDeclaredInputs):
-            rd.freeze_plan(plan, graph, source_sha="s1", state=state)
+            rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA, state=state)
 
     def test_frozen_measurement_binding_is_enforced_at_execution(self) -> None:
         graph = fixture_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state,
+            plan, graph, source_sha=SOURCE_SHA, state=state,
             measurement=AllRecordsResolve(),
         )
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
@@ -649,7 +654,7 @@ class FrozenEnforcementTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError):
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1", approvals={}, state=state, frozen=frozen,
+                    source_sha=SOURCE_SHA, approvals={}, state=state, frozen=frozen,
                 )
             self.assertEqual(lanes.calls, [])
 
@@ -708,7 +713,7 @@ class ReceiptVerificationTests(unittest.TestCase):
                 if k.startswith("staged-manifest:")
             )
             sealed, digest = rd.seal_receipt(
-                frozen.plan, graph, source_sha="s1",
+                frozen.plan, graph, source_sha=SOURCE_SHA,
                 entries=forged_entries, approvals={},
                 frozen_plan_id=planned["frozen_plan_id"],
                 staged_manifest_id=manifest_id,
@@ -841,14 +846,14 @@ class ResumeBindingTests(unittest.TestCase):
                 for n in plan.moving
             }
             foreign_bytes, foreign_digest = rd.seal_staged_manifest(
-                plan, frozen_plan_id="FOREIGN-PLAN", source_sha="s1",
+                plan, frozen_plan_id="FOREIGN-PLAN", source_sha=SOURCE_SHA,
                 entries=entries,
             )
             foreign_id = f"staged-manifest:FOREIGN-PLAN:{foreign_digest}"
             store.put(foreign_id, foreign_bytes)
             authority.record(foreign_id, foreign_digest)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
@@ -858,7 +863,7 @@ class ResumeBindingTests(unittest.TestCase):
                     plan, graph,
                     lanes=lanes, skew=FixtureSkew(),
                     store=store, authority=authority,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     frozen=frozen, measurement=AllRecordsResolve(),
                 )
 
@@ -965,7 +970,7 @@ class PostPublicationResumeTests(unittest.TestCase):
             before = orchestration_state()
             plan = rd.compute_plan(graph, before)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=before,
+                plan, graph, source_sha=SOURCE_SHA, state=before,
                 measurement=AllRecordsResolve(),
             )
             store.put(f"plan:s1:{frozen_id}", frozen_bytes)
@@ -983,7 +988,7 @@ class PostPublicationResumeTests(unittest.TestCase):
                 rd.run_plan(
                     plan, graph, crash,
                     skew=FixtureSkew(), authority=authority, store=store,
-                    source_sha="s1", approvals={}, state=before, frozen=frozen,
+                    source_sha=SOURCE_SHA, approvals={}, state=before, frozen=frozen,
                     providers=rd.Providers(
                         store=store, authority=authority,
                         measurement=AllRecordsResolve(),
@@ -1013,7 +1018,7 @@ class PostPublicationResumeTests(unittest.TestCase):
                 plan, graph,
                 lanes=resume_lanes, skew=FixtureSkew(),
                 store=store, authority=authority,
-                source_sha="s1", approvals={}, state=after,
+                source_sha=SOURCE_SHA, approvals={}, state=after,
                 frozen=frozen, measurement=AllRecordsResolve(),
             )
             self.assertEqual(set(entries), {n.component for n in plan.moving})
@@ -1274,7 +1279,7 @@ class SplitProviderTests(unittest.TestCase):
             state = orchestration_state()
             plan = rd.compute_plan(graph, state)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
             plan_artifact_id = f"plan:s1:{frozen_id}"
@@ -1298,7 +1303,7 @@ class SplitProviderTests(unittest.TestCase):
                 capture_output=True, text=True, timeout=60,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("RESOLVED s1", result.stdout)
+            self.assertIn(f"RESOLVED {SOURCE_SHA}", result.stdout)
 
 
 class DeliveryMomentTests(unittest.TestCase):
@@ -1330,7 +1335,7 @@ class DeliveryMomentTests(unittest.TestCase):
                     skew=FixtureSkew(),
                     authority=rd.FileDigestAuthority(root),
                     store=rd.FileArtifactStore(root),
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     providers=rd.Providers(
                         store=rd.FileArtifactStore(root),
                         authority=rd.FileDigestAuthority(root),
@@ -1381,7 +1386,7 @@ class StructuredProofTests(unittest.TestCase):
                 skew=FixtureSkew(),
                 authority=rd.FileDigestAuthority(root),
                 store=rd.FileArtifactStore(root),
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
                 providers=rd.Providers(
                     store=rd.FileArtifactStore(root),
                     authority=rd.FileDigestAuthority(root),
@@ -1492,7 +1497,7 @@ class ManifestSemanticLoadTests(unittest.TestCase):
         body = json.dumps(
             {
                 "frozen_plan_id": "FPID",
-                "source_sha": "s1",
+                "source_sha": SOURCE_SHA,
                 "entries": entries,
             },
             sort_keys=True,
@@ -1502,7 +1507,7 @@ class ManifestSemanticLoadTests(unittest.TestCase):
         with self.assertRaises(rd.ReceiptError) as caught:
             rd.validate_staged_manifest(
                 manifest, plan=plan, graph=graph,
-                frozen_plan_id="FPID", source_sha="s1",
+                frozen_plan_id="FPID", source_sha=SOURCE_SHA,
             )
         self.assertIn("canonical", str(caught.exception))
 
@@ -1524,15 +1529,15 @@ class ManifestSemanticLoadTests(unittest.TestCase):
         fabricated["client"]["delivery_obligation"] = "caller-invented-text"
         with self.assertRaises(rd.ReceiptError):
             rd.validate_staged_manifest(
-                {"frozen_plan_id": "F", "source_sha": "s1", "entries": fabricated},
-                plan=plan, graph=graph, frozen_plan_id="F", source_sha="s1",
+                {"frozen_plan_id": "F", "source_sha": SOURCE_SHA, "entries": fabricated},
+                plan=plan, graph=graph, frozen_plan_id="F", source_sha=SOURCE_SHA,
             )
         malformed = json.loads(json.dumps(base_entries))
         malformed["client"]["digest_set"] = {"": "sha"}
         with self.assertRaises(rd.ReceiptError):
             rd.validate_staged_manifest(
-                {"frozen_plan_id": "F", "source_sha": "s1", "entries": malformed},
-                plan=plan, graph=graph, frozen_plan_id="F", source_sha="s1",
+                {"frozen_plan_id": "F", "source_sha": SOURCE_SHA, "entries": malformed},
+                plan=plan, graph=graph, frozen_plan_id="F", source_sha=SOURCE_SHA,
             )
         missing_pointer = json.loads(json.dumps(base_entries))
         missing_pointer["pointer"]["pointer_state"] = None
@@ -1540,10 +1545,10 @@ class ManifestSemanticLoadTests(unittest.TestCase):
             rd.validate_staged_manifest(
                 {
                     "frozen_plan_id": "F",
-                    "source_sha": "s1",
+                    "source_sha": SOURCE_SHA,
                     "entries": missing_pointer,
                 },
-                plan=plan, graph=graph, frozen_plan_id="F", source_sha="s1",
+                plan=plan, graph=graph, frozen_plan_id="F", source_sha=SOURCE_SHA,
             )
 
 
@@ -1568,7 +1573,7 @@ class ManifestAnchorOrderTests(unittest.TestCase):
                 rd.run_plan(
                     plan, graph, lanes,
                     skew=FixtureSkew(), authority=authority, store=store,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     providers=rd.Providers(
                         store=store, authority=authority,
                         measurement=AllRecordsResolve(),
@@ -1719,7 +1724,7 @@ class StageBoundaryTests(unittest.TestCase):
                     skew=FixtureSkew(),
                     authority=rd.FileDigestAuthority(root),
                     store=rd.FileArtifactStore(root),
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     providers=rd.Providers(
                         store=rd.FileArtifactStore(root),
                         authority=rd.FileDigestAuthority(root),
@@ -1759,7 +1764,7 @@ class StageBoundaryTests(unittest.TestCase):
             store = rd.FileArtifactStore(root)
             authority = rd.FileDigestAuthority(root)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
             store.put(f"plan:s1:{frozen_id}", frozen_bytes)
@@ -1770,7 +1775,7 @@ class StageBoundaryTests(unittest.TestCase):
                 rd.run_plan(
                     plan, graph, crash,
                     skew=FixtureSkew(), authority=authority, store=store,
-                    source_sha="s1", approvals={}, state=state, frozen=frozen,
+                    source_sha=SOURCE_SHA, approvals={}, state=state, frozen=frozen,
                     providers=rd.Providers(
                         store=store, authority=authority,
                         measurement=AllRecordsResolve(),
@@ -1797,7 +1802,7 @@ class StageBoundaryTests(unittest.TestCase):
                     plan, graph,
                     lanes=resume_lanes, skew=FixtureSkew(),
                     store=store, authority=authority,
-                    source_sha="s1", approvals={}, state=after,
+                    source_sha=SOURCE_SHA, approvals={}, state=after,
                     frozen=frozen, measurement=AllRecordsResolve(),
                 )
             self.assertIn("digest set", str(caught.exception))
@@ -1832,7 +1837,7 @@ class PublishStateTests(unittest.TestCase):
                     skew=FixtureSkew(),
                     authority=rd.FileDigestAuthority(root),
                     store=rd.FileArtifactStore(root),
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     providers=rd.Providers(
                         store=rd.FileArtifactStore(root),
                         authority=rd.FileDigestAuthority(root),
@@ -1852,7 +1857,7 @@ class ResumeAmbiguityTests(unittest.TestCase):
             state = orchestration_state()
             plan = rd.compute_plan(graph, state)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
@@ -1868,7 +1873,7 @@ class ResumeAmbiguityTests(unittest.TestCase):
                     for n in plan.moving
                 }
                 body, digest = rd.seal_staged_manifest(
-                    plan, frozen_plan_id=frozen_id, source_sha="s1",
+                    plan, frozen_plan_id=frozen_id, source_sha=SOURCE_SHA,
                     entries=entries, graph=graph,
                 )
                 artifact_id = f"staged-manifest:{frozen_id}:{digest}"
@@ -1880,7 +1885,7 @@ class ResumeAmbiguityTests(unittest.TestCase):
                     plan, graph,
                     lanes=lanes, skew=FixtureSkew(),
                     store=store, authority=authority,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     frozen=frozen, measurement=AllRecordsResolve(),
                 )
             self.assertIn("manifest-id", str(caught.exception))
@@ -1950,7 +1955,7 @@ class RerunIdempotencyTests(unittest.TestCase):
             state = orchestration_state()
             plan = rd.compute_plan(graph, state)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
             store.put(f"plan:s1:{frozen_id}", frozen_bytes)
@@ -1960,7 +1965,7 @@ class RerunIdempotencyTests(unittest.TestCase):
             first = rd.run_plan(
                 plan, graph, lanes,
                 skew=FixtureSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=state, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=state, frozen=frozen,
                 providers=rd.Providers(
                     store=store, authority=authority,
                     measurement=AllRecordsResolve(),
@@ -1989,7 +1994,7 @@ class RerunIdempotencyTests(unittest.TestCase):
                 plan, graph,
                 lanes=rerun_lanes, skew=FixtureSkew(),
                 store=store, authority=authority,
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
                 frozen=frozen, measurement=AllRecordsResolve(),
             )
             self.assertEqual(set(entries), {n.component for n in plan.moving})
@@ -2004,7 +2009,7 @@ class FrozenSnapshotTests(unittest.TestCase):
         graph = fixture_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, _ = rd.freeze_plan(plan, graph, source_sha="s1", state=state, measurement=AllRecordsResolve())
+        frozen_bytes, _ = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA, state=state, measurement=AllRecordsResolve())
         parsed = json.loads(frozen_bytes)
         parsed["content"]["plan_digest"] = "not-the-plan"
         forged = json.dumps(parsed, sort_keys=True).encode()
@@ -2036,11 +2041,11 @@ class FrozenSnapshotTests(unittest.TestCase):
             checkout_heads={"../server-src": "cafebabe"},
         )
         _, id_a = rd.freeze_plan(
-            rd.compute_plan(graph, state_a), graph, source_sha="s1", state=state_a,
+            rd.compute_plan(graph, state_a), graph, source_sha=SOURCE_SHA, state=state_a,
             measurement=AllRecordsResolve(),
         )
         _, id_b = rd.freeze_plan(
-            rd.compute_plan(graph, state_b), graph, source_sha="s1", state=state_b,
+            rd.compute_plan(graph, state_b), graph, source_sha=SOURCE_SHA, state=state_b,
             measurement=AllRecordsResolve(),
         )
         self.assertNotEqual(
@@ -2073,7 +2078,7 @@ class TrustedCompositionTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError):
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     require_external_authority=True,
                 )
             self.assertEqual(lanes.calls, [])
@@ -2118,7 +2123,7 @@ class FrozenTruthTests(unittest.TestCase):
         graph = fixture_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, _ = rd.freeze_plan(plan, graph, source_sha="s1", state=state, measurement=AllRecordsResolve())
+        frozen_bytes, _ = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA, state=state, measurement=AllRecordsResolve())
         parsed = json.loads(frozen_bytes)
         parsed["content"]["plan_digest"] = "not-the-plan"
         import hashlib
@@ -2137,11 +2142,11 @@ class FrozenTruthTests(unittest.TestCase):
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state,
+            plan, graph, source_sha=SOURCE_SHA, state=state,
             measurement=AllRecordsResolve(),
         )
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
-        self.assertEqual(frozen.source_sha, "s1")
+        self.assertEqual(frozen.source_sha, SOURCE_SHA)
         self.assertTrue(frozen.resolved is not None)
         self.assertTrue(frozen.graph_canonical)
 
@@ -2152,7 +2157,7 @@ class FrozenTruthTests(unittest.TestCase):
             state = orchestration_state()
             plan = rd.compute_plan(graph, state)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
@@ -2205,7 +2210,7 @@ class SemanticValidationTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError) as caught:
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                 )
             self.assertIn("999.0.0", str(caught.exception))
 
@@ -2245,7 +2250,7 @@ class SemanticValidationTests(unittest.TestCase):
             with self.assertRaises(rd.BlockedByDeclaredInputs):
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                 )
             self.assertEqual(lanes.calls, [])
 
@@ -2295,7 +2300,7 @@ class ResumeManifestTests(unittest.TestCase):
                     return super().publish(node, staged)
 
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
             store.put(f"plan:s1:{frozen_id}", frozen_bytes)
@@ -2306,7 +2311,7 @@ class ResumeManifestTests(unittest.TestCase):
                 rd.run_plan(
                     plan, graph, crash_lanes,
                     skew=FixtureSkew(), authority=authority, store=store,
-                    source_sha="s1", approvals={}, state=state, frozen=frozen,
+                    source_sha=SOURCE_SHA, approvals={}, state=state, frozen=frozen,
                     providers=rd.Providers(
                         store=store, authority=authority,
                         measurement=AllRecordsResolve(),
@@ -2333,7 +2338,7 @@ class ResumeManifestTests(unittest.TestCase):
                 skew=FixtureSkew(),
                 store=store,
                 authority=authority,
-                source_sha="s1",
+                source_sha=SOURCE_SHA,
                 approvals={},
                 state=state,
                 measurement=AllRecordsResolve(),
