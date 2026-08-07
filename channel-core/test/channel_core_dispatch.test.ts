@@ -777,7 +777,10 @@ describe("channel-core dispatchAgentEvent", () => {
     const localDecrypt = { mailMessage: vi.fn(async () => { throw new Error("must not run"); }) };
     const client = {
       hasTeamCertificateAuth: (teamID: string) => teamID === "backend:acme.com",
-      get: vi.fn().mockResolvedValue({
+      get: vi.fn(async (path: string) => path === "/v1/agents" ? {
+        team_id: "backend:acme.com",
+        agents: [{ alias: "alice", did_key: vectors.did, identity_scope: "local" }],
+      } : {
         messages: [{
           message_id: env.message_id,
           from_agent_id: "agent-1",
@@ -800,10 +803,7 @@ describe("channel-core dispatchAgentEvent", () => {
           encrypted_envelope: null,
         }],
       }),
-      getFresh: vi.fn().mockResolvedValue({
-        team_id: "backend:acme.com",
-        agents: [{ alias: "alice", did_key: vectors.did, identity_scope: "local" }],
-      }),
+      getFresh: vi.fn(),
       post: vi.fn().mockResolvedValue(undefined),
     };
     const authenticatedTrust = new SenderTrustManager(
@@ -828,7 +828,8 @@ describe("channel-core dispatchAgentEvent", () => {
     );
 
     expect(localDecrypt.mailMessage).not.toHaveBeenCalled();
-    expect(client.getFresh).toHaveBeenCalledWith("/v1/agents");
+    expect(client.get).toHaveBeenCalledWith("/v1/agents");
+    expect(client.getFresh).not.toHaveBeenCalled();
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       kind: "mail",
       content: env.body,
@@ -1495,7 +1496,10 @@ describe("channel-core dispatchAgentEvent", () => {
     const wrongRecipientSignature = await signMessage(b64ToBytes(vectors.seed), wrongRecipientEnv);
     const client = {
       hasTeamCertificateAuth: (teamID: string) => teamID === "backend:acme.com",
-      get: vi.fn().mockResolvedValue({
+      get: vi.fn(async (path: string) => path === "/v1/agents" ? {
+        team_id: "backend:acme.com",
+        agents: [{ alias: "alice", did_key: rosterDID, identity_scope: "local" }],
+      } : {
         messages: [{
           message_id: env.message_id,
           conversation_id: "legacy-conversation",
@@ -1513,10 +1517,7 @@ describe("channel-core dispatchAgentEvent", () => {
           signed_payload: canonicalJSON(env),
         }],
       }),
-      getFresh: vi.fn().mockResolvedValue({
-        team_id: "backend:acme.com",
-        agents: [{ alias: "alice", did_key: rosterDID, identity_scope: "local" }],
-      }),
+      getFresh: vi.fn(),
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = new SenderTrustManager(
@@ -1533,7 +1534,8 @@ describe("channel-core dispatchAgentEvent", () => {
       { type: "mail_message", message_id: env.message_id } satisfies AgentEvent,
     );
 
-    expect(client.getFresh).toHaveBeenCalledWith("/v1/agents");
+    expect(client.get).toHaveBeenCalledWith("/v1/agents");
+    expect(client.getFresh).not.toHaveBeenCalled();
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       meta: expect.objectContaining({ trust_status: "identity_mismatch", verified: "false" }),
     }));
