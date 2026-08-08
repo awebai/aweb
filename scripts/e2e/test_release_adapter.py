@@ -4390,10 +4390,26 @@ class NpmWorkflowLaneTests(unittest.TestCase):
             published_versions={"channel": "1.7.1"},
         )
         plan = rd.compute_plan(graph, state)
+
+        # The registry is AUTHORITATIVELY EMPTY until the continuation runs.
+        # The previous version answered with the candidate digest from the very
+        # first observation, so publish() adopted an already-present package and
+        # dispatched NOTHING - it sealed the debt without ever exercising a
+        # fresh publication. The observation flips only as a consequence of the
+        # dispatch, so the assertions below cannot pass without one.
+        observed = {"value": None}
+        runs = FakeAwRuns(conclusion="success")
+        dispatch = runs.dispatch
+
+        def dispatch_then_publish(inputs):
+            dispatch(inputs)
+            observed["value"] = sha256(tgz)
+
+        runs.dispatch = dispatch_then_publish
         lane, _ = npm_lane(
             npm_lane_zip(version=version, tgz=tgz),
-            observer=lambda p, v: sha256(tgz),
-            runs=FakeAwRuns(conclusion="success"),
+            observer=lambda p, v: observed["value"],
+            runs=runs,
             delivery_proofs={},               # the honest pre-adoption state
         )
         store, authority = rd._MemoryStore(), FixtureAuthority()
@@ -4406,6 +4422,14 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         receipt_id = next(k for k in authority.recorded if k.startswith("receipt:"))
         receipt = rd.load_sealed_receipt(
             store.get(receipt_id), expected_digest=authority.expected_digest(receipt_id)
+        )
+        self.assertEqual(
+            [d["mode"] for d in runs.dispatched], ["publish-continuation"],
+            "a fresh publication must dispatch the continuation exactly once",
+        )
+        self.assertEqual(
+            observed["value"], sha256(tgz),
+            "the post-dispatch observation must be the exact staged bytes",
         )
         entry = receipt.entries["channel"]
         self.assertIsNone(entry.delivery_proof, "no evidence may be invented")
