@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.4
+
+- Stops repeated sender-identity mismatches from forcing an uncached AWID or
+  team-roster lookup on every message. Mismatches remain fail-closed, while
+  ordinary bounded cache expiry picks up updated roster, address, and key state.
+
 ## 1.7.3
 
 - Uses the distinct `aweb-channel` MCP declaration and runtime name as an
