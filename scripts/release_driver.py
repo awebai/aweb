@@ -8069,6 +8069,21 @@ def resume_plan(
                     "lane observes nothing; refusing to adopt"
                 )
             continue
+        # A forced pointer that was never applied is REMAINING WORK, not drift.
+        # This is the likeliest crash window in a pointer release, because the
+        # pointer is applied last: the package is already on the registry and
+        # the repository still advertises the old version. Adopting is only
+        # meaningful for something that actually happened, so a stale
+        # observation that nothing claims to have published falls through to
+        # run_plan, which applies it. Refusing here made that window
+        # unrecoverable - the release could neither continue nor be redone,
+        # because the package was already published.
+        #
+        # The claimed check is what keeps this from weakening drift detection:
+        # when an anchored transition DOES claim the pointer published, a stale
+        # or missing observation is real disagreement and still refuses below.
+        if observed.pointer_state == "stale" and node.component not in claimed:
+            continue
         adopt_observed(manifest, node.component, observed)
         manifest_entry = manifest["entries"][node.component]
         if manifest_entry.get("pointer_state") is not None:

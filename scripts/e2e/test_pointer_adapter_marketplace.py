@@ -327,5 +327,307 @@ class MarketplaceAdapterTests(unittest.TestCase):
         self.assertIn("@awebai/pi", result.stderr)
 
 
+
+
+class RecordingAuthority:
+    """FixtureAuthority plus recorded_ids, which resume needs to find the
+    anchored staged manifest and published transitions."""
+
+    def __init__(self):
+        self.recorded: dict[str, str] = {}
+
+    def record(self, artifact_id: str, digest: str) -> None:
+        self.recorded[artifact_id] = digest
+
+    def expected_digest(self, artifact_id: str) -> str | None:
+        return self.recorded.get(artifact_id)
+
+    def recorded_ids(self):
+        return list(self.recorded)
+
+
+class PublishedPackageLane:
+    """The npm side of a forced-pointer release, as an already-published
+    package. Counts publishes so 'adopted, never republished' is measurable
+    rather than asserted."""
+
+    def __init__(self, component="channel", version="1.7.4"):
+        self.component = component
+        self.version = version
+        self.digest = "sha256:" + "c" * 64
+        self.publishes = 0
+        self.visible = True
+
+    def has_lane(self, component):
+        return component == self.component
+
+    def _entry(self, phase):
+        import release_driver as rd
+        return rd.ReceiptEntry(
+            version=self.version, digest=self.digest, phase=phase
+        )
+
+    def stage(self, node):
+        return self._entry("staged")
+
+    def publish(self, node, staged):
+        self.publishes += 1
+        return self._entry("published")
+
+    def verify(self, node, published):
+        return self._entry("verified")
+
+    def observe(self, node, staged=None):
+        return self._entry("published") if self.visible else None
+
+
+class PointerCrashResumeTests(unittest.TestCase):
+    """The crash window between staging a forced pointer and applying it.
+
+    This window is the LIKELIEST one in a pointer release, because the pointer
+    is applied last: the package is already on the registry and the marketplace
+    still advertises the old version. Real PointerLane, real adapter executable,
+    real git remote, real resume_plan.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.remote = root / "remote.git"
+        seed = root / "seed"
+        seed.mkdir()
+        (seed / ".claude-plugin").mkdir()
+        (seed / POINTER_FILE).write_text(json.dumps(MARKETPLACE, indent=2) + "\n")
+        git("init", "-q", "-b", "main", cwd=seed)
+        git("-c", "user.email=t@t", "-c", "user.name=t", "add", ".", cwd=seed)
+        git("-c", "user.email=t@t", "-c", "user.name=t",
+            "commit", "-qm", "seed", cwd=seed)
+        git("init", "-q", "--bare", str(self.remote), cwd=root)
+        git("remote", "add", "origin", str(self.remote), cwd=seed)
+        git("push", "-q", "origin", "main", cwd=seed)
+        self.addCleanup(self.tmp.cleanup)
+        os.environ["MARKETPLACE_REMOTE"] = str(self.remote)
+        self.addCleanup(os.environ.pop, "MARKETPLACE_REMOTE", None)
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+    def graph(self):
+        import release_driver as rd
+        return rd.Graph.from_dict({
+            "component": {
+                "channel": {
+                    "source_paths": ["channel/"],
+                    "version_source": {"type": "manifest", "path": "v"},
+                    "tag_format": "channel-v{version}",
+                    "publish_lane": {"workflow": "w"},
+                    "verify": {"command": "true"},
+                },
+                "marketplace-pointer": {"publishable": False},
+            },
+            "edge": [{"type": "pointer", "from": "channel",
+                      "to": ["marketplace-pointer"]}],
+        })
+
+    def compose(self, package_lane):
+        """Real PointerLane over the real adapter, plus the package lane."""
+        import release_driver as rd
+        from test_release_driver import FixtureSkew, SOURCE_SHA
+
+        graph = self.graph()
+        state = rd.FixtureState(
+            changed_components={"channel": True},
+            versions={"channel": "1.7.4"},
+            published_versions={"channel": "1.7.3"},
+        )
+        plan = rd.compute_plan(graph, state)
+        pointer = rd.PointerLane(
+            "marketplace-pointer",
+            adapter=rd.SubprocessPointerAdapter(ADAPTER, repository=str(self.remote)),
+            updates=rd.pointer_updates(plan, graph)["marketplace-pointer"],
+            repository="github.com/awebai/claude-plugins",
+        )
+        lanes = rd.WorkflowLanes({
+            "channel": package_lane, "marketplace-pointer": pointer,
+        })
+        store, authority = rd._MemoryStore(), RecordingAuthority()
+        frozen_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha=SOURCE_SHA, state=state
+        )
+        artifact_id = f"plan:{SOURCE_SHA}:{frozen_id}"
+        rd._put_content_addressed(
+            store, authority, artifact_id, frozen_bytes, frozen_id
+        )
+        frozen = rd.load_frozen_plan(store.get(artifact_id), expected_id=frozen_id)
+        return graph, plan, lanes, store, authority, frozen, state, FixtureSkew()
+
+    def advertised(self):
+        result = subprocess.run(
+            [sys.executable, str(ADAPTER), "read",
+             "--component", "marketplace-pointer",
+             "--expect-repository", str(self.remote)],
+            capture_output=True, text=True,
+            env={**os.environ, "MARKETPLACE_REMOTE": str(self.remote)},
+        )
+        return json.loads(result.stdout)["advertised"]
+
+    def block_pushes(self):
+        """Make the marketplace push fail, which is the crash this is about."""
+        hooks = self.remote / "hooks"
+        hooks.mkdir(exist_ok=True)
+        hook = hooks / "pre-receive"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        return hook
+
+    def crash_after_package_before_pointer(self, package_lane):
+        """Round one: the package publishes, the pointer push fails."""
+        import release_driver as rd
+        from test_release_driver import SOURCE_SHA
+
+        graph, plan, lanes, store, authority, frozen, state, skew = self.compose(
+            package_lane
+        )
+        hook = self.block_pushes()
+        with self.assertRaises(rd.ReceiptError):
+            rd.run_plan(
+                plan, graph, lanes, skew=skew, authority=authority, store=store,
+                source_sha=SOURCE_SHA, approvals={}, state=state, frozen=frozen,
+                providers=rd.Providers(store=store, authority=authority),
+            )
+        hook.unlink()
+        self.assertEqual(
+            self.advertised()["channel"], "1.7.3",
+            "the crash must leave the marketplace stale, or this proves nothing",
+        )
+        return graph, plan, store, authority, frozen, state, skew
+
+    def test_a_stale_unapplied_pointer_is_remaining_work_not_drift(self):
+        """The blocker. After a crash between publishing the package and
+        applying the pointer, NOTHING claims the pointer published - so it is
+        work the resume must finish, not drift that must refuse. Refusing here
+        makes the likeliest crash window unrecoverable."""
+        import release_driver as rd
+        from test_release_driver import SOURCE_SHA
+
+        package = PublishedPackageLane()
+        graph, plan, store, authority, frozen, state, skew = (
+            self.crash_after_package_before_pointer(package)
+        )
+        published_before = package.publishes
+
+        pointer = rd.PointerLane(
+            "marketplace-pointer",
+            adapter=rd.SubprocessPointerAdapter(ADAPTER, repository=str(self.remote)),
+            updates=rd.pointer_updates(plan, graph)["marketplace-pointer"],
+            repository="github.com/awebai/claude-plugins",
+        )
+        lanes = rd.WorkflowLanes({"channel": package, "marketplace-pointer": pointer})
+        rd.resume_plan(
+            plan, graph, lanes=lanes, skew=skew, store=store, authority=authority,
+            source_sha=SOURCE_SHA, approvals={}, state=state, frozen=frozen,
+        )
+        self.assertEqual(
+            self.advertised()["channel"], "1.7.4",
+            "the resume must APPLY the pointer that was never applied",
+        )
+        self.assertEqual(
+            self.advertised()["skills"], "0.2.12",
+            "and must leave untouched entries alone",
+        )
+        self.assertEqual(
+            package.publishes, published_before,
+            "the already-published package must be adopted, never republished",
+        )
+
+    def test_an_exactly_advertised_pointer_is_adopted(self):
+        """The pointer landed before the crash. Its observation equals what was
+        staged, so the resume adopts it and pushes nothing further."""
+        import release_driver as rd
+        from test_release_driver import SOURCE_SHA
+
+        package = PublishedPackageLane()
+        graph, plan, store, authority, frozen, state, skew = (
+            self.crash_after_package_before_pointer(package)
+        )
+        adapter = rd.SubprocessPointerAdapter(ADAPTER, repository=str(self.remote))
+        updates = rd.pointer_updates(plan, graph)["marketplace-pointer"]
+        adapter.apply("marketplace-pointer", updates,
+                      adapter.intent("marketplace-pointer", updates))
+        self.assertEqual(self.advertised()["channel"], "1.7.4")
+        head_before = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(self.remote),
+            capture_output=True, text=True).stdout.strip()
+
+        pointer = rd.PointerLane(
+            "marketplace-pointer", adapter=adapter, updates=updates,
+            repository="github.com/awebai/claude-plugins",
+        )
+        lanes = rd.WorkflowLanes({"channel": package, "marketplace-pointer": pointer})
+        rd.resume_plan(
+            plan, graph, lanes=lanes, skew=skew, store=store, authority=authority,
+            source_sha=SOURCE_SHA, approvals={}, state=state, frozen=frozen,
+        )
+        head_after = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(self.remote),
+            capture_output=True, text=True).stdout.strip()
+        self.assertEqual(head_before, head_after,
+                         "an adopted pointer must not push again")
+
+    def test_a_stale_pointer_refuses_when_a_transition_claims_publication(self):
+        """The other direction, which must NOT be weakened by the fix. If an
+        anchored transition claims the pointer published and the repository
+        does not advertise it, that is drift and the resume must refuse."""
+        import release_driver as rd
+        from test_release_driver import SOURCE_SHA
+
+        package = PublishedPackageLane()
+        graph, plan, store, authority, frozen, state, skew = (
+            self.crash_after_package_before_pointer(package)
+        )
+        updates = rd.pointer_updates(plan, graph)["marketplace-pointer"]
+        pointer = rd.PointerLane(
+            "marketplace-pointer",
+            adapter=rd.SubprocessPointerAdapter(ADAPTER, repository=str(self.remote)),
+            updates=updates,
+            repository="github.com/awebai/claude-plugins",
+        )
+        lane_entry = pointer.stage(
+            next(n for n in plan.moving if n.component == "marketplace-pointer")
+        )
+        manifest_id = next(
+            i for i in authority.recorded_ids() if i.startswith("staged-manifest:")
+        )
+        record = json.dumps({
+            "kind": "published",
+            "component": "marketplace-pointer",
+            "frozen_plan_id": frozen.frozen_id,
+            "staged_manifest_id": manifest_id,
+            "entry": {
+                "version": lane_entry.version, "digest": lane_entry.digest,
+                "phase": "published", "pointer_state": "advertised",
+                "digest_set": None, "lane_ref": None,
+            },
+        }, sort_keys=True).encode()
+        artifact_id = f"transition:{frozen.frozen_id}:marketplace-pointer"
+        rd._put_content_addressed(
+            store, authority, artifact_id, record,
+            __import__("hashlib").sha256(record).hexdigest(),
+        )
+
+        lanes = rd.WorkflowLanes({"channel": package, "marketplace-pointer": pointer})
+        with self.assertRaises(rd.ReceiptError) as caught:
+            rd.resume_plan(
+                plan, graph, lanes=lanes, skew=skew, store=store,
+                authority=authority, source_sha=SOURCE_SHA, approvals={},
+                state=state, frozen=frozen,
+            )
+        self.assertIn("marketplace-pointer", str(caught.exception))
+        self.assertEqual(
+            self.advertised()["channel"], "1.7.3",
+            "a refusal must not have mutated the repository",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
