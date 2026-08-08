@@ -36,7 +36,7 @@ from test_release_driver import FixtureLanes, orchestration_state  # noqa: E402
 
 
 class ReceiptProcessTests(unittest.TestCase):
-    def seed(self, root: Path, *, owes_delivery: bool):
+    def seed(self, root: Path, *, owes_delivery: bool, owner: str = "client"):
         # Imported inside the method: unittest collects TestCase subclasses from
         # module globals by TYPE, not by name, so binding this at module scope
         # made this file report other modules' cases as its own.
@@ -46,8 +46,8 @@ class ReceiptProcessTests(unittest.TestCase):
         graph_path = helper.graph_file(root)
         if owes_delivery:
             graph_path.write_text(graph_path.read_text().replace(
-                '[component."client"]',
-                '[component."client"]\n'
+                f'[component."{owner}"]',
+                f'[component."{owner}"]\n'
                 'delivery_restart = { proof = "restart per host" }', 1))
         state = orchestration_state()
         buffer = io.StringIO()
@@ -102,11 +102,11 @@ class ReceiptProcessTests(unittest.TestCase):
             self.assertIn("MATCH", result.stdout, result.stdout + result.stderr)
             self.assertNotIn("OUTSTANDING", result.stdout)
 
-    def test_a_release_owing_delivery_reports_outstanding(self):
+    def test_the_pi_shape_reports_outstanding_without_a_pointer(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             graph_path, planned, rid, obs, receipt = self.seed(
-                root, owes_delivery=True)
+                root, owes_delivery=True, owner="client")
             self.assertEqual(
                 receipt.entries["client"].delivery_outstanding,
                 "delivery-restart-proof")
@@ -114,6 +114,26 @@ class ReceiptProcessTests(unittest.TestCase):
             self.assertIn("OUTSTANDING", result.stdout,
                           result.stdout + result.stderr)
             self.assertIn("client", result.stdout)
+
+    def test_the_channel_shape_reports_outstanding_with_its_pointer(self):
+        """The Channel production shape: a publishable component that BOTH
+        forces a pointer and owes delivery. The pi shape (delivery, no pointer)
+        is covered above; this is the one whose receipt carries a pointer node
+        and a debt together."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path, planned, rid, obs, receipt = self.seed(
+                root, owes_delivery=True, owner="plugin")
+            self.assertEqual(
+                receipt.entries["plugin"].delivery_outstanding,
+                "delivery-restart-proof")
+            self.assertIn("pointer", receipt.entries,
+                          "the Channel shape must carry its forced pointer node")
+            self.assertIsNotNone(receipt.entries["pointer"].pointer_state)
+            result = self.read_receipt(root, graph_path, planned, rid, obs)
+            self.assertIn("OUTSTANDING", result.stdout,
+                          result.stdout + result.stderr)
+            self.assertIn("plugin", result.stdout)
 
     def test_the_test_transport_is_refused_under_a_trusted_authority(self):
         """The seam must never stand in for registry truth in a real release."""
