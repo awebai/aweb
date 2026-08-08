@@ -99,7 +99,9 @@ class ReceiptProcessTests(unittest.TestCase):
             root = Path(tmp)
             graph_path, planned, rid, obs, _ = self.seed(root, owes_delivery=False)
             result = self.read_receipt(root, graph_path, planned, rid, obs)
-            self.assertIn("MATCH", result.stdout, result.stdout + result.stderr)
+            self.assertIn("MATCH: receipt is anchored", result.stdout,
+                          result.stdout + result.stderr)
+            self.assertNotIn("MISMATCH", result.stdout)
             self.assertNotIn("OUTSTANDING", result.stdout)
 
     def test_the_pi_shape_reports_outstanding_without_a_pointer(self):
@@ -135,6 +137,53 @@ class ReceiptProcessTests(unittest.TestCase):
                           result.stdout + result.stderr)
             self.assertIn("plugin", result.stdout)
 
+    def test_an_observation_that_disagrees_with_the_receipt_is_caught(self):
+        """The control that the copied-from-receipt observation cannot provide.
+
+        seed() writes the observation file FROM the receipt, so every value
+        agrees by construction and no disagreement can ever be detected. This
+        constructs the observation independently and mutates it, which is the
+        only way to prove the reader compares two things rather than one thing
+        with itself.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path, planned, rid, obs, receipt = self.seed(
+                root, owes_delivery=False)
+            document = json.loads(obs.read_text())
+            name = sorted(document["entries"])[0]
+
+            for label, mutate in (
+                ("wrong version",
+                 lambda e: e.update({"version": "9.9.9"})),
+                ("wrong digest",
+                 lambda e: e.update({"digest": "0" * 64})),
+            ):
+                with self.subTest(case=label):
+                    forged = json.loads(obs.read_text())
+                    mutate(forged["entries"][name])
+                    path = root / f"forged-{label.replace(' ', '-')}.json"
+                    path.write_text(json.dumps(forged))
+                    result = self.read_receipt(
+                        root, graph_path, planned, rid, path)
+                    # "MATCH" is a SUBSTRING of "MISMATCH", so assertNotIn
+                    # could never pass here. Assert the verdict itself.
+                    self.assertIn("MISMATCH", result.stdout, result.stdout)
+                    self.assertNotIn("MATCH: receipt is anchored", result.stdout)
+                    self.assertNotEqual(result.returncode, 0)
+
+    def test_a_missing_observation_is_refused(self):
+        """Absent observation is not a pass."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            graph_path, planned, rid, obs, _ = self.seed(root, owes_delivery=False)
+            empty = root / "empty.json"
+            empty.write_text(json.dumps(
+                {"schema": "aweb.test-observation.v1", "entries": {}}))
+            result = self.read_receipt(root, graph_path, planned, rid, empty)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("MATCH: receipt is anchored", result.stdout)
+
     def test_the_test_transport_is_refused_under_a_trusted_authority(self):
         """The seam must never stand in for registry truth in a real release."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -150,7 +199,12 @@ class ReceiptProcessTests(unittest.TestCase):
                  "--observation-file", str(obs)],
                 capture_output=True, text=True, timeout=180)
             self.assertNotEqual(result.returncode, 0)
-            self.assertNotIn("MATCH", result.stdout)
+            self.assertNotIn("MATCH: receipt is anchored", result.stdout)
+            # The EXACT refusal, not merely a nonzero exit: missing credentials
+            # or an unreachable artifact would also exit nonzero and would let
+            # this pass without the guard ever running.
+            self.assertIn("explicit test transport", result.stdout)
+            self.assertIn("refused under", result.stdout)
 
 
 if __name__ == "__main__":

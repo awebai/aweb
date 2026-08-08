@@ -116,6 +116,38 @@ class AcPinAdapterTests(unittest.TestCase):
             "a refusal must leave the pin untouched",
         )
 
+    def test_a_changed_origin_after_clone_is_caught(self):
+        """Through THIS adapter, not by importing the marketplace helper. The
+        repeated failure on this branch has been a control that exercises a
+        sibling instead of the thing it claims to cover."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("ac_adapter", ADAPTER)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        work = Path(self.tmp.name) / "checkout"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(work)], check=True)
+        other = Path(self.tmp.name) / "elsewhere.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True)
+        subprocess.run(["git", "remote", "set-url", "origin", str(other)],
+                       cwd=str(work), check=True)
+        with self.assertRaises(SystemExit) as caught:
+            mod.verify_origin(work, str(self.remote), "after cloning")
+        self.assertIn("origin is", str(caught.exception))
+
+    def test_a_substituted_remote_is_refused_through_the_executable(self):
+        """Driven through the real executable caller, not an in-process helper."""
+        other = Path(self.tmp.name) / "substituted.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True)
+        result = subprocess.run(
+            [sys.executable, str(ADAPTER), "read", "--component", "ac-pin",
+             "--expect-repository", "github.com/awebai/ac"],
+            capture_output=True, text=True,
+            env={**os.environ, "AC_REMOTE": str(other)},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to act on", result.stderr)
+
     def test_the_adapter_is_executable(self):
         """The driver execs this path. It writes aweb-cloud's production pins,
         and its sibling adapter already shipped once as 100644, so a silent mode

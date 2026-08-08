@@ -1136,6 +1136,8 @@ class Receipt:
     g5_authorization: G5Authorization | None = None
 
 
+_RECEIPT_REQUIRED_FIELDS = {"plan_digest", "source_sha", "entries"}
+
 _RECEIPT_BODY_FIELDS = {
     "plan_digest", "source_sha", "frozen_plan_id", "staged_manifest_id",
     "partial", "entries", "approvals", "g5_authorization",
@@ -1482,6 +1484,28 @@ def load_sealed_receipt(data: bytes, *, expected_digest: str) -> Receipt:
             f"receipt body carries unknown keys {unknown_body}; a sealed "
             "receipt is exactly its declared schema"
         )
+    # Exact schema is required keys AND types, not merely the absence of
+    # extras. Missing keys previously raised a raw KeyError from direct
+    # indexing, and a malformed `partial` or `approvals` loaded and failed
+    # somewhere later by accident.
+    missing_body = sorted(_RECEIPT_REQUIRED_FIELDS - set(parsed))
+    if missing_body:
+        raise ReceiptError(f"receipt body is missing required keys {missing_body}")
+    for field in ("plan_digest", "source_sha"):
+        if not isinstance(parsed[field], str) or not parsed[field]:
+            raise ReceiptError(
+                f"receipt body field {field} must be a nonempty string"
+            )
+    for field in ("frozen_plan_id", "staged_manifest_id"):
+        value = parsed.get(field, "")
+        if not isinstance(value, str):
+            raise ReceiptError(f"receipt body field {field} must be a string")
+    if not isinstance(parsed.get("partial", False), bool):
+        raise ReceiptError("receipt body field partial must be a boolean")
+    if not isinstance(parsed["entries"], dict):
+        raise ReceiptError("receipt body field entries must be an object")
+    if not isinstance(parsed.get("approvals", {}), dict):
+        raise ReceiptError("receipt body field approvals must be an object")
     return Receipt(
         plan_digest=parsed["plan_digest"],
         source_sha=parsed["source_sha"],
@@ -8918,6 +8942,18 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
     )
     args = parser.parse_args(argv)
 
+    # The backdoor guard runs BEFORE any store, provider or network access, so
+    # it cannot pass for the wrong reason: missing credentials or an unreachable
+    # artifact would otherwise produce the same nonzero exit and look like the
+    # guard firing.
+    if getattr(args, "observation_file", None) and getattr(
+        args, "authority", None
+    ) not in (None, "local-development"):
+        print(
+            "BLOCKED: --observation-file is an explicit test transport and is "
+            f"refused under {args.authority!r} authority"
+        )
+        return 1
     graph = Graph.load(Path(args.graph))
     recovery_exception = None
     if args.verb == "adopted-preplan-recovery":
