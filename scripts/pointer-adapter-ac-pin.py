@@ -314,11 +314,39 @@ def verify_lock_package(checkout: Path, name: str, version: str) -> None:
             )
 
 
-def run_ac_checks(checkout: Path) -> None:
-    make = shutil.which("make", path=check_env()["PATH"])
-    if not make:
+def make_binary() -> str:
+    executable = shutil.which("make", path=check_env()["PATH"])
+    if not executable:
         fail("make is required to run AC's release-model check")
-    run([make, "release-verify-model"], cwd=checkout, env=check_env())
+    return executable
+
+
+def require_ac_contract_surfaces(checkout: Path) -> None:
+    make_binary()
+    makefile = checkout / "Makefile"
+    try:
+        make_text = makefile.read_text()
+    except OSError as exc:
+        fail(f"AC checkout lacks readable Makefile: {exc}")
+    if not re.search(r"(?m)^release-verify-model:\s*$", make_text):
+        fail("AC Makefile lacks the release-verify-model target")
+    required = (
+        ("scripts/check_release_model.py", False),
+        ("scripts/check_release_overlay.py", False),
+        ("scripts/check-aapj-e2e-contract.sh", True),
+        ("backend/scripts/migration_manifest.py", False),
+    )
+    for relative, executable in required:
+        path = checkout / relative
+        if not path.is_file():
+            fail(f"AC checkout lacks required contract check {relative}")
+        if executable and not os.access(path, os.X_OK):
+            fail(f"AC contract check is not executable: {relative}")
+
+
+def run_ac_checks(checkout: Path) -> None:
+    require_ac_contract_surfaces(checkout)
+    run([make_binary(), "release-verify-model"], cwd=checkout, env=check_env())
     run(
         [uv_binary(), "lock", "--check", "--no-config"],
         cwd=checkout / "backend", env=check_env(),
@@ -348,13 +376,7 @@ def prepare_intent(checkout: Path, updates: dict) -> None:
             checkout / PYPROJECT_FILE, "awid-service", updates["awid-pypi"]
         )
     uv_binary()
-    for required in (
-        "scripts/check_release_model.py",
-        "scripts/check_release_overlay.py",
-        "backend/scripts/migration_manifest.py",
-    ):
-        if not (checkout / required).is_file():
-            fail(f"AC checkout lacks required contract check {required}")
+    require_ac_contract_surfaces(checkout)
 
 
 def prepare_updates(checkout: Path, updates: dict) -> list[str]:

@@ -346,6 +346,25 @@ class AcPinAdapterTests(unittest.TestCase):
                 self.assertTrue(stderr.strip())
                 self.assertEqual(self.remote_head(), before)
 
+    def test_intent_refuses_missing_apply_time_ac_gate_surface(self):
+        root = Path(self.tmp.name)
+        drift = root / "contract-drift"
+        run("git", "clone", "-q", str(self.remote), str(drift), cwd=root)
+        omitted = drift / "scripts" / "check-aapj-e2e-contract.sh"
+        omitted.unlink()
+        run("git", "add", "scripts/check-aapj-e2e-contract.sh", cwd=drift)
+        run(
+            "git", "-c", "user.email=test@example.com", "-c", "user.name=Test",
+            "commit", "-qm", "remove apply-time gate surface", cwd=drift,
+        )
+        run("git", "push", "-q", "origin", "HEAD:main", cwd=drift)
+        before = self.remote_head()
+        stderr = self.run_adapter(
+            "intent", self.combined_updates, expect_failure=True
+        )
+        self.assertIn("check-aapj-e2e-contract.sh", stderr)
+        self.assertEqual(self.remote_head(), before)
+
     def test_crash_after_checks_leaves_remote_unchanged(self):
         before = self.remote_head()
         stderr = self.run_adapter(
