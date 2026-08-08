@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.4
+
+- Bundles the Channel Core identity fix so repeated sender mismatches remain
+  fail-closed without forcing an uncached AWID or team-roster lookup for every
+  message; ordinary bounded cache expiry reconciles updated identity state.
+
 ## 0.3.3
 
 - Bounds half-open Channel Core SSE attempts with a local deadline and a
