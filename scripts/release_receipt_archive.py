@@ -1166,6 +1166,24 @@ def semantic_validator(providers=None):
                     f"{getattr(receipt, 'frozen_plan_id', None)!r}, not the "
                     f"{frozen_plan_id!r} its logical id asserts"
                 )
+            # A sealed G5 acceptance must describe THIS receipt. Comparing only
+            # the frozen-plan id let a record naming a different source or a
+            # different deferred edge set restore clean on this path, while the
+            # complete-set path rejected it - the same bytes trusted by one
+            # production restore and refused by the other.
+            authorization = getattr(receipt, "g5_authorization", None)
+            if authorization is not None:
+                if authorization.frozen_plan_id != frozen_plan_id:
+                    raise ReceiptError(
+                        "archived G5 authorization names frozen plan "
+                        f"{authorization.frozen_plan_id}, not {frozen_plan_id}"
+                    )
+                if authorization.source_sha != getattr(receipt, "source_sha", None):
+                    raise ReceiptError(
+                        "archived G5 authorization names source "
+                        f"{authorization.source_sha}, receipt records "
+                        f"{getattr(receipt, 'source_sha', None)}"
+                    )
 
     def _anchor(body: bytes, manifest: dict) -> None:
         members = _members(body, "archived anchor body")

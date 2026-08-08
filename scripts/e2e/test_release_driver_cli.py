@@ -19,6 +19,8 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import release_driver as rd
 from test_release_driver import (
+    SOURCE_SHA,
+    OTHER_SOURCE_SHA,
     AllRecordsResolve,
     FixtureAuthority,
     FixtureLanes,
@@ -99,7 +101,7 @@ class TransitionAnchoringTests(unittest.TestCase):
             )
             rd.run_plan(
                 plan, graph, providers=providers,
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
             )
         self.assertTrue(anchored_when_second_publish_ran)
         self.assertGreaterEqual(
@@ -124,7 +126,7 @@ class TransitionAnchoringTests(unittest.TestCase):
             )
             rd.run_plan(
                 plan, graph, providers=providers,
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
             )
             transitions = [
                 k for k in authority.recorded_ids() if k.startswith("transition:")
@@ -156,7 +158,7 @@ class TransitionAnchoringTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                 )
             reds = [
                 k for k in authority.recorded_ids() if "verify-red" in k
@@ -209,7 +211,7 @@ class CliPathTests(unittest.TestCase):
             lanes=lanes,
             skew=FixtureSkew(),
             state=state,
-            source_sha="s1",
+            source_sha=SOURCE_SHA,
             measurement=AllRecordsResolve(),
         )
 
@@ -417,7 +419,7 @@ class TrustClassTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError) as caught:
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     require_external_authority=True,
                 )
             self.assertIn("trust", str(caught.exception))
@@ -448,14 +450,17 @@ class TrustClassTests(unittest.TestCase):
             )
             rd.run_plan(
                 plan, graph, providers=providers,
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
                 require_external_authority=True,
             )
             receipt_id = next(
                 k for k in authority.recorded_ids() if k.startswith("receipt:")
             )
             genuine = providers.store.get(receipt_id)
-            forged = genuine.replace(b"s1", b"s2")
+            forged = genuine.replace(
+                SOURCE_SHA.encode("ascii"), OTHER_SOURCE_SHA.encode("ascii")
+            )
+            self.assertNotEqual(forged, genuine, "the forgery changed nothing")
             import hashlib
 
             with tempfile.TemporaryDirectory() as attacker_tmp:
@@ -512,7 +517,7 @@ class StagedManifestTests(unittest.TestCase):
             )
             rd.run_plan(
                 plan, graph, providers=providers,
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
             )
         last_stage = max(i for i, e in enumerate(events) if e == "stage")
         manifest = events.index("manifest")
@@ -533,7 +538,7 @@ class StagedManifestTests(unittest.TestCase):
             state = orchestration_state()
             plan = rd.compute_plan(graph, state)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
             manifest_entries = {
@@ -546,7 +551,7 @@ class StagedManifestTests(unittest.TestCase):
                 for n in plan.moving
             }
             manifest_bytes, manifest_digest = rd.seal_staged_manifest(
-                plan, frozen_plan_id=frozen_id, source_sha="s1",
+                plan, frozen_plan_id=frozen_id, source_sha=SOURCE_SHA,
                 entries=manifest_entries,
             )
             good = rd.ReceiptEntry(
@@ -588,7 +593,7 @@ class FrozenEnforcementTests(unittest.TestCase):
         frozen_state = self.pin_state("aaaa")
         plan = rd.compute_plan(graph, frozen_state)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=frozen_state,
+            plan, graph, source_sha=SOURCE_SHA, state=frozen_state,
             measurement=AllRecordsResolve(),
         )
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
@@ -606,7 +611,7 @@ class FrozenEnforcementTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError) as caught:
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1",
+                    source_sha=SOURCE_SHA,
                     approvals={"cloud-pin": rd.Approval("juan", "now")},
                     state=drifted, frozen=frozen,
                 )
@@ -619,14 +624,14 @@ class FrozenEnforcementTests(unittest.TestCase):
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
         with self.assertRaises(rd.BlockedByDeclaredInputs):
-            rd.freeze_plan(plan, graph, source_sha="s1", state=state)
+            rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA, state=state)
 
     def test_frozen_measurement_binding_is_enforced_at_execution(self) -> None:
         graph = fixture_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state,
+            plan, graph, source_sha=SOURCE_SHA, state=state,
             measurement=AllRecordsResolve(),
         )
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
@@ -649,7 +654,7 @@ class FrozenEnforcementTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError):
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1", approvals={}, state=state, frozen=frozen,
+                    source_sha=SOURCE_SHA, approvals={}, state=state, frozen=frozen,
                 )
             self.assertEqual(lanes.calls, [])
 
@@ -708,7 +713,7 @@ class ReceiptVerificationTests(unittest.TestCase):
                 if k.startswith("staged-manifest:")
             )
             sealed, digest = rd.seal_receipt(
-                frozen.plan, graph, source_sha="s1",
+                frozen.plan, graph, source_sha=SOURCE_SHA,
                 entries=forged_entries, approvals={},
                 frozen_plan_id=planned["frozen_plan_id"],
                 staged_manifest_id=manifest_id,
@@ -841,14 +846,14 @@ class ResumeBindingTests(unittest.TestCase):
                 for n in plan.moving
             }
             foreign_bytes, foreign_digest = rd.seal_staged_manifest(
-                plan, frozen_plan_id="FOREIGN-PLAN", source_sha="s1",
+                plan, frozen_plan_id="FOREIGN-PLAN", source_sha=SOURCE_SHA,
                 entries=entries,
             )
             foreign_id = f"staged-manifest:FOREIGN-PLAN:{foreign_digest}"
             store.put(foreign_id, foreign_bytes)
             authority.record(foreign_id, foreign_digest)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
@@ -858,7 +863,7 @@ class ResumeBindingTests(unittest.TestCase):
                     plan, graph,
                     lanes=lanes, skew=FixtureSkew(),
                     store=store, authority=authority,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     frozen=frozen, measurement=AllRecordsResolve(),
                 )
 
@@ -950,6 +955,170 @@ class SubprocessSurfaceTests(unittest.TestCase):
             self.assertNotIn("no record", result.stdout)
 
 
+class OutstandingReceiptVerdictTests(unittest.TestCase):
+    """The official reader's OUTSTANDING verdict, asserted through rd.main().
+
+    Nothing asserted this verdict at all, which is how the reader and the npm
+    lane were able to disagree with each other while both looked green. This
+    drives the real CLI entry point and reads the printed verdict.
+
+    In-process rather than fresh-process: crossing a process boundary needs real
+    registry observers, which fixtures cannot provide. It covers the reader's
+    composition and verdict formatting, not the transport.
+    """
+
+    def _run_and_read(self, root, graph_path, state):
+        """Plan, run, and return (receipt_id, planned, lanes, receipt)."""
+        import contextlib, io
+        helper = CliPathTests("graph_file")
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            rd.main(
+                ["--graph", str(graph_path), "--store-root", str(root), "plan"],
+                providers=helper.providers_for(root, state),
+            )
+        planned = json.loads(buffer.getvalue())
+        graph = rd.Graph.load(graph_path)
+        plan = rd.compute_plan(graph, state)
+        lanes = FixtureLanes({n.component for n in plan.moving})
+        rd.main(
+            ["--graph", str(graph_path), "release-run", "--allow-local-authority",
+             "--plan-id", planned["frozen_plan_id"],
+             "--plan-artifact-id", planned["plan_artifact_id"]],
+            providers=helper.providers_for(root, state, lanes=lanes),
+        )
+        authority = rd.FileDigestAuthority(root)
+        receipt_id = next(
+            k for k in authority.recorded_ids() if k.startswith("receipt:")
+        )
+        receipt = rd.load_sealed_receipt(
+            rd.FileArtifactStore(root).get(receipt_id),
+            expected_digest=authority.expected_digest(receipt_id),
+        )
+        return receipt_id, planned, lanes, receipt
+
+    def test_a_debt_bearing_receipt_reports_outstanding_positive(self) -> None:
+        """The half that matters: a release that owes delivery must SAY so.
+        A generic MATCH cannot distinguish published-and-delivered from
+        published-but-still-owed."""
+        import contextlib, io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = CliPathTests("graph_file")
+            graph_path = helper.graph_file(root)
+            # give client a delivery obligation it cannot satisfy pre-adoption
+            text = graph_path.read_text().replace(
+                '[component."client"]',
+                '[component."client"]\n'
+                'delivery_restart = { proof = "restart per host" }',
+                1,
+            )
+            self.assertIn("delivery_restart", text, "the graph edit must apply")
+            graph_path.write_text(text)
+            state = orchestration_state()
+            receipt_id, planned, lanes, receipt = self._run_and_read(
+                root, graph_path, state
+            )
+            self.assertEqual(
+                receipt.entries["client"].delivery_outstanding,
+                "delivery-restart-proof",
+                "the sealed receipt must record the debt",
+            )
+            # FixtureLanes has no observe(), which is exactly why nothing ever
+            # reached this verdict. An observing lane returns what the receipt
+            # recorded - including the absent proof that IS the debt.
+            class ObservingLanes(FixtureLanes):
+                def __init__(self, available, entries):
+                    super().__init__(available)
+                    self._entries = entries
+
+                def observe(self, node, staged=None):
+                    return self._entries[node.component]
+
+            observing = ObservingLanes(
+                {n.component for n in rd.compute_plan(
+                    rd.Graph.load(graph_path), state).moving},
+                receipt.entries,
+            )
+            verdict = io.StringIO()
+            with contextlib.redirect_stdout(verdict):
+                rd.main(
+                    ["--graph", str(graph_path), "--store-root", str(root),
+                     "release-receipt", "--artifact-id", receipt_id,
+                     "--plan-id", planned["frozen_plan_id"],
+                     "--plan-artifact-id", planned["plan_artifact_id"]],
+                    providers=helper.providers_for(root, state, lanes=observing),
+                )
+            printed = verdict.getvalue()
+            self.assertIn("OUTSTANDING", printed)
+            self.assertIn("client", printed)
+
+    def test_a_debt_bearing_receipt_reports_outstanding(self) -> None:
+        import contextlib, io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = CliPathTests("graph_file")
+            graph_path = helper.graph_file(root)
+            graph = rd.Graph.load(graph_path)
+            data = json.loads(graph_path.read_text()) if False else None
+            state = orchestration_state()
+
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                rd.main(
+                    ["--graph", str(graph_path), "--store-root", str(root), "plan"],
+                    providers=helper.providers_for(root, state),
+                )
+            planned = json.loads(buffer.getvalue())
+
+            plan = rd.compute_plan(graph, state)
+            lanes = FixtureLanes({n.component for n in plan.moving})
+            rd.main(
+                [
+                    "--graph", str(graph_path),
+                    "release-run", "--allow-local-authority",
+                    "--plan-id", planned["frozen_plan_id"],
+                    "--plan-artifact-id", planned["plan_artifact_id"],
+                ],
+                providers=helper.providers_for(root, state, lanes=lanes),
+            )
+            authority = rd.FileDigestAuthority(root)
+            receipt_id = next(
+                k for k in authority.recorded_ids() if k.startswith("receipt:")
+            )
+            receipt = rd.load_sealed_receipt(
+                rd.FileArtifactStore(root).get(receipt_id),
+                expected_digest=authority.expected_digest(receipt_id),
+            )
+            # The fixture graph has no delivery_restart component, so this
+            # release owes nothing and must NOT report OUTSTANDING. The
+            # discriminating half: a verdict that always said OUTSTANDING would
+            # be as useless as one that never did.
+            self.assertTrue(
+                all(e.delivery_outstanding is None for e in receipt.entries.values()),
+                "a plan with no delivery obligation owes nothing",
+            )
+            verdict = io.StringIO()
+            with contextlib.redirect_stdout(verdict):
+                rd.main(
+                    [
+                        "--graph", str(graph_path), "--store-root", str(root),
+                        "release-receipt",
+                        "--artifact-id", receipt_id,
+                        "--plan-id", planned["frozen_plan_id"],
+                        "--plan-artifact-id", planned["plan_artifact_id"],
+                    ],
+                    providers=helper.providers_for(root, state, lanes=lanes),
+                )
+            printed = verdict.getvalue()
+            self.assertNotIn(
+                "OUTSTANDING", printed,
+                "nothing is owed here, so the reader must not claim a debt",
+            )
+
+
 class PostPublicationResumeTests(unittest.TestCase):
     def test_resume_completes_after_genuine_publication(self) -> None:
         """alice's reproduction: freeze client 1.1.0 over registry 1.0.0,
@@ -965,11 +1134,11 @@ class PostPublicationResumeTests(unittest.TestCase):
             before = orchestration_state()
             plan = rd.compute_plan(graph, before)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=before,
+                plan, graph, source_sha=SOURCE_SHA, state=before,
                 measurement=AllRecordsResolve(),
             )
-            store.put(f"plan:s1:{frozen_id}", frozen_bytes)
-            authority.record(f"plan:s1:{frozen_id}", frozen_id)
+            store.put(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes)
+            authority.record(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_id)
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
 
             class CrashSecondPublish(FixtureLanes):
@@ -983,7 +1152,7 @@ class PostPublicationResumeTests(unittest.TestCase):
                 rd.run_plan(
                     plan, graph, crash,
                     skew=FixtureSkew(), authority=authority, store=store,
-                    source_sha="s1", approvals={}, state=before, frozen=frozen,
+                    source_sha=SOURCE_SHA, approvals={}, state=before, frozen=frozen,
                     providers=rd.Providers(
                         store=store, authority=authority,
                         measurement=AllRecordsResolve(),
@@ -1013,7 +1182,7 @@ class PostPublicationResumeTests(unittest.TestCase):
                 plan, graph,
                 lanes=resume_lanes, skew=FixtureSkew(),
                 store=store, authority=authority,
-                source_sha="s1", approvals={}, state=after,
+                source_sha=SOURCE_SHA, approvals={}, state=after,
                 frozen=frozen, measurement=AllRecordsResolve(),
             )
             self.assertEqual(set(entries), {n.component for n in plan.moving})
@@ -1274,10 +1443,10 @@ class SplitProviderTests(unittest.TestCase):
             state = orchestration_state()
             plan = rd.compute_plan(graph, state)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
-            plan_artifact_id = f"plan:s1:{frozen_id}"
+            plan_artifact_id = f"plan:{SOURCE_SHA}:{frozen_id}"
             store.put(plan_artifact_id, frozen_bytes)
             authority.record(plan_artifact_id, frozen_id)
 
@@ -1298,16 +1467,23 @@ class SplitProviderTests(unittest.TestCase):
                 capture_output=True, text=True, timeout=60,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("RESOLVED s1", result.stdout)
+            self.assertIn(f"RESOLVED {SOURCE_SHA}", result.stdout)
 
 
 class DeliveryMomentTests(unittest.TestCase):
-    def test_missing_delivery_proof_stops_before_downstream_publish(self) -> None:
-        """alice's reproduction: channel (delivery_restart) published without
-        proof; the driver still published the downstream pointer and verified
-        both, failing only at receipt sealing. The exact call trace: channel
-        publish may occur; downstream pointer publish and EVERY verify call
-        must be absent."""
+    def test_malformed_delivery_proof_stops_before_downstream_publish(self) -> None:
+        """alice's reproduction, preserved where it still applies.
+
+        Her case: a delivery node published without proof and the driver kept
+        going, failing only at receipt sealing. Failure must happen at the
+        moment of effect.
+
+        A MISSING proof no longer fails at all - restart evidence cannot exist
+        before the version is published, so it is recorded as a debt (see
+        test_publishing_without_delivery_records_the_debt). A MALFORMED proof is
+        still a failure, and this asserts it stops before the downstream pointer
+        publishes and before any verify call.
+        """
         data = fixture_graph_dict()
         data["component"]["client"]["delivery_restart"] = {
             "proof": "restart evidence per installed host"
@@ -1316,38 +1492,41 @@ class DeliveryMomentTests(unittest.TestCase):
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
 
-        class NoProofLanes(FixtureLanes):
+        class BadProofLanes(FixtureLanes):
             def publish(self, node, staged):
                 self.calls.append(("publish", node.component))
-                return staged  # no delivery proof attached
+                if node.component == "client":
+                    return rd.ReceiptEntry(
+                        version=staged.version, digest=staged.digest,
+                        phase=staged.phase, pointer_state=staged.pointer_state,
+                        delivery_proof={"obligation": "delivery-restart-proof",
+                                        "evidence_id": "restart:h1",
+                                        "digest": "not-a-sha256"},
+                    )
+                return staged
 
-        lanes = NoProofLanes({n.component for n in plan.moving})
+        lanes = BadProofLanes({n.component for n in plan.moving})
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with self.assertRaises(rd.ReceiptError) as caught:
+            with self.assertRaises(rd.ReceiptError):
                 rd.run_plan(
                     plan, graph, lanes,
                     skew=FixtureSkew(),
                     authority=rd.FileDigestAuthority(root),
                     store=rd.FileArtifactStore(root),
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     providers=rd.Providers(
                         store=rd.FileArtifactStore(root),
                         authority=rd.FileDigestAuthority(root),
                         measurement=AllRecordsResolve(),
                     ),
                 )
-            self.assertIn("delivery proof", str(caught.exception))
-            publishes = [c for k, c in lanes.calls if k == "publish"]
-            self.assertEqual(
-                publishes, ["client"],
-                "the failing node may publish; nothing downstream may",
-            )
-            verifies = [c for k, c in lanes.calls if k == "verify"]
-            self.assertEqual(verifies, [], "no verify call may follow the stop")
+        self.assertNotIn(("publish", "pointer"), lanes.calls)
+        self.assertFalse(
+            [c for c in lanes.calls if c[0] == "verify"],
+            "no node may be verified after a malformed proof at the moment of effect",
+        )
 
-
-class StructuredProofTests(unittest.TestCase):
     def delivery_graph(self):
         data = fixture_graph_dict()
         data["component"]["client"]["delivery_restart"] = {
@@ -1355,7 +1534,7 @@ class StructuredProofTests(unittest.TestCase):
         }
         return rd.Graph.from_dict(data)
 
-    def run_with_proof(self, proof):
+    def run_with_proof(self, proof, *, record_evidence=True, want_receipt=False):
         graph = self.delivery_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
@@ -1376,18 +1555,34 @@ class StructuredProofTests(unittest.TestCase):
 
         with tf.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            authority = rd.FileDigestAuthority(root)
+            # Record the restart evidence the way an operator must: the release
+            # resolves it against the authority instead of trusting the record.
+            if record_evidence and isinstance(proof, dict) and isinstance(proof.get("evidence_id"), str):
+                if isinstance(proof.get("digest"), str):
+                    authority.record(proof["evidence_id"], proof["digest"])
             rd.run_plan(
                 plan, graph, lanes,
                 skew=FixtureSkew(),
-                authority=rd.FileDigestAuthority(root),
+                authority=authority,
                 store=rd.FileArtifactStore(root),
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
                 providers=rd.Providers(
                     store=rd.FileArtifactStore(root),
                     authority=rd.FileDigestAuthority(root),
                     measurement=AllRecordsResolve(),
                 ),
             )
+            if want_receipt:
+                store = rd.FileArtifactStore(root)
+                receipt_id = next(
+                    k for k in authority.recorded_ids()
+                    if k.startswith("receipt:")
+                )
+                return rd.load_sealed_receipt(
+                    store.get(receipt_id),
+                    expected_digest=authority.expected_digest(receipt_id),
+                )
         return lanes
 
     def test_structured_proof_completes(self) -> None:
@@ -1395,10 +1590,92 @@ class StructuredProofTests(unittest.TestCase):
             {
                 "obligation": "delivery-restart-proof",
                 "evidence_id": "restart:host-1:pid-42",
-                "digest": "sha-evidence",
+                "digest": "b7d3f0a1c25e48d9a6f01b8e3c74d5209fa6e13b8c07d24e5f9a1b306c8d47e2",
             }
         )
         self.assertIn(("publish", "plugin"), lanes.calls)
+
+    def test_empty_proof_refuses_before_downstream_effects(self) -> None:
+        """Truthiness let a malformed {} count as absent: it travelled beside an
+        OUTSTANDING debt and surfaced only at final seal, after downstream nodes
+        may already have published. It must refuse at the first effect
+        boundary."""
+        graph = self.delivery_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+
+        class EmptyProofLanes(FixtureLanes):
+            def publish(self, node, staged):
+                self.calls.append(("publish", node.component))
+                if node.component == "client":
+                    return rd.ReceiptEntry(
+                        version=staged.version, digest=staged.digest,
+                        phase=staged.phase, pointer_state=staged.pointer_state,
+                        delivery_proof={},
+                    )
+                return staged
+
+        lanes = EmptyProofLanes({n.component for n in plan.moving})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(rd.ReceiptError):
+                rd.run_plan(
+                    plan, graph, lanes, skew=FixtureSkew(),
+                    authority=rd.FileDigestAuthority(root),
+                    store=rd.FileArtifactStore(root),
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
+                    providers=rd.Providers(
+                        store=rd.FileArtifactStore(root),
+                        authority=rd.FileDigestAuthority(root),
+                        measurement=AllRecordsResolve(),
+                    ),
+                )
+        self.assertNotIn(("publish", "pointer"), lanes.calls,
+                         "malformed evidence must stop before downstream effects")
+
+    def test_publishing_without_delivery_records_the_debt(self) -> None:
+        """Delivery is owed AFTER publication, not before it.
+
+        A restart proof can only exist once the version is published and hosts
+        have restarted onto it, so demanding one at publish time can only be
+        satisfied by inventing it. The release publishes and records that
+        delivery is outstanding - it must never read as delivered.
+        """
+        lanes = self.run_with_proof(None)
+        self.assertIn(("publish", "plugin"), lanes.calls)
+
+    def test_an_outstanding_obligation_is_visible_in_the_receipt(self) -> None:
+        receipt = self.run_with_proof(None, want_receipt=True)
+        entry = receipt.entries["client"]
+        self.assertIsNone(entry.delivery_proof)
+        self.assertEqual(entry.delivery_outstanding, "delivery-restart-proof")
+
+    def test_unrecorded_evidence_refuses_at_publish(self) -> None:
+        """The check used to compare the operator's record against the lane's
+        echo of that same record, so it always agreed. The evidence must exist
+        where an independent authority can see it."""
+        with self.assertRaises(rd.ReceiptError) as caught:
+            self.run_with_proof(
+                {
+                    "obligation": "delivery-restart-proof",
+                    "evidence_id": "restart:never-recorded",
+                    "digest": "a" * 64,
+                },
+                record_evidence=False,
+            )
+        self.assertIn("not recorded with the authority", str(caught.exception))
+
+    def test_invented_digest_refuses_at_publish(self) -> None:
+        """A digest that addresses nothing proves nothing."""
+        with self.assertRaises(rd.ReceiptError) as caught:
+            self.run_with_proof(
+                {
+                    "obligation": "delivery-restart-proof",
+                    "evidence_id": "restart:host-1:pid-42",
+                    "digest": "restarted-i-promise",
+                }
+            )
+        self.assertIn("must be a sha256", str(caught.exception))
 
     def test_free_text_proof_refuses_at_publish(self) -> None:
         """alice's refinement: nonempty free text is not delivery evidence."""
@@ -1492,7 +1769,7 @@ class ManifestSemanticLoadTests(unittest.TestCase):
         body = json.dumps(
             {
                 "frozen_plan_id": "FPID",
-                "source_sha": "s1",
+                "source_sha": SOURCE_SHA,
                 "entries": entries,
             },
             sort_keys=True,
@@ -1502,7 +1779,7 @@ class ManifestSemanticLoadTests(unittest.TestCase):
         with self.assertRaises(rd.ReceiptError) as caught:
             rd.validate_staged_manifest(
                 manifest, plan=plan, graph=graph,
-                frozen_plan_id="FPID", source_sha="s1",
+                frozen_plan_id="FPID", source_sha=SOURCE_SHA,
             )
         self.assertIn("canonical", str(caught.exception))
 
@@ -1524,15 +1801,15 @@ class ManifestSemanticLoadTests(unittest.TestCase):
         fabricated["client"]["delivery_obligation"] = "caller-invented-text"
         with self.assertRaises(rd.ReceiptError):
             rd.validate_staged_manifest(
-                {"frozen_plan_id": "F", "source_sha": "s1", "entries": fabricated},
-                plan=plan, graph=graph, frozen_plan_id="F", source_sha="s1",
+                {"frozen_plan_id": "F", "source_sha": SOURCE_SHA, "entries": fabricated},
+                plan=plan, graph=graph, frozen_plan_id="F", source_sha=SOURCE_SHA,
             )
         malformed = json.loads(json.dumps(base_entries))
         malformed["client"]["digest_set"] = {"": "sha"}
         with self.assertRaises(rd.ReceiptError):
             rd.validate_staged_manifest(
-                {"frozen_plan_id": "F", "source_sha": "s1", "entries": malformed},
-                plan=plan, graph=graph, frozen_plan_id="F", source_sha="s1",
+                {"frozen_plan_id": "F", "source_sha": SOURCE_SHA, "entries": malformed},
+                plan=plan, graph=graph, frozen_plan_id="F", source_sha=SOURCE_SHA,
             )
         missing_pointer = json.loads(json.dumps(base_entries))
         missing_pointer["pointer"]["pointer_state"] = None
@@ -1540,10 +1817,10 @@ class ManifestSemanticLoadTests(unittest.TestCase):
             rd.validate_staged_manifest(
                 {
                     "frozen_plan_id": "F",
-                    "source_sha": "s1",
+                    "source_sha": SOURCE_SHA,
                     "entries": missing_pointer,
                 },
-                plan=plan, graph=graph, frozen_plan_id="F", source_sha="s1",
+                plan=plan, graph=graph, frozen_plan_id="F", source_sha=SOURCE_SHA,
             )
 
 
@@ -1568,7 +1845,7 @@ class ManifestAnchorOrderTests(unittest.TestCase):
                 rd.run_plan(
                     plan, graph, lanes,
                     skew=FixtureSkew(), authority=authority, store=store,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     providers=rd.Providers(
                         store=store, authority=authority,
                         measurement=AllRecordsResolve(),
@@ -1660,11 +1937,11 @@ class TagDeltaTests(unittest.TestCase):
 
     def test_expected_candidate_tag_alone_is_allowed(self) -> None:
         frozen_resolved, current = self.frozen_and_current(
-            {"client-v1.0.0": "sha-old", "client-v1.1.0": "s1"}
+            {"client-v1.0.0": "sha-old", "client-v1.1.0": SOURCE_SHA}
         )
         drift = rd._frozen_drift(
             frozen_resolved, current, {"client"},
-            allowed_tag_transitions={"client": {"client-v1.1.0": "s1"}},
+            allowed_tag_transitions={"client": {"client-v1.1.0": SOURCE_SHA}},
         )
         self.assertEqual(drift, [])
 
@@ -1674,13 +1951,13 @@ class TagDeltaTests(unittest.TestCase):
         frozen_resolved, current = self.frozen_and_current(
             {
                 "client-v1.0.0": "sha-old",
-                "client-v1.1.0": "s1",
+                "client-v1.1.0": SOURCE_SHA,
                 "client-v999.0.0": "sha-evil",
             }
         )
         drift = rd._frozen_drift(
             frozen_resolved, current, {"client"},
-            allowed_tag_transitions={"client": {"client-v1.1.0": "s1"}},
+            allowed_tag_transitions={"client": {"client-v1.1.0": SOURCE_SHA}},
         )
         self.assertTrue(any("999" in d for d in drift), drift)
 
@@ -1690,7 +1967,7 @@ class TagDeltaTests(unittest.TestCase):
         )
         drift = rd._frozen_drift(
             frozen_resolved, current, {"client"},
-            allowed_tag_transitions={"client": {"client-v1.1.0": "s1"}},
+            allowed_tag_transitions={"client": {"client-v1.1.0": SOURCE_SHA}},
         )
         self.assertTrue(drift)
 
@@ -1719,7 +1996,7 @@ class StageBoundaryTests(unittest.TestCase):
                     skew=FixtureSkew(),
                     authority=rd.FileDigestAuthority(root),
                     store=rd.FileArtifactStore(root),
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     providers=rd.Providers(
                         store=rd.FileArtifactStore(root),
                         authority=rd.FileDigestAuthority(root),
@@ -1759,18 +2036,18 @@ class StageBoundaryTests(unittest.TestCase):
             store = rd.FileArtifactStore(root)
             authority = rd.FileDigestAuthority(root)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
-            store.put(f"plan:s1:{frozen_id}", frozen_bytes)
-            authority.record(f"plan:s1:{frozen_id}", frozen_id)
+            store.put(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes)
+            authority.record(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_id)
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
             crash = RegistryLanes({n.component for n in plan.moving})
             with self.assertRaises(KeyboardInterrupt):
                 rd.run_plan(
                     plan, graph, crash,
                     skew=FixtureSkew(), authority=authority, store=store,
-                    source_sha="s1", approvals={}, state=state, frozen=frozen,
+                    source_sha=SOURCE_SHA, approvals={}, state=state, frozen=frozen,
                     providers=rd.Providers(
                         store=store, authority=authority,
                         measurement=AllRecordsResolve(),
@@ -1797,7 +2074,7 @@ class StageBoundaryTests(unittest.TestCase):
                     plan, graph,
                     lanes=resume_lanes, skew=FixtureSkew(),
                     store=store, authority=authority,
-                    source_sha="s1", approvals={}, state=after,
+                    source_sha=SOURCE_SHA, approvals={}, state=after,
                     frozen=frozen, measurement=AllRecordsResolve(),
                 )
             self.assertIn("digest set", str(caught.exception))
@@ -1832,7 +2109,7 @@ class PublishStateTests(unittest.TestCase):
                     skew=FixtureSkew(),
                     authority=rd.FileDigestAuthority(root),
                     store=rd.FileArtifactStore(root),
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     providers=rd.Providers(
                         store=rd.FileArtifactStore(root),
                         authority=rd.FileDigestAuthority(root),
@@ -1852,7 +2129,7 @@ class ResumeAmbiguityTests(unittest.TestCase):
             state = orchestration_state()
             plan = rd.compute_plan(graph, state)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
@@ -1868,7 +2145,7 @@ class ResumeAmbiguityTests(unittest.TestCase):
                     for n in plan.moving
                 }
                 body, digest = rd.seal_staged_manifest(
-                    plan, frozen_plan_id=frozen_id, source_sha="s1",
+                    plan, frozen_plan_id=frozen_id, source_sha=SOURCE_SHA,
                     entries=entries, graph=graph,
                 )
                 artifact_id = f"staged-manifest:{frozen_id}:{digest}"
@@ -1880,7 +2157,7 @@ class ResumeAmbiguityTests(unittest.TestCase):
                     plan, graph,
                     lanes=lanes, skew=FixtureSkew(),
                     store=store, authority=authority,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     frozen=frozen, measurement=AllRecordsResolve(),
                 )
             self.assertIn("manifest-id", str(caught.exception))
@@ -1950,17 +2227,17 @@ class RerunIdempotencyTests(unittest.TestCase):
             state = orchestration_state()
             plan = rd.compute_plan(graph, state)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
-            store.put(f"plan:s1:{frozen_id}", frozen_bytes)
-            authority.record(f"plan:s1:{frozen_id}", frozen_id)
+            store.put(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes)
+            authority.record(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_id)
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
             lanes = FixtureLanes({n.component for n in plan.moving})
             first = rd.run_plan(
                 plan, graph, lanes,
                 skew=FixtureSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=state, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=state, frozen=frozen,
                 providers=rd.Providers(
                     store=store, authority=authority,
                     measurement=AllRecordsResolve(),
@@ -1989,7 +2266,7 @@ class RerunIdempotencyTests(unittest.TestCase):
                 plan, graph,
                 lanes=rerun_lanes, skew=FixtureSkew(),
                 store=store, authority=authority,
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
                 frozen=frozen, measurement=AllRecordsResolve(),
             )
             self.assertEqual(set(entries), {n.component for n in plan.moving})
@@ -2004,7 +2281,7 @@ class FrozenSnapshotTests(unittest.TestCase):
         graph = fixture_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, _ = rd.freeze_plan(plan, graph, source_sha="s1", state=state, measurement=AllRecordsResolve())
+        frozen_bytes, _ = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA, state=state, measurement=AllRecordsResolve())
         parsed = json.loads(frozen_bytes)
         parsed["content"]["plan_digest"] = "not-the-plan"
         forged = json.dumps(parsed, sort_keys=True).encode()
@@ -2036,11 +2313,11 @@ class FrozenSnapshotTests(unittest.TestCase):
             checkout_heads={"../server-src": "cafebabe"},
         )
         _, id_a = rd.freeze_plan(
-            rd.compute_plan(graph, state_a), graph, source_sha="s1", state=state_a,
+            rd.compute_plan(graph, state_a), graph, source_sha=SOURCE_SHA, state=state_a,
             measurement=AllRecordsResolve(),
         )
         _, id_b = rd.freeze_plan(
-            rd.compute_plan(graph, state_b), graph, source_sha="s1", state=state_b,
+            rd.compute_plan(graph, state_b), graph, source_sha=SOURCE_SHA, state=state_b,
             measurement=AllRecordsResolve(),
         )
         self.assertNotEqual(
@@ -2073,7 +2350,7 @@ class TrustedCompositionTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError):
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                     require_external_authority=True,
                 )
             self.assertEqual(lanes.calls, [])
@@ -2118,7 +2395,7 @@ class FrozenTruthTests(unittest.TestCase):
         graph = fixture_graph()
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, _ = rd.freeze_plan(plan, graph, source_sha="s1", state=state, measurement=AllRecordsResolve())
+        frozen_bytes, _ = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA, state=state, measurement=AllRecordsResolve())
         parsed = json.loads(frozen_bytes)
         parsed["content"]["plan_digest"] = "not-the-plan"
         import hashlib
@@ -2137,11 +2414,11 @@ class FrozenTruthTests(unittest.TestCase):
         state = orchestration_state()
         plan = rd.compute_plan(graph, state)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state,
+            plan, graph, source_sha=SOURCE_SHA, state=state,
             measurement=AllRecordsResolve(),
         )
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
-        self.assertEqual(frozen.source_sha, "s1")
+        self.assertEqual(frozen.source_sha, SOURCE_SHA)
         self.assertTrue(frozen.resolved is not None)
         self.assertTrue(frozen.graph_canonical)
 
@@ -2152,7 +2429,7 @@ class FrozenTruthTests(unittest.TestCase):
             state = orchestration_state()
             plan = rd.compute_plan(graph, state)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
@@ -2205,7 +2482,7 @@ class SemanticValidationTests(unittest.TestCase):
             with self.assertRaises(rd.ReceiptError) as caught:
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                 )
             self.assertIn("999.0.0", str(caught.exception))
 
@@ -2245,7 +2522,7 @@ class SemanticValidationTests(unittest.TestCase):
             with self.assertRaises(rd.BlockedByDeclaredInputs):
                 rd.run_plan(
                     plan, graph, providers=providers,
-                    source_sha="s1", approvals={}, state=state,
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
                 )
             self.assertEqual(lanes.calls, [])
 
@@ -2295,18 +2572,18 @@ class ResumeManifestTests(unittest.TestCase):
                     return super().publish(node, staged)
 
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=AllRecordsResolve(),
             )
-            store.put(f"plan:s1:{frozen_id}", frozen_bytes)
-            authority.record(f"plan:s1:{frozen_id}", frozen_id)
+            store.put(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes)
+            authority.record(f"plan:{SOURCE_SHA}:{frozen_id}", frozen_id)
             frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
             crash_lanes = CrashSecondPublish({n.component for n in plan.moving})
             with self.assertRaises(KeyboardInterrupt):
                 rd.run_plan(
                     plan, graph, crash_lanes,
                     skew=FixtureSkew(), authority=authority, store=store,
-                    source_sha="s1", approvals={}, state=state, frozen=frozen,
+                    source_sha=SOURCE_SHA, approvals={}, state=state, frozen=frozen,
                     providers=rd.Providers(
                         store=store, authority=authority,
                         measurement=AllRecordsResolve(),
@@ -2333,7 +2610,7 @@ class ResumeManifestTests(unittest.TestCase):
                 skew=FixtureSkew(),
                 store=store,
                 authority=authority,
-                source_sha="s1",
+                source_sha=SOURCE_SHA,
                 approvals={},
                 state=state,
                 measurement=AllRecordsResolve(),
@@ -2589,10 +2866,26 @@ class SitePlanTests(unittest.TestCase):
         self.assertEqual(
             plan.moving, [], "no observed change and no baseline is not movement"
         )
-        problems = rd.check_declared_inputs(graph, plan, state)
+        # Undecidability is disclosed on every plan, because it is true on
+        # every plan: the driver cannot say whether the site is current. It
+        # does not block an unrelated release - that made every plan of every
+        # component unsatisfiable - but it is never silent either, which is
+        # what turns a no-op plan into a false all-clear. The disclosure is
+        # read out of frozen truth, so it is the sealed value rather than a
+        # second computation that could disagree with it.
+        frozen_bytes, frozen_id = rd.freeze_plan(
+            plan, graph, source_sha=SOURCE_SHA, state=state,
+        )
+        frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
+        disclosures = rd.delivery_disclosures(frozen.resolved)
         self.assertTrue(
-            any("baseline" in p for p in problems),
-            f"the unobservable baseline must be a named problem: {problems}",
+            any("baseline" in d for d in disclosures),
+            f"the unobservable baseline must be disclosed: {disclosures}",
+        )
+        self.assertEqual(
+            rd.check_declared_inputs(graph, plan, state),
+            [],
+            "an undecidable delivery node must not block a plan that omits it",
         )
 
 

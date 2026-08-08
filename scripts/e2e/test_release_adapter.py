@@ -20,6 +20,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import release_driver as rd
 from test_release_driver import (
+    SOURCE_SHA,
     FixtureAuthority,
     FixtureLanes,
     fixture_graph_dict,
@@ -262,72 +263,72 @@ class AnchorStoreTests(unittest.TestCase):
     def test_put_dispatches_once_and_get_returns_the_body(self) -> None:
         transport = FakeAnchorTransport(latency=1)
         store, _ = anchor_pair(transport)
-        store.put("plan:s1:abc", b"body-bytes")
+        store.put(f"plan:{SOURCE_SHA}:abc", b"body-bytes")
         self.assertEqual(len(transport.dispatches), 1)
-        self.assertEqual(store.get("plan:s1:abc"), b"body-bytes")
+        self.assertEqual(store.get(f"plan:{SOURCE_SHA}:abc"), b"body-bytes")
 
     def test_repeated_put_reconciles_without_a_second_dispatch(self) -> None:
         transport = FakeAnchorTransport()
         store, _ = anchor_pair(transport)
-        store.put("plan:s1:abc", b"body-bytes")
-        store.put("plan:s1:abc", b"body-bytes")
+        store.put(f"plan:{SOURCE_SHA}:abc", b"body-bytes")
+        store.put(f"plan:{SOURCE_SHA}:abc", b"body-bytes")
         self.assertEqual(len(transport.dispatches), 1)
 
     def test_different_bytes_for_an_anchored_id_refuse(self) -> None:
         transport = FakeAnchorTransport()
         store, _ = anchor_pair(transport)
-        store.put("plan:s1:abc", b"body-bytes")
+        store.put(f"plan:{SOURCE_SHA}:abc", b"body-bytes")
         with self.assertRaises(rd.ReceiptError):
-            store.put("plan:s1:abc", b"DIFFERENT")
+            store.put(f"plan:{SOURCE_SHA}:abc", b"DIFFERENT")
 
     def test_conflicting_anchor_artifacts_refuse(self) -> None:
         transport = FakeAnchorTransport()
-        transport.seed("plan:s1:abc", b"one")
+        transport.seed(f"plan:{SOURCE_SHA}:abc", b"one")
         transport.artifacts.append(
-            {**transport._materialize("plan:s1:abc", b"two"),
+            {**transport._materialize(f"plan:{SOURCE_SHA}:abc", b"two"),
              "name": transport.artifacts[0]["name"].rsplit("--", 1)[0]
              + "--" + sha256(b"two")}
         )
         store, authority = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError):
-            store.get("plan:s1:abc")
+            store.get(f"plan:{SOURCE_SHA}:abc")
         with self.assertRaises(rd.ReceiptError):
-            authority.expected_digest("plan:s1:abc")
+            authority.expected_digest(f"plan:{SOURCE_SHA}:abc")
 
     def test_matching_expired_identity_refuses_reads_and_writes(self) -> None:
         """An identity whose anchor expired is compromised evidence: reads
         refuse naming expiry, and put must NOT re-anchor it."""
         transport = FakeAnchorTransport()
-        transport.seed("plan:s1:abc", b"body", expired=True)
+        transport.seed(f"plan:{SOURCE_SHA}:abc", b"body", expired=True)
         store, authority = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError) as caught:
-            store.get("plan:s1:abc")
+            store.get(f"plan:{SOURCE_SHA}:abc")
         self.assertIn("expired", str(caught.exception))
         with self.assertRaises(rd.ReceiptError):
-            authority.expected_digest("plan:s1:abc")
+            authority.expected_digest(f"plan:{SOURCE_SHA}:abc")
         with self.assertRaises(rd.ReceiptError):
-            store.put("plan:s1:abc", b"body")
+            store.put(f"plan:{SOURCE_SHA}:abc", b"body")
         self.assertEqual(transport.dispatches, [])
 
     def test_anchor_from_a_foreign_workflow_refuses(self) -> None:
         transport = FakeAnchorTransport(run_path=".github/workflows/other.yml")
-        transport.seed("plan:s1:abc", b"body")
+        transport.seed(f"plan:{SOURCE_SHA}:abc", b"body")
         store, authority = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError) as caught:
-            store.get("plan:s1:abc")
+            store.get(f"plan:{SOURCE_SHA}:abc")
         self.assertIn("release-anchor.yml", str(caught.exception))
         with self.assertRaises(rd.ReceiptError):
-            authority.expected_digest("plan:s1:abc")
+            authority.expected_digest(f"plan:{SOURCE_SHA}:abc")
         _, fresh = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError):
             fresh.recorded_ids()
 
     def test_anchor_from_a_failed_run_refuses(self) -> None:
         transport = FakeAnchorTransport(run_conclusion="failure")
-        transport.seed("plan:s1:abc", b"body")
+        transport.seed(f"plan:{SOURCE_SHA}:abc", b"body")
         store, _ = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError):
-            store.get("plan:s1:abc")
+            store.get(f"plan:{SOURCE_SHA}:abc")
 
     def test_encoded_dispatch_payload_is_bounded(self) -> None:
         """GitHub bounds the TOTAL dispatch payload at 65,535 characters; an
@@ -345,34 +346,34 @@ class AnchorStoreTests(unittest.TestCase):
 
     def test_zip_bytes_must_match_the_api_digest(self) -> None:
         transport = FakeAnchorTransport()
-        transport.seed("plan:s1:abc", b"body")
+        transport.seed(f"plan:{SOURCE_SHA}:abc", b"body")
         transport.artifacts[0]["digest"] = "sha256:" + "0" * 64
         store, _ = anchor_pair(transport)
         with self.assertRaises(rd.ReceiptError) as caught:
-            store.get("plan:s1:abc")
+            store.get(f"plan:{SOURCE_SHA}:abc")
         self.assertIn("digest", str(caught.exception))
 
     def test_record_verifies_and_never_dispatches(self) -> None:
         transport = FakeAnchorTransport()
         store, authority = anchor_pair(transport)
-        store.put("plan:s1:abc", b"body-bytes")
+        store.put(f"plan:{SOURCE_SHA}:abc", b"body-bytes")
         before = len(transport.dispatches)
-        authority.record("plan:s1:abc", sha256(b"body-bytes"))
+        authority.record(f"plan:{SOURCE_SHA}:abc", sha256(b"body-bytes"))
         self.assertEqual(len(transport.dispatches), before)
         with self.assertRaises(rd.ReceiptError):
-            authority.record("plan:s1:abc", "0" * 64)
+            authority.record(f"plan:{SOURCE_SHA}:abc", "0" * 64)
         with self.assertRaises(rd.ReceiptError):
             authority.record("plan:never-uploaded", sha256(b"x"))
 
     def test_recorded_ids_enumerate_after_a_fresh_process(self) -> None:
         transport = FakeAnchorTransport()
         store, _ = anchor_pair(transport)
-        store.put("plan:s1:abc", b"one-body")
+        store.put(f"plan:{SOURCE_SHA}:abc", b"one-body")
         store.put("staged-manifest:f:d", b"two-body")
         _, fresh_authority = anchor_pair(transport)
         self.assertEqual(
             sorted(fresh_authority.recorded_ids()),
-            ["plan:s1:abc", "staged-manifest:f:d"],
+            [f"plan:{SOURCE_SHA}:abc", "staged-manifest:f:d"],
         )
 
     def test_real_transport_paginates(self) -> None:
@@ -595,26 +596,26 @@ class LaneRefThreadingTests(unittest.TestCase):
     def test_staged_manifest_carries_and_validates_lane_ref(self) -> None:
         plan, graph = self.plan_and_graph()
         body, digest = rd.seal_staged_manifest(
-            plan, frozen_plan_id="F", source_sha="s1",
+            plan, frozen_plan_id="F", source_sha=SOURCE_SHA,
             entries=self.fixture_entries(plan), graph=graph,
         )
         manifest = rd.load_staged_manifest(body, expected_digest=digest)
         self.assertEqual(manifest["entries"]["client"]["lane_ref"], GOOD_REF)
         rd.validate_staged_manifest(
             manifest, plan=plan, graph=graph,
-            frozen_plan_id="F", source_sha="s1",
+            frozen_plan_id="F", source_sha=SOURCE_SHA,
         )
         manifest["entries"]["client"]["lane_ref"] = {"artifact": "not-a-ref"}
         with self.assertRaises(rd.ReceiptError):
             rd.validate_staged_manifest(
                 manifest, plan=plan, graph=graph,
-                frozen_plan_id="F", source_sha="s1",
+                frozen_plan_id="F", source_sha=SOURCE_SHA,
             )
 
     def test_adoption_requires_the_exact_lane_ref(self) -> None:
         plan, graph = self.plan_and_graph()
         body, digest = rd.seal_staged_manifest(
-            plan, frozen_plan_id="F", source_sha="s1",
+            plan, frozen_plan_id="F", source_sha=SOURCE_SHA,
             entries=self.fixture_entries(plan), graph=graph,
         )
         manifest = rd.load_staged_manifest(body, expected_digest=digest)
@@ -644,7 +645,7 @@ class LaneRefThreadingTests(unittest.TestCase):
             for name, e in self.fixture_entries(plan).items()
         }
         sealed, digest = rd.seal_receipt(
-            plan, graph, source_sha="s1", entries=entries, approvals={},
+            plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={},
         )
         receipt = rd.load_sealed_receipt(sealed, expected_digest=digest)
         self.assertEqual(receipt.entries["client"].lane_ref, GOOD_REF)
@@ -1404,9 +1405,9 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
         )
         plan = rd.compute_plan(graph, state)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1"
+            plan, graph, source_sha=SOURCE_SHA
         )
-        plan_artifact_id = f"plan:s1:{frozen_id}"
+        plan_artifact_id = f"plan:{SOURCE_SHA}:{frozen_id}"
         rd._put_content_addressed(
             store, authority, plan_artifact_id, frozen_bytes, frozen_id
         )
@@ -1428,7 +1429,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lane,
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         fresh_authority = rd.GithubAnchorDigestAuthority(transport=transport)
@@ -1453,7 +1454,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             plan2, graph2,
             lanes=lane2, skew=NoRuntimeSkew(),
             store=store2, authority=authority2,
-            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
             require_external_authority=True,
             authority_trust="external-immutable",
         )
@@ -1480,7 +1481,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             store3.get(receipt_ids[0]),
             expected_digest=authority3.expected_digest(receipt_ids[0]),
         )
-        ok, why = rd.receipt_matches_run(receipt, plan2, graph2, source_sha="s1")
+        ok, why = rd.receipt_matches_run(receipt, plan2, graph2, source_sha=SOURCE_SHA)
         self.assertTrue(ok, why)
         self.assertEqual(receipt.entries["aw"].lane_ref["artifact"],
                          "gh-artifact:awebai/aw:30977506589:8918869285")
@@ -1507,7 +1508,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lane,
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         runs = FakeAwRuns()
@@ -1519,7 +1520,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             plan2, graph2,
             lanes=lane2, skew=NoRuntimeSkew(),
             store=store2, authority=authority2,
-            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
             require_external_authority=True,
             authority_trust="external-immutable",
         )
@@ -1540,7 +1541,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lane,
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         manifest_id = next(
@@ -1579,7 +1580,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
                 plan2, graph2,
                 lanes=lane2, skew=NoRuntimeSkew(),
                 store=store2, authority=authority2,
-                source_sha="s1", approvals={}, state=None, frozen=frozen2,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
                 require_external_authority=True,
                 authority_trust="external-immutable",
             )
@@ -1598,7 +1599,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lane,
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         manifest_id = next(
@@ -1638,7 +1639,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
                 plan2, graph2,
                 lanes=lane2, skew=NoRuntimeSkew(),
                 store=store2, authority=authority2,
-                source_sha="s1", approvals={}, state=None, frozen=frozen2,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
                 require_external_authority=True,
                 authority_trust="external-immutable",
             )
@@ -1654,7 +1655,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
             rd.run_plan(
                 plan, graph, lane,
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         remote = remote_state()
@@ -1668,7 +1669,7 @@ class EndToEndProductionCompositionTests(unittest.TestCase):
                 plan2, graph2,
                 lanes=lane2, skew=NoRuntimeSkew(),
                 store=store2, authority=authority2,
-                source_sha="s1", approvals={}, state=None, frozen=frozen2,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
                 require_external_authority=True,
                 authority_trust="external-immutable",
             )
@@ -2268,18 +2269,18 @@ class PypiOciEndToEndTests(unittest.TestCase):
 
         store, authority = compose()
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA)
         rd._put_content_addressed(
-            store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
+            store, authority, f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes, frozen_id)
         frozen = rd.load_frozen_plan(
-            store.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+            store.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
 
         crash_lane = lane_factory(publish_ok=False)
         with self.assertRaises(rd.ReceiptError):
             rd.run_plan(
                 plan, graph, crash_lane,
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
 
@@ -2287,12 +2288,12 @@ class PypiOciEndToEndTests(unittest.TestCase):
         resume_lane = lane_factory(publish_ok=True)
         plan2 = rd.compute_plan(graph, state)
         frozen2 = rd.load_frozen_plan(
-            store2.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+            store2.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
         entries = rd.resume_plan(
             plan2, graph,
             lanes=resume_lane, skew=NoRuntimeSkew(),
             store=store2, authority=authority2,
-            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
             require_external_authority=True,
             authority_trust="external-immutable",
         )
@@ -2377,28 +2378,28 @@ class PypiOciEndToEndTests(unittest.TestCase):
         store = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
         authority = rd.GithubAnchorDigestAuthority(transport=transport)
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA)
         rd._put_content_addressed(
-            store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
+            store, authority, f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes, frozen_id)
         frozen = rd.load_frozen_plan(
-            store.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+            store.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
         with self.assertRaises(rd.ReceiptError):
             rd.run_plan(
                 plan, graph, lane_factory(publish_ok=False),
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         store2 = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
         authority2 = rd.GithubAnchorDigestAuthority(transport=transport)
         resume_lane = lane_factory(publish_ok=True)
         frozen2 = rd.load_frozen_plan(
-            store2.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+            store2.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
         entries = rd.resume_plan(
             rd.compute_plan(graph, state), graph,
             lanes=resume_lane, skew=NoRuntimeSkew(),
             store=store2, authority=authority2,
-            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
             require_external_authority=True,
             authority_trust="external-immutable",
         )
@@ -2777,7 +2778,7 @@ class MatrixSkewRunnerTests(unittest.TestCase):
                 providers=rd.Providers(
                     store=rd._MemoryStore(), authority=FixtureAuthority(),
                     measurement=AllRecordsResolve()),
-                source_sha="s1", approvals={}, state=state,
+                source_sha=SOURCE_SHA, approvals={}, state=state,
             )
         publishes = [c for k, c in lanes.calls if k == "publish"]
         self.assertEqual(publishes, [],
@@ -2841,8 +2842,8 @@ class ProductionSkewCompositionTests(unittest.TestCase):
             store = rd.FileArtifactStore(root)
             authority = rd.FileDigestAuthority(root)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state, measurement=support)
-            plan_artifact_id = f"plan:s1:{frozen_id}"
+                plan, graph, source_sha=SOURCE_SHA, state=state, measurement=support)
+            plan_artifact_id = f"plan:{SOURCE_SHA}:{frozen_id}"
             rd._put_content_addressed(
                 store, authority, plan_artifact_id, frozen_bytes, frozen_id)
             code = rd.main(
@@ -2852,7 +2853,7 @@ class ProductionSkewCompositionTests(unittest.TestCase):
                  "--allow-local-authority"],
                 providers=rd.Providers(
                     store=store, authority=authority, lanes=lanes,
-                    state=state, source_sha="s1", measurement=support,
+                    state=state, source_sha=SOURCE_SHA, measurement=support,
                 ),
             )
         return code, lanes
@@ -2917,9 +2918,9 @@ class SkewMatrixVerbTests(unittest.TestCase):
             store = rd.FileArtifactStore(root)
             authority = rd.FileDigestAuthority(root)
             frozen_bytes, frozen_id = rd.freeze_plan(
-                plan, graph, source_sha="s1", state=state,
+                plan, graph, source_sha=SOURCE_SHA, state=state,
                 measurement=support)
-            plan_artifact_id = f"plan:s1:{frozen_id}"
+            plan_artifact_id = f"plan:{SOURCE_SHA}:{frozen_id}"
             rd._put_content_addressed(
                 store, authority, plan_artifact_id, frozen_bytes, frozen_id)
             entries = {
@@ -2937,7 +2938,7 @@ class SkewMatrixVerbTests(unittest.TestCase):
                 for n in plan.moving
             }
             body, digest = rd.seal_staged_manifest(
-                plan, frozen_plan_id=frozen_id, source_sha="s1",
+                plan, frozen_plan_id=frozen_id, source_sha=SOURCE_SHA,
                 entries=entries, graph=graph)
             manifest_id = f"staged-manifest:{frozen_id}:{digest}"
             rd._put_content_addressed(
@@ -2950,7 +2951,7 @@ class SkewMatrixVerbTests(unittest.TestCase):
                      "--plan-artifact-id", plan_artifact_id],
                     providers=rd.Providers(
                         store=store, authority=authority,
-                        state=state, source_sha="s1", measurement=support,
+                        state=state, source_sha=SOURCE_SHA, measurement=support,
                     ),
                 )
         self.assertEqual(code, 0, "server is untouched: a one-side matrix")
@@ -3077,7 +3078,7 @@ class FrozenTruthSkewTests(unittest.TestCase):
         live = Support(support_versions or {"client": ["1.0.0"],
                                             "server": ["3.0.0"]})
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state, measurement=live)
+            plan, graph, source_sha=SOURCE_SHA, state=state, measurement=live)
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
         return frozen, state, live
 
@@ -3198,7 +3199,7 @@ class EdgeIdentityTests(unittest.TestCase):
             "persisted-state fixture": {"server": ["2.9.0", "3.0.0"]},
         })
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state, measurement=support)
+            plan, graph, source_sha=SOURCE_SHA, state=state, measurement=support)
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
         sealed = frozen.resolved["measurements"]
         self.assertEqual(len(sealed), 2, "one sealed record per edge")
@@ -3214,7 +3215,7 @@ class EdgeIdentityTests(unittest.TestCase):
         }
         support = self.support_for(versions)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state, measurement=support)
+            plan, graph, source_sha=SOURCE_SHA, state=state, measurement=support)
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
         harness = RecordingHarness(
             journeys=("make federation-journey", "persisted-state fixture"))
@@ -3245,7 +3246,7 @@ class EdgeIdentityTests(unittest.TestCase):
         }
         support = self.support_for(versions)
         frozen_bytes, frozen_id = rd.freeze_plan(
-            plan, graph, source_sha="s1", state=state, measurement=support)
+            plan, graph, source_sha=SOURCE_SHA, state=state, measurement=support)
         frozen = rd.load_frozen_plan(frozen_bytes, expected_id=frozen_id)
         versions["make federation-journey"] = {"server": ["9.9.9"]}
         harness = RecordingHarness(
@@ -3426,8 +3427,13 @@ def npm_lane_zip(*, package="channel", version="1.7.3", mode="stage-only",
     return buffer.getvalue()
 
 
+# Real evidence bytes, so the proof addresses something an authority can
+# confirm. A digest that resolves to nothing proves nothing.
+EVIDENCE_BYTES = b'restart proof: host-1 pid-9 running @awebai/claude-channel 1.7.3\n'
+EVIDENCE_ID = "restart:host-1:pid-9"
+EVIDENCE_DIGEST = "76b5a1d399c985b3e7fc118123c10c8278b1423e0188a58b821a3e9859945232"
 GOOD_PROOF = {"obligation": "delivery-restart-proof",
-              "evidence_id": "restart:host-1:pid-9", "digest": "sha-evidence"}
+              "evidence_id": EVIDENCE_ID, "digest": EVIDENCE_DIGEST}
 
 
 def npm_lane(zip_bytes, *, observer, runs=None, source_sha="f" * 40,
@@ -4350,12 +4356,111 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         self.assertEqual(runs.dispatched, [],
                          "the refusal must precede the dispatch")
 
-    def test_missing_proof_for_an_obligated_component_refuses_before_dispatch(
-            self) -> None:
-        self.refusal_dispatches_nothing(
-            delivery_proofs={},
+    def test_run_plan_seals_the_debt_with_a_real_npm_lane(self) -> None:
+        """End-to-end through the production caller, which the previous version
+        of this test did not do: it never ran run_plan and never asserted a
+        debt, so the lane and the official reader could disagree with fakes and
+        nothing noticed."""
+        version = "1.7.3"
+        tgz = channel_tgz(version=version)
+        graph = rd.Graph.from_dict({
+            "component": {
+                "channel": {
+                    "source_paths": ["x/"],
+                    "version_source": {"type": "manifest", "path": "x/v"},
+                    "tag_format": "channel-v{version}",
+                    "publish_lane": {
+                        "workflow": ".github/workflows/npm-release.yml",
+                        "repository": "awebai/aweb",
+                        "provider": "github-workflow-artifacts",
+                        "modes": ["stage-only", "publish-continuation",
+                                  "verify-only"],
+                        "registry": {"type": "npm",
+                                     "package": "@awebai/claude-channel"},
+                    },
+                    "verify": {"command": "true"},
+                    "delivery_restart": {"proof": "restart per host"},
+                },
+            },
+            "edge": [],
+        })
+        state = rd.FixtureState(
+            changed_components={"channel": True},
+            versions={"channel": version},
+            published_versions={"channel": "1.7.1"},
+        )
+        plan = rd.compute_plan(graph, state)
+
+        # The registry is AUTHORITATIVELY EMPTY until the continuation runs.
+        # The previous version answered with the candidate digest from the very
+        # first observation, so publish() adopted an already-present package and
+        # dispatched NOTHING - it sealed the debt without ever exercising a
+        # fresh publication. The observation flips only as a consequence of the
+        # dispatch, so the assertions below cannot pass without one.
+        observed = {"value": None}
+        runs = FakeAwRuns(conclusion="success")
+        dispatch = runs.dispatch
+
+        def dispatch_then_publish(inputs):
+            dispatch(inputs)
+            observed["value"] = sha256(tgz)
+
+        runs.dispatch = dispatch_then_publish
+        lane, _ = npm_lane(
+            npm_lane_zip(version=version, tgz=tgz),
+            observer=lambda p, v: observed["value"],
+            runs=runs,
+            delivery_proofs={},               # the honest pre-adoption state
+        )
+        store, authority = rd._MemoryStore(), FixtureAuthority()
+        rd.run_plan(
+            plan, graph, rd.WorkflowLanes({"channel": lane}),
+            skew=NoRuntimeSkew(), authority=authority, store=store,
+            source_sha=SOURCE_SHA, approvals={}, state=state,
+            providers=rd.Providers(store=store, authority=authority),
+        )
+        receipt_id = next(k for k in authority.recorded if k.startswith("receipt:"))
+        receipt = rd.load_sealed_receipt(
+            store.get(receipt_id), expected_digest=authority.expected_digest(receipt_id)
+        )
+        self.assertEqual(
+            [d["mode"] for d in runs.dispatched], ["publish-continuation"],
+            "a fresh publication must dispatch the continuation exactly once",
+        )
+        self.assertEqual(
+            observed["value"], sha256(tgz),
+            "the post-dispatch observation must be the exact staged bytes",
+        )
+        entry = receipt.entries["channel"]
+        self.assertIsNone(entry.delivery_proof, "no evidence may be invented")
+        self.assertEqual(
+            entry.delivery_outstanding, "delivery-restart-proof",
+            "the sealed receipt must record the debt it still owes",
+        )
+
+    def test_missing_proof_publishes_and_the_debt_is_recorded(self) -> None:
+        """No proof is the HONEST state before adoption: restart evidence cannot
+        exist until the version is published and hosts restart onto it.
+        Refusing here made the publish-now/discharge-later model unreachable in
+        production - only fakes that agreed with the old contract could reach
+        it. run_plan records the obligation as OUTSTANDING instead.
+
+        The sibling guarantee is unchanged and covered below: a MALFORMED proof
+        still refuses before any dispatch."""
+        runs = FakeAwRuns(conclusion="success")
+        lane, _ = npm_lane(
+            npm_lane_zip(version="1.7.3", tgz=channel_tgz(version="1.7.3")),
+            observer=lambda p, v: sha256(channel_tgz(version="1.7.3")),
+            runs=runs, delivery_proofs={},
             expected_obligation="delivery-restart-proof",
-            needle="delivery")
+        )
+        staged = lane.stage(self.node())
+        published = lane.publish(self.node(), staged)
+        self.assertIsNone(
+            published.delivery_proof,
+            "publication carries no invented evidence; the debt is recorded by "
+            "run_plan, not manufactured by the lane",
+        )
 
     def test_malformed_proof_refuses_before_dispatch(self) -> None:
         self.refusal_dispatches_nothing(
@@ -4525,7 +4630,7 @@ class DeliveryProofArgumentTests(unittest.TestCase):
     def test_well_formed_proof_parses_and_malformed_refuses(self) -> None:
         proofs = rd.parse_delivery_proof_arguments([
             "component=channel,obligation=delivery-restart-proof,"
-            "evidence_id=restart:h1:p9,digest=sha-evidence",
+            "evidence_id=restart:h1:p9,digest=b7d3f0a1c25e48d9a6f01b8e3c74d5209fa6e13b8c07d24e5f9a1b306c8d47e2",
         ])
         self.assertEqual(proofs["channel"]["obligation"],
                          "delivery-restart-proof")
@@ -4602,28 +4707,32 @@ class NpmLaneEndToEndTests(unittest.TestCase):
         store = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
         authority = rd.GithubAnchorDigestAuthority(transport=transport)
         plan = rd.compute_plan(graph, state)
-        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha="s1")
+        frozen_bytes, frozen_id = rd.freeze_plan(plan, graph, source_sha=SOURCE_SHA)
         rd._put_content_addressed(
-            store, authority, f"plan:s1:{frozen_id}", frozen_bytes, frozen_id)
+            store, authority, f"plan:{SOURCE_SHA}:{frozen_id}", frozen_bytes, frozen_id)
         frozen = rd.load_frozen_plan(
-            store.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+            store.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
+        # The operator must have recorded the restart evidence; the release
+        # resolves it rather than taking the record's word for it.
+        rd._put_content_addressed(
+            store, authority, EVIDENCE_ID, EVIDENCE_BYTES, EVIDENCE_DIGEST)
         with self.assertRaises(rd.ReceiptError):
             rd.run_plan(
                 plan, graph, lane_factory(publish_ok=False),
                 skew=NoRuntimeSkew(), authority=authority, store=store,
-                source_sha="s1", approvals={}, state=None, frozen=frozen,
+                source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen,
                 providers=rd.Providers(store=store, authority=authority),
             )
         store2 = rd.GithubAnchorStore(transport=transport, waiter=lambda: None)
         authority2 = rd.GithubAnchorDigestAuthority(transport=transport)
         resume_lane = lane_factory(publish_ok=True)
         frozen2 = rd.load_frozen_plan(
-            store2.get(f"plan:s1:{frozen_id}"), expected_id=frozen_id)
+            store2.get(f"plan:{SOURCE_SHA}:{frozen_id}"), expected_id=frozen_id)
         entries = rd.resume_plan(
             rd.compute_plan(graph, state), graph,
             lanes=resume_lane, skew=NoRuntimeSkew(),
             store=store2, authority=authority2,
-            source_sha="s1", approvals={}, state=None, frozen=frozen2,
+            source_sha=SOURCE_SHA, approvals={}, state=None, frozen=frozen2,
             require_external_authority=True,
             authority_trust="external-immutable",
         )

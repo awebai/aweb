@@ -14,10 +14,15 @@
 # measures - floors are never invented here).
 #
 # aweb-cloud's lock/pin state (ac-pin) is a forced pointer consumer of server
-# and awid: publishing either makes the pin stale by definition. Its declared
-# inputs are the exact external source pins alone; the production credential
-# and human approval live on the separate downstream ac-gate boundary. The AC
-# release itself is cut from its own repository.
+# and awid: publishing either makes the pin stale by definition, and updating it
+# is an effect this release performs.
+#
+# AC's production deploy is NOT in this graph. It is cut from AC's own
+# repository, behind AC's credentials and AC's approval, and an aweb release has
+# no business demanding it: publishing a server makes AC's pin stale and says
+# so, and when AC deploys is AC's decision. Modelling that deploy here forced
+# every server and awid release to drag in a node this repository cannot
+# perform, which blocked both of them entirely.
 
 [component.server]
 source_paths = ["server/"]
@@ -74,10 +79,55 @@ tag_format = "skills-v{version}"
 publish_lane = { workflow = ".github/workflows/npm-release.yml", repository = "awebai/aweb", provider = "github-workflow-artifacts", modes = ["stage-only", "publish-continuation", "verify-only"], registry = { type = "npm", package = "@awebai/claude-skills" } }
 verify = { command = "npm view @awebai/claude-skills@{version} version" }
 
+[component.server-image-payload]
+source_paths = [
+    "server/pyproject.toml",
+    "server/README.md",
+    "server/src",
+]
+publishable = false
+# Exactly what awid/Dockerfile.release copies into the published image
+# (lines 15 and 20), and nothing else. The image bytes depend on these three
+# paths even though awid-image's own source path is awid/.
+#
+# Naming the three rather than the whole server component is the difference
+# between a truthful declaration and a costly one: a change confined to
+# server/tests/ or to unrelated server docs would otherwise force an immutable
+# production image release, and publication cannot be undone. The image lane is
+# the only consumer - server's own PyPI release continues to move on any change
+# under server/, through the server component.
+
+[component.agent-skills]
+source_paths = [
+    "skills/aweb-bootstrap",
+    "skills/aweb-coordination",
+    "skills/aweb-identity",
+    "skills/aweb-messaging",
+    "skills/aweb-team-membership",
+]
+publishable = false
+# The shared skill sources. Neither pi-extension/ nor packages/claude-skills/
+# commits a skills directory: each one's build copies these five in, and ships
+# them in its tarball. So a change here changes published bytes for both, and
+# the graph would otherwise compute that nothing moved. Only the bundled five
+# are listed - skills/aweb-agent-instantiation and skills/DECISIONS.md reach no
+# artifact. test_bundled_skill_sources_match_what_the_packages_copy compares
+# this list against the copy commands so the two cannot drift apart.
+
 [component.marketplace-pointer]
 publishable = false
+repository = "github.com/awebai/claude-plugins"
 # Explicit bump of awebai/claude-plugins marketplace.json; the caret-range
 # experiment is deferred task aweb-abbf.
+#
+# This is a delivery effect, not a follow-up: Claude Code re-resolves an npm
+# source only when the marketplace entry advertises a version, so publishing
+# channel or skills without moving this pointer reaches nobody. It is served by
+# a PointerLane through --pointer-adapter; the adapter knows its own repository.
+#
+# Deliberately NO `lane` key. A lane here made this a delivery node carrying a
+# delivery-lane-proof obligation that no code can produce and that
+# --delivery-proof refuses to accept for it, so the node could never publish.
 
 [component.ac-pin]
 publishable = false
@@ -89,17 +139,6 @@ sibling_pins = [
 # both living in the AC repository (pin_repository) and resolved only from a
 # declared external context - never relative to this repository. Updating
 # them needs no production credentials; that boundary belongs to ac-gate.
-
-[component.ac-gate]
-publishable = false
-approval_required = true
-credential_paths = [
-    { env = "MIGRATION_GATE_ENV_FILE", purpose = "non-bypass production migration immutability" },
-]
-# The downstream AC gate/deploy boundary: canonical make release-ready with
-# the non-bypass production migration-immutability credential path, behind an
-# explicit structured human approval. Kept separate from ac-pin so a source
-# pointer update cannot demand production credentials.
 
 [component.sites]
 source_paths = ["docs/identity-guide.md", "docs/trust-model.md", "awid/site/"]
@@ -115,6 +154,16 @@ approval_required = true
 type = "bundled-build-input"
 from = "channel-core"
 to = ["channel", "pi"]
+
+[[edge]]
+type = "bundled-build-input"
+from = "agent-skills"
+to = ["pi", "skills"]
+
+[[edge]]
+type = "bundled-build-input"
+from = "server-image-payload"
+to = ["awid-image"]
 
 [[edge]]
 type = "publication-prerequisite"
@@ -145,11 +194,6 @@ to = ["ac-pin"]
 type = "pointer"
 from = "awid-pypi"
 to = ["ac-pin"]
-
-[[edge]]
-type = "pointer"
-from = "ac-pin"
-to = ["ac-gate"]
 
 # The .7.1 child emits this edge's measured support document through
 # `make measure-release-skew-cli-server`. Keep the declaration incomplete until

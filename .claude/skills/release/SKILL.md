@@ -28,8 +28,42 @@ make release-run AUTHORITY=local-runnerless \
 ```
 
 Append `EXTERNAL_CONTEXT='<repo>=/absolute/checkout'` to planning when the
-graph names an external pin. Add `DEFER_G5=1` only when that same authorization
-accepts deferring runtime compatibility measurement. Use `RESUME=1
+graph names an external pin.
+
+`DEFER_G5=1` is **not** covered by the runnerless risk authorization. Accepting a
+runner outage and accepting unmeasured runtime support are different judgments;
+deferral needs its own record, on every authority:
+
+```
+G5_AUTHORIZATION='who=<w>,when=<t>,source=<40hex>,plan=<64hex>,edges=<64hex>[+<64hex>],risk=<text>'
+```
+
+Take the edge ids verbatim from `release-plan`'s `deferrable_runtime_contracts`.
+They are content hashes, not display strings, and an authorization naming the
+wrong edge is refused.
+
+Scope a release with `ONLY=<component>`, and supply a `POINTER_ADAPTER` for every
+forced pointer the plan moves — a channel or skills release moves
+`marketplace-pointer` and cannot execute without it:
+
+```sh
+make release-plan AUTHORITY=github-workflow-artifacts ONLY=channel
+
+make release-run AUTHORITY=github-workflow-artifacts \
+  PLAN_ID=<frozen_plan_id> PLAN_ARTIFACT_ID=<plan_artifact_id> \
+  STAGE_ARTIFACT='component=channel,ref=gh-artifact:awebai/aweb:<run>:<artifact>,source=<40hex>,digest=sha256:<64hex>' \
+  POINTER_ADAPTER="marketplace-pointer=$PWD/scripts/pointer-adapter-marketplace-pointer.py" \
+  DEFER_G5=1 \
+  G5_AUTHORIZATION='who=<w>,when=<t>,source=<40hex>,plan=<64hex>,edges=<64hex>,risk=<text no commas>'
+```
+
+The pointer adapter value uses double quotes so `$PWD` expands: the driver
+requires an absolute path and rejects a literal `$PWD`. `risk=` must contain no
+comma - the record is comma-separated.
+
+No `DELIVERY_PROOF` at publish: restart evidence cannot exist before the version
+does, so the receipt records the obligation as OUTSTANDING and it is discharged
+afterwards. Use `RESUME=1
 MANIFEST_ID=<id>` only to resume an interrupted release-run from its staged
 manifest. A receipt's `deferred-hosting:*` / `tag-and-release` record is a
 separate explicitly authorized continuation; release-run resume does not
@@ -75,6 +109,17 @@ only when the user is running the new code:
   forced edge in the component graph, not an optional follow-up: Claude Code
   only re-resolves an npm source when the marketplace entry advertises a
   version, so publishing alone is invisible to existing installs.
+
+  The driver performs it. Pass the adapter and it stages the intended
+  advertisement, applies it, and re-reads the repository, refusing unless it
+  advertises exactly what was published:
+
+  ```
+  make release-run ... \
+    POINTER_ADAPTER='marketplace-pointer=$PWD/scripts/pointer-adapter-marketplace-pointer.py'
+  ```
+
+  What it advertises comes from the frozen plan, never from the command line.
 - **installed plugins** — an installed plugin keeps its loaded code until the
   session restarts. The `delivery_restart` obligation requires proof per host:
   plugin updated **and** process restarted on the published version. `claude

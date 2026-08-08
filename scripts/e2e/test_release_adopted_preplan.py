@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import io
 import sys
 import tempfile
@@ -190,7 +191,12 @@ class FakeRecoverySurface:
             delivery_proof={
                 "obligation": "delivery-restart-proof",
                 "evidence_id": f"restart:{component}",
-                "digest": f"proof:{component}",
+                # A real content digest: the check now requires the proof to
+                # address evidence an authority can confirm, so a placeholder
+                # is exactly what must be refused.
+                "digest": hashlib.sha256(
+                    f"restart evidence for {component}".encode()
+                ).hexdigest(),
             },
         )
 
