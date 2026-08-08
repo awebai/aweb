@@ -1335,8 +1335,15 @@ class GraphContractTests(unittest.TestCase):
         updates = rd.pointer_updates(plan, self.graph, source_sha=SOURCE_SHA)
         self.assertEqual(
             updates["ac-pin"],
-            {"server": SOURCE_SHA, "awid-pypi": "0.5.15"},
-            "the server pin holds a commit, the awid pin holds a version",
+            {
+                "server": {
+                    "version": "1.26.36",
+                    "git_ref": "server-v1.26.36",
+                    "git_sha": SOURCE_SHA,
+                },
+                "awid-pypi": "0.5.15",
+            },
+            "the server pin holds one coherent release identity; the awid pin holds a version",
         )
 
     def test_a_version_pointer_still_advertises_the_version(self) -> None:

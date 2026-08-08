@@ -4031,18 +4031,38 @@ def pointer_updates(
             if target not in moving:
                 continue
             advertised = _advertised_value(
-                graph.components[target], source, moving[source], source_sha
+                graph.components[target], graph.components[source],
+                moving[source], source_sha,
             )
             if advertised is not None:
                 updates.setdefault(target, {})[source] = advertised
     return updates
 
 
-def _advertised_value(target: Component, source: str, node: PlanNode, source_sha):
-    """A commit-valued pin gets the source commit; everything else the version."""
+def _advertised_value(
+    target: Component, source: Component, node: PlanNode, source_sha
+):
+    """Advertise the complete identity the target's declared pin actually holds."""
     for pin in target.sibling_pins:
-        if pin.get("component") != source:
+        if pin.get("component") != source.name:
             continue
+        identity_fields = pin.get("identity_fields")
+        if identity_fields:
+            if set(identity_fields) != {"version", "git_ref", "git_sha"}:
+                raise GraphError(
+                    f"{target.name}: unsupported pin identity_fields "
+                    f"{identity_fields!r}"
+                )
+            if not node.version or not source.tag_format or not source_sha:
+                raise GraphError(
+                    f"{target.name}: complete source identity requires version, "
+                    "tag format and source SHA"
+                )
+            return {
+                "version": node.version,
+                "git_ref": source.tag_format.format(version=node.version),
+                "git_sha": source_sha,
+            }
         if pin.get("field") == "git_sha" or pin.get("kind") == "sha-pin":
             return source_sha
         return node.version
