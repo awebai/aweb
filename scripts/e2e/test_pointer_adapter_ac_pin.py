@@ -9,15 +9,21 @@ own release-model, uv-lock, and migration-manifest gates.
 
 from __future__ import annotations
 
+import functools
+import hashlib
+import http.server
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import threading
 import tomllib
 import unittest
+import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -65,6 +71,51 @@ def write_release_pin(path: Path, *, version: str, sha: str) -> None:
 def lock_package(path: Path, name: str) -> dict:
     lock = tomllib.loads(path.read_text())
     return next(package for package in lock["package"] if package["name"] == name)
+
+
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
+
+
+def write_test_package(index_root: Path, name: str, version: str) -> None:
+    normalized = name.replace("-", "_")
+    files = index_root / "files"
+    files.mkdir(parents=True, exist_ok=True)
+    wheel = files / f"{normalized}-{version}-py3-none-any.whl"
+    dist_info = f"{normalized}-{version}.dist-info"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            f"{dist_info}/METADATA",
+            f"Metadata-Version: 2.3\nName: {name}\nVersion: {version}\n"
+            "Requires-Python: >=3.12\n",
+        )
+        archive.writestr(
+            f"{dist_info}/WHEEL",
+            "Wheel-Version: 1.0\nGenerator: aweb-test\n"
+            "Root-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        archive.writestr(f"{dist_info}/RECORD", "")
+    sdist = files / f"{normalized}-{version}.tar.gz"
+    package_root = f"{normalized}-{version}"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / package_root
+        root.mkdir()
+        (root / "PKG-INFO").write_text(
+            f"Metadata-Version: 2.3\nName: {name}\nVersion: {version}\n"
+        )
+        (root / "pyproject.toml").write_text(
+            "[build-system]\nrequires = []\nbuild-backend = 'unused'\n"
+        )
+        with tarfile.open(sdist, "w:gz") as archive:
+            archive.add(root, arcname=package_root)
+    page = index_root / "simple" / name.replace("_", "-")
+    page.mkdir(parents=True, exist_ok=True)
+    links = []
+    for artifact in (sdist, wheel):
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        links.append(f'<a href="/files/{artifact.name}#sha256={digest}">{artifact.name}</a>')
+    (page / "index.html").write_text("\n".join(links))
 
 
 class AcPinAdapterTests(unittest.TestCase):
@@ -223,6 +274,64 @@ class AcPinAdapterTests(unittest.TestCase):
             for artifact in artifacts:
                 self.assertIn(filename, artifact["url"])
                 self.assertRegex(artifact["hash"], r"^sha256:[0-9a-f]{64}$")
+
+    def test_intent_precedes_future_tag_and_packages_then_apply_uses_them(self):
+        root = Path(self.tmp.name)
+        future_remote = root / "future-aweb.git"
+        run("git", "clone", "-q", "--mirror", str(REPO_ROOT), str(future_remote), cwd=root)
+        source = root / "future-source"
+        run("git", "clone", "-q", str(future_remote), str(source), cwd=root)
+        future_server = "9.8.7"
+        future_awid = "8.7.6"
+        pyproject = source / "server" / "pyproject.toml"
+        text, count = re.subn(
+            r'(?m)^version = "[^"]+"$', f'version = "{future_server}"',
+            pyproject.read_text(), count=1,
+        )
+        self.assertEqual(count, 1)
+        pyproject.write_text(text)
+        run(
+            "git", "-c", "user.email=test@example.com", "-c", "user.name=Test",
+            "add", "server/pyproject.toml", cwd=source,
+        )
+        run(
+            "git", "-c", "user.email=test@example.com", "-c", "user.name=Test",
+            "commit", "-qm", "future unpublished server", cwd=source,
+        )
+        future_sha = git("rev-parse", "HEAD", cwd=source)
+        run("git", "push", "-q", "origin", "HEAD:main", cwd=source)
+        updates = {
+            "server": {
+                "version": future_server,
+                "git_ref": f"server-v{future_server}",
+                "git_sha": future_sha,
+            },
+            "awid-pypi": future_awid,
+        }
+        env = self.adapter_env(AWEB_REMOTE=str(future_remote))
+        before = self.remote_head()
+        self.assertEqual(
+            self.run_adapter("intent", updates, env=env)["advertised"], updates
+        )
+        self.assertEqual(self.remote_head(), before)
+
+        run("git", "tag", f"server-v{future_server}", future_sha, cwd=source)
+        run("git", "push", "-q", "origin", f"refs/tags/server-v{future_server}", cwd=source)
+        index = root / "index"
+        write_test_package(index, "aweb", future_server)
+        write_test_package(index, "awid-service", future_awid)
+        handler = functools.partial(QuietHandler, directory=str(index))
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        index_url = f"http://127.0.0.1:{server.server_port}/simple"
+        env = self.adapter_env(
+            AWEB_REMOTE=str(future_remote), AC_PIN_TEST_INDEX=index_url
+        )
+        self.assertEqual(self.run_adapter("apply", updates, env=env)["applied"], updates)
+        self.assertEqual(self.run_adapter("read")["advertised"], updates)
 
     def test_partial_and_mismatched_server_identities_refuse_without_push(self):
         before = self.remote_head()

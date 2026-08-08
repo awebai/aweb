@@ -203,19 +203,24 @@ def tagged_sha(remote: str, git_ref: str, *, cwd: Path) -> str:
     )
 
 
-def checkout_aweb(into: Path, identity: dict[str, str]) -> Path:
+def checkout_aweb(
+    into: Path, identity: dict[str, str], *, require_published_tag: bool
+) -> Path:
     remote = aweb_remote()
-    tag_sha = tagged_sha(remote, identity["git_ref"], cwd=into)
-    if tag_sha != identity["git_sha"]:
-        fail(
-            f"aweb tag {identity['git_ref']} resolves to {tag_sha or 'absent'}, "
-            f"not {identity['git_sha']}"
-        )
+    if require_published_tag:
+        tag_sha = tagged_sha(remote, identity["git_ref"], cwd=into)
+        if tag_sha != identity["git_sha"]:
+            fail(
+                f"aweb tag {identity['git_ref']} resolves to "
+                f"{tag_sha or 'absent'}, not {identity['git_sha']}"
+            )
     checkout = clone(into, remote, "aweb")
-    git(
-        "fetch", "--depth", "1", "origin",
-        f"refs/tags/{identity['git_ref']}", cwd=checkout,
-    )
+    git("fetch", "--depth", "1", "origin", identity["git_sha"], cwd=checkout)
+    if require_published_tag:
+        git(
+            "fetch", "--depth", "1", "origin",
+            f"refs/tags/{identity['git_ref']}", cwd=checkout,
+        )
     git("checkout", "--detach", identity["git_sha"], cwd=checkout)
     actual = git("rev-parse", "HEAD", cwd=checkout).strip()
     if actual != identity["git_sha"]:
@@ -270,8 +275,14 @@ def uv_binary() -> str:
 def regenerate_lock(
     checkout: Path, *, server_version: str, awid_version: str
 ) -> None:
-    command = [
-        uv_binary(), "lock", "--no-config", "--default-index", PYPI_INDEX,
+    command = [uv_binary(), "lock", "--no-config"]
+    test_index = os.environ.get("AC_PIN_TEST_INDEX")
+    if test_index:
+        if canonical(expected_remote()) == canonical(DEFAULT_REMOTE):
+            fail("test package index is refused for the production AC remote")
+        command += ["--index", test_index]
+    command += [
+        "--default-index", PYPI_INDEX,
         "--upgrade-package", f"aweb=={server_version}",
         "--upgrade-package", f"awid-service=={awid_version}",
     ]
@@ -318,10 +329,38 @@ def run_ac_checks(checkout: Path) -> None:
     )
 
 
+def prepare_intent(checkout: Path, updates: dict) -> None:
+    """Check only facts available before source publication.
+
+    Candidate source commits exist before their release tags and registry
+    artifacts. Intent validates their exact source version and AC's writable
+    contract, but apply alone requires the future tag/artifacts and runs the
+    resulting AC gates.
+    """
+    current = read_pins(checkout)
+    server = updates.get("server", current["server"])
+    checkout_aweb(checkout.parent, server, require_published_tag=False)
+    if "server" in updates:
+        replace_pin_identity(checkout / PIN_FILE, server)
+        replace_dependency(checkout / PYPROJECT_FILE, "aweb", server["version"])
+    if "awid-pypi" in updates:
+        replace_dependency(
+            checkout / PYPROJECT_FILE, "awid-service", updates["awid-pypi"]
+        )
+    uv_binary()
+    for required in (
+        "scripts/check_release_model.py",
+        "scripts/check_release_overlay.py",
+        "backend/scripts/migration_manifest.py",
+    ):
+        if not (checkout / required).is_file():
+            fail(f"AC checkout lacks required contract check {required}")
+
+
 def prepare_updates(checkout: Path, updates: dict) -> list[str]:
     current = read_pins(checkout)
     server = updates.get("server", current["server"])
-    checkout_aweb(checkout.parent, server)
+    checkout_aweb(checkout.parent, server, require_published_tag=True)
 
     touched = set()
     if "server" in updates:
@@ -397,7 +436,7 @@ def main(argv=None) -> int:
         if updates is None:
             fail(f"{args.operation} requires --updates")
         if args.operation == "intent":
-            prepare_updates(checkout, updates)
+            prepare_intent(checkout, updates)
             print(json.dumps({"advertised": updates}, sort_keys=True))
         else:
             apply_updates(checkout, updates, remote)
