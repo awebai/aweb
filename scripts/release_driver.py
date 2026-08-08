@@ -1131,6 +1131,59 @@ class Receipt:
     g5_authorization: G5Authorization | None = None
 
 
+_ENTRY_FIELDS = {
+    "version", "digest", "phase", "pointer_state", "delivery_proof",
+    "delivery_outstanding", "digest_set", "lane_ref",
+}
+
+
+def _exact_entry_fields(name: str, entry) -> dict:
+    """Exact schema on the way back in.
+
+    The loader projected the fields it knew and silently dropped the rest, so
+    bytes carrying an unknown field round-tripped as though they did not carry
+    it. A receipt is archive-bound evidence: what the bytes say and what a
+    reader sees have to be the same thing.
+    """
+    if not isinstance(entry, dict):
+        raise ReceiptError(f"receipt entry {name} is not an object")
+    unknown = sorted(set(entry) - _ENTRY_FIELDS)
+    if unknown:
+        raise ReceiptError(
+            f"receipt entry {name} carries unknown fields {unknown}; a sealed "
+            "entry is exactly its declared schema"
+        )
+    for required in ("version", "digest"):
+        if not isinstance(entry.get(required), str) or not entry[required]:
+            raise ReceiptError(
+                f"receipt entry {name} field {required} must be a nonempty string"
+            )
+    for optional in ("phase", "pointer_state", "delivery_outstanding"):
+        value = entry.get(optional)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise ReceiptError(
+                f"receipt entry {name} field {optional} must be a nonempty "
+                f"string when present, got {value!r}"
+            )
+    for mapping in ("delivery_proof", "digest_set", "lane_ref"):
+        value = entry.get(mapping)
+        if value is not None and not isinstance(value, dict):
+            raise ReceiptError(
+                f"receipt entry {name} field {mapping} must be an object when "
+                f"present, got {type(value).__name__}"
+            )
+    return {
+        "version": entry["version"],
+        "digest": entry["digest"],
+        "phase": entry.get("phase", "staged"),
+        "pointer_state": entry.get("pointer_state"),
+        "delivery_proof": entry.get("delivery_proof"),
+        "delivery_outstanding": entry.get("delivery_outstanding"),
+        "digest_set": entry.get("digest_set"),
+        "lane_ref": entry.get("lane_ref"),
+    }
+
+
 def _g5_from_record(record) -> "G5Authorization | None":
     """Exact schema on the way back in: a malformed or partial record is a
     refusal, never a silently weaker acceptance."""
@@ -1403,16 +1456,7 @@ def load_sealed_receipt(data: bytes, *, expected_digest: str) -> Receipt:
         partial=parsed.get("partial", False),
         g5_authorization=_g5_from_record(parsed.get("g5_authorization")),
         entries={
-            name: ReceiptEntry(
-                version=e["version"],
-                digest=e["digest"],
-                phase=e.get("phase", "staged"),
-                pointer_state=e.get("pointer_state"),
-                delivery_outstanding=e.get("delivery_outstanding"),
-                delivery_proof=e.get("delivery_proof"),
-                digest_set=e.get("digest_set"),
-                lane_ref=e.get("lane_ref"),
-            )
+            name: ReceiptEntry(**_exact_entry_fields(name, e))
             for name, e in parsed["entries"].items()
         },
         approvals=tuple(sorted(parsed.get("approvals", {}).items())),

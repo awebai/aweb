@@ -1965,6 +1965,46 @@ class GraphContractTests(unittest.TestCase):
             )
         self.assertIn("G5 authorization", str(caught.exception))
 
+    def test_a_sealed_entry_is_exactly_its_schema(self) -> None:
+        """The loader projected known fields and dropped the rest, so bytes
+        carrying an unknown field round-tripped as though they did not. A
+        receipt is archive-bound evidence; what the bytes say and what a reader
+        sees must be the same thing."""
+        import hashlib as _h, json as _j
+
+        graph, plan, incomplete, entries = self._incomplete_plan_and_receipt_parts()
+        authorization = rd.G5Authorization(
+            who="juan", when="t", source_sha=SOURCE_SHA,
+            frozen_plan_id="c" * 64, edges=incomplete, risk="accepted",
+        )
+        sealed, digest = rd.seal_receipt(
+            plan, graph, source_sha=SOURCE_SHA, entries=entries, approvals={},
+            frozen_plan_id="c" * 64, staged_manifest_id="staged",
+            g5_authorization=authorization,
+        )
+        self.assertTrue(rd.load_sealed_receipt(sealed, expected_digest=digest))
+
+        name = sorted(entries)[0]
+        for label, mutate in (
+            ("unknown field", lambda e: e.update({"smuggled": "x"})),
+            ("wrong type", lambda e: e.update({"pointer_state": 7})),
+            ("empty required", lambda e: e.update({"version": ""})),
+            ("non-object proof", lambda e: e.update({"delivery_proof": "yes"})),
+        ):
+            with self.subTest(case=label):
+                body = _j.loads(_j.loads(sealed)["body"])
+                mutate(body["entries"][name])
+                raw = _j.dumps(body, sort_keys=True)
+                forged = _j.dumps({
+                    "body": raw,
+                    "seal": _h.sha256(raw.encode()).hexdigest(),
+                }).encode()
+                self.assertNotEqual(forged, sealed, "the mutation changed nothing")
+                with self.assertRaises(rd.ReceiptError):
+                    rd.load_sealed_receipt(
+                        forged, expected_digest=_h.sha256(forged).hexdigest()
+                    )
+
     def test_sealed_record_fields_are_type_checked(self) -> None:
         """A key-set check is not a schema. who=42, when=[] and risk={} loaded
         and validated clean."""
