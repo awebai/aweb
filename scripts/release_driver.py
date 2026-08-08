@@ -8749,6 +8749,21 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
     receipt_parser.add_argument("--artifact-id", required=True)
     receipt_parser.add_argument("--plan-id", required=True)
     receipt_parser.add_argument("--plan-artifact-id", required=True)
+    # The official reader needs the same observer inputs release-run has. Without
+    # them providers.lanes stayed None and the command refused before reading
+    # anything, so a sealed receipt had no executable verifier at all.
+    receipt_parser.add_argument(
+        "--stage-artifact", action="append", default=[],
+        help="component=<c>,ref=<lane-ref>,source=<40hex>,digest=sha256:<64hex>",
+    )
+    receipt_parser.add_argument(
+        "--pointer-adapter", action="append", default=[],
+        help="component=/absolute/pointer-adapter, for observing a forced pointer",
+    )
+    receipt_parser.add_argument(
+        "--delivery-proof", action="append", default=[],
+        help="component=<c>,obligation=<o>,evidence_id=<e>,digest=<sha256>",
+    )
     args = parser.parse_args(argv)
 
     graph = Graph.load(Path(args.graph))
@@ -9239,6 +9254,24 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         frozen = load_frozen_plan(
             providers.store.get(args.plan_artifact_id), expected_id=args.plan_id
         )
+        # Pointer observers are composed from the FROZEN plan, the same way
+        # release-run does it, because what a pointer must advertise is derived
+        # from the plan and the plan is only loaded here. Without this a Channel
+        # receipt could never be verified: its marketplace-pointer had no
+        # observer and the command refused before reading anything.
+        try:
+            receipt_pointers = parse_pointer_adapters(
+                getattr(args, "pointer_adapter", []),
+                plan=frozen.plan, graph=frozen.graph,
+                source_sha=frozen.source_sha,
+            )
+        except ReceiptError as exc:
+            print(f"BLOCKED: {exc}")
+            return 1
+        if receipt_pointers:
+            existing = dict(getattr(providers.lanes, "_lanes", {}) or {})
+            providers.lanes = WorkflowLanes({**existing, **receipt_pointers})
+
         expected_digest = providers.authority.expected_digest(args.artifact_id)
         if expected_digest is None:
             print(f"REFUSED: the authority has no record of {args.artifact_id}")
