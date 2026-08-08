@@ -248,6 +248,67 @@ class MarketplaceAdapterTests(unittest.TestCase):
             mod.verify_origin(work, str(self.remote), "after cloning")
         self.assertIn("origin is", str(caught.exception))
 
+    def test_an_injected_url_rewrite_cannot_redirect_the_push(self):
+        """The one origin attack that IS reachable through the real caller.
+
+        The post-clone rewrite cannot be driven through SubprocessPointerAdapter
+        at all: the adapter clones into a TemporaryDirectory created inside the
+        subprocess and destroyed when it exits, so nothing outside has a window
+        to rewrite that checkout's origin. What an operator's environment CAN do
+        is carry a url.<base>.insteadOf rewrite, which redirects the clone and
+        the push at the moment they are least examined. That is what git_env()'s
+        GIT_CONFIG_GLOBAL=/dev/null exists to defeat, and it was untested.
+
+        Driven through SubprocessPointerAdapter, asserting the legitimate
+        repository moved and the attacker's received nothing.
+
+        Measured, not assumed: deleting GIT_CONFIG_GLOBAL from git_env() turns
+        this red, and the failure shows the rewrite really did redirect the
+        clone - "the checkout's origin is .../attacker.git". The refusal comes
+        from verify_origin, so the two guards are independent and the second
+        catches what the first would miss. The attacker repository received
+        nothing in either arm.
+        """
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import release_driver as rd
+
+        attacker = Path(self.tmp.name) / "attacker.git"
+        git("init", "-q", "--bare", str(attacker), cwd=Path(self.tmp.name))
+
+        home = Path(self.tmp.name) / "poisoned-home"
+        home.mkdir()
+        (home / ".gitconfig").write_text(
+            f'[url "{attacker}"]\n\tinsteadOf = {self.remote}\n'
+        )
+
+        adapter = rd.SubprocessPointerAdapter(ADAPTER, repository=str(self.remote))
+        saved = {k: os.environ.get(k) for k in
+                 ("HOME", "GIT_CONFIG_GLOBAL", "MARKETPLACE_REMOTE")}
+
+        def restore():
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.addCleanup(restore)
+        os.environ["HOME"] = str(home)
+        os.environ["GIT_CONFIG_GLOBAL"] = str(home / ".gitconfig")
+        os.environ["MARKETPLACE_REMOTE"] = str(self.remote)
+
+        updates = {"channel": "1.7.4"}
+        intent = adapter.intent("marketplace-pointer", updates)
+        adapter.apply("marketplace-pointer", updates, intent)
+
+        self.assertEqual(
+            self.run_adapter("read")["advertised"]["channel"], "1.7.4",
+            "the legitimate repository must be the one that moved",
+        )
+        refs = subprocess.run(["git", "for-each-ref"], cwd=str(attacker),
+                              capture_output=True, text=True).stdout.strip()
+        self.assertEqual(refs, "", f"the attacker repository received {refs!r}")
+
     def test_the_adapter_is_executable(self):
         """SubprocessPointerAdapter execs the path directly. Committed 100644,
         the first thing a real release did was raise PermissionError."""
