@@ -1308,13 +1308,16 @@ def seal_receipt(
             # A delivery node says one of two things and never neither: here is
             # the evidence, or delivery is still owed. Silence would let a
             # published-not-delivered release read as complete.
-            if entry.delivery_proof and entry.delivery_outstanding:
+            # Presence, not truthiness: delivery_proof={} is malformed
+            # evidence, not absent evidence, and must refuse rather than pass
+            # as an honest debt.
+            if entry.delivery_proof is not None and entry.delivery_outstanding is not None:
                 raise ReceiptError(
                     f"{node.component}: delivery is DELIVERED or OUTSTANDING, "
                     "never both; a receipt claiming evidence and a debt for the "
                     "same obligation states two contradictory things"
                 )
-            if entry.delivery_proof:
+            if entry.delivery_proof is not None:
                 validate_delivery_proof(
                     entry.delivery_proof, obligation, node.component
                 )
@@ -1481,12 +1484,12 @@ def validate_final_receipt(
             # published-not-yet-delivered receipt unverifiable, unresumable and
             # unrestorable - the receipt was right and every later reader
             # refused it.
-            if entry.delivery_proof and entry.delivery_outstanding:
+            if entry.delivery_proof is not None and entry.delivery_outstanding is not None:
                 raise ReceiptError(
                     f"{node.component}: final receipt claims both delivery "
                     "evidence and an outstanding debt for the same obligation"
                 )
-            if entry.delivery_proof:
+            if entry.delivery_proof is not None:
                 validate_delivery_proof(entry.delivery_proof, obligation, node.component)
             elif entry.delivery_outstanding != obligation:
                 raise ReceiptError(
@@ -3866,11 +3869,17 @@ class SubprocessPointerAdapter:
     Each prints JSON; intent and read print {"advertised": {component: version}}.
     """
 
-    def __init__(self, executable: Path):
+    def __init__(self, executable: Path, repository: str | None = None):
         self.executable = str(Path(executable).resolve())
+        self.repository = repository
 
     def _run(self, operation, component, updates=None):
         command = [self.executable, operation, "--component", component]
+        # The expected repository travels with EVERY operation. Adding the flag
+        # to the adapters without ever sending it made the binding a no-op: an
+        # ambient remote could be mutated under the graph's unrelated label.
+        if self.repository:
+            command += ["--expect-repository", self.repository]
         if updates is not None:
             command += ["--updates", json.dumps(updates, sort_keys=True)]
         try:
@@ -8540,7 +8549,9 @@ def parse_pointer_adapters(
             raise ReceiptError(f"--pointer-adapter names unknown component {component}")
         lanes[component] = PointerLane(
             component,
-            adapter=SubprocessPointerAdapter(Path(executable)),
+            adapter=SubprocessPointerAdapter(
+                Path(executable), repository=_pointer_repository(graph.components[component])
+            ),
             updates=updates.get(component, {}),
             repository=_pointer_repository(graph.components[component]),
         )

@@ -46,13 +46,20 @@ Scope a release with `ONLY=<component>`, and supply a `POINTER_ADAPTER` for ever
 forced pointer the plan moves — a channel or skills release moves
 `marketplace-pointer` and cannot execute without it:
 
-```
+```sh
 make release-plan AUTHORITY=github-workflow-artifacts ONLY=channel
-make release-run AUTHORITY=github-workflow-artifacts ONLY-scoped PLAN_ID/PLAN_ARTIFACT_ID \
-  STAGE_ARTIFACT='component=channel,ref=...,source=...,digest=...' \
-  POINTER_ADAPTER='marketplace-pointer=$PWD/scripts/pointer-adapter-marketplace-pointer.py' \
-  DEFER_G5=1 G5_AUTHORIZATION='...'
+
+make release-run AUTHORITY=github-workflow-artifacts \
+  PLAN_ID=<frozen_plan_id> PLAN_ARTIFACT_ID=<plan_artifact_id> \
+  STAGE_ARTIFACT='component=channel,ref=gh-artifact:awebai/aweb:<run>:<artifact>,source=<40hex>,digest=sha256:<64hex>' \
+  POINTER_ADAPTER="marketplace-pointer=$PWD/scripts/pointer-adapter-marketplace-pointer.py" \
+  DEFER_G5=1 \
+  G5_AUTHORIZATION='who=<w>,when=<t>,source=<40hex>,plan=<64hex>,edges=<64hex>,risk=<text no commas>'
 ```
+
+The pointer adapter value uses double quotes so `$PWD` expands: the driver
+requires an absolute path and rejects a literal `$PWD`. `risk=` must contain no
+comma - the record is comma-separated.
 
 No `DELIVERY_PROOF` at publish: restart evidence cannot exist before the version
 does, so the receipt records the obligation as OUTSTANDING and it is discharged

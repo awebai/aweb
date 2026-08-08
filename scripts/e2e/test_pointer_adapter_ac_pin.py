@@ -62,7 +62,8 @@ class AcPinAdapterTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def run_adapter(self, operation, updates=None, expect_failure=False):
-        command = [sys.executable, str(ADAPTER), operation, "--component", "ac-pin"]
+        command = [sys.executable, str(ADAPTER), operation, "--component", "ac-pin",
+                   "--expect-repository", str(self.remote)]
         if updates is not None:
             command += ["--updates", json.dumps(updates)]
         env = {**os.environ, "AC_REMOTE": str(self.remote)}

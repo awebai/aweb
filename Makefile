@@ -645,9 +645,11 @@ release-plan:
 # Executes an anchored frozen plan over available publish lanes; fails closed
 # naming every gap. PLAN_ID and PLAN_ARTIFACT_ID are required.
 # STAGE_ARTIFACT (repeatable, space-separated) binds hosted lane references.
-# DELIVERY_PROOF (repeatable) carries the restart evidence channel and pi
-# require before they publish - publication is not delivery, so a component
-# whose users keep running old code until a restart cannot publish without it:
+# DELIVERY_PROOF (repeatable) carries restart evidence for a component whose
+# users keep running old code until a restart. It is NOT required to publish:
+# restart evidence cannot exist before the version does, so publication records
+# the obligation as OUTSTANDING and this discharges it afterwards. Supply it
+# only when the evidence is real and recorded with the authority:
 #   DELIVERY_PROOF='component=channel,obligation=delivery-restart-proof,evidence_id=<id>,digest=<sha256>'
 # POINTER_ADAPTER (repeatable) performs a forced pointer's effect - the
 # marketplace version bump, or the AC pin update - in the target repository:

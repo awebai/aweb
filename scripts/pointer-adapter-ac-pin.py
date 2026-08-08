@@ -86,9 +86,32 @@ def expected_remote() -> str:
     return os.environ.get("AC_REMOTE", 'git@github.com:awebai/ac.git')
 
 
+def canonical(remote: str) -> str:
+    """Compare repositories by identity, not by transport spelling.
+
+    The graph says github.com/awebai/x; the transport says
+    git@github.com:awebai/x.git or a local path under test. Comparing raw
+    strings would either refuse every real release or accept anything.
+    """
+    value = remote.strip()
+    for prefix in ("git@github.com:", "https://github.com/", "ssh://git@github.com/"):
+        if value.startswith(prefix):
+            value = "github.com/" + value[len(prefix):]
+            break
+    return value[:-4] if value.endswith(".git") else value
+
+
 def require_expected(expected: str | None) -> str:
     remote = expected_remote()
-    if expected and expected != remote:
+    # A missing expectation is refused, not waved through. Accepting it made the
+    # binding decorative: an ambient remote could be mutated under the graph's
+    # label with nothing comparing the two.
+    if not expected:
+        raise SystemExit(
+            "refusing to act without --expect-repository: the release must name "
+            "the repository it intends to mutate"
+        )
+    if canonical(expected) != canonical(remote):
         raise SystemExit(
             f"refusing to act on {remote}: the release expects {expected}"
         )
@@ -121,7 +144,35 @@ def read_pins(checkout: Path) -> dict[str, str]:
     return found
 
 
+def reject_unsupported(updates: dict[str, str]) -> None:
+    """Both AC pins need contracts this adapter does not yet honour.
+
+    release-pin.toml carries version and git_ref beside git_sha and AC's
+    release-model check requires them to agree; backend/uv.lock pins the version
+    AND that version's sdist/wheel URLs and hashes. Writing one field each
+    produces a pin AC refuses - worse than none, because it looks applied.
+    See aweb-abbe.39.
+    """
+    if "server" in updates:
+        raise SystemExit(
+            "ac-pin cannot yet update AC's release-pin through AC's real "
+            "contract: release-pin.toml carries version and git_ref beside "
+            "git_sha and AC's release-model check requires them to agree. "
+            "See aweb-abbe.39."
+        )
+    if "awid-pypi" in updates:
+        raise SystemExit(
+            "ac-pin cannot yet update AC's lock through AC's real contract: "
+            "backend/uv.lock also carries this version's sdist/wheel URLs and "
+            "hashes. See aweb-abbe.39."
+        )
+    unknown = sorted(set(updates) - {"server", "awid-pypi"})
+    if unknown:
+        raise SystemExit(f"ac-pin holds no pin for: {unknown}")
+
+
 def apply_updates(checkout: Path, updates: dict[str, str]) -> list[str]:
+    reject_unsupported(updates)
     touched = []
     if "server" in updates:
         raise SystemExit(
@@ -206,6 +257,11 @@ def main(argv=None) -> int:
     remote = require_expected(args.expect_repository)
 
     if args.operation == "intent":
+        # Refuse at INTENT, which is staging, not at apply. PointerLane stages
+        # every node before run_plan publishes any of them, so a refusal that
+        # lived only in apply let the server publish irreversibly and only then
+        # discover its required pointer was impossible.
+        reject_unsupported(updates)
         print(json.dumps({"advertised": updates}))
         return 0
 

@@ -90,9 +90,32 @@ def expected_remote() -> str:
     return os.environ.get("MARKETPLACE_REMOTE", 'git@github.com:awebai/claude-plugins.git')
 
 
+def canonical(remote: str) -> str:
+    """Compare repositories by identity, not by transport spelling.
+
+    The graph says github.com/awebai/x; the transport says
+    git@github.com:awebai/x.git or a local path under test. Comparing raw
+    strings would either refuse every real release or accept anything.
+    """
+    value = remote.strip()
+    for prefix in ("git@github.com:", "https://github.com/", "ssh://git@github.com/"):
+        if value.startswith(prefix):
+            value = "github.com/" + value[len(prefix):]
+            break
+    return value[:-4] if value.endswith(".git") else value
+
+
 def require_expected(expected: str | None) -> str:
     remote = expected_remote()
-    if expected and expected != remote:
+    # A missing expectation is refused, not waved through. Accepting it made the
+    # binding decorative: an ambient remote could be mutated under the graph's
+    # label with nothing comparing the two.
+    if not expected:
+        raise SystemExit(
+            "refusing to act without --expect-repository: the release must name "
+            "the repository it intends to mutate"
+        )
+    if canonical(expected) != canonical(remote):
         raise SystemExit(
             f"refusing to act on {remote}: the release expects {expected}"
         )

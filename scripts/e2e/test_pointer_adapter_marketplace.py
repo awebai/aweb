@@ -68,7 +68,8 @@ class MarketplaceAdapterTests(unittest.TestCase):
 
     def run_adapter(self, operation, updates=None):
         command = [sys.executable, str(ADAPTER), operation,
-                   "--component", "marketplace-pointer"]
+                   "--component", "marketplace-pointer",
+                   "--expect-repository", str(self.remote)]
         if updates is not None:
             command += ["--updates", json.dumps(updates)]
         env = {**os.environ, "MARKETPLACE_REMOTE": str(self.remote)}
@@ -144,7 +145,7 @@ class MarketplaceAdapterTests(unittest.TestCase):
 
         lane = rd.PointerLane(
             "marketplace-pointer",
-            adapter=rd.SubprocessPointerAdapter(ADAPTER),
+            adapter=rd.SubprocessPointerAdapter(ADAPTER, repository=str(self.remote)),
             updates=rd.pointer_updates(plan, graph)["marketplace-pointer"],
             repository="github.com/awebai/claude-plugins",
         )
@@ -166,6 +167,43 @@ class MarketplaceAdapterTests(unittest.TestCase):
         self.assertEqual(after["skills"], "0.2.12",
                          "a partial update must leave other entries alone")
 
+    def test_a_substituted_remote_is_refused(self):
+        """The binding must not be decorative. An ambient remote pointing
+        somewhere else must refuse rather than be mutated under the graph's
+        label - a test override is a test seam, not production authority."""
+        other = Path(self.tmp.name) / "substituted.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True)
+        command = [sys.executable, str(ADAPTER), "read",
+                   "--component", "marketplace-pointer",
+                   "--expect-repository", "github.com/awebai/claude-plugins"]
+        env = {**os.environ, "MARKETPLACE_REMOTE": str(other)}
+        result = subprocess.run(command, capture_output=True, text=True, env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to act on", result.stderr)
+
+    def test_a_missing_expectation_is_refused(self):
+        """Accepting a missing expectation made the flag decorative."""
+        command = [sys.executable, str(ADAPTER), "read",
+                   "--component", "marketplace-pointer"]
+        env = {**os.environ, "MARKETPLACE_REMOTE": str(self.remote)}
+        result = subprocess.run(command, capture_output=True, text=True, env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--expect-repository", result.stderr)
+
+    def test_canonical_identity_survives_transport_spelling(self):
+        """The graph says github.com/awebai/x; the transport says
+        git@github.com:awebai/x.git. Comparing raw strings would refuse every
+        real release."""
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mp_adapter", ADAPTER)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertEqual(
+            mod.canonical("git@github.com:awebai/claude-plugins.git"),
+            mod.canonical("github.com/awebai/claude-plugins"),
+        )
+
     def test_the_adapter_is_executable(self):
         """SubprocessPointerAdapter execs the path directly. Committed 100644,
         the first thing a real release did was raise PermissionError."""
@@ -176,6 +214,7 @@ class MarketplaceAdapterTests(unittest.TestCase):
         reaches nobody."""
         command = [sys.executable, str(ADAPTER), "apply",
                    "--component", "marketplace-pointer",
+                   "--expect-repository", str(self.remote),
                    "--updates", json.dumps({"pi": "0.3.4"})]
         env = {**os.environ, "MARKETPLACE_REMOTE": str(self.remote)}
         result = subprocess.run(command, capture_output=True, text=True, env=env)

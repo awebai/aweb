@@ -9,8 +9,12 @@ runnerless lane itself.** The committed graph gives server four
 declared-incomplete runtime contracts and a forced `ac-pin` pointer, so a server
 release also needs a G5 authorization and a pointer adapter. `aw`, `pi` and
 `awid-image` force no pointer, which makes them the smallest real exercise of
-this lane. Every required input is shown; none of these commands is a subset
-that will run.
+this lane.
+
+**The server examples below are NOT runnable today** and are shown to document
+the input shape only: `ac-pin` refuses until it honours AC's real lock/pin
+contract (aweb-abbe.39), and server touches four incomplete edges, so `edges=`
+must list all four exactly as `release-plan` prints them.
 
 ```sh
 make release-plan AUTHORITY=local-runnerless STORE_ROOT="$PWD/.release-runs"
