@@ -364,4 +364,85 @@ expect_refusal "guard probe refuses present version" "already exists" \
 expect_refusal "guard probe refuses outage" "never proof of absence" \
   decide-npm --observed-status 500
 
+# ── verify-published resolving through the REGISTRY ──────────────────
+# The path that shipped a false failure. Channel 1.7.4 published, then this
+# step read the registry seconds later, got a 404 from propagation lag, and
+# reported the release as FAILED. Every earlier test supplied --observed, so
+# the resolution path had no coverage at all.
+
+fake_npm_dir="$tmp/fakebin"
+mkdir -p "$fake_npm_dir"
+attempts_file="$tmp/attempts"
+
+# $1 = how many 404s before the version resolves ("always" never resolves)
+# $2 = optional non-404 failure mode
+make_fake_npm() {
+  local fails_before_success="$1" mode="${2:-notfound}"
+  : > "$attempts_file"
+  cat > "$fake_npm_dir/npm" <<FAKE
+#!/usr/bin/env bash
+echo x >> "$attempts_file"
+n=\$(wc -l < "$attempts_file" | tr -d ' ')
+if [[ "$mode" == "outage" ]]; then
+  echo "npm error code E503" >&2
+  echo "npm error 503 Service Unavailable" >&2
+  exit 1
+fi
+if [[ "$fails_before_success" == "always" || "\$n" -le "$fails_before_success" ]]; then
+  echo "npm error code E404" >&2
+  echo "npm error 404 No match found for version 1.2.3" >&2
+  exit 1
+fi
+echo "file://$tmp/observed.tgz"
+FAKE
+  chmod +x "$fake_npm_dir/npm"
+}
+
+attempt_count() { wc -l < "$attempts_file" | tr -d ' '; }
+
+make_fixture
+bash "$LANE" pack-inspect --dir "$tmp/pkg" --version 1.2.3 \
+  --out "$tmp/staging" >/dev/null
+staged="$tmp/staging/awebai-lane-fixture-1.2.3.tgz"
+cp "$staged" "$tmp/observed.tgz"
+
+# GREEN: transient 404s are propagation lag, and the step must survive them.
+make_fake_npm 2
+if PATH="$fake_npm_dir:$PATH" NPM_VERIFY_ATTEMPTS=5 NPM_VERIFY_DELAY=0 \
+     bash "$LANE" verify-published --tgz "$staged" \
+       --package @awebai/lane-fixture --version 1.2.3 >/dev/null 2>&1; then
+  ok "verify-published survives registry propagation lag"
+else
+  fail "verify-published must retry a 404 rather than report a false failure"
+fi
+[[ "$(attempt_count)" == "3" ]] \
+  || fail "expected 3 attempts (2 lagging + 1 resolving), got $(attempt_count)"
+ok "retries stop as soon as the version resolves"
+
+# RED preserved: a version that NEVER appears is a real failure. The retry
+# must not decay into a sleep that hides a publish that did not happen.
+make_fake_npm always
+if PATH="$fake_npm_dir:$PATH" NPM_VERIFY_ATTEMPTS=3 NPM_VERIFY_DELAY=0 \
+     bash "$LANE" verify-published --tgz "$staged" \
+       --package @awebai/lane-fixture --version 1.2.3 >/dev/null 2>&1; then
+  fail "a version that never resolves must still refuse"
+fi
+ok "a version that never appears still refuses"
+[[ "$(attempt_count)" == "3" ]] \
+  || fail "expected the full 3 attempts before refusing, got $(attempt_count)"
+ok "refusal comes only after the whole propagation window"
+
+# RED preserved: an outage is NEVER proof of absence, and must not be retried
+# as though it were lag - it fails immediately, on the first attempt.
+make_fake_npm always outage
+if PATH="$fake_npm_dir:$PATH" NPM_VERIFY_ATTEMPTS=5 NPM_VERIFY_DELAY=0 \
+     bash "$LANE" verify-published --tgz "$staged" \
+       --package @awebai/lane-fixture --version 1.2.3 >/dev/null 2>&1; then
+  fail "a registry outage must refuse"
+fi
+ok "a registry outage refuses"
+[[ "$(attempt_count)" == "1" ]] \
+  || fail "an outage must not be retried as lag; got $(attempt_count) attempts"
+ok "an outage is distinguished from lag and never retried"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

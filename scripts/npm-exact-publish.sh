@@ -232,8 +232,43 @@ PY
       [[ -n "$PACKAGE" && -n "$VERSION" ]] \
         || { echo "verify-published requires --package and --version (or --observed)" >&2; exit 2; }
       OBSERVED="$(mktemp)"
-      tarball="$(npm view "${PACKAGE}@${VERSION}" dist.tarball)"
-      [[ -n "$tarball" ]] || fail "registry has no tarball for ${PACKAGE}@${VERSION}"
+      # A publish is not visible to a read the instant it returns: the registry
+      # propagates. Reading immediately made a SUCCESSFUL release report
+      # failure - channel 1.7.4 published, this step got "404 No match found",
+      # and the run went red with correct bytes already on the registry. That
+      # is the worst direction to fail in, because it invites a republish.
+      #
+      # So a 404 is retried within a bounded window. Every other npm failure
+      # (outage, auth, network) is NOT retried: an outage is never evidence of
+      # absence, and treating it as lag would both waste the window and blur
+      # the diagnosis. Exhausting the window still refuses - the retry must
+      # never decay into a sleep that hides a publish that did not happen.
+      attempts="${NPM_VERIFY_ATTEMPTS:-10}"
+      delay="${NPM_VERIFY_DELAY:-6}"
+      tarball=""
+      attempt=1
+      while :; do
+        npm_err="$(mktemp)"
+        if tarball="$(npm view "${PACKAGE}@${VERSION}" dist.tarball 2>"$npm_err")" \
+             && [[ -n "$tarball" ]]; then
+          rm -f "$npm_err"
+          break
+        fi
+        tarball=""
+        if ! grep -qE 'E404|No match found|is not in this registry' "$npm_err"; then
+          printf '%s\n' "$(cat "$npm_err")" >&2
+          rm -f "$npm_err"
+          fail "registry did not answer for ${PACKAGE}@${VERSION}; an outage is never proof of absence"
+        fi
+        rm -f "$npm_err"
+        if [[ "$attempt" -ge "$attempts" ]]; then
+          fail "registry still has no ${PACKAGE}@${VERSION} after ${attempts} attempts; it was never published"
+        fi
+        printf 'waiting for %s@%s to propagate (attempt %d/%d)\n' \
+          "$PACKAGE" "$VERSION" "$attempt" "$attempts" >&2
+        sleep "$delay"
+        attempt=$((attempt + 1))
+      done
       curl -fsSL -o "$OBSERVED" "$tarball"
     fi
     s="$(sha256 "$TGZ")"; o="$(sha256 "$OBSERVED")"
