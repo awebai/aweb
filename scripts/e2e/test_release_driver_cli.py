@@ -955,6 +955,170 @@ class SubprocessSurfaceTests(unittest.TestCase):
             self.assertNotIn("no record", result.stdout)
 
 
+class OutstandingReceiptVerdictTests(unittest.TestCase):
+    """The official reader's OUTSTANDING verdict, asserted through rd.main().
+
+    Nothing asserted this verdict at all, which is how the reader and the npm
+    lane were able to disagree with each other while both looked green. This
+    drives the real CLI entry point and reads the printed verdict.
+
+    In-process rather than fresh-process: crossing a process boundary needs real
+    registry observers, which fixtures cannot provide. It covers the reader's
+    composition and verdict formatting, not the transport.
+    """
+
+    def _run_and_read(self, root, graph_path, state):
+        """Plan, run, and return (receipt_id, planned, lanes, receipt)."""
+        import contextlib, io
+        helper = CliPathTests("graph_file")
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            rd.main(
+                ["--graph", str(graph_path), "--store-root", str(root), "plan"],
+                providers=helper.providers_for(root, state),
+            )
+        planned = json.loads(buffer.getvalue())
+        graph = rd.Graph.load(graph_path)
+        plan = rd.compute_plan(graph, state)
+        lanes = FixtureLanes({n.component for n in plan.moving})
+        rd.main(
+            ["--graph", str(graph_path), "release-run", "--allow-local-authority",
+             "--plan-id", planned["frozen_plan_id"],
+             "--plan-artifact-id", planned["plan_artifact_id"]],
+            providers=helper.providers_for(root, state, lanes=lanes),
+        )
+        authority = rd.FileDigestAuthority(root)
+        receipt_id = next(
+            k for k in authority.recorded_ids() if k.startswith("receipt:")
+        )
+        receipt = rd.load_sealed_receipt(
+            rd.FileArtifactStore(root).get(receipt_id),
+            expected_digest=authority.expected_digest(receipt_id),
+        )
+        return receipt_id, planned, lanes, receipt
+
+    def test_a_debt_bearing_receipt_reports_outstanding_positive(self) -> None:
+        """The half that matters: a release that owes delivery must SAY so.
+        A generic MATCH cannot distinguish published-and-delivered from
+        published-but-still-owed."""
+        import contextlib, io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = CliPathTests("graph_file")
+            graph_path = helper.graph_file(root)
+            # give client a delivery obligation it cannot satisfy pre-adoption
+            text = graph_path.read_text().replace(
+                '[component."client"]',
+                '[component."client"]\n'
+                'delivery_restart = { proof = "restart per host" }',
+                1,
+            )
+            self.assertIn("delivery_restart", text, "the graph edit must apply")
+            graph_path.write_text(text)
+            state = orchestration_state()
+            receipt_id, planned, lanes, receipt = self._run_and_read(
+                root, graph_path, state
+            )
+            self.assertEqual(
+                receipt.entries["client"].delivery_outstanding,
+                "delivery-restart-proof",
+                "the sealed receipt must record the debt",
+            )
+            # FixtureLanes has no observe(), which is exactly why nothing ever
+            # reached this verdict. An observing lane returns what the receipt
+            # recorded - including the absent proof that IS the debt.
+            class ObservingLanes(FixtureLanes):
+                def __init__(self, available, entries):
+                    super().__init__(available)
+                    self._entries = entries
+
+                def observe(self, node, staged=None):
+                    return self._entries[node.component]
+
+            observing = ObservingLanes(
+                {n.component for n in rd.compute_plan(
+                    rd.Graph.load(graph_path), state).moving},
+                receipt.entries,
+            )
+            verdict = io.StringIO()
+            with contextlib.redirect_stdout(verdict):
+                rd.main(
+                    ["--graph", str(graph_path), "--store-root", str(root),
+                     "release-receipt", "--artifact-id", receipt_id,
+                     "--plan-id", planned["frozen_plan_id"],
+                     "--plan-artifact-id", planned["plan_artifact_id"]],
+                    providers=helper.providers_for(root, state, lanes=observing),
+                )
+            printed = verdict.getvalue()
+            self.assertIn("OUTSTANDING", printed)
+            self.assertIn("client", printed)
+
+    def test_a_debt_bearing_receipt_reports_outstanding(self) -> None:
+        import contextlib, io
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = CliPathTests("graph_file")
+            graph_path = helper.graph_file(root)
+            graph = rd.Graph.load(graph_path)
+            data = json.loads(graph_path.read_text()) if False else None
+            state = orchestration_state()
+
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                rd.main(
+                    ["--graph", str(graph_path), "--store-root", str(root), "plan"],
+                    providers=helper.providers_for(root, state),
+                )
+            planned = json.loads(buffer.getvalue())
+
+            plan = rd.compute_plan(graph, state)
+            lanes = FixtureLanes({n.component for n in plan.moving})
+            rd.main(
+                [
+                    "--graph", str(graph_path),
+                    "release-run", "--allow-local-authority",
+                    "--plan-id", planned["frozen_plan_id"],
+                    "--plan-artifact-id", planned["plan_artifact_id"],
+                ],
+                providers=helper.providers_for(root, state, lanes=lanes),
+            )
+            authority = rd.FileDigestAuthority(root)
+            receipt_id = next(
+                k for k in authority.recorded_ids() if k.startswith("receipt:")
+            )
+            receipt = rd.load_sealed_receipt(
+                rd.FileArtifactStore(root).get(receipt_id),
+                expected_digest=authority.expected_digest(receipt_id),
+            )
+            # The fixture graph has no delivery_restart component, so this
+            # release owes nothing and must NOT report OUTSTANDING. The
+            # discriminating half: a verdict that always said OUTSTANDING would
+            # be as useless as one that never did.
+            self.assertTrue(
+                all(e.delivery_outstanding is None for e in receipt.entries.values()),
+                "a plan with no delivery obligation owes nothing",
+            )
+            verdict = io.StringIO()
+            with contextlib.redirect_stdout(verdict):
+                rd.main(
+                    [
+                        "--graph", str(graph_path), "--store-root", str(root),
+                        "release-receipt",
+                        "--artifact-id", receipt_id,
+                        "--plan-id", planned["frozen_plan_id"],
+                        "--plan-artifact-id", planned["plan_artifact_id"],
+                    ],
+                    providers=helper.providers_for(root, state, lanes=lanes),
+                )
+            printed = verdict.getvalue()
+            self.assertNotIn(
+                "OUTSTANDING", printed,
+                "nothing is owed here, so the reader must not claim a debt",
+            )
+
+
 class PostPublicationResumeTests(unittest.TestCase):
     def test_resume_completes_after_genuine_publication(self) -> None:
         """alice's reproduction: freeze client 1.1.0 over registry 1.0.0,
