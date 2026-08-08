@@ -179,4 +179,78 @@ expect_refusal "mismatch at planning" "permanent" \
   bash "$LANE" plan-publish --dist "$tmp/dist" --package fixture-pkg \
   --version 1.2.3 --observed-status 200 --observed-json "$tmp/observed.json"
 
+# ── verify-published resolving through PyPI ─────────────────────────
+# Same defect the npm lane shipped: an immediate read after upload cannot tell
+# propagation lag from a release that never happened, and the old message
+# asserted "has no release" for all three causes at once.
+
+fakebin="$tmp/fakebin"; mkdir -p "$fakebin"
+curl_attempts="$tmp/curl-attempts"
+
+# $1 = number of 404s before 200 ("always" never resolves); $2 = other status
+make_fake_curl() {
+  local fails_before_success="$1" other="${2:-}"
+  : > "$curl_attempts"
+  cat > "$fakebin/curl" <<FAKE
+#!/usr/bin/env bash
+echo x >> "$curl_attempts"
+n=\$(wc -l < "$curl_attempts" | tr -d ' ')
+out=""
+prev=""
+for a in "\$@"; do
+  if [[ "\$prev" == "-o" ]]; then out="\$a"; fi
+  prev="\$a"
+done
+if [[ -n "$other" ]]; then printf '%s' "$other"; exit 0; fi
+if [[ "$fails_before_success" == "always" || "\$n" -le "$fails_before_success" ]]; then
+  printf '404'; exit 0
+fi
+cp "$tmp/observed.json" "\$out"
+printf '200'
+FAKE
+  chmod +x "$fakebin/curl"
+}
+
+curl_count() { wc -l < "$curl_attempts" | tr -d ' '; }
+
+make_dist "$tmp/dist" 1.2.3 1.2.3
+observation
+
+# GREEN: transient 404s are lag; the step must survive them.
+make_fake_curl 2
+if PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=5 PYPI_VERIFY_DELAY=0 \
+     bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
+       --version 1.2.3 >/dev/null 2>&1; then
+  ok "pypi verify-published survives propagation lag"
+else
+  fail "pypi verify-published must retry a 404 rather than assert absence"
+fi
+[[ "$(curl_count)" == "3" ]] \
+  || fail "expected 3 attempts (2 lagging + 1 resolving), got $(curl_count)"
+ok "pypi retries stop as soon as the release resolves"
+
+# RED preserved: a release that never appears still refuses.
+make_fake_curl always
+if PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=3 PYPI_VERIFY_DELAY=0 \
+     bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
+       --version 1.2.3 >/dev/null 2>&1; then
+  fail "a release that never resolves must still refuse"
+fi
+ok "pypi refuses a release that never appears"
+[[ "$(curl_count)" == "3" ]] \
+  || fail "expected the full 3 attempts before refusing, got $(curl_count)"
+ok "pypi refusal comes only after the whole window"
+
+# RED preserved: an outage is never proof of absence and is not retried.
+make_fake_curl always 503
+if PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=5 PYPI_VERIFY_DELAY=0 \
+     bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
+       --version 1.2.3 >/dev/null 2>&1; then
+  fail "a PyPI outage must refuse"
+fi
+ok "pypi refuses on outage"
+[[ "$(curl_count)" == "1" ]] \
+  || fail "an outage must not be retried as lag; got $(curl_count) attempts"
+ok "pypi distinguishes an outage from lag and never retries it"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

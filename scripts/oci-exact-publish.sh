@@ -223,10 +223,41 @@ print("yes" if sys.argv[1] in tags else "no")
       if [[ -n "${observed_map[$tag]:-}" ]]; then
         remote="${observed_map[$tag]}"
       else
-        remote="$(skopeo inspect --raw "docker://${REPOSITORY}:${tag}" \
-          | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; } \
-          | awk '{print "sha256:"$1}')" \
-          || fail "cannot observe ${REPOSITORY}:${tag}"
+        # GHCR propagates like every other registry, so a push is not
+        # instantly visible to an inspect. The npm lane reported a successful
+        # release as FAILED for exactly this reason. A missing manifest is
+        # retried within a bounded window; any other skopeo failure is not,
+        # because an outage is never evidence of absence. Exhausting the
+        # window still refuses.
+        attempts="${OCI_VERIFY_ATTEMPTS:-10}"
+        delay="${OCI_VERIFY_DELAY:-6}"
+        attempt=1
+        remote=""
+        while :; do
+          skopeo_err="$(mktemp)"
+          if raw="$(skopeo inspect --raw "docker://${REPOSITORY}:${tag}" \
+               2>"$skopeo_err")" && [[ -n "$raw" ]]; then
+            rm -f "$skopeo_err"
+            remote="sha256:$(printf '%s' "$raw" \
+              | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; } \
+              | awk '{print $1}')"
+            break
+          fi
+          if ! grep -qiE 'manifest unknown|not found|was not found|NAME_UNKNOWN|MANIFEST_UNKNOWN' \
+               "$skopeo_err"; then
+            printf '%s\n' "$(cat "$skopeo_err")" >&2
+            rm -f "$skopeo_err"
+            fail "cannot observe ${REPOSITORY}:${tag}; an outage is never proof of absence"
+          fi
+          rm -f "$skopeo_err"
+          if [[ "$attempt" -ge "$attempts" ]]; then
+            fail "${REPOSITORY}:${tag} is still absent after ${attempts} attempts; it was never pushed"
+          fi
+          printf 'waiting for %s:%s to propagate (attempt %d/%d)\n' \
+            "$REPOSITORY" "$tag" "$attempt" "$attempts" >&2
+          sleep "$delay"
+          attempt=$((attempt + 1))
+        done
       fi
       [[ "$remote" == "$staged" ]] \
         || fail "${REPOSITORY}:${tag} resolves to ${remote}, staged index is ${staged}"

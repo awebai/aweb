@@ -215,4 +215,78 @@ for doc in '{}' '{"Tags":null}' '{"Tags":"not-an-array"}' 'not json at all'; do
 done
 ok "malformed, null, and non-array listings refuse (4 shapes) - never absence"
 
+# ── verify-published resolving through the REGISTRY ──────────────────
+# Every case above supplies --observed-digest, so the skopeo path - the one
+# that runs in production - had no coverage, exactly as in the npm lane that
+# reported a successful release as failed.
+#
+# These controls assert the RESOLUTION behaviour, not digest equality: the
+# fake registry cannot forge bytes hashing to the staged index, so a resolved
+# observation legitimately ends in a "resolves to" mismatch. That is the point
+# - reaching the mismatch PROVES the propagation loop completed, and is
+# distinguishable from "absent" and from "cannot observe".
+
+fakebin="$tmp/fakebin"; mkdir -p "$fakebin"
+sk_attempts="$tmp/skopeo-attempts"
+
+# $1 = number of absent replies before it resolves ("always" never resolves)
+# $2 = optional non-absence failure
+make_fake_skopeo() {
+  local fails_before_success="$1" mode="${2:-absent}"
+  : > "$sk_attempts"
+  cat > "$fakebin/skopeo" <<FAKE
+#!/usr/bin/env bash
+echo x >> "$sk_attempts"
+n=\$(wc -l < "$sk_attempts" | tr -d ' ')
+if [[ "$mode" == "outage" ]]; then
+  echo "error pinging docker registry: 503 Service Unavailable" >&2
+  exit 1
+fi
+if [[ "$fails_before_success" == "always" || "\$n" -le "$fails_before_success" ]]; then
+  echo "reading manifest 0.5.14 in ghcr.io/awebai/awid: manifest unknown" >&2
+  exit 1
+fi
+printf '{"schemaVersion":2,"manifests":[]}'
+FAKE
+  chmod +x "$fakebin/skopeo"
+}
+
+sk_count() { wc -l < "$sk_attempts" | tr -d ' '; }
+
+run_oci_verify() {
+  PATH="$fakebin:$PATH" OCI_VERIFY_ATTEMPTS="$1" OCI_VERIFY_DELAY=0 \
+    bash "$LANE" verify-published --archive "$tmp/good.tar" --version 0.5.14 \
+      --source-sha "$SRC_SHA" --repository ghcr.io/awebai/awid 2>&1
+}
+
+# GREEN: transient absence is propagation; the loop must get past it.
+make_fake_skopeo 2
+out="$(run_oci_verify 5 || true)"
+grep -q "resolves to" <<<"$out" \
+  || fail "oci verify must survive propagation and reach the digest comparison: $out"
+ok "oci verify-published survives registry propagation lag"
+[[ "$(sk_count)" == "3" ]] \
+  || fail "expected 3 attempts (2 absent + 1 resolving), got $(sk_count)"
+ok "oci retries stop as soon as the tag resolves"
+
+# RED preserved: a tag that never appears refuses AS ABSENT, not as a mismatch.
+make_fake_skopeo always
+out="$(run_oci_verify 3 || true)"
+grep -q "still absent" <<<"$out" \
+  || fail "a tag that never resolves must refuse as absent: $out"
+ok "oci refuses a tag that never appears"
+[[ "$(sk_count)" == "3" ]] \
+  || fail "expected the full 3 attempts before refusing, got $(sk_count)"
+ok "oci refusal comes only after the whole window"
+
+# RED preserved: an outage is never proof of absence and is not retried.
+make_fake_skopeo always outage
+out="$(run_oci_verify 5 || true)"
+grep -q "never proof of absence" <<<"$out" \
+  || fail "an outage must refuse as an outage, not as absence: $out"
+ok "oci refuses on outage, naming it as such"
+[[ "$(sk_count)" == "1" ]] \
+  || fail "an outage must not be retried as lag; got $(sk_count) attempts"
+ok "oci distinguishes an outage from lag and never retries it"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

@@ -133,9 +133,33 @@ PY
   verify-published)
     if [[ -z "$OBSERVED" ]]; then
       OBSERVED="$(mktemp)"
-      curl -fsSL -o "$OBSERVED" \
-        "https://pypi.org/pypi/${PACKAGE}/${VERSION}/json" \
-        || fail "PyPI has no release ${PACKAGE} ${VERSION}"
+      # PyPI propagates too, so an immediate read after upload can 404 for a
+      # release that succeeded. The npm lane reported exactly that as a failed
+      # release once, with correct bytes already published; the old message
+      # here ("has no release") made the same mistake worse by asserting
+      # absence when it could not tell absence from lag or from an outage.
+      #
+      # 404 is retried within a bounded window; any other HTTP status is not,
+      # because an outage is never evidence of absence. Exhausting the window
+      # still refuses.
+      attempts="${PYPI_VERIFY_ATTEMPTS:-10}"
+      delay="${PYPI_VERIFY_DELAY:-6}"
+      attempt=1
+      while :; do
+        status="$(curl -sSL -o "$OBSERVED" -w '%{http_code}' \
+          "https://pypi.org/pypi/${PACKAGE}/${VERSION}/json" 2>/dev/null || true)"
+        [[ "$status" == "200" ]] && break
+        if [[ "$status" != "404" ]]; then
+          fail "PyPI did not answer for ${PACKAGE} ${VERSION} (HTTP ${status:-none}); an outage is never proof of absence"
+        fi
+        if [[ "$attempt" -ge "$attempts" ]]; then
+          fail "PyPI still has no release ${PACKAGE} ${VERSION} after ${attempts} attempts; it was never published"
+        fi
+        printf 'waiting for %s %s to propagate (attempt %d/%d)\n' \
+          "$PACKAGE" "$VERSION" "$attempt" "$attempts" >&2
+        sleep "$delay"
+        attempt=$((attempt + 1))
+      done
     fi
     python3 - "$DIST" "$OBSERVED" "$NORMALIZED" "$VERSION" <<'PY'
 import hashlib, json, os, re, sys
