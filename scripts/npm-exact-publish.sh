@@ -11,6 +11,12 @@
 #                    [--observed <file>]
 #       Download the registry tarball (or use --observed) and refuse
 #       unless its bytes are identical to the staged tgz.
+#   verify-published-bounded --tgz <file> --package <name> --version <X.Y.Z>
+#                    --post-action <publish|adopt>
+#                    [--deadline-seconds <n>] [--backoff-seconds <n>]
+#       Only after an exact publish/adopt action, retry transient registry
+#       visibility until a strict deadline. Succeeds only on the exact staged
+#       bytes; a present mismatch refuses permanently without retry.
 #   require-publishable --manifest <manifest.json>
 #       Refuse unless the staged manifest records mode stage-only; a
 #       verify-only artifact must never continue to publication.
@@ -54,6 +60,7 @@ sha256() {
 MODE="${1:-}"; shift || true
 DIR='' VERSION='' OUT='' TGZ='' PACKAGE='' OBSERVED='' PROFILE='' SOURCE_ROOT=''
 MANIFEST='' STAGING='' SHA='' DIGEST='' RUN_ID='' ARTIFACT_ID='' STATUS=''
+POST_ACTION='' DEADLINE_SECONDS='120' BACKOFF_SECONDS='5'
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) DIR="$2"; shift 2 ;;
@@ -71,6 +78,9 @@ while [[ $# -gt 0 ]]; do
     --digest) DIGEST="$2"; shift 2 ;;
     --run-id) RUN_ID="$2"; shift 2 ;;
     --artifact-id) ARTIFACT_ID="$2"; shift 2 ;;
+    --post-action) POST_ACTION="$2"; shift 2 ;;
+    --deadline-seconds) DEADLINE_SECONDS="$2"; shift 2 ;;
+    --backoff-seconds) BACKOFF_SECONDS="$2"; shift 2 ;;
     *) echo "npm-exact-publish: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -232,49 +242,79 @@ PY
       [[ -n "$PACKAGE" && -n "$VERSION" ]] \
         || { echo "verify-published requires --package and --version (or --observed)" >&2; exit 2; }
       OBSERVED="$(mktemp)"
-      # A publish is not visible to a read the instant it returns: the registry
-      # propagates. Reading immediately made a SUCCESSFUL release report
-      # failure - channel 1.7.4 published, this step got "404 No match found",
-      # and the run went red with correct bytes already on the registry. That
-      # is the worst direction to fail in, because it invites a republish.
-      #
-      # So a 404 is retried within a bounded window. Every other npm failure
-      # (outage, auth, network) is NOT retried: an outage is never evidence of
-      # absence, and treating it as lag would both waste the window and blur
-      # the diagnosis. Exhausting the window still refuses - the retry must
-      # never decay into a sleep that hides a publish that did not happen.
-      attempts="${NPM_VERIFY_ATTEMPTS:-10}"
-      delay="${NPM_VERIFY_DELAY:-6}"
-      tarball=""
-      attempt=1
-      while :; do
-        npm_err="$(mktemp)"
-        if tarball="$(npm view "${PACKAGE}@${VERSION}" dist.tarball 2>"$npm_err")" \
-             && [[ -n "$tarball" ]]; then
-          rm -f "$npm_err"
-          break
-        fi
-        tarball=""
-        if ! grep -qE 'E404|No match found|is not in this registry' "$npm_err"; then
-          printf '%s\n' "$(cat "$npm_err")" >&2
-          rm -f "$npm_err"
-          fail "registry did not answer for ${PACKAGE}@${VERSION}; an outage is never proof of absence"
-        fi
-        rm -f "$npm_err"
-        if [[ "$attempt" -ge "$attempts" ]]; then
-          fail "registry still has no ${PACKAGE}@${VERSION} after ${attempts} attempts; it was never published"
-        fi
-        printf 'waiting for %s@%s to propagate (attempt %d/%d)\n' \
-          "$PACKAGE" "$VERSION" "$attempt" "$attempts" >&2
-        sleep "$delay"
-        attempt=$((attempt + 1))
-      done
+      tarball="$(npm view "${PACKAGE}@${VERSION}" dist.tarball)"
+      [[ -n "$tarball" ]] || fail "registry has no tarball for ${PACKAGE}@${VERSION}"
       curl -fsSL -o "$OBSERVED" "$tarball"
     fi
     s="$(sha256 "$TGZ")"; o="$(sha256 "$OBSERVED")"
     [[ "$s" == "$o" ]] \
       || fail "published bytes $o do not equal staged bytes $s for $(basename "$TGZ")"
     printf 'VERIFIED: published equals staged (%s)\n' "$s"
+    ;;
+  verify-published-bounded)
+    [[ -n "$TGZ" && -f "$TGZ" && -n "$PACKAGE" && -n "$VERSION" ]] \
+      || fail "verify-published-bounded requires --tgz --package --version"
+    [[ "$POST_ACTION" == "publish" || "$POST_ACTION" == "adopt" ]] \
+      || fail "verify-published-bounded requires --post-action publish or adopt"
+    [[ "$DEADLINE_SECONDS" =~ ^[1-9][0-9]*$ && "$BACKOFF_SECONDS" =~ ^[0-9]+$ ]] \
+      || fail "readback deadline must be positive and backoff non-negative integer seconds"
+    readback_tmp="$(mktemp -d)"
+    trap 'rm -rf "$readback_tmp"' EXIT
+    packument="$readback_tmp/packument.json"
+    observed="$readback_tmp/observed.tgz"
+    encoded="$(python3 - "$PACKAGE" <<'PYENC'
+import sys
+import urllib.parse
+print(urllib.parse.quote(sys.argv[1], safe=""))
+PYENC
+    )"
+    registry_url="https://registry.npmjs.org/${encoded}/${VERSION}"
+    deadline=$((SECONDS + DEADLINE_SECONDS))
+    attempts=0
+    last_observation='not attempted'
+    while (( SECONDS < deadline )); do
+      attempts=$((attempts + 1))
+      remaining=$((deadline - SECONDS))
+      if status="$(curl -sS --connect-timeout "$remaining" --max-time "$remaining" \
+          -o "$packument" -w '%{http_code}' "$registry_url")"; then
+        case "$status" in
+          200)
+            tarball="$(python3 - "$packument" <<'PYTARBALL' 2>/dev/null || true
+import json
+import sys
+value = json.load(open(sys.argv[1])).get("dist", {}).get("tarball")
+if isinstance(value, str) and value:
+    print(value)
+PYTARBALL
+            )"
+            remaining=$((deadline - SECONDS))
+            if [[ -n "$tarball" && "$remaining" -gt 0 ]] \
+               && curl -fsSL --connect-timeout "$remaining" --max-time "$remaining" \
+                 -o "$observed" "$tarball"; then
+              staged_digest="$(sha256 "$TGZ")"
+              observed_digest="$(sha256 "$observed")"
+              if [[ "$observed_digest" != "$staged_digest" ]]; then
+                fail "registry serves $observed_digest, staged is $staged_digest; permanent mismatch after $POST_ACTION"
+              fi
+              printf 'VERIFIED: registry equals staged (%s) after %s attempt(s)\n' \
+                "$staged_digest" "$attempts"
+              exit 0
+            fi
+            last_observation='HTTP 200 with unavailable tarball bytes'
+            ;;
+          404) last_observation='HTTP 404 (not yet visible)' ;;
+          *) last_observation="HTTP $status (registry unavailable)" ;;
+        esac
+      else
+        last_observation='registry request unavailable'
+      fi
+      remaining=$((deadline - SECONDS))
+      (( remaining > 0 )) || break
+      sleep_for="$BACKOFF_SECONDS"
+      (( sleep_for <= remaining )) || sleep_for="$remaining"
+      sleep "$sleep_for"
+    done
+    fail "registry readback uncertain at deadline after $attempts attempt(s): $last_observation"
     ;;
   decide-npm)
     # Tri-state registry decision: HTTP 404 alone proves absence (PUBLISH);

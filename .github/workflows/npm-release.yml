@@ -377,6 +377,7 @@ jobs:
           fi
 
       - name: npm - publish missing exact tgz, adopt identical
+        id: npm_action
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_NAME: ${{ steps.lane.outputs.npm_name }}
@@ -401,21 +402,25 @@ jobs:
             ADOPT)
               bash scripts/npm-exact-publish.sh verify-published --tgz "$staged" --observed observed.tgz
               echo "adopted ${NPM_NAME}@${VERSION} (byte-identical)"
+              echo "action=adopt" >> "$GITHUB_OUTPUT"
               ;;
             PUBLISH)
               bash scripts/npm-exact-publish.sh publish-exact --tgz "$staged"
+              echo "action=publish" >> "$GITHUB_OUTPUT"
               ;;
             *)
               echo "REFUSE: unexpected registry decision '${decision}'" >&2; exit 1
               ;;
           esac
 
-      - name: Verify published state equals staged bytes
+      - name: Verify published state equals staged bytes after bounded propagation
         env:
           NPM_NAME: ${{ steps.lane.outputs.npm_name }}
+          NPM_ACTION: ${{ steps.npm_action.outputs.action }}
         run: |
           set -euo pipefail
           staged="$(ls staging/*.tgz)"
-          bash scripts/npm-exact-publish.sh verify-published \
-            --tgz "$staged" --package "$NPM_NAME" --version "$VERSION"
+          bash scripts/npm-exact-publish.sh verify-published-bounded \
+            --tgz "$staged" --package "$NPM_NAME" --version "$VERSION" \
+            --post-action "$NPM_ACTION"
           echo "published ${NPM_NAME}@${VERSION} is byte-identical to the staged tgz" >> "$GITHUB_STEP_SUMMARY"

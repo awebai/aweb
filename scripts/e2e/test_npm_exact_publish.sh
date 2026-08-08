@@ -364,85 +364,81 @@ expect_refusal "guard probe refuses present version" "already exists" \
 expect_refusal "guard probe refuses outage" "never proof of absence" \
   decide-npm --observed-status 500
 
-# ── verify-published resolving through the REGISTRY ──────────────────
-# The path that shipped a false failure. Channel 1.7.4 published, then this
-# step read the registry seconds later, got a 404 from propagation lag, and
-# reported the release as FAILED. Every earlier test supplied --observed, so
-# the resolution path had no coverage at all.
-
-fake_npm_dir="$tmp/fakebin"
-mkdir -p "$fake_npm_dir"
-attempts_file="$tmp/attempts"
-
-# $1 = how many 404s before the version resolves ("always" never resolves)
-# $2 = optional non-404 failure mode
-make_fake_npm() {
-  local fails_before_success="$1" mode="${2:-notfound}"
-  : > "$attempts_file"
-  cat > "$fake_npm_dir/npm" <<FAKE
+# ── post-action readback: bounded propagation, exact bytes only ─────
+cat > "$tmp/fake-bin/curl" <<'EOFCURL'
 #!/usr/bin/env bash
-echo x >> "$attempts_file"
-n=\$(wc -l < "$attempts_file" | tr -d ' ')
-if [[ "$mode" == "outage" ]]; then
-  echo "npm error code E503" >&2
-  echo "npm error 503 Service Unavailable" >&2
-  exit 1
+set -euo pipefail
+: "${FAKE_STATUS_SEQUENCE:?}" "${FAKE_CURL_COUNT:?}" "${FAKE_REMOTE_TGZ:?}"
+out='' url=''
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -w|--connect-timeout|--max-time) shift 2 ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if [[ "$url" == "https://registry.example/exact.tgz" ]]; then
+  cp "$FAKE_REMOTE_TGZ" "$out"
+  exit 0
 fi
-if [[ "$fails_before_success" == "always" || "\$n" -le "$fails_before_success" ]]; then
-  echo "npm error code E404" >&2
-  echo "npm error 404 No match found for version 1.2.3" >&2
-  exit 1
+count=0
+[[ ! -f "$FAKE_CURL_COUNT" ]] || count="$(cat "$FAKE_CURL_COUNT")"
+count=$((count + 1)); printf '%s' "$count" > "$FAKE_CURL_COUNT"
+status="$(sed -n "${count}p" "$FAKE_STATUS_SEQUENCE")"
+[[ -n "$status" ]] || status="$(tail -n 1 "$FAKE_STATUS_SEQUENCE")"
+if [[ "$status" == 200 ]]; then
+  printf '{"dist":{"tarball":"https://registry.example/exact.tgz"}}' > "$out"
+else
+  : > "$out"
 fi
-echo "file://$tmp/observed.tgz"
-FAKE
-  chmod +x "$fake_npm_dir/npm"
+printf '%s' "$status"
+EOFCURL
+chmod +x "$tmp/fake-bin/curl"
+
+run_bounded_readback() {
+  PATH="$tmp/fake-bin:$PATH" \
+  FAKE_STATUS_SEQUENCE="$tmp/statuses" \
+  FAKE_CURL_COUNT="$tmp/curl-count" \
+  FAKE_REMOTE_TGZ="$tmp/remote.tgz" \
+    bash "$LANE" verify-published-bounded \
+      --tgz "$staged" --package '@awebai/lane-fixture' --version 1.2.3 \
+      --post-action publish --deadline-seconds "$1" --backoff-seconds "$2"
 }
 
-attempt_count() { wc -l < "$attempts_file" | tr -d ' '; }
+printf '404\n200\n' > "$tmp/statuses"; : > "$tmp/curl-count"
+cp "$staged" "$tmp/remote.tgz"
+run_bounded_readback 2 0 >/dev/null \
+  || fail "bounded readback did not accept 404 followed by exact bytes"
+[[ "$(cat "$tmp/curl-count")" == 2 ]] \
+  || fail "404-to-exact readback did not make exactly two observations"
+ok "post-publish 404 retries to exact staged-byte success"
 
-make_fixture
-bash "$LANE" pack-inspect --dir "$tmp/pkg" --version 1.2.3 \
-  --out "$tmp/staging" >/dev/null
-staged="$tmp/staging/awebai-lane-fixture-1.2.3.tgz"
-cp "$staged" "$tmp/observed.tgz"
-
-# GREEN: transient 404s are propagation lag, and the step must survive them.
-make_fake_npm 2
-if PATH="$fake_npm_dir:$PATH" NPM_VERIFY_ATTEMPTS=5 NPM_VERIFY_DELAY=0 \
-     bash "$LANE" verify-published --tgz "$staged" \
-       --package @awebai/lane-fixture --version 1.2.3 >/dev/null 2>&1; then
-  ok "verify-published survives registry propagation lag"
-else
-  fail "verify-published must retry a 404 rather than report a false failure"
+printf '404\n' > "$tmp/statuses"; : > "$tmp/curl-count"
+if out="$(run_bounded_readback 1 1 2>&1)"; then
+  fail "persistent 404 was accepted"
 fi
-[[ "$(attempt_count)" == "3" ]] \
-  || fail "expected 3 attempts (2 lagging + 1 resolving), got $(attempt_count)"
-ok "retries stop as soon as the version resolves"
+grep -qi "uncertain\|deadline" <<<"$out" \
+  || fail "persistent 404 refusal did not name bounded uncertainty: $out"
+ok "persistent 404 fails uncertain at the strict deadline"
 
-# RED preserved: a version that NEVER appears is a real failure. The retry
-# must not decay into a sleep that hides a publish that did not happen.
-make_fake_npm always
-if PATH="$fake_npm_dir:$PATH" NPM_VERIFY_ATTEMPTS=3 NPM_VERIFY_DELAY=0 \
-     bash "$LANE" verify-published --tgz "$staged" \
-       --package @awebai/lane-fixture --version 1.2.3 >/dev/null 2>&1; then
-  fail "a version that never resolves must still refuse"
+printf '200\n404\n' > "$tmp/statuses"; : > "$tmp/curl-count"
+cp "$staged" "$tmp/remote.tgz"; printf x >> "$tmp/remote.tgz"
+if out="$(run_bounded_readback 2 0 2>&1)"; then
+  fail "present mismatched bytes were accepted"
 fi
-ok "a version that never appears still refuses"
-[[ "$(attempt_count)" == "3" ]] \
-  || fail "expected the full 3 attempts before refusing, got $(attempt_count)"
-ok "refusal comes only after the whole propagation window"
+grep -qi "permanent" <<<"$out" \
+  || fail "present mismatch refusal did not name permanence: $out"
+[[ "$(cat "$tmp/curl-count")" == 1 ]] \
+  || fail "present mismatch retried instead of refusing permanently"
+ok "present mismatch refuses permanently without retry"
 
-# RED preserved: an outage is NEVER proof of absence, and must not be retried
-# as though it were lag - it fails immediately, on the first attempt.
-make_fake_npm always outage
-if PATH="$fake_npm_dir:$PATH" NPM_VERIFY_ATTEMPTS=5 NPM_VERIFY_DELAY=0 \
-     bash "$LANE" verify-published --tgz "$staged" \
-       --package @awebai/lane-fixture --version 1.2.3 >/dev/null 2>&1; then
-  fail "a registry outage must refuse"
-fi
-ok "a registry outage refuses"
-[[ "$(attempt_count)" == "1" ]] \
-  || fail "an outage must not be retried as lag; got $(attempt_count) attempts"
-ok "an outage is distinguished from lag and never retried"
+grep -q 'id: npm_action' "$ROOT/.github/workflows/npm-release.yml" \
+  || fail "workflow does not retain the exact publish/adopt action"
+grep -q 'verify-published-bounded' "$ROOT/.github/workflows/npm-release.yml" \
+  || fail "workflow does not use bounded post-action readback"
+grep -q 'steps.npm_action.outputs.action' "$ROOT/.github/workflows/npm-release.yml" \
+  || fail "workflow does not bind bounded readback to the exact action"
+ok "workflow boundary invokes bounded readback only after publish/adopt"
 
 printf 'SELFTEST OK: %d assertions\n' "$PASS"
