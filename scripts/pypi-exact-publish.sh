@@ -142,30 +142,44 @@ PY
       # 404 is retried within a bounded window; any other HTTP status is not,
       # because an outage is never evidence of absence. Exhausting the window
       # still refuses.
-      attempts="${PYPI_VERIFY_ATTEMPTS:-10}"
-      delay="${PYPI_VERIFY_DELAY:-6}"
-      attempt=1
+      # TWO bounds, whichever comes first, plus a per-REQUEST bound. Without
+      # connect/max timeouts a single hung request outlasts the whole window
+      # and "bounded" is a bound in name only.
+      deadline_seconds="${PYPI_VERIFY_DEADLINE:-120}"
+      backoff="${PYPI_VERIFY_BACKOFF:-6}"
+      req_cap="${PYPI_VERIFY_REQUEST_TIMEOUT:-30}"
+      max_attempts="${PYPI_VERIFY_ATTEMPTS:-20}"
+      deadline=$((SECONDS + deadline_seconds))
+      attempts=0
+      last=""
       while :; do
+        attempts=$((attempts + 1))
+        remaining=$((deadline - SECONDS))
+        (( remaining < 1 )) && remaining=1
+        req="$req_cap"; (( remaining < req )) && req="$remaining"
         status="$(curl -sSL -o "$OBSERVED" -w '%{http_code}' \
+          --connect-timeout "$req" --max-time "$req" \
           "https://pypi.org/pypi/${PACKAGE}/${VERSION}/json" 2>/dev/null || true)"
         [[ "$status" == "200" ]] && break
         # Four outcomes, four diagnostics. Collapsing them is the reporting
         # defect itself: waiting cannot fix credentials, and calling an outage
-        # "absent" asserts something the observation cannot support.
+        # or a timeout "absent" asserts something the observation cannot support.
         case "$status" in
           401|403)
             fail "PyPI refused authorization for ${PACKAGE} ${VERSION} (HTTP ${status}); this is permanent and waiting cannot resolve it" ;;
-          404) : ;;
+          404) last="not yet visible" ;;
+          000|"") last="request exceeded ${req}s or did not connect" ;;
           *)
-            fail "PyPI is unavailable for ${PACKAGE} ${VERSION} (HTTP ${status:-none}); unavailable is never evidence of absence" ;;
+            fail "PyPI is unavailable for ${PACKAGE} ${VERSION} (HTTP ${status}); unavailable is never evidence of absence" ;;
         esac
-        if [[ "$attempt" -ge "$attempts" ]]; then
-          fail "PyPI still has no release ${PACKAGE} ${VERSION} after ${attempts} attempts; it was never published"
+        if (( SECONDS + backoff >= deadline )) || (( attempts >= max_attempts )); then
+          # After a completed upload, "never published" is not knowable. All
+          # this observation supports is that it did not become visible in time.
+          fail "PyPI did not serve ${PACKAGE} ${VERSION} within ${deadline_seconds}s after ${attempts} attempt(s) (${last}); visibility is unconfirmed, which is not the same as absent"
         fi
-        printf 'waiting for %s %s to propagate (attempt %d/%d)\n' \
-          "$PACKAGE" "$VERSION" "$attempt" "$attempts" >&2
-        sleep "$delay"
-        attempt=$((attempt + 1))
+        printf 'waiting for %s %s to propagate (%s, %ds left)\n' \
+          "$PACKAGE" "$VERSION" "$last" "$((deadline - SECONDS))" >&2
+        sleep "$backoff"
       done
     fi
     python3 - "$DIST" "$OBSERVED" "$NORMALIZED" "$VERSION" <<'PY'

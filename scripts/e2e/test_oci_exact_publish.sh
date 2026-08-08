@@ -242,6 +242,10 @@ if [[ "$mode" == "outage" ]]; then
   echo "error pinging docker registry: 503 Service Unavailable" >&2
   exit 1
 fi
+if [[ "$mode" == "hang" ]]; then
+  sleep 30
+  exit 0
+fi
 if [[ "$mode" == "auth" ]]; then
   echo "unauthorized: authentication required" >&2
   exit 1
@@ -250,7 +254,11 @@ if [[ "$fails_before_success" == "always" || "\$n" -le "$fails_before_success" ]
   echo "reading manifest 0.5.14 in ghcr.io/awebai/awid: manifest unknown" >&2
   exit 1
 fi
-printf '{"schemaVersion":2,"manifests":[]}'
+if [[ "$mode" == "newline" ]]; then
+  printf '{"schemaVersion":2,"manifests":[]}\n'
+else
+  printf '{"schemaVersion":2,"manifests":[]}'
+fi
 FAKE
   chmod +x "$fakebin/skopeo"
 }
@@ -258,7 +266,8 @@ FAKE
 sk_count() { wc -l < "$sk_attempts" | tr -d ' '; }
 
 run_oci_verify() {
-  PATH="$fakebin:$PATH" OCI_VERIFY_ATTEMPTS="$1" OCI_VERIFY_DELAY=0 \
+  PATH="$fakebin:$PATH" OCI_VERIFY_ATTEMPTS="$1" OCI_VERIFY_BACKOFF=0 \
+    OCI_VERIFY_DEADLINE="${2:-60}" OCI_VERIFY_REQUEST_TIMEOUT="${3:-5}" \
     bash "$LANE" verify-published --archive "$tmp/good.tar" --version 0.5.14 \
       --source-sha "$SRC_SHA" --repository ghcr.io/awebai/awid 2>&1
 }
@@ -276,8 +285,13 @@ ok "oci retries stop as soon as the tag resolves"
 # RED preserved: a tag that never appears refuses AS ABSENT, not as a mismatch.
 make_fake_skopeo always
 out="$(run_oci_verify 3 || true)"
-grep -q "still absent" <<<"$out" \
-  || fail "a tag that never resolves must refuse as absent: $out"
+verdict="$(grep '^REFUSE:' <<<"$out" || true)"
+grep -q "did not become visible" <<<"$verdict" \
+  || fail "exhaustion must refuse as unconfirmed visibility: $verdict"
+# After a completed push, "never pushed" is not knowable. The verdict must not
+# claim it - that is the same false certainty this whole task is fixing.
+grep -qi "never pushed\|never published" <<<"$verdict" \
+  && fail "exhaustion must not assert absence it cannot know: $verdict"
 ok "oci refuses a tag that never appears"
 [[ "$(sk_count)" == "3" ]] \
   || fail "expected the full 3 attempts before refusing, got $(sk_count)"
@@ -289,7 +303,7 @@ out="$(run_oci_verify 5 || true)"
 verdict="$(grep '^REFUSE:' <<<"$out" || true)"
 grep -qi "unavailable" <<<"$verdict" \
   || fail "an outage must refuse as unavailable, not as absence: $verdict"
-grep -qi "still absent\|never pushed" <<<"$verdict" \
+grep -qi "never pushed\|never published" <<<"$verdict" \
   && fail "an outage must never be reported as absence: $verdict"
 ok "oci refuses on outage, naming it as such"
 [[ "$(sk_count)" == "1" ]] \
@@ -306,11 +320,43 @@ out="$(run_oci_verify 5 || true)"
 verdict="$(grep '^REFUSE:' <<<"$out" || true)"
 grep -qi "authoriz\|authentic" <<<"$verdict" \
   || fail "the VERDICT must name auth, not outage or absence: $verdict"
-grep -qi "outage\|still absent" <<<"$verdict" \
-  && fail "auth must not be reported as outage or absence: $verdict"
+grep -qi "unavailable\|did not become visible" <<<"$verdict" \
+  && fail "auth must not be reported as outage or unconfirmed visibility: $verdict"
 ok "oci names an authorization failure permanently, not as absence or outage"
 [[ "$(sk_count)" == "1" ]] \
   || fail "auth is permanent and must not be retried; got $(sk_count) attempts"
 ok "oci never retries an authorization failure"
+
+# The observed digest must be the sha256 of the EXACT bytes the registry
+# returned. Variable capture strips a trailing newline and a here-string adds
+# one, so either hashes bytes skopeo never sent - the hazard the production
+# workflow documents at awid-image-release.yml. A response ending in a newline
+# is the case that separates a byte-exact reader from a nearly-right one.
+make_fake_skopeo 0 newline
+true_digest="sha256:$(printf '{"schemaVersion":2,"manifests":[]}\n' \
+  | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; } \
+  | awk '{print $1}')"
+out="$(run_oci_verify 3 || true)"
+observed="$(sed -n 's/.*resolves to \(sha256:[0-9a-f]*\).*/\1/p' <<<"$out" | head -1)"
+[[ -n "$observed" ]] || fail "expected a resolved digest in: $out"
+[[ "$observed" == "$true_digest" ]] \
+  || fail "observed $observed is not the sha256 of the exact bytes returned ($true_digest); the reader altered the byte stream"
+ok "oci hashes the exact registry byte stream, trailing newline included"
+
+# A hung registry request must not outlast the window. Without a per-request
+# timeout a single hang runs forever and "bounded" is a bound in name only.
+if command -v timeout >/dev/null 2>&1; then
+  make_fake_skopeo always hang
+  started="$SECONDS"
+  out="$(run_oci_verify 2 8 1 || true)"
+  elapsed=$((SECONDS - started))
+  verdict="$(grep '^REFUSE:' <<<"$out" || true)"
+  [[ -n "$verdict" ]] || fail "a hanging registry must still produce a verdict: $out"
+  (( elapsed <= 12 )) \
+    || fail "a hanging request outlasted the window: ${elapsed}s for a 8s deadline"
+  ok "oci bounds a hanging registry request within the deadline"
+else
+  ok "oci hang control skipped: no timeout(1) on this host"
+fi
 
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

@@ -224,49 +224,76 @@ print("yes" if sys.argv[1] in tags else "no")
         remote="${observed_map[$tag]}"
       else
         # GHCR propagates like every other registry, so a push is not
-        # instantly visible to an inspect. The npm lane reported a successful
-        # release as FAILED for exactly this reason. A missing manifest is
-        # retried within a bounded window; any other skopeo failure is not,
-        # because an outage is never evidence of absence. Exhausting the
-        # window still refuses.
-        attempts="${OCI_VERIFY_ATTEMPTS:-10}"
-        delay="${OCI_VERIFY_DELAY:-6}"
-        attempt=1
+        # instantly visible to an inspect. A missing manifest is retried until
+        # a WALL-CLOCK deadline; each request is itself bounded, because a
+        # single hung request would otherwise outlast the whole window and the
+        # "bound" would be a bound in name only.
+        #
+        # The response is written to a FILE and the file is hashed. Capturing
+        # it in a variable strips a trailing newline and a here-string appends
+        # one, so either hashes bytes skopeo never returned - the hazard
+        # awid-image-release.yml documents, and one this code got wrong once.
+        # TWO bounds, whichever comes first. The deadline is the one that
+        # matters in production - it is what makes "bounded" true in wall-clock
+        # terms even if every request hangs. The attempt cap keeps the loop and
+        # its controls deterministic.
+        deadline_seconds="${OCI_VERIFY_DEADLINE:-120}"
+        backoff="${OCI_VERIFY_BACKOFF:-6}"
+        req_cap="${OCI_VERIFY_REQUEST_TIMEOUT:-30}"
+        max_attempts="${OCI_VERIFY_ATTEMPTS:-20}"
+        deadline=$((SECONDS + deadline_seconds))
+        attempts=0
         remote=""
+        last=""
         while :; do
-          skopeo_err="$(mktemp)"
-          if raw="$(skopeo inspect --raw "docker://${REPOSITORY}:${tag}" \
-               2>"$skopeo_err")" && [[ -n "$raw" ]]; then
-            rm -f "$skopeo_err"
-            remote="sha256:$(printf '%s' "$raw" \
-              | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; } \
-              | awk '{print $1}')"
+          attempts=$((attempts + 1))
+          skopeo_err="$(mktemp)"; raw_file="$(mktemp)"
+          remaining=$((deadline - SECONDS))
+          (( remaining < 1 )) && remaining=1
+          req="$req_cap"; (( remaining < req )) && req="$remaining"
+          # Capture the status in a CONDITION: under set -e a bare
+          # "cmd; rc=$?" aborts the script before rc is ever assigned.
+          rc=0
+          if command -v timeout >/dev/null 2>&1; then
+            timeout "$req" skopeo inspect --raw "docker://${REPOSITORY}:${tag}" \
+              >"$raw_file" 2>"$skopeo_err" || rc=$?
+          else
+            skopeo inspect --raw "docker://${REPOSITORY}:${tag}" \
+              >"$raw_file" 2>"$skopeo_err" || rc=$?
+          fi
+          if [[ "$rc" -eq 0 && -s "$raw_file" ]]; then
+            # The same byte-exact reader the observe-digest verb uses and the
+            # production workflow pipes into - stdin.buffer, no shell rewriting.
+            remote="$(python3 -c 'import hashlib, sys; print("sha256:" + hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' <"$raw_file")"
+            rm -f "$skopeo_err" "$raw_file"
             break
           fi
-          # Four outcomes, four diagnostics. Auth is checked FIRST and is
-          # permanent: waiting cannot fix a credential, and an "unauthorized"
-          # reply can also carry the word "not found", so testing absence
-          # first would misfile it as propagation and retry it pointlessly.
-          if grep -qiE 'unauthoriz|authentication required|denied|forbidden|UNAUTHORIZED|DENIED' \
-               "$skopeo_err"; then
+          # Auth is checked FIRST and is permanent: waiting cannot fix a
+          # credential, and an unauthorized reply can itself contain "not
+          # found", so testing absence first would misfile it as propagation.
+          if grep -qiE 'unauthoriz|authentication required|denied|forbidden' "$skopeo_err"; then
             printf '%s\n' "$(cat "$skopeo_err")" >&2
-            rm -f "$skopeo_err"
+            rm -f "$skopeo_err" "$raw_file"
             fail "${REPOSITORY}:${tag} refused authorization; this is permanent and waiting cannot resolve it"
           fi
-          if ! grep -qiE 'manifest unknown|not found|was not found|NAME_UNKNOWN|MANIFEST_UNKNOWN' \
-               "$skopeo_err"; then
+          if [[ "$rc" -eq 124 ]]; then
+            last="request exceeded ${req}s"
+          elif grep -qiE 'manifest unknown|not found|was not found|NAME_UNKNOWN|MANIFEST_UNKNOWN' "$skopeo_err"; then
+            last="not yet visible"
+          else
             printf '%s\n' "$(cat "$skopeo_err")" >&2
-            rm -f "$skopeo_err"
+            rm -f "$skopeo_err" "$raw_file"
             fail "${REPOSITORY}:${tag} is unavailable; unavailable is never evidence of absence"
           fi
-          rm -f "$skopeo_err"
-          if [[ "$attempt" -ge "$attempts" ]]; then
-            fail "${REPOSITORY}:${tag} is still absent after ${attempts} attempts; it was never pushed"
+          rm -f "$skopeo_err" "$raw_file"
+          if (( SECONDS + backoff >= deadline )) || (( attempts >= max_attempts )); then
+            # After a completed push, "never pushed" is not knowable. All this
+            # observation supports is that it did not become visible in time.
+            fail "${REPOSITORY}:${tag} did not become visible within ${deadline_seconds}s after ${attempts} attempt(s) (${last}); visibility is unconfirmed, which is not the same as absent"
           fi
-          printf 'waiting for %s:%s to propagate (attempt %d/%d)\n' \
-            "$REPOSITORY" "$tag" "$attempt" "$attempts" >&2
-          sleep "$delay"
-          attempt=$((attempt + 1))
+          printf 'waiting for %s:%s to propagate (%s, %ds left)\n' \
+            "$REPOSITORY" "$tag" "$last" "$((deadline - SECONDS))" >&2
+          sleep "$backoff"
         done
       fi
       [[ "$remote" == "$staged" ]] \

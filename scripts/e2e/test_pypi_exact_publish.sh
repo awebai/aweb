@@ -194,6 +194,7 @@ make_fake_curl() {
   cat > "$fakebin/curl" <<FAKE
 #!/usr/bin/env bash
 echo x >> "$curl_attempts"
+printf '%s\n' "\$*" >> "$tmp/curl-argv"
 n=\$(wc -l < "$curl_attempts" | tr -d ' ')
 out=""
 prev=""
@@ -201,6 +202,7 @@ for a in "\$@"; do
   if [[ "\$prev" == "-o" ]]; then out="\$a"; fi
   prev="\$a"
 done
+if [[ "$other" == "hang" ]]; then sleep 30; printf '000'; exit 0; fi
 if [[ -n "$other" ]]; then printf '%s' "$other"; exit 0; fi
 if [[ "$fails_before_success" == "always" || "\$n" -le "$fails_before_success" ]]; then
   printf '404'; exit 0
@@ -218,7 +220,7 @@ observation
 
 # GREEN: transient 404s are lag; the step must survive them.
 make_fake_curl 2
-if PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=5 PYPI_VERIFY_DELAY=0 \
+if PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=5 PYPI_VERIFY_BACKOFF=0 PYPI_VERIFY_DEADLINE=60 \
      bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
        --version 1.2.3 >/dev/null 2>&1; then
   ok "pypi verify-published survives propagation lag"
@@ -231,7 +233,7 @@ ok "pypi retries stop as soon as the release resolves"
 
 # RED preserved: a release that never appears still refuses.
 make_fake_curl always
-if PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=3 PYPI_VERIFY_DELAY=0 \
+if PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=3 PYPI_VERIFY_BACKOFF=0 PYPI_VERIFY_DEADLINE=60 \
      bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
        --version 1.2.3 >/dev/null 2>&1; then
   fail "a release that never resolves must still refuse"
@@ -243,7 +245,7 @@ ok "pypi refusal comes only after the whole window"
 
 # RED preserved: an outage is never proof of absence and is not retried.
 make_fake_curl always 503
-if PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=5 PYPI_VERIFY_DELAY=0 \
+if PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=5 PYPI_VERIFY_BACKOFF=0 PYPI_VERIFY_DEADLINE=60 \
      bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
        --version 1.2.3 >/dev/null 2>&1; then
   fail "a PyPI outage must refuse"
@@ -257,7 +259,7 @@ ok "pypi distinguishes an outage from lag and never retries it"
 # credential problem will never resolve by waiting, and calling it "unavailable"
 # invites a retry that cannot succeed.
 make_fake_curl always 403
-out="$(PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=5 PYPI_VERIFY_DELAY=0 \
+out="$(PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=5 PYPI_VERIFY_BACKOFF=0 PYPI_VERIFY_DEADLINE=60 \
   bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
     --version 1.2.3 2>&1 || true)"
 grep -qi "authoriz\|authentic" <<<"$out" \
@@ -268,5 +270,39 @@ ok "pypi names an authorization failure permanently, not as absence or outage"
 [[ "$(curl_count)" == "1" ]] \
   || fail "auth is permanent and must not be retried; got $(curl_count) attempts"
 ok "pypi never retries an authorization failure"
+
+# Exhaustion must not claim absence it cannot know after a completed upload.
+make_fake_curl always
+out="$(PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=2 PYPI_VERIFY_BACKOFF=0 \
+  PYPI_VERIFY_DEADLINE=60 bash "$LANE" verify-published --dist "$tmp/dist" \
+  --package fixture-pkg --version 1.2.3 2>&1 || true)"
+verdict="$(grep '^REFUSE:' <<<"$out" || true)"
+grep -q "visibility is unconfirmed" <<<"$verdict" \
+  || fail "exhaustion must refuse as unconfirmed visibility: $verdict"
+grep -qi "never published" <<<"$verdict" \
+  && fail "exhaustion must not assert absence it cannot know: $verdict"
+ok "pypi exhaustion reports unconfirmed visibility, never 'never published'"
+
+# A hung request must not outlast the window. A fake curl cannot honour
+# --max-time, so timing a fake proves nothing - an earlier version of this
+# control passed with the timeouts REMOVED. What the lane actually owns is
+# passing a positive per-request bound, so that is what is asserted.
+: > "$tmp/curl-argv"
+make_fake_curl always
+PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=2 PYPI_VERIFY_BACKOFF=0 \
+  PYPI_VERIFY_DEADLINE=60 PYPI_VERIFY_REQUEST_TIMEOUT=7 bash "$LANE" \
+  verify-published --dist "$tmp/dist" --package fixture-pkg \
+  --version 1.2.3 >/dev/null 2>&1 || true
+argv="$(head -1 "$tmp/curl-argv")"
+grep -q -- "--max-time" <<<"$argv" \
+  || fail "curl must be given a per-request bound: $argv"
+grep -q -- "--connect-timeout" <<<"$argv" \
+  || fail "curl must be given a connect bound: $argv"
+bound="$(sed -n 's/.*--max-time \([0-9][0-9]*\).*/\1/p' <<<"$argv")"
+[[ -n "$bound" && "$bound" -gt 0 ]] \
+  || fail "the per-request bound must be a positive integer: $argv"
+[[ "$bound" -le 7 ]] \
+  || fail "the per-request bound must not exceed the configured cap: $bound > 7"
+ok "pypi passes curl a positive per-request bound within the cap"
 
 printf 'SELFTEST OK: %d assertions\n' "$PASS"
