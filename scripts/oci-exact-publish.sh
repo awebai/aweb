@@ -243,11 +243,21 @@ print("yes" if sys.argv[1] in tags else "no")
               | awk '{print $1}')"
             break
           fi
+          # Four outcomes, four diagnostics. Auth is checked FIRST and is
+          # permanent: waiting cannot fix a credential, and an "unauthorized"
+          # reply can also carry the word "not found", so testing absence
+          # first would misfile it as propagation and retry it pointlessly.
+          if grep -qiE 'unauthoriz|authentication required|denied|forbidden|UNAUTHORIZED|DENIED' \
+               "$skopeo_err"; then
+            printf '%s\n' "$(cat "$skopeo_err")" >&2
+            rm -f "$skopeo_err"
+            fail "${REPOSITORY}:${tag} refused authorization; this is permanent and waiting cannot resolve it"
+          fi
           if ! grep -qiE 'manifest unknown|not found|was not found|NAME_UNKNOWN|MANIFEST_UNKNOWN' \
                "$skopeo_err"; then
             printf '%s\n' "$(cat "$skopeo_err")" >&2
             rm -f "$skopeo_err"
-            fail "cannot observe ${REPOSITORY}:${tag}; an outage is never proof of absence"
+            fail "${REPOSITORY}:${tag} is unavailable; unavailable is never evidence of absence"
           fi
           rm -f "$skopeo_err"
           if [[ "$attempt" -ge "$attempts" ]]; then

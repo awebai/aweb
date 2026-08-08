@@ -242,6 +242,10 @@ if [[ "$mode" == "outage" ]]; then
   echo "error pinging docker registry: 503 Service Unavailable" >&2
   exit 1
 fi
+if [[ "$mode" == "auth" ]]; then
+  echo "unauthorized: authentication required" >&2
+  exit 1
+fi
 if [[ "$fails_before_success" == "always" || "\$n" -le "$fails_before_success" ]]; then
   echo "reading manifest 0.5.14 in ghcr.io/awebai/awid: manifest unknown" >&2
   exit 1
@@ -282,11 +286,31 @@ ok "oci refusal comes only after the whole window"
 # RED preserved: an outage is never proof of absence and is not retried.
 make_fake_skopeo always outage
 out="$(run_oci_verify 5 || true)"
-grep -q "never proof of absence" <<<"$out" \
-  || fail "an outage must refuse as an outage, not as absence: $out"
+verdict="$(grep '^REFUSE:' <<<"$out" || true)"
+grep -qi "unavailable" <<<"$verdict" \
+  || fail "an outage must refuse as unavailable, not as absence: $verdict"
+grep -qi "still absent\|never pushed" <<<"$verdict" \
+  && fail "an outage must never be reported as absence: $verdict"
 ok "oci refuses on outage, naming it as such"
 [[ "$(sk_count)" == "1" ]] \
   || fail "an outage must not be retried as lag; got $(sk_count) attempts"
 ok "oci distinguishes an outage from lag and never retries it"
+
+# Auth is PERMANENT: waiting cannot fix a credential, and naming it
+# "unavailable" invites a retry that can never succeed.
+make_fake_skopeo always auth
+out="$(run_oci_verify 5 || true)"
+# Judge the REFUSE verdict only. The full output also carries skopeo's own
+# stderr, which contains the word "unauthorized" - grepping all of it passed
+# this control while the diagnostic still said "outage".
+verdict="$(grep '^REFUSE:' <<<"$out" || true)"
+grep -qi "authoriz\|authentic" <<<"$verdict" \
+  || fail "the VERDICT must name auth, not outage or absence: $verdict"
+grep -qi "outage\|still absent" <<<"$verdict" \
+  && fail "auth must not be reported as outage or absence: $verdict"
+ok "oci names an authorization failure permanently, not as absence or outage"
+[[ "$(sk_count)" == "1" ]] \
+  || fail "auth is permanent and must not be retried; got $(sk_count) attempts"
+ok "oci never retries an authorization failure"
 
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

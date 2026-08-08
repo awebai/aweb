@@ -253,4 +253,20 @@ ok "pypi refuses on outage"
   || fail "an outage must not be retried as lag; got $(curl_count) attempts"
 ok "pypi distinguishes an outage from lag and never retries it"
 
+# Auth is PERMANENT and must not be reported as an outage or as absence: a
+# credential problem will never resolve by waiting, and calling it "unavailable"
+# invites a retry that cannot succeed.
+make_fake_curl always 403
+out="$(PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=5 PYPI_VERIFY_DELAY=0 \
+  bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
+    --version 1.2.3 2>&1 || true)"
+grep -qi "authoriz\|authentic" <<<"$out" \
+  || fail "auth must be named as auth, not as outage or absence: $out"
+grep -qvi "never published" <<<"$out" \
+  || fail "auth must not be reported as absence: $out"
+ok "pypi names an authorization failure permanently, not as absence or outage"
+[[ "$(curl_count)" == "1" ]] \
+  || fail "auth is permanent and must not be retried; got $(curl_count) attempts"
+ok "pypi never retries an authorization failure"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

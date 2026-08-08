@@ -149,9 +149,16 @@ PY
         status="$(curl -sSL -o "$OBSERVED" -w '%{http_code}' \
           "https://pypi.org/pypi/${PACKAGE}/${VERSION}/json" 2>/dev/null || true)"
         [[ "$status" == "200" ]] && break
-        if [[ "$status" != "404" ]]; then
-          fail "PyPI did not answer for ${PACKAGE} ${VERSION} (HTTP ${status:-none}); an outage is never proof of absence"
-        fi
+        # Four outcomes, four diagnostics. Collapsing them is the reporting
+        # defect itself: waiting cannot fix credentials, and calling an outage
+        # "absent" asserts something the observation cannot support.
+        case "$status" in
+          401|403)
+            fail "PyPI refused authorization for ${PACKAGE} ${VERSION} (HTTP ${status}); this is permanent and waiting cannot resolve it" ;;
+          404) : ;;
+          *)
+            fail "PyPI is unavailable for ${PACKAGE} ${VERSION} (HTTP ${status:-none}); unavailable is never evidence of absence" ;;
+        esac
         if [[ "$attempt" -ge "$attempts" ]]; then
           fail "PyPI still has no release ${PACKAGE} ${VERSION} after ${attempts} attempts; it was never published"
         fi
