@@ -11,6 +11,7 @@
 	release-a2a-gateway-check release-a2a-gateway-tag release-a2a-gateway-push \
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
+	test-channel-integration \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
 	release-plan release-run release-receipt test-release-driver test-release-runnerless test-pointer-adapter test-release-repository-measurement test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	release-all-check \
@@ -294,6 +295,15 @@ test-channel:
 
 test-channel-name-live-contract:
 	python3 scripts/e2e/test_channel_name_live_contract.py
+
+# channel/package.json excludes test/integration.test.ts from `npm test`, so
+# `make test` never ran the one test that drives Channel against a REAL aweb
+# server. It was green by absence: the first time it ran it failed on a stale
+# assertion that contradicted shipped acknowledgement behaviour. It needs Docker
+# and Postgres, so it belongs with the other real-stack journeys rather than in
+# `make test` - but it belongs somewhere, and this is somewhere.
+test-channel-integration:
+	AWEB_SKEW_DIRECTION=a-to-b npm --prefix channel run test:integration
 
 # channel-core holds the identity, trust, pinstore and signature-decode logic
 # that channel and pi-extension are both built from, so its suite gates them.
@@ -846,7 +856,7 @@ cli-e2e:
 # Assigned with := so the environment cannot change what the gate runs. A
 # deliberate demonstration overrides it on the command line, which make allows
 # and the environment does not.
-SHIP_SUITES := release-awid-check test-federation-e2e test-e2e cli-e2e
+SHIP_SUITES := release-awid-check test-channel-integration test-federation-e2e test-e2e cli-e2e
 
 ship-suites:
 	@MAKE="$(MAKE)" ./scripts/run-ship-suites.sh $(SHIP_SUITES)

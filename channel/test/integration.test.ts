@@ -283,7 +283,15 @@ describe.sequential("channel integration", () => {
       server.awidURL,
       ["--json", "mail", "inbox"],
     );
-    expect(unreadAfterNotification.messages.some((item) => item.message_id === mail.message_id)).toBe(true);
+    // Presentation is what acknowledges the message, so it is no longer
+    // unread once the notification above has been received. The guarantee is
+    // ORDERING - never acknowledge before presenting, so a bridge that dies
+    // mid-delivery cannot silently consume mail - not that mail stays unread
+    // forever. A message still unread after presentation would be re-delivered
+    // on every reconnect, which is the replay this design exists to avoid.
+    // The assertions above prove it was presented; this proves it was then
+    // acknowledged exactly once.
+    expect(unreadAfterNotification.messages.some((item) => item.message_id === mail.message_id)).toBe(false);
 
     const chatBody = `channel verified chat ${Date.now()}`;
     await sendChatViaAW(homeDir, aliceDir, server.awidURL, "bob", chatBody);

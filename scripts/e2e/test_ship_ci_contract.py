@@ -262,7 +262,12 @@ class ShipCIContractTests(unittest.TestCase):
     # expected set, that each name is a real target, and that the runner is what
     # consumes the list.
     EXPECTED_SHIP_SUITES = frozenset(
-        {"release-awid-check", "test-federation-e2e", "test-e2e", "cli-e2e"}
+        # test-channel-integration added deliberately: channel/package.json
+        # excludes test/integration.test.ts from `npm test`, so the one test
+        # driving Channel against a real aweb server ran nowhere. It was green
+        # by absence and failed the first time it was executed.
+        {"release-awid-check", "test-channel-integration",
+         "test-federation-e2e", "test-e2e", "cli-e2e"}
     )
 
     def require_match(self, pattern: str, text: str, message: str) -> re.Match[str]:
