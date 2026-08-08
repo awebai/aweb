@@ -305,4 +305,18 @@ bound="$(sed -n 's/.*--max-time \([0-9][0-9]*\).*/\1/p' <<<"$argv")"
   || fail "the per-request bound must not exceed the configured cap: $bound > 7"
 ok "pypi passes curl a positive per-request bound within the cap"
 
+# curl treats --max-time 0 and --connect-timeout 0 as NO limit (measured), so
+# a zero override silently restores the indefinite hang and must refuse.
+make_fake_curl 0
+for knob in PYPI_VERIFY_DEADLINE PYPI_VERIFY_REQUEST_TIMEOUT PYPI_VERIFY_ATTEMPTS; do
+  for bad in 0 abc -1; do
+    out="$(PATH="$fakebin:$PATH" env "$knob=$bad" PYPI_VERIFY_BACKOFF=0 \
+      bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
+      --version 1.2.3 2>&1 || true)"
+    grep -q "^REFUSE:.*positive integer" <<<"$out" \
+      || fail "$knob=$bad must refuse as a non-positive bound: $out"
+  done
+done
+ok "pypi refuses zero and malformed deadline/request/attempt overrides"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

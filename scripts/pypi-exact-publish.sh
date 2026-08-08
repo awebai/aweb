@@ -26,6 +26,20 @@ set -euo pipefail
 
 fail() { printf 'REFUSE: %s\n' "$1" >&2; exit 1; }
 
+# A bound of zero is not a bound: curl treats --max-time 0 and
+# --connect-timeout 0 as NO limit, and timeout(1) treats 0 the same way
+# (measured: "timeout 0 sleep 3" returns 0 after three seconds). So a
+# well-meaning override of 0 silently restores the indefinite hang these
+# bounds exist to prevent, and must refuse instead.
+require_positive_int() {
+  [[ "$2" =~ ^[0-9]+$ && "$2" -gt 0 ]] \
+    || fail "$1 must be a positive integer, got '${2}'; a zero or malformed bound is not a bound"
+}
+require_nonnegative_int() {
+  [[ "$3" =~ ^[0-9]+$ ]] \
+    || fail "$2 must be a non-negative integer, got '${3}'"
+}
+
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
   else shasum -a 256 "$1" | awk '{print $1}'; fi
@@ -149,6 +163,10 @@ PY
       backoff="${PYPI_VERIFY_BACKOFF:-6}"
       req_cap="${PYPI_VERIFY_REQUEST_TIMEOUT:-30}"
       max_attempts="${PYPI_VERIFY_ATTEMPTS:-20}"
+      require_positive_int PYPI_VERIFY_DEADLINE "$deadline_seconds"
+      require_positive_int PYPI_VERIFY_REQUEST_TIMEOUT "$req_cap"
+      require_positive_int PYPI_VERIFY_ATTEMPTS "$max_attempts"
+      require_nonnegative_int x PYPI_VERIFY_BACKOFF "$backoff"
       deadline=$((SECONDS + deadline_seconds))
       attempts=0
       last=""

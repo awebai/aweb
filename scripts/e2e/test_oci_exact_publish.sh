@@ -359,4 +359,41 @@ else
   ok "oci hang control skipped: no timeout(1) on this host"
 fi
 
+# A bound of zero is NOT a bound - timeout(1) treats 0 as no limit - so a
+# sensible-looking override must refuse rather than silently restore the hang.
+make_fake_skopeo 0
+for knob in OCI_VERIFY_DEADLINE OCI_VERIFY_REQUEST_TIMEOUT OCI_VERIFY_ATTEMPTS; do
+  # An EMPTY value is deliberately not in this list: ${VAR:-default} treats it
+  # as unset, so it yields the bounded default rather than disabling the bound.
+  # Requiring a refusal there would be asserting a hazard that does not exist.
+  for bad in 0 abc -1; do
+    out="$(PATH="$fakebin:$PATH" env "$knob=$bad" OCI_VERIFY_BACKOFF=0 \
+      bash "$LANE" verify-published --archive "$tmp/good.tar" --version 0.5.14 \
+      --source-sha "$SRC_SHA" --repository ghcr.io/awebai/awid 2>&1 || true)"
+    grep -q "^REFUSE:.*positive integer" <<<"$out" \
+      || fail "$knob=$bad must refuse as a non-positive bound: $out"
+  done
+done
+ok "oci refuses zero and malformed deadline/request/attempt overrides"
+
+# And an empty override must fall back to the bounded default, not to no bound.
+out="$(PATH="$fakebin:$PATH" OCI_VERIFY_DEADLINE= OCI_VERIFY_BACKOFF=0 \
+  OCI_VERIFY_ATTEMPTS=2 bash "$LANE" verify-published --archive "$tmp/good.tar" \
+  --version 0.5.14 --source-sha "$SRC_SHA" \
+  --repository ghcr.io/awebai/awid 2>&1 || true)"
+grep -q "^REFUSE:.*positive integer" <<<"$out" \
+  && fail "an empty override is unset, and must use the bounded default: $out"
+ok "oci treats an empty override as unset and stays bounded"
+
+# Never run unbounded. Where no timeout capability exists the lane must refuse,
+# not fall back to a bare call - the previous control SKIPPED this host shape,
+# which is precisely where the unbounded path lived.
+out="$(PATH="$fakebin:$PATH" OCI_TIMEOUT_BIN=definitely-not-a-real-binary \
+  OCI_VERIFY_BACKOFF=0 bash "$LANE" verify-published --archive "$tmp/good.tar" \
+  --version 0.5.14 --source-sha "$SRC_SHA" \
+  --repository ghcr.io/awebai/awid 2>&1 || true)"
+grep -q "^REFUSE:.*bounded-execution capability" <<<"$out" \
+  || fail "with no timeout capability the lane must refuse, never run unbounded: $out"
+ok "oci fails closed when no bounded-execution capability exists"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

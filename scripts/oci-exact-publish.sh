@@ -46,6 +46,17 @@ set -euo pipefail
 
 fail() { printf 'REFUSE: %s\n' "$1" >&2; exit 1; }
 
+# A bound of zero is not a bound: timeout(1) treats 0 as NO limit (measured:
+# "timeout 0 sleep 3" returns 0 after three seconds), so a well-meaning
+# override of 0 silently restores the indefinite hang.
+require_positive_int() {
+  [[ "$2" =~ ^[0-9]+$ && "$2" -gt 0 ]] \
+    || fail "$1 must be a positive integer, got '${2}'; a zero or malformed bound is not a bound"
+}
+require_nonnegative_int() {
+  [[ "$2" =~ ^[0-9]+$ ]] || fail "$1 must be a non-negative integer, got '${2}'"
+}
+
 MODE="${1:-}"; shift || true
 ARCHIVE='' VERSION='' REPOSITORY='' SOURCE_SHA='' OUT=''
 TAG_KIND='' STAGED='' LISTING_STATUS='' PRESENT='' REMOTE_DIGEST='' TAG_NAME=''
@@ -241,6 +252,17 @@ print("yes" if sys.argv[1] in tags else "no")
         backoff="${OCI_VERIFY_BACKOFF:-6}"
         req_cap="${OCI_VERIFY_REQUEST_TIMEOUT:-30}"
         max_attempts="${OCI_VERIFY_ATTEMPTS:-20}"
+        require_positive_int OCI_VERIFY_DEADLINE "$deadline_seconds"
+        require_positive_int OCI_VERIFY_REQUEST_TIMEOUT "$req_cap"
+        require_positive_int OCI_VERIFY_ATTEMPTS "$max_attempts"
+        require_nonnegative_int OCI_VERIFY_BACKOFF "$backoff"
+        # Every observation must be capped. Running skopeo bare when no timeout
+        # capability exists was a convenience that defeated the guarantee: it
+        # is exactly the unbounded call this task removes. Refuse instead, so
+        # the absence of a bound is visible rather than silent.
+        timeout_bin="${OCI_TIMEOUT_BIN:-timeout}"
+        command -v "$timeout_bin" >/dev/null 2>&1 \
+          || fail "no bounded-execution capability: '${timeout_bin}' is not available, and an unbounded registry observation is not permitted (install coreutils timeout or set OCI_TIMEOUT_BIN)"
         deadline=$((SECONDS + deadline_seconds))
         attempts=0
         remote=""
@@ -253,14 +275,11 @@ print("yes" if sys.argv[1] in tags else "no")
           req="$req_cap"; (( remaining < req )) && req="$remaining"
           # Capture the status in a CONDITION: under set -e a bare
           # "cmd; rc=$?" aborts the script before rc is ever assigned.
+          # Capture the status in a CONDITION: under set -e a bare
+          # "cmd; rc=$?" aborts the script before rc is ever assigned.
           rc=0
-          if command -v timeout >/dev/null 2>&1; then
-            timeout "$req" skopeo inspect --raw "docker://${REPOSITORY}:${tag}" \
-              >"$raw_file" 2>"$skopeo_err" || rc=$?
-          else
-            skopeo inspect --raw "docker://${REPOSITORY}:${tag}" \
-              >"$raw_file" 2>"$skopeo_err" || rc=$?
-          fi
+          "$timeout_bin" "$req" skopeo inspect --raw "docker://${REPOSITORY}:${tag}" \
+            >"$raw_file" 2>"$skopeo_err" || rc=$?
           if [[ "$rc" -eq 0 && -s "$raw_file" ]]; then
             # The same byte-exact reader the observe-digest verb uses and the
             # production workflow pipes into - stdin.buffer, no shell rewriting.
