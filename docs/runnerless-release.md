@@ -7,14 +7,12 @@ local lane.
 **The examples below show a `server` release, which needs more inputs than the
 runnerless lane itself.** The committed graph gives server four
 declared-incomplete runtime contracts and a forced `ac-pin` pointer, so a server
-release also needs a G5 authorization and a pointer adapter. `aw`, `pi` and
-`awid-image` force no pointer, which makes them the smallest real exercise of
-this lane.
-
-**The server examples below are NOT runnable today** and are shown to document
-the input shape only: `ac-pin` refuses until it honours AC's real lock/pin
-contract (aweb-abbe.39), and server touches four incomplete edges, so `edges=`
-must list all four exactly as `release-plan` prints them.
+release also needs a G5 authorization and the checked-in AC pointer adapter.
+That adapter updates AC's complete server source identity, regenerates its exact
+Python lock through `uv`, and passes AC's own release-model, lock, and migration
+manifest checks before one source-pointer commit. AC deployment remains a
+separate human-approved downstream effect. `aw`, `pi` and `awid-image` force no
+pointer, which makes them the smallest real exercise of this lane.
 
 ```sh
 make release-plan AUTHORITY=local-runnerless STORE_ROOT="$PWD/.release-runs"
@@ -26,12 +24,6 @@ make release-run AUTHORITY=local-runnerless STORE_ROOT="$PWD/.release-runs" \
   G5_AUTHORIZATION='who=juan,when=2026-08-06T12:00:00Z,source=<40hex>,plan=<64hex>,edges=<64hex>+<64hex>+<64hex>+<64hex>,risk=unmeasured runtime support accepted' \
   POINTER_ADAPTER='ac-pin=/absolute/path/to/ac-pin-adapter'
 ```
-
-**This server example is not runnable today.** `ac-pin` refuses until it updates
-AC through AC's real lock/pin contract (aweb-abbe.39), and the graph gives server
-four incomplete edges, so `edges=` must list all four exactly as
-`release-plan` prints them. `aw`, `pi` and `awid-image` force no pointer and are
-the smallest genuinely runnable exercises of this lane.
 
 `LOCAL_RISK_AUTHORIZATION` accepts the risk of releasing without a hosted
 runner. It does **not** accept unmeasured runtime support: those are different

@@ -13,7 +13,7 @@
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	test-channel-integration \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-plan release-run release-receipt test-release-driver test-release-runnerless test-release-receipt-process test-pointer-adapter test-release-repository-measurement test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	release-plan release-run release-receipt test-release-driver test-release-runnerless test-release-receipt-process test-pointer-adapter test-pointer-adapter-ac-pin test-release-repository-measurement test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	release-all-check \
 	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
 
@@ -696,7 +696,11 @@ test-release-receipt-process:
 # nobody, so the round trip is the thing worth proving.
 test-pointer-adapter:
 	python3 scripts/e2e/test_pointer_adapter_marketplace.py
+	$(MAKE) test-pointer-adapter-ac-pin
+
+test-pointer-adapter-ac-pin:
 	python3 scripts/e2e/test_pointer_adapter_ac_pin.py
+	python3 -m unittest scripts.e2e.test_release_driver.GraphContractTests.test_a_pointer_advertises_what_its_pin_actually_holds
 
 test-release-repository-measurement:
 	python3 scripts/e2e/test_release_repository_measurement.py

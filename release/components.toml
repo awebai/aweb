@@ -132,13 +132,15 @@ repository = "github.com/awebai/claude-plugins"
 [component.ac-pin]
 publishable = false
 sibling_pins = [
-    { pin_file = "release-pin.toml", section = "aweb", field = "git_sha", component = "server", checkout = "../aweb", repository = "github.com/awebai/aweb", pin_repository = "github.com/awebai/ac" },
+    { pin_file = "release-pin.toml", section = "aweb", field = "git_sha", identity_fields = ["version", "git_ref", "git_sha"], component = "server", checkout = "../aweb", repository = "github.com/awebai/aweb", pin_repository = "github.com/awebai/ac" },
     { pin_file = "backend/uv.lock", kind = "lock-version", package = "awid-service", component = "awid-pypi", pin_repository = "github.com/awebai/ac" },
 ]
 # ac's source pointer state: backend/uv.lock and release-pin.toml,
 # both living in the AC repository (pin_repository) and resolved only from a
-# declared external context - never relative to this repository. Updating
-# them needs no production credentials; that boundary belongs to ac-gate.
+# declared external context - never relative to this repository. The server pin
+# advertises its complete version/ref/SHA identity; dependency changes regenerate
+# AC's exact uv lock rather than rewriting package entries. Updating these
+# source pointers needs no production credentials and never deploys AC.
 
 [component.sites]
 source_paths = ["docs/identity-guide.md", "docs/trust-model.md", "awid/site/"]

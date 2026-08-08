@@ -1,73 +1,211 @@
 #!/usr/bin/env python3
-"""The AC pin adapter, against a real git repository.
+"""AC pin adapter against exact AC's real release and lock contract.
 
-Real clone, commit, push and read-back into a local bare remote - no network.
-The point being proved is that AC's source pins actually move, since AC picks
-up a published server or awid only when they do.
+The fixture starts from exact AC main, is made into a coherent older release,
+and is pushed to a local bare remote. Every assertion drives the executable
+adapter through clone/intent/apply/read; successful state is checked with AC's
+own release-model, uv-lock, and migration-manifest gates.
 """
 
 from __future__ import annotations
 
+import functools
+import hashlib
+import http.server
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
+import threading
+import tomllib
 import unittest
+import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ADAPTER = REPO_ROOT / "scripts" / "pointer-adapter-ac-pin.py"
-
-OLD_SHA = "1111111111111111111111111111111111111111"
-NEW_SHA = "3f7a1c9e4b02d85617fa03cc9b1e4d7a5806e2f1"
-
-PIN_TOML = f'''[aweb]
-git_sha = "{OLD_SHA}"
-'''
-
-UV_LOCK = '''version = 1
-
-[[package]]
-name = "awid-service"
-version = "0.5.14"
-
-[[package]]
-name = "something-else"
-version = "1.0.0"
-'''
+AC_CONTRACT_REMOTE = "https://github.com/awebai/ac.git"
+AC_CONTRACT_SHA = "2451cfeac6b9e6076daf00c34eacb47cafdfba22"
+OLD_SERVER_VERSION = "1.26.31"
+NEW_SERVER_VERSION = "1.26.35"
+OLD_AWID_VERSION = "0.5.13"
+NEW_AWID_VERSION = "0.5.14"
 
 
-def git(*args, cwd):
-    subprocess.run(["git", *args], cwd=str(cwd), check=True,
-                   capture_output=True, text=True)
+def run(*args: str, cwd: Path, env=None, check=True) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        list(args), cwd=str(cwd), env=env, check=check,
+        capture_output=True, text=True,
+    )
+
+
+def git(*args: str, cwd: Path) -> str:
+    return run("git", *args, cwd=cwd).stdout.strip()
+
+
+def replace_dependency(path: Path, package: str, version: str) -> None:
+    text = path.read_text()
+    updated, count = re.subn(
+        rf'"{re.escape(package)}>=[^"]+"', f'"{package}>={version}"', text,
+        count=1,
+    )
+    if count != 1:
+        raise AssertionError(f"could not update {package} dependency in {path}")
+    path.write_text(updated)
+
+
+def write_release_pin(path: Path, *, version: str, sha: str) -> None:
+    path.write_text(
+        "# Exact aweb source identity used by AC release checks.\n\n"
+        "[aweb]\n"
+        f'version = "{version}"\n'
+        f'git_sha = "{sha}"\n'
+        f'git_ref = "server-v{version}"\n'
+    )
+
+
+def lock_package(path: Path, name: str) -> dict:
+    lock = tomllib.loads(path.read_text())
+    return next(package for package in lock["package"] if package["name"] == name)
+
+
+class QuietHandler(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
+
+
+def write_test_package(index_root: Path, name: str, version: str) -> None:
+    normalized = name.replace("-", "_")
+    files = index_root / "files"
+    files.mkdir(parents=True, exist_ok=True)
+    wheel = files / f"{normalized}-{version}-py3-none-any.whl"
+    dist_info = f"{normalized}-{version}.dist-info"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            f"{dist_info}/METADATA",
+            f"Metadata-Version: 2.3\nName: {name}\nVersion: {version}\n"
+            "Requires-Python: >=3.12\n",
+        )
+        archive.writestr(
+            f"{dist_info}/WHEEL",
+            "Wheel-Version: 1.0\nGenerator: aweb-test\n"
+            "Root-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        archive.writestr(f"{dist_info}/RECORD", "")
+    sdist = files / f"{normalized}-{version}.tar.gz"
+    package_root = f"{normalized}-{version}"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / package_root
+        root.mkdir()
+        (root / "PKG-INFO").write_text(
+            f"Metadata-Version: 2.3\nName: {name}\nVersion: {version}\n"
+        )
+        (root / "pyproject.toml").write_text(
+            "[build-system]\nrequires = []\nbuild-backend = 'unused'\n"
+        )
+        with tarfile.open(sdist, "w:gz") as archive:
+            archive.add(root, arcname=package_root)
+    page = index_root / "simple" / name.replace("_", "-")
+    page.mkdir(parents=True, exist_ok=True)
+    links = []
+    for artifact in (sdist, wheel):
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        links.append(f'<a href="/files/{artifact.name}#sha256={digest}">{artifact.name}</a>')
+    (page / "index.html").write_text("\n".join(links))
 
 
 class AcPinAdapterTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.fixture_tmp = tempfile.TemporaryDirectory()
+        root = Path(cls.fixture_tmp.name)
+        cls.uv_cache = root / "uv-cache"
+
+        contract = root / "ac-contract"
+        run("git", "clone", "-q", AC_CONTRACT_REMOTE, str(contract), cwd=root)
+        run("git", "checkout", "-q", "--detach", AC_CONTRACT_SHA, cwd=contract)
+        actual = git("rev-parse", "HEAD", cwd=contract)
+        if actual != AC_CONTRACT_SHA:
+            raise AssertionError(f"AC contract checkout is {actual}, expected {AC_CONTRACT_SHA}")
+
+        cls.aweb_remote = root / "aweb.git"
+        run("git", "clone", "-q", "--mirror", str(REPO_ROOT), str(cls.aweb_remote), cwd=root)
+        cls.old_server_sha = git("rev-parse", f"server-v{OLD_SERVER_VERSION}^{{}}", cwd=REPO_ROOT)
+        cls.new_server_sha = git("rev-parse", f"server-v{NEW_SERVER_VERSION}^{{}}", cwd=REPO_ROOT)
+        cls.old_server = {
+            "version": OLD_SERVER_VERSION,
+            "git_ref": f"server-v{OLD_SERVER_VERSION}",
+            "git_sha": cls.old_server_sha,
+        }
+        cls.new_server = {
+            "version": NEW_SERVER_VERSION,
+            "git_ref": f"server-v{NEW_SERVER_VERSION}",
+            "git_sha": cls.new_server_sha,
+        }
+
+        cls.seed = root / "seed"
+        shutil.copytree(contract, cls.seed, ignore=shutil.ignore_patterns(".git"))
+        replace_dependency(
+            cls.seed / "backend" / "pyproject.toml", "aweb", OLD_SERVER_VERSION
+        )
+        replace_dependency(
+            cls.seed / "backend" / "pyproject.toml", "awid-service", OLD_AWID_VERSION
+        )
+        write_release_pin(
+            cls.seed / "release-pin.toml",
+            version=OLD_SERVER_VERSION,
+            sha=cls.old_server_sha,
+        )
+        env = {**os.environ, "UV_CACHE_DIR": str(cls.uv_cache)}
+        run(
+            "uv", "lock", "--no-config", "--default-index", "https://pypi.org/simple",
+            "--upgrade-package", f"aweb=={OLD_SERVER_VERSION}",
+            "--upgrade-package", f"awid-service=={OLD_AWID_VERSION}",
+            cwd=cls.seed / "backend", env=env,
+        )
+        git("init", "-q", "-b", "main", cwd=cls.seed)
+        git("add", ".", cwd=cls.seed)
+        run(
+            "git", "-c", "user.email=test@example.com", "-c", "user.name=Test",
+            "commit", "-qm", "coherent old AC release", cwd=cls.seed,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.fixture_tmp.cleanup()
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         self.remote = root / "remote.git"
-        seed = root / "seed"
-        (seed / "backend").mkdir(parents=True)
-        (seed / "release-pin.toml").write_text(PIN_TOML)
-        (seed / "backend" / "uv.lock").write_text(UV_LOCK)
-        git("init", "-q", "-b", "main", cwd=seed)
-        git("-c", "user.email=t@t", "-c", "user.name=t", "add", ".", cwd=seed)
-        git("-c", "user.email=t@t", "-c", "user.name=t",
-            "commit", "-qm", "seed", cwd=seed)
-        git("init", "-q", "--bare", str(self.remote), cwd=root)
-        git("remote", "add", "origin", str(self.remote), cwd=seed)
-        git("push", "-q", "origin", "main", cwd=seed)
+        run("git", "clone", "-q", "--bare", str(self.seed), str(self.remote), cwd=root)
         self.addCleanup(self.tmp.cleanup)
 
-    def run_adapter(self, operation, updates=None, expect_failure=False):
-        command = [sys.executable, str(ADAPTER), operation, "--component", "ac-pin",
-                   "--expect-repository", str(self.remote)]
+    def adapter_env(self, **extra) -> dict:
+        return {
+            **os.environ,
+            "AC_REMOTE": str(self.remote),
+            "AWEB_REMOTE": str(self.aweb_remote),
+            "UV_CACHE_DIR": str(self.uv_cache),
+            **extra,
+        }
+
+    def run_adapter(self, operation, updates=None, *, env=None, expect_failure=False):
+        command = [
+            sys.executable, str(ADAPTER), operation,
+            "--component", "ac-pin",
+            "--expect-repository", str(self.remote),
+        ]
         if updates is not None:
             command += ["--updates", json.dumps(updates)]
-        env = {**os.environ, "AC_REMOTE": str(self.remote)}
-        result = subprocess.run(command, capture_output=True, text=True, env=env)
+        result = subprocess.run(
+            command, capture_output=True, text=True,
+            env=env or self.adapter_env(),
+        )
         if expect_failure:
             self.assertNotEqual(result.returncode, 0)
             return result.stderr
@@ -75,88 +213,205 @@ class AcPinAdapterTests(unittest.TestCase):
             raise AssertionError(f"{operation} failed: {result.stderr}")
         return json.loads(result.stdout)
 
-    def test_read_reports_both_pins(self):
+    def remote_head(self) -> str:
+        return git("--git-dir", str(self.remote), "rev-parse", "refs/heads/main", cwd=Path(self.tmp.name))
+
+    def checkout_remote(self) -> Path:
+        root = Path(self.tmp.name) / f"observed-{len(list(Path(self.tmp.name).glob('observed-*')))}"
+        ac = root / "ac"
+        root.mkdir()
+        run("git", "clone", "-q", str(self.remote), str(ac), cwd=root)
+        return ac
+
+    def run_ac_contract_checks(self, checkout: Path, source_sha: str) -> None:
+        aweb = checkout.parent / "aweb"
+        run("git", "clone", "-q", str(self.aweb_remote), str(aweb), cwd=checkout.parent)
+        run("git", "checkout", "-q", "--detach", source_sha, cwd=aweb)
+        env = {**os.environ, "UV_CACHE_DIR": str(self.uv_cache)}
+        run("make", "release-verify-model", cwd=checkout, env=env)
+        run("uv", "lock", "--check", "--no-config", cwd=checkout / "backend", env=env)
+        run(
+            sys.executable, "scripts/migration_manifest.py", "--verify",
+            cwd=checkout / "backend", env=env,
+        )
+
+    @property
+    def combined_updates(self) -> dict:
+        return {"server": self.new_server, "awid-pypi": NEW_AWID_VERSION}
+
+    def test_read_reports_complete_server_identity_and_awid_version(self):
         self.assertEqual(
             self.run_adapter("read")["advertised"],
-            {"server": OLD_SHA, "awid-pypi": "0.5.14"},
+            {"server": self.old_server, "awid-pypi": OLD_AWID_VERSION},
         )
 
-    def test_server_pin_update_refuses_until_it_honours_ac_contract(self):
-        """AC's release-pin.toml carries version and git_ref beside git_sha, and
-        AC's own release-model check requires them to agree. Moving git_sha
-        alone produces a pin AC refuses - a state worse than no update, because
-        it looks applied. See aweb-abbe.39."""
-        stderr = self.run_adapter("apply", {"server": NEW_SHA}, expect_failure=True)
-        self.assertIn("release-pin", stderr)
+    def test_combined_update_regenerates_real_lock_and_passes_ac_checks(self):
+        before = self.remote_head()
         self.assertEqual(
-            self.run_adapter("read")["advertised"]["server"], OLD_SHA,
-            "a refusal must leave the pin untouched",
+            self.run_adapter("intent", self.combined_updates)["advertised"],
+            self.combined_updates,
         )
-
-    def test_awid_lock_update_refuses_until_it_honours_ac_contract(self):
-        """backend/uv.lock pins the version AND that version's sdist/wheel URLs
-        and hashes. Rewriting the version line alone yields a lock claiming
-        0.5.15 while holding 0.5.12 artifact hashes."""
-        stderr = self.run_adapter("apply", {"awid-pypi": "0.5.15"}, expect_failure=True)
-        self.assertIn("uv.lock", stderr)
+        self.assertEqual(self.remote_head(), before, "intent must never push")
         self.assertEqual(
-            self.run_adapter("read")["advertised"]["awid-pypi"], "0.5.14",
-            "a refusal must leave the lock untouched",
+            self.run_adapter("apply", self.combined_updates)["applied"],
+            self.combined_updates,
         )
+        self.assertEqual(self.run_adapter("read")["advertised"], self.combined_updates)
 
-    def test_the_commit_pin_never_accepts_a_version(self):
-        """The aweb pin holds a commit; a version there is a value the field
-        cannot mean. Refused today by the AC-contract guard, and the shape check
-        behind it must survive that guard's removal - so this asserts a refusal,
-        not which refusal."""
-        stderr = self.run_adapter("apply", {"server": "1.26.36"}, expect_failure=True)
-        self.assertTrue(stderr.strip(), "a version for the commit pin must refuse")
+        checkout = self.checkout_remote()
+        self.run_ac_contract_checks(checkout, self.new_server_sha)
+        pyproject = (checkout / "backend" / "pyproject.toml").read_text()
+        self.assertIn(f'"aweb>={NEW_SERVER_VERSION}"', pyproject)
+        self.assertIn(f'"awid-service>={NEW_AWID_VERSION}"', pyproject)
+        for name, version, filename in (
+            ("aweb", NEW_SERVER_VERSION, f"aweb-{NEW_SERVER_VERSION}"),
+            ("awid-service", NEW_AWID_VERSION, f"awid_service-{NEW_AWID_VERSION}"),
+        ):
+            package = lock_package(checkout / "backend" / "uv.lock", name)
+            self.assertEqual(package["version"], version)
+            artifacts = [package["sdist"], *package["wheels"]]
+            self.assertGreaterEqual(len(artifacts), 2)
+            for artifact in artifacts:
+                self.assertIn(filename, artifact["url"])
+                self.assertRegex(artifact["hash"], r"^sha256:[0-9a-f]{64}$")
+
+    def test_intent_precedes_future_tag_and_packages_then_apply_uses_them(self):
+        root = Path(self.tmp.name)
+        future_remote = root / "future-aweb.git"
+        run("git", "clone", "-q", "--mirror", str(REPO_ROOT), str(future_remote), cwd=root)
+        source = root / "future-source"
+        run("git", "clone", "-q", str(future_remote), str(source), cwd=root)
+        future_server = "9.8.7"
+        future_awid = "8.7.6"
+        pyproject = source / "server" / "pyproject.toml"
+        text, count = re.subn(
+            r'(?m)^version = "[^"]+"$', f'version = "{future_server}"',
+            pyproject.read_text(), count=1,
+        )
+        self.assertEqual(count, 1)
+        pyproject.write_text(text)
+        run(
+            "git", "-c", "user.email=test@example.com", "-c", "user.name=Test",
+            "add", "server/pyproject.toml", cwd=source,
+        )
+        run(
+            "git", "-c", "user.email=test@example.com", "-c", "user.name=Test",
+            "commit", "-qm", "future unpublished server", cwd=source,
+        )
+        future_sha = git("rev-parse", "HEAD", cwd=source)
+        run("git", "push", "-q", "origin", "HEAD:main", cwd=source)
+        updates = {
+            "server": {
+                "version": future_server,
+                "git_ref": f"server-v{future_server}",
+                "git_sha": future_sha,
+            },
+            "awid-pypi": future_awid,
+        }
+        env = self.adapter_env(AWEB_REMOTE=str(future_remote))
+        before = self.remote_head()
         self.assertEqual(
-            self.run_adapter("read")["advertised"]["server"], OLD_SHA,
-            "a refusal must leave the pin untouched",
+            self.run_adapter("intent", updates, env=env)["advertised"], updates
+        )
+        self.assertEqual(self.remote_head(), before)
+
+        run("git", "tag", f"server-v{future_server}", future_sha, cwd=source)
+        run("git", "push", "-q", "origin", f"refs/tags/server-v{future_server}", cwd=source)
+        index = root / "index"
+        write_test_package(index, "aweb", future_server)
+        write_test_package(index, "awid-service", future_awid)
+        handler = functools.partial(QuietHandler, directory=str(index))
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        index_url = f"http://127.0.0.1:{server.server_port}/simple"
+        env = self.adapter_env(
+            AWEB_REMOTE=str(future_remote), AC_PIN_TEST_INDEX=index_url
+        )
+        self.assertEqual(self.run_adapter("apply", updates, env=env)["applied"], updates)
+        self.assertEqual(self.run_adapter("read")["advertised"], updates)
+
+    def test_partial_and_mismatched_server_identities_refuse_without_push(self):
+        before = self.remote_head()
+        cases = [
+            {"server": {"version": NEW_SERVER_VERSION, "git_sha": self.new_server_sha}},
+            {"server": {**self.new_server, "git_ref": "server-v9.9.9"}},
+            {"server": {**self.new_server, "git_sha": "0" * 40}},
+        ]
+        for updates in cases:
+            with self.subTest(updates=updates):
+                stderr = self.run_adapter("intent", updates, expect_failure=True)
+                self.assertTrue(stderr.strip())
+                self.assertEqual(self.remote_head(), before)
+
+    def test_intent_refuses_missing_apply_time_ac_gate_surface(self):
+        root = Path(self.tmp.name)
+        drift = root / "contract-drift"
+        run("git", "clone", "-q", str(self.remote), str(drift), cwd=root)
+        omitted = drift / "scripts" / "check-aapj-e2e-contract.sh"
+        omitted.unlink()
+        run("git", "add", "scripts/check-aapj-e2e-contract.sh", cwd=drift)
+        run(
+            "git", "-c", "user.email=test@example.com", "-c", "user.name=Test",
+            "commit", "-qm", "remove apply-time gate surface", cwd=drift,
+        )
+        run("git", "push", "-q", "origin", "HEAD:main", cwd=drift)
+        before = self.remote_head()
+        stderr = self.run_adapter(
+            "intent", self.combined_updates, expect_failure=True
+        )
+        self.assertIn("check-aapj-e2e-contract.sh", stderr)
+        self.assertEqual(self.remote_head(), before)
+
+    def test_crash_after_checks_leaves_remote_unchanged(self):
+        before = self.remote_head()
+        stderr = self.run_adapter(
+            "apply", self.combined_updates,
+            env=self.adapter_env(AC_PIN_TEST_CRASH_AFTER_CHECKS="1"),
+            expect_failure=True,
+        )
+        self.assertIn("injected crash", stderr)
+        self.assertEqual(self.remote_head(), before)
+        self.assertEqual(
+            self.run_adapter("read")["advertised"],
+            {"server": self.old_server, "awid-pypi": OLD_AWID_VERSION},
         )
 
-    def test_a_changed_origin_after_clone_is_caught(self):
-        """Through THIS adapter, not by importing the marketplace helper. The
-        repeated failure on this branch has been a control that exercises a
-        sibling instead of the thing it claims to cover."""
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("ac_adapter", ADAPTER)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+    def test_identical_second_apply_adopts_without_another_commit(self):
+        self.run_adapter("apply", self.combined_updates)
+        first = self.remote_head()
+        self.run_adapter("apply", self.combined_updates)
+        self.assertEqual(self.remote_head(), first)
+        self.assertEqual(self.run_adapter("read")["advertised"], self.combined_updates)
 
-        work = Path(self.tmp.name) / "checkout"
-        subprocess.run(["git", "clone", "-q", str(self.remote), str(work)], check=True)
-        other = Path(self.tmp.name) / "elsewhere.git"
-        subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True)
-        subprocess.run(["git", "remote", "set-url", "origin", str(other)],
-                       cwd=str(work), check=True)
-        with self.assertRaises(SystemExit) as caught:
-            mod.verify_origin(work, str(self.remote), "after cloning")
-        self.assertIn("origin is", str(caught.exception))
-
-    def test_a_substituted_remote_is_refused_through_the_executable(self):
-        """Driven through the real executable caller, not an in-process helper."""
+    def test_substituted_remote_unknown_pin_and_non_commit_refuse(self):
         other = Path(self.tmp.name) / "substituted.git"
-        subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True)
+        run("git", "init", "-q", "--bare", str(other), cwd=Path(self.tmp.name))
         result = subprocess.run(
-            [sys.executable, str(ADAPTER), "read", "--component", "ac-pin",
-             "--expect-repository", "github.com/awebai/ac"],
+            [
+                sys.executable, str(ADAPTER), "read", "--component", "ac-pin",
+                "--expect-repository", "github.com/awebai/ac",
+            ],
             capture_output=True, text=True,
-            env={**os.environ, "AC_REMOTE": str(other)},
+            env=self.adapter_env(AC_REMOTE=str(other)),
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("refusing to act on", result.stderr)
+        self.assertIn(
+            "channel",
+            self.run_adapter("intent", {"channel": "1.7.4"}, expect_failure=True),
+        )
+        self.assertTrue(
+            self.run_adapter(
+                "intent", {"server": "1.26.35"}, expect_failure=True
+            ).strip()
+        )
 
-    def test_the_adapter_is_executable(self):
-        """The driver execs this path. It writes aweb-cloud's production pins,
-        and its sibling adapter already shipped once as 100644, so a silent mode
-        regression here has to be caught by something."""
+    def test_adapter_is_executable(self):
         self.assertTrue(os.access(ADAPTER, os.X_OK), f"{ADAPTER} must be executable")
 
-    def test_an_unknown_component_is_refused(self):
-        stderr = self.run_adapter("apply", {"channel": "1.7.4"}, expect_failure=True)
-        self.assertIn("channel", stderr)
 
 if __name__ == "__main__":
     unittest.main()
