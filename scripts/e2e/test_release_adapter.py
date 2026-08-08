@@ -4356,6 +4356,64 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         self.assertEqual(runs.dispatched, [],
                          "the refusal must precede the dispatch")
 
+    def test_run_plan_seals_the_debt_with_a_real_npm_lane(self) -> None:
+        """End-to-end through the production caller, which the previous version
+        of this test did not do: it never ran run_plan and never asserted a
+        debt, so the lane and the official reader could disagree with fakes and
+        nothing noticed."""
+        version = "1.7.3"
+        tgz = channel_tgz(version=version)
+        graph = rd.Graph.from_dict({
+            "component": {
+                "channel": {
+                    "source_paths": ["x/"],
+                    "version_source": {"type": "manifest", "path": "x/v"},
+                    "tag_format": "channel-v{version}",
+                    "publish_lane": {
+                        "workflow": ".github/workflows/npm-release.yml",
+                        "repository": "awebai/aweb",
+                        "provider": "github-workflow-artifacts",
+                        "modes": ["stage-only", "publish-continuation",
+                                  "verify-only"],
+                        "registry": {"type": "npm",
+                                     "package": "@awebai/claude-channel"},
+                    },
+                    "verify": {"command": "true"},
+                    "delivery_restart": {"proof": "restart per host"},
+                },
+            },
+            "edge": [],
+        })
+        state = rd.FixtureState(
+            changed_components={"channel": True},
+            versions={"channel": version},
+            published_versions={"channel": "1.7.1"},
+        )
+        plan = rd.compute_plan(graph, state)
+        lane, _ = npm_lane(
+            npm_lane_zip(version=version, tgz=tgz),
+            observer=lambda p, v: sha256(tgz),
+            runs=FakeAwRuns(conclusion="success"),
+            delivery_proofs={},               # the honest pre-adoption state
+        )
+        store, authority = rd._MemoryStore(), FixtureAuthority()
+        rd.run_plan(
+            plan, graph, rd.WorkflowLanes({"channel": lane}),
+            skew=NoRuntimeSkew(), authority=authority, store=store,
+            source_sha=SOURCE_SHA, approvals={}, state=state,
+            providers=rd.Providers(store=store, authority=authority),
+        )
+        receipt_id = next(k for k in authority.recorded if k.startswith("receipt:"))
+        receipt = rd.load_sealed_receipt(
+            store.get(receipt_id), expected_digest=authority.expected_digest(receipt_id)
+        )
+        entry = receipt.entries["channel"]
+        self.assertIsNone(entry.delivery_proof, "no evidence may be invented")
+        self.assertEqual(
+            entry.delivery_outstanding, "delivery-restart-proof",
+            "the sealed receipt must record the debt it still owes",
+        )
+
     def test_missing_proof_publishes_and_the_debt_is_recorded(self) -> None:
         """No proof is the HONEST state before adoption: restart evidence cannot
         exist until the version is published and hosts restart onto it.

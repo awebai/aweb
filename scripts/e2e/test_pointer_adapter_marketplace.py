@@ -229,6 +229,25 @@ class MarketplaceAdapterTests(unittest.TestCase):
             mod.canonical("github.com/awebai/claude-plugins"),
         )
 
+    def test_a_changed_origin_after_clone_is_caught(self):
+        """The guard must re-observe, not re-read its own input. Rewriting the
+        checkout's origin after clone is the case that distinguishes the two -
+        without this, comparing the passed-in string to itself would pass."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mp_adapter", ADAPTER)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        work = Path(self.tmp.name) / "checkout"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(work)], check=True)
+        other = Path(self.tmp.name) / "elsewhere.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True)
+        subprocess.run(["git", "remote", "set-url", "origin", str(other)],
+                       cwd=str(work), check=True)
+        with self.assertRaises(SystemExit) as caught:
+            mod.verify_origin(work, str(self.remote), "after cloning")
+        self.assertIn("origin is", str(caught.exception))
+
     def test_the_adapter_is_executable(self):
         """SubprocessPointerAdapter execs the path directly. Committed 100644,
         the first thing a real release did was raise PermissionError."""

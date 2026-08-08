@@ -1136,6 +1136,11 @@ class Receipt:
     g5_authorization: G5Authorization | None = None
 
 
+_RECEIPT_BODY_FIELDS = {
+    "plan_digest", "source_sha", "frozen_plan_id", "staged_manifest_id",
+    "partial", "entries", "approvals", "g5_authorization",
+}
+
 _ENTRY_FIELDS = {
     "version", "digest", "phase", "pointer_state", "delivery_proof",
     "delivery_outstanding", "digest_set", "lane_ref",
@@ -1172,10 +1177,19 @@ def _exact_entry_fields(name: str, entry) -> dict:
             )
     for mapping in ("delivery_proof", "digest_set", "lane_ref"):
         value = entry.get(mapping)
-        if value is not None and not isinstance(value, dict):
+        if value is None:
+            continue
+        if not isinstance(value, dict):
             raise ReceiptError(
                 f"receipt entry {name} field {mapping} must be an object when "
                 f"present, got {type(value).__name__}"
+            )
+        # An empty object is malformed evidence, not absent evidence. Letting
+        # {} load kept the same ambiguity the presence checks exist to remove.
+        if not value:
+            raise ReceiptError(
+                f"receipt entry {name} field {mapping} is an empty object; "
+                "absent is None, present is populated"
             )
     return {
         "version": entry["version"],
@@ -1452,7 +1466,22 @@ def load_sealed_receipt(data: bytes, *, expected_digest: str) -> Receipt:
         raise ReceiptError(f"unreadable receipt: {exc}") from exc
     if hashlib.sha256(body.encode()).hexdigest() != seal:
         raise ReceiptError("receipt seal does not match its body")
+    # Exact outer and body key sets, not only entry keys. Accepting unknown keys
+    # anywhere meant bytes could carry something a reader never saw - the same
+    # defect the entry-level check exists to close, one level up.
+    if set(outer) != {"body", "seal"}:
+        raise ReceiptError(
+            f"receipt envelope carries unknown keys {sorted(set(outer) - {'body', 'seal'})}"
+        )
     parsed = json.loads(body)
+    if not isinstance(parsed, dict):
+        raise ReceiptError("receipt body is not an object")
+    unknown_body = sorted(set(parsed) - _RECEIPT_BODY_FIELDS)
+    if unknown_body:
+        raise ReceiptError(
+            f"receipt body carries unknown keys {unknown_body}; a sealed "
+            "receipt is exactly its declared schema"
+        )
     return Receipt(
         plan_digest=parsed["plan_digest"],
         source_sha=parsed["source_sha"],
@@ -3812,12 +3841,6 @@ class NpmWorkflowLane(_WorkflowLaneBase):
             # fakes that agreed with it - the lane demanded evidence at exactly
             # the moment it cannot exist.
             return None
-        if False:
-            raise ReceiptError(
-                f"{component}: its declared {self._expected_obligation} "
-                "requires separately supplied delivery evidence BEFORE any "
-                "outward call; none was supplied"
-            )
         validate_delivery_proof(proof, self._expected_obligation, component)
         return proof
 
@@ -8005,7 +8028,10 @@ def resume_plan(
                     f"{node.component}: observed digest set does not equal the "
                     "anchored staged manifest set"
                 )
-        if manifest_entry.get("delivery_obligation") and observed.delivery_proof:
+        if (
+            manifest_entry.get("delivery_obligation")
+            and observed.delivery_proof is not None
+        ):
             # An already-published node whose delivery is still owed is the
             # normal case on resume: the restart evidence could not have existed
             # when it published. Demanding it here made every interrupted

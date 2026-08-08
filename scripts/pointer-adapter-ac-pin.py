@@ -254,7 +254,10 @@ def apply_updates(checkout: Path, updates: dict[str, str]) -> list[str]:
         return touched
     summary = ", ".join(f"{k} {v}" for k, v in sorted(updates.items()))
     git("commit", "-m", f"Pin {summary}", cwd=checkout)
+    expected = expected_remote()
+    verify_origin(checkout, expected, "before pushing")
     git("push", "origin", "HEAD", cwd=checkout)
+    verify_origin(checkout, expected, "after pushing")
     return touched
 
 
