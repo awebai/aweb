@@ -26,6 +26,20 @@ set -euo pipefail
 
 fail() { printf 'REFUSE: %s\n' "$1" >&2; exit 1; }
 
+# A bound of zero is not a bound: curl treats --max-time 0 and
+# --connect-timeout 0 as NO limit, and timeout(1) treats 0 the same way
+# (measured: "timeout 0 sleep 3" returns 0 after three seconds). So a
+# well-meaning override of 0 silently restores the indefinite hang these
+# bounds exist to prevent, and must refuse instead.
+require_positive_int() {
+  [[ "$2" =~ ^[0-9]+$ && "$2" -gt 0 ]] \
+    || fail "$1 must be a positive integer, got '${2}'; a zero or malformed bound is not a bound"
+}
+require_nonnegative_int() {
+  [[ "$3" =~ ^[0-9]+$ ]] \
+    || fail "$2 must be a non-negative integer, got '${3}'"
+}
+
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
   else shasum -a 256 "$1" | awk '{print $1}'; fi
@@ -133,9 +147,58 @@ PY
   verify-published)
     if [[ -z "$OBSERVED" ]]; then
       OBSERVED="$(mktemp)"
-      curl -fsSL -o "$OBSERVED" \
-        "https://pypi.org/pypi/${PACKAGE}/${VERSION}/json" \
-        || fail "PyPI has no release ${PACKAGE} ${VERSION}"
+      # PyPI propagates too, so an immediate read after upload can 404 for a
+      # release that succeeded. The npm lane reported exactly that as a failed
+      # release once, with correct bytes already published; the old message
+      # here ("has no release") made the same mistake worse by asserting
+      # absence when it could not tell absence from lag or from an outage.
+      #
+      # 404 is retried within a bounded window; any other HTTP status is not,
+      # because an outage is never evidence of absence. Exhausting the window
+      # still refuses.
+      # TWO bounds, whichever comes first, plus a per-REQUEST bound. Without
+      # connect/max timeouts a single hung request outlasts the whole window
+      # and "bounded" is a bound in name only.
+      deadline_seconds="${PYPI_VERIFY_DEADLINE:-120}"
+      backoff="${PYPI_VERIFY_BACKOFF:-6}"
+      req_cap="${PYPI_VERIFY_REQUEST_TIMEOUT:-30}"
+      max_attempts="${PYPI_VERIFY_ATTEMPTS:-20}"
+      require_positive_int PYPI_VERIFY_DEADLINE "$deadline_seconds"
+      require_positive_int PYPI_VERIFY_REQUEST_TIMEOUT "$req_cap"
+      require_positive_int PYPI_VERIFY_ATTEMPTS "$max_attempts"
+      require_nonnegative_int x PYPI_VERIFY_BACKOFF "$backoff"
+      deadline=$((SECONDS + deadline_seconds))
+      attempts=0
+      last=""
+      while :; do
+        attempts=$((attempts + 1))
+        remaining=$((deadline - SECONDS))
+        (( remaining < 1 )) && remaining=1
+        req="$req_cap"; (( remaining < req )) && req="$remaining"
+        status="$(curl -sSL -o "$OBSERVED" -w '%{http_code}' \
+          --connect-timeout "$req" --max-time "$req" \
+          "https://pypi.org/pypi/${PACKAGE}/${VERSION}/json" 2>/dev/null || true)"
+        [[ "$status" == "200" ]] && break
+        # Four outcomes, four diagnostics. Collapsing them is the reporting
+        # defect itself: waiting cannot fix credentials, and calling an outage
+        # or a timeout "absent" asserts something the observation cannot support.
+        case "$status" in
+          401|403)
+            fail "PyPI refused authorization for ${PACKAGE} ${VERSION} (HTTP ${status}); this is permanent and waiting cannot resolve it" ;;
+          404) last="not yet visible" ;;
+          000|"") last="request exceeded ${req}s or did not connect" ;;
+          *)
+            fail "PyPI is unavailable for ${PACKAGE} ${VERSION} (HTTP ${status}); unavailable is never evidence of absence" ;;
+        esac
+        if (( SECONDS + backoff >= deadline )) || (( attempts >= max_attempts )); then
+          # After a completed upload, "never published" is not knowable. All
+          # this observation supports is that it did not become visible in time.
+          fail "PyPI did not serve ${PACKAGE} ${VERSION} within ${deadline_seconds}s after ${attempts} attempt(s) (${last}); visibility is unconfirmed, which is not the same as absent"
+        fi
+        printf 'waiting for %s %s to propagate (%s, %ds left)\n' \
+          "$PACKAGE" "$VERSION" "$last" "$((deadline - SECONDS))" >&2
+        sleep "$backoff"
+      done
     fi
     python3 - "$DIST" "$OBSERVED" "$NORMALIZED" "$VERSION" <<'PY'
 import hashlib, json, os, re, sys

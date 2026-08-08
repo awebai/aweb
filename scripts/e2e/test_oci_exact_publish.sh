@@ -215,4 +215,185 @@ for doc in '{}' '{"Tags":null}' '{"Tags":"not-an-array"}' 'not json at all'; do
 done
 ok "malformed, null, and non-array listings refuse (4 shapes) - never absence"
 
+# ── verify-published resolving through the REGISTRY ──────────────────
+# Every case above supplies --observed-digest, so the skopeo path - the one
+# that runs in production - had no coverage, exactly as in the npm lane that
+# reported a successful release as failed.
+#
+# These controls assert the RESOLUTION behaviour, not digest equality: the
+# fake registry cannot forge bytes hashing to the staged index, so a resolved
+# observation legitimately ends in a "resolves to" mismatch. That is the point
+# - reaching the mismatch PROVES the propagation loop completed, and is
+# distinguishable from "absent" and from "cannot observe".
+
+fakebin="$tmp/fakebin"; mkdir -p "$fakebin"
+sk_attempts="$tmp/skopeo-attempts"
+
+# $1 = number of absent replies before it resolves ("always" never resolves)
+# $2 = optional non-absence failure
+make_fake_skopeo() {
+  local fails_before_success="$1" mode="${2:-absent}"
+  : > "$sk_attempts"
+  cat > "$fakebin/skopeo" <<FAKE
+#!/usr/bin/env bash
+echo x >> "$sk_attempts"
+n=\$(wc -l < "$sk_attempts" | tr -d ' ')
+if [[ "$mode" == "outage" ]]; then
+  echo "error pinging docker registry: 503 Service Unavailable" >&2
+  exit 1
+fi
+if [[ "$mode" == "hang" ]]; then
+  sleep 30
+  exit 0
+fi
+if [[ "$mode" == "auth" ]]; then
+  echo "unauthorized: authentication required" >&2
+  exit 1
+fi
+if [[ "$fails_before_success" == "always" || "\$n" -le "$fails_before_success" ]]; then
+  echo "reading manifest 0.5.14 in ghcr.io/awebai/awid: manifest unknown" >&2
+  exit 1
+fi
+if [[ "$mode" == "newline" ]]; then
+  printf '{"schemaVersion":2,"manifests":[]}\n'
+else
+  printf '{"schemaVersion":2,"manifests":[]}'
+fi
+FAKE
+  chmod +x "$fakebin/skopeo"
+}
+
+sk_count() { wc -l < "$sk_attempts" | tr -d ' '; }
+
+run_oci_verify() {
+  PATH="$fakebin:$PATH" OCI_VERIFY_ATTEMPTS="$1" OCI_VERIFY_BACKOFF=0 \
+    OCI_VERIFY_DEADLINE="${2:-60}" OCI_VERIFY_REQUEST_TIMEOUT="${3:-5}" \
+    bash "$LANE" verify-published --archive "$tmp/good.tar" --version 0.5.14 \
+      --source-sha "$SRC_SHA" --repository ghcr.io/awebai/awid 2>&1
+}
+
+# GREEN: transient absence is propagation; the loop must get past it.
+make_fake_skopeo 2
+out="$(run_oci_verify 5 || true)"
+grep -q "resolves to" <<<"$out" \
+  || fail "oci verify must survive propagation and reach the digest comparison: $out"
+ok "oci verify-published survives registry propagation lag"
+[[ "$(sk_count)" == "3" ]] \
+  || fail "expected 3 attempts (2 absent + 1 resolving), got $(sk_count)"
+ok "oci retries stop as soon as the tag resolves"
+
+# RED preserved: a tag that never appears refuses AS ABSENT, not as a mismatch.
+make_fake_skopeo always
+out="$(run_oci_verify 3 || true)"
+verdict="$(grep '^REFUSE:' <<<"$out" || true)"
+grep -q "did not become visible" <<<"$verdict" \
+  || fail "exhaustion must refuse as unconfirmed visibility: $verdict"
+# After a completed push, "never pushed" is not knowable. The verdict must not
+# claim it - that is the same false certainty this whole task is fixing.
+grep -qi "never pushed\|never published" <<<"$verdict" \
+  && fail "exhaustion must not assert absence it cannot know: $verdict"
+ok "oci refuses a tag that never appears"
+[[ "$(sk_count)" == "3" ]] \
+  || fail "expected the full 3 attempts before refusing, got $(sk_count)"
+ok "oci refusal comes only after the whole window"
+
+# RED preserved: an outage is never proof of absence and is not retried.
+make_fake_skopeo always outage
+out="$(run_oci_verify 5 || true)"
+verdict="$(grep '^REFUSE:' <<<"$out" || true)"
+grep -qi "unavailable" <<<"$verdict" \
+  || fail "an outage must refuse as unavailable, not as absence: $verdict"
+grep -qi "never pushed\|never published" <<<"$verdict" \
+  && fail "an outage must never be reported as absence: $verdict"
+ok "oci refuses on outage, naming it as such"
+[[ "$(sk_count)" == "1" ]] \
+  || fail "an outage must not be retried as lag; got $(sk_count) attempts"
+ok "oci distinguishes an outage from lag and never retries it"
+
+# Auth is PERMANENT: waiting cannot fix a credential, and naming it
+# "unavailable" invites a retry that can never succeed.
+make_fake_skopeo always auth
+out="$(run_oci_verify 5 || true)"
+# Judge the REFUSE verdict only. The full output also carries skopeo's own
+# stderr, which contains the word "unauthorized" - grepping all of it passed
+# this control while the diagnostic still said "outage".
+verdict="$(grep '^REFUSE:' <<<"$out" || true)"
+grep -qi "authoriz\|authentic" <<<"$verdict" \
+  || fail "the VERDICT must name auth, not outage or absence: $verdict"
+grep -qi "unavailable\|did not become visible" <<<"$verdict" \
+  && fail "auth must not be reported as outage or unconfirmed visibility: $verdict"
+ok "oci names an authorization failure permanently, not as absence or outage"
+[[ "$(sk_count)" == "1" ]] \
+  || fail "auth is permanent and must not be retried; got $(sk_count) attempts"
+ok "oci never retries an authorization failure"
+
+# The observed digest must be the sha256 of the EXACT bytes the registry
+# returned. Variable capture strips a trailing newline and a here-string adds
+# one, so either hashes bytes skopeo never sent - the hazard the production
+# workflow documents at awid-image-release.yml. A response ending in a newline
+# is the case that separates a byte-exact reader from a nearly-right one.
+make_fake_skopeo 0 newline
+true_digest="sha256:$(printf '{"schemaVersion":2,"manifests":[]}\n' \
+  | { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; } \
+  | awk '{print $1}')"
+out="$(run_oci_verify 3 || true)"
+observed="$(sed -n 's/.*resolves to \(sha256:[0-9a-f]*\).*/\1/p' <<<"$out" | head -1)"
+[[ -n "$observed" ]] || fail "expected a resolved digest in: $out"
+[[ "$observed" == "$true_digest" ]] \
+  || fail "observed $observed is not the sha256 of the exact bytes returned ($true_digest); the reader altered the byte stream"
+ok "oci hashes the exact registry byte stream, trailing newline included"
+
+# A hung registry request must not outlast the window. Without a per-request
+# timeout a single hang runs forever and "bounded" is a bound in name only.
+if command -v timeout >/dev/null 2>&1; then
+  make_fake_skopeo always hang
+  started="$SECONDS"
+  out="$(run_oci_verify 2 8 1 || true)"
+  elapsed=$((SECONDS - started))
+  verdict="$(grep '^REFUSE:' <<<"$out" || true)"
+  [[ -n "$verdict" ]] || fail "a hanging registry must still produce a verdict: $out"
+  (( elapsed <= 12 )) \
+    || fail "a hanging request outlasted the window: ${elapsed}s for a 8s deadline"
+  ok "oci bounds a hanging registry request within the deadline"
+else
+  ok "oci hang control skipped: no timeout(1) on this host"
+fi
+
+# A bound of zero is NOT a bound - timeout(1) treats 0 as no limit - so a
+# sensible-looking override must refuse rather than silently restore the hang.
+make_fake_skopeo 0
+for knob in OCI_VERIFY_DEADLINE OCI_VERIFY_REQUEST_TIMEOUT OCI_VERIFY_ATTEMPTS; do
+  # An EMPTY value is deliberately not in this list: ${VAR:-default} treats it
+  # as unset, so it yields the bounded default rather than disabling the bound.
+  # Requiring a refusal there would be asserting a hazard that does not exist.
+  for bad in 0 abc -1; do
+    out="$(PATH="$fakebin:$PATH" env "$knob=$bad" OCI_VERIFY_BACKOFF=0 \
+      bash "$LANE" verify-published --archive "$tmp/good.tar" --version 0.5.14 \
+      --source-sha "$SRC_SHA" --repository ghcr.io/awebai/awid 2>&1 || true)"
+    grep -q "^REFUSE:.*positive integer" <<<"$out" \
+      || fail "$knob=$bad must refuse as a non-positive bound: $out"
+  done
+done
+ok "oci refuses zero and malformed deadline/request/attempt overrides"
+
+# And an empty override must fall back to the bounded default, not to no bound.
+out="$(PATH="$fakebin:$PATH" OCI_VERIFY_DEADLINE= OCI_VERIFY_BACKOFF=0 \
+  OCI_VERIFY_ATTEMPTS=2 bash "$LANE" verify-published --archive "$tmp/good.tar" \
+  --version 0.5.14 --source-sha "$SRC_SHA" \
+  --repository ghcr.io/awebai/awid 2>&1 || true)"
+grep -q "^REFUSE:.*positive integer" <<<"$out" \
+  && fail "an empty override is unset, and must use the bounded default: $out"
+ok "oci treats an empty override as unset and stays bounded"
+
+# Never run unbounded. Where no timeout capability exists the lane must refuse,
+# not fall back to a bare call - the previous control SKIPPED this host shape,
+# which is precisely where the unbounded path lived.
+out="$(PATH="$fakebin:$PATH" OCI_TIMEOUT_BIN=definitely-not-a-real-binary \
+  OCI_VERIFY_BACKOFF=0 bash "$LANE" verify-published --archive "$tmp/good.tar" \
+  --version 0.5.14 --source-sha "$SRC_SHA" \
+  --repository ghcr.io/awebai/awid 2>&1 || true)"
+grep -q "^REFUSE:.*bounded-execution capability" <<<"$out" \
+  || fail "with no timeout capability the lane must refuse, never run unbounded: $out"
+ok "oci fails closed when no bounded-execution capability exists"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"
