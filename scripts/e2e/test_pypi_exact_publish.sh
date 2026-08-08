@@ -179,4 +179,144 @@ expect_refusal "mismatch at planning" "permanent" \
   bash "$LANE" plan-publish --dist "$tmp/dist" --package fixture-pkg \
   --version 1.2.3 --observed-status 200 --observed-json "$tmp/observed.json"
 
+# ── verify-published resolving through PyPI ─────────────────────────
+# Same defect the npm lane shipped: an immediate read after upload cannot tell
+# propagation lag from a release that never happened, and the old message
+# asserted "has no release" for all three causes at once.
+
+fakebin="$tmp/fakebin"; mkdir -p "$fakebin"
+curl_attempts="$tmp/curl-attempts"
+
+# $1 = number of 404s before 200 ("always" never resolves); $2 = other status
+make_fake_curl() {
+  local fails_before_success="$1" other="${2:-}"
+  : > "$curl_attempts"
+  cat > "$fakebin/curl" <<FAKE
+#!/usr/bin/env bash
+echo x >> "$curl_attempts"
+printf '%s\n' "\$*" >> "$tmp/curl-argv"
+n=\$(wc -l < "$curl_attempts" | tr -d ' ')
+out=""
+prev=""
+for a in "\$@"; do
+  if [[ "\$prev" == "-o" ]]; then out="\$a"; fi
+  prev="\$a"
+done
+if [[ "$other" == "hang" ]]; then sleep 30; printf '000'; exit 0; fi
+if [[ -n "$other" ]]; then printf '%s' "$other"; exit 0; fi
+if [[ "$fails_before_success" == "always" || "\$n" -le "$fails_before_success" ]]; then
+  printf '404'; exit 0
+fi
+cp "$tmp/observed.json" "\$out"
+printf '200'
+FAKE
+  chmod +x "$fakebin/curl"
+}
+
+curl_count() { wc -l < "$curl_attempts" | tr -d ' '; }
+
+make_dist "$tmp/dist" 1.2.3 1.2.3
+observation
+
+# GREEN: transient 404s are lag; the step must survive them.
+make_fake_curl 2
+if PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=5 PYPI_VERIFY_BACKOFF=0 PYPI_VERIFY_DEADLINE=60 \
+     bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
+       --version 1.2.3 >/dev/null 2>&1; then
+  ok "pypi verify-published survives propagation lag"
+else
+  fail "pypi verify-published must retry a 404 rather than assert absence"
+fi
+[[ "$(curl_count)" == "3" ]] \
+  || fail "expected 3 attempts (2 lagging + 1 resolving), got $(curl_count)"
+ok "pypi retries stop as soon as the release resolves"
+
+# RED preserved: a release that never appears still refuses.
+make_fake_curl always
+if PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=3 PYPI_VERIFY_BACKOFF=0 PYPI_VERIFY_DEADLINE=60 \
+     bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
+       --version 1.2.3 >/dev/null 2>&1; then
+  fail "a release that never resolves must still refuse"
+fi
+ok "pypi refuses a release that never appears"
+[[ "$(curl_count)" == "3" ]] \
+  || fail "expected the full 3 attempts before refusing, got $(curl_count)"
+ok "pypi refusal comes only after the whole window"
+
+# RED preserved: an outage is never proof of absence and is not retried.
+make_fake_curl always 503
+if PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=5 PYPI_VERIFY_BACKOFF=0 PYPI_VERIFY_DEADLINE=60 \
+     bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
+       --version 1.2.3 >/dev/null 2>&1; then
+  fail "a PyPI outage must refuse"
+fi
+ok "pypi refuses on outage"
+[[ "$(curl_count)" == "1" ]] \
+  || fail "an outage must not be retried as lag; got $(curl_count) attempts"
+ok "pypi distinguishes an outage from lag and never retries it"
+
+# Auth is PERMANENT and must not be reported as an outage or as absence: a
+# credential problem will never resolve by waiting, and calling it "unavailable"
+# invites a retry that cannot succeed.
+make_fake_curl always 403
+out="$(PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=5 PYPI_VERIFY_BACKOFF=0 PYPI_VERIFY_DEADLINE=60 \
+  bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
+    --version 1.2.3 2>&1 || true)"
+grep -qi "authoriz\|authentic" <<<"$out" \
+  || fail "auth must be named as auth, not as outage or absence: $out"
+grep -qvi "never published" <<<"$out" \
+  || fail "auth must not be reported as absence: $out"
+ok "pypi names an authorization failure permanently, not as absence or outage"
+[[ "$(curl_count)" == "1" ]] \
+  || fail "auth is permanent and must not be retried; got $(curl_count) attempts"
+ok "pypi never retries an authorization failure"
+
+# Exhaustion must not claim absence it cannot know after a completed upload.
+make_fake_curl always
+out="$(PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=2 PYPI_VERIFY_BACKOFF=0 \
+  PYPI_VERIFY_DEADLINE=60 bash "$LANE" verify-published --dist "$tmp/dist" \
+  --package fixture-pkg --version 1.2.3 2>&1 || true)"
+verdict="$(grep '^REFUSE:' <<<"$out" || true)"
+grep -q "visibility is unconfirmed" <<<"$verdict" \
+  || fail "exhaustion must refuse as unconfirmed visibility: $verdict"
+grep -qi "never published" <<<"$verdict" \
+  && fail "exhaustion must not assert absence it cannot know: $verdict"
+ok "pypi exhaustion reports unconfirmed visibility, never 'never published'"
+
+# A hung request must not outlast the window. A fake curl cannot honour
+# --max-time, so timing a fake proves nothing - an earlier version of this
+# control passed with the timeouts REMOVED. What the lane actually owns is
+# passing a positive per-request bound, so that is what is asserted.
+: > "$tmp/curl-argv"
+make_fake_curl always
+PATH="$fakebin:$PATH" PYPI_VERIFY_ATTEMPTS=2 PYPI_VERIFY_BACKOFF=0 \
+  PYPI_VERIFY_DEADLINE=60 PYPI_VERIFY_REQUEST_TIMEOUT=7 bash "$LANE" \
+  verify-published --dist "$tmp/dist" --package fixture-pkg \
+  --version 1.2.3 >/dev/null 2>&1 || true
+argv="$(head -1 "$tmp/curl-argv")"
+grep -q -- "--max-time" <<<"$argv" \
+  || fail "curl must be given a per-request bound: $argv"
+grep -q -- "--connect-timeout" <<<"$argv" \
+  || fail "curl must be given a connect bound: $argv"
+bound="$(sed -n 's/.*--max-time \([0-9][0-9]*\).*/\1/p' <<<"$argv")"
+[[ -n "$bound" && "$bound" -gt 0 ]] \
+  || fail "the per-request bound must be a positive integer: $argv"
+[[ "$bound" -le 7 ]] \
+  || fail "the per-request bound must not exceed the configured cap: $bound > 7"
+ok "pypi passes curl a positive per-request bound within the cap"
+
+# curl treats --max-time 0 and --connect-timeout 0 as NO limit (measured), so
+# a zero override silently restores the indefinite hang and must refuse.
+make_fake_curl 0
+for knob in PYPI_VERIFY_DEADLINE PYPI_VERIFY_REQUEST_TIMEOUT PYPI_VERIFY_ATTEMPTS; do
+  for bad in 0 abc -1; do
+    out="$(PATH="$fakebin:$PATH" env "$knob=$bad" PYPI_VERIFY_BACKOFF=0 \
+      bash "$LANE" verify-published --dist "$tmp/dist" --package fixture-pkg \
+      --version 1.2.3 2>&1 || true)"
+    grep -q "^REFUSE:.*positive integer" <<<"$out" \
+      || fail "$knob=$bad must refuse as a non-positive bound: $out"
+  done
+done
+ok "pypi refuses zero and malformed deadline/request/attempt overrides"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"
