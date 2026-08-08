@@ -7737,7 +7737,13 @@ def run_plan(
             or _delivery_obligation(graph, node.component)
         )
         outstanding = None
-        if obligation and not result.delivery_proof:
+        # Presence, and validated HERE - the first effect boundary. Truthiness
+        # let a malformed {} count as absent, travel beside an OUTSTANDING debt,
+        # and surface only at final seal, after downstream nodes may already
+        # have published.
+        if obligation and result.delivery_proof is not None:
+            validate_delivery_proof(result.delivery_proof, obligation, node.component)
+        if obligation and result.delivery_proof is None:
             # Not a refusal: demanding restart evidence before the version
             # exists can only be satisfied by inventing it, which is how a gate
             # becomes a signature. The debt is recorded instead.
@@ -8022,7 +8028,7 @@ def resume_plan(
             # moved the refusal to seal time: the entry said neither evidence
             # nor debt, which is the one thing a delivery node may not say.
             delivery_outstanding=(
-                None if observed.delivery_proof
+                None if observed.delivery_proof is not None
                 else (
                     manifest_entry.get("delivery_obligation")
                     or _delivery_obligation(graph, node.component)
@@ -9336,6 +9342,24 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         except ReceiptError as exc:
             print(f"BLOCKED: {exc}")
             return 1
+        # Registry observers are recomposed from the FROZEN graph too. They were
+        # built earlier from the current checkout, so a receipt was verified
+        # against today's component definitions rather than the ones the release
+        # was frozen against.
+        frozen_refs = parse_stage_artifact_arguments(
+            getattr(args, "stage_artifact", [])
+        )
+        if frozen_refs:
+            try:
+                providers.lanes = compose_workflow_lanes(
+                    frozen.graph, frozen_refs,
+                    delivery_proofs=parse_delivery_proof_arguments(
+                        getattr(args, "delivery_proof", [])
+                    ),
+                )
+            except ReceiptError as exc:
+                print(f"BLOCKED: {exc}")
+                return 1
         if receipt_pointers:
             existing = dict(getattr(providers.lanes, "_lanes", {}) or {})
             providers.lanes = WorkflowLanes({**existing, **receipt_pointers})

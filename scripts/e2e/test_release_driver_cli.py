@@ -1431,6 +1431,44 @@ class DeliveryMomentTests(unittest.TestCase):
         )
         self.assertIn(("publish", "plugin"), lanes.calls)
 
+    def test_empty_proof_refuses_before_downstream_effects(self) -> None:
+        """Truthiness let a malformed {} count as absent: it travelled beside an
+        OUTSTANDING debt and surfaced only at final seal, after downstream nodes
+        may already have published. It must refuse at the first effect
+        boundary."""
+        graph = self.delivery_graph()
+        state = orchestration_state()
+        plan = rd.compute_plan(graph, state)
+
+        class EmptyProofLanes(FixtureLanes):
+            def publish(self, node, staged):
+                self.calls.append(("publish", node.component))
+                if node.component == "client":
+                    return rd.ReceiptEntry(
+                        version=staged.version, digest=staged.digest,
+                        phase=staged.phase, pointer_state=staged.pointer_state,
+                        delivery_proof={},
+                    )
+                return staged
+
+        lanes = EmptyProofLanes({n.component for n in plan.moving})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(rd.ReceiptError):
+                rd.run_plan(
+                    plan, graph, lanes, skew=FixtureSkew(),
+                    authority=rd.FileDigestAuthority(root),
+                    store=rd.FileArtifactStore(root),
+                    source_sha=SOURCE_SHA, approvals={}, state=state,
+                    providers=rd.Providers(
+                        store=rd.FileArtifactStore(root),
+                        authority=rd.FileDigestAuthority(root),
+                        measurement=AllRecordsResolve(),
+                    ),
+                )
+        self.assertNotIn(("publish", "pointer"), lanes.calls,
+                         "malformed evidence must stop before downstream effects")
+
     def test_publishing_without_delivery_records_the_debt(self) -> None:
         """Delivery is owed AFTER publication, not before it.
 
