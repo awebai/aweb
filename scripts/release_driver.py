@@ -4059,6 +4059,50 @@ class SubprocessLocalAdapter:
         return result.get("files")
 
 
+class FileObservationLane:
+    """An observer whose truth comes from a file, for driving a real process.
+
+    EXPLICIT TEST TRANSPORT, gated to local-development authority. It exists
+    because the receipt reader's composition and verdict can only be exercised
+    across a process boundary if some observer can be constructed there, and
+    registry/network observers cannot be. It is refused under any externally
+    trusted authority, so it can never stand in for registry truth in a real
+    release - the same shape as the pointer adapters' local remote override.
+    """
+
+    def __init__(self, observations: dict):
+        self._observations = observations
+
+    @classmethod
+    def from_file(cls, path: Path) -> "FileObservationLane":
+        document = json.loads(Path(path).read_text())
+        if document.get("schema") != "aweb.test-observation.v1":
+            raise ReceiptError(
+                "observation file is not an aweb.test-observation.v1 document"
+            )
+        return cls(document.get("entries") or {})
+
+    def has_lane(self, component: str) -> bool:
+        return component in self._observations
+
+    def observe(self, node, staged=None) -> "ReceiptEntry":
+        recorded = self._observations.get(node.component)
+        if recorded is None:
+            raise ReceiptError(
+                f"{node.component}: the observation file records nothing"
+            )
+        return ReceiptEntry(**_exact_entry_fields(node.component, recorded))
+
+    def stage(self, node):
+        raise ReceiptError("the observation lane never stages")
+
+    def publish(self, node, staged):
+        raise ReceiptError("the observation lane never publishes")
+
+    def verify(self, node, published):
+        return published
+
+
 class PointerLane:
     """Advertise published versions in another repository's pointer file.
 
@@ -8864,6 +8908,14 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         "--delivery-proof", action="append", default=[],
         help="component=<c>,obligation=<o>,evidence_id=<e>,digest=<sha256>",
     )
+    receipt_parser.add_argument(
+        "--observation-file",
+        help=(
+            "EXPLICIT TEST TRANSPORT: an aweb.test-observation.v1 document "
+            "standing in for registry observation. Refused under any externally "
+            "trusted authority."
+        ),
+    )
     args = parser.parse_args(argv)
 
     graph = Graph.load(Path(args.graph))
@@ -9368,6 +9420,20 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         except ReceiptError as exc:
             print(f"BLOCKED: {exc}")
             return 1
+        observation_file = getattr(args, "observation_file", None)
+        if observation_file:
+            if registration.trust_class != "local-development":
+                print(
+                    "BLOCKED: --observation-file is an explicit test transport "
+                    f"and is refused under {registration.trust_class!r} authority"
+                )
+                return 1
+            try:
+                providers.lanes = FileObservationLane.from_file(Path(observation_file))
+            except (ReceiptError, OSError, json.JSONDecodeError) as exc:
+                print(f"BLOCKED: {exc}")
+                return 1
+
         # Registry observers are recomposed from the FROZEN graph too. They were
         # built earlier from the current checkout, so a receipt was verified
         # against today's component definitions rather than the ones the release
