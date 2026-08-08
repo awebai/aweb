@@ -183,8 +183,11 @@ class OASPinnedCheckoutContractTests(unittest.TestCase):
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
 
     def test_ci_runs_the_canonical_ship_gate(self) -> None:
+        """What this file needs from ship is that CI runs the gate against full
+        history, so the OAS pin is exercised there. Which events trigger it is
+        pinned once, in test_ship_ci_contract.py; asserting it here too made one
+        trigger change fail in two places for one reason."""
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertRegex(workflow, r"(?m)^\s*pull_request:\s*$")
         self.assertRegex(workflow, r"(?m)^\s*push:\s*$")
         self.assertIn("make ship", workflow)
         self.assertIn("fetch-depth: 0", workflow)

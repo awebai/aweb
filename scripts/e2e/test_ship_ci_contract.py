@@ -12,6 +12,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ship.yml"
+TEST_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test.yml"
 CONTRIBUTING = REPO_ROOT / "docs" / "contributing.md"
 
 
@@ -29,12 +30,102 @@ class ShipCIContractTests(unittest.TestCase):
             "jobs.ship.name must preserve the required status context",
         )
 
-    def test_workflow_runs_the_canonical_ship_gate_on_every_change(self) -> None:
+    def ship_trigger_events(self, workflow: str) -> list:
+        """The events in ship.yml's `on:` block, in order.
+
+        Read structurally rather than by searching the whole file, so a trigger
+        named in a comment is not mistaken for one that fires - and so an added
+        trigger is visible as an extra element rather than hidden behind a
+        passing search for the ones that were expected.
+        """
+        body = workflow.split("\njobs:", 1)[0]
+        start = re.search(r"(?m)^on:\s*$", body)
+        self.assertIsNotNone(start, "ship.yml must declare an on: block")
+        events = []
+        for line in body[start.end() :].splitlines():
+            if line.strip().startswith("#") or not line.strip():
+                continue
+            if not line.startswith("  "):
+                break
+            if line.startswith("   "):
+                continue  # nested under an event, not an event itself
+            # Quoted keys are real keys to YAML: "pull_request": is a trigger.
+            # A bare-identifier regex silently ignored them, so the exact-set
+            # assertion could be bypassed by quoting. Anything at this
+            # indentation that is not a comment must be recognised or refused.
+            event = re.match(r'^  "?([A-Za-z_][A-Za-z_-]*)"?:', line)
+            if not event:
+                raise AssertionError(f"unparsed trigger line: {line!r}")
+            events.append(event.group(1))
+        return events
+
+    def ship_push_keys(self, workflow: str) -> list:
+        """The keys nested under `push:`, in order."""
+        body = workflow.split("\njobs:", 1)[0]
+        push = re.search(r"(?m)^  push:\s*$", body)
+        self.assertIsNotNone(push, "ship.yml must trigger on push")
+        keys = []
+        for line in body[push.end() :].splitlines():
+            if line.strip().startswith("#") or not line.strip():
+                continue
+            if not line.startswith("    "):
+                break
+            if line.startswith("     "):
+                continue  # nested under a push key, not a push key itself
+            key = re.match(r'^    "?([A-Za-z_][A-Za-z_-]*)"?:', line)
+            if not key:
+                raise AssertionError(f"unparsed push key line: {line!r}")
+            keys.append(key.group(1))
+        return keys
+
+    def assert_exact_ship_triggers(self, workflow: str) -> None:
+        # Exactly these events, and nothing else. Asserting only that push and
+        # workflow_dispatch are present would pass with pull_request added
+        # back, which is the regression this contract exists to prevent.
+        self.assertEqual(self.ship_trigger_events(workflow), ["push", "workflow_dispatch"])
+        # And exactly this INSIDE push. Checking only that `branches: [main]`
+        # appears somewhere left `tags:` free to be added beside it, which would
+        # run the whole gate on every release tag - the tag-triggered publishing
+        # this repository deliberately moved away from. No `paths:` either: a
+        # release proof that skipped itself for touching the wrong directory
+        # would prove nothing about the commit being released.
+        self.assertEqual(self.ship_push_keys(workflow), ["branches"])
+        self.assertRegex(workflow, r"(?m)^    branches: \[main\]\s*$")
+
+    def test_workflow_runs_the_canonical_ship_gate_on_main_and_on_demand(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertRegex(workflow, r"(?m)^  pull_request:\s*$")
-        self.assertRegex(workflow, r"(?m)^  push:\s*$")
-        self.assertNotRegex(workflow, r"(?m)^  pull_request:\n\s+paths:")
+        self.assert_exact_ship_triggers(workflow)
+        trigger_mutations = {
+            "pull_request re-added": workflow.replace(
+                "on:\n  push:", "on:\n  pull_request:\n  push:", 1
+            ),
+            "schedule added": workflow.replace(
+                "  workflow_dispatch:", "  workflow_dispatch:\n  schedule:", 1
+            ),
+            "dispatch removed": workflow.replace("\n  workflow_dispatch:", "", 1),
+            "tag filter added": workflow.replace(
+                "  push:\n    branches: [main]",
+                '  push:\n    branches: [main]\n    tags: ["*"]', 1
+            ),
+            "quoted pull_request added": workflow.replace(
+                "on:\n  push:", 'on:\n  "pull_request":\n  push:', 1
+            ),
+            "quoted tag filter added": workflow.replace(
+                "  push:\n    branches: [main]",
+                '  push:\n    branches: [main]\n    "tags": ["*"]', 1
+            ),
+            "path filter added": workflow.replace(
+                "  push:\n    branches: [main]",
+                "  push:\n    branches: [main]\n    paths: [\"server/**\"]", 1
+            ),
+        }
+        for name, mutation in trigger_mutations.items():
+            with self.subTest(mutation=name):
+                self.assertNotEqual(mutation, workflow, f"the {name} mutation changed nothing")
+                with self.assertRaises(AssertionError):
+                    self.assert_exact_ship_triggers(mutation)
+
         self.assertIn("run: make ship", workflow)
         self.assertNotIn("run: make release-all-check", workflow)
         self.assert_ship_job_context(workflow)
@@ -50,6 +141,25 @@ class ShipCIContractTests(unittest.TestCase):
             with self.subTest(mutation=mutation_name):
                 with self.assertRaises(AssertionError):
                     self.assert_ship_job_context(mutation)
+
+    def test_pull_requests_still_run_the_test_suite(self) -> None:
+        """Ship stopped running on pull requests, so something else has to run
+        `make test` there. Without this the trigger diet reads as a saving and
+        is a silent loss of every unit suite on every pull request."""
+        workflow = TEST_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertRegex(workflow, r"(?m)^  pull_request:\s*$")
+        self.assertNotRegex(workflow, r"(?m)^  pull_request:\n\s+paths:")
+        self.assertIn("run: make test", workflow)
+        # Cheapness is the point, so assert on what it runs rather than on what
+        # it says: the expensive suites are covered by ship and by the focused
+        # workflows, and adding one here would rebuild what they already run.
+        executable = "\n".join(
+            line for line in workflow.splitlines() if not line.lstrip().startswith("#")
+        )
+        for target in ("make ship", "test-e2e", "test-federation-e2e", "cli-e2e"):
+            with self.subTest(target=target):
+                self.assertNotIn(target, executable)
 
     def assert_release_all_checks_cli_vcs_stamps(self, makefile: str) -> None:
         target = self.require_match(
@@ -152,7 +262,12 @@ class ShipCIContractTests(unittest.TestCase):
     # expected set, that each name is a real target, and that the runner is what
     # consumes the list.
     EXPECTED_SHIP_SUITES = frozenset(
-        {"release-awid-check", "test-federation-e2e", "test-e2e", "cli-e2e"}
+        # test-channel-integration added deliberately: channel/package.json
+        # excludes test/integration.test.ts from `npm test`, so the one test
+        # driving Channel against a real aweb server ran nowhere. It was green
+        # by absence and failed the first time it was executed.
+        {"release-awid-check", "test-channel-integration",
+         "test-federation-e2e", "test-e2e", "cli-e2e"}
     )
 
     def require_match(self, pattern: str, text: str, message: str) -> re.Match[str]:
@@ -525,14 +640,18 @@ class ShipCIContractTests(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     self.assert_ship_runs_every_suite_independently(mutation)
 
-    def test_docs_state_that_hosted_success_must_be_required(self) -> None:
+    # Branch protection is not asserted here. aweb main is the shared sync
+    # branch and cannot be protected - the protection endpoint returns 404, as
+    # .github/workflows/library-ci.yml records against the same check name in
+    # awebai/library, where it IS enforced. Where protection is enforceable the
+    # GitHub API is the thing to query; prose cannot stand in for it, and
+    # pinning a policy this repository cannot have made writing the truth the
+    # failing action.
+    def test_docs_name_the_canonical_ship_gate(self) -> None:
         contributing = CONTRIBUTING.read_text(encoding="utf-8")
 
         self.assertIn("make ship", contributing)
         self.assertIn("Comprehensive ship gate", contributing)
-        self.assertIn("required status check", contributing)
-        self.assertIn("strict up-to-date", contributing)
-        self.assertIn("administrators", contributing)
 
 
 if __name__ == "__main__":

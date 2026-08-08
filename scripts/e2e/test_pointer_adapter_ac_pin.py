@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""The AC pin adapter, against a real git repository.
+
+Real clone, commit, push and read-back into a local bare remote - no network.
+The point being proved is that AC's source pins actually move, since AC picks
+up a published server or awid only when they do.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ADAPTER = REPO_ROOT / "scripts" / "pointer-adapter-ac-pin.py"
+
+OLD_SHA = "1111111111111111111111111111111111111111"
+NEW_SHA = "3f7a1c9e4b02d85617fa03cc9b1e4d7a5806e2f1"
+
+PIN_TOML = f'''[aweb]
+git_sha = "{OLD_SHA}"
+'''
+
+UV_LOCK = '''version = 1
+
+[[package]]
+name = "awid-service"
+version = "0.5.14"
+
+[[package]]
+name = "something-else"
+version = "1.0.0"
+'''
+
+
+def git(*args, cwd):
+    subprocess.run(["git", *args], cwd=str(cwd), check=True,
+                   capture_output=True, text=True)
+
+
+class AcPinAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.remote = root / "remote.git"
+        seed = root / "seed"
+        (seed / "backend").mkdir(parents=True)
+        (seed / "release-pin.toml").write_text(PIN_TOML)
+        (seed / "backend" / "uv.lock").write_text(UV_LOCK)
+        git("init", "-q", "-b", "main", cwd=seed)
+        git("-c", "user.email=t@t", "-c", "user.name=t", "add", ".", cwd=seed)
+        git("-c", "user.email=t@t", "-c", "user.name=t",
+            "commit", "-qm", "seed", cwd=seed)
+        git("init", "-q", "--bare", str(self.remote), cwd=root)
+        git("remote", "add", "origin", str(self.remote), cwd=seed)
+        git("push", "-q", "origin", "main", cwd=seed)
+        self.addCleanup(self.tmp.cleanup)
+
+    def run_adapter(self, operation, updates=None, expect_failure=False):
+        command = [sys.executable, str(ADAPTER), operation, "--component", "ac-pin",
+                   "--expect-repository", str(self.remote)]
+        if updates is not None:
+            command += ["--updates", json.dumps(updates)]
+        env = {**os.environ, "AC_REMOTE": str(self.remote)}
+        result = subprocess.run(command, capture_output=True, text=True, env=env)
+        if expect_failure:
+            self.assertNotEqual(result.returncode, 0)
+            return result.stderr
+        if result.returncode != 0:
+            raise AssertionError(f"{operation} failed: {result.stderr}")
+        return json.loads(result.stdout)
+
+    def test_read_reports_both_pins(self):
+        self.assertEqual(
+            self.run_adapter("read")["advertised"],
+            {"server": OLD_SHA, "awid-pypi": "0.5.14"},
+        )
+
+    def test_server_pin_update_refuses_until_it_honours_ac_contract(self):
+        """AC's release-pin.toml carries version and git_ref beside git_sha, and
+        AC's own release-model check requires them to agree. Moving git_sha
+        alone produces a pin AC refuses - a state worse than no update, because
+        it looks applied. See aweb-abbe.39."""
+        stderr = self.run_adapter("apply", {"server": NEW_SHA}, expect_failure=True)
+        self.assertIn("release-pin", stderr)
+        self.assertEqual(
+            self.run_adapter("read")["advertised"]["server"], OLD_SHA,
+            "a refusal must leave the pin untouched",
+        )
+
+    def test_awid_lock_update_refuses_until_it_honours_ac_contract(self):
+        """backend/uv.lock pins the version AND that version's sdist/wheel URLs
+        and hashes. Rewriting the version line alone yields a lock claiming
+        0.5.15 while holding 0.5.12 artifact hashes."""
+        stderr = self.run_adapter("apply", {"awid-pypi": "0.5.15"}, expect_failure=True)
+        self.assertIn("uv.lock", stderr)
+        self.assertEqual(
+            self.run_adapter("read")["advertised"]["awid-pypi"], "0.5.14",
+            "a refusal must leave the lock untouched",
+        )
+
+    def test_the_commit_pin_never_accepts_a_version(self):
+        """The aweb pin holds a commit; a version there is a value the field
+        cannot mean. Refused today by the AC-contract guard, and the shape check
+        behind it must survive that guard's removal - so this asserts a refusal,
+        not which refusal."""
+        stderr = self.run_adapter("apply", {"server": "1.26.36"}, expect_failure=True)
+        self.assertTrue(stderr.strip(), "a version for the commit pin must refuse")
+        self.assertEqual(
+            self.run_adapter("read")["advertised"]["server"], OLD_SHA,
+            "a refusal must leave the pin untouched",
+        )
+
+    def test_a_changed_origin_after_clone_is_caught(self):
+        """Through THIS adapter, not by importing the marketplace helper. The
+        repeated failure on this branch has been a control that exercises a
+        sibling instead of the thing it claims to cover."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("ac_adapter", ADAPTER)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        work = Path(self.tmp.name) / "checkout"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(work)], check=True)
+        other = Path(self.tmp.name) / "elsewhere.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True)
+        subprocess.run(["git", "remote", "set-url", "origin", str(other)],
+                       cwd=str(work), check=True)
+        with self.assertRaises(SystemExit) as caught:
+            mod.verify_origin(work, str(self.remote), "after cloning")
+        self.assertIn("origin is", str(caught.exception))
+
+    def test_a_substituted_remote_is_refused_through_the_executable(self):
+        """Driven through the real executable caller, not an in-process helper."""
+        other = Path(self.tmp.name) / "substituted.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True)
+        result = subprocess.run(
+            [sys.executable, str(ADAPTER), "read", "--component", "ac-pin",
+             "--expect-repository", "github.com/awebai/ac"],
+            capture_output=True, text=True,
+            env={**os.environ, "AC_REMOTE": str(other)},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to act on", result.stderr)
+
+    def test_the_adapter_is_executable(self):
+        """The driver execs this path. It writes aweb-cloud's production pins,
+        and its sibling adapter already shipped once as 100644, so a silent mode
+        regression here has to be caught by something."""
+        self.assertTrue(os.access(ADAPTER, os.X_OK), f"{ADAPTER} must be executable")
+
+    def test_an_unknown_component_is_refused(self):
+        stderr = self.run_adapter("apply", {"channel": "1.7.4"}, expect_failure=True)
+        self.assertIn("channel", stderr)
+
+if __name__ == "__main__":
+    unittest.main()

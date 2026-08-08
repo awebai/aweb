@@ -186,10 +186,20 @@ pinned commit, while later runs reuse and reset the repository-owned cache.
 release proof. It includes the release and AWID packaging checks, the
 cross-server federation journey, the OSS user journey and its mutation guard,
 and the real-binary profile/team/Library journey. The `Comprehensive ship gate`
-workflow runs that exact target for every pull request and every push to `main`.
-The release plan reports whether it is green at the exact source SHA as useful
-information; runner outages or a red signal do not mechanically prevent a
-human-authorized release.
+workflow runs that exact target for every push to `main`, and on demand through
+`workflow_dispatch` — which is how you produce its evidence at the exact source
+SHA a release is cut from. The release plan reports whether it is green at that
+SHA as useful information; runner outages or a red signal do not mechanically
+prevent a human-authorized release.
+
+Pull requests run `make test` through the `Test suite` workflow rather than the
+whole gate. Ship is a ~120-minute job that was cancelled on roughly half its
+runs, and its expensive half duplicates `cli-e2e`, `federation-e2e` and
+`library-ci`, each of which already runs its own Docker journey on pull
+requests. What ship uniquely contributed there was `make test`, so that is what
+runs. Before you push a release tag, run the full `make ship` — locally or by
+dispatching the workflow — because `make test` is a strict subset and will not
+catch packaging failures or e2e regressions.
 
 Those suites run independently of each other. `make` stops a recipe at the first
 failing line, so while they were recipe lines a failure in one silently removed the

@@ -85,6 +85,10 @@ class Component:
     lane: dict | None = None  # delivery lane for non-registry nodes (sites)
     verify: dict | None = None
     delivery_restart: dict | None = None
+    # Canonical identity of the repository a pointer node mutates. Frozen graph
+    # truth, not an error-message label: it is what the adapter is told to
+    # expect and what it compares its remote against.
+    repository: str | None = None
 
 
 @dataclass(frozen=True)
@@ -198,6 +202,7 @@ class Graph:
                 lane=spec.get("lane"),
                 verify=spec.get("verify"),
                 delivery_restart=spec.get("delivery_restart"),
+            repository=spec.get("repository"),
             )
 
         def known(name: str, context: str) -> str:
@@ -447,6 +452,70 @@ def compute_plan(graph: Graph, state) -> Plan:
     return Plan(moving=moving, runtime_contract_edges=contracts)
 
 
+def observed_delivery_baseline(state, component) -> str | None:
+    """One fail-closed read for every delivery-baseline lookup.
+
+    Absent provider, absent capability, absent result and a raised lookup all
+    mean the same thing - it could not be decided - and all record None. Callers
+    that read the provider directly turned a raising observer into an exception
+    escaping out of freeze_plan, so no frozen truth and no disclosure were
+    produced at all.
+    """
+    if state is None or not hasattr(state, "delivery_baseline"):
+        return None
+    try:
+        return state.delivery_baseline(component)
+    except Exception:
+        return None
+
+
+def scope_plan(plan: Plan, graph: Graph, only) -> Plan:
+    """Narrow a plan to the named components and the effects they force.
+
+    Everything with unreleased changes moves by default, which is truthful and
+    unusable: shipping one npm fix also shipped the server, AWID, the CLI and
+    the skills package, needing seven version bumps and a frozen main. A
+    process that can only release everything at once releases nothing.
+
+    Forced pointers come along and cannot be dropped - they are what makes a
+    publication reach users. Publication order among the survivors is
+    preserved. Components left behind simply keep their unreleased changes for
+    a later release, which is what would have happened anyway had they not
+    shared a repository.
+    """
+    named = list(dict.fromkeys(only or ()))
+    if not named:
+        return plan
+    moving = {node.component for node in plan.moving}
+    unknown = [name for name in named if name not in graph.components]
+    if unknown:
+        raise ReceiptError(f"--only names unknown components: {sorted(unknown)}")
+    idle = [name for name in named if name not in moving]
+    if idle:
+        raise ReceiptError(
+            f"--only names components with nothing to release: {sorted(idle)}; "
+            "releasing nothing must not look like releasing something"
+        )
+
+    keep = set(named)
+    frontier = list(named)
+    while frontier:
+        nxt = []
+        for source in frontier:
+            for target in graph.pointer_targets.get(source, ()):  # forced
+                if target in moving and target not in keep:
+                    keep.add(target)
+                    nxt.append(target)
+        frontier = nxt
+    return Plan(
+        moving=[n for n in plan.moving if n.component in keep],
+        runtime_contract_edges=[
+            edge for edge in plan.runtime_contract_edges
+            if edge.a in keep or edge.b in keep
+        ],
+    )
+
+
 def check_declared_inputs(
     graph: Graph, plan: Plan, state, adopted: set | None = None
 ) -> list[str]:
@@ -546,11 +615,15 @@ def check_declared_inputs(
 
 
 
-    for component in graph.components.values():
+    # Scoped to the moving set. A delivery node nobody is releasing must not
+    # block someone else's release: sites declares a lane and no baseline_ref,
+    # so asking this of every component made every plan of every component
+    # unsatisfiable. Releasing such a node still refuses - absence of a
+    # baseline is never movement.
+    for node in plan.moving:
+        component = graph.components[node.component]
         if component.lane is not None and component.source_paths:
-            baseline = None
-            if hasattr(state, "delivery_baseline"):
-                baseline = state.delivery_baseline(component)
+            baseline = observed_delivery_baseline(state, component)
             if baseline is None:
                 problems.append(
                     f"{component.name}: delivered baseline is unobservable; a "
@@ -558,14 +631,73 @@ def check_declared_inputs(
                     "movement is never fabricated from its absence"
                 )
 
-    for edge in plan.runtime_contract_edges:
-        if edge.declared_incomplete:
-            problems.append(
-                f"runtime-contract {edge.a}<->{edge.b}: support is "
-                "declared-incomplete (no fleet measurement or approved "
-                "deprecation); execution is blocked until aweb-abbe.7 measures"
-            )
+    # An incomplete runtime edge is deliberately NOT a declared-input problem.
+    # A plan is the diagnostic that tells an operator which measurement is
+    # owed, so it has to be freezable while the answer is still "unmeasured".
+    # Execution is where support must be measured or its absence explicitly
+    # accepted - see require_runtime_support.
     return problems
+
+
+def require_runtime_support(
+    plan: Plan,
+    *,
+    defer_g5: bool,
+    authorization,
+    source_sha: str | None = None,
+    frozen_plan_id: str | None = None,
+) -> None:
+    """Measured support, or a human who accepted its absence, before publishing.
+
+    Deferral never declares support: the edge stays declared-incomplete in the
+    frozen plan and the receipt records who accepted the risk. A bare flag is
+    not an authorization - without a record naming someone there is nothing to
+    hold, so an unrecorded deferral is refused rather than honored.
+
+    The record is bound to this source, this frozen plan and exactly the edges
+    being deferred, so it cannot be reused for another release or stretched
+    over an edge nobody read. Every mismatch refuses before any effect.
+    """
+    incomplete = [e for e in plan.runtime_contract_edges if e.declared_incomplete]
+    if not incomplete:
+        return
+    touched = frozenset(edge_identity(e) for e in incomplete)
+    named = ", ".join(sorted(touched))
+    if not defer_g5:
+        raise BlockedByDeclaredInputs(
+            f"runtime-contract {named}: support is declared-incomplete (no "
+            "fleet measurement or approved deprecation). Measure it, or accept "
+            "the risk explicitly with DEFER_G5=1 and a G5 authorization record"
+        )
+    if not isinstance(authorization, G5Authorization):
+        raise ReceiptError(
+            f"deferring runtime support for {named} requires an explicit G5 "
+            "authorization recording who accepted the risk and when. DEFER_G5 "
+            "alone records nothing, and a risk record that accepted something "
+            "else - a runner outage - is not acceptance of an unmeasured "
+            "runtime contract"
+        )
+    if source_sha is not None and authorization.source_sha != source_sha:
+        raise ReceiptError(
+            "G5 authorization is bound to source "
+            f"{authorization.source_sha} and this release is {source_sha}"
+        )
+    if frozen_plan_id is not None and authorization.frozen_plan_id != frozen_plan_id:
+        raise ReceiptError(
+            "G5 authorization is bound to frozen plan "
+            f"{authorization.frozen_plan_id} and this release is {frozen_plan_id}"
+        )
+    if authorization.edges != touched:
+        missing = sorted(touched - authorization.edges)
+        extra = sorted(authorization.edges - touched)
+        detail = []
+        if missing:
+            detail.append("does not cover " + ", ".join(missing))
+        if extra:
+            detail.append("names unrelated " + ", ".join(extra))
+        raise ReceiptError(
+            "G5 authorization " + "; ".join(detail) + f" (this release defers {named})"
+        )
 
 
 def plan_digest(plan: Plan, graph: Graph) -> str:
@@ -591,9 +723,13 @@ def _resolved_snapshot(plan: Plan, graph: Graph, state) -> dict:
     registry versions and digest sets, pin values and checkout identities,
     delivery baselines. Secrets are never included - pins and baselines are
     public metadata, credential contents never flow through state."""
+    # Delivery observability is recorded even with no state provider at all.
+    # Returning {} here reported "nothing undecidable" for a graph whose lane
+    # components had never been looked at - the false all-clear this record
+    # exists to prevent.
     if state is None:
-        return {}
-    snapshot: dict = {"components": {}, "pins": {}, "baselines": {}, "tags": {}}
+        return {"delivery": _delivery_observability(graph, None)}
+    snapshot: dict = {"components": {}, "pins": {}, "baselines": {}, "tags": {}, "delivery": {}}
     if hasattr(state, "remote_tag_shas"):
         tags = state.remote_tag_shas()
         for node in plan.moving:
@@ -624,9 +760,58 @@ def _resolved_snapshot(plan: Plan, graph: Graph, state) -> dict:
                 record["declared_repository"] = pin.get("repository")
             record["pin_repository"] = pin.get("pin_repository")
             snapshot["pins"][key] = record
-        if component.lane is not None and hasattr(state, "delivery_baseline"):
-            snapshot["baselines"][node.component] = state.delivery_baseline(component)
+        if component.lane is not None:
+            snapshot["baselines"][node.component] = observed_delivery_baseline(
+                state, component
+            )
+
+    # Delivery observability for EVERY lane component, not only the moving
+    # ones. An undecidable delivery node is by definition absent from
+    # plan.moving, so recording it per moving node left frozen bytes identical
+    # whether the node was observable or not - and a disclosure that does not
+    # change the sealed artifact is decoration, not something a later reader
+    # can verify against. None means "could not be decided at freeze time".
+    snapshot["delivery"] = _delivery_observability(graph, state)
     return snapshot
+
+
+def _delivery_observability(graph: Graph, state) -> dict:
+    """Every lane component, always, whether or not it could be decided.
+
+    A provider that cannot answer is not evidence that there is nothing to
+    answer, so an absent capability, an absent result and a raised lookup all
+    record None - explicitly unobservable - rather than omitting the component.
+    Omission and "observed fine" were previously indistinguishable in the
+    frozen artifact, and the disclosure derived from it reported neither.
+    """
+    observability: dict = {}
+    for name, component in sorted(graph.components.items()):
+        # Keyed on HAVING a lane, not on how movement is detected. Filtering on
+        # source_paths dropped every source-less lane component - which is
+        # exactly what the forced pointer nodes are - so the artifact stayed
+        # silent about the nodes most likely to be undecidable.
+        if component.lane is None:
+            continue
+        observability[name] = observed_delivery_baseline(state, component)
+    return observability
+
+
+def delivery_disclosures(resolved: dict) -> list[str]:
+    """Delivery nodes the frozen plan could not decide, read from frozen truth.
+
+    Derived from the sealed snapshot rather than recomputed against live state,
+    so what an operator reads is what the artifact records. A second computation
+    could disagree with the thing it claims to describe.
+    """
+    disclosures = []
+    for name, baseline in sorted((resolved or {}).get("delivery", {}).items()):
+        if baseline is None:
+            disclosures.append(
+                f"{name}: delivered baseline is unobservable; this plan cannot "
+                "tell you whether it is current, and movement is never "
+                "fabricated from its absence"
+            )
+    return disclosures
 
 
 def freeze_plan(
@@ -806,17 +991,105 @@ class Approval:
     g5_deferred: bool = False
 
 
-def runnerless_risk_approval(value: str | None, *, defer_g5: bool) -> Approval:
-    """One explicit human record selects local authority and any G5 deferral."""
+@dataclass(frozen=True)
+class G5Authorization:
+    """A human accepting unmeasured runtime support, for one exact release.
+
+    Bound to the source, the frozen plan and the exact set of incomplete edges
+    being deferred, so the record cannot be carried to a different release or
+    stretched to cover an edge nobody read. Deliberately not an Approval: a
+    record that accepted a runner outage is not G5 acceptance, and the type
+    keeps the two from being substituted for one another by accident.
+    """
+
+    who: str
+    when: str
+    source_sha: str
+    frozen_plan_id: str
+    edges: frozenset
+    risk: str
+
+    def as_record(self) -> dict:
+        return {
+            "who": self.who,
+            "when": self.when,
+            "source_sha": self.source_sha,
+            "frozen_plan_id": self.frozen_plan_id,
+            "edges": sorted(self.edges),
+            "risk": self.risk,
+        }
+
+
+def parse_g5_authorization(value: str | None) -> G5Authorization | None:
+    """--g5-authorization who=<w>,when=<t>,source=<40hex>,plan=<64hex>,
+    edges=<64hex>[+<64hex>],risk=<text>
+
+    Edges are canonical edge identities - the sha256 of an edge's structured
+    preimage, as `release-plan` prints under deferrable_runtime_contracts. A
+    display string like a<->b would alias the two server<->server edges, which
+    is exactly the confusion an authorization must not permit.
+
+    Authority-independent: hosted, local-development and local-runnerless all
+    accept the same record, because who may defer runtime support is a question
+    about the human, not about which runner built the artifact.
+    """
+    if not value:
+        return None
+    fields: dict[str, str] = {}
+    for part in value.split(","):
+        key, _, item = part.partition("=")
+        key = key.strip()
+        if key in fields:
+            raise ReceiptError(f"--g5-authorization repeats field {key!r}")
+        fields[key] = item.strip()
+    required = {"who", "when", "source", "plan", "edges", "risk"}
+    if set(fields) != required or not all(fields.values()):
+        raise ReceiptError(
+            "--g5-authorization must be who=<w>,when=<t>,source=<40hex>,"
+            f"plan=<64hex>,edges=<64hex>[+<64hex>],risk=<text>, got {value!r}"
+        )
+    if not re.fullmatch(r"[0-9a-f]{40}", fields["source"]):
+        raise ReceiptError(
+            f"--g5-authorization source must be a 40-hex SHA, got {fields['source']!r}"
+        )
+    if not re.fullmatch(r"[0-9a-f]{64}", fields["plan"]):
+        raise ReceiptError(
+            "--g5-authorization plan must be a 64-hex frozen plan id, got "
+            f"{fields['plan']!r}"
+        )
+    edges = frozenset(e for e in fields["edges"].split("+") if e)
+    if not edges:
+        raise ReceiptError("--g5-authorization must name the deferred edges")
+    malformed = sorted(e for e in edges if not re.fullmatch(r"[0-9a-f]{64}", e))
+    if malformed:
+        raise ReceiptError(
+            "--g5-authorization edges must be canonical 64-hex edge identities "
+            f"as printed by release-plan, got {malformed}"
+        )
+    return G5Authorization(
+        who=fields["who"],
+        when=fields["when"],
+        source_sha=fields["source"],
+        frozen_plan_id=fields["plan"],
+        edges=edges,
+        risk=fields["risk"],
+    )
+
+
+def runnerless_risk_approval(value: str | None) -> Approval:
+    """One explicit human record selecting local authority.
+
+    It does NOT carry G5 acceptance. Accepting a runner outage and accepting an
+    unmeasured runtime contract are different judgments that happen to arrive in
+    the same troubled release; G5Authorization is the record for the second.
+    """
     parts = value.split(",", 2) if value else []
     if len(parts) != 3 or not all(parts):
         raise ReceiptError(
             "runnerless local authority requires one explicit risk authorization "
             "as who,when,risk"
         )
-    return Approval(
-        who=parts[0], when=parts[1], risk=parts[2], g5_deferred=defer_g5
-    )
+    return Approval(who=parts[0], when=parts[1], risk=parts[2])
 
 
 def require_approval(node: PlanNode, *, approval) -> None:
@@ -833,6 +1106,11 @@ class ReceiptEntry:
     digest: str
     phase: str = "staged"  # staged | published | verified
     pointer_state: str | None = None
+    # What this publication still owes. Delivery happens after publication -
+    # a restart proof cannot exist until the version is published and hosts
+    # restart onto it - so an unsatisfied obligation is recorded, not demanded
+    # up front. A receipt carrying this has published and NOT delivered.
+    delivery_outstanding: str | None = None
     # The structured delivery proof validate_delivery_proof enforces:
     # {"obligation": str, "evidence_id": str, "digest": str, ...extensions}.
     delivery_proof: dict | None = None
@@ -852,6 +1130,166 @@ class Receipt:
     frozen_plan_id: str = ""
     staged_manifest_id: str = ""
     partial: bool = False
+    # Typed, so the sealed acceptance can be checked rather than merely
+    # carried. Written into the body but dropped on load, it was bytes nobody
+    # read - and validation that never asks for it is not validation.
+    g5_authorization: G5Authorization | None = None
+
+
+_RECEIPT_REQUIRED_FIELDS = {"plan_digest", "source_sha", "entries"}
+
+_RECEIPT_BODY_FIELDS = {
+    "plan_digest", "source_sha", "frozen_plan_id", "staged_manifest_id",
+    "partial", "entries", "approvals", "g5_authorization",
+}
+
+_ENTRY_FIELDS = {
+    "version", "digest", "phase", "pointer_state", "delivery_proof",
+    "delivery_outstanding", "digest_set", "lane_ref",
+}
+
+
+def _exact_entry_fields(name: str, entry) -> dict:
+    """Exact schema on the way back in.
+
+    The loader projected the fields it knew and silently dropped the rest, so
+    bytes carrying an unknown field round-tripped as though they did not carry
+    it. A receipt is archive-bound evidence: what the bytes say and what a
+    reader sees have to be the same thing.
+    """
+    if not isinstance(entry, dict):
+        raise ReceiptError(f"receipt entry {name} is not an object")
+    unknown = sorted(set(entry) - _ENTRY_FIELDS)
+    if unknown:
+        raise ReceiptError(
+            f"receipt entry {name} carries unknown fields {unknown}; a sealed "
+            "entry is exactly its declared schema"
+        )
+    for required in ("version", "digest"):
+        if not isinstance(entry.get(required), str) or not entry[required]:
+            raise ReceiptError(
+                f"receipt entry {name} field {required} must be a nonempty string"
+            )
+    for optional in ("phase", "pointer_state", "delivery_outstanding"):
+        value = entry.get(optional)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise ReceiptError(
+                f"receipt entry {name} field {optional} must be a nonempty "
+                f"string when present, got {value!r}"
+            )
+    for mapping in ("delivery_proof", "digest_set", "lane_ref"):
+        value = entry.get(mapping)
+        if value is None:
+            continue
+        if not isinstance(value, dict):
+            raise ReceiptError(
+                f"receipt entry {name} field {mapping} must be an object when "
+                f"present, got {type(value).__name__}"
+            )
+        # An empty object is malformed evidence, not absent evidence. Letting
+        # {} load kept the same ambiguity the presence checks exist to remove.
+        if not value:
+            raise ReceiptError(
+                f"receipt entry {name} field {mapping} is an empty object; "
+                "absent is None, present is populated"
+            )
+    return {
+        "version": entry["version"],
+        "digest": entry["digest"],
+        "phase": entry.get("phase", "staged"),
+        "pointer_state": entry.get("pointer_state"),
+        "delivery_proof": entry.get("delivery_proof"),
+        "delivery_outstanding": entry.get("delivery_outstanding"),
+        "digest_set": entry.get("digest_set"),
+        "lane_ref": entry.get("lane_ref"),
+    }
+
+
+def _g5_from_record(record) -> "G5Authorization | None":
+    """Exact schema on the way back in: a malformed or partial record is a
+    refusal, never a silently weaker acceptance."""
+    if record is None:
+        return None
+    if not isinstance(record, dict):
+        raise ReceiptError("sealed g5_authorization must be an object")
+    required = {"who", "when", "source_sha", "frozen_plan_id", "edges", "risk"}
+    if set(record) != required:
+        raise ReceiptError(
+            "sealed g5_authorization fields must be exactly "
+            f"{sorted(required)}, got {sorted(record)}"
+        )
+    for field in ("who", "when", "source_sha", "risk"):
+        value = record[field]
+        if not isinstance(value, str) or not value.strip():
+            raise ReceiptError(
+                f"sealed g5_authorization {field} must be a nonempty string, "
+                f"got {value!r}"
+            )
+    if not re.fullmatch(r"[0-9a-f]{40}", record["source_sha"]):
+        raise ReceiptError("sealed g5_authorization source_sha must be 40-hex")
+    if not isinstance(record["frozen_plan_id"], str) or not re.fullmatch(
+        r"[0-9a-f]{64}", record["frozen_plan_id"]
+    ):
+        raise ReceiptError("sealed g5_authorization frozen_plan_id must be 64-hex")
+    edges = record["edges"]
+    if not isinstance(edges, list) or not edges or not all(
+        isinstance(e, str) and re.fullmatch(r"[0-9a-f]{64}", e) for e in edges
+    ):
+        raise ReceiptError(
+            "sealed g5_authorization edges must be canonical 64-hex identities"
+        )
+    if len(set(edges)) != len(edges):
+        raise ReceiptError("sealed g5_authorization repeats an edge identity")
+    return G5Authorization(
+        who=record["who"], when=record["when"],
+        source_sha=record["source_sha"],
+        frozen_plan_id=record["frozen_plan_id"],
+        edges=frozenset(edges), risk=record["risk"],
+    )
+
+
+def require_sealed_g5_authorization(
+    plan: Plan, receipt: "Receipt", *, source_sha: str, frozen_plan_id: str
+) -> None:
+    """A receipt for a plan with incomplete edges must carry the acceptance.
+
+    Checked wherever a receipt is trusted - final validation, release-receipt,
+    resume and archive restore - because a receipt that records a release of
+    unmeasured support without naming who accepted it is exactly the artifact
+    an audit needs and would not find.
+    """
+    incomplete = frozenset(
+        edge_identity(e) for e in plan.runtime_contract_edges if e.declared_incomplete
+    )
+    record = receipt.g5_authorization
+    if not incomplete:
+        # An acceptance for a deferral that did not happen is a claim about the
+        # release that is not true of it.
+        if record is not None:
+            raise ReceiptError(
+                "receipt carries a G5 authorization but the plan defers no "
+                "runtime contract"
+            )
+        return
+    if record is None:
+        raise ReceiptError(
+            "receipt covers a plan with declared-incomplete runtime contracts "
+            f"({len(incomplete)}) but carries no G5 authorization"
+        )
+    if source_sha and record.source_sha != source_sha:
+        raise ReceiptError(
+            f"sealed G5 authorization names source {record.source_sha}, "
+            f"receipt is for {source_sha}"
+        )
+    if frozen_plan_id and record.frozen_plan_id != frozen_plan_id:
+        raise ReceiptError(
+            f"sealed G5 authorization names frozen plan {record.frozen_plan_id}, "
+            f"receipt is for {frozen_plan_id}"
+        )
+    if record.edges != incomplete:
+        raise ReceiptError(
+            "sealed G5 authorization does not name exactly the deferred edges"
+        )
 
 
 def seal_receipt(
@@ -864,6 +1302,7 @@ def seal_receipt(
     frozen_plan_id: str = "",
     staged_manifest_id: str = "",
     partial: bool = False,
+    g5_authorization=None,
 ) -> tuple[bytes, str]:
     """Returns (sealed bytes, digest). The digest MUST be recorded with an
     external authority; beside the receipt it is only a checksum. Entries
@@ -882,6 +1321,43 @@ def seal_receipt(
         )
     if partial and not entries:
         raise ReceiptError("a partial receipt with no entries records nothing")
+    if not partial:
+        incomplete = frozenset(
+            edge_identity(e)
+            for e in plan.runtime_contract_edges if e.declared_incomplete
+        )
+        if incomplete and g5_authorization is None:
+            raise ReceiptError(
+                "a final receipt for a plan with declared-incomplete runtime "
+                "contracts must seal the G5 authorization that accepted them"
+            )
+        if incomplete and g5_authorization is not None:
+            # Bound at seal, not only when someone later reads it back. Sealing
+            # any object exposing as_record() let a record for a different
+            # source, plan or edge set be written into the receipt it does not
+            # describe.
+            if not isinstance(g5_authorization, G5Authorization):
+                raise ReceiptError("g5_authorization must be a G5Authorization")
+            if g5_authorization.source_sha != source_sha:
+                raise ReceiptError(
+                    "G5 authorization names source "
+                    f"{g5_authorization.source_sha}, receipt seals {source_sha}"
+                )
+            if frozen_plan_id and g5_authorization.frozen_plan_id != frozen_plan_id:
+                raise ReceiptError(
+                    "G5 authorization names frozen plan "
+                    f"{g5_authorization.frozen_plan_id}, receipt seals "
+                    f"{frozen_plan_id}"
+                )
+            if g5_authorization.edges != incomplete:
+                raise ReceiptError(
+                    "G5 authorization does not name exactly the deferred edges"
+                )
+        if not incomplete and g5_authorization is not None:
+            raise ReceiptError(
+                "a G5 authorization was supplied but the plan defers no "
+                "runtime contract"
+            )
     if not partial:
         unverified = [n for n, e in entries.items() if e.phase != "verified"]
         if unverified:
@@ -902,15 +1378,29 @@ def seal_receipt(
             component.delivery_restart is not None or component.lane is not None
         )
         if needs_delivery:
-            if not entry.delivery_proof:
+            obligation = _delivery_obligation(graph, node.component)
+            # A delivery node says one of two things and never neither: here is
+            # the evidence, or delivery is still owed. Silence would let a
+            # published-not-delivered release read as complete.
+            # Presence, not truthiness: delivery_proof={} is malformed
+            # evidence, not absent evidence, and must refuse rather than pass
+            # as an honest debt.
+            if entry.delivery_proof is not None and entry.delivery_outstanding is not None:
                 raise ReceiptError(
-                    f"{node.component}: delivery node sealed without delivery_proof"
+                    f"{node.component}: delivery is DELIVERED or OUTSTANDING, "
+                    "never both; a receipt claiming evidence and a debt for the "
+                    "same obligation states two contradictory things"
                 )
-            validate_delivery_proof(
-                entry.delivery_proof,
-                _delivery_obligation(graph, node.component),
-                node.component,
-            )
+            if entry.delivery_proof is not None:
+                validate_delivery_proof(
+                    entry.delivery_proof, obligation, node.component
+                )
+            elif entry.delivery_outstanding != obligation:
+                raise ReceiptError(
+                    f"{node.component}: delivery node sealed with neither "
+                    f"delivery_proof nor an outstanding {obligation}; a "
+                    "publication that has not been delivered must say so"
+                )
         if component is not None and component.approval_required:
             approval = approvals.get(node.component)
             if (
@@ -936,6 +1426,8 @@ def seal_receipt(
                     "digest_set": e.digest_set,
                     "phase": e.phase,
                     "pointer_state": e.pointer_state,
+                    **({"delivery_outstanding": e.delivery_outstanding}
+                       if e.delivery_outstanding else {}),
                     "delivery_proof": e.delivery_proof,
                     "lane_ref": e.lane_ref,
                 }
@@ -950,6 +1442,14 @@ def seal_receipt(
                 }
                 for component, a in sorted(approvals.items())
             },
+            # Who accepted unmeasured runtime support for this exact release.
+            # Sealed, so the acceptance is auditable afterwards rather than
+            # living only in the shell history of whoever ran the release.
+            **(
+                {"g5_authorization": g5_authorization.as_record()}
+                if g5_authorization is not None
+                else {}
+            ),
         },
         sort_keys=True,
     )
@@ -968,23 +1468,53 @@ def load_sealed_receipt(data: bytes, *, expected_digest: str) -> Receipt:
         raise ReceiptError(f"unreadable receipt: {exc}") from exc
     if hashlib.sha256(body.encode()).hexdigest() != seal:
         raise ReceiptError("receipt seal does not match its body")
+    # Exact outer and body key sets, not only entry keys. Accepting unknown keys
+    # anywhere meant bytes could carry something a reader never saw - the same
+    # defect the entry-level check exists to close, one level up.
+    if set(outer) != {"body", "seal"}:
+        raise ReceiptError(
+            f"receipt envelope carries unknown keys {sorted(set(outer) - {'body', 'seal'})}"
+        )
     parsed = json.loads(body)
+    if not isinstance(parsed, dict):
+        raise ReceiptError("receipt body is not an object")
+    unknown_body = sorted(set(parsed) - _RECEIPT_BODY_FIELDS)
+    if unknown_body:
+        raise ReceiptError(
+            f"receipt body carries unknown keys {unknown_body}; a sealed "
+            "receipt is exactly its declared schema"
+        )
+    # Exact schema is required keys AND types, not merely the absence of
+    # extras. Missing keys previously raised a raw KeyError from direct
+    # indexing, and a malformed `partial` or `approvals` loaded and failed
+    # somewhere later by accident.
+    missing_body = sorted(_RECEIPT_REQUIRED_FIELDS - set(parsed))
+    if missing_body:
+        raise ReceiptError(f"receipt body is missing required keys {missing_body}")
+    for field in ("plan_digest", "source_sha"):
+        if not isinstance(parsed[field], str) or not parsed[field]:
+            raise ReceiptError(
+                f"receipt body field {field} must be a nonempty string"
+            )
+    for field in ("frozen_plan_id", "staged_manifest_id"):
+        value = parsed.get(field, "")
+        if not isinstance(value, str):
+            raise ReceiptError(f"receipt body field {field} must be a string")
+    if not isinstance(parsed.get("partial", False), bool):
+        raise ReceiptError("receipt body field partial must be a boolean")
+    if not isinstance(parsed["entries"], dict):
+        raise ReceiptError("receipt body field entries must be an object")
+    if not isinstance(parsed.get("approvals", {}), dict):
+        raise ReceiptError("receipt body field approvals must be an object")
     return Receipt(
         plan_digest=parsed["plan_digest"],
         source_sha=parsed["source_sha"],
         frozen_plan_id=parsed.get("frozen_plan_id", ""),
         staged_manifest_id=parsed.get("staged_manifest_id", ""),
         partial=parsed.get("partial", False),
+        g5_authorization=_g5_from_record(parsed.get("g5_authorization")),
         entries={
-            name: ReceiptEntry(
-                version=e["version"],
-                digest=e["digest"],
-                phase=e.get("phase", "staged"),
-                pointer_state=e.get("pointer_state"),
-                delivery_proof=e.get("delivery_proof"),
-                digest_set=e.get("digest_set"),
-                lane_ref=e.get("lane_ref"),
-            )
+            name: ReceiptEntry(**_exact_entry_fields(name, e))
             for name, e in parsed["entries"].items()
         },
         approvals=tuple(sorted(parsed.get("approvals", {}).items())),
@@ -1026,6 +1556,9 @@ def validate_final_receipt(
         raise ReceiptError("a partial receipt cannot authorize a final release set")
     if receipt.frozen_plan_id != frozen_plan_id:
         raise ReceiptError("final receipt does not bind this frozen plan")
+    require_sealed_g5_authorization(
+        plan, receipt, source_sha=source_sha, frozen_plan_id=frozen_plan_id
+    )
     if receipt.staged_manifest_id != staged_manifest_id:
         raise ReceiptError("final receipt does not bind this staged manifest")
     matches, reason = receipt_matches_run(
@@ -1047,14 +1580,24 @@ def validate_final_receipt(
             component.delivery_restart is not None or component.lane is not None
         )
         if needs_delivery:
-            if not entry.delivery_proof:
+            obligation = _delivery_obligation(graph, node.component)
+            # Same two honest states the seal accepts: evidence, or a recorded
+            # debt. Demanding evidence here made a correctly sealed
+            # published-not-yet-delivered receipt unverifiable, unresumable and
+            # unrestorable - the receipt was right and every later reader
+            # refused it.
+            if entry.delivery_proof is not None and entry.delivery_outstanding is not None:
                 raise ReceiptError(
-                    f"{node.component}: final receipt delivery proof is absent")
-            validate_delivery_proof(
-                entry.delivery_proof,
-                _delivery_obligation(graph, node.component),
-                node.component,
-            )
+                    f"{node.component}: final receipt claims both delivery "
+                    "evidence and an outstanding debt for the same obligation"
+                )
+            if entry.delivery_proof is not None:
+                validate_delivery_proof(entry.delivery_proof, obligation, node.component)
+            elif entry.delivery_outstanding != obligation:
+                raise ReceiptError(
+                    f"{node.component}: final receipt has neither delivery "
+                    f"evidence nor an outstanding {obligation}"
+                )
         if component.approval_required:
             approval = approvals.get(node.component)
             if not isinstance(approval, dict) or not approval.get(
@@ -3315,11 +3858,13 @@ class NpmWorkflowLane(_WorkflowLaneBase):
                 )
             return None
         if proof is None:
-            raise ReceiptError(
-                f"{component}: its declared {self._expected_obligation} "
-                "requires separately supplied delivery evidence BEFORE any "
-                "outward call; none was supplied"
-            )
+            # No proof is the HONEST state before adoption: restart evidence
+            # cannot exist until the version is published and hosts restart on
+            # it. run_plan records the obligation as OUTSTANDING. Refusing here
+            # made the publish-now/discharge-later model unreachable outside
+            # fakes that agreed with it - the lane demanded evidence at exactly
+            # the moment it cannot exist.
+            return None
         validate_delivery_proof(proof, self._expected_obligation, component)
         return proof
 
@@ -3417,6 +3962,93 @@ class NpmWorkflowLane(_WorkflowLaneBase):
         )
 
 
+class SubprocessPointerAdapter:
+    """The pointer protocol, as an executable, so the driver never pushes to
+    another repository itself.
+
+      <exe> intent --component C --updates '{"channel":"1.7.4"}'
+      <exe> apply  --component C --updates '{...}'
+      <exe> read   --component C
+
+    Each prints JSON; intent and read print {"advertised": {component: version}}.
+    """
+
+    def __init__(self, executable: Path, repository: str | None = None):
+        self.executable = str(Path(executable).resolve())
+        self.repository = repository
+
+    def _run(self, operation, component, updates=None):
+        command = [self.executable, operation, "--component", component]
+        # The expected repository travels with EVERY operation. Adding the flag
+        # to the adapters without ever sending it made the binding a no-op: an
+        # ambient remote could be mutated under the graph's unrelated label.
+        if self.repository:
+            command += ["--expect-repository", self.repository]
+        if updates is not None:
+            command += ["--updates", json.dumps(updates, sort_keys=True)]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True)
+        except OSError as exc:
+            raise ReceiptError(
+                f"{component}: pointer adapter {self.executable} is not "
+                f"executable ({exc}); a release must refuse by name rather "
+                "than raise mid-publication"
+            ) from exc
+        if result.returncode != 0:
+            raise ReceiptError(
+                f"{component}: pointer adapter {operation} failed: "
+                f"{result.stderr.strip()}"
+            )
+        return json.loads(result.stdout or "{}")
+
+    def intent(self, component, updates):
+        return self._run("intent", component, updates)
+
+    def apply(self, component, updates, intent):
+        return self._run("apply", component, updates)
+
+    def read(self, component):
+        return self._run("read", component)
+
+
+def pointer_updates(
+    plan: Plan, graph: Graph, *, source_sha: str | None = None
+) -> dict[str, dict]:
+    """What each moving pointer node must advertise for the sources that forced it.
+
+    Usually the planned version - a marketplace entry forced by channel@1.7.4
+    advertises exactly that, so the record cannot claim more than the release
+    published. But a pin holds whatever that pin means: AC's release-pin.toml
+    holds a commit for aweb, not a version, and writing a version into a
+    git_sha field would put a value there that the field cannot mean.
+    """
+    moving = {n.component: n for n in plan.moving}
+    updates: dict[str, dict] = {}
+    for source, targets in graph.pointer_targets.items():
+        if source not in moving:
+            continue
+        for target in targets:
+            if target not in moving:
+                continue
+            advertised = _advertised_value(
+                graph.components[target], source, moving[source], source_sha
+            )
+            if advertised is not None:
+                updates.setdefault(target, {})[source] = advertised
+    return updates
+
+
+def _advertised_value(target: Component, source: str, node: PlanNode, source_sha):
+    """A commit-valued pin gets the source commit; everything else the version."""
+    for pin in target.sibling_pins:
+        if pin.get("component") != source:
+            continue
+        if pin.get("field") == "git_sha" or pin.get("kind") == "sha-pin":
+            return source_sha
+        return node.version
+    return node.version
+
+
 class SubprocessLocalAdapter:
     """Tiny checked-in protocol for existing component/direct release scripts."""
 
@@ -3449,6 +4081,168 @@ class SubprocessLocalAdapter:
     def observe(self, node, stage, files):
         result = self._run("observe", node, stage)
         return result.get("files")
+
+
+class FileObservationLane:
+    """An observer whose truth comes from a file, for driving a real process.
+
+    EXPLICIT TEST TRANSPORT, gated to local-development authority. It exists
+    because the receipt reader's composition and verdict can only be exercised
+    across a process boundary if some observer can be constructed there, and
+    registry/network observers cannot be. It is refused under any externally
+    trusted authority, so it can never stand in for registry truth in a real
+    release - the same shape as the pointer adapters' local remote override.
+    """
+
+    def __init__(self, observations: dict):
+        self._observations = observations
+
+    @classmethod
+    def from_file(cls, path: Path) -> "FileObservationLane":
+        document = json.loads(Path(path).read_text())
+        if document.get("schema") != "aweb.test-observation.v1":
+            raise ReceiptError(
+                "observation file is not an aweb.test-observation.v1 document"
+            )
+        return cls(document.get("entries") or {})
+
+    def has_lane(self, component: str) -> bool:
+        return component in self._observations
+
+    def observe(self, node, staged=None) -> "ReceiptEntry":
+        recorded = self._observations.get(node.component)
+        if recorded is None:
+            raise ReceiptError(
+                f"{node.component}: the observation file records nothing"
+            )
+        return ReceiptEntry(**_exact_entry_fields(node.component, recorded))
+
+    def stage(self, node):
+        raise ReceiptError("the observation lane never stages")
+
+    def publish(self, node, staged):
+        raise ReceiptError("the observation lane never publishes")
+
+    def verify(self, node, published):
+        return published
+
+
+class PointerLane:
+    """Advertise published versions in another repository's pointer file.
+
+    Publishing bytes is not delivering them. Claude Code re-resolves an npm
+    plugin only when the marketplace entry advertises the new version, and
+    aweb-cloud picks up a server only when its pin moves - so a release that
+    publishes the package and stops has not finished, and the pointer is a real
+    effect with a real lane rather than a note to do something later.
+
+    The git work lives in a small adapter with three operations, so the driver
+    never shells out to another repository itself:
+
+      intent(component, updates)          what the pointer should say
+      apply(component, updates, intent)   edit, commit, push
+      read(component)                     what the remote says now
+
+    publish re-reads the remote and refuses unless it advertises exactly what
+    was staged. The failure this exists to catch is silent: the package is on
+    the registry, the pointer was never updated, and nothing said so.
+    """
+
+    def __init__(self, component: str, *, adapter, updates: dict, repository: str):
+        self.component = component
+        self.adapter = adapter
+        self.updates = dict(updates)
+        self.repository = repository
+
+    def has_lane(self, component):
+        return component == self.component
+
+    @staticmethod
+    def _digest(advertised: dict) -> str:
+        return hashlib.sha256(
+            json.dumps(advertised, sort_keys=True).encode()
+        ).hexdigest()
+
+    def _label(self) -> str:
+        return ",".join(f"{k}={v}" for k, v in sorted(self.updates.items()))
+
+    def _intent(self) -> dict:
+        if not self.updates:
+            raise ReceiptError(
+                f"{self.component}: a pointer with nothing to advertise is not "
+                "a release effect; the moving set names no source version"
+            )
+        intent = self.adapter.intent(self.component, self.updates)
+        advertised = (intent or {}).get("advertised")
+        if advertised != self.updates:
+            raise ReceiptError(
+                f"{self.component}: adapter intent {advertised!r} does not equal "
+                f"the planned advertisement {self.updates!r}"
+            )
+        return advertised
+
+    def stage(self, node) -> "ReceiptEntry":
+        advertised = self._intent()
+        return ReceiptEntry(
+            version=self._label(),
+            digest=self._digest(advertised),
+            phase="staged",
+            # One stable state across stage and publish: run_plan requires the
+            # published entry to equal the staged one, so a state that changed
+            # between them refused every pointer release - after the push had
+            # already landed. What actually proves the effect is the read-back
+            # in publish and the digest, not a changing label.
+            pointer_state="advertised",
+        )
+
+    def publish(self, node, staged) -> "ReceiptEntry":
+        advertised = self._intent()
+        if self._digest(advertised) != staged.digest:
+            raise ReceiptError(
+                f"{self.component}: intent changed between stage and publish"
+            )
+        self.adapter.apply(self.component, self.updates, advertised)
+        # Compare only the keys this release advertises. A pointer file holds
+        # entries for components this release is not touching, so demanding
+        # whole-file equality failed a partial update whose push had succeeded.
+        observed = (self.adapter.read(self.component) or {}).get("advertised") or {}
+        landed = {key: observed.get(key) for key in advertised}
+        if landed != advertised:
+            raise ReceiptError(
+                f"{self.component}: {self.repository} advertises {landed!r} "
+                f"after publishing, expected {advertised!r}"
+            )
+        return ReceiptEntry(
+            version=self._label(),
+            digest=staged.digest,
+            phase="published",
+            pointer_state="advertised",
+        )
+
+    def observe(self, node, staged=None) -> "ReceiptEntry":
+        observed = (self.adapter.read(self.component) or {}).get("advertised") or {}
+        landed = {key: observed.get(key) for key in self.updates}
+        matches = landed == self.updates
+        return ReceiptEntry(
+            version=",".join(f"{k}={v}" for k, v in sorted(landed.items())),
+            digest=self._digest(landed),
+            phase="published" if matches else "staged",
+            pointer_state="advertised" if matches else "stale",
+        )
+
+    def verify(self, node, published) -> "ReceiptEntry":
+        observed = self.observe(node)
+        if observed.pointer_state != "advertised":
+            raise ReceiptError(
+                f"{self.component}: {self.repository} does not advertise the "
+                f"published versions ({observed.version or 'nothing'})"
+            )
+        return ReceiptEntry(
+            version=published.version,
+            digest=published.digest,
+            phase="verified",
+            pointer_state="advertised",
+        )
 
 
 class LocalRunnerlessLane:
@@ -4745,6 +5539,9 @@ class Providers:
     measurement: object = None
     runnerless_risk: Approval | None = None
     defer_g5: bool = False
+    # Authority-independent: who may defer runtime support is a question
+    # about the human, not about which runner built the artifact.
+    g5_authorization: object = None
     # Established by trusted composition (build_providers with an allowlisted
     # registration), never by an attribute a caller-writable implementation
     # asserts about itself.
@@ -6793,10 +7590,24 @@ def run_plan(
         raise ReceiptError(
             "runnerless local authority requires explicit risk authorization"
         )
+    g5_authorization = providers.g5_authorization if providers is not None else None
+    require_runtime_support(
+        plan,
+        defer_g5=defer_g5,
+        authorization=g5_authorization,
+        source_sha=source_sha,
+        frozen_plan_id=frozen.frozen_id if frozen is not None else None,
+    )
     complete_edges = [
         e for e in plan.runtime_contract_edges if not e.declared_incomplete
     ]
-    if complete_edges and not defer_g5:
+    # Deferral partitions the edge set: it excuses only the incomplete edges an
+    # authorization names. A measured edge is never skipped, because nothing was
+    # deferred about it - its measurement exists and must still resolve. Gating
+    # this on defer_g5 let one accepted gap switch off every measured matrix in
+    # the same plan, and on a complete-only plan a bare flag switched them off
+    # with no authorization involved at all.
+    if complete_edges:
         if measurement is None:
             raise BlockedByDeclaredInputs(
                 "runtime-contract support records are declared complete but no "
@@ -6814,10 +7625,12 @@ def run_plan(
             + ", ".join(missing_lanes)
             + " (lanes arrive with aweb-abbe.2-.4)"
         )
+    # Same partition for the matrices: a deferred incomplete edge has no matrix
+    # to run, but every complete edge still needs one.
     missing_skew = [
         f"{e.a}<->{e.b}"
         for e in plan.runtime_contract_edges
-        if not defer_g5 and not skew.has_matrix(e)
+        if not (defer_g5 and e.declared_incomplete) and not skew.has_matrix(e)
     ]
     if missing_skew:
         raise SkewUnavailable(
@@ -6837,9 +7650,29 @@ def run_plan(
             measurement=measurement,
         )
         plan_artifact_id = f"plan:{source_sha}:{frozen_plan_id}"
+        # The binding is checked BEFORE the anchor is written. Persisting first
+        # left a plan record behind on a run that refused, which contradicts
+        # "every mismatch refuses before any effect" - a store write is an
+        # effect even when no lane was called.
+        require_runtime_support(
+            plan, defer_g5=defer_g5, authorization=g5_authorization,
+            source_sha=source_sha, frozen_plan_id=frozen_plan_id,
+        )
         _put_content_addressed(
             store, authority, plan_artifact_id, frozen_bytes, frozen_plan_id
         )
+
+    # Re-checked against the frozen id that now exists. The earlier call runs
+    # before any work so a missing or wrong-risk record refuses early, but on
+    # the path that freezes here there was no id to bind to yet, so the plan
+    # binding it claimed to check was not checked at all.
+    require_runtime_support(
+        plan,
+        defer_g5=defer_g5,
+        authorization=g5_authorization,
+        source_sha=source_sha,
+        frozen_plan_id=frozen_plan_id,
+    )
 
     if _resume_manifest is not None:
         manifest = _resume_manifest
@@ -6911,15 +7744,20 @@ def run_plan(
         )
         manifest["_artifact_id"] = manifest_id
 
-    if not defer_g5:
-        freeze_matrix = getattr(skew, "freeze_matrix", None)
-        if freeze_matrix is not None:
-            for edge in plan.runtime_contract_edges:
-                freeze_matrix(
-                    edge, staged, staged_manifest_digest=manifest_digest
-                )
-        for edge in plan.runtime_contract_edges:
-            skew.execute(edge, staged)
+    # The same partition the preflight uses, applied where the matrices
+    # actually run. Guarding this whole block on defer_g5 meant one accepted
+    # gap skipped every measured edge's matrix at execution, including on a
+    # complete-only plan where nothing was deferred at all.
+    executable_edges = [
+        e for e in plan.runtime_contract_edges
+        if not (defer_g5 and e.declared_incomplete)
+    ]
+    freeze_matrix = getattr(skew, "freeze_matrix", None)
+    if freeze_matrix is not None:
+        for edge in executable_edges:
+            freeze_matrix(edge, staged, staged_manifest_digest=manifest_digest)
+    for edge in executable_edges:
+        skew.execute(edge, staged)
 
     def anchor_transition(
         component: str, entry: ReceiptEntry, sequence: int, kind: str
@@ -6981,19 +7819,35 @@ def run_plan(
                     f"{node.component}: published digest set does not equal the "
                     "anchored staged manifest set"
                 )
-        if manifest_entry.get("delivery_obligation"):
-            # Delivery evidence at the moment of effect: missing or malformed
-            # proof stops the run BEFORE this node anchors or any downstream
-            # node publishes - never discovered at final sealing.
-            if not result.delivery_proof:
-                raise ReceiptError(
-                    f"{node.component}: publish produced no delivery proof for "
-                    f"its declared {manifest_entry['delivery_obligation']}"
-                )
+        # The graph is the authority on what a component owes. Reading it from
+        # the staged manifest here and from the graph at seal let the two
+        # disagree, so a node could publish owing nothing and then fail to seal
+        # owing something.
+        obligation = (
+            manifest_entry.get("delivery_obligation")
+            or _delivery_obligation(graph, node.component)
+        )
+        outstanding = None
+        # Presence, and validated HERE - the first effect boundary. Truthiness
+        # let a malformed {} count as absent, travel beside an OUTSTANDING debt,
+        # and surface only at final seal, after downstream nodes may already
+        # have published.
+        if obligation and result.delivery_proof is not None:
+            validate_delivery_proof(result.delivery_proof, obligation, node.component)
+        if obligation and result.delivery_proof is None:
+            # Not a refusal: demanding restart evidence before the version
+            # exists can only be satisfied by inventing it, which is how a gate
+            # becomes a signature. The debt is recorded instead.
+            outstanding = obligation
+        if obligation and result.delivery_proof:
             validate_delivery_proof(
-                result.delivery_proof,
-                manifest_entry["delivery_obligation"],
-                node.component,
+                result.delivery_proof, obligation, node.component
+            )
+            # And the evidence must exist where an independent authority can
+            # see it. The lane observes by echoing the operator's own record,
+            # so without this the check compares the proof to itself.
+            resolve_delivery_evidence(
+                result.delivery_proof, node.component, authority=authority
             )
         entry = ReceiptEntry(
             version=result.version,
@@ -7001,6 +7855,7 @@ def run_plan(
             phase="published",
             pointer_state=result.pointer_state,
             delivery_proof=result.delivery_proof,
+            delivery_outstanding=outstanding,
             digest_set=result.digest_set,
             lane_ref=result.lane_ref,
         )
@@ -7024,6 +7879,10 @@ def run_plan(
             phase="verified",
             pointer_state=published[node.component].pointer_state,
             delivery_proof=published[node.component].delivery_proof,
+            # Verification confirms what was published; it does not discharge
+            # what is still owed. Dropping this here would let a verified
+            # receipt read as delivered.
+            delivery_outstanding=published[node.component].delivery_outstanding,
             digest_set=published[node.component].digest_set,
             lane_ref=published[node.component].lane_ref,
         )
@@ -7053,6 +7912,7 @@ def run_plan(
         approvals=receipt_approvals,
         frozen_plan_id=frozen_plan_id,
         staged_manifest_id=manifest_id,
+        g5_authorization=g5_authorization,
     )
     receipt_id = f"receipt:{frozen_plan_id}:{digest}"
     _put_content_addressed(store, authority, receipt_id, sealed, digest)
@@ -7077,6 +7937,7 @@ def resume_plan(
     manifest_id: str | None = None,
     runnerless_risk: Approval | None = None,
     defer_g5: bool = False,
+    g5_authorization=None,
 ) -> dict[str, ReceiptEntry]:
     """Resume from the ORIGINAL anchored staged manifest: fetch it by id,
     verify it through the authority, stage NOTHING, observe every claimed
@@ -7208,6 +8069,21 @@ def resume_plan(
                     "lane observes nothing; refusing to adopt"
                 )
             continue
+        # A forced pointer that was never applied is REMAINING WORK, not drift.
+        # This is the likeliest crash window in a pointer release, because the
+        # pointer is applied last: the package is already on the registry and
+        # the repository still advertises the old version. Adopting is only
+        # meaningful for something that actually happened, so a stale
+        # observation that nothing claims to have published falls through to
+        # run_plan, which applies it. Refusing here made that window
+        # unrecoverable - the release could neither continue nor be redone,
+        # because the package was already published.
+        #
+        # The claimed check is what keeps this from weakening drift detection:
+        # when an anchored transition DOES claim the pointer published, a stale
+        # or missing observation is real disagreement and still refuses below.
+        if observed.pointer_state == "stale" and node.component not in claimed:
+            continue
         adopt_observed(manifest, node.component, observed)
         manifest_entry = manifest["entries"][node.component]
         if manifest_entry.get("pointer_state") is not None:
@@ -7235,13 +8111,14 @@ def resume_plan(
                     f"{node.component}: observed digest set does not equal the "
                     "anchored staged manifest set"
                 )
-        if manifest_entry.get("delivery_obligation"):
-            if not observed.delivery_proof:
-                raise ReceiptError(
-                    f"{node.component}: adoption requires observed delivery "
-                    f"evidence for its declared "
-                    f"{manifest_entry['delivery_obligation']}"
-                )
+        if (
+            manifest_entry.get("delivery_obligation")
+            and observed.delivery_proof is not None
+        ):
+            # An already-published node whose delivery is still owed is the
+            # normal case on resume: the restart evidence could not have existed
+            # when it published. Demanding it here made every interrupted
+            # channel or pi release unresumable.
             validate_delivery_proof(
                 observed.delivery_proof,
                 manifest_entry["delivery_obligation"],
@@ -7255,6 +8132,17 @@ def resume_plan(
             delivery_proof=observed.delivery_proof,
             digest_set=observed.digest_set,
             lane_ref=observed.lane_ref,
+            # An adopted node whose delivery is still owed must carry the debt
+            # forward. Dropping the raise without recording the obligation only
+            # moved the refusal to seal time: the entry said neither evidence
+            # nor debt, which is the one thing a delivery node may not say.
+            delivery_outstanding=(
+                None if observed.delivery_proof is not None
+                else (
+                    manifest_entry.get("delivery_obligation")
+                    or _delivery_obligation(graph, node.component)
+                )
+            ),
         )
     return run_plan(
         plan,
@@ -7272,6 +8160,7 @@ def resume_plan(
             authority_trust=authority_trust,
             runnerless_risk=runnerless_risk,
             defer_g5=defer_g5,
+            g5_authorization=g5_authorization,
         ),
         _resume_manifest=manifest,
         _resume_published=published,
@@ -7321,6 +8210,42 @@ def validate_delivery_proof(proof, obligation: str, component: str) -> None:
                 f"{component}: delivery proof field {field_name} must be a "
                 f"nonempty string, got {type(value).__name__}"
             )
+    # The digest must be a real content digest. Accepting any nonempty string
+    # let a human type two words and have the system record that it verified
+    # them; a proof whose digest cannot address anything proves nothing.
+    if not re.fullmatch(r"[0-9a-f]{64}", proof["digest"]):
+        raise ReceiptError(
+            f"{component}: delivery proof digest must be a sha256 of the "
+            f"recorded evidence, got {proof['digest']!r}"
+        )
+
+
+def resolve_delivery_evidence(proof, component: str, *, authority) -> None:
+    """The evidence must exist where an independent authority can see it.
+
+    Without this the proof is self-attesting in both directions: the operator
+    supplies the record, the lane echoes that same record back as its
+    observation, and verification compares it to itself and always agrees. The
+    digest is checked against the authority the same way a measurement record
+    is, so the operator must have recorded evidence somewhere rather than
+    invented an identity at the command line.
+    """
+    if authority is None or not hasattr(authority, "expected_digest"):
+        raise ReceiptError(
+            f"{component}: delivery evidence cannot be resolved without an "
+            "authority; an unverifiable proof is not a proof"
+        )
+    recorded = authority.expected_digest(proof["evidence_id"])
+    if recorded is None:
+        raise ReceiptError(
+            f"{component}: delivery evidence {proof['evidence_id']} is not "
+            "recorded with the authority; nothing attests that it exists"
+        )
+    if recorded != proof["digest"]:
+        raise ReceiptError(
+            f"{component}: delivery evidence {proof['evidence_id']} is recorded "
+            f"as {recorded}, the proof claims {proof['digest']}"
+        )
 
 
 def canonical_digest_of_set(digest_set: dict) -> str:
@@ -7692,6 +8617,8 @@ class RegistryProviders:
                             f"github release for {registry['repo']} has no assets"
                         )
                     return data["tag_name"].removeprefix("v"), digests
+            if kind == "ghcr":
+                return self._ghcr_published(registry["package"])
         except RegistryUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001 - named unavailability
@@ -7699,9 +8626,119 @@ class RegistryProviders:
                 f"{kind} read failed for {component.name}: {exc}"
             ) from exc
         raise RegistryUnavailable(
-            f"no registry reader for kind {kind!r} ({component.name}); "
-            "aweb-abbe.4 provides the image lane's digest authority"
+            f"no registry reader for kind {kind!r} ({component.name})"
         )
+
+    @staticmethod
+    def _ghcr_published(package: str) -> tuple[str, dict]:
+        """Latest published image version and its immutable manifest digest.
+
+        Through skopeo, the same mechanism the image lane already observes tags
+        with, so there is one story about how image truth is read. Without this
+        every plan failed: awid-image is in the moving set whenever awid or the
+        server payload changes, and an unreadable registry is a declared-input
+        problem that blocks the whole release, not just that component.
+        """
+        import subprocess
+
+        repository = f"ghcr.io/{package}"
+        try:
+            listing = subprocess.run(
+                ["skopeo", "list-tags", f"docker://{repository}"],
+                capture_output=True, text=True,
+            )
+        except FileNotFoundError as exc:
+            raise RegistryUnavailable(
+                "skopeo is required to read image truth for "
+                f"{repository} and is not installed"
+            ) from exc
+        if listing.returncode != 0:
+            raise RegistryUnavailable(
+                f"{repository}: tag listing unavailable "
+                f"({listing.stderr.strip()[:120]}); an outage is never proof "
+                "of absence"
+            )
+        tags = json.loads(listing.stdout or "{}").get("Tags") or []
+        released = []
+        for tag in tags:
+            try:
+                released.append((tuple(int(p) for p in tag.split(".")), tag))
+            except ValueError:
+                continue  # latest, sha-*, and other non-version tags
+        if not released:
+            raise RegistryUnavailable(
+                f"{repository}: no dotted-numeric version tags published"
+            )
+        version = max(released)[1]
+        inspected = subprocess.run(
+            ["skopeo", "inspect", f"docker://{repository}:{version}"],
+            capture_output=True, text=True,
+        )
+        if inspected.returncode != 0:
+            raise RegistryUnavailable(
+                f"{repository}:{version}: manifest unavailable "
+                f"({inspected.stderr.strip()[:120]})"
+            )
+        digest = json.loads(inspected.stdout or "{}").get("Digest")
+        if not digest:
+            raise RegistryUnavailable(
+                f"{repository}:{version}: manifest carries no digest; a version "
+                "without an immutable digest is unavailable, never acceptable"
+            )
+        return version, {version: digest}
+
+
+def _pointer_repository(component: Component) -> str:
+    """The canonical repository a pointer node mutates, from frozen graph truth.
+
+    Falling back to the component name produced a meaningless expectation - the
+    driver sent "marketplace-pointer" and the adapter correctly refused to
+    accept it as a repository, which broke every real channel pointer. A node
+    with no declared repository cannot be bound, so it refuses rather than
+    inventing an identity.
+    """
+    if component.repository:
+        return component.repository
+    for pin in component.sibling_pins:
+        repository = pin.get("pin_repository")
+        if repository:
+            return repository
+    raise ReceiptError(
+        f"{component.name}: no canonical repository declared, so the pointer "
+        "effect cannot be bound to the repository it mutates"
+    )
+
+
+def parse_pointer_adapters(
+    raw: list[str], *, plan: Plan, graph: Graph, source_sha: str | None = None
+) -> dict:
+    """component=/absolute/pointer-adapter -> {component: PointerLane}.
+
+    What each pointer advertises is derived from the plan, never supplied on
+    the command line: an operator who could type the version could advertise a
+    version the release did not publish.
+    """
+    updates = pointer_updates(plan, graph, source_sha=source_sha)
+    lanes = {}
+    for item in raw:
+        component, separator, executable = item.partition("=")
+        if not separator or not component or not Path(executable).is_absolute():
+            raise ReceiptError(
+                "--pointer-adapter must be component=/absolute/path/to/adapter"
+            )
+        if component in lanes:
+            raise ReceiptError(f"duplicate pointer adapter for {component}")
+        if component not in graph.components:
+            raise ReceiptError(f"--pointer-adapter names unknown component {component}")
+        lanes[component] = PointerLane(
+            component,
+            adapter=SubprocessPointerAdapter(
+                Path(executable), repository=_pointer_repository(graph.components[component])
+            ),
+            updates=updates.get(component, {}),
+            repository=_pointer_repository(graph.components[component]),
+        )
+    return lanes
 
 
 def parse_local_adapters(raw: list[str], *, root: Path):
@@ -7810,7 +8847,13 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         "lane tasks and are the only production-acceptable ones",
     )
     sub = parser.add_subparsers(dest="verb", required=True)
-    sub.add_parser("plan", help="freeze and anchor a diagnostic plan")
+    plan_parser = sub.add_parser(
+        "plan", help="freeze and anchor a diagnostic plan"
+    )
+    plan_parser.add_argument(
+        "--only", action="append", default=[],
+        help="restrict the release to these components and the pointers they force",
+    )
     run_parser = sub.add_parser("release-run")
     run_parser.add_argument("--plan-id")
     run_parser.add_argument("--plan-artifact-id")
@@ -7828,6 +8871,21 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
     run_parser.add_argument(
         "--defer-g5", action="store_true",
         help="record an explicit human-authorized G5 deferral",
+    )
+    run_parser.add_argument(
+        "--pointer-adapter", action="append", default=[],
+        help=(
+            "component=/absolute/pointer-adapter - performs the pointer effect "
+            "(edit, commit, push, read back) in the target repository"
+        ),
+    )
+    run_parser.add_argument(
+        "--g5-authorization",
+        help=(
+            "who=<w>,when=<t>,source=<40hex>,plan=<64hex>,"
+            "edges=<64hex>[+<64hex>],risk=<text> - edge ids as printed by "
+            "release-plan; accepted on every authority"
+        ),
     )
     run_parser.add_argument(
         "--manifest-id",
@@ -7874,8 +8932,43 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
     receipt_parser.add_argument("--artifact-id", required=True)
     receipt_parser.add_argument("--plan-id", required=True)
     receipt_parser.add_argument("--plan-artifact-id", required=True)
+    # The official reader needs the same observer inputs release-run has. Without
+    # them providers.lanes stayed None and the command refused before reading
+    # anything, so a sealed receipt had no executable verifier at all.
+    receipt_parser.add_argument(
+        "--stage-artifact", action="append", default=[],
+        help="component=<c>,ref=<lane-ref>,source=<40hex>,digest=sha256:<64hex>",
+    )
+    receipt_parser.add_argument(
+        "--pointer-adapter", action="append", default=[],
+        help="component=/absolute/pointer-adapter, for observing a forced pointer",
+    )
+    receipt_parser.add_argument(
+        "--delivery-proof", action="append", default=[],
+        help="component=<c>,obligation=<o>,evidence_id=<e>,digest=<sha256>",
+    )
+    receipt_parser.add_argument(
+        "--observation-file",
+        help=(
+            "EXPLICIT TEST TRANSPORT: an aweb.test-observation.v1 document "
+            "standing in for registry observation. Refused under any externally "
+            "trusted authority."
+        ),
+    )
     args = parser.parse_args(argv)
 
+    # The backdoor guard runs BEFORE any store, provider or network access, so
+    # it cannot pass for the wrong reason: missing credentials or an unreachable
+    # artifact would otherwise produce the same nonzero exit and look like the
+    # guard firing.
+    if getattr(args, "observation_file", None) and getattr(
+        args, "authority", None
+    ) not in (None, "local-development"):
+        print(
+            "BLOCKED: --observation-file is an explicit test transport and is "
+            f"refused under {args.authority!r} authority"
+        )
+        return 1
     graph = Graph.load(Path(args.graph))
     recovery_exception = None
     if args.verb == "adopted-preplan-recovery":
@@ -7996,12 +9089,30 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 capture_output=True,
                 text=True,
             ).stdout.strip()
+        # Carried on every lane, not only the runnerless one. Assigned inside
+        # the runnerless branch alone, a hosted --defer-g5 reached nothing and
+        # was silently ignored: the operator asked to defer, the driver did not
+        # defer, and neither said so. require_runtime_support refuses a
+        # deferral with no authorization record behind it, which on a hosted
+        # release is a loud refusal rather than a silent no-op.
+        if args.verb == "release-run":
+            providers.defer_g5 = args.defer_g5
+            # Authority-independent by construction: parsed here, outside the
+            # runnerless branch, so hosted and local-development reach the same
+            # record. Coupling it to the runner-risk authorization would make
+            # accepting an outage double as accepting an unmeasured contract.
+            try:
+                providers.g5_authorization = parse_g5_authorization(
+                    args.g5_authorization
+                )
+            except ReceiptError as exc:
+                print(f"BLOCKED: {exc}")
+                return 1
         if registration.kind == "local-runnerless" and args.verb == "release-run":
             try:
                 providers.runnerless_risk = runnerless_risk_approval(
-                    args.local_risk_authorization, defer_g5=args.defer_g5
+                    args.local_risk_authorization
                 )
-                providers.defer_g5 = args.defer_g5
                 providers.measurement = AnchoredMeasurementAuthority(
                     store=store,
                     authority=authority,
@@ -8061,9 +9172,17 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
 
     if args.verb == "plan":
         plan = compute_plan(graph, state)
+        try:
+            plan = scope_plan(plan, graph, getattr(args, "only", []))
+        except ReceiptError as exc:
+            print(f"BLOCKED: {exc}")
+            return 1
         problems = check_declared_inputs(graph, plan, state)
         frozen_id = None
         plan_artifact_id = None
+        # Read back out of the sealed artifact, so what the operator is shown
+        # is what was frozen rather than a second look at live state.
+        disclosures: list[str] = []
         try:
             frozen_bytes, frozen_id = freeze_plan(
                 plan, graph, source_sha=source_sha, state=state,
@@ -8073,6 +9192,9 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             _put_content_addressed(
                 providers.store, providers.authority, plan_artifact_id,
                 frozen_bytes, frozen_id,
+            )
+            disclosures = delivery_disclosures(
+                load_frozen_plan(frozen_bytes, expected_id=frozen_id).resolved
             )
         except (BlockedByDeclaredInputs, ReceiptError) as exc:
             problems.append(str(exc))
@@ -8097,10 +9219,22 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                             "b": e.b,
                             "journey": e.journey,
                             "declared_incomplete": e.declared_incomplete,
+                            "edge_id": edge_identity(e),
                         }
                         for e in plan.runtime_contract_edges
                     ],
+                    # Exactly the ids a G5 authorization must name to defer this
+                    # plan. Without them an operator cannot construct the record
+                    # at all: the identity is a content hash, not a display
+                    # string, because a<->b would alias the two server<->server
+                    # edges.
+                    "deferrable_runtime_contracts": sorted(
+                        edge_identity(e)
+                        for e in plan.runtime_contract_edges
+                        if e.declared_incomplete
+                    ),
                     "declared_input_problems": problems,
+                    "delivery_disclosures": disclosures,
                     "ship_gate": ship_gate_warning(source_sha),
                     "plan_digest": plan_digest(plan, graph),
                 },
@@ -8213,12 +9347,33 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         plan = frozen.plan
         frozen_graph = frozen.graph
         lanes = providers.lanes if providers.lanes is not None else NoLanes()
+        # Pointer lanes are composed here rather than with the publish lanes,
+        # because what a pointer advertises is derived from the frozen plan and
+        # the frozen plan is only loaded now. A pointer node without a lane is
+        # the reason channel and skills could not be released at all.
+        try:
+            pointer_lanes = parse_pointer_adapters(
+                getattr(args, "pointer_adapter", []),
+                plan=plan, graph=frozen_graph, source_sha=frozen.source_sha,
+            )
+        except ReceiptError as exc:
+            print(f"BLOCKED: {exc}")
+            return 1
+        if pointer_lanes:
+            lanes = WorkflowLanes({
+                **{
+                    name: lanes._lanes[name]
+                    for name in getattr(lanes, "_lanes", {})
+                },
+                **pointer_lanes,
+            })
         # Ordinary production release-run composes the G5 matrix runner; a
         # touched runtime edge with no registered harness or measured
         # support REFUSES rather than silently selecting NoSkew.
-        if providers.defer_g5:
-            skew = NoSkew()
-        elif providers.skew is not None:
+        # Production skew is composed regardless of deferral: a deferred
+        # incomplete edge has no matrix to run, but the measured edges in the
+        # same plan still do, and NoSkew would have silently skipped them.
+        if providers.skew is not None:
             skew = providers.skew
         else:
             try:
@@ -8238,6 +9393,11 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
             authority_trust=providers.authority_trust,
             runnerless_risk=providers.runnerless_risk,
             defer_g5=providers.defer_g5,
+            # Carried on the ordinary path too, not only resume. Omitted here,
+            # a valid operator-supplied record reached run_plan as None and the
+            # release refused - the flag was threaded and the authorization it
+            # requires was not.
+            g5_authorization=providers.g5_authorization,
         )
         try:
             if args.resume:
@@ -8261,6 +9421,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     manifest_id=args.manifest_id,
                     runnerless_risk=providers.runnerless_risk,
                     defer_g5=providers.defer_g5,
+                    g5_authorization=providers.g5_authorization,
                 )
             else:
                 run_plan(
@@ -8296,6 +9457,56 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
         frozen = load_frozen_plan(
             providers.store.get(args.plan_artifact_id), expected_id=args.plan_id
         )
+        # Pointer observers are composed from the FROZEN plan, the same way
+        # release-run does it, because what a pointer must advertise is derived
+        # from the plan and the plan is only loaded here. Without this a Channel
+        # receipt could never be verified: its marketplace-pointer had no
+        # observer and the command refused before reading anything.
+        try:
+            receipt_pointers = parse_pointer_adapters(
+                getattr(args, "pointer_adapter", []),
+                plan=frozen.plan, graph=frozen.graph,
+                source_sha=frozen.source_sha,
+            )
+        except ReceiptError as exc:
+            print(f"BLOCKED: {exc}")
+            return 1
+        observation_file = getattr(args, "observation_file", None)
+        if observation_file:
+            if registration.trust_class != "local-development":
+                print(
+                    "BLOCKED: --observation-file is an explicit test transport "
+                    f"and is refused under {registration.trust_class!r} authority"
+                )
+                return 1
+            try:
+                providers.lanes = FileObservationLane.from_file(Path(observation_file))
+            except (ReceiptError, OSError, json.JSONDecodeError) as exc:
+                print(f"BLOCKED: {exc}")
+                return 1
+
+        # Registry observers are recomposed from the FROZEN graph too. They were
+        # built earlier from the current checkout, so a receipt was verified
+        # against today's component definitions rather than the ones the release
+        # was frozen against.
+        frozen_refs = parse_stage_artifact_arguments(
+            getattr(args, "stage_artifact", [])
+        )
+        if frozen_refs:
+            try:
+                providers.lanes = compose_workflow_lanes(
+                    frozen.graph, frozen_refs,
+                    delivery_proofs=parse_delivery_proof_arguments(
+                        getattr(args, "delivery_proof", [])
+                    ),
+                )
+            except ReceiptError as exc:
+                print(f"BLOCKED: {exc}")
+                return 1
+        if receipt_pointers:
+            existing = dict(getattr(providers.lanes, "_lanes", {}) or {})
+            providers.lanes = WorkflowLanes({**existing, **receipt_pointers})
+
         expected_digest = providers.authority.expected_digest(args.artifact_id)
         if expected_digest is None:
             print(f"REFUSED: the authority has no record of {args.artifact_id}")
@@ -8345,6 +9556,16 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 manifest, plan=frozen.plan, graph=frozen.graph,
                 frozen_plan_id=args.plan_id, source_sha=frozen.source_sha,
             )
+            # The complete final contract, including the sealed G5 acceptance.
+            # This command reimplemented the individual checks and never called
+            # the validator, so a receipt for an unmeasured release with no
+            # authorization could still have reached MATCH.
+            validate_final_receipt(
+                receipt, plan=frozen.plan, graph=frozen.graph,
+                frozen_plan_id=args.plan_id,
+                staged_manifest_id=receipt.staged_manifest_id,
+                source_sha=frozen.source_sha,
+            )
         except ReceiptError as exc:
             print(f"MISMATCH: {exc}")
             return 1
@@ -8363,6 +9584,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 "observers for published/pointer/delivery state; none configured"
             )
             return 1
+        outstanding: list[str] = []
         for node in frozen.plan.moving:
             component = frozen_components[node.component]
             entry = receipt.entries[node.component]
@@ -8386,10 +9608,15 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     "staged manifest's immutable candidate identity"
                 )
                 return 1
-            if manifest_entry.get("delivery_obligation") and not entry.delivery_proof:
+            obligation = manifest_entry.get("delivery_obligation")
+            if (
+                obligation
+                and not entry.delivery_proof
+                and entry.delivery_outstanding != obligation
+            ):
                 print(
-                    f"MISMATCH: {node.component} carries no post-publication "
-                    f"proof for its declared {manifest_entry['delivery_obligation']}"
+                    f"MISMATCH: {node.component} carries neither post-publication "
+                    f"proof nor an outstanding {obligation}"
                 )
                 return 1
             if component.approval_required:
@@ -8463,6 +9690,15 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     )
                     return 1
             if manifest_entry.get("delivery_obligation"):
+                # An OUTSTANDING receipt has no proof to validate. Calling the
+                # validator unconditionally raised on None, so the debt state
+                # never survived this reader and never reached the branch below
+                # that exists to handle it.
+                if entry.delivery_outstanding == manifest_entry[
+                    "delivery_obligation"
+                ] and entry.delivery_proof is None:
+                    outstanding.append(node.component)
+                    continue
                 try:
                     validate_delivery_proof(
                         entry.delivery_proof,
@@ -8473,6 +9709,14 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     print(f"MISMATCH: {exc}")
                     return 1
                 if observed.delivery_proof is None:
+                    # A node whose delivery is still owed observes no proof,
+                    # and that is the honest state, not an observer failure.
+                    # The receipt's own outstanding record is what says so, and
+                    # validate_final_receipt has already checked it.
+                    if entry.delivery_outstanding == manifest_entry[
+                        "delivery_obligation"
+                    ]:
+                        continue
                     print(
                         f"BLOCKED: {node.component}: the observer cannot "
                         "produce the required delivery state for its declared "
@@ -8499,11 +9743,22 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                         "evidence identity does not equal the receipt's proof"
                     )
                     return 1
-        print(
+        # A generic MATCH could not distinguish published-and-delivered from
+        # published-but-still-owed, which is the whole point of recording the
+        # debt. Say which.
+        verdict = (
             "MATCH: receipt is anchored, bound to its frozen plan and staged "
             "manifest, entry-identical to the manifest, structurally approved, "
             "and equal to authoritative lane observation"
         )
+        if outstanding:
+            verdict += (
+                "\nOUTSTANDING: delivery is not proven for "
+                + ", ".join(sorted(outstanding))
+                + "; publication is not adoption and this receipt does not "
+                "claim it"
+            )
+        print(verdict)
         return 0
     return 2
 
