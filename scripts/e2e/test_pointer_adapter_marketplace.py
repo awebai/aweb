@@ -167,6 +167,31 @@ class MarketplaceAdapterTests(unittest.TestCase):
         self.assertEqual(after["skills"], "0.2.12",
                          "a partial update must leave other entries alone")
 
+    def test_the_committed_graph_binds_a_real_repository(self):
+        """Production composes the adapter through parse_pointer_adapters using
+        the COMMITTED graph. Constructing SubprocessPointerAdapter directly in a
+        test bypasses exactly the step that broke: the graph declared no
+        repository, the driver sent the component name, and the adapter
+        correctly refused - so every real channel pointer refused."""
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import release_driver as rd
+
+        graph = rd.Graph.load(REPO_ROOT / "release" / "components.toml")
+        state = rd.FixtureState(
+            changed_components={"channel": True}, versions={"channel": "1.7.4"}
+        )
+        plan = rd.scope_plan(rd.compute_plan(graph, state), graph, ["channel"])
+        lanes = rd.parse_pointer_adapters(
+            [f"marketplace-pointer={ADAPTER}"],
+            plan=plan, graph=graph, source_sha="a" * 40,
+        )
+        lane = lanes["marketplace-pointer"]
+        self.assertEqual(
+            lane.adapter.repository, "github.com/awebai/claude-plugins",
+            "the expectation the driver sends must be a real repository, not "
+            "the component name",
+        )
+
     def test_a_substituted_remote_is_refused(self):
         """The binding must not be decorative. An ambient remote pointing
         somewhere else must refuse rather than be mutated under the graph's

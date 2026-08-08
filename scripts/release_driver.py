@@ -85,6 +85,10 @@ class Component:
     lane: dict | None = None  # delivery lane for non-registry nodes (sites)
     verify: dict | None = None
     delivery_restart: dict | None = None
+    # Canonical identity of the repository a pointer node mutates. Frozen graph
+    # truth, not an error-message label: it is what the adapter is told to
+    # expect and what it compares its remote against.
+    repository: str | None = None
 
 
 @dataclass(frozen=True)
@@ -198,6 +202,7 @@ class Graph:
                 lane=spec.get("lane"),
                 verify=spec.get("verify"),
                 delivery_restart=spec.get("delivery_restart"),
+            repository=spec.get("repository"),
             )
 
         def known(name: str, context: str) -> str:
@@ -3800,6 +3805,14 @@ class NpmWorkflowLane(_WorkflowLaneBase):
                 )
             return None
         if proof is None:
+            # No proof is the HONEST state before adoption: restart evidence
+            # cannot exist until the version is published and hosts restart on
+            # it. run_plan records the obligation as OUTSTANDING. Refusing here
+            # made the publish-now/discharge-later model unreachable outside
+            # fakes that agreed with it - the lane demanded evidence at exactly
+            # the moment it cannot exist.
+            return None
+        if False:
             raise ReceiptError(
                 f"{component}: its declared {self._expected_obligation} "
                 "requires separately supplied delivery evidence BEFORE any "
@@ -8561,13 +8574,24 @@ class RegistryProviders:
 
 
 def _pointer_repository(component: Component) -> str:
-    """Where the pointer lives, for refusal messages. ac-pin names it on its
-    sibling pins; marketplace-pointer declares it directly."""
+    """The canonical repository a pointer node mutates, from frozen graph truth.
+
+    Falling back to the component name produced a meaningless expectation - the
+    driver sent "marketplace-pointer" and the adapter correctly refused to
+    accept it as a repository, which broke every real channel pointer. A node
+    with no declared repository cannot be bound, so it refuses rather than
+    inventing an identity.
+    """
+    if component.repository:
+        return component.repository
     for pin in component.sibling_pins:
         repository = pin.get("pin_repository")
         if repository:
             return repository
-    return (component.lane or {}).get("repository") or component.name
+    raise ReceiptError(
+        f"{component.name}: no canonical repository declared, so the pointer "
+        "effect cannot be bound to the repository it mutates"
+    )
 
 
 def parse_pointer_adapters(

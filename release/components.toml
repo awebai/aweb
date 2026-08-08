@@ -116,6 +116,7 @@ publishable = false
 
 [component.marketplace-pointer]
 publishable = false
+repository = "github.com/awebai/claude-plugins"
 # Explicit bump of awebai/claude-plugins marketplace.json; the caret-range
 # experiment is deferred task aweb-abbf.
 #

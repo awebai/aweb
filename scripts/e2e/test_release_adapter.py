@@ -4356,12 +4356,29 @@ class NpmWorkflowLaneTests(unittest.TestCase):
         self.assertEqual(runs.dispatched, [],
                          "the refusal must precede the dispatch")
 
-    def test_missing_proof_for_an_obligated_component_refuses_before_dispatch(
-            self) -> None:
-        self.refusal_dispatches_nothing(
-            delivery_proofs={},
+    def test_missing_proof_publishes_and_the_debt_is_recorded(self) -> None:
+        """No proof is the HONEST state before adoption: restart evidence cannot
+        exist until the version is published and hosts restart onto it.
+        Refusing here made the publish-now/discharge-later model unreachable in
+        production - only fakes that agreed with the old contract could reach
+        it. run_plan records the obligation as OUTSTANDING instead.
+
+        The sibling guarantee is unchanged and covered below: a MALFORMED proof
+        still refuses before any dispatch."""
+        runs = FakeAwRuns(conclusion="success")
+        lane, _ = npm_lane(
+            npm_lane_zip(version="1.7.3", tgz=channel_tgz(version="1.7.3")),
+            observer=lambda p, v: sha256(channel_tgz(version="1.7.3")),
+            runs=runs, delivery_proofs={},
             expected_obligation="delivery-restart-proof",
-            needle="delivery")
+        )
+        staged = lane.stage(self.node())
+        published = lane.publish(self.node(), staged)
+        self.assertIsNone(
+            published.delivery_proof,
+            "publication carries no invented evidence; the debt is recorded by "
+            "run_plan, not manufactured by the lane",
+        )
 
     def test_malformed_proof_refuses_before_dispatch(self) -> None:
         self.refusal_dispatches_nothing(

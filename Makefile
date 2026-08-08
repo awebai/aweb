@@ -679,7 +679,7 @@ release-run:
 # PLAN_ID and PLAN_ARTIFACT_ID are required; digests resolve through the
 # configured authority, never from caller-presented values.
 release-receipt:
-	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") release-receipt --artifact-id "$(ARTIFACT_ID)" --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)"
+	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") release-receipt --artifact-id "$(ARTIFACT_ID)" --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(foreach s,$(STAGE_ARTIFACT),--stage-artifact "$(s)") $(foreach p,$(POINTER_ADAPTER),--pointer-adapter "$(p)") $(foreach d,$(DELIVERY_PROOF),--delivery-proof "$(d)")
 
 test-release-runnerless:
 	python3 scripts/e2e/test_release_runnerless.py

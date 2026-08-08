@@ -122,9 +122,21 @@ def require_expected(expected: str | None) -> str:
     return remote
 
 
+def verify_origin(checkout: Path, expected: str, when: str) -> None:
+    """Re-observe the checkout's actual origin, rather than trusting the string
+    we passed in. Comparing the input to itself proves nothing; what matters is
+    what the working clone is really attached to, before and after mutation."""
+    actual = git("remote", "get-url", "origin", cwd=checkout).strip()
+    if canonical(actual) != canonical(expected):
+        raise SystemExit(
+            f"refusing: {when} the checkout's origin is {actual}, not {expected}"
+        )
+
+
 def clone(into: Path, remote: str) -> Path:
     checkout = into / "claude-plugins"
     git("clone", "--depth", "1", remote, str(checkout), cwd=into)
+    verify_origin(checkout, remote, "after cloning")
     return checkout
 
 
@@ -166,7 +178,11 @@ def apply_updates(checkout: Path, updates: dict[str, str]) -> None:
         return
     summary = ", ".join(f"{c} {v}" for c, v in sorted(updates.items()))
     git("commit", "-m", f"Advertise {summary}", cwd=checkout)
+    verify_origin(checkout, os.environ.get("MARKETPLACE_REMOTE", DEFAULT_REMOTE),
+                  "before pushing")
     git("push", "origin", "HEAD", cwd=checkout)
+    verify_origin(checkout, os.environ.get("MARKETPLACE_REMOTE", DEFAULT_REMOTE),
+                  "after pushing")
 
 
 def main(argv=None) -> int:
