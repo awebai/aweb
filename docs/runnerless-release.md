@@ -23,6 +23,12 @@ make release-run AUTHORITY=local-runnerless STORE_ROOT="$PWD/.release-runs" \
   POINTER_ADAPTER='ac-pin=/absolute/path/to/ac-pin-adapter'
 ```
 
+**This server example is not runnable today.** `ac-pin` refuses until it updates
+AC through AC's real lock/pin contract (aweb-abbe.39), and the graph gives server
+four incomplete edges, so `edges=` must list all four exactly as
+`release-plan` prints them. `aw`, `pi` and `awid-image` force no pointer and are
+the smallest genuinely runnable exercises of this lane.
+
 `LOCAL_RISK_AUTHORIZATION` accepts the risk of releasing without a hosted
 runner. It does **not** accept unmeasured runtime support: those are different
 judgments that happen to arrive in the same troubled release, so one is never

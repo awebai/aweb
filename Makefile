@@ -302,8 +302,15 @@ test-channel-name-live-contract:
 # assertion that contradicted shipped acknowledgement behaviour. It needs Docker
 # and Postgres, so it belongs with the other real-stack journeys rather than in
 # `make test` - but it belongs somewhere, and this is somewhere.
+# Deliberately NO AWEB_SKEW_DIRECTION. With a direction set the journey emits a
+# skew observation, which requires the five exact-server inputs (wheel, wheel
+# sha, version, constraints, constraints sha); ship supplies none of them, so a
+# clean run would die on "skew observation lacks server runtime inventory"
+# rather than exercise the journey. Ship builds the server from source and this
+# target exercises Channel against THAT. Measuring against a PUBLISHED server is
+# the skew harness's job, with the exact artifacts it resolves itself.
 test-channel-integration:
-	AWEB_SKEW_DIRECTION=a-to-b npm --prefix channel run test:integration
+	npm --prefix channel run test:integration
 
 # channel-core holds the identity, trust, pinstore and signature-decode logic
 # that channel and pi-extension are both built from, so its suite gates them.

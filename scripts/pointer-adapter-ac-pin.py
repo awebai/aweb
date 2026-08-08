@@ -49,6 +49,12 @@ def git_env() -> dict:
     push at the moment it is least examined."""
     return {
         "PATH": "/usr/bin:/bin",
+        # Disable global AND system config, not just command-scope entries.
+        # GIT_CONFIG_COUNT=0 alone leaves url.<base>.insteadOf in the operator's
+        # ~/.gitconfig free to redirect the clone and the push at the moment it
+        # is least examined - and HOME was still being inherited.
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
         "GIT_CONFIG_COUNT": "0",
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_ALLOW_PROTOCOL": "ssh:https:file",
@@ -70,8 +76,26 @@ def git(*args: str, cwd: Path) -> str:
     return result.stdout
 
 
-def clone(into: Path) -> Path:
-    remote = os.environ.get("AC_REMOTE", DEFAULT_REMOTE)
+def expected_remote() -> str:
+    """The repository this adapter is allowed to mutate.
+
+    The override exists so tests can drive a local bare repository. It is NOT
+    production authority: --expect-repository is compared against it, so a
+    substituted remote cannot be mutated under the graph's label.
+    """
+    return os.environ.get("AC_REMOTE", 'git@github.com:awebai/ac.git')
+
+
+def require_expected(expected: str | None) -> str:
+    remote = expected_remote()
+    if expected and expected != remote:
+        raise SystemExit(
+            f"refusing to act on {remote}: the release expects {expected}"
+        )
+    return remote
+
+
+def clone(into: Path, remote: str) -> Path:
     checkout = into / "ac"
     git("clone", "--depth", "1", remote, str(checkout), cwd=into)
     return checkout
@@ -100,6 +124,12 @@ def read_pins(checkout: Path) -> dict[str, str]:
 def apply_updates(checkout: Path, updates: dict[str, str]) -> list[str]:
     touched = []
     if "server" in updates:
+        raise SystemExit(
+            "ac-pin cannot yet update AC's release-pin through AC's real "
+            "contract: release-pin.toml carries version and git_ref beside "
+            "git_sha, and AC's release-model check requires them to agree. "
+            "Moving git_sha alone produces a pin AC refuses. See aweb-abbe.39."
+        )
         commit = updates["server"]
         if not re.fullmatch(r"[0-9a-f]{40}", commit):
             raise SystemExit(
@@ -121,6 +151,20 @@ def apply_updates(checkout: Path, updates: dict[str, str]) -> list[str]:
         touched.append(PIN_FILE)
 
     if "awid-pypi" in updates:
+        # AC's uv.lock pins a version AND the sdist/wheel URLs and hashes for
+        # that exact version, and release-pin.toml carries version and git_ref
+        # beside git_sha. Rewriting one field each leaves AC in a state its own
+        # release-model check rejects - a pin that says 0.5.15 while still
+        # holding 0.5.12 artifact hashes. Producing that is worse than producing
+        # nothing, so this refuses until it updates AC through AC's real
+        # contract (exact lock regeneration and every pin identity field).
+        raise SystemExit(
+            "ac-pin cannot yet update AC's lock and pin through AC's real "
+            "contract: backend/uv.lock also carries this version's sdist/wheel "
+            "URLs and hashes, and release-pin.toml carries version and git_ref "
+            "beside git_sha. Writing one field each produces a pin AC's "
+            "release-model check refuses. See aweb-abbe.39."
+        )
         version = updates["awid-pypi"]
         path = checkout / LOCK_FILE
         if not path.exists():
@@ -155,16 +199,18 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=("intent", "apply", "read"))
     parser.add_argument("--component", required=True)
+    parser.add_argument("--expect-repository")
     parser.add_argument("--updates")
     args = parser.parse_args(argv)
     updates = json.loads(args.updates) if args.updates else {}
+    remote = require_expected(args.expect_repository)
 
     if args.operation == "intent":
         print(json.dumps({"advertised": updates}))
         return 0
 
     with tempfile.TemporaryDirectory() as tmp:
-        checkout = clone(Path(tmp))
+        checkout = clone(Path(tmp), remote)
         if args.operation == "apply":
             apply_updates(checkout, updates)
             print(json.dumps({"applied": updates}))

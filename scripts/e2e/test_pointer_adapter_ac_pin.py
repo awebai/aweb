@@ -80,28 +80,40 @@ class AcPinAdapterTests(unittest.TestCase):
             {"server": OLD_SHA, "awid-pypi": "0.5.14"},
         )
 
-    def test_apply_moves_the_server_commit_pin(self):
-        self.run_adapter("apply", {"server": NEW_SHA})
-        self.assertEqual(self.run_adapter("read")["advertised"]["server"], NEW_SHA)
-
-    def test_apply_moves_the_awid_lock_version(self):
-        self.run_adapter("apply", {"awid-pypi": "0.5.15"})
-        after = self.run_adapter("read")["advertised"]
-        self.assertEqual(after["awid-pypi"], "0.5.15")
-        self.assertEqual(after["server"], OLD_SHA, "untouched pins stay put")
-
-    def test_both_pins_move_together(self):
-        self.run_adapter("apply", {"server": NEW_SHA, "awid-pypi": "0.5.15"})
+    def test_server_pin_update_refuses_until_it_honours_ac_contract(self):
+        """AC's release-pin.toml carries version and git_ref beside git_sha, and
+        AC's own release-model check requires them to agree. Moving git_sha
+        alone produces a pin AC refuses - a state worse than no update, because
+        it looks applied. See aweb-abbe.39."""
+        stderr = self.run_adapter("apply", {"server": NEW_SHA}, expect_failure=True)
+        self.assertIn("release-pin", stderr)
         self.assertEqual(
-            self.run_adapter("read")["advertised"],
-            {"server": NEW_SHA, "awid-pypi": "0.5.15"},
+            self.run_adapter("read")["advertised"]["server"], OLD_SHA,
+            "a refusal must leave the pin untouched",
         )
 
-    def test_a_version_is_refused_for_the_commit_pin(self):
-        """The aweb pin holds a commit. Writing a version there would put a
-        value in the field that the field cannot mean."""
+    def test_awid_lock_update_refuses_until_it_honours_ac_contract(self):
+        """backend/uv.lock pins the version AND that version's sdist/wheel URLs
+        and hashes. Rewriting the version line alone yields a lock claiming
+        0.5.15 while holding 0.5.12 artifact hashes."""
+        stderr = self.run_adapter("apply", {"awid-pypi": "0.5.15"}, expect_failure=True)
+        self.assertIn("uv.lock", stderr)
+        self.assertEqual(
+            self.run_adapter("read")["advertised"]["awid-pypi"], "0.5.14",
+            "a refusal must leave the lock untouched",
+        )
+
+    def test_the_commit_pin_never_accepts_a_version(self):
+        """The aweb pin holds a commit; a version there is a value the field
+        cannot mean. Refused today by the AC-contract guard, and the shape check
+        behind it must survive that guard's removal - so this asserts a refusal,
+        not which refusal."""
         stderr = self.run_adapter("apply", {"server": "1.26.36"}, expect_failure=True)
-        self.assertIn("holds a commit", stderr)
+        self.assertTrue(stderr.strip(), "a version for the commit pin must refuse")
+        self.assertEqual(
+            self.run_adapter("read")["advertised"]["server"], OLD_SHA,
+            "a refusal must leave the pin untouched",
+        )
 
     def test_the_adapter_is_executable(self):
         """The driver execs this path. It writes aweb-cloud's production pins,
@@ -112,12 +124,6 @@ class AcPinAdapterTests(unittest.TestCase):
     def test_an_unknown_component_is_refused(self):
         stderr = self.run_adapter("apply", {"channel": "1.7.4"}, expect_failure=True)
         self.assertIn("channel", stderr)
-
-    def test_apply_is_idempotent(self):
-        self.run_adapter("apply", {"server": NEW_SHA})
-        self.run_adapter("apply", {"server": NEW_SHA})
-        self.assertEqual(self.run_adapter("read")["advertised"]["server"], NEW_SHA)
-
 
 if __name__ == "__main__":
     unittest.main()

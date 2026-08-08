@@ -28,8 +28,35 @@ make release-run AUTHORITY=local-runnerless \
 ```
 
 Append `EXTERNAL_CONTEXT='<repo>=/absolute/checkout'` to planning when the
-graph names an external pin. Add `DEFER_G5=1` only when that same authorization
-accepts deferring runtime compatibility measurement. Use `RESUME=1
+graph names an external pin.
+
+`DEFER_G5=1` is **not** covered by the runnerless risk authorization. Accepting a
+runner outage and accepting unmeasured runtime support are different judgments;
+deferral needs its own record, on every authority:
+
+```
+G5_AUTHORIZATION='who=<w>,when=<t>,source=<40hex>,plan=<64hex>,edges=<64hex>[+<64hex>],risk=<text>'
+```
+
+Take the edge ids verbatim from `release-plan`'s `deferrable_runtime_contracts`.
+They are content hashes, not display strings, and an authorization naming the
+wrong edge is refused.
+
+Scope a release with `ONLY=<component>`, and supply a `POINTER_ADAPTER` for every
+forced pointer the plan moves — a channel or skills release moves
+`marketplace-pointer` and cannot execute without it:
+
+```
+make release-plan AUTHORITY=github-workflow-artifacts ONLY=channel
+make release-run AUTHORITY=github-workflow-artifacts ONLY-scoped PLAN_ID/PLAN_ARTIFACT_ID \
+  STAGE_ARTIFACT='component=channel,ref=...,source=...,digest=...' \
+  POINTER_ADAPTER='marketplace-pointer=$PWD/scripts/pointer-adapter-marketplace-pointer.py' \
+  DEFER_G5=1 G5_AUTHORIZATION='...'
+```
+
+No `DELIVERY_PROOF` at publish: restart evidence cannot exist before the version
+does, so the receipt records the obligation as OUTSTANDING and it is discharged
+afterwards. Use `RESUME=1
 MANIFEST_ID=<id>` only to resume an interrupted release-run from its staged
 manifest. A receipt's `deferred-hosting:*` / `tag-and-release` record is a
 separate explicitly authorized continuation; release-run resume does not

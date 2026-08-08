@@ -42,6 +42,12 @@ def git_env() -> dict:
     would otherwise redirect a push at the moment it is least examined."""
     return {
         "PATH": "/usr/bin:/bin",
+        # Disable global AND system config, not just command-scope entries.
+        # GIT_CONFIG_COUNT=0 alone leaves url.<base>.insteadOf in the operator's
+        # ~/.gitconfig free to redirect the clone and the push at the moment it
+        # is least examined - and HOME was still being inherited.
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_SYSTEM": "/dev/null",
         "GIT_CONFIG_COUNT": "0",
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_ALLOW_PROTOCOL": "ssh:https:file",
@@ -74,8 +80,26 @@ def package_for_component() -> dict[str, str]:
     return mapping
 
 
-def clone(into: Path) -> Path:
-    remote = os.environ.get("MARKETPLACE_REMOTE", DEFAULT_REMOTE)
+def expected_remote() -> str:
+    """The repository this adapter is allowed to mutate.
+
+    The override exists so tests can drive a local bare repository. It is NOT
+    production authority: --expect-repository is compared against it, so a
+    substituted remote cannot be mutated under the graph's label.
+    """
+    return os.environ.get("MARKETPLACE_REMOTE", 'git@github.com:awebai/claude-plugins.git')
+
+
+def require_expected(expected: str | None) -> str:
+    remote = expected_remote()
+    if expected and expected != remote:
+        raise SystemExit(
+            f"refusing to act on {remote}: the release expects {expected}"
+        )
+    return remote
+
+
+def clone(into: Path, remote: str) -> Path:
     checkout = into / "claude-plugins"
     git("clone", "--depth", "1", remote, str(checkout), cwd=into)
     return checkout
@@ -126,9 +150,11 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=("intent", "apply", "read"))
     parser.add_argument("--component", required=True)
+    parser.add_argument("--expect-repository")
     parser.add_argument("--updates")
     args = parser.parse_args(argv)
     updates = json.loads(args.updates) if args.updates else {}
+    remote = require_expected(args.expect_repository)
 
     if args.operation == "intent":
         # No network: the intent is what the plan asked for, and the driver
@@ -137,7 +163,7 @@ def main(argv=None) -> int:
         return 0
 
     with tempfile.TemporaryDirectory() as tmp:
-        checkout = clone(Path(tmp))
+        checkout = clone(Path(tmp), remote)
         if args.operation == "apply":
             apply_updates(checkout, updates)
             print(json.dumps({"applied": updates}))

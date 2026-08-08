@@ -1308,6 +1308,12 @@ def seal_receipt(
             # A delivery node says one of two things and never neither: here is
             # the evidence, or delivery is still owed. Silence would let a
             # published-not-delivered release read as complete.
+            if entry.delivery_proof and entry.delivery_outstanding:
+                raise ReceiptError(
+                    f"{node.component}: delivery is DELIVERED or OUTSTANDING, "
+                    "never both; a receipt claiming evidence and a debt for the "
+                    "same obligation states two contradictory things"
+                )
             if entry.delivery_proof:
                 validate_delivery_proof(
                     entry.delivery_proof, obligation, node.component
@@ -1475,6 +1481,11 @@ def validate_final_receipt(
             # published-not-yet-delivered receipt unverifiable, unresumable and
             # unrestorable - the receipt was right and every later reader
             # refused it.
+            if entry.delivery_proof and entry.delivery_outstanding:
+                raise ReceiptError(
+                    f"{node.component}: final receipt claims both delivery "
+                    "evidence and an outstanding debt for the same obligation"
+                )
             if entry.delivery_proof:
                 validate_delivery_proof(entry.delivery_proof, obligation, node.component)
             elif entry.delivery_outstanding != obligation:
@@ -9294,6 +9305,7 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                 "observers for published/pointer/delivery state; none configured"
             )
             return 1
+        outstanding: list[str] = []
         for node in frozen.plan.moving:
             component = frozen_components[node.component]
             entry = receipt.entries[node.component]
@@ -9399,6 +9411,15 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     )
                     return 1
             if manifest_entry.get("delivery_obligation"):
+                # An OUTSTANDING receipt has no proof to validate. Calling the
+                # validator unconditionally raised on None, so the debt state
+                # never survived this reader and never reached the branch below
+                # that exists to handle it.
+                if entry.delivery_outstanding == manifest_entry[
+                    "delivery_obligation"
+                ] and entry.delivery_proof is None:
+                    outstanding.append(node.component)
+                    continue
                 try:
                     validate_delivery_proof(
                         entry.delivery_proof,
@@ -9443,11 +9464,22 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                         "evidence identity does not equal the receipt's proof"
                     )
                     return 1
-        print(
+        # A generic MATCH could not distinguish published-and-delivered from
+        # published-but-still-owed, which is the whole point of recording the
+        # debt. Say which.
+        verdict = (
             "MATCH: receipt is anchored, bound to its frozen plan and staged "
             "manifest, entry-identical to the manifest, structurally approved, "
             "and equal to authoritative lane observation"
         )
+        if outstanding:
+            verdict += (
+                "\nOUTSTANDING: delivery is not proven for "
+                + ", ".join(sorted(outstanding))
+                + "; publication is not adoption and this receipt does not "
+                "claim it"
+            )
+        print(verdict)
         return 0
     return 2
 
