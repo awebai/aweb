@@ -310,7 +310,7 @@ test-channel-name-live-contract:
 # target exercises Channel against THAT. Measuring against a PUBLISHED server is
 # the skew harness's job, with the exact artifacts it resolves itself.
 test-channel-integration:
-	npm --prefix channel run test:integration
+	cd channel && npm run test:integration
 
 # channel-core holds the identity, trust, pinstore and signature-decode logic
 # that channel and pi-extension are both built from, so its suite gates them.
