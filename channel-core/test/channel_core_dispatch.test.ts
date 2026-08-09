@@ -121,7 +121,14 @@ describe("channel-core dispatchAgentEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     async function* events(): AsyncGenerator<AgentEvent> {
-      yield { type: "mail_message", message_id: "mail-trace-1" };
+      yield {
+        type: "mail_message",
+        message_id: "mail-trace-1",
+        subject: "SECRET-FRAME-SUBJECT",
+        text: "SECRET-FRAME-TEXT",
+        from_alias: "SECRET-FRAME-SENDER",
+        title: "SECRET-FRAME-TITLE",
+      };
       yield { type: "mail_message", message_id: "mail-trace-2" };
       yield { type: "control_interrupt", signal_id: "control-trace" };
     }
@@ -161,13 +168,15 @@ describe("channel-core dispatchAgentEvent", () => {
       stage: "notification_accepted", message_id: "mail-trace-1",
     }));
     expect(JSON.stringify(traces)).not.toContain("SECRET-");
+    const allowedKeys = new Set([
+      "component", "conversation_id", "event_type", "lane", "message_id",
+      "session_id", "stage", "ts",
+    ]);
     for (const trace of traces) {
-      expect(Object.keys(trace).sort()).toEqual(expect.arrayContaining([
+      expect(Object.keys(trace).filter((key) => !allowedKeys.has(key))).toEqual([]);
+      expect(Object.keys(trace)).toEqual(expect.arrayContaining([
         "component", "event_type", "stage", "ts",
       ]));
-      for (const forbidden of ["body", "content", "subject"]) {
-        expect(Object.keys(trace)).not.toContain(forbidden);
-      }
     }
 
     finishFirstMail?.();
