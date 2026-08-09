@@ -769,15 +769,28 @@ async function normalizeAndPersistMessageTrust(
   event: AgentEvent,
   lane: string,
 ) {
+  const trustAddress = senderTrustAddress(fromAlias, fromAddress);
+  const resolveTrustMetadata = options.trust.resolveTrustMetadata;
+  const resolvedMetadata = typeof resolveTrustMetadata === "function"
+    ? await resolveTrustMetadata.call(
+      options.trust,
+      msg.verification_status,
+      trustAddress,
+      msg.from_stable_id,
+      toDID,
+      toStableID,
+    )
+    : undefined;
   return options.pinStore.runExclusive(async () => {
     emitTrace(options, "lock_acquired", event, lane);
     const trust = await normalizeMessageTrust(
       options,
       msg,
-      fromAlias,
-      fromAddress,
+      trustAddress,
+      msg.signed_from || fromAddress || fromAlias || "",
       toDID,
       toStableID,
+      resolvedMetadata,
     );
     if (trust.stored || options.pinStore.hasUndurableChanges()) {
       emitTrace(options, "pin_commit_started", event, lane);
@@ -814,23 +827,28 @@ async function persistDeliveryMark(
 async function normalizeMessageTrust(
   options: Pick<ChannelLoopOptions, "trust" | "pinStore">,
   msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from">,
-  fromAlias: string | undefined,
-  fromAddress: string | undefined,
+  trustAddress: string,
+  verificationAddress: string,
   toDID: string | undefined,
   toStableID: string | undefined,
+  resolvedMetadata: Awaited<ReturnType<SenderTrustManager["resolveTrustMetadata"]>>,
 ) {
-  return options.trust.normalizeTrust(
+  const args = [
     options.pinStore,
     msg.verification_status,
-    senderTrustAddress(fromAlias, fromAddress),
+    trustAddress,
     msg.from_did,
     msg.from_stable_id,
     toDID,
     toStableID,
     msg.rotation_announcement,
     msg.replacement_announcement,
-    msg.signed_from || fromAddress || fromAlias || "",
-  );
+    verificationAddress,
+  ] as const;
+  if (resolvedMetadata === undefined) {
+    return options.trust.normalizeTrust(...args);
+  }
+  return options.trust.normalizeTrust(...args, resolvedMetadata);
 }
 
 async function resolveMailForDelivery(

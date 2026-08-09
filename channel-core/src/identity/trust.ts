@@ -62,6 +62,11 @@ interface AgentMeta {
   resolutionError?: "not_found" | "unavailable";
 }
 
+interface ResolvedTrustMetadata {
+  trustAddress: string;
+  meta: AgentMeta;
+}
+
 interface AgentMetaCacheEntry {
   meta: AgentMeta;
   expiresAt: number;
@@ -93,6 +98,7 @@ export function normalizeIdentityScope(
 
 export class SenderTrustManager {
   private readonly metaCache = new Map<string, AgentMetaCacheEntry>();
+  private readonly preparedMetadata = new WeakSet<ResolvedTrustMetadata>();
   private teamRosterCache: TeamRosterCacheEntry | undefined;
   private teamRosterRequest: Promise<LocalAgentsResponse> | undefined;
 
@@ -105,6 +111,35 @@ export class SenderTrustManager {
     private readonly now: () => number = () => Date.now(),
   ) {}
 
+  async resolveTrustMetadata(
+    verificationStatus: VerificationStatus | undefined,
+    rawAddress: string,
+    fromStableID: string | undefined,
+    toDID: string | undefined,
+    toStableID: string | undefined,
+  ): Promise<ResolvedTrustMetadata | undefined> {
+    const status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
+    const trimmedAddress = rawAddress.trim();
+    if (!status || !trimmedAddress) return undefined;
+    const rosterAlias = this.teamRosterAliasReference(trimmedAddress);
+    if (
+      status !== "verified"
+      && status !== "verified_legacy"
+      && status !== "verified_custodial"
+      && rosterAlias !== undefined
+      && !fromStableID
+    ) {
+      return undefined;
+    }
+    const trustAddress = this.canonicalTrustAddress(trimmedAddress);
+    const resolved = {
+      trustAddress,
+      meta: await this.resolveAgentMeta(trimmedAddress),
+    };
+    this.preparedMetadata.add(resolved);
+    return resolved;
+  }
+
   async normalizeTrust(
     store: PinStore,
     verificationStatus: VerificationStatus | undefined,
@@ -116,6 +151,7 @@ export class SenderTrustManager {
     rotationAnnouncement?: RotationAnnouncement,
     replacementAnnouncement?: ReplacementAnnouncement,
     verificationAddress?: string,
+    resolvedMetadata?: ResolvedTrustMetadata,
   ): Promise<TrustResult> {
     let status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     const acceptedInput = verificationStatus === "verified"
@@ -127,6 +163,10 @@ export class SenderTrustManager {
     }
 
     const trustAddress = this.canonicalTrustAddress(rawAddress);
+    let resolvedMeta: AgentMeta | undefined;
+    if (resolvedMetadata && this.preparedMetadata.delete(resolvedMetadata)) {
+      if (resolvedMetadata.trustAddress === trustAddress) resolvedMeta = resolvedMetadata.meta;
+    }
     if (
       status !== "verified"
       && status !== "verified_legacy"
@@ -144,7 +184,7 @@ export class SenderTrustManager {
       && this.teamRosterAliasReference(rawAddress.trim()) !== undefined
       && fromDID
     ) {
-      const fresh = await this.resolveAgentMeta(rawAddress);
+      const fresh = resolvedMeta ?? await this.resolveAgentMeta(rawAddress);
       if (!fresh.resolved) {
         return {
           status: fresh.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
@@ -159,7 +199,7 @@ export class SenderTrustManager {
       }
       meta = fresh;
     }
-    meta ??= await this.resolveAgentMeta(rawAddress);
+    meta ??= resolvedMeta ?? await this.resolveAgentMeta(rawAddress);
     const registryCheck = await this.checkStableIdentityRegistry(
       store,
       status,

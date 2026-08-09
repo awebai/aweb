@@ -241,6 +241,67 @@ describe("channel-core dispatchAgentEvent", () => {
     }));
   });
 
+  test("resolves sender metadata before entering the trust critical section", async () => {
+    let finishResolution!: (value: undefined) => void;
+    const resolutionPending = new Promise<undefined>((resolve) => {
+      finishResolution = resolve;
+    });
+    const resolvingTrust = {
+      resolveTrustMetadata: vi.fn(() => resolutionPending),
+      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    } as unknown as SenderTrustManager;
+    const pinStore = new PinStore();
+    const runExclusive = vi.spyOn(pinStore, "runExclusive");
+    const traces: Array<Record<string, unknown>> = [];
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-resolve-before-lock",
+          conversation_id: "conversation-resolve-before-lock",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "world",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const dispatching = dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore,
+        trust: resolvingTrust,
+        self,
+        onAwakening: vi.fn(),
+        onTrace: (entry) => traces.push(entry),
+      },
+      new Set(),
+      { type: "mail_message", message_id: "mail-resolve-before-lock" },
+    );
+
+    await vi.waitFor(() => expect(resolvingTrust.resolveTrustMetadata).toHaveBeenCalledTimes(1));
+    expect(runExclusive).not.toHaveBeenCalled();
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "trust_started", message_id: "mail-resolve-before-lock",
+    }));
+    expect(traces).not.toContainEqual(expect.objectContaining({
+      stage: "lock_acquired", message_id: "mail-resolve-before-lock",
+    }));
+
+    finishResolution(undefined);
+    await dispatching;
+    expect(runExclusive).toHaveBeenCalledTimes(1);
+    expect(resolvingTrust.normalizeTrust).toHaveBeenCalledTimes(1);
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "lock_acquired", message_id: "mail-resolve-before-lock",
+    }));
+  });
+
   test("acks mail after channel delivery succeeds", async () => {
     const onAwakening = vi.fn();
     const traces: Array<Record<string, unknown>> = [];
