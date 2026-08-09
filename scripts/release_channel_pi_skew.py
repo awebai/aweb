@@ -2024,6 +2024,7 @@ def _atomic_write_text(path: Path, payload: str) -> None:
         )
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     linked_identity = None
+    witness = None
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
@@ -2032,6 +2033,15 @@ def _atomic_write_text(path: Path, payload: str) -> None:
         # Captured BEFORE the temp entry goes away: it is how rollback proves the
         # final link is the one THIS call created rather than a racer's file.
         temp_stat = os.stat(tmp)
+        # An inode number identifies our link only while that inode stays
+        # allocated. After the temp is unlinked the final is its last reference,
+        # so a racer that replaces the path frees the inode and the very next
+        # create can be handed the same number back -- on ext4 it is handed back
+        # every time. Rollback would then read a racer's file as its own and
+        # delete it. This descriptor holds the inode allocated for the whole
+        # post-link window, so the number cannot be recycled underneath the
+        # comparison; it is the identity, not merely a copy of it.
+        witness = os.open(tmp, os.O_RDONLY)
         try:
             os.link(tmp, path)
         except FileExistsError as exc:
@@ -2057,6 +2067,10 @@ def _atomic_write_text(path: Path, payload: str) -> None:
                 "so the write was rolled back"
             ) from exc
     finally:
+        # Released only after the rollback boundary above has run to completion,
+        # since that is the code whose comparison the pin protects.
+        if witness is not None:
+            os.close(witness)
         # Conditional on never having committed. Once a final link exists the
         # post-link path owns cleanup and fails closed on its own, so a
         # redundant unlink here can only mask that outcome -- and an exception
