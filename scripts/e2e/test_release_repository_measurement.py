@@ -130,7 +130,12 @@ class RepositoryMeasurementTests(unittest.TestCase):
     def test_current_graph_make_release_plan_prints_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = subprocess.run(
-                ["make", "release-plan", f"STORE_ROOT={tmp}"],
+                # --no-print-directory because this parses stdout as JSON and a
+                # child make inherits -w from a recursive parent, prepending
+                # "make: Entering directory ..." to stdout. Run directly there
+                # is no parent, so the corruption appears only inside the gate,
+                # where make reaches this target four levels deep.
+                ["make", "--no-print-directory", "release-plan", f"STORE_ROOT={tmp}"],
                 cwd=rd.REPO_ROOT,
                 capture_output=True,
                 text=True,
