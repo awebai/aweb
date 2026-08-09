@@ -11,6 +11,8 @@ ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
 const ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENT_META_CACHE_TTL_MS = 60 * 60 * 1000;
+const TEAM_ROSTER_CACHE_TTL_MS = 5_000;
+const TEAM_ROSTER_FAILURE_BACKOFF_MS = 1_000;
 
 export interface RotationAnnouncement {
   old_did: string;
@@ -65,6 +67,10 @@ interface AgentMetaCacheEntry {
   expiresAt: number;
 }
 
+type TeamRosterCacheEntry =
+  | { roster: LocalAgentsResponse; expiresAt: number }
+  | { error: unknown; expiresAt: number };
+
 export interface TrustResult {
   status: VerificationStatus | undefined;
   stored: boolean;
@@ -87,6 +93,8 @@ export function normalizeIdentityScope(
 
 export class SenderTrustManager {
   private readonly metaCache = new Map<string, AgentMetaCacheEntry>();
+  private teamRosterCache: TeamRosterCacheEntry | undefined;
+  private teamRosterRequest: Promise<LocalAgentsResponse> | undefined;
 
   constructor(
     private readonly client: APIClient,
@@ -605,11 +613,7 @@ export class SenderTrustManager {
       throw new Error("team roster resolution requires team-certificate authentication");
     }
 
-    const path = "/v1/agents";
-    const roster = await this.client.get<LocalAgentsResponse>(path);
-    if ((roster.team_id || "").trim() !== this.teamID) {
-      throw new Error("team roster response does not match the authenticated team");
-    }
+    const roster = await this.resolveAuthenticatedTeamRoster();
     const response = (roster.agents || []).find((agent) => (agent.alias || "").trim() === localAlias);
     if (!response) {
       const qualifiedTeamPrefix = `${this.teamID.toLowerCase()}/`;
@@ -631,6 +635,41 @@ export class SenderTrustManager {
       custody: "self",
       identityScope: normalizeIdentityScope(response.identity_scope, response.lifetime, "local"),
     };
+  }
+
+  private async resolveAuthenticatedTeamRoster(): Promise<LocalAgentsResponse> {
+    const cached = this.teamRosterCache;
+    if (cached && this.now() <= cached.expiresAt) {
+      if ("roster" in cached) return cached.roster;
+      throw cached.error;
+    }
+    if (this.teamRosterRequest) return this.teamRosterRequest;
+
+    const request = this.client.get<LocalAgentsResponse>("/v1/agents").then((roster) => {
+      if ((roster.team_id || "").trim() !== this.teamID) {
+        throw new Error("team roster response does not match the authenticated team");
+      }
+      return roster;
+    });
+    this.teamRosterRequest = request;
+    try {
+      const roster = await request;
+      this.teamRosterCache = {
+        roster,
+        expiresAt: this.now() + TEAM_ROSTER_CACHE_TTL_MS,
+      };
+      return roster;
+    } catch (error) {
+      // A shared failure needs a short quiet interval too. Starting it when the
+      // request settles ensures a full client timeout cannot consume the backoff.
+      this.teamRosterCache = {
+        error,
+        expiresAt: this.now() + TEAM_ROSTER_FAILURE_BACKOFF_MS,
+      };
+      throw error;
+    } finally {
+      if (this.teamRosterRequest === request) this.teamRosterRequest = undefined;
+    }
   }
 }
 
