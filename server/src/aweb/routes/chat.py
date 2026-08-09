@@ -2710,6 +2710,7 @@ class SessionListResponse(BaseModel):
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
     request: Request,
+    limit: int = Query(200, ge=1, le=500),
     db=Depends(get_db),
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
@@ -2739,13 +2740,16 @@ async def list_sessions(
               ON m.session_id = s.session_id
             GROUP BY s.session_id, s.team_id, s.created_at
             ORDER BY last_activity DESC, s.created_at DESC
+            LIMIT $2::int
             """,
             participant_did,
+            limit,
         )
         for row in rows:
             rows_by_session.setdefault(str(row["session_id"]), row)
     rows = list(rows_by_session.values())
     rows.sort(key=lambda row: (row["last_activity"], row["created_at"]), reverse=True)
+    rows = rows[:limit]
 
     session_ids = [row["session_id"] for row in rows]
     participant_rows: list[dict[str, Any]] = []
