@@ -61,7 +61,13 @@ class MarketplaceAdapterTests(unittest.TestCase):
         git("-c", "user.email=t@t", "-c", "user.name=t", "add", ".", cwd=seed)
         git("-c", "user.email=t@t", "-c", "user.name=t",
             "commit", "-qm", "seed", cwd=seed)
-        git("init", "-q", "--bare", str(self.remote), cwd=root)
+        # -b main here as well as on the seed: a bare repository takes its HEAD
+        # from init.defaultBranch, so leaving it implicit builds a remote whose
+        # HEAD names a branch that was never pushed. Cloning that checks out
+        # nothing, and the adapter reads the pointer from an empty tree. It
+        # agrees with the seed only on a machine configured for main, which is
+        # why this passed locally and failed on every runner.
+        git("init", "-q", "--bare", "-b", "main", str(self.remote), cwd=root)
         git("remote", "add", "origin", str(self.remote), cwd=seed)
         git("push", "-q", "origin", "main", cwd=seed)
         self.addCleanup(self.tmp.cleanup)
@@ -402,7 +408,13 @@ class PointerCrashResumeTests(unittest.TestCase):
         git("-c", "user.email=t@t", "-c", "user.name=t", "add", ".", cwd=seed)
         git("-c", "user.email=t@t", "-c", "user.name=t",
             "commit", "-qm", "seed", cwd=seed)
-        git("init", "-q", "--bare", str(self.remote), cwd=root)
+        # -b main here as well as on the seed: a bare repository takes its HEAD
+        # from init.defaultBranch, so leaving it implicit builds a remote whose
+        # HEAD names a branch that was never pushed. Cloning that checks out
+        # nothing, and the adapter reads the pointer from an empty tree. It
+        # agrees with the seed only on a machine configured for main, which is
+        # why this passed locally and failed on every runner.
+        git("init", "-q", "--bare", "-b", "main", str(self.remote), cwd=root)
         git("remote", "add", "origin", str(self.remote), cwd=seed)
         git("push", "-q", "origin", "main", cwd=seed)
         self.addCleanup(self.tmp.cleanup)
