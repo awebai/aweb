@@ -31,7 +31,7 @@ run_self_test "AWID public site document mirrors" \
   "self-test passed: clean mirrors pass; stale copies and dead publication-context links fail" \
   bash scripts/test-awid-site-doc-freshness.sh
 run_self_test "TypeScript dist" \
-  "self-test passed: clean TypeScript builds pass and source-level security reverts fail" \
+  "self-test passed: clean TypeScript builds pass and guarded source regressions fail" \
   bash scripts/test-typescript-dist-freshness.sh
 
 echo "freshness negative fixtures passed in both directions"
