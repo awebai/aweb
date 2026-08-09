@@ -39,5 +39,6 @@ export {
   type ChannelAwakeningKind,
   type ChannelDeliveryIntent,
   type ChannelLoopOptions,
+  type ChannelTraceEntry,
   type SelfIdentity,
 } from "./channel.js";

@@ -47,6 +47,17 @@ export interface ChannelAwakening {
   deliveryIntent: ChannelDeliveryIntent;
 }
 
+export interface ChannelTraceEntry {
+  ts: string;
+  component: "aweb-channel-core";
+  stage: string;
+  event_type: string;
+  lane?: string;
+  message_id?: string;
+  conversation_id?: string;
+  session_id?: string;
+}
+
 export interface ChannelLoopOptions {
   client: APIClient;
   pinStore: PinStore;
@@ -67,6 +78,7 @@ export interface ChannelLoopOptions {
   pinStoreWriter?: PinStoreWriter;
   log?: (message: string) => void;
   onStreamState?: (state: EventStreamState) => void;
+  onTrace?: (entry: ChannelTraceEntry) => void;
 }
 
 export async function loadPinStore(path: string = DEFAULT_PIN_STORE_PATH): Promise<PinStore> {
@@ -342,6 +354,38 @@ export function createChannelClient(config: {
   return client;
 }
 
+function emitTrace(
+  options: Pick<ChannelLoopOptions, "onTrace">,
+  stage: string,
+  event: AgentEvent,
+  lane?: string,
+): void {
+  if (!options.onTrace) return;
+  const entry: ChannelTraceEntry = {
+    ts: new Date().toISOString(),
+    component: "aweb-channel-core",
+    stage,
+    event_type: event.type,
+  };
+  if (lane) entry.lane = lane;
+  if (event.message_id) entry.message_id = event.message_id;
+  if (event.conversation_id) entry.conversation_id = event.conversation_id;
+  if (event.session_id) entry.session_id = event.session_id;
+  try {
+    options.onTrace(entry);
+  } catch {
+    // Diagnostics must never change delivery behavior.
+  }
+}
+
+function eventForMessage(event: AgentEvent, messageID: string, conversationID?: string): AgentEvent {
+  return {
+    ...event,
+    message_id: messageID,
+    conversation_id: conversationID || event.conversation_id,
+  };
+}
+
 export async function startChannelLoop(options: ChannelLoopOptions & { teamID: string }): Promise<void> {
   const dispatched = new Set<string>();
   // Per-agent delivery store: one global file shared by every agent on the host
@@ -367,7 +411,12 @@ export async function startChannelLoop(options: ChannelLoopOptions & { teamID: s
     // recording dropped messages entirely. See aweb-aayl.
     { ...options, deliveryStore, undeliveredLog, localDecrypt },
     dispatched,
-    streamAgentEvents(options.client, options.signal, options.onStreamState),
+    streamAgentEvents(
+      options.client,
+      options.signal,
+      options.onStreamState,
+      (event) => emitTrace(options, "frame_parsed", event, eventDispatchLane(event)),
+    ),
     options.log || (() => {}),
   );
 }
@@ -383,13 +432,17 @@ export async function consumeAgentEvents(
 
   for await (const event of events) {
     const lane = eventDispatchLane(event);
+    emitTrace(options, "event_enqueued", event, lane);
     const previous = lane ? lanes.get(lane) : undefined;
     const job = (previous || Promise.resolve())
       .then(async () => {
+        emitTrace(options, "lane_job_started", event, lane);
         await dispatchAgentEvent(options, dispatched, event, log);
         pruneDispatched(dispatched);
+        emitTrace(options, "lane_job_completed", event, lane);
       })
       .catch((error) => {
+        emitTrace(options, "lane_job_failed", event, lane);
         const detail = error instanceof Error ? error.message : String(error);
         log(`aweb: could not process an incoming event: ${detail}; it remains pending`);
       });
@@ -509,7 +562,7 @@ async function dispatchAppEvent(
     deliveryIntent: event.delivery_intent || "ambient",
     meta,
   });
-  await persistDeliveryMark(options.deliveryStore, dispatched, key);
+  await persistDeliveryMark(options, dispatched, key, event, eventDispatchLane(event));
 }
 
 async function dispatchMailEvent(
@@ -518,8 +571,11 @@ async function dispatchMailEvent(
   event: AgentEvent,
   log: (message: string) => void,
 ): Promise<void> {
+  emitTrace(options, "exact_fetch_started", event, "mail");
   const messages = await fetchInbox(options.client, true, MAIL_FETCH_LIMIT, event.message_id, log);
+  emitTrace(options, "exact_fetch_completed", event, "mail");
   for (const msg of messages) {
+    const messageEvent = eventForMessage(event, msg.message_id, msg.conversation_id);
     if (msg.verification_error) {
       // An audit write must never fail the delivery it observes. This message is
       // deliberately left unread and unacked, so it returns in every unread-only
@@ -545,13 +601,17 @@ async function dispatchMailEvent(
     const key = dispatchKey("mail", conversationID, msg.message_id);
     if (dispatched.has(key) || options.deliveryStore?.has(key)) {
       if (options.mailAcknowledgment !== "manual" && !msg.read_at) {
+        emitTrace(options, "ack_started", messageEvent, "mail");
         await ackMessage(options.client, msg.message_id);
+        emitTrace(options, "ack_completed", messageEvent, "mail");
       }
       continue;
     }
 
     const from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    emitTrace(options, "decrypt_started", messageEvent, "mail");
     const decrypt = await resolveMailForDelivery(options, msg);
+    emitTrace(options, "decrypt_completed", messageEvent, "mail");
     if (!decrypt.ok) {
       await options.onAwakening({
         kind: "mail",
@@ -561,6 +621,7 @@ async function dispatchMailEvent(
       });
       continue;
     }
+    emitTrace(options, "trust_started", messageEvent, "mail");
     const trust = await normalizeAndPersistMessageTrust(
       options,
       msg,
@@ -568,7 +629,10 @@ async function dispatchMailEvent(
       msg.from_address,
       msg.to_did,
       msg.to_stable_id,
+      messageEvent,
+      "mail",
     );
+    emitTrace(options, "trust_completed", messageEvent, "mail");
     msg.verification_status = trust.status as InboxMessage["verification_status"];
 
     const meta: Record<string, string> = {
@@ -582,15 +646,19 @@ async function dispatchMailEvent(
     if (msg.subject) meta.subject = msg.subject;
     if (msg.priority && msg.priority !== "normal") meta.priority = msg.priority;
 
+    emitTrace(options, "notification_started", messageEvent, "mail");
     await options.onAwakening({
       kind: "mail",
       content: msg.body,
       meta,
       deliveryIntent: "wake",
     });
-    await persistDeliveryMark(options.deliveryStore, dispatched, key);
+    emitTrace(options, "notification_accepted", messageEvent, "mail");
+    await persistDeliveryMark(options, dispatched, key, messageEvent, "mail");
     if (options.mailAcknowledgment !== "manual") {
+      emitTrace(options, "ack_started", messageEvent, "mail");
       await ackMessage(options.client, msg.message_id);
+      emitTrace(options, "ack_completed", messageEvent, "mail");
     }
   }
 }
@@ -601,11 +669,15 @@ async function dispatchChatEvent(
   event: AgentEvent,
 ): Promise<void> {
   if (!event.session_id) return;
+  const lane = eventDispatchLane(event);
+  emitTrace(options, "exact_fetch_started", event, lane);
   const messages = await fetchHistory(options.client, event.session_id, true, CHAT_FETCH_LIMIT, event.message_id);
+  emitTrace(options, "exact_fetch_completed", event, lane);
   const presentedMessageIds: string[] = [];
   for (const msg of messages) {
-    if (isSelfSender(msg.from_agent, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
     const conversationID = msg.conversation_id || event.conversation_id || event.session_id;
+    const messageEvent = eventForMessage(event, msg.message_id, conversationID);
+    if (isSelfSender(msg.from_agent, msg.from_address, msg.from_stable_id, msg.from_did, options.self)) continue;
     const key = dispatchKey("chat", conversationID, msg.message_id);
     if (dispatched.has(key) || options.deliveryStore?.has(key)) {
       presentedMessageIds.push(msg.message_id);
@@ -613,7 +685,9 @@ async function dispatchChatEvent(
     }
 
     const from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    emitTrace(options, "decrypt_started", messageEvent, lane);
     const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
+    emitTrace(options, "decrypt_completed", messageEvent, lane);
     if (!decrypt.ok) {
       await options.onAwakening({
         kind: "chat",
@@ -623,6 +697,7 @@ async function dispatchChatEvent(
       });
       continue;
     }
+    emitTrace(options, "trust_started", messageEvent, lane);
     const trust = await normalizeAndPersistMessageTrust(
       options,
       msg,
@@ -630,7 +705,10 @@ async function dispatchChatEvent(
       msg.from_address,
       msg.to_did,
       msg.to_stable_id,
+      messageEvent,
+      lane,
     );
+    emitTrace(options, "trust_completed", messageEvent, lane);
     msg.verification_status = trust.status as ChatMessage["verification_status"];
 
     const meta: Record<string, string> = {
@@ -645,17 +723,21 @@ async function dispatchChatEvent(
     if (event.sender_waiting) meta.sender_waiting = "true";
     if (msg.sender_leaving) meta.sender_leaving = "true";
 
+    emitTrace(options, "notification_started", messageEvent, lane);
     await options.onAwakening({
       kind: "chat",
       content: msg.body,
       meta,
       deliveryIntent: event.sender_waiting ? "steer" : "wake",
     });
-    await persistDeliveryMark(options.deliveryStore, dispatched, key);
+    emitTrace(options, "notification_accepted", messageEvent, lane);
+    await persistDeliveryMark(options, dispatched, key, messageEvent, lane);
     presentedMessageIds.push(msg.message_id);
   }
   if (presentedMessageIds.length > 0) {
+    emitTrace(options, "ack_started", event, lane);
     await markRead(options.client, event.session_id, presentedMessageIds);
+    emitTrace(options, "ack_completed", event, lane);
   }
 }
 
@@ -678,12 +760,14 @@ async function commitPinStore(
 }
 
 async function normalizeAndPersistMessageTrust(
-  options: Pick<ChannelLoopOptions, "trust" | "pinStore" | "pinStorePath" | "pinStoreWriter" | "workdir" | "awCommand">,
+  options: Pick<ChannelLoopOptions, "trust" | "pinStore" | "pinStorePath" | "pinStoreWriter" | "workdir" | "awCommand" | "onTrace">,
   msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from">,
   fromAlias: string | undefined,
   fromAddress: string | undefined,
   toDID: string | undefined,
   toStableID: string | undefined,
+  event: AgentEvent,
+  lane: string,
 ) {
   return options.pinStore.runExclusive(async () => {
     const trust = await normalizeMessageTrust(
@@ -695,29 +779,35 @@ async function normalizeAndPersistMessageTrust(
       toStableID,
     );
     if (trust.stored || options.pinStore.hasUndurableChanges()) {
+      emitTrace(options, "pin_commit_started", event, lane);
       await commitPinStore(options);
+      emitTrace(options, "pin_commit_completed", event, lane);
     }
     return trust;
   });
 }
 
 async function persistDeliveryMark(
-  deliveryStore: DeliveryStore | undefined,
+  options: Pick<ChannelLoopOptions, "deliveryStore" | "onTrace">,
   dispatched: Set<string>,
   key: string,
+  event: AgentEvent,
+  lane: string,
 ): Promise<void> {
-  if (deliveryStore) {
-    deliveryStore.mark(key);
+  emitTrace(options, "durable_mark_started", event, lane);
+  if (options.deliveryStore) {
+    options.deliveryStore.mark(key);
     try {
-      await deliveryStore.save();
+      await options.deliveryStore.save();
     } catch (error) {
       // A transient in-memory mark must not turn a failed durable save into an
       // acknowledgment on the next event. Leave the message pending instead.
-      deliveryStore.unmark(key);
+      options.deliveryStore.unmark(key);
       throw error;
     }
   }
   dispatched.add(key);
+  emitTrace(options, "durable_mark_completed", event, lane);
 }
 
 async function normalizeMessageTrust(

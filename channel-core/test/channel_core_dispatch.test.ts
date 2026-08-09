@@ -92,8 +92,97 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-lane-1/ack");
   });
 
+  test("traces a blocked mail lane without leaking message content", async () => {
+    let finishFirstMail: (() => void) | undefined;
+    const traces: Array<Record<string, unknown>> = [];
+    const onAwakening = vi.fn((awakening: ChannelAwakening) => {
+      if (awakening.meta.message_id === "mail-trace-1") {
+        return new Promise<void>((resolve) => { finishFirstMail = resolve; });
+      }
+      return Promise.resolve();
+    });
+    const mail = (id: string, body: string) => ({
+      message_id: id,
+      conversation_id: `conversation-${id}`,
+      from_agent_id: "agent-1",
+      from_alias: "alice",
+      from_address: "acme.com/alice",
+      to_alias: "eve",
+      subject: `subject-${id}`,
+      body,
+      priority: "normal",
+      created_at: "2025-01-01T00:00:00Z",
+    });
+    const client = {
+      get: vi.fn(async (path: string) => {
+        if (path.includes("mail-trace-1")) return { messages: [mail("mail-trace-1", "SECRET-FIRST-BODY")] };
+        return { messages: [mail("mail-trace-2", "SECRET-SECOND-BODY")] };
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    async function* events(): AsyncGenerator<AgentEvent> {
+      yield { type: "mail_message", message_id: "mail-trace-1" };
+      yield { type: "mail_message", message_id: "mail-trace-2" };
+      yield { type: "control_interrupt", signal_id: "control-trace" };
+    }
+
+    const consuming = consumeAgentEvents(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening,
+        onTrace: (entry: Record<string, unknown>) => traces.push(entry),
+      } as never,
+      new Set(),
+      events(),
+    );
+    await vi.waitFor(() => expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "control",
+    })));
+
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "event_enqueued", event_type: "mail_message", message_id: "mail-trace-2", lane: "mail",
+    }));
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "lane_job_started", message_id: "mail-trace-1", lane: "mail",
+    }));
+    expect(traces).not.toContainEqual(expect.objectContaining({
+      stage: "lane_job_started", message_id: "mail-trace-2", lane: "mail",
+    }));
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "lane_job_started", event_type: "control_interrupt",
+    }));
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "notification_started", message_id: "mail-trace-1",
+    }));
+    expect(traces).not.toContainEqual(expect.objectContaining({
+      stage: "notification_accepted", message_id: "mail-trace-1",
+    }));
+    expect(JSON.stringify(traces)).not.toContain("SECRET-");
+    for (const trace of traces) {
+      expect(Object.keys(trace).sort()).toEqual(expect.arrayContaining([
+        "component", "event_type", "stage", "ts",
+      ]));
+      for (const forbidden of ["body", "content", "subject"]) {
+        expect(Object.keys(trace)).not.toContain(forbidden);
+      }
+    }
+
+    finishFirstMail?.();
+    await consuming;
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "notification_accepted", message_id: "mail-trace-1",
+    }));
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "lane_job_started", message_id: "mail-trace-2", lane: "mail",
+    }));
+  });
+
   test("acks mail after channel delivery succeeds", async () => {
     const onAwakening = vi.fn();
+    const traces: Array<Record<string, unknown>> = [];
     const client = {
       get: vi.fn().mockResolvedValue({
         messages: [{
@@ -118,6 +207,7 @@ describe("channel-core dispatchAgentEvent", () => {
         trust,
         self,
         onAwakening,
+        onTrace: (entry) => traces.push(entry),
       },
       new Set(),
       { type: "mail_message", message_id: "mail-1" } satisfies AgentEvent,
@@ -128,6 +218,20 @@ describe("channel-core dispatchAgentEvent", () => {
       content: "world",
     }));
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-1/ack");
+    expect(traces.map((entry) => entry.stage)).toEqual([
+      "exact_fetch_started",
+      "exact_fetch_completed",
+      "decrypt_started",
+      "decrypt_completed",
+      "trust_started",
+      "trust_completed",
+      "notification_started",
+      "notification_accepted",
+      "durable_mark_started",
+      "durable_mark_completed",
+      "ack_started",
+      "ack_completed",
+    ]);
   });
 
   test("delivery-store lock failure rejects without creating an in-memory acknowledgment path", { timeout: 15_000 }, async () => {

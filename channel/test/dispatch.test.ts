@@ -6,7 +6,7 @@ import type { AgentEvent } from "../../channel-core/src/api/events.js";
 import { PinStore } from "../../channel-core/src/identity/pinstore.js";
 import { canonicalJSON, signMessage, type MessageEnvelope } from "../../channel-core/src/identity/signing.js";
 import { SenderTrustManager } from "../../channel-core/src/identity/trust.js";
-import { dispatchEvent } from "../src/index.js";
+import { createChannelTraceLogger, dispatchEvent } from "../src/index.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const vectors = JSON.parse(
@@ -86,6 +86,30 @@ async function signedInboxMailWithStableRecipient(messageID: string, selfStableI
     signed_payload: canonicalJSON(env),
   };
 }
+
+describe("createChannelTraceLogger", () => {
+  test("is opt-in and writes one structured diagnostic line", () => {
+    const lines: string[] = [];
+    expect(createChannelTraceLogger("", (line) => lines.push(line))).toBeUndefined();
+
+    const trace = createChannelTraceLogger("true", (line) => lines.push(line));
+    trace?.({
+      ts: "2026-08-09T15:05:03.738Z",
+      component: "aweb-channel-core",
+      stage: "frame_parsed",
+      event_type: "mail_message",
+      message_id: "message-1",
+    });
+
+    expect(lines).toEqual([JSON.stringify({
+      ts: "2026-08-09T15:05:03.738Z",
+      component: "aweb-channel-core",
+      stage: "frame_parsed",
+      event_type: "mail_message",
+      message_id: "message-1",
+    })]);
+  });
+});
 
 describe("dispatchEvent", () => {
   const self = {
