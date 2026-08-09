@@ -356,6 +356,9 @@ class FixtureState:
     def pin_sha(self, pin: dict) -> str | None:
         return self.pin_values.get(pin["pin_file"])
 
+    def pin_checkout(self, pin: dict) -> str:
+        return pin["checkout"]
+
     def checkout_head(self, path: str) -> str | None:
         return self.checkout_heads.get(path)
 
@@ -591,7 +594,7 @@ def check_declared_inputs(
                         f"candidate version is {candidate}"
                     )
                 continue
-            checkout = pin["checkout"]
+            checkout = state.pin_checkout(pin)
             if not state.path_exists(checkout):
                 problems.append(
                     f"{component.name}: sibling checkout {checkout} (pin file "
@@ -755,6 +758,10 @@ def _resolved_snapshot(plan: Plan, graph: Graph, state) -> dict:
             record = {"value": state.pin_sha(pin)}
             checkout = pin.get("checkout")
             if checkout and hasattr(state, "checkout_head"):
+                # Same context as the check above: a receipt that measured a
+                # different directory than the one validated would seal the
+                # wrong observation.
+                checkout = state.pin_checkout(pin)
                 record["checkout_head"] = state.checkout_head(checkout)
                 record["checkout_remote"] = state.checkout_remote(checkout)
                 record["declared_repository"] = pin.get("repository")
@@ -8537,6 +8544,29 @@ class GitRepositoryState:
         section = data.get(pin.get("section", ""), {})
         value = section.get(pin.get("field", ""))
         return value if isinstance(value, str) else None
+
+    def pin_checkout(self, pin: dict) -> str:
+        """The sibling checkout a pin names, resolved in the same repository
+        context the pin itself is read from.
+
+        A relative checkout is written from the point of view of the repository
+        holding the pin, so anchoring it here is only ever right by accident:
+        `../aweb` resolves back to this repository from the canonical checkout
+        and names nothing at all from a worktree, which is where the work
+        happens. That produced a sibling reported absent while it was present.
+        Pins with no declared repository stay anchored here, which is what they
+        have always meant.
+        """
+        checkout = pin["checkout"]
+        if Path(checkout).is_absolute():
+            return checkout
+        repo = pin.get("pin_repository")
+        root = self.external_contexts.get(repo) if repo else str(self.repo_root)
+        if root is None:
+            # The pin is unreadable without its context and is already reported
+            # as such; leave the declared value rather than invent an anchor.
+            return checkout
+        return str(Path(root) / checkout)
 
     def delivery_baseline(self, component: Component) -> str | None:
         baseline = (component.lane or {}).get("baseline_ref")

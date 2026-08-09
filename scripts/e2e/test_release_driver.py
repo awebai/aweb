@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -2204,6 +2205,74 @@ class GraphContractTests(unittest.TestCase):
                 with self.assertRaises(rd.ReceiptError):
                     rd.parse_g5_authorization(value)
         self.assertIsNone(rd.parse_g5_authorization(None))
+
+
+class PinCheckoutContextTests(unittest.TestCase):
+    """A pin's sibling checkout is written from the point of view of the
+    repository the pin lives in, so it has to resolve there. Resolving it
+    against THIS repository's root only agrees by coincidence, and only when
+    that root is itself the directory the relative path names - true in the
+    canonical checkout, false in every worktree, which is where we all work.
+    """
+
+    def _two_candidate_parents(self, tmp: str) -> tuple[Path, Path]:
+        """Both parents hold a directory the relative path could name, so
+        existence cannot distinguish a correct resolution from the coincidence.
+        Only the identity of the answer can, which is what these tests assert.
+        """
+        context_parent = Path(tmp) / "context-parent"
+        repo_parent = Path(tmp) / "repo-parent"
+        (context_parent / "ac").mkdir(parents=True)
+        (context_parent / "aweb").mkdir(parents=True)
+        (repo_parent / "worktree").mkdir(parents=True)
+        (repo_parent / "aweb").mkdir(parents=True)
+        return context_parent, repo_parent
+
+    def test_a_pin_checkout_resolves_in_its_declared_repository_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            context_parent, repo_parent = self._two_candidate_parents(tmp)
+            state = rd.GitRepositoryState(
+                repo_root=repo_parent / "worktree",
+                external_contexts={
+                    "github.com/awebai/ac": str(context_parent / "ac")
+                },
+            )
+            pin = {
+                "pin_file": "release-pin.toml",
+                "component": "server",
+                "checkout": "../aweb",
+                "pin_repository": "github.com/awebai/ac",
+            }
+            # Same directory, not the same spelling: the driver anchors without
+            # normalising, exactly as it always has for repository-relative
+            # pins, so what is asserted here is identity of the target.
+            self.assertEqual(
+                Path(state.pin_checkout(pin)).resolve(),
+                (context_parent / "aweb").resolve(),
+                "the sibling belongs to the pin's repository, not to this one",
+            )
+            self.assertTrue(
+                state.path_exists(state.pin_checkout(pin)),
+                "a present sibling must never be reported absent",
+            )
+
+    def test_a_pin_without_a_declared_context_stays_relative_to_this_repository(
+        self,
+    ) -> None:
+        """The control: pins that name no external repository are unaffected,
+        so the fix cannot silently move every other checkout in the graph."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _context_parent, repo_parent = self._two_candidate_parents(tmp)
+            state = rd.GitRepositoryState(repo_root=repo_parent / "worktree")
+            pin = {
+                "pin_file": "release-pin.toml",
+                "component": "server",
+                "checkout": "../aweb",
+            }
+            self.assertEqual(
+                Path(state.pin_checkout(pin)).resolve(),
+                (repo_parent / "aweb").resolve(),
+            )
 
 
 if __name__ == "__main__":
