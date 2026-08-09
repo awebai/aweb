@@ -189,6 +189,58 @@ describe("channel-core dispatchAgentEvent", () => {
     }));
   });
 
+  test("distinguishes waiting for the trust lock from work after acquisition", async () => {
+    const pinStore = new PinStore();
+    let releaseLock: (() => void) | undefined;
+    const holdingLock = pinStore.runExclusive(() => new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    }));
+    const traces: Array<Record<string, unknown>> = [];
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-lock-trace",
+          conversation_id: "conversation-lock-trace",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "world",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const dispatching = dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore,
+        trust,
+        self,
+        onAwakening: vi.fn(),
+        onTrace: (entry) => traces.push(entry),
+      },
+      new Set(),
+      { type: "mail_message", message_id: "mail-lock-trace" },
+    );
+
+    await vi.waitFor(() => expect(traces).toContainEqual(expect.objectContaining({
+      stage: "trust_started", message_id: "mail-lock-trace",
+    })));
+    expect(traces).not.toContainEqual(expect.objectContaining({
+      stage: "lock_acquired", message_id: "mail-lock-trace",
+    }));
+
+    releaseLock?.();
+    await holdingLock;
+    await dispatching;
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "lock_acquired", message_id: "mail-lock-trace",
+    }));
+  });
+
   test("acks mail after channel delivery succeeds", async () => {
     const onAwakening = vi.fn();
     const traces: Array<Record<string, unknown>> = [];
@@ -233,6 +285,7 @@ describe("channel-core dispatchAgentEvent", () => {
       "decrypt_started",
       "decrypt_completed",
       "trust_started",
+      "lock_acquired",
       "trust_completed",
       "notification_started",
       "notification_accepted",

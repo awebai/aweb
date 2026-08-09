@@ -2,6 +2,8 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { realpathSync } from "node:fs";
+import { appendFile, mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -31,12 +33,41 @@ export function loadChannelConfig(workdir: string) {
   return resolveConfig(workdir);
 }
 
-export function createChannelTraceLogger(
+export interface ChannelTraceSink {
+  onTrace: (entry: ChannelTraceEntry) => void;
+  flush: () => Promise<void>;
+}
+
+type AppendTrace = (path: string, line: string) => Promise<void>;
+
+export function createChannelTraceSink(
   debug = process.env.AWEB_CHANNEL_DEBUG || "",
-  write: (line: string) => void = (line) => console.error(line),
-): ((entry: ChannelTraceEntry) => void) | undefined {
+  path = process.env.AWEB_CHANNEL_DEBUG_FILE || "",
+  append: AppendTrace = (target, line) => appendFile(
+    target,
+    line,
+    { encoding: "utf-8", mode: 0o600 },
+  ),
+): ChannelTraceSink | undefined {
   if (!/^(1|true|yes)$/i.test(debug.trim())) return undefined;
-  return (entry) => write(JSON.stringify(entry));
+  if (!path.trim()) throw new Error("AWEB_CHANNEL_DEBUG_FILE is required when channel diagnostics are enabled");
+
+  let reportedFailure = false;
+  let pending = mkdir(dirname(path), { recursive: true, mode: 0o700 }).then(() => {});
+  return {
+    onTrace(entry) {
+      const line = `${JSON.stringify(entry)}\n`;
+      pending = pending
+        .then(() => append(path, line))
+        .catch((error) => {
+          if (reportedFailure) return;
+          reportedFailure = true;
+          const detail = error instanceof Error ? error.message : String(error);
+          console.error(`aweb: channel trace file unavailable: ${detail}`);
+        });
+    },
+    flush: () => pending,
+  };
 }
 
 async function main() {
@@ -84,45 +115,54 @@ Control events (type="control") are operational signals. On "pause", stop curren
   process.on("SIGINT", () => abort.abort());
   process.on("SIGTERM", () => abort.abort());
 
-  await startChannelLoop({
-    client,
-    pinStore,
-    trust,
-    self: {
-      alias: config.alias,
-      address: config.address,
-      did: config.did,
-      stableID: config.stableID,
-    },
-    signal: abort.signal,
-    teamID: config.teamID,
-    workdir,
-    onAwakening: (awakening) => mcp.notification({
-      method: "notifications/claude/channel",
-      params: { content: awakening.content, meta: awakening.meta },
-    }),
-    // On Claude the MCP notification IS the presentation of the mail to the
-    // agent (Claude presents at the first tool boundary), so mail is marked read
-    // at presentation — matching the honest semantic "presented = read". If the
-    // transport send fails, the ack is skipped and reconnect re-fetches the still
-    // -unread message; if the send succeeds but the process dies before
-    // presentation, the message is already read and is reachable only via
-    // aw mail show / a read-inclusive view (default-aaka), not by unread-only
-    // reconnect. Never acking is not the fix: it left mail unread and caused a
-    // replay burst on reconnect (default-aajy).
-    mailAcknowledgment: "delivery",
-    onTrace: createChannelTraceLogger(),
-    onStreamState: (state) => {
-      if (state.state === "connected") return;
-      const content = formatEventStreamState(state);
-      console.error(content);
-      void mcp.notification({
+  const traceSink = createChannelTraceSink(
+    process.env.AWEB_CHANNEL_DEBUG || "",
+    process.env.AWEB_CHANNEL_DEBUG_FILE
+      || join(workdir, ".aw", `channel-trace-${process.pid}.jsonl`),
+  );
+  try {
+    await startChannelLoop({
+      client,
+      pinStore,
+      trust,
+      self: {
+        alias: config.alias,
+        address: config.address,
+        did: config.did,
+        stableID: config.stableID,
+      },
+      signal: abort.signal,
+      teamID: config.teamID,
+      workdir,
+      onAwakening: (awakening) => mcp.notification({
         method: "notifications/claude/channel",
-        params: { content, meta: { type: "channel_status", stream_state: state.state } },
-      }).catch(() => {});
-    },
-    log: (message) => console.error(message),
-  });
+        params: { content: awakening.content, meta: awakening.meta },
+      }),
+      // On Claude the MCP notification IS the presentation of the mail to the
+      // agent (Claude presents at the first tool boundary), so mail is marked read
+      // at presentation — matching the honest semantic "presented = read". If the
+      // transport send fails, the ack is skipped and reconnect re-fetches the still
+      // -unread message; if the send succeeds but the process dies before
+      // presentation, the message is already read and is reachable only via
+      // aw mail show / a read-inclusive view (default-aaka), not by unread-only
+      // reconnect. Never acking is not the fix: it left mail unread and caused a
+      // replay burst on reconnect (default-aajy).
+      mailAcknowledgment: "delivery",
+      onTrace: traceSink?.onTrace,
+      onStreamState: (state) => {
+        if (state.state === "connected") return;
+        const content = formatEventStreamState(state);
+        console.error(content);
+        void mcp.notification({
+          method: "notifications/claude/channel",
+          params: { content, meta: { type: "channel_status", stream_state: state.state } },
+        }).catch(() => {});
+      },
+      log: (message) => console.error(message),
+    });
+  } finally {
+    await traceSink?.flush();
+  }
 }
 
 export async function dispatchEvent(
