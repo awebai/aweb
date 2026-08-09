@@ -31,9 +31,11 @@ The directory must already be connected to an aweb team workspace
 Set `AWEB_CHANNEL_DEBUG=1` before starting Claude Code to emit structured
 Channel Core stage timestamps to `.aw/channel-trace-<pid>.jsonl`, or set
 `AWEB_CHANNEL_DEBUG_FILE` to an explicit path. Diagnostics are off by default.
-The delivery lane only enqueues writes onto a serialized asynchronous file sink;
-it never waits for disk I/O. Each entry contains only event type, dispatch lane,
-message/conversation/session IDs, and timestamps—never message subjects, bodies,
+The explicit path must be a regular file on local storage—not a FIFO, device,
+socket, network/mounted volume, or any sink whose reader can stop. Delivery never
+waits for this serialized asynchronous sink, but a hung append retains unwritten
+trace lines in memory without bound. Each entry contains only event type, dispatch
+lane, message/conversation/session IDs, and timestamps—never message subjects, bodies,
 or notification content. Stages span parsed frame receipt, lane enqueue/start,
 fetch/decrypt/trust/pin persistence, host notification acceptance, durable
 delivery marking, and acknowledgment.

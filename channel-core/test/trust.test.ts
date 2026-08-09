@@ -178,6 +178,277 @@ describe("SenderTrustManager", () => {
     expect(get).toHaveBeenCalledTimes(1);
   });
 
+  test("shares one roster request across concurrent distinct aliases", async () => {
+    const alice = await didFromSeed(55);
+    const bob = await didFromSeed(56);
+    let releaseRoster!: (roster: ReturnType<typeof localRoster>) => void;
+    const rosterPending = new Promise<ReturnType<typeof localRoster>>((resolve) => {
+      releaseRoster = resolve;
+    });
+    const get = vi.fn(() => rosterPending);
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const aliceTrust = trust.normalizeTrust(new PinStore(), "verified", "alice", alice.did, undefined, undefined);
+    const bobTrust = trust.normalizeTrust(new PinStore(), "verified", "bob", bob.did, undefined, undefined);
+    await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+
+    releaseRoster({
+      team_id: "backend:acme.com",
+      agents: [
+        { alias: "alice", did_key: alice.did, identity_scope: "local" },
+        { alias: "bob", did_key: bob.did, identity_scope: "local" },
+      ],
+    });
+    await expect(Promise.all([aliceTrust, bobTrust])).resolves.toEqual([
+      { status: "verified", stored: false },
+      { status: "verified", stored: false },
+    ]);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  test("shares a roster failure and starts backoff when the request finishes", async () => {
+    let now = 0;
+    const failure = new Error("roster timed out");
+    let rejectRoster!: (error: Error) => void;
+    const rosterPending = new Promise<ReturnType<typeof localRoster>>((_resolve, reject) => {
+      rejectRoster = reject;
+    });
+    const get = vi.fn()
+      .mockImplementationOnce(() => rosterPending)
+      .mockResolvedValueOnce(localRoster({ did_key: "did:key:zretry", identity_scope: "local" }));
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => now,
+    ) as SenderTrustManager & {
+      resolveAuthenticatedTeamRoster(): Promise<ReturnType<typeof localRoster>>;
+    };
+
+    const requests = [
+      trust.resolveAuthenticatedTeamRoster(),
+      trust.resolveAuthenticatedTeamRoster(),
+      trust.resolveAuthenticatedTeamRoster(),
+    ];
+    await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+    now = 30_000;
+    rejectRoster(failure);
+    const settled = await Promise.allSettled(requests);
+    expect(settled).toHaveLength(3);
+    for (const result of settled) {
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") expect(result.reason).toBe(failure);
+    }
+
+    now = 30_999;
+    await expect(trust.resolveAuthenticatedTeamRoster()).rejects.toBe(failure);
+    expect(get).toHaveBeenCalledTimes(1);
+
+    now = 31_001;
+    await expect(trust.resolveAuthenticatedTeamRoster()).resolves.toMatchObject({
+      team_id: "backend:acme.com",
+    });
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  test("uses prepared roster metadata without retrying inside the trust decision", async () => {
+    let now = 0;
+    const currentIdentity = await didFromSeed(57);
+    const get = vi.fn()
+      .mockRejectedValueOnce(new Error("roster timed out"))
+      .mockResolvedValueOnce(localRoster({
+        did_key: currentIdentity.did,
+        identity_scope: "local",
+      }));
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => now,
+    );
+
+    const resolved = await trust.resolveTrustMetadata("verified", "alice", undefined, undefined, undefined);
+    now = 2_000;
+    const result = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "alice",
+      currentIdentity.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      resolved,
+    );
+
+    expect(result).toEqual({ status: "verification_stale", stored: false });
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  test("ignores forged prepared metadata", async () => {
+    const rosterIdentity = await didFromSeed(59);
+    const attacker = await didFromSeed(60);
+    const get = vi.fn(async () => localRoster({
+      did_key: rosterIdentity.did,
+      identity_scope: "local",
+    }));
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "alice",
+      attacker.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        trustAddress: "backend:acme.com/alice",
+        meta: {
+          did: attacker.did,
+          identityScope: "local",
+          custody: "self",
+          resolved: true,
+        },
+      },
+    );
+
+    expect(result.status).toBe("identity_mismatch");
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  test("accepts prepared metadata only for its address and first decision", async () => {
+    let now = 0;
+    const previousAlice = await didFromSeed(61);
+    const currentAlice = await didFromSeed(62);
+    const bob = await didFromSeed(63);
+    const get = vi.fn()
+      .mockResolvedValueOnce({
+        team_id: "backend:acme.com",
+        agents: [{ alias: "alice", did_key: previousAlice.did, identity_scope: "local" }],
+      })
+      .mockResolvedValueOnce({
+        team_id: "backend:acme.com",
+        agents: [{ alias: "bob", did_key: bob.did, identity_scope: "local" }],
+      })
+      .mockResolvedValueOnce({
+        team_id: "backend:acme.com",
+        agents: [{ alias: "alice", did_key: currentAlice.did, identity_scope: "local" }],
+      });
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => now,
+    );
+
+    const resolvedAlice = await trust.resolveTrustMetadata(
+      "verified",
+      "alice",
+      undefined,
+      undefined,
+      undefined,
+    );
+    now = 6_000;
+    const bobResult = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "bob",
+      bob.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      resolvedAlice,
+    );
+    expect(bobResult.status).toBe("verified");
+    expect(get).toHaveBeenCalledTimes(2);
+
+    now = (60 * 60 * 1000) + 1;
+    const aliceResult = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "alice",
+      currentAlice.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      resolvedAlice,
+    );
+    expect(aliceResult.status).toBe("verified");
+    expect(get).toHaveBeenCalledTimes(3);
+  });
+
+  test("prepares public identity resolution before the trust decision", async () => {
+    const currentIdentity = await didFromSeed(58);
+    const resolveIdentity = vi.fn(async () => ({
+      did: currentIdentity.did,
+      address: "acme.com/alice",
+      custody: "self",
+      identityScope: "global",
+    }));
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        resolveIdentity,
+        verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }),
+      } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const resolved = await trust.resolveTrustMetadata(
+      "verified",
+      "acme.com/alice",
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(resolveIdentity).toHaveBeenCalledTimes(1);
+
+    const result = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "acme.com/alice",
+      currentIdentity.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      resolved,
+    );
+    expect(result.status).toBe("verified");
+    expect(resolveIdentity).toHaveBeenCalledTimes(1);
+  });
+
   test("reconciles local metadata through a normal cached read after one hour", async () => {
     const previousIdentity = await didFromSeed(53);
     const currentIdentity = await didFromSeed(54);
@@ -289,12 +560,10 @@ describe("SenderTrustManager", () => {
     expect((await trust.normalizeTrust(store, "verified", "acme.com/alice", currentIdentity.did, undefined, undefined)).status).toBe("verified");
     expect((await trust.normalizeTrust(store, "verified_legacy", "alice", currentIdentity.did, undefined, undefined)).status).toBe("verified_legacy");
     expect((await trust.normalizeTrust(store, "verified", "acme.com/grace", globalIdentity.did, "did:aw:grace", undefined)).status).toBe("verified");
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(1);
     expect(requests[0].authorization).toMatch(/^DIDKey /);
     expect(requests[0].certificate).toBe("certificate-header");
     expect(requests[0].cacheControl).toBe("");
-    expect(requests[1].cacheControl).toBe("");
-    expect(requests[2].cacheControl).toBe("");
     expect(store.pins.size).toBe(1);
   });
 

@@ -11,6 +11,8 @@ ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
 const ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENT_META_CACHE_TTL_MS = 60 * 60 * 1000;
+const TEAM_ROSTER_CACHE_TTL_MS = 5_000;
+const TEAM_ROSTER_FAILURE_BACKOFF_MS = 1_000;
 
 export interface RotationAnnouncement {
   old_did: string;
@@ -60,10 +62,19 @@ interface AgentMeta {
   resolutionError?: "not_found" | "unavailable";
 }
 
+interface ResolvedTrustMetadata {
+  trustAddress: string;
+  meta: AgentMeta;
+}
+
 interface AgentMetaCacheEntry {
   meta: AgentMeta;
   expiresAt: number;
 }
+
+type TeamRosterCacheEntry =
+  | { roster: LocalAgentsResponse; expiresAt: number }
+  | { error: unknown; expiresAt: number };
 
 export interface TrustResult {
   status: VerificationStatus | undefined;
@@ -87,6 +98,9 @@ export function normalizeIdentityScope(
 
 export class SenderTrustManager {
   private readonly metaCache = new Map<string, AgentMetaCacheEntry>();
+  private readonly preparedMetadata = new WeakSet<ResolvedTrustMetadata>();
+  private teamRosterCache: TeamRosterCacheEntry | undefined;
+  private teamRosterRequest: Promise<LocalAgentsResponse> | undefined;
 
   constructor(
     private readonly client: APIClient,
@@ -96,6 +110,35 @@ export class SenderTrustManager {
     private readonly selfStableID: string = "",
     private readonly now: () => number = () => Date.now(),
   ) {}
+
+  async resolveTrustMetadata(
+    verificationStatus: VerificationStatus | undefined,
+    rawAddress: string,
+    fromStableID: string | undefined,
+    toDID: string | undefined,
+    toStableID: string | undefined,
+  ): Promise<ResolvedTrustMetadata | undefined> {
+    const status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
+    const trimmedAddress = rawAddress.trim();
+    if (!status || !trimmedAddress) return undefined;
+    const rosterAlias = this.teamRosterAliasReference(trimmedAddress);
+    if (
+      status !== "verified"
+      && status !== "verified_legacy"
+      && status !== "verified_custodial"
+      && rosterAlias !== undefined
+      && !fromStableID
+    ) {
+      return undefined;
+    }
+    const trustAddress = this.canonicalTrustAddress(trimmedAddress);
+    const resolved = {
+      trustAddress,
+      meta: await this.resolveAgentMeta(trimmedAddress),
+    };
+    this.preparedMetadata.add(resolved);
+    return resolved;
+  }
 
   async normalizeTrust(
     store: PinStore,
@@ -108,6 +151,7 @@ export class SenderTrustManager {
     rotationAnnouncement?: RotationAnnouncement,
     replacementAnnouncement?: ReplacementAnnouncement,
     verificationAddress?: string,
+    resolvedMetadata?: ResolvedTrustMetadata,
   ): Promise<TrustResult> {
     let status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     const acceptedInput = verificationStatus === "verified"
@@ -119,6 +163,10 @@ export class SenderTrustManager {
     }
 
     const trustAddress = this.canonicalTrustAddress(rawAddress);
+    let resolvedMeta: AgentMeta | undefined;
+    if (resolvedMetadata && this.preparedMetadata.delete(resolvedMetadata)) {
+      if (resolvedMetadata.trustAddress === trustAddress) resolvedMeta = resolvedMetadata.meta;
+    }
     if (
       status !== "verified"
       && status !== "verified_legacy"
@@ -136,7 +184,7 @@ export class SenderTrustManager {
       && this.teamRosterAliasReference(rawAddress.trim()) !== undefined
       && fromDID
     ) {
-      const fresh = await this.resolveAgentMeta(rawAddress);
+      const fresh = resolvedMeta ?? await this.resolveAgentMeta(rawAddress);
       if (!fresh.resolved) {
         return {
           status: fresh.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
@@ -151,7 +199,7 @@ export class SenderTrustManager {
       }
       meta = fresh;
     }
-    meta ??= await this.resolveAgentMeta(rawAddress);
+    meta ??= resolvedMeta ?? await this.resolveAgentMeta(rawAddress);
     const registryCheck = await this.checkStableIdentityRegistry(
       store,
       status,
@@ -605,11 +653,7 @@ export class SenderTrustManager {
       throw new Error("team roster resolution requires team-certificate authentication");
     }
 
-    const path = "/v1/agents";
-    const roster = await this.client.get<LocalAgentsResponse>(path);
-    if ((roster.team_id || "").trim() !== this.teamID) {
-      throw new Error("team roster response does not match the authenticated team");
-    }
+    const roster = await this.resolveAuthenticatedTeamRoster();
     const response = (roster.agents || []).find((agent) => (agent.alias || "").trim() === localAlias);
     if (!response) {
       const qualifiedTeamPrefix = `${this.teamID.toLowerCase()}/`;
@@ -631,6 +675,41 @@ export class SenderTrustManager {
       custody: "self",
       identityScope: normalizeIdentityScope(response.identity_scope, response.lifetime, "local"),
     };
+  }
+
+  private async resolveAuthenticatedTeamRoster(): Promise<LocalAgentsResponse> {
+    const cached = this.teamRosterCache;
+    if (cached && this.now() <= cached.expiresAt) {
+      if ("roster" in cached) return cached.roster;
+      throw cached.error;
+    }
+    if (this.teamRosterRequest) return this.teamRosterRequest;
+
+    const request = this.client.get<LocalAgentsResponse>("/v1/agents").then((roster) => {
+      if ((roster.team_id || "").trim() !== this.teamID) {
+        throw new Error("team roster response does not match the authenticated team");
+      }
+      return roster;
+    });
+    this.teamRosterRequest = request;
+    try {
+      const roster = await request;
+      this.teamRosterCache = {
+        roster,
+        expiresAt: this.now() + TEAM_ROSTER_CACHE_TTL_MS,
+      };
+      return roster;
+    } catch (error) {
+      // A shared failure needs a short quiet interval too. Starting it when the
+      // request settles ensures a full client timeout cannot consume the backoff.
+      this.teamRosterCache = {
+        error,
+        expiresAt: this.now() + TEAM_ROSTER_FAILURE_BACKOFF_MS,
+      };
+      throw error;
+    } finally {
+      if (this.teamRosterRequest === request) this.teamRosterRequest = undefined;
+    }
   }
 }
 
