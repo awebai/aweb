@@ -336,6 +336,75 @@ describe("SenderTrustManager", () => {
     expect(get).toHaveBeenCalledTimes(1);
   });
 
+  test("accepts prepared metadata only for its address and first decision", async () => {
+    let now = 0;
+    const previousAlice = await didFromSeed(61);
+    const currentAlice = await didFromSeed(62);
+    const bob = await didFromSeed(63);
+    const get = vi.fn()
+      .mockResolvedValueOnce({
+        team_id: "backend:acme.com",
+        agents: [{ alias: "alice", did_key: previousAlice.did, identity_scope: "local" }],
+      })
+      .mockResolvedValueOnce({
+        team_id: "backend:acme.com",
+        agents: [{ alias: "bob", did_key: bob.did, identity_scope: "local" }],
+      })
+      .mockResolvedValueOnce({
+        team_id: "backend:acme.com",
+        agents: [{ alias: "alice", did_key: currentAlice.did, identity_scope: "local" }],
+      });
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => now,
+    );
+
+    const resolvedAlice = await trust.resolveTrustMetadata(
+      "verified",
+      "alice",
+      undefined,
+      undefined,
+      undefined,
+    );
+    now = 6_000;
+    const bobResult = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "bob",
+      bob.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      resolvedAlice,
+    );
+    expect(bobResult.status).toBe("verified");
+    expect(get).toHaveBeenCalledTimes(2);
+
+    now = (60 * 60 * 1000) + 1;
+    const aliceResult = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "alice",
+      currentAlice.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      resolvedAlice,
+    );
+    expect(aliceResult.status).toBe("verified");
+    expect(get).toHaveBeenCalledTimes(3);
+  });
+
   test("prepares public identity resolution before the trust decision", async () => {
     const currentIdentity = await didFromSeed(58);
     const resolveIdentity = vi.fn(async () => ({
