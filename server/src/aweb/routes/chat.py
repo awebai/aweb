@@ -2705,11 +2705,16 @@ class SessionListItem(BaseModel):
 
 class SessionListResponse(BaseModel):
     sessions: list[SessionListItem]
+    # True when the limit left sessions out, so a short page is never mistaken
+    # for the whole list. There is no cursor yet: this reports the omission, it
+    # does not let a caller retrieve what was omitted.
+    has_more: bool = False
 
 
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
     request: Request,
+    limit: int = Query(200, ge=1, le=500),
     db=Depends(get_db),
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
@@ -2738,14 +2743,21 @@ async def list_sessions(
             LEFT JOIN {{tables.chat_messages}} m
               ON m.session_id = s.session_id
             GROUP BY s.session_id, s.team_id, s.created_at
-            ORDER BY last_activity DESC, s.created_at DESC
+            ORDER BY last_activity DESC, s.created_at DESC, s.session_id DESC
+            LIMIT $2::int
             """,
             participant_did,
+            limit + 1,
         )
         for row in rows:
             rows_by_session.setdefault(str(row["session_id"]), row)
     rows = list(rows_by_session.values())
     rows.sort(key=lambda row: (row["last_activity"], row["created_at"]), reverse=True)
+    # Count after the merge across the identity's dids: the same session reached
+    # through two dids is one session, and counting per query would report an
+    # omission that deduplication has already undone.
+    has_more = len(rows) > limit
+    rows = rows[:limit]
 
     session_ids = [row["session_id"] for row in rows]
     participant_rows: list[dict[str, Any]] = []
@@ -2808,4 +2820,4 @@ async def list_sessions(
             )
         )
 
-    return SessionListResponse(sessions=sessions)
+    return SessionListResponse(sessions=sessions, has_more=has_more)
