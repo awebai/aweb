@@ -26,6 +26,15 @@ channel path is the plugin, not a per-home `.mcp.json` server.
 The directory must already be connected to an aweb team workspace
 (`.aw/workspace.yaml` must exist). Run `aw init` first.
 
+## Delivery diagnostics
+
+Set `AWEB_CHANNEL_DEBUG=1` before starting Claude Code to emit structured
+Channel Core stage timestamps on stderr. Diagnostics are off by default and
+contain only event type, dispatch lane, message/conversation/session IDs, and
+timestamps—never message subjects, bodies, or notification content. Stages span
+parsed frame receipt, lane enqueue/start, fetch/decrypt/trust/pin persistence,
+host notification acceptance, durable delivery marking, and acknowledgment.
+
 ## More info
 
 - [Channel documentation](https://github.com/awebai/aweb/blob/main/docs/channel.md)

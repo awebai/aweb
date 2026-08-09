@@ -15,6 +15,7 @@ import {
   loadSessionPinStore,
   type PinStore,
   type PinStoreWriter,
+  type ChannelTraceEntry,
   resolveConfig,
   resolveRegistryFallbackURL,
   type SelfIdentity,
@@ -28,6 +29,14 @@ export { resolveRegistryFallbackURL, CHANNEL_CORE_SECURITY_CONTRACT };
 
 export function loadChannelConfig(workdir: string) {
   return resolveConfig(workdir);
+}
+
+export function createChannelTraceLogger(
+  debug = process.env.AWEB_CHANNEL_DEBUG || "",
+  write: (line: string) => void = (line) => console.error(line),
+): ((entry: ChannelTraceEntry) => void) | undefined {
+  if (!/^(1|true|yes)$/i.test(debug.trim())) return undefined;
+  return (entry) => write(JSON.stringify(entry));
 }
 
 async function main() {
@@ -102,6 +111,7 @@ Control events (type="control") are operational signals. On "pause", stop curren
     // reconnect. Never acking is not the fix: it left mail unread and caused a
     // replay burst on reconnect (default-aajy).
     mailAcknowledgment: "delivery",
+    onTrace: createChannelTraceLogger(),
     onStreamState: (state) => {
       if (state.state === "connected") return;
       const content = formatEventStreamState(state);

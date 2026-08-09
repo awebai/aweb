@@ -56,6 +56,7 @@ export async function* streamAgentEvents(
   client: APIClient,
   signal: AbortSignal,
   onState: (state: EventStreamState) => void = () => {},
+  onEvent: (event: AgentEvent) => void = () => {},
 ): AsyncGenerator<AgentEvent> {
   let connectedOnce = false;
   let disconnected = false;
@@ -114,6 +115,11 @@ export async function* streamAgentEvents(
             connectedOnce = true;
             onState({ state: "connected" });
           }
+        }
+        try {
+          onEvent(event);
+        } catch {
+          // Diagnostics must never change event consumption.
         }
         yield event;
       }
