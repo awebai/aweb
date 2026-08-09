@@ -752,10 +752,12 @@ async def test_current_actionable_mail_keeps_newest_unread_in_diff_window(aweb_c
         current,
         events_module._index_events(previous, key_field="message_id"),
         key_field="message_id",
+        ignored_fields=frozenset({"unread_count"}),
     )
 
     assert newest_message_id in {item["message_id"] for item in current}
-    assert newest_message_id in {item["message_id"] for item in changed}
+    assert {item["message_id"] for item in changed} == {newest_message_id}
+    assert changed[0]["unread_count"] == 51
     newest = next(item for item in current if item["message_id"] == newest_message_id)
     assert newest["conversation_id"] == newest_conversation_id
 

@@ -308,11 +308,15 @@ def _new_or_changed_events(
     previous: dict[str, dict[str, Any]],
     *,
     key_field: str,
+    ignored_fields: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     changed: list[dict[str, Any]] = []
     for evt in current:
         key = str(evt[key_field])
-        if previous.get(key) != evt:
+        previous_event = previous.get(key)
+        if previous_event is None or {
+            field: value for field, value in previous_event.items() if field not in ignored_fields
+        } != {field: value for field, value in evt.items() if field not in ignored_fields}:
             changed.append(evt)
     return changed
 
@@ -436,6 +440,7 @@ async def _sse_agent_events(
             current_mail,
             previous_mail,
             key_field="message_id",
+            ignored_fields=frozenset({"unread_count"}),
         )
         chat_events = _new_or_changed_events(
             current_chat,
