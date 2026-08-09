@@ -147,10 +147,13 @@ async def list_conversations(
                 GROUP BY group_key
             ),
             page AS (
+                -- group_key breaks ties so the page has the same members on
+                -- every call: which conversations fall inside the limit is
+                -- decided here, not by the caller-visible sort further down.
                 SELECT group_key, last_message_at, unread_count
                 FROM grouped
                 WHERE ($6::timestamptz IS NULL OR last_message_at < $6::timestamptz)
-                ORDER BY last_message_at DESC
+                ORDER BY last_message_at DESC, group_key DESC
                 LIMIT $7::int
             )
             SELECT
@@ -200,7 +203,7 @@ async def list_conversations(
                     GROUP BY labelled.label
                 ) ranked
             ) labels ON TRUE
-            ORDER BY p.last_message_at DESC
+            ORDER BY p.last_message_at DESC, p.group_key DESC
             """,
             actor_dids,
             actor_agent_id,
@@ -318,7 +321,7 @@ async def list_conversations(
                         )
                   )
                 GROUP BY s.session_id, lm.body, lm.from_alias, lm.from_did, lm.created_at, unread.cnt
-                ORDER BY lm.created_at DESC
+                ORDER BY lm.created_at DESC, s.session_id DESC
                 LIMIT $5::int
                 """,
                 actor_did,

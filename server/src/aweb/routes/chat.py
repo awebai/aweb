@@ -2739,7 +2739,7 @@ async def list_sessions(
             LEFT JOIN {{tables.chat_messages}} m
               ON m.session_id = s.session_id
             GROUP BY s.session_id, s.team_id, s.created_at
-            ORDER BY last_activity DESC, s.created_at DESC
+            ORDER BY last_activity DESC, s.created_at DESC, s.session_id DESC
             LIMIT $2::int
             """,
             participant_did,
