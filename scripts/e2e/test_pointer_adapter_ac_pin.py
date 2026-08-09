@@ -47,6 +47,54 @@ def git(*args: str, cwd: Path) -> str:
     return run("git", *args, cwd=cwd).stdout.strip()
 
 
+def require_reachable_contract_source() -> None:
+    """Skip with disclosure where AC cannot be reached at all.
+
+    This suite executes AC's own release-verify-model against AC's real tree, so
+    it cannot be reduced to a fixture and cannot run where that tree is
+    unreachable: AC is private and this repository's gate carries no credential
+    for it, by design -- ship.yml checks out public inputs only. There it fails
+    at the clone having run zero tests, which reports as a defect in the pin
+    contract rather than as absent coverage.
+
+    Skipping only on an UNREACHABLE source is the point. Wherever AC can be
+    reached -- a credentialed developer machine, and AC's own CI once
+    aweb-abcy moves the suite there -- every assertion still runs. This narrows
+    coverage to the one environment that could never have had it, instead of
+    dropping it everywhere.
+
+    A skip nobody reads is how a gate quietly stops covering something, which is
+    the failure this whole task exists to correct, so the disclosure names what
+    is uncovered, what tracks it, and what covers it meanwhile.
+    """
+    probe = subprocess.run(
+        ["git", "ls-remote", AC_CONTRACT_REMOTE, "HEAD"],
+        capture_output=True, text=True, timeout=120,
+        # Never let an unauthenticated probe sit on a credential prompt: a hang
+        # in the gate is worse than the failure it is here to convert.
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+    if probe.returncode == 0:
+        return
+    disclosure = (
+        f"ac-pin contract suite SKIPPED: {AC_CONTRACT_REMOTE} is unreachable "
+        "here, so AC's release-verify-model cannot run against AC's real tree. "
+        "THIS GATE DOES NOT COVER THE AC PIN CONTRACT. Tracked by aweb-abcy, "
+        "which moves the suite to where AC's tree exists. Covered meanwhile by: "
+        "the suite passing 9/9 against the real AC tree on 2026-08-09 (recorded "
+        "on aweb-abce), and the release driver's ac-pin lane executing AC's real "
+        "release-model gates at pin-advance time through EXTERNAL_CONTEXT."
+    )
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        # The gate's own summary, so the disclosure is read without anyone
+        # scrolling a make log to find it.
+        with open(summary_path, "a", encoding="utf-8") as handle:
+            handle.write(f"### {disclosure}\n\n")
+    print(f"\n{disclosure}\n", file=sys.stderr, flush=True)
+    raise unittest.SkipTest(disclosure)
+
+
 def replace_dependency(path: Path, package: str, version: str) -> None:
     text = path.read_text()
     updated, count = re.subn(
@@ -121,6 +169,7 @@ def write_test_package(index_root: Path, name: str, version: str) -> None:
 class AcPinAdapterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        require_reachable_contract_source()
         cls.fixture_tmp = tempfile.TemporaryDirectory()
         root = Path(cls.fixture_tmp.name)
         cls.uv_cache = root / "uv-cache"
