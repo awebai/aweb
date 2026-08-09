@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -2273,6 +2274,114 @@ class PinCheckoutContextTests(unittest.TestCase):
                 Path(state.pin_checkout(pin)).resolve(),
                 (repo_parent / "aweb").resolve(),
             )
+
+
+class PinCheckoutCheckingPathTests(unittest.TestCase):
+    """The defect lived at the call sites, not in the helper underneath them.
+    A test that asks the helper directly passes while the checker reads the pin
+    dict again, so these drive the checking path and the receipt snapshot over a
+    real repository state instead - re-anchoring a relative checkout to this
+    repository has to fail HERE, where the reported bug was.
+    """
+
+    def _pin_world(self, tmp: str) -> tuple[Path, Path, Path, str]:
+        """A pin that lives in one repository and names a sibling of THAT
+        repository. This root deliberately has no such sibling, which is the
+        worktree condition the bug appeared under: the sibling is present, and
+        was reported absent.
+        """
+        context = Path(tmp) / "ac"
+        sibling = Path(tmp) / "aweb"
+        repo_root = Path(tmp) / "elsewhere" / "worktree"
+        for directory in (context, sibling, repo_root):
+            directory.mkdir(parents=True)
+
+        def git(*args: str) -> str:
+            return subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", "-C", str(sibling), *args],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        git("init", "-q")
+        git("config", "user.email", "test@example.invalid")
+        git("config", "user.name", "test")
+        git("commit", "-q", "--allow-empty", "-m", "base")
+        git("remote", "add", "origin", "https://github.com/awebai/aweb")
+        head = git("rev-parse", "HEAD")
+
+        # This root is a repository in its own right, because the snapshot reads
+        # remote tags from it. It is NOT the sibling and has no `../aweb` of its
+        # own: that absence is the whole point of the fixture.
+        subprocess.run(
+            ["git", "init", "-q", str(repo_root)], check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "-C", str(repo_root), "remote", "add", "origin", str(sibling)],
+            check=True,
+            capture_output=True,
+        )
+        # The pin is satisfied: it records the sibling's real HEAD, so the only
+        # thing that can produce a problem here is resolving to the wrong place.
+        (context / "release-pin.toml").write_text(f'[aweb]\ngit_sha = "{head}"\n')
+        return context, sibling, repo_root, head
+
+    def _graph(self) -> rd.Graph:
+        return rd.Graph.from_dict(
+            {
+                "component": {
+                    "server": {"publishable": False},
+                    "external-pin": {
+                        "publishable": False,
+                        "sibling_pins": [
+                            {
+                                "pin_file": "release-pin.toml",
+                                "section": "aweb",
+                                "field": "git_sha",
+                                "component": "server",
+                                "checkout": "../aweb",
+                                "repository": "github.com/awebai/aweb",
+                                "pin_repository": "github.com/awebai/ac",
+                            }
+                        ],
+                    },
+                },
+                "edge": [],
+            }
+        )
+
+    def _state_and_plan(self, tmp: str):
+        context, sibling, repo_root, head = self._pin_world(tmp)
+        state = rd.GitRepositoryState(
+            repo_root=repo_root,
+            external_contexts={"github.com/awebai/ac": str(context)},
+        )
+        plan = rd.Plan(
+            moving=[rd.PlanNode(component="external-pin", reason="pointer")],
+            runtime_contract_edges=[],
+        )
+        return state, plan, sibling, head
+
+    def test_a_present_sibling_is_not_reported_absent_by_the_checker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state, plan, _sibling, _head = self._state_and_plan(tmp)
+            self.assertEqual(
+                rd.check_declared_inputs(self._graph(), plan, state),
+                [],
+                "the sibling exists, its HEAD equals the pin and its remote is "
+                "the declared repository, so nothing about this pin is a problem",
+            )
+
+    def test_the_receipt_records_the_checkout_the_checker_validated(self) -> None:
+        """A receipt that measured a different directory than the one validated
+        would seal the wrong observation."""
+        with tempfile.TemporaryDirectory() as tmp:
+            state, plan, _sibling, head = self._state_and_plan(tmp)
+            snapshot = rd._resolved_snapshot(plan, self._graph(), state)
+            record = snapshot["pins"]["external-pin:release-pin.toml:git_sha"]
+            self.assertEqual(record["checkout_head"], head)
+            self.assertEqual(record["checkout_remote"], "github.com/awebai/aweb")
 
 
 if __name__ == "__main__":
