@@ -770,6 +770,7 @@ async function normalizeAndPersistMessageTrust(
   lane: string,
 ) {
   return options.pinStore.runExclusive(async () => {
+    emitTrace(options, "lock_acquired", event, lane);
     const trust = await normalizeMessageTrust(
       options,
       msg,
