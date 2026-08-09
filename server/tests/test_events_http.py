@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -112,6 +113,50 @@ def _build_test_app(aweb_db, team_did_key):
     registry.get_team_revocations = AsyncMock(return_value=set())
     app.state.awid_registry_client = registry
     return app
+
+
+async def _create_test_event_recipient(aweb_db):
+    agent_id = uuid4()
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        """
+    )
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
+        VALUES ($1, 'backend:acme.com', 'did:aw:bob', 'did:key:z6MkBob', 'bob', 'acme.com/bob')
+        """,
+        agent_id,
+    )
+    return agent_id
+
+
+async def _open_test_event_stream(aweb_db, agent_id, monkeypatch):
+    class _DbShim:
+        def get_manager(self, name="aweb"):
+            assert name == "aweb"
+            return aweb_db
+
+    class _ConnectedRequest:
+        async def is_disconnected(self):
+            return False
+
+    monkeypatch.setattr(events_module, "EVENTS_POLL_INTERVAL", 0.01)
+    monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.01)
+    stream = events_module._sse_agent_events(
+        request=_ConnectedRequest(),
+        db=_DbShim(),
+        redis=None,
+        team_id="backend:acme.com",
+        agent_id=str(agent_id),
+        identity=SimpleNamespace(did_aw="did:aw:bob", did_key="did:key:z6MkBob"),
+        deadline=datetime.now(timezone.utc) + timedelta(seconds=1),
+    )
+    assert await anext(stream) == ": keepalive\n\n"
+    assert (await anext(stream)).startswith("event: connected\n")
+    return stream
 
 
 @pytest.mark.asyncio
@@ -686,21 +731,12 @@ async def test_current_actionable_chat_includes_from_stable_id_for_current_sende
 
 
 @pytest.mark.asyncio
-async def test_current_actionable_mail_keeps_newest_unread_in_diff_window(aweb_cloud_db):
+async def test_events_stream_emits_only_new_arrival_for_full_mail_window(
+    aweb_cloud_db,
+    monkeypatch,
+):
     created_at = datetime.now(timezone.utc) - timedelta(hours=1)
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (agent_id, team_id, did_aw, did_key, alias, address)
-        VALUES ($1, 'backend:acme.com', 'did:aw:alice', 'did:key:z6MkAlice', 'alice', 'acme.com/alice')
-        """,
-        uuid4(),
-    )
+    recipient_agent_id = await _create_test_event_recipient(aweb_cloud_db.aweb_db)
     for i in range(50):
         await aweb_cloud_db.aweb_db.execute(
             """
@@ -714,12 +750,15 @@ async def test_current_actionable_mail_keeps_newest_unread_in_diff_window(aweb_c
             created_at + timedelta(minutes=i),
         )
 
-    previous = await events_module._current_actionable_mail(
+    stream = await _open_test_event_stream(
         aweb_cloud_db.aweb_db,
-        inbox_dids=["did:aw:bob"],
+        recipient_agent_id,
+        monkeypatch,
     )
-    assert len(previous) == 50
-    assert all(item["conversation_id"] == item["message_id"] for item in previous)
+    initial_events = [
+        json.loads((await anext(stream)).split("data: ", 1)[1]) for _ in range(50)
+    ]
+    assert all(item["conversation_id"] == item["message_id"] for item in initial_events)
 
     newest_message_id = "ffffffff-ffff-4fff-8fff-ffffffffffff"
     newest_conversation_id = "99999999-9999-4999-8999-999999999999"
@@ -744,20 +783,16 @@ async def test_current_actionable_mail_keeps_newest_unread_in_diff_window(aweb_c
         created_at + timedelta(hours=2),
     )
 
+    changed = json.loads((await anext(stream)).split("data: ", 1)[1])
+    assert await anext(stream) == ": keepalive\n\n"
+    await stream.aclose()
+
+    assert changed["message_id"] == newest_message_id
+    assert changed["unread_count"] == 51
     current = await events_module._current_actionable_mail(
         aweb_cloud_db.aweb_db,
         inbox_dids=["did:aw:bob"],
     )
-    changed = events_module._new_or_changed_events(
-        current,
-        events_module._index_events(previous, key_field="message_id"),
-        key_field="message_id",
-        ignored_fields=frozenset({"unread_count"}),
-    )
-
-    assert newest_message_id in {item["message_id"] for item in current}
-    assert {item["message_id"] for item in changed} == {newest_message_id}
-    assert changed[0]["unread_count"] == 51
     newest = next(item for item in current if item["message_id"] == newest_message_id)
     assert newest["conversation_id"] == newest_conversation_id
 
@@ -782,3 +817,95 @@ async def test_current_actionable_mail_keeps_newest_unread_in_diff_window(aweb_c
         inbox_dids=["did:aw:bob"],
     )
     assert {item["message_id"] for item in after_ack} == omitted_ids
+
+
+@pytest.mark.asyncio
+async def test_events_stream_emits_one_mail_event_when_only_unread_count_changes(
+    aweb_cloud_db,
+    monkeypatch,
+):
+    recipient_agent_id = await _create_test_event_recipient(aweb_cloud_db.aweb_db)
+    message_ids = [uuid4(), uuid4()]
+    created_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    for index, message_id in enumerate(message_ids):
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.messages}}
+                (message_id, from_did, to_did, from_alias, to_alias, subject, body, created_at)
+            VALUES ($1, 'did:aw:alice', 'did:aw:bob', 'alice', 'bob', 'subject', 'body', $2)
+            """,
+            message_id,
+            created_at + timedelta(seconds=index),
+        )
+
+    stream = await _open_test_event_stream(
+        aweb_cloud_db.aweb_db,
+        recipient_agent_id,
+        monkeypatch,
+    )
+    initial_events = [
+        json.loads((await anext(stream)).split("data: ", 1)[1]) for _ in range(2)
+    ]
+    assert {event["unread_count"] for event in initial_events} == {2}
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.messages}}
+        SET read_at = NOW()
+        WHERE message_id = $1
+        """,
+        message_ids[0],
+    )
+
+    count_update_frame = await anext(stream)
+    assert await anext(stream) == ": keepalive\n\n"
+    await stream.aclose()
+
+    assert count_update_frame.startswith("event: actionable_mail\n")
+    count_update = json.loads(count_update_frame.split("data: ", 1)[1])
+    assert count_update["message_id"] == str(message_ids[1])
+    assert count_update["unread_count"] == 1
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="aweb-abbr.1: actionable mail has no row event for last-read-to-zero",
+)
+@pytest.mark.asyncio
+async def test_events_stream_signals_last_unread_count_reaching_zero(
+    aweb_cloud_db,
+    monkeypatch,
+):
+    recipient_agent_id = await _create_test_event_recipient(aweb_cloud_db.aweb_db)
+    message_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}}
+            (message_id, from_did, to_did, from_alias, to_alias, subject, body, created_at)
+        VALUES ($1, 'did:aw:alice', 'did:aw:bob', 'alice', 'bob', 'subject', 'body', NOW())
+        """,
+        message_id,
+    )
+    stream = await _open_test_event_stream(
+        aweb_cloud_db.aweb_db,
+        recipient_agent_id,
+        monkeypatch,
+    )
+    initial_event = json.loads((await anext(stream)).split("data: ", 1)[1])
+    assert initial_event["unread_count"] == 1
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.messages}}
+        SET read_at = NOW()
+        WHERE message_id = $1
+        """,
+        message_id,
+    )
+
+    zero_update_frame = await anext(stream)
+    await stream.aclose()
+
+    assert zero_update_frame.startswith("event:")
+    zero_update = json.loads(zero_update_frame.split("data: ", 1)[1])
+    assert zero_update["unread_count"] == 0

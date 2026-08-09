@@ -321,6 +321,30 @@ def _new_or_changed_events(
     return changed
 
 
+def _new_or_changed_mail_events(
+    current: list[dict[str, Any]],
+    previous: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    changed = _new_or_changed_events(
+        current,
+        previous,
+        key_field="message_id",
+        ignored_fields=frozenset({"unread_count"}),
+    )
+    if changed:
+        return changed
+
+    # Actionable mail is ordered oldest-to-newest, so a count-only change uses
+    # the newest current row as its single deterministic representative.
+    for evt in reversed(current):
+        previous_event = previous.get(str(evt["message_id"]))
+        if previous_event is not None and previous_event.get("unread_count") != evt.get(
+            "unread_count"
+        ):
+            return [evt]
+    return []
+
+
 async def _poll_control_signals(aweb_db, *, team_id: str, agent_id: UUID) -> list[dict]:
     """Consume and return pending control signals for this agent.
 
@@ -436,12 +460,7 @@ async def _sse_agent_events(
             yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'poll failure'})}\n\n"
             break
 
-        mail_events = _new_or_changed_events(
-            current_mail,
-            previous_mail,
-            key_field="message_id",
-            ignored_fields=frozenset({"unread_count"}),
-        )
+        mail_events = _new_or_changed_mail_events(current_mail, previous_mail)
         chat_events = _new_or_changed_events(
             current_chat,
             previous_chat,
