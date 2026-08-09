@@ -699,7 +699,7 @@ test-pointer-adapter:
 	$(MAKE) test-pointer-adapter-ac-pin
 
 test-pointer-adapter-ac-pin:
-	EXTERNAL_CONTEXT="$(EXTERNAL_CONTEXT)" python3 scripts/e2e/test_pointer_adapter_ac_pin.py
+	python3 scripts/e2e/test_pointer_adapter_ac_pin.py
 	python3 -m unittest scripts.e2e.test_release_driver.GraphContractTests.test_a_pointer_advertises_what_its_pin_actually_holds
 
 test-release-repository-measurement:
