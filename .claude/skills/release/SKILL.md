@@ -28,7 +28,18 @@ make release-run AUTHORITY=local-runnerless \
 ```
 
 Append `EXTERNAL_CONTEXT='<repo>=/absolute/checkout'` to planning when the
-graph names an external pin.
+graph names an external pin. Today that is the `ac-pin` lane: both its pins,
+`release-pin.toml` and `backend/uv.lock`, live in the AC repository and are
+resolved only from a declared context, never relative to this one.
+
+```
+make release-plan EXTERNAL_CONTEXT='github.com/awebai/ac=/absolute/path/to/ac'
+```
+
+Without it the driver refuses to guess, and both pins report as *unreadable in
+its declared repository context* — which reads like a broken lane rather than a
+missing argument. The checkout must be an absolute path whose `origin` is the
+declared repository; the driver verifies both and refuses otherwise.
 
 `DEFER_G5=1` is **not** covered by the runnerless risk authorization. Accepting a
 runner outage and accepting unmeasured runtime support are different judgments;
