@@ -26,6 +26,7 @@ const MAX_DELIVERED_IDS = 5000;
 const DELIVERED_IDS_TTL_MS = 24 * 60 * 60 * 1000;
 const MAIL_FETCH_LIMIT = 200;
 const CHAT_FETCH_LIMIT = 2000;
+const PIN_STORE_CAS_MAX_ATTEMPTS = 3;
 const APP_EVENT_SUMMARY_SEPARATOR = " — ";
 const MAX_APP_EVENT_VALUE_LENGTH = 160;
 const MAX_APP_EVENT_PAYLOAD_LENGTH = 500;
@@ -771,34 +772,44 @@ async function normalizeAndPersistMessageTrust(
 ) {
   const trustAddress = senderTrustAddress(fromAlias, fromAddress);
   const resolveTrustMetadata = options.trust.resolveTrustMetadata;
-  const resolvedMetadata = typeof resolveTrustMetadata === "function"
-    ? await resolveTrustMetadata.call(
-      options.trust,
-      msg.verification_status,
-      trustAddress,
-      msg.from_stable_id,
-      toDID,
-      toStableID,
-    )
-    : undefined;
-  return options.pinStore.runExclusive(async () => {
-    emitTrace(options, "lock_acquired", event, lane);
-    const trust = await normalizeMessageTrust(
-      options,
-      msg,
-      trustAddress,
-      msg.signed_from || fromAddress || fromAlias || "",
-      toDID,
-      toStableID,
-      resolvedMetadata,
-    );
-    if (trust.stored || options.pinStore.hasUndurableChanges()) {
-      emitTrace(options, "pin_commit_started", event, lane);
-      await commitPinStore(options);
-      emitTrace(options, "pin_commit_completed", event, lane);
+  let attempt = 0;
+  while (true) {
+    attempt += 1;
+    const resolvedMetadata = typeof resolveTrustMetadata === "function"
+      ? await resolveTrustMetadata.call(
+        options.trust,
+        msg.verification_status,
+        trustAddress,
+        msg.from_stable_id,
+        toDID,
+        toStableID,
+      )
+      : undefined;
+    try {
+      return await options.pinStore.runExclusive(async () => {
+        emitTrace(options, "lock_acquired", event, lane);
+        const trust = await normalizeMessageTrust(
+          options,
+          msg,
+          trustAddress,
+          msg.signed_from || fromAddress || fromAlias || "",
+          toDID,
+          toStableID,
+          resolvedMetadata,
+        );
+        if (trust.stored || options.pinStore.hasUndurableChanges()) {
+          emitTrace(options, "pin_commit_started", event, lane);
+          await commitPinStore(options);
+          emitTrace(options, "pin_commit_completed", event, lane);
+        }
+        return trust;
+      });
+    } catch (error) {
+      if (!(error instanceof PinStoreCASConflictError) || attempt >= PIN_STORE_CAS_MAX_ATTEMPTS) {
+        throw error;
+      }
     }
-    return trust;
-  });
+  }
 }
 
 async function persistDeliveryMark(
