@@ -160,6 +160,31 @@ describe("SenderTrustManager", () => {
     expect(store.pins.size).toBe(0);
   });
 
+  test("verifies a reissued alias whose pin still names the previous holder", async () => {
+    const previousHolder = await didFromSeed(11);
+    const currentHolder = await didFromSeed(12);
+    const store = new PinStore();
+    // The fixture must reuse a name already pinned to a DIFFERENT key. An unused
+    // alias has no previous holder to be confused with, so it cannot fail for the
+    // reason this test exists (aweb-aava).
+    store.storePin(previousHolder.did, "backend:acme.com/alice", "", "");
+
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({
+        get: async () => localRoster({ did_key: currentHolder.did, identity_scope: "local", custody: "self" }),
+      }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(store, "verified", "alice", currentHolder.did, undefined, undefined);
+
+    expect(result.status).toBe("verified");
+    expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
+    expect(store.pins.has(previousHolder.did)).toBe(false);
+  });
+
   test("caches certificate-authenticated local metadata on the message path", async () => {
     const currentIdentity = await didFromSeed(33);
     const store = new PinStore();
