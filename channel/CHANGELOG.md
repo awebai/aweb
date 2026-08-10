@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.7.6
+
+- Retries a trust pin commit when a concurrent writer wins the compare-and-set,
+  so simultaneous first contacts no longer drop one side's pin.
+- Stops a steady-state message from forcing a pin-store commit: last-seen
+  updates coalesce over a bounded window instead of writing on every delivery.
+- Resolves trust outside the pin lock, leaving only the decision and its commit
+  inside it, so one slow resolution no longer holds the lock against everyone.
+
+## 1.7.5
+
+- Collapses concurrent authenticated team-roster resolution into one shared
+  request, briefly caches the roster, and applies a short backoff after shared
+  failures. Sender metadata now resolves before the per-process trust critical
+  section, while each trust decision and its pin-store commit remain atomic.
+  This stops burst traffic from becoming a 30-second-per-lane notification
+  ladder.
+- Adds opt-in closed-schema delivery-stage diagnostics, written asynchronously
+  to a local regular file. Explicit trace destinations must not be FIFOs,
+  devices, sockets, mounted or network volumes, or sinks whose appends can hang.
+- Bundles js-yaml 4.3.1, addressing GHSA-5p4m-2wfm-xmqj / CVE-2026-59870.
+  Exposure is local-config denial-of-service hardening: Channel does not parse
+  untrusted YAML from the delivery wire, and pin-store YAML uses JSON_SCHEMA.
+
 ## 1.7.4
 
 - Stops repeated sender-identity mismatches from forcing an uncached AWID or
