@@ -8748,6 +8748,14 @@ class RegistryProviders:
         # the tag; a tag's digest is the digest of exactly those bytes. This is
         # also how the tag observer at _observe_ghcr_tag_factory reads a digest,
         # so the file keeps one story about image truth.
+        #
+        # No text=True, and that is load-bearing rather than tidiness: the
+        # digest has to be taken over the bytes the registry served. Decoding
+        # them by the ambient locale and hashing a re-encoding would produce a
+        # different digest, or would raise on bytes that locale cannot
+        # represent. Restoring text=True for symmetry with the calls around it
+        # would silently change what this digest means. The stderr decode below
+        # is the consequence of that, not a separate choice.
         inspected = subprocess.run(
             ["skopeo", "inspect", "--raw", f"docker://{repository}:{version}"],
             capture_output=True,

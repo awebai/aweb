@@ -2860,10 +2860,19 @@ class CommittedPinContractTests(unittest.TestCase):
 
     def test_an_unreadable_registry_never_condemns_the_lock(self) -> None:
         """An outage is not evidence about the lock. The component's own
-        registry-truth problem is reported instead, and it already blocks."""
+        registry-truth problem is reported instead, and it already blocks.
+
+        published_versions is populated ON PURPOSE, and with a value the pin
+        disagrees with. Without it the outage skip is not pinned at all: a
+        state carrying no published version reaches the `published is not None`
+        guard and returns clean through that instead, so the test would keep
+        passing with the outage skip deleted. The two conditions have to be
+        separable for this to discriminate, and FixtureState keeps them in
+        separate dicts precisely so they are."""
         problems = self._lock_problems(
             changed_components={"lib": True},
             versions={"lib": "2.1.0"},
+            published_versions={"lib": "2.0.0"},
             registry_unavailable={"lib": "registry timeout"},
             pin_values={"backend/uv.lock": "1.9.0"},
         )
