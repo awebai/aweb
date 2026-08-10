@@ -35,18 +35,38 @@ produced a false RED against correct code.
 `~/.config/aw/known_agents.yaml` before and after and returns `isolationHeld`.
 If it is false the arm is VOID — report it void, do not report its numbers.
 
-Isolation is belt and braces on purpose: `pinStorePath` is passed explicitly AND
-`HOME` is overridden per process. Only the second one actually moves the default,
-because `DEFAULT_PIN_STORE_PATH` is built from `homedir()` and the channel host
-never sets `pinStorePath`. `AWEB_IDENTITY_HOME` looks like the isolation knob and
-is not — it governs credentials only (see `aweb-abdp`).
+Isolation is belt and braces on purpose, and **both belts are load-bearing here**:
 
-## The trap: onTrace arity
+- `pinStorePath` is passed explicitly by `agent.mjs`. `commitPinStore` prefers it
+  and it becomes the `--path` argument the `aw` binary receives
+  (`local_aw.ts`: `["id","pin-store","compare-and-set","--path", path]`), so it
+  is operative in this harness, not decorative — it would save you even if the
+  `HOME` override failed to propagate.
+- `HOME` is overridden per process. This is the one that moves the *default*,
+  since `DEFAULT_PIN_STORE_PATH` is built from `homedir()` and no channel host
+  ever sets `pinStorePath` in production. It moves the Go side too:
+  `awconfig` derives the user state dir from `os.UserHomeDir()`, i.e. `$HOME`.
+
+`AWEB_IDENTITY_HOME` looks like the isolation knob and is not — it governs
+credentials only (see `aweb-abdp`).
+
+## The trap: onTrace arity, and why it is SILENT
 
 `onTrace` receives ONE `ChannelTraceEntry` object — `{ts, component, stage,
-event_type, lane, message_id}` — not `(stage, event)`. Destructure it wrongly and
-every stage name renders as `[object Object]`, every stage assertion silently
-fails to match, and the arms look like the fix is absent.
+event_type}` plus, conditionally, `lane`, `message_id`, `conversation_id` and
+`session_id` — not `(stage, event)`. The last two appear on chat-lane events, so
+a reader who assumes the schema stops at six will meet undocumented fields.
+
+Destructure it wrongly and every stage name renders as `[object Object]`, every
+stage assertion silently fails to match, and the arms look like the fix is absent.
+
+**The mechanism is what makes it silent, and it is deliberate:** `emitTrace`
+wraps the `onTrace` call in `try {} catch {}` and swallows, commented
+"Diagnostics must never change delivery behavior." That is correct design — a
+broken tracer must not break delivery — and the cost is that a broken *consumer*
+raises nothing at all. Any callback the channel invokes for diagnostics is in the
+same family: the absence of an error is not evidence your handler ran correctly.
+Assert on the *content* it produced, which is what the runner proof does.
 
 ## Reading traces
 
