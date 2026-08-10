@@ -623,15 +623,14 @@ def prove_route_controls(
             f"exit={positive.returncode}, output={positive_output[-1000:]}"
         )
     positive_runtime = _parse_control_runtime(positive_output, positive_env)
-    dependency_inventories = {
-        _identity(_dependency_inventory(runtime))
-        for record in (negative_runtime, positive_runtime)
-        for runtime in (record["alpha"], record["beta"])
-    }
-    if len(dependency_inventories) != 1:
-        raise release_driver.ReceiptError(
-            "federation control dependency-only inventories differ across runs"
-        )
+    _refuse_divergent_dependencies(
+        [
+            runtime
+            for record in (negative_runtime, positive_runtime)
+            for runtime in (record["alpha"], record["beta"])
+        ],
+        "federation control dependency-only inventories differ across runs",
+    )
 
     def invocation(environment: dict[str, str]) -> dict:
         return {
@@ -699,7 +698,7 @@ def measure_current_published_support(
     side = {"component": "server", "kind": "published", "version": version}
     resolved = _resolved_identity(wheel, side, "published")
     cells = []
-    dependency_digests = set()
+    measured_runtimes: list[dict] = []
     for direction in ("a-to-b", "b-to-a"):
         cell_id = _identity({
             "artifact": _wheel_identity(wheel),
@@ -722,8 +721,7 @@ def measure_current_published_support(
                 f"exit={result.returncode}, output={combined[-2000:]}"
             )
         observation = _parse_observation(combined, environment)
-        for runtime in (observation["alpha"], observation["beta"]):
-            dependency_digests.add(_identity(_dependency_inventory(runtime)))
+        measured_runtimes.extend((observation["alpha"], observation["beta"]))
         cells.append({
             "cell_id": cell_id,
             "direction": direction,
@@ -731,10 +729,10 @@ def measure_current_published_support(
             "observation_sha256": _identity(observation),
             "resolved": {"alpha": resolved, "beta": resolved},
         })
-    if len(dependency_digests) != 1:
-        raise release_driver.ReceiptError(
-            "current federation support dependency inventories differ across directions"
-        )
+    _refuse_divergent_dependencies(
+        measured_runtimes,
+        "current federation support dependency inventories differ across directions",
+    )
 
     document = {
         "artifacts": {"a": "pypi:aweb", "b": "pypi:aweb"},
@@ -855,6 +853,47 @@ def _dependency_inventory(runtime: dict) -> dict:
     }
 
 
+def _refuse_divergent_dependencies(runtimes, message: str) -> None:
+    """Dependency inventories must agree among runtimes OF THE SAME VERSION.
+
+    Never across versions. A skew measurement exists to run different server
+    versions against each other, and different versions declare different
+    dependency sets - which is exactly what a release bumping a dependency floor
+    produces. Requiring one inventory across a mixed set refuses the measurement
+    for having the property it was constructed to have.
+
+    Grouped rather than compared pairwise because the same requirement appears at
+    four layers - the live cell, the reloaded report, the route controls, and the
+    aggregate across every cell of a matrix - and at the aggregate layer "the two
+    sides" is not a meaningful pairing. One shared rule also means the next layer
+    added inherits it instead of restating it, which is how the first three came
+    to disagree.
+
+    What this does NOT check: that a runtime's dependencies are the ones its own
+    version declares. Nothing here can - this harness installs each wheel with no
+    constraints file, so there is no per-side expectation to compare against.
+    Per-side constraints, as release_channel_pi_skew got, is the stronger fix.
+
+    A refusal here is CORRECT even when its cause is environmental. Installing
+    unconstrained resolves transitive versions at install time, so two installs
+    of one wheel can differ if the index moved between them - and that means the
+    arms of the measurement ran under different conditions, so the evidence is
+    invalid whatever caused it. The trap is that such a refusal is
+    non-reproducible: resolution happens again on a re-run and may agree. Treating
+    the green re-run as proof the red was noise keeps the invalid measurement and
+    discards the one honest signal about it. Fix the environment rather than
+    re-rolling until the arms agree.
+    """
+    by_version: dict[str, set[str]] = {}
+    for runtime in runtimes:
+        by_version.setdefault(runtime["version"], set()).add(
+            _identity(_dependency_inventory(runtime))
+        )
+    for version in sorted(by_version):
+        if len(by_version[version]) != 1:
+            raise release_driver.ReceiptError(f"{message} at server {version}")
+
+
 def _validate_invocation(value: dict, expected: dict, label: str) -> None:
     for field in ("cell_id", "ports", "project"):
         if value.get(field) != expected[field]:
@@ -896,44 +935,12 @@ def _parse_observation(output: str, environment: dict[str, str]) -> dict:
     beta = _validate_runtime(
         observation["beta"], expected["runtime"]["beta"], "beta"
     )
-    # Only for two runtimes of the SAME server version. A skew cell exists to
-    # run two DIFFERENT versions against each other, and different versions
-    # declare different dependency sets - which is precisely what a release
-    # bumping a dependency floor produces. Requiring equality there refused the
-    # measurement for having the property it was constructed to have, after the
-    # journey had already reported every required outcome green.
-    #
-    # What a mixed-version cell keeps: each side is pinned by _validate_runtime
-    # to its own expected version, wheel digest and mcp version, and its
-    # inventory must be internally consistent with them and with its own
-    # recomputed digest. What it loses is any cross-side dependency comparison,
-    # and nothing here can replace it: this harness installs each wheel without
-    # a constraints file, so there is no per-side expected dependency set to
-    # check an inventory against. Supplying one is the stronger fix and a
-    # larger change than this.
-    #
-    # IF THIS FIRES ON A SAME-VERSION CELL IT IS CORRECT, AND A PASSING RE-RUN
-    # DOES NOT MAKE IT WRONG. There is a legitimate cause: installing with no
-    # constraints file resolves transitive versions AT INSTALL TIME, so two
-    # installs of the same wheel can differ if the index moved between them.
-    # That does not make the refusal spurious - it means the two arms of the
-    # measurement ran under different conditions, so the cell measured one
-    # version against a DIFFERENT BUILD of itself while claiming to measure it
-    # against itself. Evidence whose arms differ is invalid whatever caused the
-    # difference.
-    #
-    # The trap is that the refusal is non-reproducible: resolution happens again
-    # on a re-run and may agree. That reads as a flaky harness, and treating the
-    # green re-run as proof the red was noise keeps the invalid measurement and
-    # discards the one honest signal about it. Fix the environment - see the
-    # per-side constraints note above - rather than re-rolling until it agrees.
-    if (
-        alpha["version"] == beta["version"]
-        and _dependency_inventory(alpha) != _dependency_inventory(beta)
-    ):
-        raise release_driver.ReceiptError(
-            "federation cell dependency-only inventories differ between runtimes"
-        )
+    # The rule and everything it turns on live in _refuse_divergent_dependencies,
+    # because four layers need it and three of them used to disagree.
+    _refuse_divergent_dependencies(
+        (alpha, beta),
+        "federation cell dependency-only inventories differ between runtimes",
+    )
     return observation
 
 
@@ -959,10 +966,10 @@ def _parse_control_runtime(output: str, environment: dict[str, str]) -> dict:
     beta = _validate_runtime(
         runtime["beta"], expected["runtime"]["beta"], "control beta"
     )
-    if _dependency_inventory(alpha) != _dependency_inventory(beta):
-        raise release_driver.ReceiptError(
-            "federation control dependency-only inventories differ between runtimes"
-        )
+    _refuse_divergent_dependencies(
+        (alpha, beta),
+        "federation control dependency-only inventories differ between runtimes",
+    )
     return runtime
 
 
@@ -1148,10 +1155,10 @@ def _reload_cell_report(
     beta_identity = _validate_resolved_identity(
         resolved["beta"], beta_expected_side, beta_kind, beta, "beta"
     )
-    if _dependency_inventory(alpha) != _dependency_inventory(beta):
-        raise release_driver.ReceiptError(
-            f"federation cell report {identity} dependency inventories differ"
-        )
+    _refuse_divergent_dependencies(
+        (alpha, beta),
+        f"federation cell report {identity} dependency inventories differ",
+    )
     identities = (alpha_identity, beta_identity)
     candidates = [value for value in identities if value["kind"] == "candidate"]
     published = [value for value in identities if value["kind"] != "candidate"]
@@ -1190,7 +1197,7 @@ def _matrix_aggregate(
     reports = []
     candidates = []
     published_by_version: dict[tuple[str, str], dict] = {}
-    dependency_digests = set()
+    aggregated_runtimes: list[dict] = []
     for identity, cell in zip(identities, cells):
         path = cell_dir / f"{identity}.json"
         report, body, cell_candidates, cell_published = _reload_cell_report(
@@ -1209,18 +1216,19 @@ def _matrix_aggregate(
                     f"federation published {published['version']} identity "
                     "differs across cells"
                 )
-        for runtime in report["observation"]["alpha"], report["observation"]["beta"]:
-            dependency_digests.add(_identity(_dependency_inventory(runtime)))
+        aggregated_runtimes.extend(
+            (report["observation"]["alpha"], report["observation"]["beta"])
+        )
     candidate_by_identity = {_identity(value): value for value in candidates}
     if len(candidate_by_identity) != 1:
         raise release_driver.ReceiptError(
             f"federation aggregate must bind one exact candidate identity, "
             f"found {sorted(candidate_by_identity)}"
         )
-    if len(dependency_digests) != 1:
-        raise release_driver.ReceiptError(
-            "federation aggregate dependency-only inventories differ across cells"
-        )
+    _refuse_divergent_dependencies(
+        aggregated_runtimes,
+        "federation aggregate dependency-only inventories differ across cells",
+    )
     candidate_id, candidate = next(iter(candidate_by_identity.items()))
     aggregate_preimage = {
         "matrix_id": matrix_id,

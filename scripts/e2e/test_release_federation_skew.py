@@ -676,6 +676,74 @@ class FederationHarnessTests(unittest.TestCase):
             with self.assertRaisesRegex(rd.ReceiptError, "aggregate"):
                 federation.load_aggregate(cells, Path(tmp))
 
+    def test_the_reload_and_aggregate_layers_also_allow_two_versions_to_differ(self):
+        """The twin, and the class. Conditioning only the live cell check left
+        the SAME comparison unconditioned at the reload layer and again at the
+        aggregate layer, so a mixed cell passed live and was then refused on
+        re-read - and would have been refused again across cells.
+
+        The aggregate layer is the widest instance: it required every runtime of
+        every cell to share one dependency digest, and a matrix by construction
+        spans a candidate version and a published one."""
+        def journey(env):
+            side = "BETA" if env["AWEB_BETA_VERSION"] == "1.26.35" else "ALPHA"
+            other = "ALPHA" if side == "BETA" else "BETA"
+            return SimpleNamespace(
+                returncode=0,
+                stdout=self.observation(env, **{
+                    side.lower(): self.runtime(env, side, dependency="0.37.3"),
+                    other.lower(): self.runtime(env, other),
+                }),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cells = [self.cell("a-to-b"), self.cell("b-to-a")]
+            for cell in cells:
+                self.assertNotEqual(
+                    cell.a["version"], cell.b["version"],
+                    "control: these cells must be mixed-version",
+                )
+            harness = self.prime(self.harness(tmp, journey), cells)
+            for cell in cells:
+                harness.run(cell)
+            aggregate = federation.aggregate_cell_reports(cells, Path(tmp))
+            self.assertEqual(len(aggregate["reports"]), 2)
+            self.assertEqual(
+                federation.load_aggregate(cells, Path(tmp)), aggregate
+            )
+
+    def test_the_reload_layer_still_refuses_divergence_at_one_version(self):
+        """The guard the reload layer keeps: two runtimes recorded at the SAME
+        version must still agree on dependencies."""
+        def journey(env):
+            return SimpleNamespace(returncode=0, stdout=self.observation(env), stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cells = [self.same_version_cell("a-to-b")]
+            harness = self.prime(self.harness(tmp, journey), cells)
+            harness.run(cells[0])
+            federation.aggregate_cell_reports(cells, Path(tmp))
+            report_path = (
+                Path(tmp) / "cells" / f"{federation.cell_identity(cells[0])}.json"
+            )
+            report = json.loads(report_path.read_text())
+            report["observation"]["beta"]["installed_distributions"]["starlette"] = "9.9.9"
+            report["observation"]["beta"]["installed_distributions_sha256"] = sha256(
+                json.dumps(
+                    report["observation"]["beta"]["installed_distributions"],
+                    sort_keys=True, separators=(",", ":"),
+                ).encode()
+            )
+            report["observation_sha256"] = sha256(json.dumps(
+                report["observation"], sort_keys=True, separators=(",", ":")
+            ).encode())
+            report_path.write_text(json.dumps(
+                report, sort_keys=True, separators=(",", ":")
+            ) + "\n")
+            with self.assertRaisesRegex(rd.ReceiptError, "dependency"):
+                federation.load_aggregate(cells, Path(tmp))
+
     def test_reload_revalidates_cell_report_instead_of_trusting_write_time(self):
         def journey(env):
             return SimpleNamespace(returncode=0, stdout=self.observation(env), stderr="")
