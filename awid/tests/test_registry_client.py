@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import inspect
 import json
 
 import httpx
@@ -8,6 +10,7 @@ import pytest
 from httpx import MockTransport, Response
 
 import awid.registry as registry_module
+from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER
 from awid.did import generate_keypair
 from awid.registry import (
     MAX_REGISTRY_ERROR_BYTES,
@@ -494,3 +497,44 @@ async def test_cached_registry_client_can_invalidate_team_certificate_reads():
     assert all_key not in redis.values
     assert revocations_key not in redis.values
     assert redis.values["unrelated"] == "keep"
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_carries_the_service_token():
+    """CachedRegistryClient declares its own __init__, so every RegistryClient
+    field has to be named there explicitly; a field the override forgets is not
+    a missing value but a TypeError at construction."""
+    seen: dict[str, object] = {}
+
+    async def handler(request):
+        seen["token"] = request.headers.get(AWID_SERVICE_TOKEN_HEADER)
+        return Response(200, json={"status": "ok"})
+
+    token = "trusted-service-token-with-at-least-32-bytes"
+    registry = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=FakeRedis(),  # type: ignore[arg-type]
+        transport=MockTransport(handler),
+        service_token=token,
+    )
+    try:
+        assert registry.service_token == token
+        assert await registry.health() == {"status": "ok"}
+    finally:
+        await registry.aclose()
+
+    assert seen["token"] == token
+
+
+def test_cached_registry_client_names_every_registry_client_field():
+    """The override's signature and the parent's field list have to be kept in
+    step by hand. Compare them so the next added field fails here rather than
+    at server startup."""
+    parent_fields = {
+        field.name for field in dataclasses.fields(RegistryClient) if field.init
+    }
+    override_parameters = set(
+        inspect.signature(CachedRegistryClient.__init__).parameters
+    ) - {"self", "redis_client"}
+
+    assert parent_fields - override_parameters == set()

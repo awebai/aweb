@@ -2,8 +2,15 @@ import logging
 
 import pytest
 
+from awid.registry import CachedRegistryClient
+
 from aweb.api import _build_awid_registry_client, create_app
 from aweb.config import DEFAULT_AWID_REGISTRY_URL, get_awid_registry_url
+
+
+class _StubRedis:
+    """Stands in for a configured Redis. _build_awid_registry_client only stores
+    it, so no command surface is needed to reach the construction under test."""
 
 
 def _route_paths(app) -> set[str]:
@@ -64,6 +71,23 @@ async def test_aweb_registry_client_receives_configured_service_token(monkeypatc
 
     client = _build_awid_registry_client(create_app(), redis=None)
     try:
+        assert client.service_token == token
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_aweb_cached_registry_client_receives_configured_service_token(monkeypatch):
+    """redis=None is the branch no deployment runs: docker-compose and production
+    both configure Redis, so _build_awid_registry_client returns the cached class
+    there. Cover the branch that boots the server."""
+    token = "trusted-service-token-with-at-least-32-bytes"
+    monkeypatch.setenv("AWID_SERVICE_TOKEN", token)
+    monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
+
+    client = _build_awid_registry_client(create_app(), redis=_StubRedis())
+    try:
+        assert isinstance(client, CachedRegistryClient)
         assert client.service_token == token
     finally:
         await client.aclose()

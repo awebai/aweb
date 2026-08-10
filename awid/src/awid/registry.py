@@ -1071,6 +1071,7 @@ class CachedRegistryClient(RegistryClient):
         transport: httpx.AsyncBaseTransport | None = None,
         base_url: str | None = None,
         domain_registry_resolver: DomainRegistryResolver | None = None,
+        service_token: str | None = None,
     ) -> None:
         super().__init__(
             registry_url=registry_url,
@@ -1078,6 +1079,7 @@ class CachedRegistryClient(RegistryClient):
             transport=transport,
             base_url=base_url,
             domain_registry_resolver=domain_registry_resolver,
+            service_token=service_token,
         )
         object.__setattr__(self, "redis_client", redis_client)
         object.__setattr__(self, "_refresh_tasks", {})
