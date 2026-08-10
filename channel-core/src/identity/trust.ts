@@ -424,8 +424,14 @@ export class SenderTrustManager {
             }
           }
         }
-        store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID);
-        return { status, stored: true };
+        // The steady state: an already-pinned sender presenting the key it is
+        // pinned to. Nothing here is a continuity claim, so it commits only when
+        // the store actually changed - otherwise every accepted message forces a
+        // commit and the resident processes sharing this file spend their time
+        // losing CAS races instead of delivering wakes (aweb-abdk). A store left
+        // undurable by an earlier failure is still persisted: that is decided by
+        // the caller, which commits on `stored || hasUndurableChanges()`.
+        return { status, stored: store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID) };
       }
       case "mismatch": {
         const pinnedKey = store.addresses.get(trustAddress) || "";

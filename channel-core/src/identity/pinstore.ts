@@ -8,6 +8,38 @@ type RekeyPinResult =
   | { status: "rekeyed" | "unchanged"; pin: Pin }
   | { status: "missing" | "conflict" };
 
+/**
+ * How long a pin's last_seen may go unrefreshed before an accepted message from
+ * that sender advances it again, and so forces a commit.
+ *
+ * 60s was measured rather than picked. Conflicts come from CLUSTERING, not from
+ * the average rate: on this fleet 13.8% of a pinned global sender's inbound
+ * arrives within one second of the previous message and 21% within ten seconds,
+ * and one message fanned out to several resident processes commits from each of
+ * them at once. Any window wider than a burst collapses that burst to a single
+ * commit per process; the widest observed intra-burst spacing was under 10s, so
+ * 60s clears it with an order of magnitude of margin, and widening further only
+ * trims a trickle whose median spacing is 84s and which never raced.
+ *
+ * It costs the frozen-last_seen staleness diagnostic a 60s false-positive
+ * window. That is far inside the window traffic already imposes: a healthy pin
+ * routinely goes 15.6 minutes between refreshes (p90) and over four hours (p99),
+ * because it only refreshes when its holder sends.
+ */
+export const LAST_SEEN_COALESCE_MS = 60_000;
+
+/**
+ * Whether a stored last_seen is old enough to be worth advancing. An
+ * unparseable or future value refreshes, so a malformed timestamp fails toward
+ * writing rather than pinning a pin's last_seen forever.
+ */
+function lastSeenIsStale(previous: string, now: string): boolean {
+  const previousMs = Date.parse(previous);
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(previousMs) || !Number.isFinite(nowMs)) return true;
+  return nowMs - previousMs >= LAST_SEEN_COALESCE_MS || nowMs < previousMs;
+}
+
 const ROOT_FIELDS = new Set(["pins", "addresses"]);
 const PIN_FIELDS = new Set([
   "address",
@@ -75,26 +107,51 @@ export class PinStore {
     return "mismatch";
   }
 
-  /** Record or update a TOFU pin. */
+  /**
+   * Record or update a TOFU pin. Returns whether anything changed, which is what
+   * decides if the caller must commit.
+   *
+   * A last_seen refresh is not a continuity claim — the same distinction Go draws
+   * between commitContinuity and commitRefresh. Refreshing it on every accepted
+   * message made every such message force a commit, and with several resident
+   * processes sharing one known_agents.yaml that made CAS conflicts the steady
+   * state, each one deferring a wake (aweb-abdk).
+   *
+   * last_seen is therefore advanced at most once per LAST_SEEN_COALESCE_MS. It is
+   * left untouched inside that window rather than advanced-but-not-persisted, so
+   * memory and disk keep agreeing; nothing reads the value to make a decision, so
+   * the coarser resolution costs no behaviour.
+   */
   storePin(
     did: string,
     address: string,
     handle: string,
     server: string,
-  ): void {
+  ): boolean {
     const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
     const existing = this.mutablePins.get(did);
 
     if (existing) {
+      let changed = false;
       if (existing.address !== address) {
         this.addresses.delete(existing.address);
         this.addresses.set(address, did);
         existing.address = address;
+        changed = true;
       }
-      existing.last_seen = now;
-      existing.handle = handle;
-      existing.server = server;
-      return;
+      if (existing.handle !== handle) {
+        existing.handle = handle;
+        changed = true;
+      }
+      if (existing.server !== server) {
+        existing.server = server;
+        changed = true;
+      }
+      if (lastSeenIsStale(existing.last_seen, now)) {
+        existing.last_seen = now;
+        changed = true;
+      }
+      return changed;
     }
 
     this.mutablePins.set(did, {
@@ -105,6 +162,7 @@ export class PinStore {
       server,
     });
     this.addresses.set(address, did);
+    return true;
   }
 
   rekeyPin(currentKey: string, nextKey: string): RekeyPinResult {
@@ -170,17 +228,25 @@ export class PinStore {
     return rekey;
   }
 
+  /** Returns whether anything changed, so the caller can skip a needless commit. */
   recordVerifiedIdentity(
     pinKey: string,
     address: string,
     stableID?: string,
     didKey?: string,
-  ): void {
-    this.storePin(pinKey, address, "", "");
-    if (!stableID) return;
+  ): boolean {
+    let changed = this.storePin(pinKey, address, "", "");
+    if (!stableID) return changed;
     const pin = this.mutablePins.get(pinKey)!;
-    pin.stable_id = stableID;
-    if (didKey) pin.did_key = didKey;
+    if (pin.stable_id !== stableID) {
+      pin.stable_id = stableID;
+      changed = true;
+    }
+    if (didKey && pin.did_key !== didKey) {
+      pin.did_key = didKey;
+      changed = true;
+    }
+    return changed;
   }
 
   replaceVerifiedIdentity(
@@ -189,9 +255,12 @@ export class PinStore {
     address: string,
     stableID?: string,
     didKey?: string,
-  ): void {
-    if (previousPinKey) this.deletePin(previousPinKey);
-    this.recordVerifiedIdentity(pinKey, address, stableID, didKey);
+  ): boolean {
+    // Dropping the previous key is itself a durable change, so it decides the
+    // result independently of whether the recorded pin then looks unchanged.
+    const removed = previousPinKey ? this.deletePin(previousPinKey) : false;
+    const recorded = this.recordVerifiedIdentity(pinKey, address, stableID, didKey);
+    return removed || recorded;
   }
 
   advanceLogCheckpoint(stableID: string, seq: number, entryHash: string): boolean {
