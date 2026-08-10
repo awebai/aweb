@@ -156,7 +156,7 @@ describe("dispatchEvent", () => {
       mcp as never,
       {} as never,
       new PinStore(),
-      { normalizeTrust: vi.fn() } as unknown as SenderTrustManager,
+      { normalizeResolvedTrust: vi.fn() } as unknown as SenderTrustManager,
       self,
       new Set(),
       {
@@ -189,7 +189,7 @@ describe("dispatchEvent", () => {
       mcp as never,
       {} as never,
       new PinStore(),
-      { normalizeTrust: vi.fn() } as unknown as SenderTrustManager,
+      { normalizeResolvedTrust: vi.fn() } as unknown as SenderTrustManager,
       self,
       new Set(),
       {
@@ -219,7 +219,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async (_store, status, from, fromDid, fromStableID) => {
+      normalizeResolvedTrust: vi.fn(async (_store, status, from, fromDid, fromStableID) => {
         const pinKey = fromStableID || fromDid;
         pinStore.storePin(pinKey, from, "", "");
         const pin = pinStore.pins.get(pinKey)!;
@@ -266,8 +266,8 @@ describe("dispatchEvent", () => {
       get: vi.fn().mockResolvedValue({ messages: [await signedInboxMail("msg-local-trust")] }),
       post: vi.fn().mockResolvedValue(undefined),
     };
-    const normalizeTrust = vi.fn(async () => ({ status: "verified", stored: false }));
-    const trust = { normalizeTrust } as unknown as SenderTrustManager;
+    const normalizeResolvedTrust = vi.fn(async () => ({ status: "verified", stored: false }));
+    const trust = { normalizeResolvedTrust } as unknown as SenderTrustManager;
 
     await dispatchEvent(
       mcp as never,
@@ -279,7 +279,7 @@ describe("dispatchEvent", () => {
       { type: "mail_message", message_id: "msg-local-trust" } satisfies AgentEvent,
     );
 
-    expect(normalizeTrust).toHaveBeenCalledWith(
+    expect(normalizeResolvedTrust).toHaveBeenCalledWith(
       pinStore,
       "verified",
       "acme.com/alice",
@@ -290,6 +290,7 @@ describe("dispatchEvent", () => {
       undefined,
       undefined,
       "acme.com/alice",
+      undefined,
     );
     expect(notification).toHaveBeenCalledWith({
       method: "notifications/claude/channel",
@@ -316,7 +317,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "identity_mismatch", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "identity_mismatch", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchEvent(
@@ -410,7 +411,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchEvent(
@@ -441,7 +442,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
 
     const dispatch = dispatchEvent(
@@ -472,7 +473,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
     const dispatched = new Set<string>();
     const event = {
@@ -499,7 +500,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
     const dispatched = new Set<string>();
 
@@ -579,7 +580,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchEvent(
@@ -640,7 +641,7 @@ describe("dispatchEvent", () => {
         .mockResolvedValueOnce(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
     const dispatched = new Set<string>();
     const event = {
@@ -680,7 +681,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchEvent(
@@ -716,7 +717,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchEvent(

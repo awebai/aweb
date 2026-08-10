@@ -138,7 +138,7 @@ test("mid-turn mail is acknowledged only after Pi accepts the follow-up", async 
     post: async (path: string) => { posts.push(path); },
   };
   const trust = {
-    normalizeTrust: async () => ({ status: "verified", stored: false }),
+    normalizeResolvedTrust: async () => ({ status: "verified", stored: false }),
   } as unknown as SenderTrustManager;
 
   const dispatch = dispatchAgentEvent(
@@ -208,7 +208,7 @@ test("in-flight shutdown rejection prevents source acknowledgment after late sen
     post: async (path: string) => { posts.push(path); },
   };
   const trust = {
-    normalizeTrust: async () => ({ status: "verified", stored: false }),
+    normalizeResolvedTrust: async () => ({ status: "verified", stored: false }),
   } as unknown as SenderTrustManager;
   const dispatch = dispatchAgentEvent(
     {
