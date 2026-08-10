@@ -2406,10 +2406,18 @@ elif "--raw" in argv:
 elif "--override-os" in argv and "--override-arch" in argv:
     # Selection against a platform the caller named rather than the host's.
     # Real skopeo still reports the tag's index digest here, not the selected
-    # child's, which is why this arm agrees with --raw.
-    index = os.environ["AWEB_TEST_INDEX_JSON"].encode()
+    # child's, which is why this arm agrees with --raw - but it is still
+    # selection, so it fails when the named platform is absent.
+    index = os.environ["AWEB_TEST_INDEX_JSON"]
+    named = argv[argv.index("--override-arch") + 1]
+    if not any(m["platform"]["architecture"] == named
+               for m in json.loads(index)["manifests"]):
+        sys.stderr.write(
+            'level=fatal msg="choosing image instance: no image found in image '
+            'index for architecture ' + named + '"')
+        sys.exit(1)
     sys.stdout.write(json.dumps(
-        {"Digest": "sha256:" + hashlib.sha256(index).hexdigest()}))
+        {"Digest": "sha256:" + hashlib.sha256(index.encode()).hexdigest()}))
 else:
     sys.stderr.write(
         'level=fatal msg="Error parsing manifest for image: choosing image '
@@ -2470,6 +2478,37 @@ class GhcrPublishedPlatformIndependenceTests(unittest.TestCase):
             self.assertEqual(selecting.returncode, 1)
             self.assertIn("no image found in image index", selecting.stderr)
             self.assertIn("OS darwin", selecting.stderr)
+
+    def test_the_read_survives_an_index_that_stops_carrying_one_platform(self):
+        """The reason --raw is preferred over naming a platform explicitly. Both
+        forms return the same digest today, so correctness does not separate
+        them; what separates them is an index that no longer carries the
+        platform the caller would have named."""
+        index = json.dumps({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [
+                {"mediaType": "application/vnd.oci.image.manifest.v1+json",
+                 "digest": "sha256:" + "4f" * 32, "size": 2200,
+                 "platform": {"architecture": "arm64", "os": "linux"}},
+            ],
+        }, sort_keys=True)
+        restore = dict(os.environ)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                self._with_stub(tmp)
+                os.environ["AWEB_TEST_INDEX_JSON"] = index
+                version, digests = rd.RegistryProviders._ghcr_published(
+                    "awebai/awid")
+        finally:
+            os.environ.clear()
+            os.environ.update(restore)
+
+        self.assertEqual(version, "0.5.14")
+        self.assertEqual(
+            digests,
+            {"0.5.14": "sha256:" + hashlib.sha256(index.encode()).hexdigest()},
+        )
 
     def test_published_image_truth_is_read_without_platform_selection(self):
         """The whole point: the same call has to work where the asking host's
