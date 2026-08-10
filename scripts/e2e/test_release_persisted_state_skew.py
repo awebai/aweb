@@ -20,30 +20,36 @@ import release_channel_pi_skew as channel_pi  # noqa: E402
 import release_driver as rd  # noqa: E402
 import release_persisted_state_skew as skew  # noqa: E402
 
-REAL_SERVER_LOCK_BYTES = channel_pi._server_lock_bytes
-
-
-def setUpModule():
-    """Serve the working tree's lock for every fixture version.
-
-    This harness measures a published wheel and a candidate wheel in one run, so
-    after the provenance change their constraints legitimately differ. The
-    fixtures' versions are invented (1.2.1, 1.2.3), so no tag exists for the
-    published side and the real reader correctly refuses it. These tests are
-    about persisted-state behaviour, not about tag history.
-
-    Making both sides resolve the same constraints here does mean these tests
-    cannot see the per-wheel keying work. ConstraintsPerWheelTests covers that
-    with the real reader.
-    """
-    channel_pi._server_lock_bytes = lambda provenance, version: (
+def fixture_server_lock_bytes(provenance: str, version: str):
+    return (
         (SCRIPTS.parent / "server" / "uv.lock").read_bytes(),
         f"fixture-lock:{provenance}",
     )
 
 
-def tearDownModule():
-    channel_pi._server_lock_bytes = REAL_SERVER_LOCK_BYTES
+class FixtureServerLock:
+    """Serve the working tree's lock for every version. OPT-IN, per class.
+
+    This harness installs a published wheel and a candidate wheel in one run, so
+    their constraints legitimately differ. Fixture versions here are invented
+    (1.2.1, 1.2.3), so no tag exists for the published side and the real reader
+    correctly refuses it; classes about persisted-state behaviour mix this in
+    and stop depending on tag history.
+
+    Opt-in rather than module-wide, because the fake makes both provenances
+    resolve the SAME constraints digest - the value the evidence anchors - and
+    so hides the divergence per-wheel keying exists to carry. A plain TestCase
+    gets the real reader, and ConstraintsPerWheelTests is one.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._real_server_lock_bytes = channel_pi._server_lock_bytes
+        channel_pi._server_lock_bytes = fixture_server_lock_bytes
+
+    def tearDown(self):
+        channel_pi._server_lock_bytes = self._real_server_lock_bytes
+        super().tearDown()
 
 
 JOURNEY = (
@@ -551,7 +557,7 @@ class PublishedTypeBindingTests(unittest.TestCase):
             self.resolve(self.metadata(swap_types=True))
 
 
-class AggregatePublishedIdentityTests(unittest.TestCase):
+class AggregatePublishedIdentityTests(FixtureServerLock, unittest.TestCase):
     """aggregate_support must exact-revalidate the complete published actor
     identity - reviewer tampering counterexamples, each with a recomputed
     self-presented report_id so the digest check cannot mask them."""
@@ -640,7 +646,7 @@ class AggregatePublishedIdentityTests(unittest.TestCase):
             skew.aggregate_support(self.measured(tamper))
 
 
-class PersistedJourneyTests(unittest.TestCase):
+class PersistedJourneyTests(FixtureServerLock, unittest.TestCase):
     def test_installed_wheel_is_started_through_its_serve_subcommand(self):
         self.assertEqual(
             skew.server_command(Path("/runtime"), 8123),
@@ -841,7 +847,7 @@ class RealCausalMatcherTests(unittest.TestCase):
             journey.assert_causal_mail_failure(RuntimeError("timeout"))
 
 
-class RuntimePostureTests(unittest.TestCase):
+class RuntimePostureTests(FixtureServerLock, unittest.TestCase):
     """Cells and control bind canonical in-venv distribution inventories;
     only the aweb wheel may differ across compared runtimes."""
 
@@ -926,7 +932,7 @@ class RuntimePostureTests(unittest.TestCase):
             skew.aggregate_support(matrix_path)
 
 
-class SupportMeasurementTests(unittest.TestCase):
+class SupportMeasurementTests(FixtureServerLock, unittest.TestCase):
     def measured_matrix(self):
         document, cells = matrix_document(("1.2.1", "1.2.2"))
         temporary = tempfile.TemporaryDirectory()
@@ -999,14 +1005,15 @@ class RegistrationTests(unittest.TestCase):
 
 class ConstraintsPerWheelTests(unittest.TestCase):
     """This harness installs TWO server wheels in one run, so constraints have
-    to be keyed per wheel. Run against the real lock reader, because a fixture
-    that makes both sides resolve the same constraints cannot see the keying at
-    all - which is exactly what setUpModule does for the rest of this file."""
+    to be keyed per wheel.
+
+    A plain TestCase, so it runs against the real lock reader. A fixture that
+    makes both sides resolve the same constraints cannot see the keying at all,
+    which is exactly what FixtureServerLock does for the classes that mix it
+    in - so the property has to be covered by a class that does not."""
 
     def setUp(self):
-        channel_pi._server_lock_bytes = REAL_SERVER_LOCK_BYTES
         self.journey = skew.SubprocessPersistedStateJourney()
-        self.addCleanup(setUpModule)
 
     def _wheel(self, version, sha_seed, kind):
         return skew.WheelIdentity(
