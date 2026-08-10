@@ -185,6 +185,36 @@ describe("SenderTrustManager", () => {
     expect(store.pins.has(previousHolder.did)).toBe(false);
   });
 
+  // Every accepted message from an already-pinned global sender used to refresh
+  // last_seen and so report stored=true, forcing a pin-store commit per message.
+  // With several resident processes sharing one known_agents.yaml that made CAS
+  // conflicts the steady state and each conflict deferred a wake (aweb-abdk).
+  // The sender must be GLOBAL: a local-scope sender is not pinned at all, so the
+  // same test built from one would pass without exercising this path.
+  test("an already-pinned global sender stops forcing a commit on every message", async () => {
+    const globalIdentity = await didFromSeed(71);
+    const store = new PinStore();
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({
+        get: async () => localRoster(
+          { did_key: globalIdentity.did, did_aw: "did:aw:grace", identity_scope: "global" },
+          "grace",
+        ),
+      }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const first = await trust.normalizeTrust(store, "verified", "grace", globalIdentity.did, "did:aw:grace", undefined);
+    expect(first.status).toBe("verified");
+    expect(first.stored).toBe(true);
+
+    const second = await trust.normalizeTrust(store, "verified", "grace", globalIdentity.did, "did:aw:grace", undefined);
+    expect(second.status).toBe("verified");
+    expect(second.stored).toBe(false);
+  });
+
   test("caches certificate-authenticated local metadata on the message path", async () => {
     const currentIdentity = await didFromSeed(33);
     const store = new PinStore();

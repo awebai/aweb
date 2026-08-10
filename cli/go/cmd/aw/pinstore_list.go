@@ -105,6 +105,16 @@ func newPinStoreListCmd() *cobra.Command {
 			"stays frozen while its holder is actively sending is a pin that no longer " +
 			"matches the sender, because the path that reports a mismatch does not refresh " +
 			"it while the verified path does. Two fields, no network.\n\n" +
+			"That rule has a resolution, so read it over minutes rather than seconds. " +
+			"last_seen is advanced at most once a minute: refreshing it on every accepted " +
+			"message forced a store commit per message, and the resident processes sharing " +
+			"this file then spent their time losing write races instead of delivering " +
+			"wakes. So a healthy binding can read as frozen for up to a minute. That is " +
+			"far inside the window ordinary traffic already imposes - a healthy pin goes " +
+			"about fifteen minutes between refreshes at p90, and hours at p99, because it " +
+			"only refreshes when its holder sends - so the discriminator is unaffected in " +
+			"practice. It is stated because a rule with an unstated resolution is one " +
+			"somebody will eventually read at the wrong timescale.\n\n" +
 			"One read is not the store's state. Several processes write this file, each " +
 			"marshalling its whole map, so its contents are whichever wrote last: entries " +
 			"and field values can differ between two reads seconds apart. To characterise " +
