@@ -2542,10 +2542,18 @@ class SkewCellIdentityTotalityTests(unittest.TestCase):
     __main__ while each child imports release_driver, so there are two SkewCell
     classes and dataclass equality is class-scoped.
 
-    That is only safe while the identity covers EVERY field. A field added to
-    SkewCell but not to skew_cell_preimage would silently stop being checked at
-    the matrix boundary - two cells differing only in it would share an identity
-    and each would be accepted as the other."""
+    That is only safe while the identity covers EVERY field, and TWO separate
+    properties now rest on it. A field added to SkewCell but not to
+    skew_cell_preimage would (1) silently stop being checked at the matrix
+    boundary - two cells differing only in it would share an identity and each
+    would be accepted as the other - and (2) break the persisted-state harness's
+    field checks, which run against the CALLER's cell object rather than the
+    frozen one and are equivalent to it only because an identity match proves
+    every field equal.
+
+    Both consequences are caught here, by these two tests. Anyone weakening them
+    later will be thinking about the first, which is why the second is written
+    down: it has no test of its own and no other place that says it."""
 
     def test_the_preimage_names_every_field_of_the_cell(self):
         cell_fields = {field.name for field in dataclasses.fields(rd.SkewCell)}
