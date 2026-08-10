@@ -21,6 +21,10 @@ from awid.registry import (
 )
 
 
+
+async def _unused_domain_registry_resolver(domain: str) -> str:
+    raise AssertionError("field-forwarding fixtures are never called")
+
 def test_registry_http_bound_values_are_pinned():
     assert MAX_REGISTRY_RESPONSE_BYTES == 10 * 1024 * 1024
     assert MAX_REGISTRY_ERROR_BYTES == 64 * 1024
@@ -538,3 +542,42 @@ def test_cached_registry_client_names_every_registry_client_field():
     ) - {"self", "redis_client"}
 
     assert parent_fields - override_parameters == set()
+
+
+# One distinguishable value per RegistryClient field, so a value that arrives on
+# the wrong field, or does not arrive at all, is visible. Keyed by field name and
+# checked for completeness by the test below rather than by whoever edits it.
+DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS = {
+    "registry_url": "http://named-registry.test",
+    "timeout_seconds": 12.5,
+    "transport": MockTransport(lambda _request: Response(500)),
+    "base_url": "http://named-base.test",
+    "domain_registry_resolver": _unused_domain_registry_resolver,
+    "service_token": "distinguishable-service-token-of-sufficient-length",
+}
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_forwards_every_field_it_names():
+    """Naming a field in the override is half the work; forwarding it to super()
+    is the other half, and the parity test above cannot see that half. Worse, it
+    steers against it: when a newly added field makes parity fail, adding the
+    NAME is the minimum edit that turns it green, and the forwarding is a second
+    edit nothing then checks."""
+    fields = {
+        field.name for field in dataclasses.fields(RegistryClient) if field.init
+    }
+    assert fields == set(DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS), (
+        "give every RegistryClient field a distinguishable value here, or this "
+        "test silently stops covering the ones it does not name"
+    )
+
+    registry = CachedRegistryClient(
+        redis_client=FakeRedis(),  # type: ignore[arg-type]
+        **DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS,
+    )
+    try:
+        for name, value in DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS.items():
+            assert getattr(registry, name) == value, name
+    finally:
+        await registry.aclose()
