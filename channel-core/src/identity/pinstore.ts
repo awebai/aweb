@@ -31,7 +31,14 @@ export const LAST_SEEN_COALESCE_MS = 60_000;
 /**
  * Whether a stored last_seen is old enough to be worth advancing. An
  * unparseable or future value refreshes, so a malformed timestamp fails toward
- * writing rather than pinning a pin's last_seen forever.
+ * writing rather than pinning a pin's last_seen forever. That failure is
+ * self-healing: the first write replaces the bad value, so the cost is one extra
+ * commit rather than a standing regression.
+ *
+ * The future-value branch rests on this store being HOST-GLOBAL, so its writers
+ * share a clock. Two writers whose clocks disagree could otherwise ping-pong
+ * past each other's future timestamps and defeat coalescing entirely. If this
+ * file ever becomes shared across hosts, revisit this branch first.
  */
 function lastSeenIsStale(previous: string, now: string): boolean {
   const previousMs = Date.parse(previous);

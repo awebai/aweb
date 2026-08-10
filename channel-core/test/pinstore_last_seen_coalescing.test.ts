@@ -91,6 +91,78 @@ describe("last_seen coalescing", () => {
     expect(store.addresses.get("acme.com/alice-moved")).toBe(PIN_KEY);
   });
 
+  // The contract this change introduces is "returns whether anything changed, so
+  // the caller can skip a commit". Every cell of it needs a case where that cell
+  // ALONE changes, or the cell can be deleted with the suite green - which is how
+  // three of them survived the first round.
+  test("a stable_id gained on an existing did:key pin still commits, inside the window", () => {
+    // Upgrade-on-first-sight: the pin exists under a did:key, nothing else moves,
+    // and only the stable_id appears. Unreported, the upgrade is computed and
+    // discarded on every process start and never reaches disk.
+    // did_key is ALREADY set, so stable_id is the only cell that moves. With
+    // did_key absent too, that cell fires as well and masks this one - which is
+    // what the first version of this test did, and it passed under the mutation.
+    const store = PinStore.fromYAML([
+      "pins:",
+      `  ${DID_KEY}:`,
+      `    address: ${ADDRESS}`,
+      "    handle: ''",
+      `    did_key: ${DID_KEY}`,
+      "    first_seen: 2026-02-22T10:00:00Z",
+      `    last_seen: ${nowISO(-5_000)}`,
+      "    server: ''",
+      "addresses:",
+      `  ${ADDRESS}: ${DID_KEY}`,
+      "",
+    ].join("\n"));
+
+    const changed = store.recordVerifiedIdentity(DID_KEY, ADDRESS, PIN_KEY, DID_KEY);
+
+    expect(changed).toBe(true);
+    expect(store.pins.get(DID_KEY)?.stable_id).toBe(PIN_KEY);
+  });
+
+  test("dropping a previous pin still commits even when the recorded pin is unchanged", () => {
+    // replaceVerifiedIdentity's `removed` term. Without it the deletion is gone in
+    // memory and still present on disk: safe in direction, but a real loss of the
+    // behaviour this change introduces.
+    const store = storeWithPin(nowISO(-5_000));
+    store.storePin("did:key:zSupersededHolder", "acme.com/superseded", "", "");
+
+    const changed = store.replaceVerifiedIdentity(
+      "did:key:zSupersededHolder",
+      PIN_KEY,
+      ADDRESS,
+      PIN_KEY,
+      DID_KEY,
+    );
+
+    expect(changed).toBe(true);
+    expect(store.pins.has("did:key:zSupersededHolder")).toBe(false);
+  });
+
+  // resolver-review probed five cells and named handle and server as unprobed
+  // rather than implying the map was complete. These are those two.
+  test("a handle change still commits, inside the window", () => {
+    const store = storeWithPin(nowISO(-5_000));
+
+    expect(store.storePin(PIN_KEY, ADDRESS, "@renamed", "")).toBe(true);
+    expect(store.pins.get(PIN_KEY)?.handle).toBe("@renamed");
+  });
+
+  test("a server change still commits, inside the window", () => {
+    const store = storeWithPin(nowISO(-5_000));
+
+    expect(store.storePin(PIN_KEY, ADDRESS, "", "https://elsewhere.example")).toBe(true);
+    expect(store.pins.get(PIN_KEY)?.server).toBe("https://elsewhere.example");
+  });
+
+  test("an unchanged pin reports no change - the control for the cells above", () => {
+    const store = storeWithPin(nowISO(-5_000));
+
+    expect(store.storePin(PIN_KEY, ADDRESS, "", "")).toBe(false);
+  });
+
   test("a checkpoint advance is unaffected by the window", () => {
     const store = storeWithPin(nowISO(-5_000));
 
