@@ -446,9 +446,15 @@ class PersistedStateHarness:
     def _validate_cell(self, cell) -> str:
         if self._matrix is None:
             raise rd.ReceiptError("persisted-state cell arrived before its matrix")
+        # Membership is decided by the CANONICAL IDENTITY, not by comparing
+        # cell objects. skew_cell_preimage covers every SkewCell field, so an
+        # identity match is a full content match - and it survives the fact that
+        # the driver runs as __main__ while every child does `import
+        # release_driver`, which makes TWO SkewCell classes. Dataclass equality
+        # is class-scoped, so object comparison refused every genuine member the
+        # first time this edge executed in a release-run.
         cell_id = rd.skew_cell_identity(cell)
-        expected = self._cells.get(cell_id)
-        if expected != cell:
+        if cell_id not in self._cells:
             raise rd.ReceiptError(
                 "cell is not an exact member of the frozen persisted matrix"
             )

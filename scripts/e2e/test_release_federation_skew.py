@@ -848,5 +848,98 @@ class RegistrationAndTargetTests(unittest.TestCase):
         self.assertIn("test_release_federation_skew.py", makefile)
 
 
+
+def _second_driver_module():
+    """A SECOND module object for release_driver, as the real invocation makes.
+
+    `python3 scripts/release_driver.py` loads the driver as `__main__`, so every
+    child that does `import release_driver` gets a separate copy - separate
+    SkewCell class, separate ReceiptError. This helper reproduces that split
+    inside one process without depending on how the test itself was started.
+    """
+    import importlib.util
+
+    name = "release_driver__as_main_probe"
+    spec = importlib.util.spec_from_file_location(
+        name, REPO_ROOT / "scripts" / "release_driver.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    # Registered before exec: dataclasses resolves a field's annotations through
+    # sys.modules[cls.__module__], and a module absent from there raises inside
+    # @dataclass rather than at the point of use.
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+class CrossModuleCellIdentityTests(unittest.TestCase):
+    """A cell built by the driver must be accepted by a harness that imported
+    the driver separately. The release path guarantees exactly that split."""
+
+    def _cell(self, cell_class, journey):
+        return cell_class(
+            edge_id="e" * 64, edge_a="server", edge_b="server", journey=journey,
+            artifacts={"a": "pypi:aweb", "b": "pypi:aweb"},
+            declared_direction="both", direction="a-to-b",
+            a_kind="candidate", b_kind="candidate",
+            a={"component": "server", "version": "1.27.1"},
+            b={"component": "server", "version": "1.27.1"},
+        )
+
+    def test_the_split_this_test_depends_on_is_real(self):
+        """The control. Without it a passing membership test below cannot
+        distinguish a fixed check from a helper that handed back the same
+        class."""
+        other = _second_driver_module()
+        self.assertIsNot(other.SkewCell, rd.SkewCell)
+        self.assertIsNot(other.ReceiptError, rd.ReceiptError)
+        same_values = self._cell(other.SkewCell, federation.JOURNEY)
+        self.assertNotEqual(
+            same_values, self._cell(rd.SkewCell, federation.JOURNEY),
+            "dataclass equality is class-scoped, which is the whole hazard",
+        )
+        self.assertEqual(
+            rd.skew_cell_identity(same_values),
+            rd.skew_cell_identity(self._cell(rd.SkewCell, federation.JOURNEY)),
+            "the canonical identity covers every field, so it survives the split",
+        )
+
+    def test_a_cell_from_the_other_module_is_an_exact_member(self):
+        """The defect: comparing cell OBJECTS made membership depend on which
+        module object built them, so a genuine member was refused as foreign."""
+        other = _second_driver_module()
+        harness = federation.FederationSkewHarness(report_dir=Path(self.tmp))
+        harness._matrix = {"matrix_id": "x"}
+        mine = self._cell(rd.SkewCell, federation.JOURNEY)
+        harness._cells = {rd.skew_cell_identity(mine): mine}
+
+        theirs = self._cell(other.SkewCell, federation.JOURNEY)
+        self.assertEqual(
+            harness._frozen_cell_id(theirs), rd.skew_cell_identity(mine),
+        )
+
+    def test_a_genuinely_foreign_cell_is_still_refused(self):
+        """Relaxing the comparison must not accept a cell the matrix never
+        froze."""
+        harness = federation.FederationSkewHarness(report_dir=Path(self.tmp))
+        harness._matrix = {"matrix_id": "x"}
+        mine = self._cell(rd.SkewCell, federation.JOURNEY)
+        harness._cells = {rd.skew_cell_identity(mine): mine}
+
+        foreign = self._cell(rd.SkewCell, federation.JOURNEY)
+        foreign = rd.SkewCell(**{**foreign.__dict__, "direction": "b-to-a"})
+        with self.assertRaisesRegex(rd.ReceiptError, "not an exact member"):
+            harness._frozen_cell_id(foreign)
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = self._tmp.name
+        self.addCleanup(self._tmp.cleanup)
+
+
 if __name__ == "__main__":
     unittest.main()

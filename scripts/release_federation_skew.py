@@ -1288,8 +1288,15 @@ class FederationSkewHarness:
             raise release_driver.ReceiptError(
                 "federation cell arrived before its frozen matrix"
             )
+        # Membership is decided by the CANONICAL IDENTITY, not by comparing
+        # cell objects. skew_cell_preimage covers every SkewCell field, so an
+        # identity match is a full content match - and it survives the fact that
+        # the driver runs as __main__ while every child does `import
+        # release_driver`, which makes TWO SkewCell classes. Dataclass equality
+        # is class-scoped, so object comparison refused every genuine member the
+        # first time this edge executed in a release-run.
         identity = release_driver.skew_cell_identity(cell)
-        if self._cells.get(identity) != cell:
+        if identity not in self._cells:
             raise release_driver.ReceiptError(
                 "federation cell is not an exact member of its frozen matrix"
             )
