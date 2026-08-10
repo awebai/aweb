@@ -930,6 +930,27 @@ class RegistrationAndJourneyParameterTests(unittest.TestCase):
             with self.assertRaisesRegex(rd.ReceiptError, needle):
                 skew.parse_observation(output, "channel", "a-to-b")
 
+    def test_missing_observation_reports_what_the_journey_actually_printed(self):
+        """A journey that exits 0 and prints no observation is the hard case to
+        diagnose: the count alone says nothing about why. Carry the tail of the
+        journey's own output into the refusal, or the only evidence of the cause
+        is discarded by the instrument that detected it."""
+        output = b"vitest: No test files found, exiting\n"
+        with self.assertRaises(rd.ReceiptError) as raised:
+            skew.parse_observation(output, "channel", "a-to-b")
+        self.assertIn("exactly one", str(raised.exception))
+        self.assertIn("No test files found", str(raised.exception))
+
+    def test_missing_observation_report_bounds_the_journey_output_it_quotes(self):
+        """Journey output is unbounded and lands in a receipt, so quote a bounded
+        tail rather than the whole stream."""
+        output = b"x" * (skew.JOURNEY_OUTPUT_REPORT_BYTES * 4)
+        with self.assertRaises(rd.ReceiptError) as raised:
+            skew.parse_observation(output, "channel", "a-to-b")
+        message = str(raised.exception)
+        self.assertLess(len(message), skew.JOURNEY_OUTPUT_REPORT_BYTES * 2)
+        self.assertIn("x" * 64, message)
+
     def test_channel_and_pi_factories_isolate_matrix_evidence_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
             prior = os.environ.get("AWEB_CHANNEL_PI_SKEW_EVIDENCE_DIR")

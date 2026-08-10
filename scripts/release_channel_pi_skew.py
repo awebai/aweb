@@ -38,6 +38,10 @@ LEGACY_MARK_READ_REQUEST = {"up_to_message_id": LEGACY_MESSAGE_ID}
 PUBLISHED_KINDS = {"published", "published-latest", "published-floor"}
 OBSERVATION_PREFIX = "AWEB_SKEW_OBSERVATION "
 OBSERVATION_SCHEMA = "aweb.channel-pi-skew-observation.v1"
+# How much of the journey's own output the wrong-count refusal quotes back. A
+# journey that exits 0 and prints no observation is diagnosed from what it did
+# print, and nothing else in the harness keeps that stream.
+JOURNEY_OUTPUT_REPORT_BYTES = 4000
 OBSERVATION_CONTRACTS = {
     ("channel", "a-to-b"): ("chat-mark-read", "removed-from-pending"),
     ("channel", "b-to-a"): ("sse-chat-presentation", "presented"),
@@ -181,17 +185,20 @@ def parse_observation(
     output: bytes, component: str, direction: str,
     server_version: str | None = None,
 ) -> dict:
+    decoded = output.decode(errors="replace")
     observations = []
-    for line in output.decode(errors="replace").splitlines():
+    for line in decoded.splitlines():
         if line.startswith(OBSERVATION_PREFIX):
             try:
                 observations.append(json.loads(line.removeprefix(OBSERVATION_PREFIX)))
             except json.JSONDecodeError as exc:
                 raise rd.ReceiptError("skew journey emitted malformed observation JSON") from exc
     if len(observations) != 1:
+        tail = decoded[-JOURNEY_OUTPUT_REPORT_BYTES:]
         raise rd.ReceiptError(
             f"skew journey must emit exactly one direction observation, got "
-            f"{len(observations)}"
+            f"{len(observations)}; last {len(tail)} characters the journey "
+            f"printed:\n{tail}"
         )
     observation = observations[0]
     validate_observation(observation, component, direction, server_version)
