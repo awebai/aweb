@@ -236,7 +236,31 @@ describe("SenderTrustManager", () => {
     expect(get).toHaveBeenCalledTimes(1);
   });
 
-  test("shares a roster failure and starts backoff when the request finishes", async () => {
+  test("keeps a successful authenticated roster for sixty seconds", async () => {
+    let now = 0;
+    const get = vi.fn(async () => localRoster({ did_key: "did:key:zAlice", identity_scope: "local" }));
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => now,
+    ) as SenderTrustManager & {
+      resolveAuthenticatedTeamRoster(): Promise<ReturnType<typeof localRoster>>;
+    };
+
+    await trust.resolveAuthenticatedTeamRoster();
+    now = 59_999;
+    await trust.resolveAuthenticatedTeamRoster();
+    expect(get).toHaveBeenCalledTimes(1);
+
+    now = 60_001;
+    await trust.resolveAuthenticatedTeamRoster();
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  test("shares a roster failure and starts jittered backoff when the request finishes", async () => {
     let now = 0;
     const failure = new Error("roster timed out");
     let rejectRoster!: (error: Error) => void;
@@ -253,6 +277,7 @@ describe("SenderTrustManager", () => {
       "",
       "",
       () => now,
+      () => 0.5,
     ) as SenderTrustManager & {
       resolveAuthenticatedTeamRoster(): Promise<ReturnType<typeof localRoster>>;
     };
@@ -272,15 +297,89 @@ describe("SenderTrustManager", () => {
       if (result.status === "rejected") expect(result.reason).toBe(failure);
     }
 
-    now = 30_999;
+    now = 49_999;
     await expect(trust.resolveAuthenticatedTeamRoster()).rejects.toBe(failure);
     expect(get).toHaveBeenCalledTimes(1);
 
-    now = 31_001;
+    now = 50_001;
     await expect(trust.resolveAuthenticatedTeamRoster()).resolves.toMatchObject({
       team_id: "backend:acme.com",
     });
     expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  test("jitters roster failure backoff between ten and thirty seconds", async () => {
+    let shortNow = 0;
+    let longNow = 0;
+    const shortFailure = new Error("short backoff");
+    const longFailure = new Error("long backoff");
+    const shortGet = vi.fn()
+      .mockRejectedValueOnce(shortFailure)
+      .mockResolvedValueOnce(localRoster({ did_key: "did:key:zShort", identity_scope: "local" }));
+    const longGet = vi.fn()
+      .mockRejectedValueOnce(longFailure)
+      .mockResolvedValueOnce(localRoster({ did_key: "did:key:zLong", identity_scope: "local" }));
+    const short = new SenderTrustManager(
+      authenticatedTeamClient({ get: shortGet }),
+      {} as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => shortNow,
+      () => 0,
+    ) as SenderTrustManager & {
+      resolveAuthenticatedTeamRoster(): Promise<ReturnType<typeof localRoster>>;
+    };
+    const long = new SenderTrustManager(
+      authenticatedTeamClient({ get: longGet }),
+      {} as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => longNow,
+      () => 0.999999,
+    ) as SenderTrustManager & {
+      resolveAuthenticatedTeamRoster(): Promise<ReturnType<typeof localRoster>>;
+    };
+
+    await expect(short.resolveAuthenticatedTeamRoster()).rejects.toBe(shortFailure);
+    await expect(long.resolveAuthenticatedTeamRoster()).rejects.toBe(longFailure);
+    shortNow = 10_001;
+    longNow = 10_001;
+    await expect(short.resolveAuthenticatedTeamRoster()).resolves.toMatchObject({ team_id: "backend:acme.com" });
+    await expect(long.resolveAuthenticatedTeamRoster()).rejects.toBe(longFailure);
+    expect(shortGet).toHaveBeenCalledTimes(2);
+    expect(longGet).toHaveBeenCalledTimes(1);
+
+    longNow = 30_001;
+    await expect(long.resolveAuthenticatedTeamRoster()).resolves.toMatchObject({ team_id: "backend:acme.com" });
+    expect(longGet).toHaveBeenCalledTimes(2);
+  });
+
+  test("caches unavailable identity metadata for a jittered failure interval", async () => {
+    let now = 0;
+    const resolveIdentity = vi.fn(async () => { throw new Error("registry timed out"); });
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        resolveIdentity,
+        verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }),
+      } as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => now,
+      () => 0.5,
+    );
+
+    await trust.resolveTrustMetadata("verified", "acme.com/alice", undefined, undefined, undefined);
+    now = 44_999;
+    await trust.resolveTrustMetadata("verified", "acme.com/alice", undefined, undefined, undefined);
+    expect(resolveIdentity).toHaveBeenCalledTimes(1);
+
+    now = 45_001;
+    await trust.resolveTrustMetadata("verified", "acme.com/alice", undefined, undefined, undefined);
+    expect(resolveIdentity).toHaveBeenCalledTimes(2);
   });
 
   test("uses prepared roster metadata without retrying inside the trust decision", async () => {
@@ -395,7 +494,7 @@ describe("SenderTrustManager", () => {
       undefined,
       undefined,
     );
-    now = 6_000;
+    now = 60_001;
     const bobResult = await trust.normalizeTrust(
       new PinStore(),
       "verified",
@@ -544,6 +643,70 @@ describe("SenderTrustManager", () => {
 
     expect(getFresh).not.toHaveBeenCalled();
     expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  test("uses prepared metadata for the identity-mismatch fallback without resolving under the pin lock", async () => {
+    const pinned = await didFromSeed(65);
+    const sender = await didFromSeed(66);
+    const store = new PinStore();
+    store.storePin(pinned.did, "backend:acme.com/alice", "", "");
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({
+        get: vi.fn(async () => localRoster({
+          did_key: sender.did,
+          did_aw: "not-a-stable-did",
+          identity_scope: "global",
+        })),
+      }),
+      { verifyStableIdentity: vi.fn() } as never,
+      "backend:acme.com",
+      "",
+    ) as SenderTrustManager & {
+      resolveAgentMeta(address: string): Promise<unknown>;
+      normalizeResolvedTrust(
+        target: PinStore,
+        verificationStatus: "verified",
+        rawAddress: string,
+        fromDID: string,
+        fromStableID: string,
+        toDID: undefined,
+        toStableID: undefined,
+        rotationAnnouncement: undefined,
+        replacementAnnouncement: undefined,
+        verificationAddress: string,
+        resolvedMetadata: unknown,
+      ): Promise<{ status: string | undefined; stored: boolean }>;
+    };
+    let lockHeld = false;
+    const originalResolveAgentMeta = trust.resolveAgentMeta.bind(trust);
+    const resolutionLockStates: boolean[] = [];
+    vi.spyOn(trust, "resolveAgentMeta").mockImplementation(async (address) => {
+      resolutionLockStates.push(lockHeld);
+      return originalResolveAgentMeta(address);
+    });
+    const prepared = await trust.resolveTrustMetadata(
+      "verified",
+      "alice",
+      "not-a-stable-did",
+      undefined,
+      undefined,
+      { pinStore: store, fromDID: sender.did, verificationAddress: "alice" },
+    );
+
+    const result = await store.runExclusive(async () => {
+      lockHeld = true;
+      try {
+        return await trust.normalizeResolvedTrust(
+          store, "verified", "alice", sender.did, "not-a-stable-did", undefined, undefined,
+          undefined, undefined, "alice", prepared,
+        );
+      } finally {
+        lockHeld = false;
+      }
+    });
+
+    expect(result).toEqual({ status: "identity_mismatch", stored: false });
+    expect(resolutionLockStates).toEqual([false]);
   });
 
   test("uses a cache-respecting certificate-authenticated roster read before verifying a local sender", async () => {
@@ -1233,6 +1396,100 @@ describe("SenderTrustManager", () => {
     expect(store.pins.get(stableID)?.log_seq).toBeUndefined();
   });
 
+  test("rejects prepared registry evidence when its pin checkpoint changed in flight", async () => {
+    const identity = await didFromSeed(64);
+    const stableID = "did:aw:checkpointRace";
+    const address = "acme.com/alice";
+    const store = new PinStore();
+    store.storePin(stableID, address, "", "");
+    const pin = store.pins.get(stableID)!;
+    pin.stable_id = stableID;
+    pin.did_key = identity.did;
+    pin.log_seq = 1;
+    pin.log_entry_hash = "a".repeat(64);
+    const verifyStableIdentity = vi.fn()
+      .mockResolvedValueOnce({
+        outcome: "OK_VERIFIED",
+        currentDidKey: identity.did,
+        verifiedHead: {
+          seq: 2,
+          entryHash: "b".repeat(64),
+          stateHash: "c".repeat(64),
+          currentDidKey: identity.did,
+          fetchedAt: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        outcome: "OK_VERIFIED",
+        currentDidKey: identity.did,
+        verifiedHead: {
+          seq: 3,
+          entryHash: "d".repeat(64),
+          stateHash: "e".repeat(64),
+          currentDidKey: identity.did,
+          fetchedAt: 2,
+        },
+      });
+    const seedVerifiedHead = vi.fn();
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        resolveIdentity: vi.fn(async () => ({
+          did: identity.did,
+          stableID,
+          address,
+          controllerDid: "did:key:zcontroller",
+          custody: "self",
+          identityScope: "global",
+        })),
+        seedVerifiedHead,
+        verifyStableIdentity,
+      } as never,
+      "backend:acme.com",
+      "",
+    ) as SenderTrustManager & {
+      normalizeResolvedTrust(
+        target: PinStore,
+        verificationStatus: "verified",
+        rawAddress: string,
+        fromDID: string,
+        fromStableID: string,
+        toDID: undefined,
+        toStableID: undefined,
+        rotationAnnouncement: undefined,
+        replacementAnnouncement: undefined,
+        verificationAddress: string,
+        resolvedMetadata: unknown,
+      ): Promise<{ status: string | undefined; stored: boolean }>;
+    };
+    const context = { pinStore: store, fromDID: identity.did, verificationAddress: address };
+
+    const firstPrepared = await trust.resolveTrustMetadata(
+      "verified", address, stableID, undefined, undefined, context,
+    );
+    const secondPrepared = await trust.resolveTrustMetadata(
+      "verified", address, stableID, undefined, undefined, context,
+    );
+    expect(seedVerifiedHead).toHaveBeenCalledTimes(2);
+    expect(store.pins.get(stableID)?.log_seq).toBe(1);
+
+    const first = await trust.normalizeResolvedTrust(
+      store, "verified", address, identity.did, stableID, undefined, undefined,
+      undefined, undefined, address, firstPrepared,
+    );
+    expect(first).toEqual({ status: "verified", stored: true });
+    expect(store.pins.get(stableID)?.log_seq).toBe(2);
+    expect(store.pins.get(stableID)?.log_entry_hash).toBe("b".repeat(64));
+
+    const stale = await trust.normalizeResolvedTrust(
+      store, "verified", address, identity.did, stableID, undefined, undefined,
+      undefined, undefined, address, secondPrepared,
+    );
+    expect(stale).toEqual({ status: "verification_stale", stored: false });
+    expect(store.pins.get(stableID)?.log_seq).toBe(2);
+    expect(store.pins.get(stableID)?.log_entry_hash).toBe("b".repeat(64));
+  });
+
   test("surfaces stale verifier cache honestly instead of claiming identity mismatch", async () => {
     const { did } = await didFromSeed(17);
     const stableID = "did:aw:freshAlice";
@@ -1266,7 +1523,7 @@ describe("SenderTrustManager", () => {
     expect(result.stored).toBe(false);
   });
 
-  test("does not create a TOFU pin when public-address resolution fails", async () => {
+  test("degrades without creating a TOFU pin when public-address resolution fails", async () => {
     const { did } = await didFromSeed(10);
     const stableID = "did:aw:test";
     const store = new PinStore();
@@ -1295,7 +1552,7 @@ describe("SenderTrustManager", () => {
       "acme.com/alice",
     );
 
-    expect(result.status).toBe("verified");
+    expect(result.status).toBe("verification_stale");
     expect(result.stored).toBe(false);
     expect(store.pins.size).toBe(0);
     expect(store.addresses.size).toBe(0);

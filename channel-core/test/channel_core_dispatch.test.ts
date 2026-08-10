@@ -41,7 +41,7 @@ describe("channel-core dispatchAgentEvent", () => {
   };
 
   const trust = {
-    normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
   } as unknown as SenderTrustManager;
   const acceptingPinStoreWriter = {
     compareAndSet: vi.fn(async () => {}),
@@ -248,7 +248,7 @@ describe("channel-core dispatchAgentEvent", () => {
     });
     const resolvingTrust = {
       resolveTrustMetadata: vi.fn(() => resolutionPending),
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
     const pinStore = new PinStore();
     const runExclusive = vi.spyOn(pinStore, "runExclusive");
@@ -296,10 +296,135 @@ describe("channel-core dispatchAgentEvent", () => {
     finishResolution(undefined);
     await dispatching;
     expect(runExclusive).toHaveBeenCalledTimes(1);
-    expect(resolvingTrust.normalizeTrust).toHaveBeenCalledTimes(1);
+    expect(resolvingTrust.normalizeResolvedTrust).toHaveBeenCalledTimes(1);
     expect(traces).toContainEqual(expect.objectContaining({
       stage: "lock_acquired", message_id: "mail-resolve-before-lock",
     }));
+  });
+
+  test("shares one hanging roster failure across chat lanes and reuses the cached stale verdict", async () => {
+    let now = 0;
+    let rejectRoster!: (error: Error) => void;
+    const rosterPending = new Promise<never>((_resolve, reject) => {
+      rejectRoster = reject;
+    });
+    const neverResolveRoster = new Promise<never>(() => {});
+    const rosterRequests = vi.fn()
+      .mockImplementationOnce(() => rosterPending)
+      .mockImplementationOnce(() => neverResolveRoster);
+    const sessionIDs = Array.from({ length: 5 }, (_, index) => `burst-session-${index + 1}`);
+    const envelopes = await Promise.all(sessionIDs.map(async (sessionID, index) => {
+      const env: MessageEnvelope = {
+        from: "alice",
+        from_did: vectors.did,
+        to: self.alias,
+        to_did: self.did,
+        type: "chat",
+        subject: "",
+        body: `burst ${index + 1}`,
+        timestamp: `2025-01-01T00:00:0${index}Z`,
+        message_id: `burst-message-${index + 1}`,
+        conversation_id: sessionID,
+      };
+      return { env, signature: await signMessage(b64ToBytes(vectors.seed), env) };
+    }));
+    const client = {
+      hasTeamCertificateAuth: (teamID: string) => teamID === "backend:acme.com",
+      get: vi.fn(async (path: string) => {
+        if (path === "/v1/agents") return rosterRequests();
+        const item = envelopes.find(({ env }) => path.includes(env.conversation_id!));
+        expect(item).toBeDefined();
+        const { env, signature } = item!;
+        return {
+          messages: [{
+            message_id: env.message_id,
+            conversation_id: env.conversation_id,
+            from_agent: "alice",
+            from_address: env.from,
+            to_address: env.to,
+            body: env.body,
+            timestamp: env.timestamp,
+            sender_leaving: false,
+            from_did: vectors.did,
+            to_did: self.did,
+            signature,
+            signing_key_id: vectors.did,
+            signed_payload: canonicalJSON(env),
+          }],
+        };
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = new SenderTrustManager(
+      client as never,
+      { verifyStableIdentity: vi.fn() } as never,
+      "backend:acme.com",
+      self.did,
+      self.stableID,
+      () => now,
+      () => 0,
+    );
+    const awakenings: ChannelAwakening[] = [];
+    const log = vi.fn();
+    async function* burstEvents(): AsyncGenerator<AgentEvent> {
+      for (const { env } of envelopes.slice(0, 4)) {
+        yield {
+          type: "chat_message",
+          session_id: env.conversation_id,
+          conversation_id: env.conversation_id,
+          message_id: env.message_id,
+        };
+      }
+    }
+    const consuming = consumeAgentEvents(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening: (awakening) => { awakenings.push(awakening); },
+      },
+      new Set(),
+      burstEvents(),
+      log,
+    );
+
+    await vi.waitFor(() => expect(rosterRequests).toHaveBeenCalledTimes(1));
+    expect(awakenings).toHaveLength(0);
+    rejectRoster(new Error("roster request timed out"));
+    await consuming;
+
+    expect(awakenings).toHaveLength(4);
+    expect(awakenings.map((item) => item.meta.trust_status)).toEqual([
+      "verification_stale",
+      "verification_stale",
+      "verification_stale",
+      "verification_stale",
+    ]);
+    expect(log).not.toHaveBeenCalled();
+
+    now = 5_000;
+    const fifth = envelopes[4].env;
+    const fifthDispatch = dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening: (awakening) => { awakenings.push(awakening); },
+      },
+      new Set(),
+      {
+        type: "chat_message",
+        session_id: fifth.conversation_id,
+        conversation_id: fifth.conversation_id,
+        message_id: fifth.message_id,
+      },
+    );
+    await vi.waitFor(() => expect(awakenings).toHaveLength(5), { timeout: 200 });
+    await fifthDispatch;
+    expect(awakenings[4].meta.trust_status).toBe("verification_stale");
+    expect(rosterRequests).toHaveBeenCalledTimes(1);
   });
 
   test("acks mail after channel delivery succeeds", async () => {
@@ -453,7 +578,7 @@ describe("channel-core dispatchAgentEvent", () => {
     };
     let trustAttempt = 0;
     const storingTrust = {
-      normalizeTrust: vi.fn(async (store: PinStore) => {
+      normalizeResolvedTrust: vi.fn(async (store: PinStore) => {
         trustAttempt += 1;
         if (trustAttempt === 1) {
           store.storePin("did:key:zAlice", "acme.com/alice", "", "");
@@ -508,7 +633,7 @@ describe("channel-core dispatchAgentEvent", () => {
   test("serializes trust decisions through pin persistence", async () => {
     let trustAttempt = 0;
     const trustGate = {
-      normalizeTrust: vi.fn(async (store: PinStore) => {
+      normalizeResolvedTrust: vi.fn(async (store: PinStore) => {
         trustAttempt += 1;
         if (trustAttempt === 1) {
           store.storePin("did:key:zAlice", "acme.com/alice", "", "");
@@ -580,12 +705,12 @@ describe("channel-core dispatchAgentEvent", () => {
       { type: "mail_message", message_id: "mail-serialize-2" } satisfies AgentEvent,
     );
     await vi.waitFor(() => expect(runExclusive).toHaveBeenCalledTimes(2));
-    expect(trustGate.normalizeTrust).toHaveBeenCalledTimes(1);
+    expect(trustGate.normalizeResolvedTrust).toHaveBeenCalledTimes(1);
 
     releaseCommit();
     await Promise.all([first, second]);
 
-    expect(trustGate.normalizeTrust).toHaveBeenCalledTimes(2);
+    expect(trustGate.normalizeResolvedTrust).toHaveBeenCalledTimes(2);
     expect(pinStoreWriter.compareAndSet).toHaveBeenCalledTimes(2);
   });
 
@@ -659,7 +784,10 @@ describe("channel-core dispatchAgentEvent", () => {
         expect(lockHeld).toBe(false);
         throw new Error("team aliases must use the authenticated roster");
       }),
-      verifyStableIdentity: vi.fn(async () => ({ outcome: "OK_DEGRADED" })),
+      verifyStableIdentity: vi.fn(async () => {
+        expect(lockHeld).toBe(false);
+        return { outcome: "OK_DEGRADED" };
+      }),
     };
     const trustAfterReload = new SenderTrustManager(
       client as never,
@@ -747,7 +875,7 @@ describe("channel-core dispatchAgentEvent", () => {
         preparedMetadata.add(prepared);
         return prepared;
       }),
-      normalizeTrust: vi.fn(async (store: PinStore, ...args: unknown[]) => {
+      normalizeResolvedTrust: vi.fn(async (store: PinStore, ...args: unknown[]) => {
         const prepared = args.at(-1) as object;
         expect(preparedMetadata.delete(prepared)).toBe(true);
         store.storePin("did:key:zAlice", "acme.com/alice", "", "");
@@ -792,7 +920,7 @@ describe("channel-core dispatchAgentEvent", () => {
 
     expect(pinStoreWriter.compareAndSet).toHaveBeenCalledTimes(3);
     expect(trustWithFreshMetadata.resolveTrustMetadata).toHaveBeenCalledTimes(3);
-    expect(trustWithFreshMetadata.normalizeTrust).toHaveBeenCalledTimes(3);
+    expect(trustWithFreshMetadata.normalizeResolvedTrust).toHaveBeenCalledTimes(3);
     expect(onAwakening).not.toHaveBeenCalled();
     expect(client.post).not.toHaveBeenCalled();
   });
@@ -1227,7 +1355,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
-        trust: { normalizeTrust } as unknown as SenderTrustManager,
+        trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
         self,
         onAwakening,
         localDecrypt,
@@ -1247,6 +1375,7 @@ describe("channel-core dispatchAgentEvent", () => {
       undefined,
       undefined,
       "acme.com/alice",
+      undefined,
     );
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       kind: "mail",
@@ -1479,7 +1608,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
-        trust: { normalizeTrust } as unknown as SenderTrustManager,
+        trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
         self,
         onAwakening,
         localDecrypt,
@@ -1504,6 +1633,7 @@ describe("channel-core dispatchAgentEvent", () => {
       undefined,
       undefined,
       "acme.com/alice",
+      undefined,
     );
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       kind: "chat",
@@ -1802,7 +1932,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
-        trust: { normalizeTrust } as unknown as SenderTrustManager,
+        trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
         self,
         onAwakening,
       },
@@ -1958,7 +2088,7 @@ describe("channel-core dispatchAgentEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const staleTrust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verification_stale", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verification_stale", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchAgentEvent(
@@ -2000,7 +2130,7 @@ describe("channel-core dispatchAgentEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const conflictTrust = {
-      normalizeTrust: vi.fn(async () => ({ status: "pin_conflict", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "pin_conflict", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchAgentEvent(
@@ -2104,7 +2234,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
-        trust: { normalizeTrust } as unknown as SenderTrustManager,
+        trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
         self,
         onAwakening,
       },
@@ -2128,7 +2258,7 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-stable/read", { message_ids: ["chat-stable-envelope"] });
   });
 
-  test("chat live dispatch accepts legacy stored-route recipient did:aw when it is this receiver", async () => {
+  test("chat live dispatch resolves public identity and registry evidence outside the pin lock", async () => {
     const onAwakening = vi.fn();
     const env: MessageEnvelope = {
       from: "aweb.ai/ama",
@@ -2164,27 +2294,48 @@ describe("channel-core dispatchAgentEvent", () => {
       }),
       post: vi.fn().mockResolvedValue(undefined),
     };
-    const trust = new SenderTrustManager(
-      client as never,
-      {
-        verifyStableIdentity: async () => ({ outcome: "OK_VERIFIED", currentDidKey: vectors.did }),
-        resolveIdentity: async () => ({
+    let lockHeld = false;
+    const registry = {
+      verifyStableIdentity: vi.fn(async () => {
+        expect(lockHeld).toBe(false);
+        return { outcome: "OK_VERIFIED", currentDidKey: vectors.did };
+      }),
+      resolveIdentity: vi.fn(async () => {
+        expect(lockHeld).toBe(false);
+        return {
           did: vectors.did,
           stableID: vectors.stableID,
           address: env.from,
           custody: "self",
           identityScope: "global",
-        }),
-      } as never,
+        };
+      }),
+    };
+    const trust = new SenderTrustManager(
+      client as never,
+      registry as never,
       "default:aweb.ai",
       self.did,
       self.stableID,
     );
+    const pinStore = new PinStore();
+    const originalRunExclusive = pinStore.runExclusive.bind(pinStore);
+    vi.spyOn(pinStore, "runExclusive").mockImplementation(async (operation) => (
+      originalRunExclusive(async () => {
+        expect(lockHeld).toBe(false);
+        lockHeld = true;
+        try {
+          return await operation();
+        } finally {
+          lockHeld = false;
+        }
+      })
+    ));
 
     await dispatchAgentEvent(
       {
         client: client as never,
-        pinStore: new PinStore(),
+        pinStore,
         pinStoreWriter: acceptingPinStoreWriter,
         trust,
         self,
@@ -2207,6 +2358,8 @@ describe("channel-core dispatchAgentEvent", () => {
         verified: "true",
       }),
     }));
+    expect(registry.resolveIdentity).toHaveBeenCalledTimes(1);
+    expect(registry.verifyStableIdentity).toHaveBeenCalledTimes(1);
   });
 
   test("chat live dispatch hydrates trust fields from signed_payload when top-level row has stable did:aw", async () => {

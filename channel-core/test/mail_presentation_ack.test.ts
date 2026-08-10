@@ -19,7 +19,7 @@ describe("mail presentation-ack semantic", () => {
     stableID: "did:aw:self-eve",
   };
   const trust = {
-    normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
   } as unknown as SenderTrustManager;
 
   function mkClient() {

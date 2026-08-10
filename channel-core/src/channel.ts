@@ -783,6 +783,11 @@ async function normalizeAndPersistMessageTrust(
         msg.from_stable_id,
         toDID,
         toStableID,
+        {
+          pinStore: options.pinStore,
+          fromDID: msg.from_did,
+          verificationAddress: msg.signed_from || fromAddress || fromAlias || "",
+        },
       )
       : undefined;
     try {
@@ -856,10 +861,7 @@ async function normalizeMessageTrust(
     msg.replacement_announcement,
     verificationAddress,
   ] as const;
-  if (resolvedMetadata === undefined) {
-    return options.trust.normalizeTrust(...args);
-  }
-  return options.trust.normalizeTrust(...args, resolvedMetadata);
+  return options.trust.normalizeResolvedTrust(...args, resolvedMetadata);
 }
 
 async function resolveMailForDelivery(
