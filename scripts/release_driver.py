@@ -582,16 +582,36 @@ def check_declared_inputs(
                 continue
             if kind == "lock-version":
                 # A lock pin records a VERSION of the pinned component; it can
-                # never be compared with a git HEAD. Satisfied when it names
-                # the CANDIDATE this plan will publish - a stale lock fails
-                # and a correctly advanced one passes before publication.
+                # never be compared with a git HEAD. It is checked against
+                # PUBLISHED truth, because a lock entry carries the registry's
+                # own url, hash and upload time for an uploaded file and so
+                # cannot record a version that is not published yet. Requiring
+                # the candidate here demanded exactly what the ac-pin adapter
+                # produces DURING release-run, after publication - the plan-time
+                # check asked for the run's own output, so no awid-pypi or
+                # server release could be planned. The candidate is validated
+                # where it exists: the adapter re-reads the lock it regenerated.
+                #
+                # The candidate is accepted too, for the states in which it is
+                # legitimately already there: a re-plan after the adapter has
+                # run, and the window in which the registry still reports the
+                # previous version. What remains named is a lock recording
+                # neither, which is the divergence worth catching.
                 target = graph.components[pin["component"]]
+                if state.registry_unavailable_reason(target) is not None:
+                    # An outage is evidence about the registry, never about the
+                    # lock. The target's own registry-truth problem already
+                    # blocks; condemning the lock here would name the wrong
+                    # thing for the operator to fix.
+                    continue
+                published = state.published_version(target)
                 candidate = state.source_version(target)
-                if candidate is not None and pinned != candidate:
+                if published is not None and pinned not in {published, candidate}:
                     problems.append(
                         f"{component.name}: lock {pin['pin_file']} records "
-                        f"{pin.get('package', target.name)} {pinned} but the "
-                        f"candidate version is {candidate}"
+                        f"{pin.get('package', target.name)} {pinned}, which is "
+                        f"neither the published version {published} nor the "
+                        f"candidate {candidate}"
                     )
                 continue
             checkout = state.pin_checkout(pin)

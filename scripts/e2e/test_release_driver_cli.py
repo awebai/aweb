@@ -2779,11 +2779,8 @@ class CommittedPinContractTests(unittest.TestCase):
             )
             self.assertEqual(git_state.pin_sha(lock_pin), "0.5.14")
 
-    def test_lock_version_compares_against_frozen_candidate(self) -> None:
-        """alice's reproduction: comparing with the currently published
-        version passes a stale lock and fails a correctly advanced one.
-        The comparison target is the candidate the plan will publish."""
-        graph = rd.Graph.from_dict(
+    def _lock_pin_graph(self):
+        return rd.Graph.from_dict(
             {
                 "component": {
                     "lib": {
@@ -2808,30 +2805,87 @@ class CommittedPinContractTests(unittest.TestCase):
                 "edge": [{"type": "pointer", "from": "lib", "to": ["pin"]}],
             }
         )
-        advanced = rd.FixtureState(
-            changed_components={"lib": True},
-            versions={"lib": "2.1.0"},
-            published_versions={"lib": "2.0.0"},
-            pin_values={"backend/uv.lock": "2.1.0"},
-        )
-        plan = rd.compute_plan(graph, advanced)
-        problems = rd.check_declared_inputs(graph, plan, advanced)
+
+    def _lock_problems(self, **state_kwargs) -> list[str]:
+        graph = self._lock_pin_graph()
+        state = rd.FixtureState(**state_kwargs)
+        plan = rd.compute_plan(graph, state)
+        return [p for p in rd.check_declared_inputs(graph, plan, state) if "lock" in p]
+
+    def test_a_lock_at_the_published_version_freezes_clean(self) -> None:
+        """The deadlock. A uv lock entry carries the registry's own url, hash
+        and upload time for an uploaded file, so a lock CANNOT record a version
+        that is not published yet - and the ac-pin adapter regenerates it during
+        release-run, after publication. Requiring the candidate at plan time
+        therefore demanded what only the run produces, and no release of
+        awid-pypi or server could be planned at all."""
         self.assertEqual(
-            [p for p in problems if "lock" in p],
+            self._lock_problems(
+                changed_components={"lib": True},
+                versions={"lib": "2.1.0"},
+                published_versions={"lib": "2.0.0"},
+                pin_values={"backend/uv.lock": "2.0.0"},
+            ),
             [],
-            f"a lock already at the candidate version is satisfied: {problems}",
         )
-        stale = rd.FixtureState(
+
+    def test_a_lock_behind_the_published_version_is_still_named(self) -> None:
+        """What the published-version comparison is FOR. Relaxing the check must
+        not stop it catching a lock that records neither the published version
+        nor the candidate."""
+        problems = self._lock_problems(
             changed_components={"lib": True},
             versions={"lib": "2.1.0"},
             published_versions={"lib": "2.0.0"},
             pin_values={"backend/uv.lock": "1.9.0"},
         )
-        plan = rd.compute_plan(graph, stale)
-        problems = rd.check_declared_inputs(graph, plan, stale)
         self.assertTrue(
-            any("lock" in p and "1.9.0" in p and "2.1.0" in p for p in problems),
-            f"a stale lock must be named against the candidate: {problems}",
+            any("1.9.0" in p and "2.0.0" in p for p in problems),
+            f"a diverged lock must be named against published truth: {problems}",
+        )
+
+    def test_a_lock_already_at_the_candidate_freezes_clean(self) -> None:
+        """Resumption and registry lag. Re-planning after the adapter has
+        advanced the lock, or while the registry still reports the previous
+        version, must not refuse work that already happened."""
+        self.assertEqual(
+            self._lock_problems(
+                changed_components={"lib": True},
+                versions={"lib": "2.1.0"},
+                published_versions={"lib": "2.0.0"},
+                pin_values={"backend/uv.lock": "2.1.0"},
+            ),
+            [],
+        )
+
+    def test_an_unreadable_registry_never_condemns_the_lock(self) -> None:
+        """An outage is not evidence about the lock. The component's own
+        registry-truth problem is reported instead, and it already blocks."""
+        problems = self._lock_problems(
+            changed_components={"lib": True},
+            versions={"lib": "2.1.0"},
+            registry_unavailable={"lib": "registry timeout"},
+            pin_values={"backend/uv.lock": "1.9.0"},
+        )
+        self.assertEqual(problems, [])
+
+    def test_lock_version_compares_against_frozen_candidate(self) -> None:
+        """SUPERSEDED, kept as the record of what changed and why. This asserted
+        the opposite rule - that the lock must already record the CANDIDATE -
+        which deadlocked every awid-pypi and server release on first exercise.
+        The body below now asserts the rule that replaced it. The original
+        concern it was written for, that a stale lock must not pass, is kept
+        alive by test_a_lock_behind_the_published_version_is_still_named."""
+        self.assertEqual(
+            self._lock_problems(
+                changed_components={"lib": True},
+                versions={"lib": "2.1.0"},
+                published_versions={"lib": "2.0.0"},
+                pin_values={"backend/uv.lock": "2.0.0"},
+            ),
+            [],
+            "the lock the adapter has not yet advanced is the normal plan-time "
+            "state, not a declared-input problem",
         )
 
 
