@@ -17,6 +17,6 @@ Wake-fix independently rechecked:
 
 Raw candidate and registry digests are identical, so the canonical payload-manifest fallback was not needed. For this release npm preserved the published tarball bytes exactly.
 
-Measured chain:
+Evidence chain (`tagged source -> staged candidate bytes` is attested by release-lane's stage record; all other links are measured; see `audit.md`):
 
 `reviewed fix -> tagged source -> staged candidate bytes -> same published/registry bytes -> imported bundle -> four aliases / one roster request`
