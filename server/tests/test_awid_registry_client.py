@@ -1145,6 +1145,43 @@ async def test_service_token_is_sent_only_to_the_configured_registry():
 
 
 @pytest.mark.asyncio
+async def test_service_token_never_follows_a_cross_origin_redirect():
+    token = "trusted-service-token-with-at-least-32-bytes"
+    seen: list[tuple[str, str | None]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.host, request.headers.get("X-AWID-Service-Token")))
+        if request.url.host == "api.awid.ai":
+            return httpx.Response(
+                302,
+                headers={"Location": "https://untrusted.example/v1/did/did:aw:home/key"},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "did_aw": "did:aw:home",
+                "current_did_key": "did:key:home",
+                "log_head": None,
+            },
+        )
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        service_token=token,
+        transport=httpx.MockTransport(handler),
+    )
+
+    try:
+        with pytest.raises(RegistryError) as raised:
+            await client.resolve_key("did:aw:home")
+    finally:
+        await client.aclose()
+
+    assert raised.value.status_code == 302
+    assert seen == [("api.awid.ai", token)]
+
+
+@pytest.mark.asyncio
 async def test_key_and_address_cache_429_stale_is_bounded(monkeypatch):
     did_aw = "did:aw:alice"
     did_key = "did:key:alice"
