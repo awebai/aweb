@@ -911,6 +911,22 @@ def _parse_observation(output: str, environment: dict[str, str]) -> dict:
     # a constraints file, so there is no per-side expected dependency set to
     # check an inventory against. Supplying one is the stronger fix and a
     # larger change than this.
+    #
+    # IF THIS FIRES ON A SAME-VERSION CELL IT IS CORRECT, AND A PASSING RE-RUN
+    # DOES NOT MAKE IT WRONG. There is a legitimate cause: installing with no
+    # constraints file resolves transitive versions AT INSTALL TIME, so two
+    # installs of the same wheel can differ if the index moved between them.
+    # That does not make the refusal spurious - it means the two arms of the
+    # measurement ran under different conditions, so the cell measured one
+    # version against a DIFFERENT BUILD of itself while claiming to measure it
+    # against itself. Evidence whose arms differ is invalid whatever caused the
+    # difference.
+    #
+    # The trap is that the refusal is non-reproducible: resolution happens again
+    # on a re-run and may agree. That reads as a flaky harness, and treating the
+    # green re-run as proof the red was noise keeps the invalid measurement and
+    # discards the one honest signal about it. Fix the environment - see the
+    # per-side constraints note above - rather than re-rolling until it agrees.
     if (
         alpha["version"] == beta["version"]
         and _dependency_inventory(alpha) != _dependency_inventory(beta)
