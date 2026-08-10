@@ -8720,21 +8720,29 @@ class RegistryProviders:
                 f"{repository}: no dotted-numeric version tags published"
             )
         version = max(released)[1]
+        # --raw, because plain `skopeo inspect` selects an instance from a
+        # multi-platform index by the ASKING host's platform, and fails outright
+        # where that platform is absent - so a reader of published image truth
+        # would answer differently depending on where it ran, or not at all.
+        # --raw selects nothing and returns the bytes the registry serves for
+        # the tag; a tag's digest is the digest of exactly those bytes. This is
+        # also how the tag observer at _observe_ghcr_tag_factory reads a digest,
+        # so the file keeps one story about image truth.
         inspected = subprocess.run(
-            ["skopeo", "inspect", f"docker://{repository}:{version}"],
-            capture_output=True, text=True,
+            ["skopeo", "inspect", "--raw", f"docker://{repository}:{version}"],
+            capture_output=True,
         )
         if inspected.returncode != 0:
             raise RegistryUnavailable(
                 f"{repository}:{version}: manifest unavailable "
-                f"({inspected.stderr.strip()[:120]})"
+                f"({inspected.stderr.decode(errors='replace').strip()[:120]})"
             )
-        digest = json.loads(inspected.stdout or "{}").get("Digest")
-        if not digest:
+        if not inspected.stdout:
             raise RegistryUnavailable(
                 f"{repository}:{version}: manifest carries no digest; a version "
                 "without an immutable digest is unavailable, never acceptable"
             )
+        digest = "sha256:" + hashlib.sha256(inspected.stdout).hexdigest()
         return version, {version: digest}
 
 

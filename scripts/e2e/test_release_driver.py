@@ -8,6 +8,7 @@ provider interfaces the real driver uses, filled from fixtures.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -2382,6 +2383,116 @@ class PinCheckoutCheckingPathTests(unittest.TestCase):
             record = snapshot["pins"]["external-pin:release-pin.toml:git_sha"]
             self.assertEqual(record["checkout_head"], head)
             self.assertEqual(record["checkout_remote"], "github.com/awebai/aweb")
+
+
+
+# Reproduces skopeo on a host whose platform is absent from the image index.
+# Measured against ghcr.io/awebai/awid:0.5.14 from darwin/arm64: `skopeo
+# inspect` selects an instance and exits 1 with "no image found in image index
+# for architecture arm64 ... OS darwin"; `skopeo inspect --raw` selects nothing
+# and returns the index document.
+SKOPEO_PLATFORM_STUB = """#!/usr/bin/env python3
+import hashlib
+import json
+import os
+import sys
+
+argv = sys.argv[1:]
+if "list-tags" in argv:
+    sys.stdout.write(os.environ["AWEB_TEST_TAGS_JSON"])
+elif "--raw" in argv:
+    # No instance selection at all: the bytes the registry serves for the tag.
+    sys.stdout.write(os.environ["AWEB_TEST_INDEX_JSON"])
+elif "--override-os" in argv and "--override-arch" in argv:
+    # Selection against a platform the caller named rather than the host's.
+    # Real skopeo still reports the tag's index digest here, not the selected
+    # child's, which is why this arm agrees with --raw.
+    index = os.environ["AWEB_TEST_INDEX_JSON"].encode()
+    sys.stdout.write(json.dumps(
+        {"Digest": "sha256:" + hashlib.sha256(index).hexdigest()}))
+else:
+    sys.stderr.write(
+        'level=fatal msg="Error parsing manifest for image: choosing image '
+        'instance: no image found in image index for architecture arm64, '
+        'variant v8, OS darwin"'
+    )
+    sys.exit(1)
+"""
+
+# A real multi-platform index: linux/amd64 and linux/arm64, no darwin entry.
+IMAGE_INDEX_JSON = json.dumps({
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.oci.image.index.v1+json",
+    "manifests": [
+        {"mediaType": "application/vnd.oci.image.manifest.v1+json",
+         "digest": "sha256:" + "2d" * 32, "size": 2200,
+         "platform": {"architecture": "amd64", "os": "linux"}},
+        {"mediaType": "application/vnd.oci.image.manifest.v1+json",
+         "digest": "sha256:" + "3e" * 32, "size": 2200,
+         "platform": {"architecture": "arm64", "os": "linux"}},
+    ],
+}, sort_keys=True)
+
+
+class GhcrPublishedPlatformIndependenceTests(unittest.TestCase):
+    """Reading image truth for a version tag must not depend on the platform of
+    the host that asks. A lane that only ever ran where the host platform
+    happened to be in the index cannot tell the two apart.
+
+    The stub models both non-selecting reads skopeo offers, --raw and an
+    explicitly overridden platform, so the property under test is "does not
+    depend on the asking host" rather than "spells it the way we spelled it".
+    Only a read that selects by the host's own platform fails here."""
+
+    def _stub_path(self, tmp: str) -> str:
+        stub_bin = Path(tmp) / "bin"
+        stub_bin.mkdir()
+        stub = stub_bin / "skopeo"
+        stub.write_text(SKOPEO_PLATFORM_STUB)
+        stub.chmod(0o755)
+        return str(stub_bin)
+
+    def _with_stub(self, tmp: str):
+        os.environ["PATH"] = self._stub_path(tmp) + os.pathsep + os.environ["PATH"]
+        os.environ["AWEB_TEST_TAGS_JSON"] = json.dumps(
+            {"Tags": ["0.5.13", "0.5.14", "latest", "sha-abc1234"]})
+        os.environ["AWEB_TEST_INDEX_JSON"] = IMAGE_INDEX_JSON
+
+    def test_the_stub_reproduces_the_platform_selection_failure(self):
+        """The control. Without this the passing test below could not
+        distinguish a fixed reader from a stub that never fails."""
+        with tempfile.TemporaryDirectory() as tmp:
+            selecting = subprocess.run(
+                [str(Path(self._stub_path(tmp)) / "skopeo"),
+                 "inspect", "docker://ghcr.io/awebai/awid:0.5.14"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(selecting.returncode, 1)
+            self.assertIn("no image found in image index", selecting.stderr)
+            self.assertIn("OS darwin", selecting.stderr)
+
+    def test_published_image_truth_is_read_without_platform_selection(self):
+        """The whole point: the same call has to work where the asking host's
+        platform is not in the index at all."""
+        restore = dict(os.environ)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                self._with_stub(tmp)
+                version, digests = rd.RegistryProviders._ghcr_published(
+                    "awebai/awid")
+        finally:
+            os.environ.clear()
+            os.environ.update(restore)
+
+        self.assertEqual(version, "0.5.14")
+        self.assertEqual(
+            digests,
+            {"0.5.14": "sha256:" + hashlib.sha256(
+                IMAGE_INDEX_JSON.encode()).hexdigest()},
+            "the digest of a tag is the digest of the bytes the registry "
+            "serves for it, which for a multi-platform tag is the index",
+        )
+
 
 
 if __name__ == "__main__":
