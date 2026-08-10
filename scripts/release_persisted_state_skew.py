@@ -31,6 +31,9 @@ from pathlib import Path
 
 import release_driver as rd
 from release_channel_pi_skew import (
+    CANDIDATE_PROVENANCE,
+    PUBLISHED_PROVENANCE,
+    artifact_provenance,
     server_runtime_constraints,
     validate_server_runtime,
 )
@@ -633,7 +636,8 @@ class PersistedStateHarness:
         for label, wheel in (("candidate", candidate),
                              ("published", published)):
             inventory = runtime_of(wheel)
-            validate_server_runtime(inventory, wheel.version)
+            validate_server_runtime(
+                inventory, artifact_provenance(wheel), wheel.version)
             runtimes[label] = inventory
         return runtimes
 
@@ -821,16 +825,24 @@ class SubprocessPersistedStateJourney:
         self._start_infrastructure()
         return "aweb"
 
-    def _constraints_path(self) -> tuple[Path, str]:
-        path = self._root / "server-runtime-constraints.txt"
-        body, digest, _ = server_runtime_constraints()
+    def _constraints_path(self, wheel: WheelIdentity) -> tuple[Path, str]:
+        """Keyed per wheel, like _installed, because this harness measures TWO
+        server artifacts in one run and their constraints legitimately differ -
+        the published wheel's come from its tag, the candidate's from the tree.
+        One file per run would make that disagreement fire the drift check
+        below, whose message says the opposite of what happened. Within a wheel
+        the check still means what it always did."""
+        resolved = server_runtime_constraints(
+            artifact_provenance(wheel), wheel.version)
+        path = self._root / wheel.sha256 / "server-runtime-constraints.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
-            path.write_bytes(body)
-        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            path.write_bytes(resolved.body)
+        if hashlib.sha256(path.read_bytes()).hexdigest() != resolved.digest:
             raise rd.ReceiptError(
                 "server runtime constraints changed while materializing"
             )
-        return path, digest
+        return path, resolved.digest
 
     def _install(self, wheel: WheelIdentity) -> Path:
         existing = self._installed.get(wheel.sha256)
@@ -841,7 +853,7 @@ class SubprocessPersistedStateJourney:
         wheel_path.write_bytes(wheel.bytes)
         if hashlib.sha256(wheel_path.read_bytes()).hexdigest() != wheel.sha256:
             raise rd.ReceiptError("wheel bytes changed while materializing runtime")
-        constraints, constraints_digest = self._constraints_path()
+        constraints, constraints_digest = self._constraints_path(wheel)
         venv = self._root / "venvs" / wheel.sha256
         self._run(["uv", "venv", "--python", "3.12", str(venv)])
         python = venv / "bin" / "python"
@@ -859,7 +871,8 @@ class SubprocessPersistedStateJourney:
                 "AWEB_SKEW_SERVER_CONSTRAINTS_SHA256": constraints_digest,
             },
         ))
-        validate_server_runtime(inventory, wheel.version)
+        validate_server_runtime(
+            inventory, artifact_provenance(wheel), wheel.version)
         self._runtime_inventories[wheel.sha256] = inventory
         self._installed[wheel.sha256] = venv
         return venv
@@ -1287,9 +1300,11 @@ def aggregate_support(matrix_path: Path) -> dict:
         }:
             raise rd.ReceiptError(f"{name}: report lacks runtime inventories")
         validate_server_runtime(
-            runtimes["candidate"], report["candidate"].get("version"))
+            runtimes["candidate"], CANDIDATE_PROVENANCE,
+            report["candidate"].get("version"))
         validate_server_runtime(
-            runtimes["published"], report["published"].get("version"))
+            runtimes["published"], PUBLISHED_PROVENANCE,
+            report["published"].get("version"))
         for label, runtime in runtimes.items():
             dependency_rows = json.dumps(
                 [row for row in runtime["distributions"]

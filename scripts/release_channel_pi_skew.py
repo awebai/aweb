@@ -69,34 +69,155 @@ def _canonical_package_name(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).lower()
 
 
-def server_runtime_constraints() -> tuple[bytes, str, dict[str, str]]:
-    """Derive canonical exact constraints from the reviewed server lock."""
-    lock = Path(__file__).resolve().parents[1] / "server" / "uv.lock"
-    document = tomllib.loads(lock.read_text())
+def kind_provenance(kind: str) -> str:
+    """Constraints provenance from a frozen cell's declared side kind.
+
+    The evidence re-reader has no artifact, only the kind the cell froze, so it
+    resolves the same mapping from that. Sharing one mapping is what keeps a
+    re-read from validating an inventory against a different lock than the run
+    measured it under.
+    """
+    if kind in PUBLISHED_KINDS:
+        return PUBLISHED_PROVENANCE
+    if kind == CANDIDATE_PROVENANCE:
+        return CANDIDATE_PROVENANCE
+    raise rd.ReceiptError(f"cell side kind {kind!r} names no constraints provenance")
+
+
+def artifact_provenance(artifact) -> str:
+    """Whether an artifact's constraints come from a tag or from the tree.
+
+    Read from the artifact's own resolved source rather than from a caller's
+    label, so a mislabelled call site cannot pick the wrong lock.
+    """
+    return kind_provenance(artifact.source.get("kind"))
+
+
+PUBLISHED_PROVENANCE = "published"
+CANDIDATE_PROVENANCE = "candidate"
+WORKING_TREE_LOCK_REF = "working-tree"
+
+
+@dataclass(frozen=True)
+class ServerConstraints:
+    """Exact runtime constraints for ONE server artifact, with their provenance.
+
+    Two cells of the same matrix measure different server artifacts, so they
+    legitimately carry different digests. Reading two evidence records with
+    different digests must not require reconstructing this function, so the
+    version, the lock's git ref and the digest travel together.
+    """
+
+    body: bytes
+    digest: str
+    constraints: dict[str, str]
+    provenance: str
+    version: str
+    lock_ref: str
+
+    def evidence(self) -> dict:
+        return {
+            "provenance": self.provenance,
+            "version": self.version,
+            "lock_ref": self.lock_ref,
+            "digest": self.digest,
+        }
+
+
+def _server_lock_bytes(provenance: str, version: str) -> tuple[bytes, str]:
+    """The reviewed server lock OF THE ARTIFACT being measured, and its ref.
+
+    A published wheel was built under the lock reviewed for it, which lives at
+    its tag. The working tree's lock describes whatever the tree is now, and
+    during a release that is a different, unpublished version - constraining a
+    published wheel with it names dependency versions that are not on the
+    registry, so the wheel cannot even be installed.
+
+    A published version whose tag is missing REFUSES. Falling back to the
+    working tree there is precisely how the defect returns, and it returns
+    quietly: a tree that happens to carry the same version string is not a tree
+    that carries the same lock.
+    """
+    repo = Path(__file__).resolve().parents[1]
+    if provenance == CANDIDATE_PROVENANCE:
+        return (repo / "server" / "uv.lock").read_bytes(), WORKING_TREE_LOCK_REF
+    if provenance != PUBLISHED_PROVENANCE:
+        raise rd.ReceiptError(
+            f"unknown server artifact provenance {provenance!r}; constraints "
+            "are a property of the artifact and cannot be chosen without one"
+        )
+    tag = f"server-v{version}"
+    resolved = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", f"{tag}^{{commit}}"],
+        capture_output=True,
+    )
+    if resolved.returncode != 0:
+        raise rd.ReceiptError(
+            f"published server {version} has no {tag} tag in this repository, "
+            "so the lock it was built under is unavailable; a missing tag is "
+            "information about the measurement, never a reason to substitute "
+            "the working tree's lock"
+        )
+    lock_ref = resolved.stdout.decode().strip()
+    shown = subprocess.run(
+        ["git", "-C", str(repo), "show", f"{lock_ref}:server/uv.lock"],
+        capture_output=True,
+    )
+    if shown.returncode != 0:
+        raise rd.ReceiptError(
+            f"{tag} carries no server/uv.lock, so published server {version} "
+            "has no reviewed constraints to measure under"
+        )
+    return shown.stdout, lock_ref
+
+
+def server_runtime_constraints(provenance: str, version: str) -> ServerConstraints:
+    """Canonical exact constraints for the server artifact under measurement.
+
+    Both arguments are required on purpose. Constraints used to come from
+    ambient state - the working tree's lock - which made every caller silently
+    inherit whatever the tree happened to be, and measure a published wheel
+    under an unpublished wheel's dependencies. Making the artifact explicit
+    makes that mistake unavailable rather than merely discouraged.
+    """
+    lock_body, lock_ref = _server_lock_bytes(provenance, version)
+    document = tomllib.loads(lock_body.decode())
     constraints: dict[str, str] = {}
     for package in document.get("package", []):
         name = _canonical_package_name(package.get("name", ""))
-        version = package.get("version")
-        if not name or not isinstance(version, str) or not version:
+        # Not `version`: that names the artifact under measurement, and the
+        # dataclass below reports it.
+        pinned = package.get("version")
+        if not name or not isinstance(pinned, str) or not pinned:
             raise rd.ReceiptError("server lock contains an unversioned package")
         if name == "aweb":
             continue
-        prior = constraints.setdefault(name, version)
-        if prior != version:
+        prior = constraints.setdefault(name, pinned)
+        if prior != pinned:
             raise rd.ReceiptError(
-                f"server lock resolves multiple versions for {name}: {prior}, {version}"
+                f"server lock resolves multiple versions for {name}: {prior}, {pinned}"
             )
     if "mcp" not in constraints:
         raise rd.ReceiptError("server lock does not pin the moving mcp dependency")
     body = "".join(
-        f"{name}=={version}\n" for name, version in sorted(constraints.items())
+        f"{name}=={pinned}\n" for name, pinned in sorted(constraints.items())
     ).encode()
-    return body, hashlib.sha256(body).hexdigest(), constraints
+    return ServerConstraints(
+        body=body,
+        digest=hashlib.sha256(body).hexdigest(),
+        constraints=constraints,
+        provenance=provenance,
+        version=version,
+        lock_ref=lock_ref,
+    )
 
 
-def validate_server_runtime(runtime: dict, server_version: str | None = None) -> None:
-    body, constraints_digest, constraints = server_runtime_constraints()
-    del body
+def validate_server_runtime(
+    runtime: dict, provenance: str, server_version: str,
+) -> None:
+    resolved = server_runtime_constraints(provenance, server_version)
+    constraints_digest = resolved.digest
+    constraints = resolved.constraints
     if not isinstance(runtime, dict) or runtime.get("schema") != RUNTIME_INVENTORY_SCHEMA:
         raise rd.ReceiptError("server runtime inventory has the wrong schema")
     distributions = runtime.get("distributions")
@@ -156,7 +277,7 @@ def validate_server_runtime(runtime: dict, server_version: str | None = None) ->
 
 def validate_observation(
     observation: dict, component: str, direction: str,
-    server_version: str | None = None,
+    server_provenance: str, server_version: str,
 ) -> None:
     operation, result = OBSERVATION_CONTRACTS[(component, direction)]
     expected = {
@@ -178,12 +299,13 @@ def validate_observation(
             raise rd.ReceiptError(
                 f"{component} {direction} observation lacks concrete {key}"
             )
-    validate_server_runtime(observation.get("server_runtime"), server_version)
+    validate_server_runtime(
+        observation.get("server_runtime"), server_provenance, server_version)
 
 
 def parse_observation(
     output: bytes, component: str, direction: str,
-    server_version: str | None = None,
+    server_provenance: str, server_version: str,
 ) -> dict:
     decoded = output.decode(errors="replace")
     observations = []
@@ -201,7 +323,8 @@ def parse_observation(
             f"printed:\n{tail}"
         )
     observation = observations[0]
-    validate_observation(observation, component, direction, server_version)
+    validate_observation(
+        observation, component, direction, server_provenance, server_version)
     return observation
 
 
@@ -760,7 +883,8 @@ class ChannelPiHarness:
                 )}
             observed = next(iter(observation.values()))
             validate_observation(
-                observed, client_component, cell.direction, server.version
+                observed, client_component, cell.direction,
+                artifact_provenance(server), server.version
             )
             report = {
                 "schema": "aweb.channel-pi-server-skew-cell.v1",
@@ -933,7 +1057,10 @@ class SubprocessChannelPiJourney:
             )
         return package_root
 
-    def _run(self, command: list[str], env: dict, direction: str) -> dict:
+    def _run(
+        self, command: list[str], env: dict, direction: str,
+        server_provenance: str,
+    ) -> dict:
         child_env = dict(os.environ)
         for key in CLOSED_AMBIENT_ENV:
             child_env.pop(key, None)
@@ -950,7 +1077,7 @@ class SubprocessChannelPiJourney:
             )
         observation = parse_observation(
             result.stdout, self.component, direction,
-            env.get("AWEB_SKEW_SERVER_VERSION"),
+            server_provenance, env["AWEB_SKEW_SERVER_VERSION"],
         )
         return {
             **observation,
@@ -961,11 +1088,20 @@ class SubprocessChannelPiJourney:
     def _journey(self, client, server, cell) -> dict:
         client_root = self._client_root(client)
         server_wheel = self._materialize(server)
-        constraints_body, constraints_digest, _ = server_runtime_constraints()
-        constraints_path = self.root / "server-runtime-constraints.txt"
-        constraints_path.write_bytes(constraints_body)
-        if hashlib.sha256(constraints_path.read_bytes()).hexdigest() != constraints_digest:
+        provenance = artifact_provenance(server)
+        resolved = server_runtime_constraints(provenance, server.version)
+        # Keyed by the artifact, because two cells of one matrix measure two
+        # different server wheels and so carry two different constraint sets.
+        # One shared path per run would make the legitimate disagreement look
+        # like drift.
+        constraints_path = (
+            self.root / server.sha256 / "server-runtime-constraints.txt"
+        )
+        constraints_path.parent.mkdir(parents=True, exist_ok=True)
+        constraints_path.write_bytes(resolved.body)
+        if hashlib.sha256(constraints_path.read_bytes()).hexdigest() != resolved.digest:
             raise rd.ReceiptError("server runtime constraints changed while materializing")
+        constraints_digest = resolved.digest
         project = compose_project_name(self.root, cell)
         common = {
             "AWEB_SKEW_SERVER_WHEEL": str(server_wheel),
@@ -982,12 +1118,12 @@ class SubprocessChannelPiJourney:
             return self._run(
                 ["npm", "--prefix", "channel", "run", "test:integration"],
                 {**common, "AWEB_CHANNEL_PACKAGE_ROOT": str(client_root)},
-                cell.direction,
+                cell.direction, provenance,
             )
         return self._run(
             ["make", "test-oas-pi-resident-e2e"],
             {**common, "OAS_PROOF_PI_PACKAGE_ROOT": str(client_root)},
-            cell.direction,
+            cell.direction, provenance,
         )
 
     def run_client_request(self, client, server, cell):
@@ -1239,7 +1375,7 @@ def aggregate_support(
             )
         validate_observation(
             observation[expected_key], preimage["edge_a"], direction,
-            preimage["b"]["version"],
+            kind_provenance(preimage["b_kind"]), preimage["b"]["version"],
         )
         runtime = report.get("server_runtime")
         if runtime != observation[expected_key].get("server_runtime"):
