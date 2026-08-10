@@ -896,7 +896,25 @@ def _parse_observation(output: str, environment: dict[str, str]) -> dict:
     beta = _validate_runtime(
         observation["beta"], expected["runtime"]["beta"], "beta"
     )
-    if _dependency_inventory(alpha) != _dependency_inventory(beta):
+    # Only for two runtimes of the SAME server version. A skew cell exists to
+    # run two DIFFERENT versions against each other, and different versions
+    # declare different dependency sets - which is precisely what a release
+    # bumping a dependency floor produces. Requiring equality there refused the
+    # measurement for having the property it was constructed to have, after the
+    # journey had already reported every required outcome green.
+    #
+    # What a mixed-version cell keeps: each side is pinned by _validate_runtime
+    # to its own expected version, wheel digest and mcp version, and its
+    # inventory must be internally consistent with them and with its own
+    # recomputed digest. What it loses is any cross-side dependency comparison,
+    # and nothing here can replace it: this harness installs each wheel without
+    # a constraints file, so there is no per-side expected dependency set to
+    # check an inventory against. Supplying one is the stronger fix and a
+    # larger change than this.
+    if (
+        alpha["version"] == beta["version"]
+        and _dependency_inventory(alpha) != _dependency_inventory(beta)
+    ):
         raise release_driver.ReceiptError(
             "federation cell dependency-only inventories differ between runtimes"
         )

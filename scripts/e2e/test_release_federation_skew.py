@@ -358,6 +358,19 @@ class FederationHarnessTests(unittest.TestCase):
             b={"component": "server", "version": "1.26.35", "kind": "published"},
         )
 
+    def same_version_cell(self, direction="a-to-b"):
+        """candidate x candidate: both sides are the SAME server version.
+
+        The matrix produces this whenever a self-edge's component moves, and it
+        is the only shape in which the two runtimes are required to have
+        installed identical dependencies."""
+        value = self.cell(direction=direction)
+        return SimpleNamespace(**{
+            **value.__dict__,
+            "b_kind": "candidate",
+            "b": dict(value.a),
+        })
+
     def wheels(self):
         return {
             "1.26.36": wheel_artifact("1.26.36", b"candidate"),
@@ -493,7 +506,14 @@ class FederationHarnessTests(unittest.TestCase):
                     harness.run(value)
                 self.assertFalse((Path(tmp) / "cells").exists())
 
-    def test_dependency_only_inventory_mismatch_is_red(self):
+    def test_dependency_only_inventory_mismatch_is_red_at_one_version(self):
+        """The guard, kept. Two runtimes of the SAME server version must have
+        installed the same dependencies; a divergence there is drift in the
+        harness or the environment and is still red.
+
+        Previously this ran on a MIXED-version cell and passed for the wrong
+        reason - see the sibling test below, which is the case that reading
+        proved wrong."""
         with tempfile.TemporaryDirectory() as tmp:
             def journey(env):
                 return SimpleNamespace(
@@ -505,11 +525,44 @@ class FederationHarnessTests(unittest.TestCase):
                     stderr="",
                 )
 
-            value = self.cell()
+            value = self.same_version_cell()
             harness = self.prime(self.harness(tmp, journey), [value])
             with self.assertRaisesRegex(rd.ReceiptError, "dependency"):
                 harness.run(value)
             self.assertFalse((Path(tmp) / "cells").exists())
+
+    def test_two_versions_may_declare_different_dependencies(self):
+        """A skew cell exists to run two DIFFERENT server versions against each
+        other, and different versions declare different dependency sets - that
+        is what a release bumping a dependency floor produces. Requiring the two
+        inventories to be equal refused the measurement for having the property
+        it was constructed to have.
+
+        Measured in production before this test existed: the candidate x
+        published-latest federation cell reported every required outcome green -
+        encrypted mail and chat, fail-closed, replay idempotence, route
+        validation - and was then refused with "dependency-only inventories
+        differ between runtimes". The subject was fine; the invariant was
+        wrong."""
+        with tempfile.TemporaryDirectory() as tmp:
+            def journey(env):
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=self.observation(
+                        env,
+                        beta=self.runtime(env, "BETA", dependency="0.37.3"),
+                    ),
+                    stderr="",
+                )
+
+            value = self.cell()
+            self.assertNotEqual(
+                value.a["version"], value.b["version"],
+                "control: this cell must be mixed-version or it tests nothing",
+            )
+            harness = self.prime(self.harness(tmp, journey), [value])
+            harness.run(value)
+            self.assertTrue((Path(tmp) / "cells").exists())
 
     def test_child_forces_keep_off_despite_ambient_debug_setting(self):
         completed = SimpleNamespace(returncode=0, stdout="", stderr="")
