@@ -8,6 +8,7 @@ provider interfaces the real driver uses, filled from fixtures.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -2532,6 +2533,57 @@ class GhcrPublishedPlatformIndependenceTests(unittest.TestCase):
             "serves for it, which for a multi-platform tag is the index",
         )
 
+
+
+
+class SkewCellIdentityTotalityTests(unittest.TestCase):
+    """Every skew harness now decides frozen-matrix membership by canonical
+    identity rather than by comparing cell objects, because the driver runs as
+    __main__ while each child imports release_driver, so there are two SkewCell
+    classes and dataclass equality is class-scoped.
+
+    That is only safe while the identity covers EVERY field. A field added to
+    SkewCell but not to skew_cell_preimage would silently stop being checked at
+    the matrix boundary - two cells differing only in it would share an identity
+    and each would be accepted as the other."""
+
+    def test_the_preimage_names_every_field_of_the_cell(self):
+        cell_fields = {field.name for field in dataclasses.fields(rd.SkewCell)}
+        preimage_keys = set(rd.skew_cell_preimage(self._cell()))
+
+        self.assertEqual(
+            cell_fields - preimage_keys, set(),
+            "a SkewCell field outside the preimage is a field the membership "
+            "check no longer sees",
+        )
+
+    def test_changing_any_single_field_changes_the_identity(self):
+        """The property the test above is a proxy for, asserted directly: no
+        field is inert."""
+        base = self._cell()
+        base_id = rd.skew_cell_identity(base)
+        for field in dataclasses.fields(rd.SkewCell):
+            with self.subTest(field=field.name):
+                current = getattr(base, field.name)
+                altered = (
+                    {**current, "probe": "x"} if isinstance(current, dict)
+                    else f"{current}-probe"
+                )
+                other = dataclasses.replace(base, **{field.name: altered})
+                self.assertNotEqual(
+                    rd.skew_cell_identity(other), base_id, field.name,
+                )
+
+    @staticmethod
+    def _cell():
+        return rd.SkewCell(
+            edge_id="e" * 64, edge_a="server", edge_b="server",
+            journey="a journey", artifacts={"a": "pypi:aweb", "b": "pypi:aweb"},
+            declared_direction="both", direction="a-to-b",
+            a_kind="candidate", b_kind="candidate",
+            a={"component": "server", "version": "1.27.1"},
+            b={"component": "server", "version": "1.27.0"},
+        )
 
 
 if __name__ == "__main__":
