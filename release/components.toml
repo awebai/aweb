@@ -238,23 +238,10 @@ b = "server"
 journey = "make test-federation-e2e (both request directions)"
 artifacts = { a = "pypi:aweb", b = "pypi:aweb" }
 direction = "both"
-# TEMPORARILY DECLARED INCOMPLETE, on Juan's explicit override, 2026-08-09.
-# The measured set below covers 1.26.35 only, so a 1.27.0 candidate cell is not
-# an exact member of it and the driver refuses - correctly. Rather than fake a
-# measurement, this edge is declared incomplete so the deferral is visible on the
-# receipt as a deferral: for this release federation support is DECLARED, not
-# MEASURED. What makes that acceptable and nothing more: the diff on
-# server/src/aweb/federation from 8551c42f (the measured 1.26.35 source) to the
-# release source is empty, so the wire code is byte-identical to what was
-# measured.
-#
-# RESTORE THIS with a real 1.27.0 measurement - run the journey candidate x
-# candidate, commit the new document, and put its measured set and record back
-# here. Tracked by aweb-abdg. Until then this edge claims less than it used to,
-# which is the honest state rather than a convenient one.
-#   set = "measured:93675cc26aa05661daa86bcc7f9c80503b8421f6290edd25cd0237105c060f5e"
-#   record = { authority = "repository", artifact_id = "support:server-federation:1.26.35", path = "release/measurements/server-federation-1.26.35.json", digest = "6e65e483e83552f4524758437bcec72cb9c2931b6cda2b1a4b2e0f4c59944825" }
-supported = { policy = "additive-only" }
+# Measured against the published 1.27.0 wheel, both directions, after the
+# release. The 1.26.35 measurement it replaces is kept at
+# release/measurements/server-federation-1.26.35.json for history.
+supported = { policy = "additive-only", set = "measured:34498f34e2c007ac1771388c4fc45394293cac49bbe1381504d49b3885fe9e96", record = { authority = "repository", artifact_id = "support:server-federation:1.27.0", path = "release/measurements/server-federation-1.27.0.json", digest = "b68ef0c4af40c28f1c0a07df1b0ec97936602868834114094c10cc1d4083ebb7" } }
 
 [[edge]]
 type = "runtime-contract"
