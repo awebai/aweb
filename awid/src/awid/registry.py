@@ -26,6 +26,7 @@ from awid.log import (
     identity_state_hash,
     log_entry_payload,
 )
+from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER, normalize_service_token
 from awid.signing import canonical_json_bytes, sign_message
 
 
@@ -231,9 +232,11 @@ class RegistryClient:
     transport: httpx.AsyncBaseTransport | None = None
     base_url: str | None = None
     domain_registry_resolver: DomainRegistryResolver | None = None
+    service_token: str | None = field(default=None, repr=False, compare=False)
     _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "service_token", normalize_service_token(self.service_token))
         object.__setattr__(
             self,
             "_http_client",
@@ -296,6 +299,12 @@ class RegistryClient:
             if key.strip().lower() != "accept-encoding"
         }
         request_headers["Accept-Encoding"] = "identity"
+        if self.service_token and (
+            registry_url is None
+            or canonical_server_origin(registry_url)
+            == canonical_server_origin(self.registry_url)
+        ):
+            request_headers[AWID_SERVICE_TOKEN_HEADER] = self.service_token
         async with asyncio.timeout(self.timeout_seconds):
             async with self._http_client.stream(
                 method,

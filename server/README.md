@@ -51,6 +51,8 @@ Common environment variables:
 - `AWEB_DATABASE_URL` or `DATABASE_URL`
 - `AWEB_REDIS_URL` or `REDIS_URL`
 - `AWID_REGISTRY_URL`
+- `AWID_SERVICE_TOKEN` optional >=32-byte trusted caller secret shared with the
+  configured home AWID registry
 - `AWEB_HOST`
 - `AWEB_PORT`
 - `AWEB_DASHBOARD_JWT_SECRET`

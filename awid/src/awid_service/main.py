@@ -50,6 +50,7 @@ def _make_standalone_lifespan():
                 redis=redis,
                 backend=settings.rate_limit_backend,
             )
+            app.state.awid_service_token = settings.service_token
             app.state.db_schema = settings.db_schema
             yield
         finally:
@@ -79,6 +80,7 @@ def _make_library_lifespan(
             redis=redis,
             backend=settings.rate_limit_backend,
         )
+        app.state.awid_service_token = settings.service_token
         app.state.db_schema = db_infra.schema
         try:
             yield

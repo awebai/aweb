@@ -6,12 +6,31 @@ Supports in-memory (single-instance) and Redis (multi-instance) backends.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request, Response
+
+
+logger = logging.getLogger(__name__)
+
+AWID_SERVICE_TOKEN_HEADER = "X-AWID-Service-Token"
+_MIN_SERVICE_TOKEN_BYTES = 32
+
+
+def normalize_service_token(value: str | None) -> str | None:
+    token = (value or "").strip()
+    if not token:
+        return None
+    if len(token.encode("utf-8")) < _MIN_SERVICE_TOKEN_BYTES:
+        raise ValueError(
+            f"AWID_SERVICE_TOKEN must contain at least {_MIN_SERVICE_TOKEN_BYTES} bytes"
+        )
+    return token
 
 
 @dataclass(frozen=True)
@@ -243,13 +262,30 @@ async def enforce_rate_limit(
 
 
 def rate_limit_dep(
-    bucket: str, *, key_extractor: Callable[[Request], str] = ip_bucket_key
+    bucket: str,
+    *,
+    key_extractor: Callable[[Request], str] = ip_bucket_key,
+    allow_trusted_service: bool = False,
 ) -> Callable[..., Awaitable[None]]:
     async def _dep(
         request: Request,
         response: Response,
         limiter: RateLimiter = Depends(get_rate_limiter),
     ) -> None:
+        if allow_trusted_service:
+            expected = getattr(request.app.state, "awid_service_token", None)
+            presented = (request.headers.get(AWID_SERVICE_TOKEN_HEADER) or "").strip()
+            if expected and presented and secrets.compare_digest(
+                expected.encode("utf-8"), presented.encode("utf-8")
+            ):
+                return
+            if presented:
+                logger.warning(
+                    "event=awid_service_credential_rejected "
+                    "metric=awid_service_credential_rejected value=1 bucket=%s",
+                    bucket,
+                )
+
         limit, window = _rate_config(bucket)
         key = key_extractor(request)
         decision = await limiter.hit(

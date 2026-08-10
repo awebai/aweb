@@ -1,6 +1,8 @@
+import logging
+
 import pytest
 
-from aweb.api import create_app
+from aweb.api import _build_awid_registry_client, create_app
 from aweb.config import DEFAULT_AWID_REGISTRY_URL, get_awid_registry_url
 
 
@@ -38,6 +40,33 @@ def test_registry_url_local_detection_is_rejected_case_insensitively(monkeypatch
 
     with pytest.raises(ValueError, match="AWID_REGISTRY_URL=local is no longer supported"):
         get_awid_registry_url()
+
+
+@pytest.mark.asyncio
+async def test_aweb_registry_client_missing_service_token_emits_metric_signal(monkeypatch, caplog):
+    monkeypatch.delenv("AWID_SERVICE_TOKEN", raising=False)
+    monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
+
+    with caplog.at_level(logging.WARNING):
+        client = _build_awid_registry_client(create_app(), redis=None)
+    try:
+        assert client.service_token is None
+        assert "event=awid_service_credential_missing" in caplog.text
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_aweb_registry_client_receives_configured_service_token(monkeypatch):
+    token = "trusted-service-token-with-at-least-32-bytes"
+    monkeypatch.setenv("AWID_SERVICE_TOKEN", token)
+    monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
+
+    client = _build_awid_registry_client(create_app(), redis=None)
+    try:
+        assert client.service_token == token
+    finally:
+        await client.aclose()
 
 
 def test_create_app_never_mounts_awid_registry_routes(monkeypatch):

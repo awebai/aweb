@@ -106,8 +106,19 @@ operation's exact envelope shape.
 
 Public read endpoints (`GET /v1/namespaces/{domain}`,
 `GET /v1/did/{did_aw}/key`, team metadata, revocations, etc.) are rate-limited
-and do not carry signatures. Identity-private reads and certificate-blob fetch
+and do not require signatures. Identity-private reads and certificate-blob fetch
 have their separately documented authentication requirements.
+
+An operator may configure the same high-entropy `AWID_SERVICE_TOKEN` on its
+AWID service and aweb server. The aweb RegistryClient then sends that bearer
+secret in `X-AWID-Service-Token` only to its exact configured home registry;
+it never forwards the credential to a DNS-discovered external registry. AWID
+uses constant-time comparison and exempts a matching credential only from the
+`did_key` and `did_addresses` public-read rate-limit buckets. The credential
+does not authorize writes, disclose additional data, or bypass any other
+bucket. Missing credentials use the normal public IP limits. A wrong presented
+credential also uses those limits and emits the stable
+`awid_service_credential_rejected` telemetry event without logging the secret.
 
 ---
 
@@ -789,6 +800,10 @@ DATABASE_URL=postgresql://awid:password@localhost:5432/awid
 # Server
 AWID_PORT=8001
 AWID_LOG_JSON=true
+
+# Optional trusted caller lane; set the same >=32-byte secret on AWID and aweb.
+# Generate, for example, with: openssl rand -hex 32
+AWID_SERVICE_TOKEN=
 ```
 
 awid has no encryption keys, no custody keys, no signing keys.
