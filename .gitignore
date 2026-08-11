@@ -51,13 +51,3 @@ pi-extension/skills/
 /oas/agents/*/instances/
 .release-runs/
 
-# Retired per-artifact release skills
-# Deleted twice and swept back in twice by `git add -A`. They describe a
-# tag-and-push flow that no longer exists; the single .claude/skills/release
-# skill is authoritative. Ignored so the mistake cannot recur.
-.claude/skills/release-awid-docker/
-.claude/skills/release-awid-pypi/
-.claude/skills/release-channel/
-.claude/skills/release-cli/
-.claude/skills/release-pi/
-.claude/skills/release-pypi/
