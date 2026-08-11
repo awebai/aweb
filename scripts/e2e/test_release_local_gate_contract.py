@@ -61,6 +61,7 @@ FORBIDDEN_RESIDUE_LITERALS = (
     "make ship",
     "release-all-check",
 )
+NEW_RELEASE_COVERAGE = frozenset({"release-a2a-gateway-check"})
 OLD_SHIP_CLOSURE = frozenset(
     {
         "build", "check-aw-commit-repo-stamp", "check-cli-go-tidy",
@@ -120,7 +121,7 @@ EXPECTED_STEPS = (
     ("channel-live-name", "unit", "test-channel-name-live-contract"),
     ("channel-core-unit", "unit", "_release-unit-channel-core"),
     ("pi-unit", "unit", "_release-unit-pi"),
-    ("a2a-unit", "unit", "test-a2a"),
+    ("a2a-copy-contract", "contract", "check-a2a-copy-guardrails"),
     ("go-audit-unit", "unit", "test-go-vulnerability-audit"),
     ("cli-version-contract", "contract", "test-release-cli-version"),
     ("aw-binary", "artifact", "build"),
@@ -134,10 +135,12 @@ EXPECTED_STEPS = (
     ("freshness", "contract", "freshness"),
     ("release-residue", "contract", "check-release-gate-residue"),
     ("local-gate-contract", "contract", "test-release-local-gate-contract"),
+    ("publication-workflow-contract", "contract", "test-release-gate-contract"),
     ("channel-process-guard", "contract", "test-channel-core-process-guard"),
     ("oas", "journey", "_release-oas"),
     ("oas-proof-helpers", "journey", "_release-oas-proof-helpers"),
     ("tmux-guard", "journey", "test-tmux-guard"),
+    ("a2a-gateway-e2e", "journey", "test-a2a-gateway-e2e"),
     ("channel-integration", "journey", "test-channel-integration"),
     ("oss-user", "journey", "test-e2e"),
     ("oss-federation", "journey", "test-federation-e2e"),
@@ -347,11 +350,20 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
         deleted = {row[2] for row in rows if row[3] == "task-10-delete"}
         task_6 = {row[2] for row in rows if row[3] == "task-6"}
         self.assertEqual(task_6, {"test-pointer-adapter-ac-pin"})
+        self.assertEqual(NEW_RELEASE_COVERAGE, {"release-a2a-gateway-check"})
+        newly_mapped = next(iter(NEW_RELEASE_COVERAGE))
+        self.assertEqual(
+            [row[0] for row in rows if newly_mapped in row[4].split(",")],
+            ["cli-unit", "a2a-copy-contract", "a2a-image", "a2a-gateway-e2e"],
+        )
+        mapped_targets = [row[2] for row in rows if newly_mapped in row[4].split(",")]
+        self.assertEqual(len(mapped_targets), len(set(mapped_targets)))
+        self.assertNotIn("test-a2a", {row[2] for row in rows if row[3] == "run"})
         old_targets = [
             target
             for row in rows
             for target in row[4].split(",")
-            if target != "-"
+            if target not in {"-", newly_mapped}
         ]
         self.assertEqual(len(old_targets), 64)
         self.assertEqual(set(old_targets), OLD_SHIP_CLOSURE)
@@ -844,7 +856,7 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             )
             logs = root / "logs"
             with contextlib.redirect_stdout(io.StringIO()):
-                status = runner.run(suite_map, logs, [str(make)])
+                status = runner.run(suite_map, logs, [str(make)], probe=lambda _phase: None)
             self.assertEqual(status, 1)
             self.assertEqual(calls.read_text().splitlines(), ["one", "two", "three"])
             summary = (logs / "summary.tsv").read_text()
@@ -868,6 +880,28 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
                     path.write_text(body)
                     with self.assertRaises(runner.MapError):
                         runner.run(path, logs / label, ["true"])
+            historical = root / "historical-duplicate.tsv"
+            historical.write_text("one\tunit\tone\trun\told-one\ntwo\tunit\ttwo\trun\told-one\n")
+            with self.assertRaises(runner.MapError):
+                runner.run(historical, logs / "historical", ["true"])
+            for count in (3, 5):
+                path = root / f"a2a-{count}.tsv"
+                path.write_text("".join(
+                    f"row-{index}\tunit\ttarget-{index}\trun\trelease-a2a-gateway-check\n"
+                    for index in range(count)
+                ))
+                with self.assertRaises(runner.MapError):
+                    runner.run(path, logs / f"a2a-{count}", ["true"])
+            accepted = root / "a2a-four.tsv"
+            accepted.write_text("".join(
+                f"row-{index}\tunit\ttarget-{index}\trun\trelease-a2a-gateway-check\n"
+                for index in range(4)
+            ))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    runner.run(accepted, logs / "a2a-four", ["true"], probe=lambda _phase: None),
+                    0,
+                )
 
     def test_make_help_exposes_no_release_operator_command(self) -> None:
         result = subprocess.run(

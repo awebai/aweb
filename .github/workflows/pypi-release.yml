@@ -21,6 +21,7 @@ jobs:
   awid_service:
     name: Publish awid-service
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -151,6 +152,7 @@ jobs:
     name: Publish aweb
     needs: awid_service
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:

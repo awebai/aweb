@@ -22,6 +22,7 @@ jobs:
   publish:
     name: Publish ${{ matrix.package }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -242,20 +243,27 @@ jobs:
               fail "Pi registry history unavailable (HTTP $root_status)"
             fi
             if [[ "$AW_FLOOR_MOVED" == yes ]]; then
-              aw_status="$(curl -sS --connect-timeout 15 --max-time 30 \
-                -o "$RUNNER_TEMP/aw-floor.json" -w '%{http_code}' \
-                "https://registry.npmjs.org/%40awebai%2Faw/${floor}")" \
-                || fail "public aw floor observation unavailable"
-              case "$aw_status" in
-                200) ;;
-                404) fail "public aw floor $floor is not served" ;;
-                401|403) fail "public aw floor observation authorization failed (HTTP $aw_status)" ;;
-                *) fail "public aw floor observation unavailable (HTTP $aw_status)" ;;
-              esac
-              if ! observed_aw="$(node -p "require('$RUNNER_TEMP/aw-floor.json').version")"; then
-                fail "public aw floor evidence is malformed"
-              fi
-              [[ "$observed_aw" == "$floor" ]] || fail "public aw floor evidence mismatch"
+              aw_deadline=$((SECONDS + ${PI_AW_FLOOR_TIMEOUT_SECONDS:-600}))
+              while :; do
+                aw_status="$(curl -sS --connect-timeout 15 --max-time 30 \
+                  -o "$RUNNER_TEMP/aw-floor.json" -w '%{http_code}' \
+                  "https://registry.npmjs.org/%40awebai%2Faw/${floor}")" \
+                  || fail "public aw floor observation unavailable"
+                case "$aw_status" in
+                  200)
+                    if ! observed_aw="$(node -p "require('$RUNNER_TEMP/aw-floor.json').version")"; then
+                      fail "public aw floor evidence is malformed"
+                    fi
+                    [[ "$observed_aw" == "$floor" ]] || fail "public aw floor evidence mismatch"
+                    break ;;
+                  404)
+                    (( SECONDS < aw_deadline )) || fail "public aw floor $floor propagation deadline exceeded"
+                    echo "waiting for public aw floor $floor"
+                    sleep "${PI_AW_FLOOR_BACKOFF_SECONDS:-5}" ;;
+                  401|403) fail "public aw floor observation authorization failed (HTTP $aw_status)" ;;
+                  *) fail "public aw floor observation unavailable (HTTP $aw_status)" ;;
+                esac
+              done
             fi
             # PI_AW_FLOOR_END
           fi

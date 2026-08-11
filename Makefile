@@ -5,8 +5,7 @@
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
 	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps check-server-locked-suite \
 	check-awid-locked-suite \
-	release-a2a-gateway-check release-a2a-gateway-tag release-a2a-gateway-push \
-	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
+	test-release-cli-version \
 	test-channel-integration \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
 	release-plan release-run release-receipt test-release-driver test-release-runnerless test-release-receipt-process test-pointer-adapter test-pointer-adapter-ac-pin test-release-repository-measurement test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
@@ -98,9 +97,6 @@ help:
 	@echo "    release-receipt                     read a sealed receipt"
 	@echo "    See the 'release' skill for exact argument forms and hazards:"
 	@echo "    publication is not delivery, publication is immutable."
-	@echo ""
-	@echo "  Legacy per-artifact checks not yet cut over:"
-	@echo "    release-a2a-gateway-check, release-cli-version-check"
 	@echo ""
 	@echo "  release-awid-site                     deploy awid landing page"
 	@echo "  clean        Remove all build artifacts and caches"
@@ -315,6 +311,7 @@ check-release-gate-residue:
 
 test-release-gate-contract:
 	python3 scripts/e2e/test_release_gate_contract.py
+	python3 scripts/e2e/test_aw_a2a_release_workflows.py
 
 prepare-oas-test-root:
 	@if [ "$(abspath $(OAS_TEST_ROOT))" = "$(abspath $(OAS_PINNED_ROOT))" ]; then \
@@ -464,35 +461,6 @@ check-server-locked-suite:
 check-awid-locked-suite:
 	cd awid && uv lock --check
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
-
-# ── A2A gateway release ─────────────────────────────────────────────
-
-release-a2a-gateway-check:
-	./scripts/check-a2a-copy-guardrails.sh
-	cd cli/go && GOCACHE=/tmp/go-build go test ./a2a ./a2agw ./awid ./cmd/aweb-a2a-gw ./tools/a2a-gateway-check-workspace -count=1
-	docker build -f cli/go/Dockerfile.a2a-gw \
-		--build-arg VERSION=$(A2A_GATEWAY_VERSION) \
-		--build-arg RELEASE_TAG=a2a-gw-v$(A2A_GATEWAY_VERSION) \
-		--build-arg COMMIT=$$(git rev-parse HEAD) \
-		--build-arg DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-		-t a2a-gateway:release-test cli/go
-	@set -eu; workspace="$$(mktemp -d)"; trap 'rm -rf "$$workspace"' EXIT; \
-		(cd cli/go && go run ./tools/a2a-gateway-check-workspace -output "$$workspace"); \
-		docker run --rm \
-			--user "$$(id -u):$$(id -g)" \
-			-v "$(CURDIR)/docs/examples/a2a-gateway.yaml:/config/gateway.yaml:ro" \
-			-v "$$workspace:/workspace:ro" \
-			a2a-gateway:release-test \
-			aweb-a2a-gw -config /config/gateway.yaml -workspace-dir /workspace -check
-	./scripts/e2e-a2a-gateway-docker.sh
-
-release-a2a-gateway-tag:
-	@git rev-parse --verify "a2a-gw-v$(A2A_GATEWAY_VERSION)" >/dev/null 2>&1 && (echo "Tag a2a-gw-v$(A2A_GATEWAY_VERSION) already exists."; exit 1) || true
-	git tag "a2a-gw-v$(A2A_GATEWAY_VERSION)"
-	@echo "Created tag a2a-gw-v$(A2A_GATEWAY_VERSION)."
-
-release-a2a-gateway-push:
-	git push origin a2a-gw-v$(A2A_GATEWAY_VERSION)
 
 # ── Awid site deploy ────────────────────────────────────────────────
 
@@ -668,17 +636,6 @@ test-oci-exact-publish:
 
 test-release-cli-version:
 	bash scripts/check-cli-release-version-test.sh
-
-release-cli-version-check:
-	@./scripts/cli-release-version.sh check "$(CLI_VERSION)"
-
-release-cli-tag: release-cli-version-check
-	@git rev-parse --verify "aw-v$(CLI_VERSION)" >/dev/null 2>&1 && (echo "Tag aw-v$(CLI_VERSION) already exists."; exit 1) || true
-	git tag "aw-v$(CLI_VERSION)"
-	@echo "Created tag aw-v$(CLI_VERSION)."
-
-release-cli-push: release-cli-version-check
-	git push origin aw-v$(CLI_VERSION)
 
 # ── Unified release ──────────────────────────────────────────────────
 

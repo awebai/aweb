@@ -582,6 +582,9 @@ if url.endswith("%40awebai%2Fpi"):
             json.dump({"dist-tags":{"latest":"0.3.5"},"versions":{"0.3.5":{"dependencies":{"@awebai/aw":floor}}}},open(out,"w"))
 else:
     status={"aw_outage":"503","aw_auth":"403","aw_absent":"404"}.get(mode,"200")
+    if mode=="aw_lag":
+        prior=sum(1 for line in open(os.environ["FLOOR_QUERIES"]) if "%40awebai%2Faw" in line)
+        status="404" if prior == 1 else "200"
     if status=="200":
         if mode=="aw_malformed": open(out,"w").write("not-json")
         else: json.dump({"version":"9.9.9" if mode=="aw_mismatch" else "1.22.1"},open(out,"w"))
@@ -594,7 +597,9 @@ run_floor_fixture(){
   rm -rf "$run_tmp" "$queries" "$proceeded"; mkdir -p "$run_tmp"
   local output
   if output="$(cd "$ROOT" && FLOOR_MODE="$mode" FLOOR_QUERIES="$queries" FLOOR_PROCEEDED="$proceeded" \
-      RUNNER_TEMP="$run_tmp" encoded=%40awebai%2Fpi PATH="$tmp/fake-bin:$PATH" \
+      RUNNER_TEMP="$run_tmp" encoded=%40awebai%2Fpi \
+      PI_AW_FLOOR_TIMEOUT_SECONDS="$([[ "$mode" == aw_lag ]] && echo 2 || echo 0)" \
+      PI_AW_FLOOR_BACKOFF_SECONDS=0 PATH="$tmp/fake-bin:$PATH" \
       bash "$tmp/pi-floor-block.sh" 2>&1)"; then
     [[ "$expect" == pass ]] || fail "$mode floor fixture unexpectedly passed"
     [[ -f "$proceeded" ]] || fail "$mode passed without proceeding"
@@ -607,7 +612,7 @@ run_floor_fixture(){
       history_malformed) needle='history evidence is malformed' ;;
       aw_outage) needle='floor observation unavailable' ;;
       aw_auth) needle='floor observation authorization' ;;
-      aw_absent) needle='is not served' ;;
+      aw_absent) needle='propagation deadline exceeded' ;;
       aw_malformed) needle='floor evidence is malformed' ;;
       aw_mismatch) needle='floor evidence mismatch' ;;
     esac
@@ -617,11 +622,14 @@ run_floor_fixture(){
     [[ "$(wc -l < "$queries" | tr -d ' ')" == 1 ]] || fail "unchanged floor queried public aw"
   elif [[ "$mode" == moved || "$mode" == none ]]; then
     [[ "$(wc -l < "$queries" | tr -d ' ')" == 2 ]] || fail "$mode did not query exact public aw"
+  elif [[ "$mode" == aw_lag ]]; then
+    [[ "$(wc -l < "$queries" | tr -d ' ')" == 3 ]] || fail "lag fixture did not poll 404 to exact success"
   fi
 }
 run_floor_fixture same pass
 run_floor_fixture moved pass
 run_floor_fixture none pass
+run_floor_fixture aw_lag pass
 for mode in history_outage history_auth history_malformed aw_outage aw_auth aw_absent aw_malformed aw_mismatch; do
   run_floor_fixture "$mode" refuse
 done

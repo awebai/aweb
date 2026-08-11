@@ -47,8 +47,7 @@ make_cli_version() {
 
 run_guard() {
   local work="$1" proposal="$2"
-  scenario_make -C "$work" -f TestMakefile \
-    release-cli-version-check CLI_VERSION="$proposal"
+  (cd "$work" && CLI_RELEASE_REMOTE=origin "$VERSION_TOOL" check "$proposal")
 }
 
 work="$TMP/work"
@@ -72,22 +71,6 @@ if [ "$leaked" = "1.34.1" ]; then
   echo "ok: outer CLI_VERSION does not reach scenario fixtures"
 else
   fail "outer CLI_VERSION leaked into scenario fixtures: derived '$leaked', want '1.34.1'"
-fi
-
-a2a_dry_run="$(
-  scenario_make -n -C "$work" -f TestMakefile release-a2a-gateway-check
-  scenario_make -n -C "$work" -f TestMakefile release-a2a-gateway-tag
-  scenario_make -n -C "$work" -f TestMakefile release-a2a-gateway-push
-)"
-if grep -Fq -- '--build-arg VERSION=1.26.30' <<<"$a2a_dry_run" \
-  && grep -Fq -- '--build-arg RELEASE_TAG=a2a-gw-v1.26.30' <<<"$a2a_dry_run" \
-  && grep -Fq 'git tag "a2a-gw-v1.26.30"' <<<"$a2a_dry_run" \
-  && grep -Fq 'git push origin a2a-gw-v1.26.30' <<<"$a2a_dry_run" \
-  && ! grep -Fq 'a2a-gw-v1.34.1' <<<"$a2a_dry_run"; then
-  echo "ok: divergent CLI version does not change server-owned A2A gateway release paths"
-else
-  fail "A2A gateway check/tag/push did not retain server version 1.26.30 when CLI proposed 1.34.1"
-  printf '%s\n' "$a2a_dry_run"
 fi
 
 out="$TMP/nonmonotonic.out"

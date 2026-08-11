@@ -22,6 +22,7 @@ jobs:
   publish_image:
     name: Publish two-platform AWID image
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -131,10 +132,10 @@ jobs:
           printf 'STAGED INDEX DIGEST: %s\n' "$staged" | tee -a "$GITHUB_STEP_SUMMARY"
 
           require_release_sha
-          echo "$GHCR_TOKEN" | skopeo login ghcr.io \
+          echo "$GHCR_TOKEN" | timeout 30 skopeo login ghcr.io \
             --username "${{ github.actor }}" --password-stdin
           listing_status=ok
-          if ! tags_json="$(skopeo list-tags docker://ghcr.io/awebai/awid)"; then
+          if ! tags_json="$(timeout 30 skopeo list-tags docker://ghcr.io/awebai/awid)"; then
             listing_status=failed
             tags_json='{}'
           fi
@@ -146,7 +147,7 @@ jobs:
               | bash scripts/oci-exact-publish.sh classify-listing --tag "$image_tag")"
             remote_digest=unavailable
             if [[ "$present" == yes ]]; then
-              if ! remote_digest="$(skopeo inspect --raw \
+              if ! remote_digest="$(timeout 30 skopeo inspect --raw \
                 "docker://ghcr.io/awebai/awid:${image_tag}" \
                 | bash scripts/oci-exact-publish.sh observe-digest)"; then
                 fail "GHCR digest unavailable for present tag $image_tag"

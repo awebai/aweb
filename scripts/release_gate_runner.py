@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from collections import Counter
 import os
 import subprocess
 import sys
@@ -126,8 +127,9 @@ def load_map(path: Path) -> tuple[Step, ...]:
         for target in step.old_targets.split(",")
         if target != "-"
     ]
-    if len(set(old_targets)) != len(old_targets):
-        raise MapError("suite map has duplicate old comprehensive-gate targets")
+    repeated = {target: count for target, count in Counter(old_targets).items() if count > 1}
+    if repeated and repeated != {"release-a2a-gateway-check": 4}:
+        raise MapError(f"suite map has invalid repeated mapped authority: {repeated}")
     return tuple(rows)
 
 

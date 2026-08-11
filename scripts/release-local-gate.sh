@@ -178,6 +178,21 @@ BUILDX_CONFIG="$buildx_config" docker buildx create \
   "unix:///var/run/docker.sock" --bootstrap >/dev/null
 socket_gid="$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   "$IMAGE" stat -c '%g' /var/run/docker.sock)"
+read -r a2a_aweb_port a2a_awid_port a2a_redis_port a2a_pg_port a2a_gateway_port < <(
+  python3 - <<'PY'
+import socket
+sockets=[]
+try:
+    for _ in range(5):
+        sock=socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        sockets.append(sock)
+    print(*(sock.getsockname()[1] for sock in sockets))
+finally:
+    for sock in sockets:
+        sock.close()
+PY
+)
 
 set +e
 docker run --rm --init \
@@ -196,6 +211,11 @@ docker run --rm --init \
   -e BUILDX_BUILDER="$owned_builder" \
   -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
   -e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test \
+  -e AWEB_A2A_E2E_PORT="$a2a_aweb_port" \
+  -e AWID_A2A_E2E_PORT="$a2a_awid_port" \
+  -e AWEB_A2A_E2E_REDIS="$a2a_redis_port" \
+  -e AWEB_A2A_E2E_PG="$a2a_pg_port" \
+  -e A2A_GW_E2E_PORT="$a2a_gateway_port" \
   -e AWEB_SKEW_PROJECT_TOKEN="${suite_projects[0]}" \
   -e AWEB_E2E_PROJECT="${suite_projects[1]}" \
   -e AWEB_FED_AUTH_PROJECT="${suite_projects[2]}" \
