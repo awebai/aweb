@@ -53,10 +53,15 @@ fi
 AWID_PORT="${LIBRARY_E2E_AWID_PORT:-18010}"
 AWEB_PORT="${LIBRARY_E2E_AWEB_PORT:-18000}"
 LIBRARY_PORT="${LIBRARY_E2E_LIBRARY_PORT:-18765}"
+DOCKER_PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
+case "$DOCKER_PUBLISHED_HOST" in
+  127.0.0.1|host.docker.internal) ;;
+  *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
+esac
 
-AWID_URL="http://127.0.0.1:$AWID_PORT"
-AWEB_URL="http://127.0.0.1:$AWEB_PORT"
-LIBRARY_URL="http://127.0.0.1:$LIBRARY_PORT"
+AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
+AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
+LIBRARY_URL="http://$DOCKER_PUBLISHED_HOST:$LIBRARY_PORT"
 
 # Resolve a cross-repo sibling checkout. The two inputs (../library, ../blueprints)
 # live beside the *main* repo. In a normal checkout that is $REPO_ROOT/..; in a

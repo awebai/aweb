@@ -27,9 +27,13 @@ docker info >/dev/null || refuse "docker daemon is unavailable"
 work="$(mktemp -d)"
 owned_containers=()
 owned_network=""
+owned_builder=""
 cleanup() {
   if [[ "${#owned_containers[@]}" -gt 0 ]]; then
     docker rm -f "${owned_containers[@]}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$owned_builder" ]]; then
+    docker buildx rm "$owned_builder" >/dev/null 2>&1 || true
   fi
   if [[ -n "$owned_network" ]]; then
     docker network rm "$owned_network" >/dev/null 2>&1 || true
@@ -68,6 +72,8 @@ printf 'NOT RELEVANT: this slice changes only the release gate mechanism, not a 
 
 docker build --pull -f "$checkout/release-gate/Dockerfile" -t "$IMAGE" "$checkout/release-gate" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
+python3 "$checkout/scripts/e2e/test_release_gate_docker_boundaries.py" --image "$IMAGE" \
+  2>&1 | tee "$LOG_DIR/docker-boundaries.log"
 
 owned_network="aweb-release-gate-${SOURCE_SHA:0:12}-$$"
 docker network create "$owned_network" >/dev/null
@@ -77,9 +83,10 @@ pg_id="$(docker run --detach --network "$owned_network" --name "$pg_name" \
   --env POSTGRES_USER=postgres --env POSTGRES_PASSWORD=postgres --env POSTGRES_DB=postgres \
   --health-cmd 'pg_isready -U postgres -d postgres' \
   --health-interval 2s --health-timeout 5s --health-retries 45 postgres:17)"
+owned_containers+=("$pg_id")
 redis_id="$(docker run --detach --network "$owned_network" --name "$redis_name" \
   --health-cmd 'redis-cli ping' --health-interval 2s --health-timeout 5s --health-retries 45 redis:7)"
-owned_containers+=("$pg_id" "$redis_id")
+owned_containers+=("$redis_id")
 for container in "$pg_id" "$redis_id"; do
   for _ in $(seq 1 60); do
     [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" == healthy ]] && break
@@ -88,16 +95,25 @@ for container in "$pg_id" "$redis_id"; do
   [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" == healthy ]] \
     || refuse "gate service failed health: $container"
 done
+owned_builder="aweb-release-gate-${SOURCE_SHA:0:12}-$$"
+docker buildx create --name "$owned_builder" --driver docker-container --bootstrap >/dev/null
 mkdir -p "$checkout/.release-home"
+socket_gid="$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  "$IMAGE" stat -c '%g' /var/run/docker.sock)"
 
 set +e
 docker run --rm --init \
   --network "$owned_network" \
+  --user "$(id -u):$(id -g)" \
+  --group-add "$socket_gid" \
+  --add-host host.docker.internal:host-gateway \
   -e HOME="$checkout/.release-home" \
   -e RELEASE_BASE_SHA="$RELEASE_BASE_SHA" \
   -e LIBRARY_E2E_LIBRARY_CONTEXT="$LIBRARY_E2E_LIBRARY_CONTEXT" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e RELEASE_GATE_LOG_DIR="$LOG_DIR" \
+  -e BUILDX_BUILDER="$owned_builder" \
+  -e AWEB_DOCKER_PUBLISHED_HOST=host.docker.internal \
   -e TEST_DB_HOST="$pg_name" \
   -e TEST_DB_PORT=5432 \
   -e TEST_DB_USER=postgres \
@@ -109,6 +125,7 @@ docker run --rm --init \
   -e PGDATABASE=postgres \
   -e REDIS_URL="redis://$redis_name:6379/0" \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /tmp:/tmp \
   -v "$checkout:$checkout" \
   -v "$LOG_DIR:$LOG_DIR" \
   -v "$LIBRARY_E2E_LIBRARY_CONTEXT:$LIBRARY_E2E_LIBRARY_CONTEXT:ro" \

@@ -1,47 +1,70 @@
-# name	category	make target
-version-authority	contract	_release-gate-version-authority
-aw-repository-stamp	contract	check-aw-commit-repo-stamp
-cli-tidy	contract	check-cli-go-tidy
-cli-vcs-release-matrix	artifact	check-cli-release-vcs-stamps
-python-locks	contract	test-python-locks
-sot-inventories	contract	test-sot-source-inventories
-vector-provenance	contract	test-vector-provenance
-federation-error-reference	contract	test-federation-error-reference
-federation-authority-mutations	contract	test-federation-authority-mutations
-federation-harness	contract	test-federation-harness
-cli-reference	contract	test-cli-reference
-mcp-reference	contract	test-mcp-tools-reference
-channel-version-equality	contract	_release-gate-channel-version
-node-dependencies	contract	_release-node-deps
-release-train-foundation	unit	test-release-train
-server-unit	unit	test-server
-awid-unit	unit	test-awid
-cli-unit	unit	test-cli
-channel-unit	unit	_release-unit-channel
-channel-live-name	unit	test-channel-name-live-contract
-channel-core-unit	unit	_release-unit-channel-core
-pi-unit	unit	_release-unit-pi
-a2a-unit	unit	test-a2a
-go-audit-unit	unit	test-go-vulnerability-audit
-server-package	artifact	_release-artifact-server
-awid-package	artifact	_release-artifact-awid-package
-awid-image	artifact	_release-artifact-awid-image
-channel-package	artifact	_release-artifact-channel
-pi-package	artifact	_release-artifact-pi
-skills-package-zips	artifact	_release-artifact-skills
-a2a-image	artifact	_release-artifact-a2a-image
-freshness	contract	freshness
-channel-process-guard	contract	test-channel-core-process-guard
-oas	journey	_release-oas
-oas-proof-helpers	journey	test-oas-proof-helpers
-tmux-guard	journey	test-tmux-guard
-channel-integration	journey	test-channel-integration
-oss-user	journey	test-e2e
-oss-federation	journey	test-federation-e2e
-cli-library	journey	cli-e2e
-marketplace-pointer	contract	_release-marketplace-pointer
-npm-exact-publish	contract	test-npm-exact-publish
-pypi-exact-publish	contract	test-pypi-exact-publish
-oci-exact-publish	contract	test-oci-exact-publish
-node-vulnerability-audit	audit	check-node-audit
-go-vulnerability-audit	audit	check-go-vulnerability-audit
+# name	category	make target or fixed replacement	disposition	old make ship closure target(s)
+version-authority	contract	_release-gate-version-authority	run	release-cli-version-check
+aw-repository-stamp	contract	check-aw-commit-repo-stamp	run	check-aw-commit-repo-stamp
+cli-tidy	contract	check-cli-go-tidy	run	check-cli-go-tidy
+cli-vcs-release-matrix	artifact	check-cli-release-vcs-stamps	run	check-cli-release-vcs-stamps
+python-locks	contract	test-python-locks	run	test-python-locks
+sot-inventories	contract	test-sot-source-inventories	run	test-sot-source-inventories
+vector-provenance	contract	test-vector-provenance	run	test-vector-provenance
+federation-error-reference	contract	test-federation-error-reference	run	test-federation-error-reference
+federation-authority-mutations	contract	test-federation-authority-mutations	run	test-federation-authority-mutations
+federation-harness	contract	test-federation-harness	run	test-federation-harness
+cli-reference	contract	test-cli-reference	run	test-cli-reference
+mcp-reference	contract	test-mcp-tools-reference	run	test-mcp-tools-reference
+channel-version-equality	contract	_release-gate-channel-version	run	-
+node-dependencies	contract	_release-node-deps	run	test-node-deps
+release-train-foundation	unit	test-release-train	run	-
+server-unit	unit	test-server	run	test-server
+awid-unit	unit	test-awid	run	test-awid
+cli-unit	unit	test-cli	run	test-cli
+channel-unit	unit	_release-unit-channel	run	test-channel
+channel-live-name	unit	test-channel-name-live-contract	run	test-channel-name-live-contract
+channel-core-unit	unit	_release-unit-channel-core	run	test-channel-core
+pi-unit	unit	_release-unit-pi	run	test-pi-extension
+a2a-unit	unit	test-a2a	run	-
+go-audit-unit	unit	test-go-vulnerability-audit	run	test-go-vulnerability-audit
+cli-version-contract	contract	test-release-cli-version	run	test-release-cli-version
+aw-binary	artifact	build	run	build
+server-package	artifact	_release-artifact-server	run	release-server-check
+awid-package	artifact	_release-artifact-awid-package	run	release-awid-check
+awid-image	artifact	_release-artifact-awid-image	run	-
+channel-package	artifact	_release-artifact-channel	run	release-channel-check
+pi-package	artifact	_release-artifact-pi	run	-
+skills-package-zips	artifact	_release-artifact-skills	run	-
+a2a-image	artifact	_release-artifact-a2a-image	run	-
+freshness	contract	freshness	run	freshness
+release-residue	contract	check-release-gate-residue	run	-
+local-gate-contract	contract	test-release-local-gate-contract	run	test-ship-ci-contract
+channel-process-guard	contract	test-channel-core-process-guard	run	test-channel-core-process-guard
+oas	journey	_release-oas	run	prepare-oas-test-root,check-oas-launch-environment-contract,check-oas-pi-launch-order,test-oas
+oas-proof-helpers	journey	_release-oas-proof-helpers	run	test-oas-proof-helpers
+tmux-guard	journey	test-tmux-guard	run	test-tmux-guard
+channel-integration	journey	test-channel-integration	run	test-channel-integration
+oss-user	journey	test-e2e	run	test-e2e
+oss-federation	journey	test-federation-e2e	run	test-federation-e2e
+cli-library	journey	cli-e2e	run	cli-e2e
+marketplace-pointer	contract	_release-marketplace-pointer	run	test-pointer-adapter
+npm-exact-publish	contract	test-npm-exact-publish	run	test-npm-exact-publish
+pypi-exact-publish	contract	test-pypi-exact-publish	run	test-pypi-exact-publish
+oci-exact-publish	contract	test-oci-exact-publish	run	test-oci-exact-publish
+node-vulnerability-audit	audit	check-node-audit	run	check-node-audit
+go-vulnerability-audit	audit	check-go-vulnerability-audit	run	check-go-vulnerability-audit
+ac-pointer-primary-moves	migration	test-pointer-adapter-ac-pin	task-6	test-pointer-adapter-ac-pin
+old-adopted-preplan	migration	test-release-adopted-preplan	task-10-delete	test-release-adopted-preplan
+old-channel-pi-skew	migration	test-release-channel-pi-skew	task-10-delete	test-release-channel-pi-skew
+old-driver	migration	test-release-driver	task-10-delete	test-release-driver
+old-federation-skew	migration	test-release-federation-skew	task-10-delete	test-release-federation-skew
+old-gate-contract	migration	test-release-gate-contract	task-10-delete	test-release-gate-contract
+old-persisted-state-skew	migration	test-release-persisted-state-skew	task-10-delete	test-release-persisted-state-skew
+old-receipt-archive	migration	test-release-receipt-archive	task-10-delete	test-release-receipt-archive
+old-receipt-process	migration	test-release-receipt-process	task-10-delete	test-release-receipt-process
+old-repository-measurement	migration	test-release-repository-measurement	task-10-delete	test-release-repository-measurement
+old-runnerless	migration	test-release-runnerless	task-10-delete	test-release-runnerless
+old-cli-server-skew	migration	test-release-skew-cli-server	task-10-delete	test-release-skew-cli-server
+old-ship	migration	entrypoint-clean-checkout	replaced-wrapper	ship
+old-ship-gate	migration	entrypoint-fixed-runner	replaced-wrapper	ship-gate
+old-ship-suites	migration	runner-complete-summary	replaced-wrapper	ship-suites
+old-ship-invocation-guard	migration	entrypoint-fixed-inputs	replaced-wrapper	check-ship-invocation
+old-ship-owner-guard	migration	entrypoint-owned-services	replaced-wrapper	check-ship-owner
+old-release-all-wrapper	migration	suite-map-run-disposition	replaced-wrapper	release-all-check
+old-test-wrapper	migration	suite-map-expanded-leaves	replaced-wrapper	test

@@ -18,18 +18,59 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+import check_release_gate_residue as residue
 import release_gate_runner as runner
 
 MAKEFILE = ROOT / "Makefile"
 MAP = ROOT / "release-gate" / "suite-map.tsv"
-MIGRATION_MAP = ROOT / "release-gate" / "migration-map.tsv"
 DOCKERFILE = ROOT / "release-gate" / "Dockerfile"
 ENTRYPOINT = SCRIPTS / "release-local-gate.sh"
 OLD_FILES = (
-    ROOT / ".github" / "workflows" / ("ship" + ".yml"),
-    SCRIPTS / ("run-" + "ship-suites.sh"),
-    SCRIPTS / ("ship-" + "env.sh"),
+    ROOT / ".github" / "workflows" / "ship.yml",
+    SCRIPTS / "run-ship-suites.sh",
+    SCRIPTS / "ship-env.sh",
     Path(__file__).with_name("test_ship_ci_contract.py"),
+)
+FORBIDDEN_RESIDUE_LITERALS = (
+    "ship.yml",
+    "run-ship-suites.sh",
+    "ship-env.sh",
+    "SHIP_SUITES",
+    "ship-suites:",
+    "check-ship-invocation:",
+    "check-ship-owner:",
+    "ship-gate:",
+    "ship:",
+    "make ship",
+    "release-all-check",
+)
+OLD_SHIP_CLOSURE = frozenset(
+    {
+        "build", "check-aw-commit-repo-stamp", "check-cli-go-tidy",
+        "check-cli-release-vcs-stamps", "check-go-vulnerability-audit",
+        "check-node-audit", "check-oas-launch-environment-contract",
+        "check-oas-pi-launch-order", "check-ship-invocation", "check-ship-owner",
+        "cli-e2e", "freshness", "prepare-oas-test-root", "release-all-check",
+        "release-awid-check", "release-channel-check", "release-cli-version-check",
+        "release-server-check", "ship", "ship-gate", "ship-suites", "test",
+        "test-awid", "test-channel", "test-channel-core",
+        "test-channel-core-process-guard", "test-channel-integration",
+        "test-channel-name-live-contract", "test-cli", "test-cli-reference",
+        "test-e2e", "test-federation-authority-mutations", "test-federation-e2e",
+        "test-federation-error-reference", "test-federation-harness",
+        "test-go-vulnerability-audit", "test-mcp-tools-reference", "test-node-deps",
+        "test-npm-exact-publish", "test-oas", "test-oas-proof-helpers",
+        "test-oci-exact-publish", "test-pi-extension", "test-pointer-adapter",
+        "test-pointer-adapter-ac-pin", "test-pypi-exact-publish",
+        "test-python-locks", "test-release-adopted-preplan",
+        "test-release-channel-pi-skew", "test-release-cli-version",
+        "test-release-driver", "test-release-federation-skew",
+        "test-release-gate-contract", "test-release-persisted-state-skew",
+        "test-release-receipt-archive", "test-release-receipt-process",
+        "test-release-repository-measurement", "test-release-runnerless",
+        "test-release-skew-cli-server", "test-server", "test-ship-ci-contract",
+        "test-sot-source-inventories", "test-tmux-guard", "test-vector-provenance",
+    }
 )
 MAIN_TRIGGER_WORKFLOWS = (
     "library-ci.yml",
@@ -64,6 +105,8 @@ EXPECTED_STEPS = (
     ("pi-unit", "unit", "_release-unit-pi"),
     ("a2a-unit", "unit", "test-a2a"),
     ("go-audit-unit", "unit", "test-go-vulnerability-audit"),
+    ("cli-version-contract", "contract", "test-release-cli-version"),
+    ("aw-binary", "artifact", "build"),
     ("server-package", "artifact", "_release-artifact-server"),
     ("awid-package", "artifact", "_release-artifact-awid-package"),
     ("awid-image", "artifact", "_release-artifact-awid-image"),
@@ -72,9 +115,11 @@ EXPECTED_STEPS = (
     ("skills-package-zips", "artifact", "_release-artifact-skills"),
     ("a2a-image", "artifact", "_release-artifact-a2a-image"),
     ("freshness", "contract", "freshness"),
+    ("release-residue", "contract", "check-release-gate-residue"),
+    ("local-gate-contract", "contract", "test-release-local-gate-contract"),
     ("channel-process-guard", "contract", "test-channel-core-process-guard"),
     ("oas", "journey", "_release-oas"),
-    ("oas-proof-helpers", "journey", "test-oas-proof-helpers"),
+    ("oas-proof-helpers", "journey", "_release-oas-proof-helpers"),
     ("tmux-guard", "journey", "test-tmux-guard"),
     ("channel-integration", "journey", "test-channel-integration"),
     ("oss-user", "journey", "test-e2e"),
@@ -123,40 +168,76 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
 
     def test_old_ship_mechanism_is_deleted(self) -> None:
         self.assertFalse([str(path) for path in OLD_FILES if path.exists()])
-        makefile = MAKEFILE.read_text()
-        for term in (
-            "SHIP" + "_SUITES",
-            "ship-" + "suites:",
-            "check-" + "ship-invocation:",
-            "check-" + "ship-owner:",
-            "ship-" + "gate:",
-            "ship" + ":",
-        ):
-            with self.subTest(term=term):
-                self.assertNotIn(term, makefile)
+        self.assertEqual(residue.FORBIDDEN, FORBIDDEN_RESIDUE_LITERALS)
+        self.assertEqual(
+            residue.PRODUCTION_EXCLUSIONS,
+            frozenset(
+                {
+                    "docs/release.md",
+                    "docs/runnerless-release.md",
+                    "release-gate/suite-map.tsv",
+                    "scripts/e2e/test_release_local_gate_contract.py",
+                }
+            ),
+        )
+        self.assertEqual(residue.find_residue(ROOT), [])
+
+    def test_residue_detector_exercises_every_complete_literal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+            for index, literal in enumerate(FORBIDDEN_RESIDUE_LITERALS):
+                name = "Makefile" if literal == "ship:" else f"probe-{index}"
+                (repo / name).write_text(literal + "\n")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            findings = residue.find_residue(repo, excluded=())
+            self.assertEqual({literal for _path, literal in findings}, set(FORBIDDEN_RESIDUE_LITERALS))
+            self.assertEqual(len(findings), len(FORBIDDEN_RESIDUE_LITERALS))
 
     def test_exact_suite_map_is_unique_and_every_target_exists(self) -> None:
         rows = self.read_map()
-        self.assertEqual(rows, list(EXPECTED_STEPS))
+        run_rows = [row for row in rows if row[3] == "run"]
+        self.assertEqual([row[:4] for row in run_rows], [(*row, "run") for row in EXPECTED_STEPS])
         self.assertEqual(len({row[0] for row in rows}), len(rows))
         self.assertEqual(len({row[2] for row in rows}), len(rows))
         makefile = MAKEFILE.read_text()
-        for _name, _category, target in rows:
+        for _name, _category, target, _disposition, _old_targets in run_rows:
             with self.subTest(target=target):
                 self.assertRegex(makefile, rf"(?m)^{re.escape(target)}:")
 
-    def test_migration_map_accounts_for_every_old_unique_command(self) -> None:
-        rows = self.read_map(MIGRATION_MAP)
-        self.assertTrue(rows)
-        self.assertEqual(len({row[0] for row in rows}), len(rows))
+    def test_one_table_accounts_for_run_and_later_dispositions(self) -> None:
+        rows = self.read_map()
+        self.assertFalse((ROOT / "release-gate" / "migration-map.tsv").exists())
         self.assertEqual(
-            {row[1] for row in rows}, {"run", "task-6", "task-10-delete"}
+            {row[3] for row in rows},
+            {"run", "task-6", "task-10-delete", "replaced-wrapper"},
         )
-        run_targets = {row[2] for row in rows if row[1] == "run"}
+        run_targets = {row[2] for row in rows if row[3] == "run"}
         self.assertEqual(run_targets, {row[2] for row in EXPECTED_STEPS})
-        deleted = {row[2] for row in rows if row[1] == "task-10-delete"}
-        task_6 = {row[2] for row in rows if row[1] == "task-6"}
+        deleted = {row[2] for row in rows if row[3] == "task-10-delete"}
+        task_6 = {row[2] for row in rows if row[3] == "task-6"}
         self.assertEqual(task_6, {"test-pointer-adapter-ac-pin"})
+        old_targets = [
+            target
+            for row in rows
+            for target in row[4].split(",")
+            if target != "-"
+        ]
+        self.assertEqual(len(old_targets), 64)
+        self.assertEqual(set(old_targets), OLD_SHIP_CLOSURE)
+        ship_contract = next(row for row in rows if row[4] == "test-ship-ci-contract")
+        self.assertEqual(
+            ship_contract[:4],
+            ("local-gate-contract", "contract", "test-release-local-gate-contract", "run"),
+        )
+        wrappers = {row[4] for row in rows if row[3] == "replaced-wrapper"}
+        self.assertEqual(
+            wrappers,
+            {
+                "ship", "ship-gate", "ship-suites", "check-ship-invocation",
+                "check-ship-owner", "release-all-check", "test",
+            },
+        )
         self.assertIn("test-release-driver", deleted)
         self.assertIn("test-release-skew-cli-server", deleted)
         self.assertIn("test-release-runnerless", deleted)
@@ -228,13 +309,43 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             "diff --quiet",
             "docker build",
             "/var/run/docker.sock",
+            "--user \"$(id -u):$(id -g)\"",
+            "--group-add \"$socket_gid\"",
+            "docker buildx create --name",
+            "docker buildx rm",
+            "-v /tmp:/tmp",
+            "--add-host host.docker.internal:host-gateway",
+            "-e AWEB_DOCKER_PUBLISHED_HOST=host.docker.internal",
+            "test_release_gate_docker_boundaries.py",
             "RELEASE_BASE_SHA",
             "LIBRARY_E2E_LIBRARY_CONTEXT",
             "LIBRARY_E2E_BLUEPRINT_SRC",
         ):
             self.assertIn(required, text)
+        self.assertNotIn("--privileged", text)
+        self.assertNotIn("dockerd", text)
         self.assertNotIn("git push", text)
         self.assertNotIn("gh ", text)
+
+    def test_only_published_docker_endpoints_use_the_fixed_host_input(self) -> None:
+        paths = (
+            ROOT / "channel" / "test" / "integration.test.ts",
+            ROOT / "scripts" / "e2e-oss-user-journey.sh",
+            ROOT / "scripts" / "e2e-oss-federation.sh",
+            ROOT / "scripts" / "e2e-federation-authority.sh",
+            ROOT / "cli" / "scripts" / "e2e.sh",
+            ROOT / "scripts" / "e2e-library-stack.sh",
+        )
+        for path in paths:
+            with self.subTest(path=path.name):
+                body = path.read_text()
+                self.assertIn("AWEB_DOCKER_PUBLISHED_HOST", body)
+                self.assertIn("host.docker.internal", body)
+                self.assertIn("127.0.0.1", body)
+                self.assertIn("unsupported", body)
+        channel = paths[0].read_text()
+        self.assertIn('server.listen(0, "127.0.0.1"', channel)
+        self.assertNotIn("AWEB_DOCKER_PUBLISHED_HOST:-", ENTRYPOINT.read_text())
 
     def test_entrypoint_refuses_a_real_dirty_checkout_before_docker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -310,7 +421,11 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             )
             make.chmod(0o755)
             suite_map = root / "map.tsv"
-            suite_map.write_text("one\tunit\tone\ntwo\tunit\ttwo\nthree\tunit\tthree\n")
+            suite_map.write_text(
+                "one\tunit\tone\trun\told-one\n"
+                "two\tunit\ttwo\trun\told-two\n"
+                "three\tunit\tthree\trun\told-three\n"
+            )
             logs = root / "logs"
             with contextlib.redirect_stdout(io.StringIO()):
                 status = runner.run(suite_map, logs, [str(make)])
@@ -327,10 +442,10 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             root = Path(tmp)
             logs = root / "logs"
             for label, body in (
-                ("duplicate", "one\tunit\tt\none\tunit\tu\n"),
-                ("target", "one\tunit\tt\ntwo\tunit\tt\n"),
+                ("duplicate", "one\tunit\tt\trun\told-one\none\tunit\tu\trun\told-two\n"),
+                ("target", "one\tunit\tt\trun\told-one\ntwo\tunit\tt\trun\told-two\n"),
                 ("empty", "# none\n"),
-                ("hidden skip", "one\tskip\tt\n"),
+                ("hidden skip", "one\tskip\tt\trun\told-one\n"),
             ):
                 with self.subTest(label=label):
                     path = root / f"{label}.tsv"

@@ -19,6 +19,11 @@ AWEB_B1_PORT="${AWEB_FED_AUTH_AWEB_B1_PORT:-18441}"
 AWEB_B2_PORT="${AWEB_FED_AUTH_AWEB_B2_PORT:-18442}"
 POSTGRES_A_PORT="${AWEB_FED_AUTH_POSTGRES_A_PORT:-58431}"
 POSTGRES_B_PORT="${AWEB_FED_AUTH_POSTGRES_B_PORT:-58432}"
+DOCKER_PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
+case "$DOCKER_PUBLISHED_HOST" in
+  127.0.0.1|host.docker.internal) ;;
+  *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
+esac
 mkdir -p "$TLS_DIR" "$ARTIFACT_DIR"
 
 compose() {
@@ -245,17 +250,17 @@ if [[ "${AWEB_FED_AUTH_BUILD:-1}" != "0" ]]; then
   compose build
 fi
 compose up -d postgres-a postgres-b redis-a redis-b awid-a awid-b registry-a registry-b
-wait_http awid-a "http://127.0.0.1:$AWID_A_PORT" awid-a
-wait_http awid-b "http://127.0.0.1:$AWID_B_PORT" awid-b
+wait_http awid-a "http://$DOCKER_PUBLISHED_HOST:$AWID_A_PORT" awid-a
+wait_http awid-b "http://$DOCKER_PUBLISHED_HOST:$AWID_B_PORT" awid-b
 # Serialize first migration ownership per side, then start the second process
 # against the already-migrated shared schema. This avoids mistaking pgdbm's
 # first-table creation race for an authority-core worker race.
 compose up -d aweb-a-1 aweb-b-1
-wait_http aweb-a-1 "http://127.0.0.1:$AWEB_A1_PORT" aweb-a-1
-wait_http aweb-b-1 "http://127.0.0.1:$AWEB_B1_PORT" aweb-b-1
+wait_http aweb-a-1 "http://$DOCKER_PUBLISHED_HOST:$AWEB_A1_PORT" aweb-a-1
+wait_http aweb-b-1 "http://$DOCKER_PUBLISHED_HOST:$AWEB_B1_PORT" aweb-b-1
 compose up -d aweb-a-2 aweb-b-2
-wait_http aweb-a-2 "http://127.0.0.1:$AWEB_A2_PORT" aweb-a-2
-wait_http aweb-b-2 "http://127.0.0.1:$AWEB_B2_PORT" aweb-b-2
+wait_http aweb-a-2 "http://$DOCKER_PUBLISHED_HOST:$AWEB_A2_PORT" aweb-a-2
+wait_http aweb-b-2 "http://$DOCKER_PUBLISHED_HOST:$AWEB_B2_PORT" aweb-b-2
 
 seed_registry() {
   local postgres_service="$1" identity_file="$2" domain="$3" name="$4" delivery="$5"

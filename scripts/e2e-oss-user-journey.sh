@@ -51,8 +51,13 @@ AWEB_PORT="${AWEB_E2E_PORT:-8100}"
 AWID_PORT="${AWID_E2E_PORT:-8110}"
 REDIS_PORT="${AWEB_E2E_REDIS:-6399}"
 PG_PORT="${AWEB_E2E_PG:-5452}"
-AWEB_URL="http://localhost:$AWEB_PORT"
-AWID_URL="http://localhost:$AWID_PORT"
+DOCKER_PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
+case "$DOCKER_PUBLISHED_HOST" in
+  127.0.0.1|host.docker.internal) ;;
+  *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
+esac
+AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
+AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
 
 # Isolated temp dirs
 E2E_HOME="$(make_temp_dir aw-e2e-home)"

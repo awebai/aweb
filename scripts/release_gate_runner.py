@@ -22,9 +22,12 @@ class Step:
     name: str
     category: str
     target: str
+    disposition: str
+    old_targets: str
 
 
-CATEGORIES = {"contract", "unit", "artifact", "journey", "audit"}
+CATEGORIES = {"contract", "unit", "artifact", "journey", "audit", "migration"}
+DISPOSITIONS = {"run", "task-6", "task-10-delete", "replaced-wrapper"}
 
 
 def load_map(path: Path) -> tuple[Step, ...]:
@@ -38,11 +41,22 @@ def load_map(path: Path) -> tuple[Step, ...]:
         ):
             if not row:
                 continue
-            if len(row) != 3 or any(not value or value != value.strip() for value in row):
-                raise MapError(f"suite-map row {number} must have three trimmed fields")
+            if len(row) != 5 or any(not value or value != value.strip() for value in row):
+                raise MapError(f"suite-map row {number} must have five trimmed fields")
             step = Step(*row)
             if step.category not in CATEGORIES:
                 raise MapError(f"suite-map row {number} has unknown category {step.category}")
+            if step.disposition not in DISPOSITIONS:
+                raise MapError(
+                    f"suite-map row {number} has unknown disposition {step.disposition}"
+                )
+            if (step.disposition == "run") == (step.category == "migration"):
+                raise MapError(
+                    f"suite-map row {number} has inconsistent category/disposition"
+                )
+            old_targets = step.old_targets.split(",")
+            if any(not target or target != target.strip() for target in old_targets):
+                raise MapError(f"suite-map row {number} has malformed old targets")
             rows.append(step)
     if not rows:
         raise MapError("suite map is empty")
@@ -52,6 +66,14 @@ def load_map(path: Path) -> tuple[Step, ...]:
         raise MapError("suite map has duplicate step names")
     if len(set(targets)) != len(targets):
         raise MapError("suite map has duplicate make targets")
+    old_targets = [
+        target
+        for step in rows
+        for target in step.old_targets.split(",")
+        if target != "-"
+    ]
+    if len(set(old_targets)) != len(old_targets):
+        raise MapError("suite map has duplicate old comprehensive-gate targets")
     return tuple(rows)
 
 
@@ -65,7 +87,8 @@ def write_summary(path: Path, steps: Sequence[Step], states: dict[str, str]) -> 
 def run(map_path: Path, log_dir: Path, command_prefix: Sequence[str]) -> int:
     if not command_prefix or any(not item for item in command_prefix):
         raise MapError("make command prefix is empty")
-    steps = load_map(map_path)
+    all_steps = load_map(map_path)
+    steps = tuple(step for step in all_steps if step.disposition == "run")
     log_dir.mkdir(parents=True, exist_ok=True)
     states = {step.name: "NOT RUN" for step in steps}
     summary = log_dir / "summary.tsv"

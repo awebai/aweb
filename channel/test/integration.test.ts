@@ -498,10 +498,19 @@ describe.sequential("channel integration", () => {
   }
 });
 
+function dockerPublishedHost(): string {
+  const host = process.env.AWEB_DOCKER_PUBLISHED_HOST || "127.0.0.1";
+  if (host !== "127.0.0.1" && host !== "host.docker.internal") {
+    throw new Error(`AWEB_DOCKER_PUBLISHED_HOST has unsupported fixed value ${host}`);
+  }
+  return host;
+}
+
 function requireLoopbackURL(rawURL: string, label: string): void {
   const url = new URL(rawURL);
-  if (url.protocol !== "http:" || (url.hostname !== "127.0.0.1" && url.hostname !== "::1")) {
-    throw new Error(`${label} live-proof endpoint must be loopback HTTP, got ${rawURL}`);
+  const allowed = new Set(["127.0.0.1", "::1", dockerPublishedHost()]);
+  if (url.protocol !== "http:" || !allowed.has(url.hostname)) {
+    throw new Error(`${label} live-proof endpoint must use the fixed Docker host, got ${rawURL}`);
   }
 }
 
@@ -568,6 +577,7 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
   const postgresPassword = "aweb-e2e-test";
   const postgresDb = "aweb";
 
+  const publishedHost = dockerPublishedHost();
   await writeFile(envFilePath, [
     `POSTGRES_USER=${postgresUser}`,
     `POSTGRES_PASSWORD=${postgresPassword}`,
@@ -576,9 +586,9 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     `REDIS_PORT=${redisPort}`,
     `AWEB_PORT=${awebPort}`,
     `AWID_PORT=${awidPort}`,
-    `AWEB_PUBLIC_ORIGIN=http://127.0.0.1:${awebPort}`,
-    `AWEB_DISCOVERY_ORIGIN=http://127.0.0.1:${awebPort}`,
-    `AWID_PUBLIC_REGISTRY_URL=http://127.0.0.1:${awidPort}`,
+    `AWEB_PUBLIC_ORIGIN=http://${publishedHost}:${awebPort}`,
+    `AWEB_DISCOVERY_ORIGIN=http://${publishedHost}:${awebPort}`,
+    `AWID_PUBLIC_REGISTRY_URL=http://${publishedHost}:${awidPort}`,
     "AWID_LOG_JSON=true",
     "AWEB_LOG_JSON=true",
     "AWID_RATE_LIMIT_BACKEND=redis",
@@ -647,8 +657,8 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
   }
   await writeFile(overrideFilePath, overrideLines.join("\n"));
 
-  const awidURL = `http://127.0.0.1:${awidPort}`;
-  const awebURL = `http://127.0.0.1:${awebPort}`;
+  const awidURL = `http://${publishedHost}:${awidPort}`;
+  const awebURL = `http://${publishedHost}:${awebPort}`;
   const handle: ServerHandle = {
     awebURL,
     awidURL,
