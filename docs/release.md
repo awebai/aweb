@@ -107,9 +107,11 @@ the go cannot waive it. Juan replies with one go.
 
 Prepare writes the displayed card and gate references to one fixed, git-local, untracked card
 file. Continue takes no arguments: it reads only that file and rejects a missing file or any
-material mismatch — loss or change means fresh prepare/card/go. The file carries no release ID
-and is not a manifest protocol, receipt, audit store, or cross-machine mechanism; workflow,
-registry, and provider records remain the audit trail.
+material mismatch — loss or change means fresh prepare/card/go. The file is transient: reused
+for idempotent retry until continue reaches DONE, consumed and removed at DONE; after removal,
+another release requires a fresh prepare/card/go. It carries no release ID and is not a manifest
+protocol, receipt, audit store, or cross-machine mechanism; workflow, registry, and provider
+records remain the audit trail.
 
 ### `make release-continue` (after the go)
 
