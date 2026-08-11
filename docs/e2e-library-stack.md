@@ -35,11 +35,9 @@ This harness depends on two checkouts sitting beside the aweb repo:
   checkout that the seed publishes into Library. Override with
   `LIBRARY_E2E_BLUEPRINT_SRC`.
 
-The hosted `Comprehensive ship gate` does not consume mutable repository heads:
-it checks out Library and blueprints at the exact reviewed commits recorded in
-`.github/workflows/ship.yml` and points these overrides at them.
-Sibling working checkouts remain the local default for deliberate leading-edge
-integration only.
+The clean local-Docker release gate records the exact commit and requires a
+clean working tree for each sibling input before it starts. Pull-request CI
+checks out the current public default branches without stale fixed pins.
 
 The expected layout is the standard sibling checkout:
 

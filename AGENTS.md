@@ -2,13 +2,18 @@ We use main as the sync branch.
 
 Work is done in worktrees.
 
-After your reviewer ACKs, merge your branch to main and merge
-main back into your branch, from your own worktree. Do not wait
-for anyone. Many agents cannot stay coordinated if integration
-queues behind one of them.
+Ordinary single-repo work: merge it yourself. After your reviewer ACKs,
+always merge `origin/main` into your branch before handing off, then merge your
+branch to main and merge main back into your branch, from your own worktree. Do
+not wait for anyone. Many agents cannot stay coordinated if integration queues
+behind one of them; never merge work your reviewer has not ACKed.
 
-The coordinator integrates when the change spans repositories,
-cuts a release tag, or touches production tooling.
+Ask the coordinator to integrate when the change spans repositories, cuts a
+release tag, or touches production tooling.
+
+Do not copy teammate names, presence timestamps, or current availability into
+repository or profile instructions. Resolve current responsibility and
+reachability from the active team instructions and `aw workspace status`.
 
 We use pgdbm (you probably have a skill, it lives in
 https://github.com/juanre/pgdbm) for database management.

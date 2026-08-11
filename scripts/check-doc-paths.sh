@@ -45,6 +45,10 @@ is_allowed() {
     # the digests in that document — not this existence check — are what detect
     # the tooling changing underneath the procedure.
     scripts/prod_db_reset.py|scripts/verify_db_reset_roundtrip.py) return 0 ;;
+    # The release authority is deliberately cross-repository. These paths are
+    # named under an explicit AC heading in docs/release.md and are verified by
+    # AC's own docs/model gates, not by pretending they live in aweb.
+    docs/publication-sources.json|docs/sot.md|scripts/check_release_model.py|scripts/verify_docs_contract.py) return 0 ;;
   esac
   return 1
 }

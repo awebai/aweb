@@ -142,7 +142,7 @@ regenerated output:
 make freshness
 ```
 
-`make release-all-check` runs the same check and fails on drift.
+The internal clean-Docker release gate runs the same check and fails on drift.
 
 Run the Node installs first if you are invoking it directly on a fresh checkout:
 
@@ -152,19 +152,18 @@ Run the Node installs first if you are invoking it directly on a fresh checkout:
 
 Without them the bundle sections fail on a missing `esbuild` binary, and they
 report it as `bundle stale or missing the security surface` — which reads as
-artifact drift rather than as an absent install. `make release-all-check` does not
-hit this because `release-channel-check` runs `npm ci` before it reaches
-freshness; running `make freshness` on its own skips that step.
+artifact drift rather than as an absent install. The internal release gate
+installs all three Node workspaces once before it reaches freshness; running
+`make freshness` on its own skips that step.
 
 ## Reproducible OAS seam input
 
 The OAS seam tests do not read a sibling working checkout by default. `make
 prepare-oas-test-root` materializes the immutable repository and commit recorded
 in `oas/upstream-test-pin.json` into the ignored `.cache/oas-pinned` directory;
-`make test-oas`, `make test-oas-proof-helpers`, and `make release-all-check` all
-consume that clean checkout. The same default runs in the release-gate workflow,
-so an aweb result is attributable to committed inputs rather than another
-repository's uncommitted state.
+`make test-oas`, `make test-oas-proof-helpers`, and the internal clean-Docker
+gate all consume that clean checkout, so an aweb result is attributable to
+committed inputs rather than another repository's uncommitted state.
 
 This pin has a cost: it does not automatically exercise newer or uncommitted OAS
 integration primitives. To test that leading edge deliberately, opt in without
@@ -180,43 +179,20 @@ for the pinned release result. Update the committed pin deliberately when the
 reviewed OAS seam advances; a clean first run requires network access to fetch the
 pinned commit, while later runs reuse and reset the repository-owned cache.
 
-## Comprehensive CI signal
+## Comprehensive release proof
 
-`make ship`, not `make test` or `make release-all-check`, is the comprehensive
-release proof. It includes the release and AWID packaging checks, the
-cross-server federation journey, the OSS user journey and its mutation guard,
-and the real-binary profile/team/Library journey. The `Comprehensive ship gate`
-workflow runs that exact target for every push to `main`, and on demand through
-`workflow_dispatch` — which is how you produce its evidence at the exact source
-SHA a release is cut from. The release plan reports whether it is green at that
-SHA as useful information; runner outages or a red signal do not mechanically
-prevent a human-authorized release.
+The release train runs one complete gate in a clean local Docker environment
+before publication. Its fixed table is `release-gate/suite-map.tsv`: release-shaped
+packages/images, unit and contract suites, OAS and real-stack journeys, freshness,
+process guards, and vulnerability audits. Hosted workflows retain focused pull
+request checks but no longer repeat this complete proof on `main`.
 
-Pull requests run `make test` through the `Test suite` workflow rather than the
-whole gate. Ship is a ~120-minute job that was cancelled on roughly half its
-runs, and its expensive half duplicates `cli-e2e`, `federation-e2e` and
-`library-ci`, each of which already runs its own Docker journey on pull
-requests. What ship uniquely contributed there was `make test`, so that is what
-runs. Before you push a release tag, run the full `make ship` — locally or by
-dispatching the workflow — because `make test` is a strict subset and will not
-catch packaging failures or e2e regressions.
-
-Those suites run independently of each other. `make` stops a recipe at the first
-failing line, so while they were recipe lines a failure in one silently removed the
-coverage of every suite behind it — the federation journey failing meant the OSS
-user journey did not run, and nothing said so. `ship` now hands `SHIP_SUITES` to
-`scripts/run-ship-suites.sh`, which runs each suite whatever the previous one did
-and exits nonzero if any failed. Read its summary rather than the last failure: it
-reports every suite as `PASSED`, `FAILED` or `NOT RUN`, so a run that was cancelled
-or timed out names the suites it never reached instead of leaving them out. A suite
-missing from the output would otherwise read the same as one that passed.
-
-The workflow checks out Library and blueprints at the exact public commits in
-`.github/workflows/ship.yml`. Advance either pin deliberately after
-proving the combined stack. Local `make ship` still accepts the sibling checkouts
-and `LIBRARY_E2E_LIBRARY_CONTEXT` / `LIBRARY_E2E_BLUEPRINT_SRC` overrides as
-additional leading-edge integration evidence, but mutable siblings are not the
-hosted release subject.
+The gate runs every table row independently and writes a full log plus a summary
+that names every row `PASSED`, `FAILED`, or `NOT RUN`; any failure or unobserved row
+makes the gate red. It starts from one exact clean aweb commit, records the exact
+clean Library and blueprint input commits, and rejects dirty or missing inputs.
+The gate is internal to release preparation and is deliberately not a third
+operator command.
 
 Reproducible here means reproducible on a clean runner with no helpful ambient
 tools. The OAS seam builds `aw` from the exact aweb checkout and selects the real
@@ -232,8 +208,8 @@ acceptance usable when runners are unavailable or urgency warrants proceeding.
 ## Vulnerability audits
 
 `make check-node-audit` and `make check-go-vulnerability-audit` audit the
-dependencies a release ships. Both run from `make release-all-check`, and
-neither runs from `make test`: the Go audit pins itself to the toolchain in
+dependencies a release ships. Both run from the internal clean-Docker release
+gate, and neither runs from `make test`: the Go audit pins itself to the toolchain in
 `cli/go/go.mod` and refuses to run under any other, and both consult an
 advisory database that moves without any repo change, which would make `make
 test` non-deterministic.
@@ -247,7 +223,7 @@ only checked when an audit runs. This is an accepted limitation, tracked in
 The Go audit refuses to run under the wrong toolchain and prints the two
 commands that install the pinned one. `make check-node-audit` needs the
 workspace dependencies installed (`npm ci` in `channel-core`, `channel` and
-`pi-extension`); `make release-all-check` installs them before auditing.
+`pi-extension`); the internal release gate installs them before auditing.
 
 Routine `make test` uses `uv run --frozen`, so tests never silently repair a
 stale lock — regenerate it explicitly with `cd server && uv lock` (or `cd awid

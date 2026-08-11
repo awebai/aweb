@@ -26,9 +26,13 @@ docker info >/dev/null || refuse "docker daemon is unavailable"
 
 work="$(mktemp -d)"
 owned_containers=()
+owned_network=""
 cleanup() {
   if [[ "${#owned_containers[@]}" -gt 0 ]]; then
     docker rm -f "${owned_containers[@]}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$owned_network" ]]; then
+    docker network rm "$owned_network" >/dev/null 2>&1 || true
   fi
   rm -rf "$work"
 }
@@ -36,6 +40,7 @@ trap cleanup EXIT
 checkout="$work/aweb"
 git clone --local --no-hardlinks "$ROOT" "$checkout" >/dev/null
 git -C "$checkout" checkout --detach "$SOURCE_SHA" >/dev/null
+git -C "$checkout" remote set-url origin "$checkout"
 [[ "$(git -C "$checkout" rev-parse HEAD)" == "$SOURCE_SHA" ]] || refuse "clone selected the wrong SHA"
 git -C "$checkout" diff --quiet && git -C "$checkout" diff --cached --quiet \
   || refuse "cloned checkout is not clean"
@@ -64,11 +69,15 @@ printf 'NOT RELEVANT: this slice changes only the release gate mechanism, not a 
 docker build --pull -f "$checkout/release-gate/Dockerfile" -t "$IMAGE" "$checkout/release-gate" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
 
-pg_id="$(docker run --detach --publish 127.0.0.1::5432 \
+owned_network="aweb-release-gate-${SOURCE_SHA:0:12}-$$"
+docker network create "$owned_network" >/dev/null
+pg_name="${owned_network}-postgres"
+redis_name="${owned_network}-redis"
+pg_id="$(docker run --detach --network "$owned_network" --name "$pg_name" \
   --env POSTGRES_USER=postgres --env POSTGRES_PASSWORD=postgres --env POSTGRES_DB=postgres \
   --health-cmd 'pg_isready -U postgres -d postgres' \
   --health-interval 2s --health-timeout 5s --health-retries 45 postgres:17)"
-redis_id="$(docker run --detach --publish 127.0.0.1::6379 \
+redis_id="$(docker run --detach --network "$owned_network" --name "$redis_name" \
   --health-cmd 'redis-cli ping' --health-interval 2s --health-timeout 5s --health-retries 45 redis:7)"
 owned_containers+=("$pg_id" "$redis_id")
 for container in "$pg_id" "$redis_id"; do
@@ -79,31 +88,26 @@ for container in "$pg_id" "$redis_id"; do
   [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" == healthy ]] \
     || refuse "gate service failed health: $container"
 done
-pg_port="$(docker port "$pg_id" 5432/tcp | sed 's/.*://')"
-redis_port="$(docker port "$redis_id" 6379/tcp | sed 's/.*://')"
 mkdir -p "$checkout/.release-home"
 
-socket_gid="$(stat -f '%g' /var/run/docker.sock 2>/dev/null || stat -c '%g' /var/run/docker.sock)"
 set +e
-docker run --rm \
-  --user "$(id -u):$(id -g)" \
-  --group-add "$socket_gid" \
+docker run --rm --init \
+  --network "$owned_network" \
   -e HOME="$checkout/.release-home" \
   -e RELEASE_BASE_SHA="$RELEASE_BASE_SHA" \
   -e LIBRARY_E2E_LIBRARY_CONTEXT="$LIBRARY_E2E_LIBRARY_CONTEXT" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e RELEASE_GATE_LOG_DIR="$LOG_DIR" \
-  --add-host host.docker.internal:host-gateway \
-  -e TEST_DB_HOST=host.docker.internal \
-  -e TEST_DB_PORT="$pg_port" \
+  -e TEST_DB_HOST="$pg_name" \
+  -e TEST_DB_PORT=5432 \
   -e TEST_DB_USER=postgres \
   -e TEST_DB_PASSWORD=postgres \
-  -e PGHOST=host.docker.internal \
-  -e PGPORT="$pg_port" \
+  -e PGHOST="$pg_name" \
+  -e PGPORT=5432 \
   -e PGUSER=postgres \
   -e PGPASSWORD=postgres \
   -e PGDATABASE=postgres \
-  -e REDIS_URL="redis://host.docker.internal:$redis_port/0" \
+  -e REDIS_URL="redis://$redis_name:6379/0" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$checkout:$checkout" \
   -v "$LOG_DIR:$LOG_DIR" \
