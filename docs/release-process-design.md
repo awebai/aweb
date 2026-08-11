@@ -228,6 +228,11 @@ The manifest MUST contain:
 - **Deployment intent**: `none`, or the deployment target(s) with exact image
   digest, the ordered migration set to be applied, and the irreversibility
   statement (§13, §15).
+- **Deploy-target configuration**: for every known deployment target that
+  consumes any image in the set — whatever the deployment intent — the
+  target's standing image reference as read from the provider at assembly.
+  Each MUST be an immutable digest reference with tag-following and
+  registry-push auto-deploy absent (§15.1).
 - **Break-glass marker**: normally absent. Present only when the attempt
   uses the break-glass procedure (§8.5), stating which evidence or execution
   steps were performed outside hosted CI and how each was bound to the same
@@ -283,8 +288,9 @@ from the manifest:
 ### 7.3 Mechanical integrity is not a fifth input
 
 Exact tested artifacts, immutable identifiers, trusted publication,
-authoritative read-back, and non-reusable authorization are mandatory
-properties the tooling enforces (§8, §11, §20). They MUST be enforced
+authoritative read-back, non-reusable authorization, and digest-pinned
+standing configuration on every known deployment target (§15.1) are mandatory
+properties the tooling enforces (§8, §11, §15, §20). They MUST be enforced
 mechanically and MUST NOT be presented to the human as questions. If a
 mechanical property cannot be established, the attempt is not presentable for
 a go at all.
@@ -313,7 +319,8 @@ and go — never a per-repository or per-artifact re-approval:
 
 Execution MUST verify, immediately before its first outward effect, that the
 manifest's external claims still hold (registry versions it read at assembly,
-the pointer repositories' state, the deployment target's current version). If
+the pointer repositories' state, the deployment target's current version and
+standing configuration per §15.1). If
 any drifted, execution MUST refuse without publishing; the go is then spent by
 that refused attempt only if an outward effect had begun, otherwise it remains
 unspent but bound to a manifest that can no longer execute — either way the
@@ -323,9 +330,11 @@ recovery is a new attempt (§12).
 
 ### 8.1 Hosted, per repository
 
-Each repository (aweb, AC) MUST have one candidate pipeline: a hosted CI
-workflow that builds every releasable candidate from one source SHA and runs
-the full required suite against those exact bytes. The aweb candidate
+There are exactly two candidate pipelines, one in aweb and one in AC: a
+hosted CI workflow that builds every releasable candidate from one source SHA
+and runs the full required suite against those exact bytes. (`awebai/aw`
+hosts only the `aw` CLI's publish lane; the CLI's source is `cli/go/` in
+aweb, so its candidate is built and tested by the aweb pipeline.) The aweb candidate
 pipeline subsumes the current comprehensive gate content
 (`.github/workflows/ship.yml` journeys) and the artifact staging currently
 done by the stage-only lane modes; the AC candidate pipeline is the hosted
@@ -442,6 +451,15 @@ published release operated by the candidate, and the published server against
 the upgraded schema where rollout is non-atomic. Its result feeds the
 deployment irreversibility statement (§15.4).
 
+The instruments MUST be deterministic: both arms of a mixed-version check
+MUST run under identical conditions apart from the versions being compared —
+in particular, transitive dependencies MUST be pinned per side, so that two
+installs of the same artifact cannot differ because a package index moved
+between them. A `could_not_measure` produced by the instrument rather than
+the pairing is an instrument defect to fix, and §10.3's no-override blocking
+is only safe once instruments cannot fail spuriously; §18.4 therefore makes
+instrument determinism a precondition, not a follow-up.
+
 ### 10.3 Blocking rules
 
 - `compatible` — releasable.
@@ -475,14 +493,26 @@ exactly the published versions from the manifest; the AC pin commit sets
 server/awid versions and SHA. Pointer content comes from the manifest, never
 from a command line.
 
+Publishing an image that a live service's standing configuration follows is
+an outward effect on that service, not mere publication. The model therefore
+forbids the configuration rather than reasoning around it: §15.1 makes a
+mutable-tag-following target block go presentation, and pre-effect
+verification re-checks it immediately before the first publish. One go
+covering every outward effect is only true while that holds.
+
 ### 11.2 Non-reusable authorization at the mechanical layer
 
 Each publish job MUST require (`release_id`, `manifest_digest`, artifact,
 version, digest set) and MUST verify, against the audit record, that a go
-binding that manifest exists and that no publication record for
-(`release_id`, artifact) already exists. One manifest entry authorizes at
-most one publication. A publish job invoked outside a live attempt MUST
-refuse.
+binding that manifest exists. Before acting it MUST acquire the entry by an
+atomic conditional write to the audit store — a claim on
+(`release_id`, artifact) that fails if the claim already exists — and MUST
+refuse when acquisition fails. A read followed by an act is not sufficient:
+two concurrent dispatches of the same entry both pass a read check, and while
+registry immutability would catch the duplicate for PyPI and npm, pointer
+pushes and deployment have no such backstop. One manifest entry authorizes at
+most one publication, and the claim is what makes that true under
+concurrency. A publish job invoked outside a live attempt MUST refuse.
 
 ### 11.3 Read-back
 
@@ -538,9 +568,11 @@ authorized attempt.
 ### 13.2 Stop-at-publication
 
 When deployment intent is `none`, the process stops after publication and
-read-back. Deploying that release later is a new release attempt whose set
-contains the deployment (adopting the published artifacts under §11.4) — with
-its own manifest and its own single go.
+read-back. Stopping at publication is only meaningful because §15.1
+guarantees no live target follows a published image; without that guarantee,
+"publication only" would deploy anyway. Deploying that release later is a new
+release attempt whose set contains the deployment (adopting the published
+artifacts under §11.4) — with its own manifest and its own single go.
 
 ### 13.3 Delivery obligations are not gates
 
@@ -582,13 +614,31 @@ mandates the overlay. Until both exist, the overlay stays.
 
 ## 15. Production deployment mechanics
 
-### 15.1 Immutable digest deployment
+### 15.1 Immutable digest deployment, including the standing configuration
 
-Deployment MUST target the image by immutable digest
-(`ghcr.io/awebai/ac@sha256:…`), the digest from the manifest — never a
-mutable tag. Repointing the service and triggering the deploy MUST be
-performed by the AC-owned deploy job via the provider API, not by hand in a
-dashboard.
+A deploy target's **standing configuration** — the image reference the
+service is configured to run between releases — is a mechanical-integrity
+property (§7.3), because it decides whether publication is an outward effect
+on production. A service configured to follow a mutable tag (for example
+`latest`) deploys itself the moment such a tag moves: no deploy job runs, no
+deployment intent is declared, and the go's boundary (§13) becomes false by
+configuration. Therefore:
+
+- Every known deployment target MUST be pinned, as standing configuration,
+  to an immutable digest reference (`ghcr.io/awebai/ac@sha256:…`), with
+  tag-following and registry-push auto-deploy absent.
+- Manifest assembly MUST read each such target's standing configuration from
+  the provider API and record it in the manifest (§6.2). If any target that
+  consumes an image in the set follows a mutable tag or auto-deploys on
+  registry push, the attempt is not presentable for a go at all — regardless
+  of deployment intent, including `none`.
+- Pre-effect verification (§7.4) MUST re-read the standing configuration and
+  refuse to publish if it drifted from what assembly recorded.
+
+Deployment itself MUST target the image by immutable digest, the digest from
+the manifest — never a mutable tag. Repointing the service and triggering the
+deploy MUST be performed by the AC-owned deploy job via the provider API, not
+by hand in a dashboard.
 
 ### 15.2 Migration preflight
 
@@ -601,14 +651,26 @@ migration set. A mismatch fails the attempt (§12). Migrations are applied as
 an explicit ordered step of the deploy job — not left to startup — and the
 container's fail-closed startup check remains as the backstop.
 
-### 15.3 Health and version read-back
+### 15.3 Deployment read-back: identity from the provider, labels as corroboration
 
-After deploy, the job MUST read `GET /api/v1/release` (and health) from the
-deployed service and verify: `git_sha` equals the manifest's AC SHA,
-`aweb_git_sha` equals the manifest's aweb SHA, and package versions equal the
-manifest's. The release is not complete until this read-back matches. A
-mismatch is a failure (§12) — the service is left running whatever it
-reports, the record states it, and recovery is a new attempt.
+After deploy, the job MUST prove identity and corroborate it separately,
+because the two come from different authorities:
+
+- **Identity**: read from the provider's deploy record the image digest the
+  service is actually running, and verify it equals the manifest's image
+  digest. This is the proof, held to the same standard as §11.3 and §11.4:
+  anything short of digest equality is a conflict.
+- **Corroboration**: read `GET /api/v1/release` (and health) from the
+  deployed service and verify `git_sha` equals the manifest's AC SHA,
+  `aweb_git_sha` equals the manifest's aweb SHA, and package versions equal
+  the manifest's. These are build-time labels stamped into the image — what
+  the image says about itself, useful for catching provenance-stamping and
+  build-argument errors, but not proof of what is running. Label equality
+  MUST NOT substitute for the provider digest check.
+
+The release is not complete until both match. A mismatch in either is a
+failure (§12) — the service is left running whatever it runs, the record
+states exactly what each authority reported, and recovery is a new attempt.
 
 ### 15.4 Irreversible steps
 
@@ -737,7 +799,7 @@ nothing falls out silently:
 | `ac-pin` | Pointer artifact executed by a hosted AC-owned job (§14, §16.1). |
 | AC hosted image | Released artifact, new in the model (§5.1, §14). |
 | AC production deployment | Deployment intent in the manifest; same single go (§13, §15). |
-| `sites` (awid.ai landing) | Released artifact; its current `approval_required` flag is deleted — inclusion in a go-authorized set is its approval (§16.3). A docs-only site refresh outside a release set remains a content operation under `docs/a2a-release-runbook.md`-style maintainer discipline, out of release scope. |
+| `sites` (awid.ai landing) | Released artifact; its current `approval_required` flag is deleted — inclusion in a go-authorized set is its approval (§16.3). Because no delivered baseline for `sites` is observable from this repository's origin, the current graph plans it conservatively on every run; under this model that default inversion is removed: `sites` enters a set only by explicit selection, or when its content digest differs from the last sealed audit record that delivered it — the audit store (§20.3) is its delivered baseline. It MUST NOT ride along in every set by default. A docs-only site refresh outside a release set remains a content operation, out of release scope. |
 | A2A gateway image (`a2a-gw-v*` tag workflow) | **Excluded.** Outside the current graph by deliberate decision; stays on `docs/a2a-release-runbook.md`. MAY be folded in as a released artifact in a later reviewed slice; until then its exclusion is explicit here. |
 | Legacy `aw-release.yml` tag sync | Superseded; deleted in migration (§16.3). |
 | aweb.ai site deploy, AC docs snapshot (`ac:docs/publication-sources.json`) | **Excluded**: AC-owned content publication, not release (§3). |
@@ -759,6 +821,10 @@ lane alongside the old, and deletion comes last.
    leaves the release path (§14).
 4. **Compatibility results** — skew harnesses and the AC compat journey emit
    the three-state, manifest-ready result (§10) from candidate bytes.
+   Precondition, not follow-up: every harness's arms are made deterministic
+   (per-side pinned transitive dependencies, §10.2) before `could_not_measure`
+   gates releases, because blocking-with-no-override is only safe on
+   instruments that cannot fail spuriously.
 5. **Manifest and go** — coordinator assembles manifests, records gos, audit
    store lands (§6, §7, §20.3). Still no outward effects through it.
 6. **Publish binding** — publish workflows accept and verify
@@ -793,8 +859,16 @@ Normative acceptance for the implemented process:
 - No workflow on the release path accepts a test selector, artifact selector,
   skip flag, arbitrary ref, or command override (§8.3).
 - Every published artifact's authoritative read-back equals its manifest
-  entry (§11.3); every deployment's version read-back equals the manifest
-  (§15.3).
+  entry (§11.3); every deployment's read-back proves identity from the
+  provider-reported running image digest, with label equality as
+  corroboration only (§15.3).
+- A known deployment target whose standing configuration follows a mutable
+  tag or auto-deploys on registry push mechanically prevents go presentation
+  for any set containing an image it consumes, including sets with
+  deployment intent `none` (§15.1).
+- Concurrent duplicate dispatch of the same manifest entry cannot publish
+  twice: the second dispatch fails to acquire the atomic claim and refuses
+  (§11.2).
 - A deliberately induced mid-attempt failure (shadow exercise, §18.8) yields:
   a sealed partial record, zero automatic retries, and a recovery attempt
   that adopts published items only via proven equality and requires a new go
