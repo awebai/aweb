@@ -139,8 +139,7 @@ Idempotent; rerunnable until it prints DONE. Steps:
    on later releases fail closed if those standing properties have regressed. Apply pending
    migrations via the scripted migration step; deploy the exact digest; verify standing
    configuration, provider-reported running digest, and health. No extra prompt or approval.
-8. Deploy any moving sites via their branch-push targets. Print DONE with versions, digests, and
-   workflow run URLs.
+8. Deploy any moving sites via their branch-push targets. Print DONE with versions, digests, and run URLs.
 
 Stop/retry: exact-match registry items are skipped; a conflict (same version, different or un-adoptable
 state) stops, named; transient mechanical failures retry the failed job only; tests never rerun. A rerun
