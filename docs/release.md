@@ -1,273 +1,250 @@
 # Release process
 
-Status: approved replacement release specification for aweb and AC. It
-supersedes the release driver, the per-component tag lanes, the runnerless
-document, and the ship-gate-on-every-landing model. Implementation lands the new
-mechanism and the deletions below in one reviewed change set. Machinery facts:
-audit on task `aweb-abds.4`.
+Status: proposed replacement release specification for aweb and AC; it becomes authority only
+after independent review ACK and the coordinator's constraint check. It supersedes the release
+driver, the per-component tag lanes, the runnerless document, and the ship-gate-on-every-landing
+model; implementation lands the new mechanism and the deletions below in one reviewed change
+set. Facts: audit on task `aweb-abds.4`; binding decisions on findings F1-F4: coordinator, 2026-08-11.
 
 ## Operating model
 
-- `main` in each repository is the agent integration branch. Comprehensive
-  release CI does not run on `main` landings; PR CI stays as it is.
-- Each repository has a `release` branch that is only a publication pointer,
-  advancing fast-forward-only to an exact commit already on `main`. Release-only
-  code never exists; a bad candidate is fixed on `main` and re-promoted.
-- Expensive correctness gates run once, locally, in clean Docker, before
-  `release` moves. GitHub never repeats them: advancing `release` triggers only
-  thin packaging/publication/deployment plus cheap integrity, installability,
-  digest, and health verification. GitHub rebuilds from the exact locally tested
-  source SHA; this pragmatic boundary is accepted and the cheap post-publication
-  checks cover it.
-- Juan gives one global go against one script-generated release card; the agent
-  then runs a single idempotent continue operation. No per-repository,
-  per-artifact, phase, migration, or deployment approvals exist.
-- Exactly two operator commands. Branch moves, version discovery, artifact-set
-  calculation, registry polling, workflow dispatch/monitoring, retries, and
-  verification are scripted; the agent never manually builds, tests, publishes,
-  migrates, edits pointers, or deploys.
-- Audit trail: GitHub workflow run identity and logs, registry state, provider
-  deployment records. No release IDs, manifests, receipts, anchors, claim
-  stores, or custom audit stores.
+- `main` in each repository is the agent integration branch; no comprehensive release CI runs
+  on `main` landings. PR checks stay; four workflows lose their `main`-push triggers (Migration).
+- Each repository's `release` branch is only a publication pointer: fast-forward-only to an
+  exact commit already on `main`, never force-pushed. Release-only code never exists. A failed
+  candidate leaves the branch put; the fix lands on `main` and prepare reruns (new card, new go).
+  Already-published versions stay published (fix forward); the rerun's set computation excludes them.
+- Expensive correctness gates run once, locally, in clean Docker, before `release` moves. GitHub
+  never repeats them: advancing `release` triggers only thin packaging/publication/deployment
+  plus cheap integrity, installability, digest, and health verification. GitHub rebuilds from
+  the exact locally tested SHA — an accepted boundary covered by those checks.
+- Juan gives one global go against one script-generated card; the agent then runs one
+  idempotent continue operation. No per-repository, per-artifact, phase, migration, or
+  deployment approvals. Exactly two operator commands: branch moves, version discovery,
+  artifact-set calculation, registry polling, workflow dispatch/monitoring, retries, and
+  verification are scripted; the agent never manually builds, tests, publishes, migrates,
+  edits pointers, or deploys.
+- Audit trail: workflow run identity and logs, registry state, provider deploy records. No
+  release IDs, manifests, receipts, anchors, claim stores, or custom audit stores. Ordering is
+  the fixed ten-edge DAG, hardcoded — not a graph engine.
 
 ## Artifacts
 
-aweb (github.com/awebai/aweb) publishes:
+| Repo | Artifact | Registry / target | Version source |
+|---|---|---|---|
+| aweb | aweb server | PyPI `aweb` | `server/pyproject.toml` |
+| aweb | AWID service | PyPI `awid-service` | `awid/pyproject.toml` |
+| aweb | AWID image | `ghcr.io/awebai/awid` | `awid/pyproject.toml` |
+| aweb | aw CLI (binaries `aw` + `aweb-a2a-gw`) | GitHub Release + npm `@awebai/aw` and `@awebai/aw-{linux,darwin,windows}-{x64,arm64}`, via repo `awebai/aw` | remote `aw-v*` tag history |
+| aweb | channel plugin | npm `@awebai/claude-channel` | `channel/package.json` |
+| aweb | pi extension | npm `@awebai/pi` | `pi-extension/package.json` |
+| aweb | skills | npm `@awebai/claude-skills` + ZIPs on `skills-v*` GitHub Release | `packages/claude-skills/package.json` |
+| aweb | a2a-gateway image | `ghcr.io/awebai/a2a-gateway` | equals server version |
+| aweb | awid.ai site | Render static, branch `deploy-awid-landing` | n/a |
+| AC | product image | `ghcr.io/awebai/ac` | `backend/pyproject.toml` |
+| AC | production deploy | Render `aweb-cloud`, by image digest | the image |
+| AC | aweb.ai site | Render static, branch `deploy-landing` | n/a |
 
-| Artifact | Registry | Version source |
-|---|---|---|
-| aweb server | PyPI `aweb` | `server/pyproject.toml` |
-| AWID service | PyPI `awid-service` | `awid/pyproject.toml` |
-| AWID image | `ghcr.io/awebai/awid` | `awid/pyproject.toml` |
-| aw CLI | GitHub Release + npm `@awebai/aw` via repo `awebai/aw` | remote `aw-v*` tag history |
-| channel plugin | npm `@awebai/claude-channel` | `channel/package.json` |
-| pi extension | npm `@awebai/pi` | `pi-extension/package.json` |
-| skills | npm `@awebai/claude-skills` + ZIPs on the `skills-v*` GitHub Release | `packages/claude-skills/package.json` |
-| a2a-gateway image | `ghcr.io/awebai/a2a-gateway` | equals server version |
-| awid.ai site | Render static site via `deploy-awid-landing` branch | n/a |
+Non-artifacts (nothing here builds or publishes them): `channel-core`, the five `skills/aweb-*`
+sources, and server source in the AWID image (bundled inputs); `packages/codex-plugin`,
+`naapp/*`, `naapp-lib`, `packages/hermes-aweb-platform`, `resource-packs/`, `oas/`,
+`test-vectors/`. The marketplace pointer and AC pin/lock are publication effects. Sites deploy
+by their existing branch push, invoked by continue, outside the ordering.
 
-AC (github.com/awebai/ac) publishes:
+## The static DAG (all ten audited edges)
 
-| Artifact | Registry / target | Version source |
-|---|---|---|
-| product image | `ghcr.io/awebai/ac` | `backend/pyproject.toml` |
-| production deployment | Render service `aweb-cloud`, by image digest | the image |
-| aweb.ai site | Render static site via `deploy-landing` branch | n/a |
+Ordering (O), same-commit bundle (S), equality (E), independent (I):
 
-Explicit non-artifacts (nothing here builds or publishes them): `channel-core`
-(bundled into channel and pi), the five `skills/aweb-*` sources (bundled into
-pi, claude-skills, and the ZIPs), server source baked into the AWID image,
-`packages/codex-plugin`, `naapp/*`, `naapp-lib`,
-`packages/hermes-aweb-platform`, `resource-packs/`, `oas/`, `test-vectors/`.
-Marketplace pointer and AC pin are publication effects, not artifacts (see
-Pointers). Sites deploy through their existing branch-push mechanism, invoked
-by the continue command, outside the artifact ordering.
+1. O: PyPI `awid-service` before PyPI `aweb` (dependency floor).
+2. O: npm serves `@awebai/aw` + platform packages (published by `awebai/aw`) before `@awebai/pi`
+   when pi's floor moves; the aw step completes when the registry serves it, not at sync time.
+3. O: channel and skills publication before the marketplace pointer advance.
+4. O: registries serve all intended aweb/AWID versions before the derived AC pin/lock commit and
+   AC gate (AC installs from PyPI).
+5. O: AC image push before deploy; deploy before digest+health verify.
+6. S: `channel-core` into channel and pi.
+7. S: the five `skills/aweb-*` sources into pi, claude-skills, and the ZIPs.
+8. S: server source into the AWID image.
+9. E: a2a-gateway version equals server version (checked at set computation).
+10. I: both sites, via branch push, independent of the artifact train.
 
-## The static DAG
-
-The complete verified ordering (audit, task `aweb-abds.4`):
-
-1. PyPI `awid-service` before PyPI `aweb` (aweb requires `awid-service>=`).
-2. npm `@awebai/aw` before npm `@awebai/pi` when pi's floor moves (`^` dep).
-3. npm channel and skills publication before the marketplace pointer advance.
-4. All intended aweb/AWID publications served by the public registries before
-   the AC gate runs, because AC installs them from PyPI.
-5. AC image pushed before deployment; deployment before digest/health verify.
-
-Bundling (channel-core, skills sources, server source in the AWID image) is
-same-commit content, not an ordering edge. Unresolved edges, stated not hidden:
-the internals of `awebai/aw` (goreleaser + npm publication) and of
-`awebai/claude-plugins` are unaudited external repositories; the continue
-command treats them as dispatch-and-verify targets only.
+External repos `awebai/aw` and `awebai/claude-plugins`: dispatch-and-verify only (U1, U2).
 
 ## The two commands
 
 ### `make release-prepare` (before the go)
 
-Inputs, the only judgment the agent supplies: `PURPOSE="..."` and
-`COMPAT_BREAK="none"` or a one-line description of the intentional break.
+Inputs — the only judgment the agent supplies: `PURPOSE="..."` and `COMPAT_BREAK="none"` or a
+one-line description. The script, no prompts:
 
-The script, with no further prompts:
-
-1. Fetches; selects the exact aweb and AC `main` commits (tips unless
-   `AWEB_SHA=`/`AC_SHA=` name older commits on `main`); refuses dirty trees or
-   unpushed selections with the exact commands to fix.
-2. Computes the artifact set: a component moves iff its manifest version is not
-   in its registry (aw: next tag-history version; a2a-gateway: server version
-   absent from GHCR). Prints the set and versions.
-3. Runs the aweb release gate once in clean Docker: builds every moving
-   artifact release-shaped (wheels, npm packs, OCI images) and runs the required
-   suites (current `make test` content, cli e2e, federation e2e, channel
-   integration, locked suites, freshness, vulnerability audits, version-bump
-   guards). One additional run is allowed only for one last-released/new
-   mixed-version compatibility pairing when a moving component has one.
-4. Prepares, on AC `main` as a normal reviewed commit, the pin/lock update
-   naming the aweb versions being published (`release-pin.toml`,
-   `backend/uv.lock`). The AC gate itself cannot run yet (dependencies
-   unpublished); the card says so.
+1. Fetches; selects the exact aweb and AC `main` commits (tips unless `AWEB_SHA=`/`AC_SHA=` name
+   older commits on `main`); refuses dirty trees or unpushed selections, printing the fix.
+2. Computes the artifact set: a component moves iff its manifest version is not in its registry
+   (aw: next tag-history version; a2a-gateway: server version absent from GHCR). Prints the set
+   and versions.
+3. Runs the aweb gate once in clean Docker: builds every moving artifact release-shaped (wheels,
+   npm packs, OCI images) and runs the mapped suite inventory (see Migration). One extra run
+   only for one last-released/new mixed-version compatibility pairing.
+4. Records the reviewed AC base SHA, the intended public dependency versions, and the only
+   permitted derived files: `backend/pyproject.toml` dependency floors (if not already intended)
+   and `backend/uv.lock`.
 5. Generates and prints the release card.
 
-Failure at any step stops with the failing step, the log path, and the one next
-command (fix on `main`, rerun prepare). Nothing has been published; `release`
-branches have not moved.
+Failure stops with the failing step, log path, and the one next command (fix on `main`, rerun
+prepare). Nothing published; `release` branches unmoved.
 
 ### The release card
 
-Script-generated, answering only: dependency closure (exact aweb and AC commits,
-artifacts and versions, in DAG order); customer compatibility, including the
-explicit known break or "none"; tests/e2e state (which suites ran, at which SHA,
-result); purpose; whether production deployment is included. For AC artifacts it
-states: dependency, test, and compatibility gates are pending and will be
-enforced automatically before AC publication; the go cannot waive them. Juan
-replies with one go to the card.
+Script-generated, answering only: dependency closure (exact aweb `main` commit and exact
+reviewed AC base SHA, artifacts and versions, in DAG order); customer compatibility with the
+explicit known break or "none"; tests/e2e state (suites, SHA, result); purpose; whether
+deployment is included. It states that the final AC SHA is a pending dependency-only derived
+commit — not yet known — created, verified, and gated automatically before AC publication,
+which the go cannot waive. Juan replies with one go.
 
 ### `make release-continue` (after the go)
 
-Idempotent; safe to rerun until it prints DONE. The steps, in order:
+Idempotent; rerunnable until it prints DONE. Steps:
 
 1. Advance aweb `release` fast-forward to the prepared SHA.
-2. Dispatch and monitor the thin aweb publication workflows for the moving set,
-   in DAG order: PyPI awid-service, PyPI aweb, AWID image, aw sync to
-   `awebai/aw`, npm channel/pi/skills + skills ZIPs, a2a-gateway image. Each
-   workflow rebuilds from the exact `release` SHA, publishes, pushes its version
-   tag, and runs its cheap verification (registry serves the exact version;
-   installability; image digest resolves).
+2. Dispatch and monitor the thin publication workflows for the moving set, in DAG order: PyPI
+   awid-service, PyPI aweb, AWID image, aw sync to `awebai/aw`, npm channel/pi/skills + ZIPs,
+   a2a-gateway image. Each rebuilds from the exact `release` SHA, publishes, pushes its tag, and
+   cheaply verifies (exact version served, incl. aw's npm platform packages; installable; digest resolves).
 3. Advance the marketplace pointer to the published channel/skills versions.
-4. Poll the public registries until every intended aweb/AWID version is served;
-   bounded wait with a clear still-waiting message.
-5. Run the AC release gate once in clean Docker at the prepared AC `main`
-   commit: `make release-ready` content, with the image build installing the
-   just-published public wheels.
-6. Advance AC `release` fast-forward; dispatch and monitor the thin AC image
-   workflow (build from the `release` SHA, push to `ghcr.io/awebai/ac`, emit
-   the immutable digest).
-7. If the card includes deployment: verify the Render service is configured for
-   explicit-digest deploys with auto-deploy disabled (refuse otherwise), apply
-   pending migrations via the scripted migration step, deploy the exact digest,
-   then verify the provider-reported running digest and health.
-8. Deploy any moving sites via their branch-push targets. Print DONE with the
-   published versions, digests, and workflow run URLs.
+4. Poll public registries until every intended aweb/AWID version is served (bounded wait, clear
+   still-waiting message). Then, requiring AC `main` still at the recorded base SHA, mechanically
+   derive the dependency-only commit: bump the recorded floors, regenerate `backend/uv.lock`,
+   assert the diff touches only the declared files and versions, advance AC `main` to it, print
+   its final SHA. The commit is code-free and independently inspectable. A moved base, unexpected
+   file/diff, version mismatch, or need for source change stops the train and invalidates the
+   card (fresh prepare/card/go); no third command, prompt, or new go.
+5. Run the AC gate once in clean Docker at the derived commit (`make release-ready` content; the
+   image installs the published wheels).
+6. Advance AC `release` fast-forward to the derived commit; dispatch the thin AC image workflow
+   (build from the `release` SHA, push `ghcr.io/awebai/ac`, emit the immutable digest).
+7. If deployment is included: fail closed unless the Render `aweb-cloud` standing configuration
+   is an explicit immutable digest with auto-deploy disabled; apply pending migrations via the
+   scripted migration step; deploy the exact digest; verify provider-reported running digest and
+   health.
+8. Deploy any moving sites via their branch-push targets. Print DONE with versions, digests, and
+   workflow run URLs.
 
-Stop/retry semantics: registry items that already match exactly are skipped; a
-registry conflict (same version, different or un-adoptable state) stops with
-the conflict named; transient mechanical failures retry the failed job only.
-Tests never rerun on retry. A rerun with unchanged commits, versions, artifact
-bytes, compatibility result, and deployment intent reuses the same go; any
-material change requires a new prepare, card, and go. Every stop names its
-state and the resume command (rerun continue); the operator never reconstructs
-state by hand.
+Stop/retry: exact-match registry items are skipped; a conflict (same version, different or
+un-adoptable state) stops, named; transient mechanical failures retry the failed job only; tests
+never rerun. A rerun with unchanged commits, versions, bytes, compatibility, and deployment
+intent reuses the same go; any material change needs a new prepare, card, and go. Every stop
+names its state and the resume command (rerun continue). The train stops before AC `release`
+moves if derivation, the AC gate, publication, or deploy verify fails.
 
-## Release branch lifecycle
+## Pointers: prepared on `main` vs moved during publication
 
-Both branches only ever fast-forward to reviewed `main` commits; force-pushing
-them is prohibited. A failed candidate leaves the branch where it was: fix on
-`main`, rerun prepare (new card, new go). If publication partially completed,
-the published registry versions stay (publication is immutable; fix forward);
-the rerun's artifact-set computation naturally excludes what already published.
+On `main` before the go: version bumps and the reviewed AC base commit — source that gates
+builds. During publication, by continue: `release` branches, version tags, the marketplace
+pointer, site branches, and the derived AC pin/lock commit — state that advertises or consumes
+published artifacts, true only after publication. `release-pin.toml` is deleted (its only
+concrete purpose was the removed overlay, F1); documentation publication pinning
+(`docs/publication-sources.json`) is separate, untouched.
 
-## Pointers: prepared on main vs moved during publication
+## Production configuration (F2)
 
-Prepared on `main` before the go: version bumps, AC's `release-pin.toml` and
-`backend/uv.lock`. These are reviewed source that gates builds, so they must
-exist as ordinary commits before any gate runs. Moved during publication by the
-continue command: `release` branches, version tags, the marketplace pointer,
-site branches. These advertise published state, so they can only be true after
-publication; writing them earlier would advertise artifacts that may never
-publish.
+One-time, part of implementation completion: configure Render `aweb-cloud` to an explicit
+immutable image digest with auto-deploy disabled. Continue verifies those standing properties on
+every deploy and fails closed without them — against the known service only, no provider-account
+discovery or service-inventory framework. Rollback deploys a previous digest the same way.
 
-## AC dependency rule
+## GitHub outage (F3)
 
-AC consumes only actually published aweb/AWID packages from public registries —
-never staged, unpublished, or cross-workflow candidates. Implementation note:
-today's `Dockerfile.release` overlays pinned git source over the installed
-wheels; this specification removes the overlay so the image ships the published
-wheels the lock resolves (finding F1, task `aweb-abds.4`). The train stops
-before AC's `release` branch moves if the AC Docker gate fails, if hosted image
-publication fails, or if deployment verification fails; aweb's already-published
-artifacts remain published, and recovery is a corrected AC `main` commit plus a
-new prepare of the AC half only.
-
-## Production configuration
-
-One-time, verified by the continue command on every deploy: the Render service
-deploys only explicit immutable image digests, with registry-push auto-deploy
-disabled (as of 2026-08-11 the service points at the mutable `latest` tag with
-auto-deploy enabled; the implementation includes correcting this). Rollback is
-deploying a previous digest through the same scripted step.
-
-## GitHub outage
-
-No runnerless system is maintained. In an outage, with Juan's explicit risk
-override recorded in the go, the kept exact-publish scripts
-(`scripts/npm-exact-publish.sh`, `pypi-exact-publish.sh`, `oci-exact-publish.sh`)
-may publish the locally built, locally gated artifacts directly; tags and
-release assets are pushed when GitHub returns. This is a documented break-glass
-use of kept primitives, not a parallel lane.
+No runnerless system is maintained. If GitHub is unavailable, the normal release stops. Under
+an explicit human risk override, an operator may invoke the kept per-artifact exact-publish
+primitives (`scripts/npm-exact-publish.sh`, `pypi-exact-publish.sh`, `oci-exact-publish.sh`)
+against locally built, locally gated outputs; when GitHub returns, bookkeeping resumes — tags,
+release assets, the `release` branch, and the marketplace pointer advance by exact-match
+adoption. Not a maintained lane, completeness guarantee, third command, or framework.
 
 ## Migration: keep, replace, delete
 
-One mechanism must remain. Cleanup is part of the same reviewed change set as
-the new scripts, not a follow-up.
+One mechanism remains; cleanup lands in the same reviewed change set.
 
-Keep (aweb): the test suites and their infra (`make test` content, cli e2e,
-federation e2e, channel integration, locked suites, freshness, audits),
-`docker-compose.e2e*.yml`, version guards (`check-server-version-bump.sh`,
-`cli-release-version.sh`), copy/provenance guards, the three exact-publish
-scripts and their tests, PR CI workflows (`test.yml`, `server-ci.yml`,
-`cli-e2e.yml`, `federation-e2e.yml`, `library-ci.yml`,
-`a2a-copy-guardrails.yml`, `exception-deadlines.yml`).
+Keep (aweb): the suites and infra (`make test` content, cli e2e, federation e2e, channel
+integration, locked suites, freshness, audits, `docker-compose.e2e*.yml`); version guards
+(`check-server-version-bump.sh`, `cli-release-version.sh`); copy/provenance guards; the three
+exact-publish scripts + tests; `scripts/e2e/test_pointer_adapter_ac_pin.py` and
+`test_pointer_adapter_marketplace.py` (retargeted, driver protocol removed); all current PR checks.
 
-Replace (aweb): `pypi-release.yml`, `npm-release.yml`, `awid-image-release.yml`
-(re-trigger from `release`; strip stage/continuation provenance; keep exact-match
-publish and cheap verify); `aw-release.yml` and `a2a-gateway-release.yml`
-(re-trigger from `release`; no tag-triggered publication remains);
-`scripts/pointer-adapter-marketplace-pointer.py` and `pointer-adapter-ac-pin.py`
-(become continue steps, driver protocol removed); `make release-awid-site`
-(invoked by continue); `.claude/skills/release`, `deploy-awid-site`,
-`cross-repo-change`, and `docs/contributing.md` release sections (rewritten).
+Replace (aweb): `pypi-release.yml`, `npm-release.yml`, `awid-image-release.yml` (trigger from
+`release`; drop stage/continuation provenance; keep exact-match publish + cheap verify);
+`aw-release.yml`, `a2a-gateway-release.yml` (trigger from `release`; no tag-triggered
+publication remains); `library-ci.yml`, `federation-e2e.yml`, `server-ci.yml`, `a2a-copy-guardrails.yml`
+lose their `push: main` triggers, keeping PR checks; both pointer-adapter scripts (become
+continue steps); `make release-awid-site` (invoked by continue); `.claude/skills/release`,
+`deploy-awid-site`, `cross-repo-change`, and `docs/contributing.md` release sections
+(rewritten).
 
-Delete (aweb): `scripts/release_driver.py`; `release/components.toml` and
-`release/measurements/`; `.release-runs/`; `release-anchor.yml`;
-`scripts/release_receipt_archive.py`; the skew-harness family
-(`release_skew_harnesses.py`, `release_skew_cli_server.py`,
-`release_channel_pi_skew.py`, `release_federation_skew.py`,
-`release_persisted_state_skew.py`) and `measure-release-*` targets; all
-`scripts/e2e/test_release_*` and `test_pointer_adapter_*` tests tied to deleted
-code; `ship.yml` and the `ship`/`ship-gate`/`ship-suites`/`check-ship-*`
-targets with `run-ship-suites.sh`/`ship-env.sh` (suite list moves into the
-prepare gate); the per-component `release-*-{check,tag,push}` Makefile lane;
-`scripts/check-release-tag-monotonic.sh` (+ self-test; both callerless);
-`docs/runnerless-release.md`; `docs/setup-surface-release-gates.md` (fold
-still-live checks into the gate first); the `test_ship_ci_contract.py` and
-`test_release_gate_contract.py` contracts are rewritten against the new
-workflows or deleted with them.
+Delete (aweb): `scripts/release_driver.py`; `release/` (graph, measurements); `.release-runs/`;
+`.github/workflows/release-anchor.yml`; `scripts/release_receipt_archive.py`; skew harnesses
+`release_skew_harnesses.py`, `release_skew_cli_server.py`, `release_channel_pi_skew.py`,
+`release_federation_skew.py`, `release_persisted_state_skew.py` and `measure-release-*` targets;
+under `scripts/e2e/`, exactly the 12 driver/skew tests `test_release_adapter.py`, `test_release_adopted_preplan.py`, `test_release_channel_pi_skew.py`, `test_release_driver.py`, `test_release_driver_cli.py`, `test_release_federation_skew.py`, `test_release_persisted_state_skew.py`, `test_release_receipt_archive.py`, `test_release_receipt_process.py`, `test_release_repository_measurement.py`, `test_release_runnerless.py`, `test_release_skew_cli_server.py`, plus the skew-cell helpers `test_cli_server_skew_shell.py`, `run_cli_server_skew_cell.sh`, `mark_read_skew_control.py`; `test_release_gate_contract.py` and `test_ship_ci_contract.py` (rewritten with their workflows or deleted with them). Mechanical check: 12 deleted + 2 rewrite-or-delete + 2 kept pointer-adapter tests = all 16 matching files;
+`ship.yml` and the `ship*`/`check-ship-*` targets with `run-ship-suites.sh`/`ship-env.sh`; the
+per-component `release-*-{check,tag,push}` Makefile lane; `check-release-tag-monotonic.sh` +
+self-test (callerless); `docs/runnerless-release.md`; `docs/setup-surface-release-gates.md`
+(fold still-live checks into the gate).
 
-Keep (AC): `make release-ready` content as the AC Docker gate; migration
-manifest and verifiers; `check_release_model.py` / `check_release_overlay.py`
-(re-targeted to wheels-only); `release-pin.toml` + lock mechanics; two-service
-and journey suites; site deploy targets; `prod-migrate-direct` as the scripted
-migration step.
+Suite mapping (F4): before `ship.yml` and its wrappers are deleted, every unique
+artifact-relevant suite they run is mapped into the local Docker gate, and that gate passes
+green from a clean checkout — in the same change set. The ship gate's currently red suites
+(audit F4) are fixed, not dropped. A duplicate is removed only with proof the survivor covers
+it; an irrelevant suite only with evidence it covers no released artifact. Failures are never
+masked, skipped, grandfathered, or converted to warnings.
 
-Replace (AC): `aweb-cloud-ci-cd.yml` (trigger from `release`, keep thin
-build/push/model checks, emit digest); `ship`/`ship-tag`/`release`/`deploy`
-targets (become the two commands); the manual Render procedure (scripted
-digest deploy + verify); `.claude/skills/ship` and the ops release SOP.
+AC — keep: `make release-ready` content as the AC gate; migration manifest + verifiers;
+two-service and journey suites; site deploy targets; `prod-migrate-direct` as the scripted
+migration step. Replace: `aweb-cloud-ci-cd.yml` (trigger from `release`; keep thin build/push
+checks; emit digest); `ship`/`ship-tag`/`release`/`deploy` targets (become the two commands);
+the manual Render procedure (scripted digest deploy + verify); `.claude/skills/ship` and the ops
+release SOP. Delete (F1): the `Dockerfile.release` git-source overlay, its
+`aweb_server`/`aweb_awid` build contexts and CI aweb checkout, `release-pin.toml`, and the
+`check_release_model.py`/`check_release_overlay.py` assertions that exist only to require the
+overlay (floor==lock==published checks are kept).
 
-Delete/fix (AC): the `Dockerfile.release` source overlay (F1); stale
-`ghcr.io/awebai/aweb-cloud` references (`Makefile` `PROD_IMAGE`,
-`OPERATIONS.md`, `docker-compose.prod.yml`); the dangling "Cloud Deploy Image"
-reference in `ci-failure-alert.yml`; the stale `use-aweb-pypi` refusal.
+Audit discrepancies, each addressed:
+
+| # | Disposition |
+|---|---|
+| D1 | a2a-gateway joins the release-branch set; its tag path dies |
+| D2 | aw npm platform packages + `aweb-a2a-gw` declared in the artifact table; registry-verified in continue step 2 |
+| D3 | the ZIPs are a declared skills output |
+| D4 | dead monotonic guard deleted; per-surface guards stay |
+| D5 | graph `sites` lane dies with the graph; the Make target survives as a continue step |
+| D6 | `awid-release.yml` reference dies with its Makefile lane |
+| D7 | coordinator memory naming nonexistent workflows is corrected |
+| D8 | stale `ghcr.io/awebai/aweb-cloud` refs (`Makefile` `PROD_IMAGE`, `OPERATIONS.md`, `docker-compose.prod.yml`) become `ghcr.io/awebai/ac` |
+| D9 | dangling "Cloud Deploy Image" reference removed |
+| D10 | `use-aweb-pypi` rewritten for the wheels-only model |
+| D11 | committed `.claude-plugin/plugin.json` == `package.json` version equality asserted by the prepare gate |
+| D12 | tags become publication outputs only; `contributing.md` tag-push narrative rewritten |
+| D13 | `ship.yml` deleted per the F4 mapping above |
+
+Audit uncertainties as bounded verification criteria:
+
+| # | Verification |
+|---|---|
+| U1 | before the first release moving aw: read the `awebai/aw` workflow; confirm its dispatch trigger and that it publishes the GitHub Release and all seven npm packages |
+| U2 | before the first release moving channel/skills: read the live `marketplace.json`; confirm the adapter's expected shape |
+| U3 | before the first site deploy: read both Render static-site services' branch/trigger configuration |
+| U4 | query GHCR for `awebai/aweb-cloud`; delete or record-absent the stale namespace |
+| U5 | verify `ghcr.io/awebai/ac` tags/digests with one authenticated read; thereafter the workflow-emitted digest is authoritative |
+| U6 | the ship.yml library/blueprint pins die with ship.yml; confirm the cli-e2e PR workflow's checkouts remain current (outside the release train) |
 
 ## Residue check
 
-Implementation is complete only when, in both repositories: repository-wide
-searches for `release_driver`, `components.toml`, `release-anchor`,
-`runnerless`, `release-plan`, `release-run`, `release-receipt`, `ship.yml`,
-`ship-tag`, `stage-only`, `publish-continuation`, `manifest-id`, and the
-deleted doc/skill paths return only this document and its history; `make help`
-and both Makefiles expose no deleted target; no workflow in either repository
-can publish or deploy except the `release`-triggered ones defined here; every
-tag-triggered publication path is gone; obsolete tests and fixtures are deleted
-with the code they covered; and all surviving documentation describes the local
-Docker gate, thin GitHub publication, the two-repository staged train, and the
-one global go.
+Implementation is complete only when, in both repositories: repository-wide searches for
+`release_driver`, `components.toml`, `release-anchor`, `runnerless`, `release-plan`,
+`release-run`, `release-receipt`, `ship.yml`, `ship-tag`, `stage-only`, `publish-continuation`,
+`manifest-id`, `release-pin.toml`, and the deleted doc/skill paths return only this document and
+history; both Makefiles and `make help` expose no deleted target; no workflow can publish or
+deploy except the `release`-triggered ones defined here; every tag-triggered publication path
+is gone; no kept workflow triggers on `main` pushes; obsolete tests and fixtures are gone with
+their code; the F2 production configuration is verified in place; and all surviving docs
+describe the local Docker gate, thin GitHub publication, the staged train, and one global go.
