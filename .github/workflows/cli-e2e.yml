@@ -24,18 +24,6 @@ on:
       - "awid/**"
       - "server/**"
       - ".github/workflows/cli-e2e.yml"
-  push:
-    branches: [main]
-    paths:
-      - "cli/**"
-      - "docker-compose.e2e.yml"
-      - "docker-compose.e2e.cache.yml"
-      - "scripts/e2e-library-stack.sh"
-      - "scripts/e2e/**"
-      - "awid/**"
-      - "server/**"
-      - ".github/workflows/cli-e2e.yml"
-
 concurrency:
   group: cli-e2e-${{ github.ref }}
   cancel-in-progress: true

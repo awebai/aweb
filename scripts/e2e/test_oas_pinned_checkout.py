@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
 PIN_FILE = REPO_ROOT / "oas" / "upstream-test-pin.json"
 PREPARE_SCRIPT = REPO_ROOT / "scripts" / "prepare-pinned-oas.mjs"
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ship.yml"
+RELEASE_GATE_MAP = REPO_ROOT / "release-gate" / "suite-map.tsv"
 
 
 class OASPinnedCheckoutContractTests(unittest.TestCase):
@@ -182,15 +182,11 @@ class OASPinnedCheckoutContractTests(unittest.TestCase):
             self.assertIn("explicit OAS_TEST_ROOT override", result.stderr)
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
 
-    def test_ci_runs_the_canonical_ship_gate(self) -> None:
-        """What this file needs from ship is that CI runs the gate against full
-        history, so the OAS pin is exercised there. Which events trigger it is
-        pinned once, in test_ship_ci_contract.py; asserting it here too made one
-        trigger change fail in two places for one reason."""
-        workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertRegex(workflow, r"(?m)^\s*push:\s*$")
-        self.assertIn("make ship", workflow)
-        self.assertIn("fetch-depth: 0", workflow)
+    def test_clean_release_gate_runs_the_pinned_oas_contract(self) -> None:
+        """The local release gate must execute the OAS seam from its fixed map."""
+        suite_map = RELEASE_GATE_MAP.read_text(encoding="utf-8")
+        self.assertIn("oas\tjourney\t_release-oas\n", suite_map)
+        self.assertIn("oas-proof-helpers\tjourney\ttest-oas-proof-helpers\n", suite_map)
 
 
 if __name__ == "__main__":

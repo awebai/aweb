@@ -8888,32 +8888,6 @@ register_authority(
 )
 
 
-def ship_gate_warning(source_sha: str) -> dict:
-    """Informational only: GitHub absence/outage can never block a release."""
-    try:
-        result = subprocess.run(
-            [
-                "gh", "run", "list", "--workflow", "ship.yml",
-                "--commit", source_sha, "--limit", "1",
-                "--json", "conclusion,url",
-            ],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0:
-            return {"status": "unknown", "detail": result.stderr.strip()}
-        runs = json.loads(result.stdout)
-        if not runs:
-            return {"status": "none", "detail": "no ship.yml run found"}
-        conclusion = runs[0].get("conclusion")
-        return {
-            "status": "success" if conclusion == "success" else "failure",
-            "detail": conclusion or "incomplete",
-            "url": runs[0].get("url"),
-        }
-    except Exception as exc:  # informational warning, never a gate
-        return {"status": "unknown", "detail": str(exc)}
-
-
 def main(argv: list[str] | None = None, providers: Providers | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--graph", default=str(GRAPH_PATH))
@@ -9321,7 +9295,6 @@ def main(argv: list[str] | None = None, providers: Providers | None = None) -> i
                     ),
                     "declared_input_problems": problems,
                     "delivery_disclosures": disclosures,
-                    "ship_gate": ship_gate_warning(source_sha),
                     "plan_digest": plan_digest(plan, graph),
                 },
                 indent=2,

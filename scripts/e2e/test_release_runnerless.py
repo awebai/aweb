@@ -3,7 +3,6 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -120,13 +119,6 @@ class RunnerlessTests(unittest.TestCase):
                 resolver.resolve(record, edge)["supported_versions"],
                 {"server": ["1.26.35"]},
             )
-
-    def test_ship_gate_status_is_informational_and_never_blocks(self):
-        with mock.patch.object(rd.subprocess, "run", side_effect=OSError("offline")):
-            self.assertEqual(rd.ship_gate_warning("a" * 40)["status"], "unknown")
-        completed = mock.Mock(returncode=0, stdout='[{"conclusion":"failure","url":"u"}]', stderr="")
-        with mock.patch.object(rd.subprocess, "run", return_value=completed):
-            self.assertEqual(rd.ship_gate_warning("a" * 40)["status"], "failure")
 
     def test_registry_success_can_defer_tag_release_as_resumable_continuation(self):
         with tempfile.TemporaryDirectory() as tmp:

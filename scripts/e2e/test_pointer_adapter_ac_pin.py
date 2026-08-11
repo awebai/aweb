@@ -82,7 +82,7 @@ def require_declared_ac_checkout() -> Path:
 
     This suite executes AC's own release-verify-model against AC's real tree, so
     it cannot be reduced to a fixture. AC is private and this repository's gate
-    carries no credential for it by design -- ship.yml checks out public inputs
+    carries no credential for it by design -- the local gate uses public inputs
     only -- so on the runner there is no declaration and none can be made. It
     previously died at a hardcoded clone having run zero tests, which reads as a
     defect in the pin contract rather than as coverage the gate cannot have.

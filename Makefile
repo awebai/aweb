@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract check-oas-pi-launch-order test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release-local-gate-contract test-release-train test-release-gate-contract test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract check-oas-pi-launch-order test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -14,8 +14,10 @@
 	test-channel-integration \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
 	release-plan release-run release-receipt test-release-driver test-release-runnerless test-release-receipt-process test-pointer-adapter test-pointer-adapter-ac-pin test-release-repository-measurement test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
-	release-all-check \
-	cli-e2e ship-suites ship ship-gate check-ship-invocation check-ship-owner
+	cli-e2e _release-gate-version-authority _release-gate-channel-version _release-node-deps \
+	_release-unit-channel _release-unit-channel-core _release-unit-pi _release-oas _release-marketplace-pointer \
+	_release-artifact-server _release-artifact-awid-package _release-artifact-awid-image \
+	_release-artifact-channel _release-artifact-pi _release-artifact-skills _release-artifact-a2a-image
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
@@ -53,7 +55,6 @@ help:
 	@echo "  test-channel-core Run channel-core tests"
 	@echo "  test-channel-core-process-guard Run the multi-process DeliveryStore guard (release path)"
 	@echo "  test-pi-extension Run pi-extension tests"
-	@echo "  test-ship-ci-contract Verify the canonical mandatory ship workflow"
 	@echo "  test-sot-source-inventories Verify canonical SOT tables and REST routers against source"
 	@echo "  test-vector-provenance Enforce root-only public conformance vectors and consumer paths"
 	@echo "  test-federation-error-reference Verify generated stable error/status/retryability reference"
@@ -102,8 +103,6 @@ help:
 	@echo "    See the 'release' skill for exact argument forms and hazards:"
 	@echo "    publication is not delivery, publication is immutable."
 	@echo ""
-	@echo "  release-all-check   Validate ALL products before release"
-	@echo ""
 	@echo "  Per-artifact CHECK gates (still current):"
 	@echo "    release-server-check, release-channel-check, release-awid-check,"
 	@echo "    release-a2a-gateway-check, release-cli-version-check"
@@ -123,20 +122,9 @@ build:
 
 # ORDER IS LOAD-BEARING FOR THE FIRST FOUR - do not sort this list.
 #
-# make runs these left to right and ship.yml reaches `make test` on 93% of runs (43/46 over
-# the full retained history) but is CANCELLED partway through it: cancel-in-progress plus a
-# ~120-minute job gives a 54% cancellation rate, and a cancelled run kills the prerequisites
-# it has not reached yet without reporting that it did. The three checks below cost about
-# two seconds together and read committed files only, so anything behind the long suites
-# executes on the runs that survive an hour of tests rather than on the runs that start.
-# Measured while they sat at positions 7-10: the stamp check executed on 1 of the 5 runs whose
-# Makefile contained it and the tidy check on 0 of 2, and every miss was a cancellation that
-# had already reached `make test`. aweb-aaxk.
-#
-# check-cli-go-tidy is here rather than behind test-cli by a deliberate reversal: it was placed
-# after it to inherit a warm module cache, and moving it forward reattributes that fetch rather
-# than adding one - about a second for 85MB when cold.
-test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-release-driver test-release-runnerless test-release-receipt-process test-pointer-adapter test-release-repository-measurement test-release-skew-cli-server test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+# These cheap committed-source controls run first on every ordinary test run.
+# The expensive complete release proof is owned by the clean local-Docker gate.
+test: check-aw-commit-repo-stamp test-release-local-gate-contract test-release-train test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-release-driver test-release-runnerless test-release-receipt-process test-pointer-adapter test-release-repository-measurement test-release-skew-cli-server test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 # Editable AWID metadata is repeated in both committed Python locks. Check both
 # without repair, then prove a missing dependent-lock dependency is rejected.
@@ -201,7 +189,7 @@ regenerate-mcp-tools-reference:
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
-# fail on drift. Runs as part of release-all-check.
+# fail on drift. The clean local release gate runs it before publication.
 freshness:
 	bash scripts/check-freshness.sh
 
@@ -328,8 +316,11 @@ test-channel-core-process-guard:
 test-pi-extension:
 	cd pi-extension && npm test
 
-test-ship-ci-contract:
-	python3 scripts/e2e/test_ship_ci_contract.py
+test-release-local-gate-contract:
+	python3 scripts/e2e/test_release_local_gate_contract.py
+
+test-release-train:
+	python3 scripts/e2e/test_release_train.py
 
 test-release-gate-contract:
 	python3 scripts/e2e/test_release_gate_contract.py
@@ -805,141 +796,83 @@ release-cli-push: release-cli-version-check
 
 # ── Unified release ──────────────────────────────────────────────────
 
-release-all-check: check-ship-invocation
-	@echo "=== Validating versions ==="
-	@echo "  server:  $(SERVER_VERSION)"
-	@echo "  awid:    $(AWID_VERSION)"
-	@echo "  channel: $(CHANNEL_VERSION) (plugin: $(CHANNEL_PLUGIN_VERSION))"
-	@echo "  cli:     $(CLI_VERSION)"
-	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
-		(echo "ERROR: channel package.json != plugin.json"; exit 1)
-	$(MAKE) release-cli-version-check
-	@echo ""
-	@echo "=== Verifying CLI release VCS stamps ==="
-	$(MAKE) check-cli-release-vcs-stamps
-	@echo ""
-	@echo "=== Running all tests ==="
-	$(MAKE) test
-	@echo ""
-	@echo "=== Building artifacts ==="
-	$(MAKE) release-server-check
-	$(MAKE) release-channel-check
-	@echo ""
-	@echo "=== Checking generated-artifact freshness ==="
-	$(MAKE) freshness
-	@echo ""
-# ORDER MATTERS: the audits run AFTER release-channel-check because that target
-# is what runs `npm ci` in channel-core and channel. Moved earlier,
-# check-node-audit fails on a fresh checkout - its build-provenance step cannot
-# resolve the channel-core module before it is installed.
-	@echo "=== Running the multi-process DeliveryStore guard ==="
-	$(MAKE) test-channel-core-process-guard
-	@echo ""
-	@echo "=== Running vulnerability audits ==="
-	$(MAKE) check-node-audit
-	$(MAKE) check-go-vulnerability-audit
-	@echo ""
-	@echo "=== All checks passed ==="
+# Internal steps consumed only by scripts/release-local-gate.sh's fixed map.
+# They are intentionally absent from help; release-prepare will invoke the gate.
+_release-gate-version-authority:
+	@test -n "$(RELEASE_BASE_SHA)" || (echo "RELEASE_BASE_SHA is required"; exit 2)
+	./scripts/check-server-version-bump-test.sh
+	./scripts/check-server-version-bump.sh "$(RELEASE_BASE_SHA)"
+	./scripts/cli-release-version.sh check "$(CLI_VERSION)"
 
-# `make ship` is the canonical pre-tag-push gate. ALWAYS use this before
-# pushing any release tag (server-v*, aw-v*, awid-v*, awid-service-v*,
-# channel-v*). Do NOT substitute `make test` alone — it is a strict
-# subset and will not catch packaging/build failures or e2e regressions.
-#
-# This target adds awid build-check + the e2e user journeys on top of
-# release-all-check. All are load-bearing for releases:
-#  - awid build-check (uv build + Docker image) catches awid packaging
-#    issues before the GHCR/PyPI workflows do.
-#  - test-e2e catches integration regressions across CLI + server +
-#    awid that unit/integration tests miss in isolation.
-#  - test-federation-e2e catches cross-server mail/chat federation
-#    regressions that single-server user journeys cannot see.
-#  - cli e2e (make -C cli e2e) runs the real-stack profile/team/Library net:
-#    awid + aweb + Library from source, seeded, driven by the real aw binary.
-#    It catches the materialize/team/Library regressions hermetic tests miss
-#    (the class of P0s that shipped on green-plus-ACK). Requires Docker and the
-#    sibling ../library + ../blueprints checkouts (see docs/e2e-library-stack.md).
-#
-# Banked discipline: releases 1.18.3 / 1.18.4 / 1.18.5 / 1.18.6 each
-# ran `make test` instead of the canonical comprehensive gate. Even
-# though GHA caught build failures downstream, the local gate should
-# be the source of truth before tag-push.
+_release-gate-channel-version:
+	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
+		(echo "channel package.json != plugin.json"; exit 1)
+
+_release-node-deps:
+	cd channel-core && npm ci --no-audit --no-fund
+	cd channel && npm ci --no-audit --no-fund
+	cd pi-extension && npm ci --no-audit --no-fund
+
+_release-unit-channel:
+	cd channel && npm test
+
+_release-unit-channel-core:
+	cd channel-core && npm test
+
+_release-unit-pi:
+	cd pi-extension && npm test
+
+_release-oas: check-oas-launch-environment-contract check-oas-pi-launch-order build
+	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node --test oas/test/*.test.mjs
+
+_release-marketplace-pointer:
+	python3 scripts/e2e/test_pointer_adapter_marketplace.py
+
+_release-artifact-server:
+	rm -rf server/dist
+	cd server && uv build
+	test -f server/dist/aweb-$(SERVER_VERSION).tar.gz
+	test -f server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
+
+_release-artifact-awid-package:
+	rm -rf awid/dist
+	cd awid && uv build
+	test -f awid/dist/awid_service-$(AWID_VERSION).tar.gz
+	test -f awid/dist/awid_service-$(AWID_VERSION)-py3-none-any.whl
+
+_release-artifact-awid-image:
+	@mkdir -p /tmp/aweb-release-gate
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-f awid/Dockerfile.release --output type=oci,dest=/tmp/aweb-release-gate/awid.oci.tar .
+	test -s /tmp/aweb-release-gate/awid.oci.tar
+
+_release-artifact-channel:
+	cd channel && npm run build
+	cd channel && npm pack --ignore-scripts --pack-destination /tmp/aweb-release-gate
+
+_release-artifact-pi:
+	cd pi-extension && npm run build
+	cd pi-extension && npm pack --ignore-scripts --pack-destination /tmp/aweb-release-gate
+
+_release-artifact-skills:
+	cd packages/claude-skills && npm pack --ignore-scripts --pack-destination /tmp/aweb-release-gate
+	cd packages/claude-ai-skills && ./build-zips.sh
+	@test "$$(find packages/claude-ai-skills/dist -name 'aweb-*.zip' -type f | wc -l | tr -d ' ')" = 5
+
+_release-artifact-a2a-image:
+	@mkdir -p /tmp/aweb-release-gate
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-f cli/go/Dockerfile.a2a-gw \
+		--build-arg VERSION=$(A2A_GATEWAY_VERSION) \
+		--build-arg RELEASE_TAG=a2a-gw-v$(A2A_GATEWAY_VERSION) \
+		--build-arg COMMIT=$$(git rev-parse HEAD) \
+		--build-arg DATE=1970-01-01T00:00:00Z \
+		--output type=oci,dest=/tmp/aweb-release-gate/a2a-gateway.oci.tar cli/go
+	test -s /tmp/aweb-release-gate/a2a-gateway.oci.tar
+
+# Real-stack CLI/Library journey retained in the fixed local release gate.
 cli-e2e:
 	COMPOSE_BAKE="$${LIBRARY_E2E_COMPOSE_BAKE:-}" $(MAKE) -C cli e2e
-
-# The suites ship runs after the build. None of them consumes another's output -
-# awid:release-test is built by release-awid-check and read by nothing else - so a
-# failure in one must not remove the evidence the others would have produced.
-# make stops a recipe at the first failing line, which is why these are handed to
-# a runner instead of being recipe lines.
-#
-# Assigned with := so the environment cannot change what the gate runs. A
-# deliberate demonstration overrides it on the command line, which make allows
-# and the environment does not.
-SHIP_SUITES := release-awid-check test-channel-integration test-federation-e2e test-e2e cli-e2e
-
-ship-suites:
-	@MAKE="$(MAKE)" ./scripts/run-ship-suites.sh $(SHIP_SUITES)
-
-# The gate derives every release version and its suite list itself. Any
-# command-line override rides MAKEOVERRIDES into nested makes: CLI_VERSION
-# contaminates the version scenario fixtures, and SHIP_SUITES= can empty the
-# suite list while the run still reports green. So the only accepted
-# invocation is plain `make ship`:
-#  - nonempty MAKEOVERRIDES refuses every command-line override by name;
-#  - the origin check refuses `make -e`, where the environment would override
-#    the file assignments (without -e those assignments win, which is why
-#    environment copies of the other release variables are inert and allowed);
-#  - CLI_VERSION is additionally refused from the environment outright.
-check-ship-invocation:
-	@if [ "$(origin MAKEOVERRIDES)" = "command line" ]; then \
-		echo "ERROR: ship refuses MAKEOVERRIDES on the command line; suppressing override propagation is itself an override."; \
-		echo "       Run plain 'make ship'."; \
-		exit 1; \
-	fi
-	@if [ -n "$(MAKEOVERRIDES)" ]; then \
-		echo "ERROR: ship refuses command-line variable overrides: $(MAKEOVERRIDES)"; \
-		echo "       The gate derives its own versions and suite list. Run plain 'make ship'."; \
-		exit 1; \
-	fi
-	@case "$(origin SERVER_VERSION)/$(origin AWID_VERSION)/$(origin CHANNEL_VERSION)/$(origin CLI_VERSION)/$(origin SHIP_SUITES)" in \
-		*command*|*environment*) \
-			echo "ERROR: ship refuses overridden release variables (make -e or command line): SERVER_VERSION AWID_VERSION CHANNEL_VERSION CLI_VERSION SHIP_SUITES"; \
-			exit 1;; \
-	esac
-	@if [ -n "$$CLI_VERSION" ]; then \
-		echo "ERROR: ship refuses CLI_VERSION from the environment; the gate derives the version itself."; \
-		echo "       Intentional version bumps go through the release driver."; \
-		exit 1; \
-	fi
-
-# ship-gate assumes services, toolchain, and inputs that only ship-env.sh
-# establishes; reaching it by name skips all of that ownership.
-check-ship-owner:
-	@if [ -z "$$AWEB_SHIP_ENV_READY" ]; then \
-		echo "ERROR: ship-gate refuses to run outside scripts/ship-env.sh; run plain 'make ship'."; \
-		exit 1; \
-	fi
-
-ship: check-ship-invocation
-	@./scripts/ship-env.sh $(MAKE) ship-gate
-
-# The owner check is ship-gate's ONLY prerequisite: a sibling prerequisite
-# races it under parallel make, letting the gate start work before the
-# refusal. Recipe-after-prerequisite is a make guarantee at any -j, so the
-# gate stages run as sequential sub-makes from the recipe.
-ship-gate: check-ship-owner
-	$(MAKE) release-all-check
-	@echo ""
-	$(MAKE) ship-suites
-	@echo ""
-	@echo "=== ship: ALL pre-release checks passed ==="
-	@echo "    server:  $(SERVER_VERSION)"
-	@echo "    awid:    $(AWID_VERSION)"
-	@echo "    channel: $(CHANNEL_VERSION)"
-	@echo "    cli:     $(CLI_VERSION)"
-	@echo ""
-	@echo "    Ready for tag-push."
 
 clean:
 	@echo "Cleaning build artifacts..."
