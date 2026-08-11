@@ -106,12 +106,11 @@ dependency-only derived commit created, verified, and gated automatically before
 the go cannot waive it. Juan replies with one go.
 
 Prepare writes the displayed card and gate references to one fixed, git-local, untracked card
-file. Continue takes no arguments: it reads only that file and rejects a missing file or any
-material mismatch — loss or change means fresh prepare/card/go. The file is transient: reused
-for idempotent retry until continue reaches DONE, consumed and removed at DONE; after removal,
-another release requires a fresh prepare/card/go. It carries no release ID and is not a manifest
-protocol, receipt, audit store, or cross-machine mechanism; workflow, registry, and provider
-records remain the audit trail.
+file. Continue takes no arguments: it reads only that file and rejects any material mismatch.
+The file is transient: reused for idempotent retry until continue reaches DONE, then consumed
+and removed; a missing, changed, or consumed card means a fresh prepare/card/go. It carries no
+release ID and is not a manifest protocol, receipt, audit store, or cross-machine mechanism;
+workflow, registry, and provider records remain the audit trail.
 
 ### `make release-continue` (after the go)
 
@@ -162,12 +161,12 @@ provider/registry records.
 
 ## Production configuration (F2/C1)
 
-No production change occurs during implementation or rehearsal. While the live state requires
-the one-time correction (today: mutable `latest` tag, auto-deploy enabled), the card shows it as
-pending; the first post-go `release-continue` performs it once the exact AC digest exists
-(continue step 7), and subsequent releases fail closed if the standing properties — explicit
-immutable digest, auto-deploy disabled — have regressed. The known service only, no
-provider-account discovery framework. Rollback deploys a previous digest the same way.
+No production change occurs during implementation or rehearsal. While the live state requires the
+one-time correction (today: mutable `latest` tag, auto-deploy enabled), the card shows it as pending;
+the first post-go `release-continue` performs it once the exact AC digest exists (continue step 7), and
+subsequent releases fail closed if the standing properties — explicit immutable digest, auto-deploy
+disabled — have regressed. The known service only, no provider-account discovery framework. Rollback
+deploys a previous digest the same way.
 
 ## GitHub outage (F3)
 
