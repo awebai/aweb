@@ -47,18 +47,8 @@ def git(*args: str, cwd: Path) -> str:
     return result.stdout.strip()
 
 
-def replace_artifact(key: str, **changes: object) -> tuple[rt.Artifact, ...]:
-    return tuple(
-        dataclasses.replace(artifact, **changes) if artifact.key == key else artifact
-        for artifact in rt.ARTIFACTS
-    )
-
-
 class FixedContractTests(unittest.TestCase):
-    def test_literal_contract_has_the_exact_release_inventory(self) -> None:
-        rt.validate_fixed_contract(rt.ARTIFACTS, rt.DAG_EDGES, (rt.CARD_GIT_PATH,))
-        self.assertEqual(len(rt.ARTIFACTS), 12)
-        self.assertEqual(len(rt.DAG_EDGES), 10)
+    def test_literal_artifact_rows_and_outputs_are_exact(self) -> None:
         self.assertEqual(
             rt.AW_NPM_PACKAGES,
             (
@@ -73,70 +63,216 @@ class FixedContractTests(unittest.TestCase):
         )
         self.assertEqual(rt.AW_BINARIES, ("aw", "aweb-a2a-gw"))
         self.assertEqual(
+            rt.SKILL_SOURCES,
+            (
+                "aweb-coordination",
+                "aweb-messaging",
+                "aweb-team-membership",
+                "aweb-bootstrap",
+                "aweb-identity",
+            ),
+        )
+        self.assertEqual(
             rt.SKILL_ZIPS,
-            tuple(f"{name}.zip" for name in rt.SKILL_SOURCES),
+            (
+                "aweb-coordination.zip",
+                "aweb-messaging.zip",
+                "aweb-team-membership.zip",
+                "aweb-bootstrap.zip",
+                "aweb-identity.zip",
+            ),
         )
         self.assertEqual(rt.OCI_PLATFORMS, ("linux/amd64", "linux/arm64"))
-
-        by_key = {artifact.key: artifact for artifact in rt.ARTIFACTS}
         self.assertEqual(
-            by_key["aw-cli"].targets,
-            ("github:awebai/aw:release",)
-            + tuple(f"npm:{package}" for package in rt.AW_NPM_PACKAGES),
-        )
-        self.assertEqual(by_key["aw-cli"].outputs, rt.AW_BINARIES)
-        self.assertEqual(by_key["skills"].outputs, rt.SKILL_ZIPS)
-        self.assertEqual(by_key["skills"].bundled_inputs, rt.SKILL_SOURCES)
-        self.assertEqual(by_key["pi-extension"].bundled_inputs,
-                         ("channel-core",) + rt.SKILL_SOURCES)
-        self.assertEqual(by_key["awid-image"].bundled_inputs, ("server-source",))
-        self.assertEqual(by_key["a2a-gateway-image"].version_source,
-                         "equals:server/pyproject.toml")
-        self.assertEqual(
-            {by_key["awid-site"].targets[0], by_key["aweb-site"].targets[0]},
-            {
-                "render-static:deploy-awid-landing",
-                "render-static:deploy-landing",
-            },
-        )
-
-    def test_added_or_reordered_edge_is_refused(self) -> None:
-        added = rt.DAG_EDGES + (
-            rt.ReleaseEdge(11, "ordering", ("a", "b"), "not approved"),
-        )
-        with self.assertRaisesRegex(rt.ContractError, "ten audited edges"):
-            rt.validate_fixed_contract(rt.ARTIFACTS, added, (rt.CARD_GIT_PATH,))
-        with self.assertRaisesRegex(rt.ContractError, "order or content"):
-            rt.validate_fixed_contract(
-                rt.ARTIFACTS,
-                (rt.DAG_EDGES[1], rt.DAG_EDGES[0], *rt.DAG_EDGES[2:]),
-                (rt.CARD_GIT_PATH,),
-            )
-
-    def test_omitted_artifact_platform_package_binary_or_zip_is_refused(self) -> None:
-        mutations = {
-            "artifact": rt.ARTIFACTS[:-1],
-            "platform": replace_artifact("awid-image", platforms=("linux/amd64",)),
-            "package": replace_artifact(
-                "aw-cli", targets={a.key: a for a in rt.ARTIFACTS}["aw-cli"].targets[:-1]
+            rt.ARTIFACTS,
+            (
+                rt.Artifact(
+                    "aweb-server",
+                    "aweb",
+                    "aweb server",
+                    ("pypi:aweb",),
+                    "server/pyproject.toml",
+                ),
+                rt.Artifact(
+                    "awid-service",
+                    "aweb",
+                    "AWID service",
+                    ("pypi:awid-service",),
+                    "awid/pyproject.toml",
+                ),
+                rt.Artifact(
+                    "awid-image",
+                    "aweb",
+                    "AWID image",
+                    ("ghcr.io/awebai/awid",),
+                    "awid/pyproject.toml",
+                    platforms=rt.OCI_PLATFORMS,
+                    bundled_inputs=("server-source",),
+                ),
+                rt.Artifact(
+                    "aw-cli",
+                    "aweb",
+                    "aw CLI",
+                    ("github:awebai/aw:release",)
+                    + tuple(f"npm:{package}" for package in rt.AW_NPM_PACKAGES),
+                    "tag-history:aw-v*",
+                    outputs=rt.AW_BINARIES,
+                    external_repository="awebai/aw",
+                ),
+                rt.Artifact(
+                    "channel-plugin",
+                    "aweb",
+                    "channel plugin",
+                    ("npm:@awebai/claude-channel",),
+                    "channel/package.json",
+                    bundled_inputs=("channel-core",),
+                ),
+                rt.Artifact(
+                    "pi-extension",
+                    "aweb",
+                    "Pi extension",
+                    ("npm:@awebai/pi",),
+                    "pi-extension/package.json",
+                    bundled_inputs=("channel-core",) + rt.SKILL_SOURCES,
+                ),
+                rt.Artifact(
+                    "skills",
+                    "aweb",
+                    "skills",
+                    (
+                        "npm:@awebai/claude-skills",
+                        "github:awebai/aweb:skills-release-zips",
+                    ),
+                    "packages/claude-skills/package.json",
+                    outputs=rt.SKILL_ZIPS,
+                    bundled_inputs=rt.SKILL_SOURCES,
+                ),
+                rt.Artifact(
+                    "a2a-gateway-image",
+                    "aweb",
+                    "a2a-gateway image",
+                    ("ghcr.io/awebai/a2a-gateway",),
+                    "equals:server/pyproject.toml",
+                    platforms=rt.OCI_PLATFORMS,
+                ),
+                rt.Artifact(
+                    "awid-site",
+                    "aweb",
+                    "awid.ai site",
+                    ("render-static:deploy-awid-landing",),
+                    None,
+                ),
+                rt.Artifact(
+                    "ac-image",
+                    "ac",
+                    "product image",
+                    ("ghcr.io/awebai/ac",),
+                    "backend/pyproject.toml",
+                    platforms=rt.OCI_PLATFORMS,
+                ),
+                rt.Artifact(
+                    "ac-production",
+                    "ac",
+                    "production deploy",
+                    ("render:aweb-cloud:image-digest",),
+                    "image:ghcr.io/awebai/ac@digest",
+                ),
+                rt.Artifact(
+                    "aweb-site",
+                    "ac",
+                    "aweb.ai site",
+                    ("render-static:deploy-landing",),
+                    None,
+                ),
             ),
-            "binary": replace_artifact("aw-cli", outputs=("aw",)),
-            "zip": replace_artifact("skills", outputs=rt.SKILL_ZIPS[:-1]),
-        }
-        for label, artifacts in mutations.items():
-            with self.subTest(label=label):
-                with self.assertRaisesRegex(rt.ContractError, "artifact inventory"):
-                    rt.validate_fixed_contract(
-                        artifacts, rt.DAG_EDGES, (rt.CARD_GIT_PATH,)
-                    )
+        )
 
-    def test_accidental_second_state_path_is_refused(self) -> None:
-        with self.assertRaisesRegex(rt.ContractError, "one git-local card"):
-            rt.validate_fixed_contract(
-                rt.ARTIFACTS,
-                rt.DAG_EDGES,
-                (rt.CARD_GIT_PATH, ".release-state.json"),
-            )
+    def test_literal_ten_edge_order_is_exact(self) -> None:
+        self.assertEqual(
+            tuple(
+                (edge.number, edge.kind, edge.nodes, edge.rule)
+                for edge in rt.DAG_EDGES
+            ),
+            (
+                (
+                    1,
+                    "ordering",
+                    ("awid-service", "aweb-server"),
+                    "public PyPI AWID dependency floor before aweb",
+                ),
+                (
+                    2,
+                    "ordering",
+                    ("aw-cli-npm-set", "pi-extension"),
+                    "all seven aw npm packages served before Pi when its floor moves",
+                ),
+                (
+                    3,
+                    "ordering",
+                    ("channel-plugin", "skills", "marketplace-pointer"),
+                    "channel and skills served before marketplace advance",
+                ),
+                (
+                    4,
+                    "ordering",
+                    (
+                        "intended-aweb-awid-public",
+                        "ac-dependency-commit",
+                        "ac-gate",
+                    ),
+                    "public packages before derived AC dependency commit and gate",
+                ),
+                (
+                    5,
+                    "ordering",
+                    ("ac-image", "ac-production", "digest-health-verification"),
+                    "AC image before deploy before digest and health verification",
+                ),
+                (
+                    6,
+                    "same-commit",
+                    ("channel-core", "channel-plugin", "pi-extension"),
+                    "one channel-core input in channel and Pi",
+                ),
+                (
+                    7,
+                    "same-commit",
+                    ("skill-source-set", "pi-extension", "skills", "skills-zips"),
+                    "the same five skill sources in every output",
+                ),
+                (
+                    8,
+                    "same-commit",
+                    ("server-source", "awid-image"),
+                    "server source in the same-commit AWID image",
+                ),
+                (
+                    9,
+                    "equality",
+                    ("a2a-gateway-image", "aweb-server"),
+                    "a2a-gateway version equals server version",
+                ),
+                (
+                    10,
+                    "independent",
+                    ("awid-site", "aweb-site"),
+                    "both site branch pushes are independent of the artifact train",
+                ),
+            ),
+        )
+
+    def test_only_the_fixed_git_local_card_path_exists(self) -> None:
+        self.assertEqual(rt.CARD_GIT_PATH, "aweb-release-card.json")
+        self.assertEqual(
+            {
+                name: value
+                for name, value in vars(rt).items()
+                if name.endswith(("_GIT_PATH", "_STATE_PATH"))
+            },
+            {"CARD_GIT_PATH": "aweb-release-card.json"},
+        )
+        self.assertFalse(hasattr(rt, "validate_fixed_contract"))
+        self.assertFalse(hasattr(rt, "ContractError"))
 
 
 class ValidationTests(unittest.TestCase):
@@ -348,6 +484,8 @@ class _RegistryHandler(BaseHTTPRequestHandler):
             body = json.dumps(
                 {"state": "present", "version": "1.2.3", "digest": DIGEST}
             ).encode()
+        elif self.path == "/declared-absent":
+            body = json.dumps({"state": "absent"}).encode()
         elif self.path == "/exact":
             body = json.dumps(
                 {"state": "present", "version": "1.2.3", "digest": DIGEST}
@@ -418,8 +556,8 @@ class BoundaryTests(unittest.TestCase):
                         self.base_url + path, "1.2.3", DIGEST, timeout=timeout
                     )
 
-    def test_malformed_registry_evidence_is_refused(self) -> None:
-        for path in ("/malformed", "/unknown"):
+    def test_malformed_or_self_declared_absence_is_refused(self) -> None:
+        for path in ("/malformed", "/unknown", "/declared-absent"):
             with self.subTest(path=path):
                 with self.assertRaises(rt.ObservationMalformed):
                     rt.observe_registry(

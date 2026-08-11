@@ -26,10 +26,6 @@ class ReleaseTrainError(RuntimeError):
     """Base error for the fixed release train foundation."""
 
 
-class ContractError(ReleaseTrainError):
-    """The literal artifact/edge/state contract was changed."""
-
-
 class ValidationError(ReleaseTrainError):
     """Material release input is not in its strict accepted form."""
 
@@ -109,7 +105,7 @@ OCI_PLATFORMS = ("linux/amd64", "linux/arm64")
 CARD_GIT_PATH = "aweb-release-card.json"
 
 
-_EXPECTED_ARTIFACTS = (
+ARTIFACTS = (
     Artifact(
         "aweb-server",
         "aweb",
@@ -209,9 +205,8 @@ _EXPECTED_ARTIFACTS = (
         None,
     ),
 )
-ARTIFACTS = _EXPECTED_ARTIFACTS
 
-_EXPECTED_DAG_EDGES = (
+DAG_EDGES = (
     ReleaseEdge(
         1,
         "ordering",
@@ -273,7 +268,6 @@ _EXPECTED_DAG_EDGES = (
         "both site branch pushes are independent of the artifact train",
     ),
 )
-DAG_EDGES = _EXPECTED_DAG_EDGES
 
 CARD_ARTIFACT_ORDER = (
     "awid-service",
@@ -286,26 +280,6 @@ CARD_ARTIFACT_ORDER = (
     "a2a-gateway-image",
     "ac-image",
 )
-
-
-def validate_fixed_contract(
-    artifacts: Sequence[Artifact],
-    edges: Sequence[ReleaseEdge],
-    state_paths: Sequence[str],
-) -> None:
-    """Reject any drift from the reviewed literal release contract."""
-
-    artifact_tuple = tuple(artifacts)
-    edge_tuple = tuple(edges)
-    path_tuple = tuple(state_paths)
-    if len(edge_tuple) != 10:
-        raise ContractError("the fixed release contract has exactly ten audited edges")
-    if edge_tuple != _EXPECTED_DAG_EDGES:
-        raise ContractError("the ten audited edges changed order or content")
-    if artifact_tuple != _EXPECTED_ARTIFACTS:
-        raise ContractError("the fixed artifact inventory changed")
-    if path_tuple != (CARD_GIT_PATH,):
-        raise ContractError("the release train has exactly one git-local card path")
 
 
 _SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -806,12 +780,10 @@ def observe_registry(
         raise ObservationMalformed(str(error)) from error
     evidence = _require_registry_mapping(document)
     state = evidence.get("state")
-    if state == "absent":
-        if set(evidence) != {"state"}:
-            raise ObservationMalformed("absent registry evidence has unknown fields")
-        return RegistryOutcome.ABSENT
     if state != "present":
-        raise ObservationMalformed("registry evidence state must be absent or present")
+        raise ObservationMalformed(
+            "registry evidence state must be present; absence requires HTTP 404"
+        )
     if set(evidence) != {"state", "version", "digest"}:
         raise ObservationMalformed(
             "present registry evidence requires exactly state, version, and digest"
