@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""AC pin adapter against exact AC's real release and lock contract.
-
-The fixture starts from exact AC main, is made into a coherent older release,
-and is pushed to a local bare remote. Every assertion drives the executable
-adapter through clone/intent/apply/read; successful state is checked with AC's
-own release-model, uv-lock, and migration-manifest gates.
-"""
+"""Local bare-remote/index proofs for AC public-dependency derivation."""
 
 from __future__ import annotations
 
@@ -15,482 +9,292 @@ import http.server
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import threading
-import tomllib
 import unittest
 import zipfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ADAPTER = REPO_ROOT / "scripts" / "pointer-adapter-ac-pin.py"
-AC_REPOSITORY = "github.com/awebai/ac"
-AC_CONTRACT_SHA = "2451cfeac6b9e6076daf00c34eacb47cafdfba22"
-OLD_SERVER_VERSION = "1.26.31"
-NEW_SERVER_VERSION = "1.26.35"
-OLD_AWID_VERSION = "0.5.13"
-NEW_AWID_VERSION = "0.5.14"
+OLD_AWEB = "1.2.3"
+NEW_AWEB = "1.2.4"
+OLD_AWID = "2.3.4"
+NEW_AWID = "2.3.5"
 
 
 def run(*args: str, cwd: Path, env=None, check=True) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        list(args), cwd=str(cwd), env=env, check=check,
-        capture_output=True, text=True,
-    )
+    return subprocess.run(list(args), cwd=str(cwd), env=env, check=check, capture_output=True, text=True)
 
 
 def git(*args: str, cwd: Path) -> str:
     return run("git", *args, cwd=cwd).stdout.strip()
 
 
-def declared_ac_checkout() -> Path | None:
-    """AC's checkout as DECLARED, in the driver's own EXTERNAL_CONTEXT spelling.
-
-    The release driver refuses to guess where AC is and takes
-    `repository=checkout` entries, absolute, because "environment-relative
-    guessing produced unsatisfiable checks". This suite reads the same
-    declaration rather than reaching for a hardcoded remote, so there is one
-    contract for where AC lives instead of two.
-
-    A declaration that is present but malformed is an operator error and raises;
-    only an ABSENT declaration is the environment this suite cannot run in.
-    """
-    for entry in os.environ.get("EXTERNAL_CONTEXT", "").split():
-        repository, separator, checkout = entry.partition("=")
-        if not separator or repository != AC_REPOSITORY:
-            continue
-        path = Path(checkout)
-        if not path.is_absolute():
-            raise AssertionError(
-                f"EXTERNAL_CONTEXT checkout must be absolute, got {checkout!r}; "
-                "a relative path lets the working directory decide identity"
-            )
-        if not (path / ".git").exists():
-            raise AssertionError(
-                f"EXTERNAL_CONTEXT names {path}, which is not a git checkout"
-            )
-        return path
-    return None
-
-
-def require_declared_ac_checkout() -> Path:
-    """Skip with disclosure where AC has not been declared.
-
-    This suite executes AC's own release-verify-model against AC's real tree, so
-    it cannot be reduced to a fixture. AC is private and this repository's gate
-    carries no credential for it by design -- the local gate uses public inputs
-    only -- so on the runner there is no declaration and none can be made. It
-    previously died at a hardcoded clone having run zero tests, which reads as a
-    defect in the pin contract rather than as coverage the gate cannot have.
-
-    Skipping ONLY on an absent declaration is the point: wherever AC is declared
-    -- a credentialed machine, and AC's own CI once aweb-abcy moves primary
-    coverage there -- all nine assertions still run against the real tree.
-
-    A skip nobody reads is how a gate quietly stops covering something, which is
-    the failure this task exists to correct, so the disclosure names what is
-    uncovered, what tracks it, and what covers it meanwhile. It goes to the gate
-    summary because a skipped run and the old blind failure both print
-    "Ran 0 tests": the disclosure is the only thing that tells them apart.
-    """
-    checkout = declared_ac_checkout()
-    if checkout is not None:
-        return checkout
-    disclosure = (
-        f"ac-pin contract suite SKIPPED: no EXTERNAL_CONTEXT entry declares "
-        f"{AC_REPOSITORY}, so AC's release-verify-model cannot run against AC's "
-        "real tree. THIS GATE DOES NOT COVER THE AC PIN CONTRACT. Tracked by "
-        "aweb-abcy, which moves primary coverage to where AC's tree exists. "
-        "Covered meanwhile by: the suite passing 9/9 against the real AC tree on "
-        "2026-08-09 (recorded on aweb-abce), and the release driver's ac-pin lane "
-        "executing AC's real release-model gates at pin-advance time through the "
-        "same EXTERNAL_CONTEXT declaration. To run it here, pass "
-        f"EXTERNAL_CONTEXT='{AC_REPOSITORY}=/absolute/path/to/ac'."
-    )
-    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary_path:
-        # The gate's own summary, so the disclosure is read without anyone
-        # scrolling a make log to find it.
-        with open(summary_path, "a", encoding="utf-8") as handle:
-            handle.write(f"### {disclosure}\n\n")
-    print(f"\n{disclosure}\n", file=sys.stderr, flush=True)
-    raise unittest.SkipTest(disclosure)
-
-
-def replace_dependency(path: Path, package: str, version: str) -> None:
-    text = path.read_text()
-    updated, count = re.subn(
-        rf'"{re.escape(package)}>=[^"]+"', f'"{package}>={version}"', text,
-        count=1,
-    )
-    if count != 1:
-        raise AssertionError(f"could not update {package} dependency in {path}")
-    path.write_text(updated)
-
-
-def write_release_pin(path: Path, *, version: str, sha: str) -> None:
-    path.write_text(
-        "# Exact aweb source identity used by AC release checks.\n\n"
-        "[aweb]\n"
-        f'version = "{version}"\n'
-        f'git_sha = "{sha}"\n'
-        f'git_ref = "server-v{version}"\n'
-    )
-
-
-def lock_package(path: Path, name: str) -> dict:
-    lock = tomllib.loads(path.read_text())
-    return next(package for package in lock["package"] if package["name"] == name)
-
-
-class QuietHandler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, format, *args):
-        pass
-
-
-def write_test_package(index_root: Path, name: str, version: str) -> None:
+def write_package(index: Path, name: str, version: str) -> None:
     normalized = name.replace("-", "_")
-    files = index_root / "files"
+    files = index / "files"
     files.mkdir(parents=True, exist_ok=True)
     wheel = files / f"{normalized}-{version}-py3-none-any.whl"
     dist_info = f"{normalized}-{version}.dist-info"
     with zipfile.ZipFile(wheel, "w") as archive:
         archive.writestr(
             f"{dist_info}/METADATA",
-            f"Metadata-Version: 2.3\nName: {name}\nVersion: {version}\n"
-            "Requires-Python: >=3.12\n",
+            f"Metadata-Version: 2.3\nName: {name}\nVersion: {version}\nRequires-Python: >=3.12\n",
         )
         archive.writestr(
             f"{dist_info}/WHEEL",
-            "Wheel-Version: 1.0\nGenerator: aweb-test\n"
-            "Root-Is-Purelib: true\nTag: py3-none-any\n",
+            "Wheel-Version: 1.0\nGenerator: aweb-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
         )
         archive.writestr(f"{dist_info}/RECORD", "")
     sdist = files / f"{normalized}-{version}.tar.gz"
-    package_root = f"{normalized}-{version}"
     with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp) / package_root
-        root.mkdir()
-        (root / "PKG-INFO").write_text(
+        package_root = Path(tmp) / f"{normalized}-{version}"
+        package_root.mkdir()
+        (package_root / "PKG-INFO").write_text(
             f"Metadata-Version: 2.3\nName: {name}\nVersion: {version}\n"
         )
-        (root / "pyproject.toml").write_text(
+        (package_root / "pyproject.toml").write_text(
             "[build-system]\nrequires = []\nbuild-backend = 'unused'\n"
         )
         with tarfile.open(sdist, "w:gz") as archive:
-            archive.add(root, arcname=package_root)
-    page = index_root / "simple" / name.replace("_", "-")
+            archive.add(package_root, arcname=package_root.name)
+    page = index / "simple" / name
     page.mkdir(parents=True, exist_ok=True)
     links = []
     for artifact in (sdist, wheel):
         digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
         links.append(f'<a href="/files/{artifact.name}#sha256={digest}">{artifact.name}</a>')
-    (page / "index.html").write_text("\n".join(links))
+    (page / "index.html").write_text("\n".join(links) + "\n")
 
 
-class AcPinAdapterTests(unittest.TestCase):
+class IndexHandler(http.server.SimpleHTTPRequestHandler):
+    modes: dict[str, str] = {}
+    counts: dict[str, int] = {}
+
+    def log_message(self, format, *args):
+        pass
+
+    def do_GET(self):
+        match = re.fullmatch(r"/simple/(aweb|awid-service)/?", self.path)
+        if match:
+            name = match.group(1)
+            self.counts[name] = self.counts.get(name, 0) + 1
+            mode = self.modes.get(name, "serve")
+            if mode == "lag" and self.counts[name] == 1:
+                self.send_error(404)
+                return
+            if mode == "absent":
+                self.send_error(404)
+                return
+            if mode == "auth":
+                self.send_error(401)
+                return
+            if mode == "outage":
+                self.send_error(503)
+                return
+            if mode == "malformed":
+                body = b"<html>not package evidence</html>"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        super().do_GET()
+
+
+class PublicDependencyAdapterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        declared = require_declared_ac_checkout()
         cls.fixture_tmp = tempfile.TemporaryDirectory()
-        root = Path(cls.fixture_tmp.name)
-        cls.uv_cache = root / "uv-cache"
+        cls.root = Path(cls.fixture_tmp.name)
+        cls.index = cls.root / "index"
+        for name, versions in (("aweb", (OLD_AWEB, NEW_AWEB)), ("awid-service", (OLD_AWID, NEW_AWID))):
+            for version in versions:
+                write_package(cls.index, name, version)
+        handler = functools.partial(IndexHandler, directory=str(cls.index))
+        cls.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.index_url = f"http://127.0.0.1:{cls.server.server_port}/simple"
+        cls.uv_cache = cls.root / "uv-cache"
 
-        # Clone the declared checkout rather than working in it: this suite
-        # detaches, rewrites pins and regenerates locks, and none of that is
-        # allowed to touch the operator's own AC tree. The pinned SHA is still
-        # asserted, so a declaration pointing somewhere that lacks it fails here
-        # rather than silently measuring the wrong tree.
-        contract = root / "ac-contract"
-        run("git", "clone", "-q", str(declared), str(contract), cwd=root)
-        run("git", "checkout", "-q", "--detach", AC_CONTRACT_SHA, cwd=contract)
-        actual = git("rev-parse", "HEAD", cwd=contract)
-        if actual != AC_CONTRACT_SHA:
-            raise AssertionError(f"AC contract checkout is {actual}, expected {AC_CONTRACT_SHA}")
-
-        cls.aweb_remote = root / "aweb.git"
-        run("git", "clone", "-q", "--mirror", str(REPO_ROOT), str(cls.aweb_remote), cwd=root)
-        cls.old_server_sha = git("rev-parse", f"server-v{OLD_SERVER_VERSION}^{{}}", cwd=REPO_ROOT)
-        cls.new_server_sha = git("rev-parse", f"server-v{NEW_SERVER_VERSION}^{{}}", cwd=REPO_ROOT)
-        cls.old_server = {
-            "version": OLD_SERVER_VERSION,
-            "git_ref": f"server-v{OLD_SERVER_VERSION}",
-            "git_sha": cls.old_server_sha,
-        }
-        cls.new_server = {
-            "version": NEW_SERVER_VERSION,
-            "git_ref": f"server-v{NEW_SERVER_VERSION}",
-            "git_sha": cls.new_server_sha,
-        }
-
-        cls.seed = root / "seed"
-        shutil.copytree(contract, cls.seed, ignore=shutil.ignore_patterns(".git"))
-        replace_dependency(
-            cls.seed / "backend" / "pyproject.toml", "aweb", OLD_SERVER_VERSION
-        )
-        replace_dependency(
-            cls.seed / "backend" / "pyproject.toml", "awid-service", OLD_AWID_VERSION
-        )
-        write_release_pin(
-            cls.seed / "release-pin.toml",
-            version=OLD_SERVER_VERSION,
-            sha=cls.old_server_sha,
+        cls.seed = cls.root / "seed"
+        backend = cls.seed / "backend"
+        backend.mkdir(parents=True)
+        (backend / "pyproject.toml").write_text(
+            "[project]\n"
+            "name = \"aweb-cloud\"\n"
+            "version = \"0.1.0\"\n"
+            "requires-python = \">=3.12\"\n"
+            "dependencies = [\n"
+            f"    \"aweb>={OLD_AWEB}\",\n"
+            f"    \"awid-service>={OLD_AWID}\",\n"
+            "]\n"
         )
         env = {**os.environ, "UV_CACHE_DIR": str(cls.uv_cache)}
-        run(
-            "uv", "lock", "--no-config", "--default-index", "https://pypi.org/simple",
-            "--upgrade-package", f"aweb=={OLD_SERVER_VERSION}",
-            "--upgrade-package", f"awid-service=={OLD_AWID_VERSION}",
-            cwd=cls.seed / "backend", env=env,
-        )
+        run("uv", "lock", "--no-config", "--default-index", cls.index_url, cwd=backend, env=env)
         git("init", "-q", "-b", "main", cwd=cls.seed)
         git("add", ".", cwd=cls.seed)
         run(
-            "git", "-c", "user.email=test@example.com", "-c", "user.name=Test",
-            "commit", "-qm", "coherent old AC release", cwd=cls.seed,
+            "git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
+            "commit", "-qm", "AC reviewed base", cwd=cls.seed,
         )
 
     @classmethod
     def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
         cls.fixture_tmp.cleanup()
 
     def setUp(self):
+        IndexHandler.modes = {}
+        IndexHandler.counts = {}
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.remote = root / "remote.git"
+        self.remote = root / "ac.git"
         run("git", "clone", "-q", "--bare", str(self.seed), str(self.remote), cwd=root)
         self.addCleanup(self.tmp.cleanup)
 
-    def adapter_env(self, **extra) -> dict:
+    def env(self, **extra) -> dict:
         return {
             **os.environ,
             "AC_REMOTE": str(self.remote),
-            "AWEB_REMOTE": str(self.aweb_remote),
+            "AC_DEPENDENCY_TEST_INDEX": self.index_url,
+            "AC_DEPENDENCY_POLL_TIMEOUT_SECONDS": "0",
+            "AC_DEPENDENCY_POLL_BACKOFF_SECONDS": "0",
             "UV_CACHE_DIR": str(self.uv_cache),
             **extra,
         }
 
-    def run_adapter(self, operation, updates=None, *, env=None, expect_failure=False):
+    def head(self) -> str:
+        return git("--git-dir", str(self.remote), "rev-parse", "refs/heads/main", cwd=Path(self.tmp.name))
+
+    def invoke(
+        self,
+        *,
+        base: str | None = None,
+        aweb: str = NEW_AWEB,
+        awid: str = NEW_AWID,
+        env=None,
+        expected: str | None = None,
+        fail: bool = False,
+    ):
         command = [
-            sys.executable, str(ADAPTER), operation,
-            "--component", "ac-pin",
-            "--expect-repository", str(self.remote),
+            sys.executable,
+            str(ADAPTER),
+            "--expect-repository", expected or str(self.remote),
+            "--base-sha", base or self.head(),
+            "--aweb-version", aweb,
+            "--awid-version", awid,
         ]
-        if updates is not None:
-            command += ["--updates", json.dumps(updates)]
-        result = subprocess.run(
-            command, capture_output=True, text=True,
-            env=env or self.adapter_env(),
-        )
-        if expect_failure:
+        result = subprocess.run(command, capture_output=True, text=True, env=env or self.env())
+        if fail:
             self.assertNotEqual(result.returncode, 0)
             return result.stderr
         if result.returncode != 0:
-            raise AssertionError(f"{operation} failed: {result.stderr}")
+            raise AssertionError(result.stderr)
         return json.loads(result.stdout)
 
-    def remote_head(self) -> str:
-        return git("--git-dir", str(self.remote), "rev-parse", "refs/heads/main", cwd=Path(self.tmp.name))
+    def checkout(self) -> Path:
+        target = Path(self.tmp.name) / f"checkout-{len(list(Path(self.tmp.name).glob('checkout-*')))}"
+        run("git", "clone", "-q", str(self.remote), str(target), cwd=Path(self.tmp.name))
+        return target
 
-    def checkout_remote(self) -> Path:
-        root = Path(self.tmp.name) / f"observed-{len(list(Path(self.tmp.name).glob('observed-*')))}"
-        ac = root / "ac"
-        root.mkdir()
-        run("git", "clone", "-q", str(self.remote), str(ac), cwd=root)
-        return ac
+    def test_derives_exact_two_file_commit_after_packages_are_observed(self):
+        base = self.head()
+        result = self.invoke(base=base)
+        self.assertFalse(result["adopted"])
+        self.assertEqual(result["base_sha"], base)
+        self.assertEqual(result["commit_sha"], self.head())
+        changed = git("diff", "--name-only", f"{base}..{self.head()}", cwd=self.checkout()).splitlines()
+        self.assertEqual(changed, ["backend/pyproject.toml", "backend/uv.lock"])
+        checkout = self.checkout()
+        pyproject = (checkout / "backend/pyproject.toml").read_text()
+        self.assertIn(f'"aweb>={NEW_AWEB}"', pyproject)
+        self.assertIn(f'"awid-service>={NEW_AWID}"', pyproject)
+        lock = (checkout / "backend/uv.lock").read_text()
+        self.assertIn(self.index_url, lock)
+        self.assertRegex(lock, r"sha256:[0-9a-f]{64}")
 
-    def run_ac_contract_checks(self, checkout: Path, source_sha: str) -> None:
-        aweb = checkout.parent / "aweb"
-        run("git", "clone", "-q", str(self.aweb_remote), str(aweb), cwd=checkout.parent)
-        run("git", "checkout", "-q", "--detach", source_sha, cwd=aweb)
-        env = {**os.environ, "UV_CACHE_DIR": str(self.uv_cache)}
-        run("make", "release-verify-model", cwd=checkout, env=env)
-        run("uv", "lock", "--check", "--no-config", cwd=checkout / "backend", env=env)
+    def test_sequential_404_then_200_waits_before_deriving(self):
+        IndexHandler.modes["aweb"] = "lag"
+        base = self.head()
+        result = self.invoke(
+            base=base,
+            env=self.env(
+                AC_DEPENDENCY_POLL_TIMEOUT_SECONDS="2",
+                AC_DEPENDENCY_POLL_BACKOFF_SECONDS="0",
+            ),
+        )
+        self.assertNotEqual(result["commit_sha"], base)
+        self.assertGreaterEqual(IndexHandler.counts["aweb"], 2)
+
+    def test_absent_package_refuses_at_named_deadline_without_push(self):
+        IndexHandler.modes["aweb"] = "absent"
+        before = self.head()
+        stderr = self.invoke(base=before, fail=True)
+        self.assertIn("public package propagation deadline exceeded", stderr)
+        self.assertEqual(self.head(), before)
+
+    def test_auth_outage_and_malformed_evidence_refuse_without_push(self):
+        for mode, expected in (("auth", "HTTP 401"), ("outage", "HTTP 503"), ("malformed", "propagation deadline")):
+            with self.subTest(mode=mode):
+                IndexHandler.modes = {"aweb": mode}
+                IndexHandler.counts = {}
+                before = self.head()
+                stderr = self.invoke(base=before, fail=True)
+                self.assertIn(expected, stderr)
+                self.assertEqual(self.head(), before)
+
+    def test_moved_base_refuses_without_commit_or_rebase(self):
+        recorded = self.head()
+        checkout = self.checkout()
+        (checkout / "README.md").write_text("source change\n")
+        git("add", "README.md", cwd=checkout)
         run(
-            sys.executable, "scripts/migration_manifest.py", "--verify",
-            cwd=checkout / "backend", env=env,
+            "git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
+            "commit", "-qm", "move main", cwd=checkout,
         )
+        git("push", "-q", "origin", "HEAD:main", cwd=checkout)
+        moved = self.head()
+        stderr = self.invoke(base=recorded, fail=True)
+        self.assertIn("AC main moved from recorded base", stderr)
+        self.assertEqual(self.head(), moved)
 
-    @property
-    def combined_updates(self) -> dict:
-        return {"server": self.new_server, "awid-pypi": NEW_AWID_VERSION}
-
-    def test_read_reports_complete_server_identity_and_awid_version(self):
-        self.assertEqual(
-            self.run_adapter("read")["advertised"],
-            {"server": self.old_server, "awid-pypi": OLD_AWID_VERSION},
-        )
-
-    def test_combined_update_regenerates_real_lock_and_passes_ac_checks(self):
-        before = self.remote_head()
-        self.assertEqual(
-            self.run_adapter("intent", self.combined_updates)["advertised"],
-            self.combined_updates,
-        )
-        self.assertEqual(self.remote_head(), before, "intent must never push")
-        self.assertEqual(
-            self.run_adapter("apply", self.combined_updates)["applied"],
-            self.combined_updates,
-        )
-        self.assertEqual(self.run_adapter("read")["advertised"], self.combined_updates)
-
-        checkout = self.checkout_remote()
-        self.run_ac_contract_checks(checkout, self.new_server_sha)
-        pyproject = (checkout / "backend" / "pyproject.toml").read_text()
-        self.assertIn(f'"aweb>={NEW_SERVER_VERSION}"', pyproject)
-        self.assertIn(f'"awid-service>={NEW_AWID_VERSION}"', pyproject)
-        for name, version, filename in (
-            ("aweb", NEW_SERVER_VERSION, f"aweb-{NEW_SERVER_VERSION}"),
-            ("awid-service", NEW_AWID_VERSION, f"awid_service-{NEW_AWID_VERSION}"),
+    def test_extra_file_and_extra_project_version_refuse_without_push(self):
+        for variable, expected in (
+            ("AC_DEPENDENCY_TEST_EXTRA_FILE", "outside allowlist"),
+            ("AC_DEPENDENCY_TEST_EXTRA_VERSION", "outside intended package floors"),
         ):
-            package = lock_package(checkout / "backend" / "uv.lock", name)
-            self.assertEqual(package["version"], version)
-            artifacts = [package["sdist"], *package["wheels"]]
-            self.assertGreaterEqual(len(artifacts), 2)
-            for artifact in artifacts:
-                self.assertIn(filename, artifact["url"])
-                self.assertRegex(artifact["hash"], r"^sha256:[0-9a-f]{64}$")
+            with self.subTest(variable=variable):
+                before = self.head()
+                stderr = self.invoke(base=before, env=self.env(**{variable: "1"}), fail=True)
+                self.assertIn(expected, stderr)
+                self.assertEqual(self.head(), before)
 
-    def test_intent_precedes_future_tag_and_packages_then_apply_uses_them(self):
-        root = Path(self.tmp.name)
-        future_remote = root / "future-aweb.git"
-        run("git", "clone", "-q", "--mirror", str(REPO_ROOT), str(future_remote), cwd=root)
-        source = root / "future-source"
-        run("git", "clone", "-q", str(future_remote), str(source), cwd=root)
-        future_server = "9.8.7"
-        future_awid = "8.7.6"
-        pyproject = source / "server" / "pyproject.toml"
-        text, count = re.subn(
-            r'(?m)^version = "[^"]+"$', f'version = "{future_server}"',
-            pyproject.read_text(), count=1,
-        )
-        self.assertEqual(count, 1)
-        pyproject.write_text(text)
-        run(
-            "git", "-c", "user.email=test@example.com", "-c", "user.name=Test",
-            "add", "server/pyproject.toml", cwd=source,
-        )
-        run(
-            "git", "-c", "user.email=test@example.com", "-c", "user.name=Test",
-            "commit", "-qm", "future unpublished server", cwd=source,
-        )
-        future_sha = git("rev-parse", "HEAD", cwd=source)
-        run("git", "push", "-q", "origin", "HEAD:main", cwd=source)
-        updates = {
-            "server": {
-                "version": future_server,
-                "git_ref": f"server-v{future_server}",
-                "git_sha": future_sha,
-            },
-            "awid-pypi": future_awid,
-        }
-        env = self.adapter_env(AWEB_REMOTE=str(future_remote))
-        before = self.remote_head()
-        self.assertEqual(
-            self.run_adapter("intent", updates, env=env)["advertised"], updates
-        )
-        self.assertEqual(self.remote_head(), before)
+    def test_exact_noop_adopts_without_another_commit(self):
+        first = self.invoke()
+        head = first["commit_sha"]
+        second = self.invoke(base=head)
+        self.assertEqual(second["commit_sha"], head)
+        self.assertTrue(second["adopted"])
+        self.assertEqual(self.head(), head)
 
-        run("git", "tag", f"server-v{future_server}", future_sha, cwd=source)
-        run("git", "push", "-q", "origin", f"refs/tags/server-v{future_server}", cwd=source)
-        index = root / "index"
-        write_test_package(index, "aweb", future_server)
-        write_test_package(index, "awid-service", future_awid)
-        handler = functools.partial(QuietHandler, directory=str(index))
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
-        index_url = f"http://127.0.0.1:{server.server_port}/simple"
-        env = self.adapter_env(
-            AWEB_REMOTE=str(future_remote), AC_PIN_TEST_INDEX=index_url
-        )
-        self.assertEqual(self.run_adapter("apply", updates, env=env)["applied"], updates)
-        self.assertEqual(self.run_adapter("read")["advertised"], updates)
+    def test_wrong_remote_identity_refuses_without_push(self):
+        before = self.head()
+        stderr = self.invoke(base=before, expected="github.com/awebai/not-ac", fail=True)
+        self.assertIn("refusing to act on", stderr)
+        self.assertEqual(self.head(), before)
 
-    def test_partial_and_mismatched_server_identities_refuse_without_push(self):
-        before = self.remote_head()
-        cases = [
-            {"server": {"version": NEW_SERVER_VERSION, "git_sha": self.new_server_sha}},
-            {"server": {**self.new_server, "git_ref": "server-v9.9.9"}},
-            {"server": {**self.new_server, "git_sha": "0" * 40}},
-        ]
-        for updates in cases:
-            with self.subTest(updates=updates):
-                stderr = self.run_adapter("intent", updates, expect_failure=True)
-                self.assertTrue(stderr.strip())
-                self.assertEqual(self.remote_head(), before)
-
-    def test_intent_refuses_missing_apply_time_ac_gate_surface(self):
-        root = Path(self.tmp.name)
-        drift = root / "contract-drift"
-        run("git", "clone", "-q", str(self.remote), str(drift), cwd=root)
-        omitted = drift / "scripts" / "check-aapj-e2e-contract.sh"
-        omitted.unlink()
-        run("git", "add", "scripts/check-aapj-e2e-contract.sh", cwd=drift)
-        run(
-            "git", "-c", "user.email=test@example.com", "-c", "user.name=Test",
-            "commit", "-qm", "remove apply-time gate surface", cwd=drift,
-        )
-        run("git", "push", "-q", "origin", "HEAD:main", cwd=drift)
-        before = self.remote_head()
-        stderr = self.run_adapter(
-            "intent", self.combined_updates, expect_failure=True
-        )
-        self.assertIn("check-aapj-e2e-contract.sh", stderr)
-        self.assertEqual(self.remote_head(), before)
-
-    def test_crash_after_checks_leaves_remote_unchanged(self):
-        before = self.remote_head()
-        stderr = self.run_adapter(
-            "apply", self.combined_updates,
-            env=self.adapter_env(AC_PIN_TEST_CRASH_AFTER_CHECKS="1"),
-            expect_failure=True,
-        )
-        self.assertIn("injected crash", stderr)
-        self.assertEqual(self.remote_head(), before)
-        self.assertEqual(
-            self.run_adapter("read")["advertised"],
-            {"server": self.old_server, "awid-pypi": OLD_AWID_VERSION},
-        )
-
-    def test_identical_second_apply_adopts_without_another_commit(self):
-        self.run_adapter("apply", self.combined_updates)
-        first = self.remote_head()
-        self.run_adapter("apply", self.combined_updates)
-        self.assertEqual(self.remote_head(), first)
-        self.assertEqual(self.run_adapter("read")["advertised"], self.combined_updates)
-
-    def test_substituted_remote_unknown_pin_and_non_commit_refuse(self):
-        other = Path(self.tmp.name) / "substituted.git"
-        run("git", "init", "-q", "--bare", str(other), cwd=Path(self.tmp.name))
-        result = subprocess.run(
-            [
-                sys.executable, str(ADAPTER), "read", "--component", "ac-pin",
-                "--expect-repository", "github.com/awebai/ac",
-            ],
-            capture_output=True, text=True,
-            env=self.adapter_env(AC_REMOTE=str(other)),
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("refusing to act on", result.stderr)
-        self.assertIn(
-            "channel",
-            self.run_adapter("intent", {"channel": "1.7.4"}, expect_failure=True),
-        )
-        self.assertTrue(
-            self.run_adapter(
-                "intent", {"server": "1.26.35"}, expect_failure=True
-            ).strip()
-        )
-
-    def test_adapter_is_executable(self):
-        self.assertTrue(os.access(ADAPTER, os.X_OK), f"{ADAPTER} must be executable")
+    def test_adapter_is_executable_and_driver_protocol_is_absent(self):
+        self.assertTrue(os.access(ADAPTER, os.X_OK))
+        help_result = run(sys.executable, str(ADAPTER), "--help", cwd=REPO_ROOT)
+        for obsolete in ("{intent,apply,read}", "--component", "--updates"):
+            self.assertNotIn(obsolete, help_result.stdout)
 
 
 if __name__ == "__main__":

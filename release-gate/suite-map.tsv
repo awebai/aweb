@@ -51,7 +51,7 @@ pypi-exact-publish	contract	test-pypi-exact-publish	run	test-pypi-exact-publish
 oci-exact-publish	contract	test-oci-exact-publish	run	test-oci-exact-publish
 node-vulnerability-audit	audit	check-node-audit	run	check-node-audit
 go-vulnerability-audit	audit	check-go-vulnerability-audit	run	check-go-vulnerability-audit
-ac-pointer-primary-moves	migration	test-pointer-adapter-ac-pin	task-6	test-pointer-adapter-ac-pin
+ac-pointer-primary-moves	contract	test-pointer-adapter-ac-pin	run	test-pointer-adapter-ac-pin
 old-adopted-preplan	migration	test-release-adopted-preplan	task-10-delete	test-release-adopted-preplan
 old-channel-pi-skew	migration	test-release-channel-pi-skew	task-10-delete	test-release-channel-pi-skew
 old-driver	migration	test-release-driver	task-10-delete	test-release-driver

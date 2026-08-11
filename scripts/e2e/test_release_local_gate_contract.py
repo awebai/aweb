@@ -151,6 +151,7 @@ EXPECTED_STEPS = (
     ("oci-exact-publish", "contract", "test-oci-exact-publish"),
     ("node-vulnerability-audit", "audit", "check-node-audit"),
     ("go-vulnerability-audit", "audit", "check-go-vulnerability-audit"),
+    ("ac-pointer-primary-moves", "contract", "test-pointer-adapter-ac-pin"),
 )
 
 
@@ -330,6 +331,7 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
     def test_exact_suite_map_is_unique_and_every_target_exists(self) -> None:
         rows = self.read_map()
         run_rows = [row for row in rows if row[3] == "run"]
+        self.assertEqual(len(EXPECTED_STEPS), 53)
         self.assertEqual([row[:4] for row in run_rows], [(*row, "run") for row in EXPECTED_STEPS])
         self.assertEqual(len({row[0] for row in rows}), len(rows))
         self.assertEqual(len({row[2] for row in rows}), len(rows))
@@ -343,13 +345,15 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
         self.assertFalse((ROOT / "release-gate" / "migration-map.tsv").exists())
         self.assertEqual(
             {row[3] for row in rows},
-            {"run", "task-6", "task-10-delete", "replaced-wrapper"},
+            {"run", "task-10-delete", "replaced-wrapper"},
         )
         run_targets = {row[2] for row in rows if row[3] == "run"}
         self.assertEqual(run_targets, {row[2] for row in EXPECTED_STEPS})
         deleted = {row[2] for row in rows if row[3] == "task-10-delete"}
-        task_6 = {row[2] for row in rows if row[3] == "task-6"}
-        self.assertEqual(task_6, {"test-pointer-adapter-ac-pin"})
+        self.assertEqual(
+            [row[:4] for row in rows if row[2] == "test-pointer-adapter-ac-pin"],
+            [("ac-pointer-primary-moves", "contract", "test-pointer-adapter-ac-pin", "run")],
+        )
         self.assertEqual(NEW_RELEASE_COVERAGE, {"release-a2a-gateway-check"})
         newly_mapped = next(iter(NEW_RELEASE_COVERAGE))
         self.assertEqual(

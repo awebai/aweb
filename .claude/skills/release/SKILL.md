@@ -27,19 +27,15 @@ make release-run AUTHORITY=local-runnerless \
   LOCAL_RISK_AUTHORIZATION='<who>,<when>,<risk accepted>'
 ```
 
-Append `EXTERNAL_CONTEXT='<repo>=/absolute/checkout'` to planning when the
-graph names an external pin. Today that is the `ac-pin` lane: both its pins,
-`release-pin.toml` and `backend/uv.lock`, live in the AC repository and are
-resolved only from a declared context, never relative to this one.
-
-```
-make release-plan EXTERNAL_CONTEXT='github.com/awebai/ac=/absolute/path/to/ac'
-```
-
-Without it the driver refuses to guess, and both pins report as *unreadable in
-its declared repository context* — which reads like a broken lane rather than a
-missing argument. The checkout must be an absolute path whose `origin` is the
-declared repository; the driver verifies both and refuses otherwise.
+AC release compatibility is public-package authority. Prepare records the exact
+reviewed AC `main` base and intended `aweb` and `awid-service` versions. After
+those versions are served by public PyPI, continue invokes
+`scripts/pointer-adapter-ac-pin.py` to change only the two floors in
+`backend/pyproject.toml` and regenerate `backend/uv.lock`. The helper verifies
+exact versions, public URLs and hashes, then pushes `HEAD:main` only if remote AC
+`main` still equals the recorded base. A moved base, unavailable package,
+source-code need, extra diff, or mismatch invalidates the card; never rebase,
+force, or substitute a source checkout.
 
 `DEFER_G5=1` is **not** covered by the runnerless risk authorization. Accepting a
 runner outage and accepting unmeasured runtime support are different judgments;
