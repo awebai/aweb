@@ -8,6 +8,7 @@ import csv
 import io
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,14 @@ MAKEFILE = ROOT / "Makefile"
 MAP = ROOT / "release-gate" / "suite-map.tsv"
 DOCKERFILE = ROOT / "release-gate" / "Dockerfile"
 ENTRYPOINT = SCRIPTS / "release-local-gate.sh"
+BOUNDARY_HARNESSES = (
+    ROOT / "channel" / "test" / "integration.test.ts",
+    SCRIPTS / "e2e-oss-user-journey.sh",
+    SCRIPTS / "e2e-oss-federation.sh",
+    SCRIPTS / "e2e-federation-authority.sh",
+    ROOT / "cli" / "scripts" / "e2e.sh",
+    SCRIPTS / "e2e-library-stack.sh",
+)
 OLD_FILES = (
     ROOT / ".github" / "workflows" / "ship.yml",
     SCRIPTS / "run-ship-suites.sh",
@@ -134,6 +143,40 @@ EXPECTED_STEPS = (
 )
 
 
+def boundary_contract_errors(
+    entrypoint: str, harnesses: dict[str, str]
+) -> tuple[str, ...]:
+    errors: list[str] = []
+    required_entrypoint = {
+        "non-root user": '--user "$(id -u):$(id -g)"',
+        "Docker socket group": '--group-add "$socket_gid"',
+        "container buildx builder": "--driver docker-container",
+        "builder cleanup": 'docker buildx rm "$owned_builder"',
+        "host-visible tmp": "-v /tmp:/tmp",
+        "host-visible checkout": '-v "$checkout:$checkout"',
+        "fixed Docker host mapping": "--add-host host.docker.internal:host-gateway",
+        "fixed Docker host input": "-e AWEB_DOCKER_PUBLISHED_HOST=host.docker.internal",
+    }
+    for label, literal in required_entrypoint.items():
+        if literal not in entrypoint:
+            errors.append(label)
+    if "--privileged" in entrypoint or "dockerd" in entrypoint:
+        errors.append("no privileged nested daemon")
+    for name, body in harnesses.items():
+        for label, literal in (
+            ("fixed input", "AWEB_DOCKER_PUBLISHED_HOST"),
+            ("fixed Docker hostname", "host.docker.internal"),
+            ("local default/fixture", "127.0.0.1"),
+            ("unsupported-value refusal", "unsupported"),
+        ):
+            if literal not in body:
+                errors.append(f"{name}: {label}")
+    channel = harnesses[BOUNDARY_HARNESSES[0].as_posix()]
+    if 'server.listen(0, "127.0.0.1"' not in channel:
+        errors.append("channel process-local loopback fixture")
+    return tuple(errors)
+
+
 def workflow_events(text: str) -> tuple[str, ...]:
     header = text.split("\njobs:", 1)[0]
     start = re.search(r"(?m)^on:\s*$", header)
@@ -193,6 +236,27 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             findings = residue.find_residue(repo, excluded=())
             self.assertEqual({literal for _path, literal in findings}, set(FORBIDDEN_RESIDUE_LITERALS))
             self.assertEqual(len(findings), len(FORBIDDEN_RESIDUE_LITERALS))
+
+    def test_reachable_file_mutation_makes_maintained_make_check_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "scripts").mkdir()
+            shutil.copy2(SCRIPTS / "check_release_gate_residue.py", repo / "scripts")
+            (repo / "Makefile").write_text(
+                "check-release-gate-residue:\n"
+                "\tpython3 scripts/check_release_gate_residue.py\n"
+            )
+            (repo / "reachable.txt").write_text("SHIP_SUITES\n")
+            subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            result = subprocess.run(
+                ["make", "check-release-gate-residue"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("reachable.txt: SHIP_SUITES", result.stderr)
 
     def test_exact_suite_map_is_unique_and_every_target_exists(self) -> None:
         rows = self.read_map()
@@ -328,24 +392,47 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
         self.assertNotIn("gh ", text)
 
     def test_only_published_docker_endpoints_use_the_fixed_host_input(self) -> None:
-        paths = (
-            ROOT / "channel" / "test" / "integration.test.ts",
-            ROOT / "scripts" / "e2e-oss-user-journey.sh",
-            ROOT / "scripts" / "e2e-oss-federation.sh",
-            ROOT / "scripts" / "e2e-federation-authority.sh",
-            ROOT / "cli" / "scripts" / "e2e.sh",
-            ROOT / "scripts" / "e2e-library-stack.sh",
-        )
-        for path in paths:
-            with self.subTest(path=path.name):
-                body = path.read_text()
-                self.assertIn("AWEB_DOCKER_PUBLISHED_HOST", body)
-                self.assertIn("host.docker.internal", body)
-                self.assertIn("127.0.0.1", body)
-                self.assertIn("unsupported", body)
-        channel = paths[0].read_text()
-        self.assertIn('server.listen(0, "127.0.0.1"', channel)
-        self.assertNotIn("AWEB_DOCKER_PUBLISHED_HOST:-", ENTRYPOINT.read_text())
+        entrypoint = ENTRYPOINT.read_text()
+        harnesses = {path.as_posix(): path.read_text() for path in BOUNDARY_HARNESSES}
+        self.assertEqual(boundary_contract_errors(entrypoint, harnesses), ())
+        self.assertNotIn("AWEB_DOCKER_PUBLISHED_HOST:-", entrypoint)
+
+    def test_boundary_mutations_are_each_rejected(self) -> None:
+        entrypoint = ENTRYPOINT.read_text()
+        harnesses = {path.as_posix(): path.read_text() for path in BOUNDARY_HARNESSES}
+        mutations = {
+            "root": (
+                entrypoint.replace('--user "$(id -u):$(id -g)"', "", 1),
+                harnesses,
+                "non-root user",
+            ),
+            "builder": (
+                entrypoint.replace("--driver docker-container", "--driver docker", 1),
+                harnesses,
+                "container buildx builder",
+            ),
+            "host-visible paths": (
+                entrypoint.replace("-v /tmp:/tmp", "", 1),
+                harnesses,
+                "host-visible tmp",
+            ),
+            "all loopback rewritten": (
+                entrypoint,
+                {
+                    name: body.replace("127.0.0.1", "host.docker.internal")
+                    for name, body in harnesses.items()
+                },
+                "local default/fixture",
+            ),
+        }
+        for name, (mutated_entrypoint, mutated_harnesses, expected) in mutations.items():
+            with self.subTest(mutation=name):
+                errors = boundary_contract_errors(mutated_entrypoint, mutated_harnesses)
+                self.assertTrue(errors, f"{name} mutation escaped the boundary contract")
+                self.assertTrue(
+                    any(expected in error for error in errors),
+                    f"{name} mutation failed for the wrong reason: {errors}",
+                )
 
     def test_entrypoint_refuses_a_real_dirty_checkout_before_docker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

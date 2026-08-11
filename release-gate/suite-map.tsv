@@ -1,4 +1,4 @@
-# name	category	make target or fixed replacement	disposition	old make ship closure target(s)
+# name	category	make target or fixed replacement	disposition	old comprehensive-gate target(s)
 version-authority	contract	_release-gate-version-authority	run	release-cli-version-check
 aw-repository-stamp	contract	check-aw-commit-repo-stamp	run	check-aw-commit-repo-stamp
 cli-tidy	contract	check-cli-go-tidy	run	check-cli-go-tidy
