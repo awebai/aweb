@@ -480,6 +480,7 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             for pid in ("101", "202")
         ]
         self.assertEqual(len(set(identities)), 2)
+        self.assertIn('[[ "$PROJECT" =~ ^aweb-fed-e2e-[a-z0-9]+$ ]]', harnesses[BOUNDARY_HARNESSES[2].as_posix()])
         for identity in identities:
             self.assertRegex(identity, r"^aweb-fed-e2e-[a-z0-9]+$")
         runner_text = (SCRIPTS / "release_gate_runner.py").read_text()
