@@ -4,7 +4,7 @@ Status: proposed replacement release specification for aweb and AC; it becomes a
 after independent review ACK and the coordinator's constraint check. It supersedes the release
 driver, the per-component tag lanes, the runnerless document, and the ship-gate-on-every-landing
 model; implementation lands the new mechanism and the deletions below in one reviewed change
-set. Facts: audit on task `aweb-abds.4`; binding decisions on findings F1-F4: coordinator, 2026-08-11.
+set. Facts: audit on `aweb-abds.4`; binding decisions F1-F4 and C1-C4: coordinator, 2026-08-11.
 
 ## Operating model
 
@@ -73,10 +73,13 @@ External repos `awebai/aw` and `awebai/claude-plugins`: dispatch-and-verify only
 
 ## The two commands
 
+Both run from the aweb repository root; the scripts resolve and validate the sibling AC checkout.
+Exact invocations: `PURPOSE="..." COMPAT_BREAK="none" make release-prepare` (or the one-line intentional
+break — the only judgment the agent supplies), then after the go exactly `make release-continue`.
+
 ### `make release-prepare` (before the go)
 
-Inputs — the only judgment the agent supplies: `PURPOSE="..."` and `COMPAT_BREAK="none"` or a
-one-line description. The script, no prompts:
+The script, no prompts:
 
 1. Fetches; selects the exact aweb and AC `main` commits (tips unless `AWEB_SHA=`/`AC_SHA=` name
    older commits on `main`); refuses dirty trees or unpushed selections, printing the fix.
@@ -94,12 +97,19 @@ Failure stops with the failing step, log path, and next command (fix on `main`, 
 
 ### The release card
 
-Script-generated, answering only: dependency closure (exact aweb `main` commit and exact
-reviewed AC base SHA, artifacts and versions, in DAG order); customer compatibility with the
-explicit known break or "none"; tests/e2e state (suites, SHA, result); purpose; whether
-deployment is included. The final AC SHA is stated as pending — a dependency-only derived commit
-created, verified, and gated automatically before AC publication; the go cannot waive it. Juan
-replies with one go.
+Script-generated, answering only: dependency closure (exact aweb `main` commit and exact AC base
+SHA, artifacts and versions, in DAG order); customer compatibility with the explicit known break
+or "none"; tests/e2e state (suites, SHA, result); purpose; the inferred deployment set —
+production iff the AC image moves, each site iff it moves — plus, while live state requires it,
+the pending one-time production correction (C1). The final AC SHA is stated as pending — a
+dependency-only derived commit created, verified, and gated automatically before AC publication;
+the go cannot waive it. Juan replies with one go.
+
+Prepare writes the displayed card and gate references to one fixed, git-local, untracked card
+file. Continue takes no arguments: it reads only that file and rejects a missing file or any
+material mismatch — loss or change means fresh prepare/card/go. The file carries no release ID
+and is not a manifest protocol, receipt, audit store, or cross-machine mechanism; workflow,
+registry, and provider records remain the audit trail.
 
 ### `make release-continue` (after the go)
 
@@ -122,9 +132,12 @@ Idempotent; rerunnable until it prints DONE. Steps:
    image installs the published wheels).
 6. Advance AC `release` fast-forward to the derived commit; dispatch the thin AC image workflow
    (build from the `release` SHA, push `ghcr.io/awebai/ac`, emit the immutable digest).
-7. If deployment is included: fail closed unless the Render `aweb-cloud` standing configuration is an
-   explicit immutable digest with auto-deploy disabled; apply pending migrations via the scripted
-   migration step; deploy the exact digest; verify provider-reported running digest and health.
+7. If the AC image moved, production deployment is included: on the first release, once the exact
+   AC digest exists, perform the card's pending one-time correction — disable registry-push
+   auto-deploy and configure/deploy the known Render `aweb-cloud` service to that exact digest;
+   on later releases fail closed if those standing properties have regressed. Apply pending
+   migrations via the scripted migration step; deploy the exact digest; verify standing
+   configuration, provider-reported running digest, and health. No extra prompt or approval.
 8. Deploy any moving sites via their branch-push targets. Print DONE with versions, digests, and
    workflow run URLs.
 
@@ -145,12 +158,14 @@ consumer rewritten (F1/N1, see Migration); AC release authority becomes the depe
 `backend/uv.lock`'s exact public versions/URLs/hashes, and the final AC SHA plus
 provider/registry records.
 
-## Production configuration (F2)
+## Production configuration (F2/C1)
 
-One-time, part of implementation completion: configure Render `aweb-cloud` to an explicit
-immutable image digest with auto-deploy disabled. Continue verifies those standing properties on
-every deploy and fails closed without them — the known service only, no provider-account
-discovery framework. Rollback deploys a previous digest the same way.
+No production change occurs during implementation or rehearsal. While the live state requires
+the one-time correction (today: mutable `latest` tag, auto-deploy enabled), the card shows it as
+pending; the first post-go `release-continue` performs it once the exact AC digest exists
+(continue step 7), and subsequent releases fail closed if the standing properties — explicit
+immutable digest, auto-deploy disabled — have regressed. The known service only, no
+provider-account discovery framework. Rollback deploys a previous digest the same way.
 
 ## GitHub outage (F3)
 
@@ -241,7 +256,7 @@ Audit discrepancies, each addressed:
 | D5 | graph `sites` lane dies with the graph; the Make target survives as a continue step |
 | D6 | `awid-release.yml` reference dies with its Makefile lane |
 | D7 | coordinator memory naming nonexistent workflows is corrected |
-| D8 | stale `ghcr.io/awebai/aweb-cloud` refs (`Makefile` `PROD_IMAGE`, `OPERATIONS.md`, compose.prod) become `ghcr.io/awebai/ac` |
+| D8 | `ghcr.io/awebai/aweb-cloud` refs (`Makefile` `PROD_IMAGE`, `OPERATIONS.md`, `docker-compose.prod.yml`) become `ghcr.io/awebai/ac` |
 | D9 | dangling "Cloud Deploy Image" reference removed |
 | D10 | `use-aweb-pypi` rewritten for the wheels-only model |
 | D11 | committed `.claude-plugin/plugin.json` == `package.json` version equality asserted by the prepare gate |
@@ -269,7 +284,7 @@ searches (`rg --hidden`) for `release_driver`, `components.toml`, `release-ancho
 doc/skill paths return only this document and history; no Make target invokes a deleted file;
 both Makefiles and `make help` expose no deleted target; no workflow can publish or deploy except
 the `release`-triggered ones defined here; every tag-triggered publication path is gone; no kept
-workflow triggers on `main` pushes; obsolete tests and fixtures are gone with their code; the F2
-production configuration is verified in place; the AC gate is green with `release-pin.toml`
-absent; and all surviving docs describe the local Docker gate, thin GitHub publication, the
-staged train, and one global go.
+workflow triggers on `main` pushes; obsolete tests and fixtures are gone with their code; the
+continue script implements the C1 first-release production correction (no production change
+before the first go); the AC gate is green with `release-pin.toml` absent; and all surviving
+docs describe the local Docker gate, thin GitHub publication, the staged train, and one global go.
