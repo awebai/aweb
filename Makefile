@@ -6,7 +6,6 @@
 	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps check-server-locked-suite \
 	check-awid-locked-suite \
 	release-a2a-gateway-check release-a2a-gateway-tag release-a2a-gateway-push \
-	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
 	test-channel-integration \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
@@ -101,7 +100,7 @@ help:
 	@echo "    publication is not delivery, publication is immutable."
 	@echo ""
 	@echo "  Legacy per-artifact checks not yet cut over:"
-	@echo "    release-channel-check, release-a2a-gateway-check, release-cli-version-check"
+	@echo "    release-a2a-gateway-check, release-cli-version-check"
 	@echo ""
 	@echo "  release-awid-site                     deploy awid landing page"
 	@echo "  clean        Remove all build artifacts and caches"
@@ -509,29 +508,6 @@ release-awid-site:
 	git push origin deploy-awid-landing
 	git checkout main
 	@echo "Awid site deployed via deploy-awid-landing."
-
-# ── Channel release ──────────────────────────────────────────────────
-
-release-channel-check:
-	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
-		(echo "ERROR: channel package.json ($(CHANNEL_VERSION)) != plugin.json ($(CHANNEL_PLUGIN_VERSION))"; exit 1)
-	cd channel-core && npm ci && npm run build
-	cd channel && npm ci
-	cd channel && npm test
-	cd channel && npm run build
-	cd channel && npm pack --dry-run
-	@echo "Channel $(CHANNEL_VERSION) ready."
-
-release-channel-tag:
-	@git rev-parse --verify "channel-v$(CHANNEL_VERSION)" >/dev/null 2>&1 && (echo "Tag channel-v$(CHANNEL_VERSION) already exists."; exit 1) || true
-	git add channel/package.json channel/package-lock.json channel/.claude-plugin/plugin.json
-	git commit -m "release: @awebai/claude-channel $(CHANNEL_VERSION)"
-	git tag "channel-v$(CHANNEL_VERSION)"
-	@echo "Created tag channel-v$(CHANNEL_VERSION)."
-
-release-channel-push:
-	git push origin main
-	git push origin channel-v$(CHANNEL_VERSION)
 
 # ── CLI release ──────────────────────────────────────────────────────
 

@@ -148,11 +148,15 @@ PYPLUGIN
       node "$SOURCE_ROOT/pi-extension/scripts/check-package-dist.mjs" \
         --dist "$unpack/package/dist/index.js" \
         || fail "pi package-dist contract (bundled channel-core markers) failed"
-      local s
+      local s actual expected
       for s in $EXPECTED_SKILLS; do
         [[ -d "$unpack/package/skills/$s" ]] \
           || fail "pi tgz lacks expected skill directory skills/$s"
       done
+      actual="$(ls "$unpack/package/skills" 2>/dev/null | sort | tr '\n' ' ')"
+      expected="$(tr ' ' '\n' <<<"$EXPECTED_SKILLS" | sort | tr '\n' ' ')"
+      [[ "$actual" == "$expected" ]] \
+        || fail "pi tgz skill set is [$actual], expected exactly [$expected]"
       ;;
     skills)
       python3 - "$unpack/package/.claude-plugin/plugin.json" "$VERSION" <<'PYPLUG'
@@ -182,7 +186,7 @@ case "$MODE" in
       || { echo "pack-inspect requires --dir --version --out" >&2; exit 2; }
     mkdir -p "$OUT"
     OUT="$(cd "$OUT" && pwd)"
-    (cd "$DIR" && npm pack --pack-destination "$OUT" >/dev/null)
+    (cd "$DIR" && npm pack --ignore-scripts --pack-destination "$OUT" >/dev/null)
     count="$(ls "$OUT"/*.tgz 2>/dev/null | wc -l | tr -d ' ')"
     [[ "$count" == "1" ]] || fail "expected exactly one staged tgz in $OUT, found $count"
     tgz="$(ls "$OUT"/*.tgz)"
@@ -233,7 +237,7 @@ PY
     ;;
   publish-exact)
     [[ -n "$TGZ" && -f "$TGZ" ]] || fail "publish-exact requires an existing --tgz"
-    npm publish "$TGZ" --access public
+    npm publish "$TGZ" --ignore-scripts --access public
     printf 'PUBLISHED: %s sha256 %s\n' "$(basename "$TGZ")" "$(sha256 "$TGZ")"
     ;;
   verify-published)
