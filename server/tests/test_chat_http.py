@@ -6513,3 +6513,142 @@ async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_
             "sender_waiting": False,
         }
     ]
+
+
+class _SessionRowCountingManager:
+    """Database manager wrapper recording how many rows each query returned.
+
+    The session listing reads every session an identity has ever joined, so
+    only the row counts coming back from the database show whether a page is
+    cut in SQL or after the whole history is already in memory.
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.row_counts: list[int] = []
+
+    async def fetch_all(self, *args, **kwargs):
+        rows = await self._inner.fetch_all(*args, **kwargs)
+        self.row_counts.append(len(rows))
+        return rows
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_reads_page_sized_rows_not_every_session(aweb_cloud_db):
+    """Listing sessions must read in proportion to the page, not to history."""
+    session_count = 12
+    limit = 3
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        """
+    )
+    for index in range(session_count):
+        session_id = uuid4()
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+            VALUES ($1, 'alice', $2)
+            """,
+            session_id,
+            datetime.now(timezone.utc) - timedelta(minutes=index + 1),
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+            VALUES
+                ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+                ($1, 'did:aw:bob', 'bob')
+            """,
+            session_id,
+        )
+
+    counting_db = _SessionRowCountingManager(aweb_cloud_db.aweb_db)
+    app = _build_test_app(counting_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/v1/chat/sessions?limit={limit}")
+
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["sessions"]) == limit
+
+    # The page and its participant rows scale with the limit, not with the
+    # twelve sessions on file.
+    assert max(counting_db.row_counts) <= 3 * limit
+    assert max(counting_db.row_counts) < session_count * 2
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_reports_whether_the_limit_left_sessions_out(aweb_cloud_db):
+    """A short page must say it is short; a complete one must not claim it is."""
+    session_count = 6
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        """
+    )
+    for index in range(session_count):
+        session_id = uuid4()
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+            VALUES ($1, 'alice', $2)
+            """,
+            session_id,
+            datetime.now(timezone.utc) - timedelta(minutes=index + 1),
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+            VALUES
+                ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+                ($1, 'did:aw:bob', 'bob')
+            """,
+            session_id,
+        )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        truncated = await client.get("/v1/chat/sessions?limit=2")
+        exact = await client.get(f"/v1/chat/sessions?limit={session_count}")
+        roomy = await client.get("/v1/chat/sessions?limit=50")
+
+    assert truncated.status_code == 200, truncated.text
+    assert len(truncated.json()["sessions"]) == 2
+    assert truncated.json()["has_more"] is True
+
+    # A page that exactly consumes the limit is still complete, and must not
+    # claim otherwise just because the lookahead row was fetched.
+    assert exact.status_code == 200, exact.text
+    assert len(exact.json()["sessions"]) == session_count
+    assert exact.json()["has_more"] is False
+
+    assert roomy.status_code == 200, roomy.text
+    assert len(roomy.json()["sessions"]) == session_count
+    assert roomy.json()["has_more"] is False

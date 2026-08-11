@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.6
+
+- Includes the Channel Core trust-path changes above: compare-and-set retry on
+  pin commits, coalesced last-seen writes, and trust resolution moved out of the
+  pin lock.
+
+## 0.3.5
+
+- Includes the Channel Core burst-resolution fix and the opt-in delivery-stage
+  diagnostics.
+- Queues active-turn wake deliveries through Pi's accepted follow-up path
+  instead of holding them behind the current turn; source mail and chat are
+  acknowledged only after Pi accepts the injection.
+- Bundles js-yaml 4.3.1 with the same local-config exposure bound.
+
 ## 0.3.4
 
 - Bundles the Channel Core identity fix so repeated sender mismatches remain

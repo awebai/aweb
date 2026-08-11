@@ -356,6 +356,9 @@ class FixtureState:
     def pin_sha(self, pin: dict) -> str | None:
         return self.pin_values.get(pin["pin_file"])
 
+    def pin_checkout(self, pin: dict) -> str:
+        return pin["checkout"]
+
     def checkout_head(self, path: str) -> str | None:
         return self.checkout_heads.get(path)
 
@@ -579,19 +582,39 @@ def check_declared_inputs(
                 continue
             if kind == "lock-version":
                 # A lock pin records a VERSION of the pinned component; it can
-                # never be compared with a git HEAD. Satisfied when it names
-                # the CANDIDATE this plan will publish - a stale lock fails
-                # and a correctly advanced one passes before publication.
+                # never be compared with a git HEAD. It is checked against
+                # PUBLISHED truth, because a lock entry carries the registry's
+                # own url, hash and upload time for an uploaded file and so
+                # cannot record a version that is not published yet. Requiring
+                # the candidate here demanded exactly what the ac-pin adapter
+                # produces DURING release-run, after publication - the plan-time
+                # check asked for the run's own output, so no awid-pypi or
+                # server release could be planned. The candidate is validated
+                # where it exists: the adapter re-reads the lock it regenerated.
+                #
+                # The candidate is accepted too, for the states in which it is
+                # legitimately already there: a re-plan after the adapter has
+                # run, and the window in which the registry still reports the
+                # previous version. What remains named is a lock recording
+                # neither, which is the divergence worth catching.
                 target = graph.components[pin["component"]]
+                if state.registry_unavailable_reason(target) is not None:
+                    # An outage is evidence about the registry, never about the
+                    # lock. The target's own registry-truth problem already
+                    # blocks; condemning the lock here would name the wrong
+                    # thing for the operator to fix.
+                    continue
+                published = state.published_version(target)
                 candidate = state.source_version(target)
-                if candidate is not None and pinned != candidate:
+                if published is not None and pinned not in {published, candidate}:
                     problems.append(
                         f"{component.name}: lock {pin['pin_file']} records "
-                        f"{pin.get('package', target.name)} {pinned} but the "
-                        f"candidate version is {candidate}"
+                        f"{pin.get('package', target.name)} {pinned}, which is "
+                        f"neither the published version {published} nor the "
+                        f"candidate {candidate}"
                     )
                 continue
-            checkout = pin["checkout"]
+            checkout = state.pin_checkout(pin)
             if not state.path_exists(checkout):
                 problems.append(
                     f"{component.name}: sibling checkout {checkout} (pin file "
@@ -755,6 +778,10 @@ def _resolved_snapshot(plan: Plan, graph: Graph, state) -> dict:
             record = {"value": state.pin_sha(pin)}
             checkout = pin.get("checkout")
             if checkout and hasattr(state, "checkout_head"):
+                # Same context as the check above: a receipt that measured a
+                # different directory than the one validated would seal the
+                # wrong observation.
+                checkout = state.pin_checkout(pin)
                 record["checkout_head"] = state.checkout_head(checkout)
                 record["checkout_remote"] = state.checkout_remote(checkout)
                 record["declared_repository"] = pin.get("repository")
@@ -8538,6 +8565,29 @@ class GitRepositoryState:
         value = section.get(pin.get("field", ""))
         return value if isinstance(value, str) else None
 
+    def pin_checkout(self, pin: dict) -> str:
+        """The sibling checkout a pin names, resolved in the same repository
+        context the pin itself is read from.
+
+        A relative checkout is written from the point of view of the repository
+        holding the pin, so anchoring it here is only ever right by accident:
+        `../aweb` resolves back to this repository from the canonical checkout
+        and names nothing at all from a worktree, which is where the work
+        happens. That produced a sibling reported absent while it was present.
+        Pins with no declared repository stay anchored here, which is what they
+        have always meant.
+        """
+        checkout = pin["checkout"]
+        if Path(checkout).is_absolute():
+            return checkout
+        repo = pin.get("pin_repository")
+        root = self.external_contexts.get(repo) if repo else str(self.repo_root)
+        if root is None:
+            # The pin is unreadable without its context and is already reported
+            # as such; leave the declared value rather than invent an anchor.
+            return checkout
+        return str(Path(root) / checkout)
+
     def delivery_baseline(self, component: Component) -> str | None:
         baseline = (component.lane or {}).get("baseline_ref")
         if baseline is None:
@@ -8690,21 +8740,37 @@ class RegistryProviders:
                 f"{repository}: no dotted-numeric version tags published"
             )
         version = max(released)[1]
+        # --raw, because plain `skopeo inspect` selects an instance from a
+        # multi-platform index by the ASKING host's platform, and fails outright
+        # where that platform is absent - so a reader of published image truth
+        # would answer differently depending on where it ran, or not at all.
+        # --raw selects nothing and returns the bytes the registry serves for
+        # the tag; a tag's digest is the digest of exactly those bytes. This is
+        # also how the tag observer at _observe_ghcr_tag_factory reads a digest,
+        # so the file keeps one story about image truth.
+        #
+        # No text=True, and that is load-bearing rather than tidiness: the
+        # digest has to be taken over the bytes the registry served. Decoding
+        # them by the ambient locale and hashing a re-encoding would produce a
+        # different digest, or would raise on bytes that locale cannot
+        # represent. Restoring text=True for symmetry with the calls around it
+        # would silently change what this digest means. The stderr decode below
+        # is the consequence of that, not a separate choice.
         inspected = subprocess.run(
-            ["skopeo", "inspect", f"docker://{repository}:{version}"],
-            capture_output=True, text=True,
+            ["skopeo", "inspect", "--raw", f"docker://{repository}:{version}"],
+            capture_output=True,
         )
         if inspected.returncode != 0:
             raise RegistryUnavailable(
                 f"{repository}:{version}: manifest unavailable "
-                f"({inspected.stderr.strip()[:120]})"
+                f"({inspected.stderr.decode(errors='replace').strip()[:120]})"
             )
-        digest = json.loads(inspected.stdout or "{}").get("Digest")
-        if not digest:
+        if not inspected.stdout:
             raise RegistryUnavailable(
                 f"{repository}:{version}: manifest carries no digest; a version "
                 "without an immutable digest is unavailable, never acceptable"
             )
+        digest = "sha256:" + hashlib.sha256(inspected.stdout).hexdigest()
         return version, {version: digest}
 
 

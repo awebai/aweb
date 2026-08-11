@@ -1,12 +1,14 @@
 import { describe, expect, test, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentEvent } from "../../channel-core/src/api/events.js";
 import { PinStore } from "../../channel-core/src/identity/pinstore.js";
 import { canonicalJSON, signMessage, type MessageEnvelope } from "../../channel-core/src/identity/signing.js";
 import { SenderTrustManager } from "../../channel-core/src/identity/trust.js";
-import { dispatchEvent } from "../src/index.js";
+import { createChannelTraceSink, dispatchEvent } from "../src/index.js";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const vectors = JSON.parse(
@@ -87,6 +89,54 @@ async function signedInboxMailWithStableRecipient(messageID: string, selfStableI
   };
 }
 
+describe("createChannelTraceSink", () => {
+  test("is opt-in and durably flushes structured diagnostics", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "aweb-channel-trace-"));
+    const path = join(directory, "trace.jsonl");
+    expect(createChannelTraceSink("", path)).toBeUndefined();
+
+    const sink = createChannelTraceSink("true", path);
+    sink?.onTrace({
+      ts: "2026-08-09T15:05:03.738Z",
+      component: "aweb-channel-core",
+      stage: "frame_parsed",
+      event_type: "mail_message",
+      message_id: "message-1",
+    });
+    await sink?.flush();
+
+    expect(await readFile(path, "utf-8")).toBe(`${JSON.stringify({
+      ts: "2026-08-09T15:05:03.738Z",
+      component: "aweb-channel-core",
+      stage: "frame_parsed",
+      event_type: "mail_message",
+      message_id: "message-1",
+    })}\n`);
+  });
+
+  test("does not await a slow file append in the traced delivery lane", async () => {
+    let finishAppend: (() => void) | undefined;
+    const append = vi.fn(() => new Promise<void>((resolve) => { finishAppend = resolve; }));
+    const sink = createChannelTraceSink("1", "/tmp/aweb-channel-trace-test.jsonl", append);
+
+    sink?.onTrace({
+      ts: "2026-08-09T15:05:03.738Z",
+      component: "aweb-channel-core",
+      stage: "lane_job_started",
+      event_type: "mail_message",
+    });
+    await vi.waitFor(() => expect(append).toHaveBeenCalledTimes(1));
+    let flushed = false;
+    const flushing = sink?.flush().then(() => { flushed = true; });
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+
+    finishAppend?.();
+    await flushing;
+    expect(flushed).toBe(true);
+  });
+});
+
 describe("dispatchEvent", () => {
   const self = {
     alias: "eve",
@@ -106,7 +156,7 @@ describe("dispatchEvent", () => {
       mcp as never,
       {} as never,
       new PinStore(),
-      { normalizeTrust: vi.fn() } as unknown as SenderTrustManager,
+      { normalizeResolvedTrust: vi.fn() } as unknown as SenderTrustManager,
       self,
       new Set(),
       {
@@ -139,7 +189,7 @@ describe("dispatchEvent", () => {
       mcp as never,
       {} as never,
       new PinStore(),
-      { normalizeTrust: vi.fn() } as unknown as SenderTrustManager,
+      { normalizeResolvedTrust: vi.fn() } as unknown as SenderTrustManager,
       self,
       new Set(),
       {
@@ -169,7 +219,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async (_store, status, from, fromDid, fromStableID) => {
+      normalizeResolvedTrust: vi.fn(async (_store, status, from, fromDid, fromStableID) => {
         const pinKey = fromStableID || fromDid;
         pinStore.storePin(pinKey, from, "", "");
         const pin = pinStore.pins.get(pinKey)!;
@@ -216,8 +266,8 @@ describe("dispatchEvent", () => {
       get: vi.fn().mockResolvedValue({ messages: [await signedInboxMail("msg-local-trust")] }),
       post: vi.fn().mockResolvedValue(undefined),
     };
-    const normalizeTrust = vi.fn(async () => ({ status: "verified", stored: false }));
-    const trust = { normalizeTrust } as unknown as SenderTrustManager;
+    const normalizeResolvedTrust = vi.fn(async () => ({ status: "verified", stored: false }));
+    const trust = { normalizeResolvedTrust } as unknown as SenderTrustManager;
 
     await dispatchEvent(
       mcp as never,
@@ -229,7 +279,7 @@ describe("dispatchEvent", () => {
       { type: "mail_message", message_id: "msg-local-trust" } satisfies AgentEvent,
     );
 
-    expect(normalizeTrust).toHaveBeenCalledWith(
+    expect(normalizeResolvedTrust).toHaveBeenCalledWith(
       pinStore,
       "verified",
       "acme.com/alice",
@@ -240,6 +290,7 @@ describe("dispatchEvent", () => {
       undefined,
       undefined,
       "acme.com/alice",
+      undefined,
     );
     expect(notification).toHaveBeenCalledWith({
       method: "notifications/claude/channel",
@@ -266,7 +317,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "identity_mismatch", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "identity_mismatch", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchEvent(
@@ -360,7 +411,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchEvent(
@@ -391,7 +442,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
 
     const dispatch = dispatchEvent(
@@ -422,7 +473,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
     const dispatched = new Set<string>();
     const event = {
@@ -449,7 +500,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
     const dispatched = new Set<string>();
 
@@ -529,7 +580,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchEvent(
@@ -590,7 +641,7 @@ describe("dispatchEvent", () => {
         .mockResolvedValueOnce(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
     const dispatched = new Set<string>();
     const event = {
@@ -630,7 +681,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchEvent(
@@ -666,7 +717,7 @@ describe("dispatchEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const trust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchEvent(

@@ -8,9 +8,13 @@ provider interfaces the real driver uses, filled from fixtures.
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -2204,6 +2208,390 @@ class GraphContractTests(unittest.TestCase):
                 with self.assertRaises(rd.ReceiptError):
                     rd.parse_g5_authorization(value)
         self.assertIsNone(rd.parse_g5_authorization(None))
+
+
+class PinCheckoutContextTests(unittest.TestCase):
+    """A pin's sibling checkout is written from the point of view of the
+    repository the pin lives in, so it has to resolve there. Resolving it
+    against THIS repository's root only agrees by coincidence, and only when
+    that root is itself the directory the relative path names - true in the
+    canonical checkout, false in every worktree, which is where we all work.
+    """
+
+    def _two_candidate_parents(self, tmp: str) -> tuple[Path, Path]:
+        """Both parents hold a directory the relative path could name, so
+        existence cannot distinguish a correct resolution from the coincidence.
+        Only the identity of the answer can, which is what these tests assert.
+        """
+        context_parent = Path(tmp) / "context-parent"
+        repo_parent = Path(tmp) / "repo-parent"
+        (context_parent / "ac").mkdir(parents=True)
+        (context_parent / "aweb").mkdir(parents=True)
+        (repo_parent / "worktree").mkdir(parents=True)
+        (repo_parent / "aweb").mkdir(parents=True)
+        return context_parent, repo_parent
+
+    def test_a_pin_checkout_resolves_in_its_declared_repository_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            context_parent, repo_parent = self._two_candidate_parents(tmp)
+            state = rd.GitRepositoryState(
+                repo_root=repo_parent / "worktree",
+                external_contexts={
+                    "github.com/awebai/ac": str(context_parent / "ac")
+                },
+            )
+            pin = {
+                "pin_file": "release-pin.toml",
+                "component": "server",
+                "checkout": "../aweb",
+                "pin_repository": "github.com/awebai/ac",
+            }
+            # Same directory, not the same spelling: the driver anchors without
+            # normalising, exactly as it always has for repository-relative
+            # pins, so what is asserted here is identity of the target.
+            self.assertEqual(
+                Path(state.pin_checkout(pin)).resolve(),
+                (context_parent / "aweb").resolve(),
+                "the sibling belongs to the pin's repository, not to this one",
+            )
+            self.assertTrue(
+                state.path_exists(state.pin_checkout(pin)),
+                "a present sibling must never be reported absent",
+            )
+
+    def test_a_pin_without_a_declared_context_stays_relative_to_this_repository(
+        self,
+    ) -> None:
+        """The control: pins that name no external repository are unaffected,
+        so the fix cannot silently move every other checkout in the graph."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _context_parent, repo_parent = self._two_candidate_parents(tmp)
+            state = rd.GitRepositoryState(repo_root=repo_parent / "worktree")
+            pin = {
+                "pin_file": "release-pin.toml",
+                "component": "server",
+                "checkout": "../aweb",
+            }
+            self.assertEqual(
+                Path(state.pin_checkout(pin)).resolve(),
+                (repo_parent / "aweb").resolve(),
+            )
+
+
+class PinCheckoutCheckingPathTests(unittest.TestCase):
+    """The defect lived at the call sites, not in the helper underneath them.
+    A test that asks the helper directly passes while the checker reads the pin
+    dict again, so these drive the checking path and the receipt snapshot over a
+    real repository state instead - re-anchoring a relative checkout to this
+    repository has to fail HERE, where the reported bug was.
+    """
+
+    def _pin_world(self, tmp: str) -> tuple[Path, Path, Path, str]:
+        """A pin that lives in one repository and names a sibling of THAT
+        repository. This root deliberately has no such sibling, which is the
+        worktree condition the bug appeared under: the sibling is present, and
+        was reported absent.
+        """
+        context = Path(tmp) / "ac"
+        sibling = Path(tmp) / "aweb"
+        repo_root = Path(tmp) / "elsewhere" / "worktree"
+        for directory in (context, sibling, repo_root):
+            directory.mkdir(parents=True)
+
+        def git(*args: str) -> str:
+            return subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", "-C", str(sibling), *args],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        git("init", "-q")
+        git("config", "user.email", "test@example.invalid")
+        git("config", "user.name", "test")
+        git("commit", "-q", "--allow-empty", "-m", "base")
+        git("remote", "add", "origin", "https://github.com/awebai/aweb")
+        head = git("rev-parse", "HEAD")
+
+        # This root is a repository in its own right, because the snapshot reads
+        # remote tags from it. It is NOT the sibling and has no `../aweb` of its
+        # own: that absence is the whole point of the fixture.
+        subprocess.run(
+            ["git", "init", "-q", str(repo_root)], check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "-C", str(repo_root), "remote", "add", "origin", str(sibling)],
+            check=True,
+            capture_output=True,
+        )
+        # The pin is satisfied: it records the sibling's real HEAD, so the only
+        # thing that can produce a problem here is resolving to the wrong place.
+        (context / "release-pin.toml").write_text(f'[aweb]\ngit_sha = "{head}"\n')
+        return context, sibling, repo_root, head
+
+    def _graph(self) -> rd.Graph:
+        return rd.Graph.from_dict(
+            {
+                "component": {
+                    "server": {"publishable": False},
+                    "external-pin": {
+                        "publishable": False,
+                        "sibling_pins": [
+                            {
+                                "pin_file": "release-pin.toml",
+                                "section": "aweb",
+                                "field": "git_sha",
+                                "component": "server",
+                                "checkout": "../aweb",
+                                "repository": "github.com/awebai/aweb",
+                                "pin_repository": "github.com/awebai/ac",
+                            }
+                        ],
+                    },
+                },
+                "edge": [],
+            }
+        )
+
+    def _state_and_plan(self, tmp: str):
+        context, sibling, repo_root, head = self._pin_world(tmp)
+        state = rd.GitRepositoryState(
+            repo_root=repo_root,
+            external_contexts={"github.com/awebai/ac": str(context)},
+        )
+        plan = rd.Plan(
+            moving=[rd.PlanNode(component="external-pin", reason="pointer")],
+            runtime_contract_edges=[],
+        )
+        return state, plan, sibling, head
+
+    def test_a_present_sibling_is_not_reported_absent_by_the_checker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state, plan, _sibling, _head = self._state_and_plan(tmp)
+            self.assertEqual(
+                rd.check_declared_inputs(self._graph(), plan, state),
+                [],
+                "the sibling exists, its HEAD equals the pin and its remote is "
+                "the declared repository, so nothing about this pin is a problem",
+            )
+
+    def test_the_receipt_records_the_checkout_the_checker_validated(self) -> None:
+        """A receipt that measured a different directory than the one validated
+        would seal the wrong observation."""
+        with tempfile.TemporaryDirectory() as tmp:
+            state, plan, _sibling, head = self._state_and_plan(tmp)
+            snapshot = rd._resolved_snapshot(plan, self._graph(), state)
+            record = snapshot["pins"]["external-pin:release-pin.toml:git_sha"]
+            self.assertEqual(record["checkout_head"], head)
+            self.assertEqual(record["checkout_remote"], "github.com/awebai/aweb")
+
+
+
+# Reproduces skopeo on a host whose platform is absent from the image index.
+# Measured against ghcr.io/awebai/awid:0.5.14 from darwin/arm64: `skopeo
+# inspect` selects an instance and exits 1 with "no image found in image index
+# for architecture arm64 ... OS darwin"; `skopeo inspect --raw` selects nothing
+# and returns the index document.
+SKOPEO_PLATFORM_STUB = """#!/usr/bin/env python3
+import hashlib
+import json
+import os
+import sys
+
+argv = sys.argv[1:]
+if "list-tags" in argv:
+    sys.stdout.write(os.environ["AWEB_TEST_TAGS_JSON"])
+elif "--raw" in argv:
+    # No instance selection at all: the bytes the registry serves for the tag.
+    sys.stdout.write(os.environ["AWEB_TEST_INDEX_JSON"])
+elif "--override-os" in argv and "--override-arch" in argv:
+    # Selection against a platform the caller named rather than the host's.
+    # Real skopeo still reports the tag's index digest here, not the selected
+    # child's, which is why this arm agrees with --raw - but it is still
+    # selection, so it fails when the named platform is absent.
+    index = os.environ["AWEB_TEST_INDEX_JSON"]
+    named = argv[argv.index("--override-arch") + 1]
+    if not any(m["platform"]["architecture"] == named
+               for m in json.loads(index)["manifests"]):
+        sys.stderr.write(
+            'level=fatal msg="choosing image instance: no image found in image '
+            'index for architecture ' + named + '"')
+        sys.exit(1)
+    sys.stdout.write(json.dumps(
+        {"Digest": "sha256:" + hashlib.sha256(index.encode()).hexdigest()}))
+else:
+    sys.stderr.write(
+        'level=fatal msg="Error parsing manifest for image: choosing image '
+        'instance: no image found in image index for architecture arm64, '
+        'variant v8, OS darwin"'
+    )
+    sys.exit(1)
+"""
+
+# A real multi-platform index: linux/amd64 and linux/arm64, no darwin entry.
+IMAGE_INDEX_JSON = json.dumps({
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.oci.image.index.v1+json",
+    "manifests": [
+        {"mediaType": "application/vnd.oci.image.manifest.v1+json",
+         "digest": "sha256:" + "2d" * 32, "size": 2200,
+         "platform": {"architecture": "amd64", "os": "linux"}},
+        {"mediaType": "application/vnd.oci.image.manifest.v1+json",
+         "digest": "sha256:" + "3e" * 32, "size": 2200,
+         "platform": {"architecture": "arm64", "os": "linux"}},
+    ],
+}, sort_keys=True)
+
+
+class GhcrPublishedPlatformIndependenceTests(unittest.TestCase):
+    """Reading image truth for a version tag must not depend on the platform of
+    the host that asks. A lane that only ever ran where the host platform
+    happened to be in the index cannot tell the two apart.
+
+    The stub models both non-selecting reads skopeo offers, --raw and an
+    explicitly overridden platform, so the property under test is "does not
+    depend on the asking host" rather than "spells it the way we spelled it".
+    Only a read that selects by the host's own platform fails here."""
+
+    def _stub_path(self, tmp: str) -> str:
+        stub_bin = Path(tmp) / "bin"
+        stub_bin.mkdir()
+        stub = stub_bin / "skopeo"
+        stub.write_text(SKOPEO_PLATFORM_STUB)
+        stub.chmod(0o755)
+        return str(stub_bin)
+
+    def _with_stub(self, tmp: str):
+        os.environ["PATH"] = self._stub_path(tmp) + os.pathsep + os.environ["PATH"]
+        os.environ["AWEB_TEST_TAGS_JSON"] = json.dumps(
+            {"Tags": ["0.5.13", "0.5.14", "latest", "sha-abc1234"]})
+        os.environ["AWEB_TEST_INDEX_JSON"] = IMAGE_INDEX_JSON
+
+    def test_the_stub_reproduces_the_platform_selection_failure(self):
+        """The control. Without this the passing test below could not
+        distinguish a fixed reader from a stub that never fails."""
+        with tempfile.TemporaryDirectory() as tmp:
+            selecting = subprocess.run(
+                [str(Path(self._stub_path(tmp)) / "skopeo"),
+                 "inspect", "docker://ghcr.io/awebai/awid:0.5.14"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(selecting.returncode, 1)
+            self.assertIn("no image found in image index", selecting.stderr)
+            self.assertIn("OS darwin", selecting.stderr)
+
+    def test_the_read_survives_an_index_that_stops_carrying_one_platform(self):
+        """The reason --raw is preferred over naming a platform explicitly. Both
+        forms return the same digest today, so correctness does not separate
+        them; what separates them is an index that no longer carries the
+        platform the caller would have named."""
+        index = json.dumps({
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [
+                {"mediaType": "application/vnd.oci.image.manifest.v1+json",
+                 "digest": "sha256:" + "4f" * 32, "size": 2200,
+                 "platform": {"architecture": "arm64", "os": "linux"}},
+            ],
+        }, sort_keys=True)
+        restore = dict(os.environ)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                self._with_stub(tmp)
+                os.environ["AWEB_TEST_INDEX_JSON"] = index
+                version, digests = rd.RegistryProviders._ghcr_published(
+                    "awebai/awid")
+        finally:
+            os.environ.clear()
+            os.environ.update(restore)
+
+        self.assertEqual(version, "0.5.14")
+        self.assertEqual(
+            digests,
+            {"0.5.14": "sha256:" + hashlib.sha256(index.encode()).hexdigest()},
+        )
+
+    def test_published_image_truth_is_read_without_platform_selection(self):
+        """The whole point: the same call has to work where the asking host's
+        platform is not in the index at all."""
+        restore = dict(os.environ)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                self._with_stub(tmp)
+                version, digests = rd.RegistryProviders._ghcr_published(
+                    "awebai/awid")
+        finally:
+            os.environ.clear()
+            os.environ.update(restore)
+
+        self.assertEqual(version, "0.5.14")
+        self.assertEqual(
+            digests,
+            {"0.5.14": "sha256:" + hashlib.sha256(
+                IMAGE_INDEX_JSON.encode()).hexdigest()},
+            "the digest of a tag is the digest of the bytes the registry "
+            "serves for it, which for a multi-platform tag is the index",
+        )
+
+
+
+
+class SkewCellIdentityTotalityTests(unittest.TestCase):
+    """Every skew harness now decides frozen-matrix membership by canonical
+    identity rather than by comparing cell objects, because the driver runs as
+    __main__ while each child imports release_driver, so there are two SkewCell
+    classes and dataclass equality is class-scoped.
+
+    That is only safe while the identity covers EVERY field, and TWO separate
+    properties now rest on it. A field added to SkewCell but not to
+    skew_cell_preimage would (1) silently stop being checked at the matrix
+    boundary - two cells differing only in it would share an identity and each
+    would be accepted as the other - and (2) break the persisted-state harness's
+    field checks, which run against the CALLER's cell object rather than the
+    frozen one and are equivalent to it only because an identity match proves
+    every field equal.
+
+    Both consequences are caught here, by these two tests. Anyone weakening them
+    later will be thinking about the first, which is why the second is written
+    down: it has no test of its own and no other place that says it."""
+
+    def test_the_preimage_names_every_field_of_the_cell(self):
+        cell_fields = {field.name for field in dataclasses.fields(rd.SkewCell)}
+        preimage_keys = set(rd.skew_cell_preimage(self._cell()))
+
+        self.assertEqual(
+            cell_fields - preimage_keys, set(),
+            "a SkewCell field outside the preimage is a field the membership "
+            "check no longer sees",
+        )
+
+    def test_changing_any_single_field_changes_the_identity(self):
+        """The property the test above is a proxy for, asserted directly: no
+        field is inert."""
+        base = self._cell()
+        base_id = rd.skew_cell_identity(base)
+        for field in dataclasses.fields(rd.SkewCell):
+            with self.subTest(field=field.name):
+                current = getattr(base, field.name)
+                altered = (
+                    {**current, "probe": "x"} if isinstance(current, dict)
+                    else f"{current}-probe"
+                )
+                other = dataclasses.replace(base, **{field.name: altered})
+                self.assertNotEqual(
+                    rd.skew_cell_identity(other), base_id, field.name,
+                )
+
+    @staticmethod
+    def _cell():
+        return rd.SkewCell(
+            edge_id="e" * 64, edge_a="server", edge_b="server",
+            journey="a journey", artifacts={"a": "pypi:aweb", "b": "pypi:aweb"},
+            declared_direction="both", direction="a-to-b",
+            a_kind="candidate", b_kind="candidate",
+            a={"component": "server", "version": "1.27.1"},
+            b={"component": "server", "version": "1.27.0"},
+        )
 
 
 if __name__ == "__main__":

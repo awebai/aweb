@@ -16,8 +16,40 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
+import release_channel_pi_skew as channel_pi  # noqa: E402
 import release_driver as rd  # noqa: E402
 import release_persisted_state_skew as skew  # noqa: E402
+
+def fixture_server_lock_bytes(provenance: str, version: str):
+    return (
+        (SCRIPTS.parent / "server" / "uv.lock").read_bytes(),
+        f"fixture-lock:{provenance}",
+    )
+
+
+class FixtureServerLock:
+    """Serve the working tree's lock for every version. OPT-IN, per class.
+
+    This harness installs a published wheel and a candidate wheel in one run, so
+    their constraints legitimately differ. Fixture versions here are invented
+    (1.2.1, 1.2.3), so no tag exists for the published side and the real reader
+    correctly refuses it; classes about persisted-state behaviour mix this in
+    and stop depending on tag history.
+
+    Opt-in rather than module-wide, because the fake makes both provenances
+    resolve the SAME constraints digest - the value the evidence anchors - and
+    so hides the divergence per-wheel keying exists to carry. A plain TestCase
+    gets the real reader, and ConstraintsPerWheelTests is one.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._real_server_lock_bytes = channel_pi._server_lock_bytes
+        channel_pi._server_lock_bytes = fixture_server_lock_bytes
+
+    def tearDown(self):
+        channel_pi._server_lock_bytes = self._real_server_lock_bytes
+        super().tearDown()
 
 
 JOURNEY = (
@@ -225,7 +257,9 @@ class PersistedArtifactTests(unittest.TestCase):
 def valid_runtime_inventory(aweb_version, extra_locked=()):
     import release_channel_pi_skew as channel_pi
 
-    _, digest, constraints = channel_pi.server_runtime_constraints()
+    resolved = channel_pi.server_runtime_constraints(
+        channel_pi.CANDIDATE_PROVENANCE, aweb_version)
+    digest, constraints = resolved.digest, resolved.constraints
     rows = [{"name": "aweb", "version": aweb_version},
             {"name": "mcp", "version": constraints["mcp"]}]
     for name in extra_locked:
@@ -523,7 +557,7 @@ class PublishedTypeBindingTests(unittest.TestCase):
             self.resolve(self.metadata(swap_types=True))
 
 
-class AggregatePublishedIdentityTests(unittest.TestCase):
+class AggregatePublishedIdentityTests(FixtureServerLock, unittest.TestCase):
     """aggregate_support must exact-revalidate the complete published actor
     identity - reviewer tampering counterexamples, each with a recomputed
     self-presented report_id so the digest check cannot mask them."""
@@ -612,7 +646,7 @@ class AggregatePublishedIdentityTests(unittest.TestCase):
             skew.aggregate_support(self.measured(tamper))
 
 
-class PersistedJourneyTests(unittest.TestCase):
+class PersistedJourneyTests(FixtureServerLock, unittest.TestCase):
     def test_installed_wheel_is_started_through_its_serve_subcommand(self):
         self.assertEqual(
             skew.server_command(Path("/runtime"), 8123),
@@ -813,7 +847,7 @@ class RealCausalMatcherTests(unittest.TestCase):
             journey.assert_causal_mail_failure(RuntimeError("timeout"))
 
 
-class RuntimePostureTests(unittest.TestCase):
+class RuntimePostureTests(FixtureServerLock, unittest.TestCase):
     """Cells and control bind canonical in-venv distribution inventories;
     only the aweb wheel may differ across compared runtimes."""
 
@@ -883,7 +917,8 @@ class RuntimePostureTests(unittest.TestCase):
     def test_aggregate_refuses_dependency_drift(self):
         import release_channel_pi_skew as channel_pi
 
-        _, _, constraints = channel_pi.server_runtime_constraints()
+        constraints = channel_pi.server_runtime_constraints(
+            channel_pi.CANDIDATE_PROVENANCE, "1.2.1").constraints
         extra = sorted(n for n in constraints if n != "mcp")[0]
 
         def tamper(wheel, inventory):
@@ -897,7 +932,7 @@ class RuntimePostureTests(unittest.TestCase):
             skew.aggregate_support(matrix_path)
 
 
-class SupportMeasurementTests(unittest.TestCase):
+class SupportMeasurementTests(FixtureServerLock, unittest.TestCase):
     def measured_matrix(self):
         document, cells = matrix_document(("1.2.1", "1.2.2"))
         temporary = tempfile.TemporaryDirectory()
@@ -965,6 +1000,65 @@ class RegistrationTests(unittest.TestCase):
         self.assertIn("test_release_persisted_state_skew.py", target.split("\n\n", 1)[0])
         release_target = makefile.split("test-release-driver:", 1)[1].split("\n\n", 1)[0]
         self.assertIn("test-release-persisted-state-skew", release_target)
+
+
+
+class ConstraintsPerWheelTests(unittest.TestCase):
+    """This harness installs TWO server wheels in one run, so constraints have
+    to be keyed per wheel.
+
+    A plain TestCase, so it runs against the real lock reader. A fixture that
+    makes both sides resolve the same constraints cannot see the keying at all,
+    which is exactly what FixtureServerLock does for the classes that mix it
+    in - so the property has to be covered by a class that does not."""
+
+    def setUp(self):
+        self.journey = skew.SubprocessPersistedStateJourney()
+
+    def _wheel(self, version, sha_seed, kind):
+        return skew.WheelIdentity(
+            filename=f"aweb-{version}-py3-none-any.whl",
+            version=version, sha256=sha_seed * 64, bytes=b"",
+            source={"kind": kind},
+        )
+
+    def test_two_wheels_get_separate_constraints_files_and_digests(self):
+        published = self._wheel("1.27.0", "a", "published")
+        candidate = self._wheel("1.27.1", "b", "candidate")
+
+        published_path, published_digest = self.journey._constraints_path(published)
+        candidate_path, candidate_digest = self.journey._constraints_path(candidate)
+
+        self.assertNotEqual(published_path, candidate_path)
+        self.assertNotEqual(
+            published_digest, candidate_digest,
+            "published 1.27.0 is built under its tag's lock and the candidate "
+            "under the working tree's; identical digests would mean one of them "
+            "is measured under the other's dependencies",
+        )
+        self.assertEqual(
+            hashlib.sha256(published_path.read_bytes()).hexdigest(),
+            published_digest,
+        )
+        self.assertEqual(
+            hashlib.sha256(candidate_path.read_bytes()).hexdigest(),
+            candidate_digest,
+        )
+
+    def test_the_drift_check_still_fires_within_one_wheel(self):
+        """Keying per wheel must not cost the guard it replaces. A constraints
+        file that changes under the SAME wheel is still drift."""
+        wheel = self._wheel("1.27.0", "c", "published")
+        path, _ = self.journey._constraints_path(wheel)
+        path.write_bytes(b"tampered==0.0.0\n")
+
+        with self.assertRaisesRegex(rd.ReceiptError, "constraints changed"):
+            self.journey._constraints_path(wheel)
+
+    def test_a_published_wheel_with_no_tag_refuses_rather_than_borrowing(self):
+        with self.assertRaisesRegex(rd.ReceiptError, "no server-v9.9.9 tag"):
+            self.journey._constraints_path(
+                self._wheel("9.9.9", "d", "published"))
 
 
 if __name__ == "__main__":

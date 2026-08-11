@@ -41,7 +41,7 @@ describe("channel-core dispatchAgentEvent", () => {
   };
 
   const trust = {
-    normalizeTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
   } as unknown as SenderTrustManager;
   const acceptingPinStoreWriter = {
     compareAndSet: vi.fn(async () => {}),
@@ -92,8 +92,344 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-lane-1/ack");
   });
 
+  test("traces a blocked mail lane without leaking message content", async () => {
+    let finishFirstMail: (() => void) | undefined;
+    const traces: Array<Record<string, unknown>> = [];
+    const onAwakening = vi.fn((awakening: ChannelAwakening) => {
+      if (awakening.meta.message_id === "mail-trace-1") {
+        return new Promise<void>((resolve) => { finishFirstMail = resolve; });
+      }
+      return Promise.resolve();
+    });
+    const mail = (id: string, body: string) => ({
+      message_id: id,
+      conversation_id: `conversation-${id}`,
+      from_agent_id: "agent-1",
+      from_alias: "alice",
+      from_address: "acme.com/alice",
+      to_alias: "eve",
+      subject: `subject-${id}`,
+      body,
+      priority: "normal",
+      created_at: "2025-01-01T00:00:00Z",
+    });
+    const client = {
+      get: vi.fn(async (path: string) => {
+        if (path.includes("mail-trace-1")) return { messages: [mail("mail-trace-1", "SECRET-FIRST-BODY")] };
+        return { messages: [mail("mail-trace-2", "SECRET-SECOND-BODY")] };
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    async function* events(): AsyncGenerator<AgentEvent> {
+      yield {
+        type: "mail_message",
+        message_id: "mail-trace-1",
+        subject: "SECRET-FRAME-SUBJECT",
+        text: "SECRET-FRAME-TEXT",
+        from_alias: "SECRET-FRAME-SENDER",
+        title: "SECRET-FRAME-TITLE",
+      };
+      yield { type: "mail_message", message_id: "mail-trace-2" };
+      yield { type: "control_interrupt", signal_id: "control-trace" };
+    }
+
+    const consuming = consumeAgentEvents(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening,
+        onTrace: (entry: Record<string, unknown>) => traces.push(entry),
+      } as never,
+      new Set(),
+      events(),
+    );
+    await vi.waitFor(() => expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "control",
+    })));
+
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "event_enqueued", event_type: "mail_message", message_id: "mail-trace-2", lane: "mail",
+    }));
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "lane_job_started", message_id: "mail-trace-1", lane: "mail",
+    }));
+    expect(traces).not.toContainEqual(expect.objectContaining({
+      stage: "lane_job_started", message_id: "mail-trace-2", lane: "mail",
+    }));
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "lane_job_started", event_type: "control_interrupt",
+    }));
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "notification_started", message_id: "mail-trace-1",
+    }));
+    expect(traces).not.toContainEqual(expect.objectContaining({
+      stage: "notification_accepted", message_id: "mail-trace-1",
+    }));
+    expect(JSON.stringify(traces)).not.toContain("SECRET-");
+    const allowedKeys = new Set([
+      "component", "conversation_id", "event_type", "lane", "message_id",
+      "session_id", "stage", "ts",
+    ]);
+    for (const trace of traces) {
+      expect(Object.keys(trace).filter((key) => !allowedKeys.has(key))).toEqual([]);
+      expect(Object.keys(trace)).toEqual(expect.arrayContaining([
+        "component", "event_type", "stage", "ts",
+      ]));
+    }
+
+    finishFirstMail?.();
+    await consuming;
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "notification_accepted", message_id: "mail-trace-1",
+    }));
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "lane_job_started", message_id: "mail-trace-2", lane: "mail",
+    }));
+  });
+
+  test("distinguishes waiting for the trust lock from work after acquisition", async () => {
+    const pinStore = new PinStore();
+    let releaseLock: (() => void) | undefined;
+    const holdingLock = pinStore.runExclusive(() => new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    }));
+    const traces: Array<Record<string, unknown>> = [];
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-lock-trace",
+          conversation_id: "conversation-lock-trace",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "world",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const dispatching = dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore,
+        trust,
+        self,
+        onAwakening: vi.fn(),
+        onTrace: (entry) => traces.push(entry),
+      },
+      new Set(),
+      { type: "mail_message", message_id: "mail-lock-trace" },
+    );
+
+    await vi.waitFor(() => expect(traces).toContainEqual(expect.objectContaining({
+      stage: "trust_started", message_id: "mail-lock-trace",
+    })));
+    expect(traces).not.toContainEqual(expect.objectContaining({
+      stage: "lock_acquired", message_id: "mail-lock-trace",
+    }));
+
+    releaseLock?.();
+    await holdingLock;
+    await dispatching;
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "lock_acquired", message_id: "mail-lock-trace",
+    }));
+  });
+
+  test("resolves sender metadata before entering the trust critical section", async () => {
+    let finishResolution!: (value: undefined) => void;
+    const resolutionPending = new Promise<undefined>((resolve) => {
+      finishResolution = resolve;
+    });
+    const resolvingTrust = {
+      resolveTrustMetadata: vi.fn(() => resolutionPending),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })),
+    } as unknown as SenderTrustManager;
+    const pinStore = new PinStore();
+    const runExclusive = vi.spyOn(pinStore, "runExclusive");
+    const traces: Array<Record<string, unknown>> = [];
+    const client = {
+      get: vi.fn().mockResolvedValue({
+        messages: [{
+          message_id: "mail-resolve-before-lock",
+          conversation_id: "conversation-resolve-before-lock",
+          from_agent_id: "agent-1",
+          from_alias: "alice",
+          from_address: "acme.com/alice",
+          to_alias: "eve",
+          subject: "hello",
+          body: "world",
+          priority: "normal",
+          created_at: "2025-01-01T00:00:00Z",
+        }],
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const dispatching = dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore,
+        trust: resolvingTrust,
+        self,
+        onAwakening: vi.fn(),
+        onTrace: (entry) => traces.push(entry),
+      },
+      new Set(),
+      { type: "mail_message", message_id: "mail-resolve-before-lock" },
+    );
+
+    await vi.waitFor(() => expect(resolvingTrust.resolveTrustMetadata).toHaveBeenCalledTimes(1));
+    expect(runExclusive).not.toHaveBeenCalled();
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "trust_started", message_id: "mail-resolve-before-lock",
+    }));
+    expect(traces).not.toContainEqual(expect.objectContaining({
+      stage: "lock_acquired", message_id: "mail-resolve-before-lock",
+    }));
+
+    finishResolution(undefined);
+    await dispatching;
+    expect(runExclusive).toHaveBeenCalledTimes(1);
+    expect(resolvingTrust.normalizeResolvedTrust).toHaveBeenCalledTimes(1);
+    expect(traces).toContainEqual(expect.objectContaining({
+      stage: "lock_acquired", message_id: "mail-resolve-before-lock",
+    }));
+  });
+
+  test("shares one hanging roster failure across chat lanes and reuses the cached stale verdict", async () => {
+    let now = 0;
+    let rejectRoster!: (error: Error) => void;
+    const rosterPending = new Promise<never>((_resolve, reject) => {
+      rejectRoster = reject;
+    });
+    const neverResolveRoster = new Promise<never>(() => {});
+    const rosterRequests = vi.fn()
+      .mockImplementationOnce(() => rosterPending)
+      .mockImplementationOnce(() => neverResolveRoster);
+    const sessionIDs = Array.from({ length: 5 }, (_, index) => `burst-session-${index + 1}`);
+    const envelopes = await Promise.all(sessionIDs.map(async (sessionID, index) => {
+      const env: MessageEnvelope = {
+        from: "alice",
+        from_did: vectors.did,
+        to: self.alias,
+        to_did: self.did,
+        type: "chat",
+        subject: "",
+        body: `burst ${index + 1}`,
+        timestamp: `2025-01-01T00:00:0${index}Z`,
+        message_id: `burst-message-${index + 1}`,
+        conversation_id: sessionID,
+      };
+      return { env, signature: await signMessage(b64ToBytes(vectors.seed), env) };
+    }));
+    const client = {
+      hasTeamCertificateAuth: (teamID: string) => teamID === "backend:acme.com",
+      get: vi.fn(async (path: string) => {
+        if (path === "/v1/agents") return rosterRequests();
+        const item = envelopes.find(({ env }) => path.includes(env.conversation_id!));
+        expect(item).toBeDefined();
+        const { env, signature } = item!;
+        return {
+          messages: [{
+            message_id: env.message_id,
+            conversation_id: env.conversation_id,
+            from_agent: "alice",
+            from_address: env.from,
+            to_address: env.to,
+            body: env.body,
+            timestamp: env.timestamp,
+            sender_leaving: false,
+            from_did: vectors.did,
+            to_did: self.did,
+            signature,
+            signing_key_id: vectors.did,
+            signed_payload: canonicalJSON(env),
+          }],
+        };
+      }),
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const trust = new SenderTrustManager(
+      client as never,
+      { verifyStableIdentity: vi.fn() } as never,
+      "backend:acme.com",
+      self.did,
+      self.stableID,
+      () => now,
+      () => 0,
+    );
+    const awakenings: ChannelAwakening[] = [];
+    const log = vi.fn();
+    async function* burstEvents(): AsyncGenerator<AgentEvent> {
+      for (const { env } of envelopes.slice(0, 4)) {
+        yield {
+          type: "chat_message",
+          session_id: env.conversation_id,
+          conversation_id: env.conversation_id,
+          message_id: env.message_id,
+        };
+      }
+    }
+    const consuming = consumeAgentEvents(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening: (awakening) => { awakenings.push(awakening); },
+      },
+      new Set(),
+      burstEvents(),
+      log,
+    );
+
+    await vi.waitFor(() => expect(rosterRequests).toHaveBeenCalledTimes(1));
+    expect(awakenings).toHaveLength(0);
+    rejectRoster(new Error("roster request timed out"));
+    await consuming;
+
+    expect(awakenings).toHaveLength(4);
+    expect(awakenings.map((item) => item.meta.trust_status)).toEqual([
+      "verification_stale",
+      "verification_stale",
+      "verification_stale",
+      "verification_stale",
+    ]);
+    expect(log).not.toHaveBeenCalled();
+
+    now = 5_000;
+    const fifth = envelopes[4].env;
+    const fifthDispatch = dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        onAwakening: (awakening) => { awakenings.push(awakening); },
+      },
+      new Set(),
+      {
+        type: "chat_message",
+        session_id: fifth.conversation_id,
+        conversation_id: fifth.conversation_id,
+        message_id: fifth.message_id,
+      },
+    );
+    await vi.waitFor(() => expect(awakenings).toHaveLength(5), { timeout: 200 });
+    await fifthDispatch;
+    expect(awakenings[4].meta.trust_status).toBe("verification_stale");
+    expect(rosterRequests).toHaveBeenCalledTimes(1);
+  });
+
   test("acks mail after channel delivery succeeds", async () => {
     const onAwakening = vi.fn();
+    const traces: Array<Record<string, unknown>> = [];
     const client = {
       get: vi.fn().mockResolvedValue({
         messages: [{
@@ -118,6 +454,7 @@ describe("channel-core dispatchAgentEvent", () => {
         trust,
         self,
         onAwakening,
+        onTrace: (entry) => traces.push(entry),
       },
       new Set(),
       { type: "mail_message", message_id: "mail-1" } satisfies AgentEvent,
@@ -128,6 +465,21 @@ describe("channel-core dispatchAgentEvent", () => {
       content: "world",
     }));
     expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-1/ack");
+    expect(traces.map((entry) => entry.stage)).toEqual([
+      "exact_fetch_started",
+      "exact_fetch_completed",
+      "decrypt_started",
+      "decrypt_completed",
+      "trust_started",
+      "lock_acquired",
+      "trust_completed",
+      "notification_started",
+      "notification_accepted",
+      "durable_mark_started",
+      "durable_mark_completed",
+      "ack_started",
+      "ack_completed",
+    ]);
   });
 
   test("delivery-store lock failure rejects without creating an in-memory acknowledgment path", { timeout: 15_000 }, async () => {
@@ -226,7 +578,7 @@ describe("channel-core dispatchAgentEvent", () => {
     };
     let trustAttempt = 0;
     const storingTrust = {
-      normalizeTrust: vi.fn(async (store: PinStore) => {
+      normalizeResolvedTrust: vi.fn(async (store: PinStore) => {
         trustAttempt += 1;
         if (trustAttempt === 1) {
           store.storePin("did:key:zAlice", "acme.com/alice", "", "");
@@ -281,7 +633,7 @@ describe("channel-core dispatchAgentEvent", () => {
   test("serializes trust decisions through pin persistence", async () => {
     let trustAttempt = 0;
     const trustGate = {
-      normalizeTrust: vi.fn(async (store: PinStore) => {
+      normalizeResolvedTrust: vi.fn(async (store: PinStore) => {
         trustAttempt += 1;
         if (trustAttempt === 1) {
           store.storePin("did:key:zAlice", "acme.com/alice", "", "");
@@ -353,100 +705,224 @@ describe("channel-core dispatchAgentEvent", () => {
       { type: "mail_message", message_id: "mail-serialize-2" } satisfies AgentEvent,
     );
     await vi.waitFor(() => expect(runExclusive).toHaveBeenCalledTimes(2));
-    expect(trustGate.normalizeTrust).toHaveBeenCalledTimes(1);
+    expect(trustGate.normalizeResolvedTrust).toHaveBeenCalledTimes(1);
 
     releaseCommit();
     await Promise.all([first, second]);
 
-    expect(trustGate.normalizeTrust).toHaveBeenCalledTimes(2);
+    expect(trustGate.normalizeResolvedTrust).toHaveBeenCalledTimes(2);
     expect(pinStoreWriter.compareAndSet).toHaveBeenCalledTimes(2);
   });
 
-  test("reloads after a CAS conflict so a later mutation can proceed", async () => {
+  test("retries a whole trust decision after a CAS reload without resolving inside the lock", async () => {
     const onAwakening = vi.fn();
     const dir = await mkdtemp(join(tmpdir(), "aw-pin-conflict-reload-"));
     const pinStorePath = join(dir, "known_agents.yaml");
     const durable = new PinStore();
-    durable.storePin("did:key:zBob", "acme.com/bob", "", "");
+    durable.storePin("did:key:zBob", "backend:acme.com/bob", "", "");
     await writeFile(pinStorePath, durable.toYAML(), "utf-8");
 
-    const pinStore = new PinStore();
-    let trustAttempt = 0;
-    const trustAfterReload = {
-      normalizeTrust: vi.fn(async (store: PinStore) => {
-        trustAttempt += 1;
-        if (trustAttempt === 1) {
-          store.storePin("did:key:zAlice", "acme.com/alice", "", "");
-        } else {
-          expect(store.addresses.get("acme.com/bob")).toBe("did:key:zBob");
-          expect(store.addresses.has("acme.com/alice")).toBe(false);
-          store.storePin("did:key:zCarol", "acme.com/carol", "", "");
+    const env: MessageEnvelope = {
+      from: "backend:acme.com/alice",
+      from_did: vectors.did,
+      from_stable_id: vectors.stableID,
+      to: self.address,
+      to_did: self.did,
+      to_stable_id: self.stableID,
+      type: "mail",
+      subject: "hello",
+      body: "retry after reload",
+      timestamp: "2025-01-01T00:00:00Z",
+      message_id: "mail-pin-conflict",
+    };
+    const signature = await signMessage(b64ToBytes(vectors.seed), env);
+    let lockHeld = false;
+    const rosterRequests = vi.fn();
+    const client = {
+      hasTeamCertificateAuth: (teamID: string) => teamID === "backend:acme.com",
+      get: vi.fn(async (path: string) => {
+        if (path === "/v1/agents") {
+          expect(lockHeld).toBe(false);
+          rosterRequests();
+          return {
+            team_id: "backend:acme.com",
+            agents: [{
+              alias: "alice",
+              address: env.from,
+              did_key: vectors.did,
+              did_aw: vectors.stableID,
+              identity_scope: "global",
+            }],
+          };
         }
-        return { status: "verified", stored: true };
+        expect(path).toContain("/v1/messages/inbox?");
+        return {
+          messages: [{
+            message_id: env.message_id,
+            from_agent_id: "agent-1",
+            from_alias: "alice",
+            from_address: env.from,
+            from_did: vectors.stableID,
+            from_stable_id: vectors.stableID,
+            to_alias: self.alias,
+            to_did: self.stableID,
+            to_stable_id: self.stableID,
+            subject: env.subject,
+            body: env.body,
+            priority: "normal",
+            created_at: env.timestamp,
+            signature,
+            signing_key_id: vectors.did,
+            signed_payload: canonicalJSON(env),
+          }],
+        };
       }),
-    } as unknown as SenderTrustManager;
+      post: vi.fn().mockResolvedValue(undefined),
+    };
+    const registry = {
+      resolveIdentity: vi.fn(async () => {
+        expect(lockHeld).toBe(false);
+        throw new Error("team aliases must use the authenticated roster");
+      }),
+      verifyStableIdentity: vi.fn(async () => {
+        expect(lockHeld).toBe(false);
+        return { outcome: "OK_DEGRADED" };
+      }),
+    };
+    const trustAfterReload = new SenderTrustManager(
+      client as never,
+      registry as never,
+      "backend:acme.com",
+      self.did,
+      self.stableID,
+    );
+    const pinStore = new PinStore();
+    const originalRunExclusive = pinStore.runExclusive.bind(pinStore);
+    const runExclusive = vi.spyOn(pinStore, "runExclusive").mockImplementation(async (operation) => (
+      originalRunExclusive(async () => {
+        expect(lockHeld).toBe(false);
+        lockHeld = true;
+        try {
+          return await operation();
+        } finally {
+          lockHeld = false;
+        }
+      })
+    ));
+    const trustInternals = trustAfterReload as unknown as {
+      resolveAgentMeta(address: string): Promise<unknown>;
+    };
+    const originalResolveAgentMeta = trustInternals.resolveAgentMeta.bind(trustAfterReload);
+    const resolutionLockStates: boolean[] = [];
+    vi.spyOn(trustInternals, "resolveAgentMeta").mockImplementation(async (address) => {
+      resolutionLockStates.push(lockHeld);
+      return originalResolveAgentMeta(address);
+    });
+    const prepareMetadata = vi.spyOn(trustAfterReload, "resolveTrustMetadata");
+
     let writeAttempt = 0;
     const pinStoreWriter = {
       compareAndSet: vi.fn(async (_path: string, expectedYAML: string, desiredYAML: string) => {
         writeAttempt += 1;
+        const desired = PinStore.fromYAML(desiredYAML);
+        expect(desired.addresses.get(env.from)).toBe(vectors.stableID);
         if (writeAttempt === 1) {
           throw new PinStoreCASConflictError("trust pin store changed since it was read");
         }
         const expected = PinStore.fromYAML(expectedYAML);
         expect(expected.toYAML()).toBe(durable.toYAML());
-        expect(expected.addresses.get("acme.com/bob")).toBe("did:key:zBob");
-        expect(expected.addresses.has("acme.com/alice")).toBe(false);
-        const desired = PinStore.fromYAML(desiredYAML);
-        expect(desired.addresses.get("acme.com/bob")).toBe("did:key:zBob");
-        expect(desired.addresses.get("acme.com/carol")).toBe("did:key:zCarol");
-        expect(desired.addresses.has("acme.com/alice")).toBe(false);
+        expect(expected.addresses.get("backend:acme.com/bob")).toBe("did:key:zBob");
+        expect(desired.addresses.get("backend:acme.com/bob")).toBe("did:key:zBob");
         await writeFile(pinStorePath, desiredYAML, "utf-8");
+      }),
+    };
+
+    await dispatchAgentEvent(
+      {
+        client: client as never,
+        pinStore,
+        pinStorePath,
+        pinStoreWriter,
+        trust: trustAfterReload,
+        self,
+        onAwakening,
+      },
+      new Set(),
+      { type: "mail_message", message_id: env.message_id } satisfies AgentEvent,
+    );
+
+    const persisted = PinStore.fromYAML(await readFile(pinStorePath, "utf-8"));
+    expect(persisted.addresses.get("backend:acme.com/bob")).toBe("did:key:zBob");
+    expect(persisted.addresses.get(env.from)).toBe(vectors.stableID);
+    expect(onAwakening).toHaveBeenCalledTimes(1);
+    expect(client.post).toHaveBeenCalledTimes(1);
+    expect(runExclusive).toHaveBeenCalledTimes(2);
+    expect(prepareMetadata).toHaveBeenCalledTimes(2);
+    expect(resolutionLockStates).toEqual([false, false]);
+    expect(rosterRequests).toHaveBeenCalledTimes(1);
+    expect(registry.resolveIdentity).not.toHaveBeenCalled();
+  });
+
+  test("leaves an event pending after three pin-store CAS attempts", async () => {
+    const onAwakening = vi.fn();
+    const dir = await mkdtemp(join(tmpdir(), "aw-pin-conflict-exhausted-"));
+    const pinStorePath = join(dir, "known_agents.yaml");
+    await writeFile(pinStorePath, new PinStore().toYAML(), "utf-8");
+    const preparedMetadata = new Set<object>();
+    const trustWithFreshMetadata = {
+      resolveTrustMetadata: vi.fn(async () => {
+        const prepared = {};
+        preparedMetadata.add(prepared);
+        return prepared;
+      }),
+      normalizeResolvedTrust: vi.fn(async (store: PinStore, ...args: unknown[]) => {
+        const prepared = args.at(-1) as object;
+        expect(preparedMetadata.delete(prepared)).toBe(true);
+        store.storePin("did:key:zAlice", "acme.com/alice", "", "");
+        return { status: "verified", stored: true };
+      }),
+    } as unknown as SenderTrustManager;
+    const pinStoreWriter = {
+      compareAndSet: vi.fn(async () => {
+        throw new PinStoreCASConflictError("trust pin store changed since it was read");
       }),
     };
     const client = {
       get: vi.fn().mockResolvedValue({
         messages: [{
-          message_id: "mail-pin-conflict",
+          message_id: "mail-pin-conflict-exhausted",
           from_agent_id: "agent-1",
           from_alias: "alice",
           from_address: "acme.com/alice",
           to_alias: "eve",
           subject: "hello",
-          body: "retry after reload",
+          body: "remain pending",
           priority: "normal",
           created_at: "2025-01-01T00:00:00Z",
         }],
       }),
       post: vi.fn().mockResolvedValue(undefined),
     };
-    const options = {
-      client: client as never,
-      pinStore,
-      pinStorePath,
-      pinStoreWriter,
-      trust: trustAfterReload,
-      self,
-      onAwakening,
-    };
 
     await expect(dispatchAgentEvent(
-      options,
+      {
+        client: client as never,
+        pinStore: new PinStore(),
+        pinStorePath,
+        pinStoreWriter,
+        trust: trustWithFreshMetadata,
+        self,
+        onAwakening,
+      },
       new Set(),
-      { type: "mail_message", message_id: "mail-pin-conflict" } satisfies AgentEvent,
+      { type: "mail_message", message_id: "mail-pin-conflict-exhausted" } satisfies AgentEvent,
     )).rejects.toBeInstanceOf(PinStoreCASConflictError);
+
+    expect(pinStoreWriter.compareAndSet).toHaveBeenCalledTimes(3);
+    expect(trustWithFreshMetadata.resolveTrustMetadata).toHaveBeenCalledTimes(3);
+    expect(trustWithFreshMetadata.normalizeResolvedTrust).toHaveBeenCalledTimes(3);
     expect(onAwakening).not.toHaveBeenCalled();
-
-    await dispatchAgentEvent(
-      options,
-      new Set(),
-      { type: "mail_message", message_id: "mail-pin-conflict" } satisfies AgentEvent,
-    );
-
-    const persisted = PinStore.fromYAML(await readFile(pinStorePath, "utf-8"));
-    expect(persisted.addresses.get("acme.com/bob")).toBe("did:key:zBob");
-    expect(persisted.addresses.get("acme.com/carol")).toBe("did:key:zCarol");
-    expect(persisted.addresses.has("acme.com/alice")).toBe(false);
-    expect(onAwakening).toHaveBeenCalledTimes(1);
+    expect(client.post).not.toHaveBeenCalled();
   });
 
   test("skips and leaves unread only the inbox message whose verification throws", async () => {
@@ -879,7 +1355,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
-        trust: { normalizeTrust } as unknown as SenderTrustManager,
+        trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
         self,
         onAwakening,
         localDecrypt,
@@ -899,6 +1375,7 @@ describe("channel-core dispatchAgentEvent", () => {
       undefined,
       undefined,
       "acme.com/alice",
+      undefined,
     );
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       kind: "mail",
@@ -1131,7 +1608,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
-        trust: { normalizeTrust } as unknown as SenderTrustManager,
+        trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
         self,
         onAwakening,
         localDecrypt,
@@ -1156,6 +1633,7 @@ describe("channel-core dispatchAgentEvent", () => {
       undefined,
       undefined,
       "acme.com/alice",
+      undefined,
     );
     expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining<Partial<ChannelAwakening>>({
       kind: "chat",
@@ -1454,7 +1932,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
-        trust: { normalizeTrust } as unknown as SenderTrustManager,
+        trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
         self,
         onAwakening,
       },
@@ -1610,7 +2088,7 @@ describe("channel-core dispatchAgentEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const staleTrust = {
-      normalizeTrust: vi.fn(async () => ({ status: "verification_stale", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "verification_stale", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchAgentEvent(
@@ -1652,7 +2130,7 @@ describe("channel-core dispatchAgentEvent", () => {
       post: vi.fn().mockResolvedValue(undefined),
     };
     const conflictTrust = {
-      normalizeTrust: vi.fn(async () => ({ status: "pin_conflict", stored: false })),
+      normalizeResolvedTrust: vi.fn(async () => ({ status: "pin_conflict", stored: false })),
     } as unknown as SenderTrustManager;
 
     await dispatchAgentEvent(
@@ -1756,7 +2234,7 @@ describe("channel-core dispatchAgentEvent", () => {
       {
         client: client as never,
         pinStore: new PinStore(),
-        trust: { normalizeTrust } as unknown as SenderTrustManager,
+        trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
         self,
         onAwakening,
       },
@@ -1780,7 +2258,7 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-stable/read", { message_ids: ["chat-stable-envelope"] });
   });
 
-  test("chat live dispatch accepts legacy stored-route recipient did:aw when it is this receiver", async () => {
+  test("chat live dispatch resolves public identity and registry evidence outside the pin lock", async () => {
     const onAwakening = vi.fn();
     const env: MessageEnvelope = {
       from: "aweb.ai/ama",
@@ -1816,27 +2294,48 @@ describe("channel-core dispatchAgentEvent", () => {
       }),
       post: vi.fn().mockResolvedValue(undefined),
     };
-    const trust = new SenderTrustManager(
-      client as never,
-      {
-        verifyStableIdentity: async () => ({ outcome: "OK_VERIFIED", currentDidKey: vectors.did }),
-        resolveIdentity: async () => ({
+    let lockHeld = false;
+    const registry = {
+      verifyStableIdentity: vi.fn(async () => {
+        expect(lockHeld).toBe(false);
+        return { outcome: "OK_VERIFIED", currentDidKey: vectors.did };
+      }),
+      resolveIdentity: vi.fn(async () => {
+        expect(lockHeld).toBe(false);
+        return {
           did: vectors.did,
           stableID: vectors.stableID,
           address: env.from,
           custody: "self",
           identityScope: "global",
-        }),
-      } as never,
+        };
+      }),
+    };
+    const trust = new SenderTrustManager(
+      client as never,
+      registry as never,
       "default:aweb.ai",
       self.did,
       self.stableID,
     );
+    const pinStore = new PinStore();
+    const originalRunExclusive = pinStore.runExclusive.bind(pinStore);
+    vi.spyOn(pinStore, "runExclusive").mockImplementation(async (operation) => (
+      originalRunExclusive(async () => {
+        expect(lockHeld).toBe(false);
+        lockHeld = true;
+        try {
+          return await operation();
+        } finally {
+          lockHeld = false;
+        }
+      })
+    ));
 
     await dispatchAgentEvent(
       {
         client: client as never,
-        pinStore: new PinStore(),
+        pinStore,
         pinStoreWriter: acceptingPinStoreWriter,
         trust,
         self,
@@ -1859,6 +2358,8 @@ describe("channel-core dispatchAgentEvent", () => {
         verified: "true",
       }),
     }));
+    expect(registry.resolveIdentity).toHaveBeenCalledTimes(1);
+    expect(registry.verifyStableIdentity).toHaveBeenCalledTimes(1);
   });
 
   test("chat live dispatch hydrates trust fields from signed_payload when top-level row has stable did:aw", async () => {

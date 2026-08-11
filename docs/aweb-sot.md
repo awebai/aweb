@@ -381,6 +381,28 @@ behavior. These values come from `_TEAM_METADATA_CACHE_TTL_SECONDS`,
 - `team_revocations_stale_seconds=600`
 <!-- END SOURCE INVENTORY: aweb-awid-cache -->
 
+Identity-only auth uses separate Redis entries for the current `did:aw` key and
+its reverse address list. Each is fresh for 300 seconds and retained for one
+additional 300-second stale window. A fresh key-and-address cache hit makes zero
+AWID HTTP requests. During the existing stale window, a previously verified key
+may continue to authenticate only when it equals the request's signing key;
+refresh runs in the background, and an upstream 429 does not widen the window.
+Once Redis expires the entry at 600 seconds, an unsuccessful refresh fails the
+request. A signing key that differs from the cached binding always forces a
+foreground current-key read; 429 or registry unavailability on that read fails
+closed and never turns the differing key into an accepted binding. Thus stale
+handling can extend an already verified binding within the shipped bound, but
+cannot accept a new binding.
+
+When `AWID_SERVICE_TOKEN` is configured, the aweb RegistryClient sends it in
+`X-AWID-Service-Token` only to the exact configured home registry. AWID may use
+it to exempt the `did_key` and `did_addresses` reads from public IP limits. The
+client never forwards it to DNS-discovered external registries. A missing token
+emits `awid_service_credential_missing` once at aweb startup and uses public
+limits; AWID emits `awid_service_credential_rejected` when a presented token is
+wrong. Operators count those stable events through log/Sentry telemetry.
+Rotating this shared secret is a coordinated two-service configuration change.
+
 **Team-key rotation.** AWID rotates a team key at
 `POST /v1/namespaces/{domain}/teams/{name}/rotate`. With the Redis cache, aweb
 may continue reading the old key for up to 20 minutes. Old-key certificates may
@@ -1559,6 +1581,8 @@ AWEB_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 
 # awid registry (optional; default https://api.awid.ai)
 AWID_REGISTRY_URL=https://api.awid.ai
+# Optional trusted caller lane; the same >=32-byte value must be configured on AWID.
+AWID_SERVICE_TOKEN=
 
 # Dashboard JWT validation (shared secret with whichever upstream
 # service mints the X-Dashboard-Token JWTs; only required if a

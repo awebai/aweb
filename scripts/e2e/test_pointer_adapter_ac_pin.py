@@ -28,7 +28,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ADAPTER = REPO_ROOT / "scripts" / "pointer-adapter-ac-pin.py"
-AC_CONTRACT_REMOTE = "https://github.com/awebai/ac.git"
+AC_REPOSITORY = "github.com/awebai/ac"
 AC_CONTRACT_SHA = "2451cfeac6b9e6076daf00c34eacb47cafdfba22"
 OLD_SERVER_VERSION = "1.26.31"
 NEW_SERVER_VERSION = "1.26.35"
@@ -45,6 +45,80 @@ def run(*args: str, cwd: Path, env=None, check=True) -> subprocess.CompletedProc
 
 def git(*args: str, cwd: Path) -> str:
     return run("git", *args, cwd=cwd).stdout.strip()
+
+
+def declared_ac_checkout() -> Path | None:
+    """AC's checkout as DECLARED, in the driver's own EXTERNAL_CONTEXT spelling.
+
+    The release driver refuses to guess where AC is and takes
+    `repository=checkout` entries, absolute, because "environment-relative
+    guessing produced unsatisfiable checks". This suite reads the same
+    declaration rather than reaching for a hardcoded remote, so there is one
+    contract for where AC lives instead of two.
+
+    A declaration that is present but malformed is an operator error and raises;
+    only an ABSENT declaration is the environment this suite cannot run in.
+    """
+    for entry in os.environ.get("EXTERNAL_CONTEXT", "").split():
+        repository, separator, checkout = entry.partition("=")
+        if not separator or repository != AC_REPOSITORY:
+            continue
+        path = Path(checkout)
+        if not path.is_absolute():
+            raise AssertionError(
+                f"EXTERNAL_CONTEXT checkout must be absolute, got {checkout!r}; "
+                "a relative path lets the working directory decide identity"
+            )
+        if not (path / ".git").exists():
+            raise AssertionError(
+                f"EXTERNAL_CONTEXT names {path}, which is not a git checkout"
+            )
+        return path
+    return None
+
+
+def require_declared_ac_checkout() -> Path:
+    """Skip with disclosure where AC has not been declared.
+
+    This suite executes AC's own release-verify-model against AC's real tree, so
+    it cannot be reduced to a fixture. AC is private and this repository's gate
+    carries no credential for it by design -- ship.yml checks out public inputs
+    only -- so on the runner there is no declaration and none can be made. It
+    previously died at a hardcoded clone having run zero tests, which reads as a
+    defect in the pin contract rather than as coverage the gate cannot have.
+
+    Skipping ONLY on an absent declaration is the point: wherever AC is declared
+    -- a credentialed machine, and AC's own CI once aweb-abcy moves primary
+    coverage there -- all nine assertions still run against the real tree.
+
+    A skip nobody reads is how a gate quietly stops covering something, which is
+    the failure this task exists to correct, so the disclosure names what is
+    uncovered, what tracks it, and what covers it meanwhile. It goes to the gate
+    summary because a skipped run and the old blind failure both print
+    "Ran 0 tests": the disclosure is the only thing that tells them apart.
+    """
+    checkout = declared_ac_checkout()
+    if checkout is not None:
+        return checkout
+    disclosure = (
+        f"ac-pin contract suite SKIPPED: no EXTERNAL_CONTEXT entry declares "
+        f"{AC_REPOSITORY}, so AC's release-verify-model cannot run against AC's "
+        "real tree. THIS GATE DOES NOT COVER THE AC PIN CONTRACT. Tracked by "
+        "aweb-abcy, which moves primary coverage to where AC's tree exists. "
+        "Covered meanwhile by: the suite passing 9/9 against the real AC tree on "
+        "2026-08-09 (recorded on aweb-abce), and the release driver's ac-pin lane "
+        "executing AC's real release-model gates at pin-advance time through the "
+        "same EXTERNAL_CONTEXT declaration. To run it here, pass "
+        f"EXTERNAL_CONTEXT='{AC_REPOSITORY}=/absolute/path/to/ac'."
+    )
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        # The gate's own summary, so the disclosure is read without anyone
+        # scrolling a make log to find it.
+        with open(summary_path, "a", encoding="utf-8") as handle:
+            handle.write(f"### {disclosure}\n\n")
+    print(f"\n{disclosure}\n", file=sys.stderr, flush=True)
+    raise unittest.SkipTest(disclosure)
 
 
 def replace_dependency(path: Path, package: str, version: str) -> None:
@@ -121,12 +195,18 @@ def write_test_package(index_root: Path, name: str, version: str) -> None:
 class AcPinAdapterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        declared = require_declared_ac_checkout()
         cls.fixture_tmp = tempfile.TemporaryDirectory()
         root = Path(cls.fixture_tmp.name)
         cls.uv_cache = root / "uv-cache"
 
+        # Clone the declared checkout rather than working in it: this suite
+        # detaches, rewrites pins and regenerates locks, and none of that is
+        # allowed to touch the operator's own AC tree. The pinned SHA is still
+        # asserted, so a declaration pointing somewhere that lacks it fails here
+        # rather than silently measuring the wrong tree.
         contract = root / "ac-contract"
-        run("git", "clone", "-q", AC_CONTRACT_REMOTE, str(contract), cwd=root)
+        run("git", "clone", "-q", str(declared), str(contract), cwd=root)
         run("git", "checkout", "-q", "--detach", AC_CONTRACT_SHA, cwd=contract)
         actual = git("rev-parse", "HEAD", cwd=contract)
         if actual != AC_CONTRACT_SHA:

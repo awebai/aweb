@@ -89,7 +89,7 @@ test("ambient events are next-turn only", () => {
   });
 });
 
-test("active-turn wake stays pending until turn end, then resolves after Pi accepts it", async () => {
+test("active-turn wake submits a follow-up and resolves after Pi accepts it", async () => {
   const calls: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
   const dispatcher = createWakeDispatcher(fakePi((message, options) => {
     calls.push([message, options]);
@@ -100,22 +100,24 @@ test("active-turn wake stays pending until turn end, then resolves after Pi acce
   const delivered = dispatcher.enqueue(awakening()).then(() => { settled = true; });
   await waitForDrain();
 
-  assert.equal(calls.length, 0);
-  assert.equal(settled, false);
-
-  dispatcher.setTurnActive(false);
-  await delivered;
-
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0][0].customType, "aweb-channel");
-  assert.deepEqual(calls[0][1], { triggerTurn: true });
-  assert.equal(settled, true);
+  try {
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0].customType, "aweb-channel");
+    assert.deepEqual(calls[0][1], { deliverAs: "followUp" });
+    assert.equal(settled, true);
+  } finally {
+    dispatcher.setTurnActive(false);
+    await delivered;
+  }
 });
 
-test("mid-turn mail stays unread until turn-end injection succeeds", async () => {
+test("mid-turn mail is acknowledged only after Pi accepts the follow-up", async () => {
   const sends: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
+  let acceptSend: () => void = () => {};
+  const accepted = new Promise<void>((resolve) => { acceptSend = resolve; });
   const dispatcher = createWakeDispatcher(fakePi((message, options) => {
     sends.push([message, options]);
+    return accepted;
   }), () => {});
   dispatcher.setTurnActive(true);
   const posts: string[] = [];
@@ -136,7 +138,7 @@ test("mid-turn mail stays unread until turn-end injection succeeds", async () =>
     post: async (path: string) => { posts.push(path); },
   };
   const trust = {
-    normalizeTrust: async () => ({ status: "verified", stored: false }),
+    normalizeResolvedTrust: async () => ({ status: "verified", stored: false }),
   } as unknown as SenderTrustManager;
 
   const dispatch = dispatchAgentEvent(
@@ -150,19 +152,25 @@ test("mid-turn mail stays unread until turn-end injection succeeds", async () =>
     new Set(),
     { type: "mail_message", message_id: "mail-mid-turn" } satisfies AgentEvent,
   );
-  await waitForDrain();
+  for (let attempt = 0; attempt < 10 && sends.length === 0; attempt += 1) {
+    await waitForDrain();
+  }
 
-  assert.equal(sends.length, 0);
-  assert.deepEqual(posts, []);
-
-  dispatcher.setTurnActive(false);
-  await dispatch;
-
-  assert.equal(sends.length, 1);
-  assert.deepEqual(posts, ["/v1/messages/mail-mid-turn/ack"]);
+  try {
+    assert.equal(sends.length, 1);
+    assert.deepEqual(sends[0][1], { deliverAs: "followUp" });
+    assert.deepEqual(posts, []);
+    acceptSend();
+    await dispatch;
+    assert.deepEqual(posts, ["/v1/messages/mail-mid-turn/ack"]);
+  } finally {
+    dispatcher.setTurnActive(false);
+    acceptSend();
+    await dispatch;
+  }
 });
 
-test("dispatcher rejects a pending active-turn wake when the session shuts down", async () => {
+test("dispatcher rejects a queued wake when the session shuts down", async () => {
   const dispatcher = createWakeDispatcher(fakePi(() => {
     assert.fail("pending wake must not inject after shutdown");
   }), () => {});
@@ -200,7 +208,7 @@ test("in-flight shutdown rejection prevents source acknowledgment after late sen
     post: async (path: string) => { posts.push(path); },
   };
   const trust = {
-    normalizeTrust: async () => ({ status: "verified", stored: false }),
+    normalizeResolvedTrust: async () => ({ status: "verified", stored: false }),
   } as unknown as SenderTrustManager;
   const dispatch = dispatchAgentEvent(
     {

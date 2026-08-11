@@ -330,7 +330,7 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
 @router.get(
     "/{did_aw}/key",
     response_model=DidKeyResponse,
-    dependencies=[Depends(rate_limit_dep("did_key"))],
+    dependencies=[Depends(rate_limit_dep("did_key", allow_trusted_service=True))],
 )
 async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
     try:
@@ -482,7 +482,7 @@ async def publish_encryption_key(
 @router.get(
     "/{did_aw}/addresses",
     response_model=AddressListResponse,
-    dependencies=[Depends(rate_limit_dep("did_addresses"))],
+    dependencies=[Depends(rate_limit_dep("did_addresses", allow_trusted_service=True))],
 )
 async def list_did_addresses(
     request: Request,

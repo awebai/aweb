@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from awid.ratelimit import normalize_service_token
+
 
 def _env_bool(name: str, *, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -21,6 +23,7 @@ class Settings:
     redis_url: str
     db_schema: str
     rate_limit_backend: str
+    service_token: str | None
 
 
 def get_settings() -> Settings:
@@ -49,4 +52,5 @@ def get_settings() -> Settings:
         redis_url=redis_url,
         db_schema=schema,
         rate_limit_backend=rate_limit_backend,
+        service_token=normalize_service_token(os.getenv("AWID_SERVICE_TOKEN")),
     )

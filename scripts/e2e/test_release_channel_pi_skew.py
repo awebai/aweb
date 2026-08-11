@@ -22,6 +22,42 @@ import release_driver as rd  # noqa: E402
 import release_channel_pi_skew as skew  # noqa: E402
 
 
+def fixture_server_lock_bytes(provenance: str, version: str):
+    return (
+        (SCRIPTS.parent / "server" / "uv.lock").read_bytes(),
+        f"fixture-lock:{provenance}",
+    )
+
+
+class FixtureServerLock:
+    """Serve the working tree's lock for every version. OPT-IN, per class.
+
+    Fixture server versions in this module are invented (1.26.33, 1.26.34), so
+    no tag exists for them and the real reader correctly REFUSES a published
+    version with no tag. Classes asserting the constraints' SHAPE, or what binds
+    an inventory to them, mix this in and stop depending on tag history.
+
+    It is opt-in rather than module-wide because the fake collapses the very
+    property this module protects. Measured while it was module-wide: at one
+    version, the published and candidate constraint DIGESTS - the value the
+    evidence anchors - came out IDENTICAL, and 18 of 23 classes inherited that
+    by writing `class Foo(unittest.TestCase)`. With the polarity inverted a
+    plain TestCase gets the REAL reader, so a new test that invents an untagged
+    published version fails at once with a refusal that names what to do.
+    (lock_ref does still differ under the fake, so a ref assertion keeps
+    discriminating; the digest does not, which is the half that matters.)
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._real_server_lock_bytes = skew._server_lock_bytes
+        skew._server_lock_bytes = fixture_server_lock_bytes
+
+    def tearDown(self):
+        skew._server_lock_bytes = self._real_server_lock_bytes
+        super().tearDown()
+
+
 def sha(body: bytes) -> str:
     return hashlib.sha256(body).hexdigest()
 
@@ -298,8 +334,14 @@ class FakeResolver:
         )
 
 
-def runtime_proof(server_version="1.26.34", *, extra=None):
-    _, constraints_digest, constraints = skew.server_runtime_constraints()
+def runtime_proof(server_version="1.26.34", *, extra=None,
+                  provenance=skew.CANDIDATE_PROVENANCE):
+    # Candidate provenance by default: these fixtures assert the SHAPE of the
+    # constraints, and their versions are invented, so there is no tag to read.
+    # A fixture that means to exercise the tag path says so.
+    resolved = skew.server_runtime_constraints(provenance, server_version)
+    constraints_digest = resolved.digest
+    constraints = resolved.constraints
     distributions = [
         {"name": "aweb", "version": server_version},
         {"name": "mcp", "version": constraints["mcp"]},
@@ -434,7 +476,7 @@ def prime_harness(harness, value, matrix_id=None):
     return harness
 
 
-class ChildHarnessTests(unittest.TestCase):
+class ChildHarnessTests(FixtureServerLock, unittest.TestCase):
     def run_cell(self, value, *, journey=None):
         reports = Reports()
         journey = journey or FakeJourney()
@@ -537,7 +579,7 @@ class ChildHarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(rd.ReceiptError, "unlocked distribution"):
             skew.validate_server_runtime(
                 runtime_proof(extra=[{"name": "surprise", "version": "9.9"}]),
-                "1.26.34",
+                skew.CANDIDATE_PROVENANCE, "1.26.34",
             )
 
     def test_other_edges_and_labels_refuse(self):
@@ -562,7 +604,7 @@ class ChildHarnessTests(unittest.TestCase):
         self.assertEqual(journey.events, [("close",)])
 
 
-class MatrixCoverageTests(unittest.TestCase):
+class MatrixCoverageTests(FixtureServerLock, unittest.TestCase):
     @staticmethod
     def staged(component, version):
         files = {f"{component}.artifact": sha(component.encode())}
@@ -751,7 +793,7 @@ class MatrixCoverageTests(unittest.TestCase):
         self.assertEqual(len(reports.items), 4)
 
 
-class MeasurementCompletenessTests(unittest.TestCase):
+class MeasurementCompletenessTests(FixtureServerLock, unittest.TestCase):
     @staticmethod
     def resign(report):
         report["report_id"] = rd.canonical_json_digest({
@@ -840,7 +882,10 @@ class MeasurementCompletenessTests(unittest.TestCase):
 
 class ClosedRuntimeTests(unittest.TestCase):
     def test_lock_derived_constraints_pin_mcp_and_are_canonical(self):
-        body, digest, constraints = skew.server_runtime_constraints()
+        resolved = skew.server_runtime_constraints(
+            skew.CANDIDATE_PROVENANCE, "1.26.34")
+        body, digest, constraints = (
+            resolved.body, resolved.digest, resolved.constraints)
         self.assertEqual(digest, sha(body))
         self.assertEqual(constraints["mcp"], "1.26.0")
         self.assertIn(b"mcp==1.26.0\n", body)
@@ -889,7 +934,8 @@ print("AWEB_SKEW_OBSERVATION " + observation)
             result = journey._run(
                 [sys.executable, "-c", script, str(capture), str(residue),
                  json.dumps(observation, sort_keys=True)],
-                {}, "a-to-b",
+                {"AWEB_SKEW_SERVER_VERSION": "1.26.34"}, "a-to-b",
+                skew.CANDIDATE_PROVENANCE,
             )
         finally:
             for key, value in saved.items():
@@ -919,7 +965,8 @@ class RegistrationAndJourneyParameterTests(unittest.TestCase):
             + json.dumps(observation, sort_keys=True).encode() + b"\n"
         )
         self.assertEqual(
-            skew.parse_observation(body, "channel", "a-to-b"), observation
+            skew.parse_observation(
+                body, "channel", "a-to-b", skew.CANDIDATE_PROVENANCE, "1.26.34"), observation
         )
         for output, needle in (
             (b"runner noise", "exactly one"),
@@ -928,7 +975,31 @@ class RegistrationAndJourneyParameterTests(unittest.TestCase):
             (body.replace(b"a-to-b", b"b-to-a"), "structured"),
         ):
             with self.assertRaisesRegex(rd.ReceiptError, needle):
-                skew.parse_observation(output, "channel", "a-to-b")
+                skew.parse_observation(
+                output, "channel", "a-to-b", skew.CANDIDATE_PROVENANCE, "1.26.34")
+
+    def test_missing_observation_reports_what_the_journey_actually_printed(self):
+        """A journey that exits 0 and prints no observation is the hard case to
+        diagnose: the count alone says nothing about why. Carry the tail of the
+        journey's own output into the refusal, or the only evidence of the cause
+        is discarded by the instrument that detected it."""
+        output = b"vitest: No test files found, exiting\n"
+        with self.assertRaises(rd.ReceiptError) as raised:
+            skew.parse_observation(
+                output, "channel", "a-to-b", skew.CANDIDATE_PROVENANCE, "1.26.34")
+        self.assertIn("exactly one", str(raised.exception))
+        self.assertIn("No test files found", str(raised.exception))
+
+    def test_missing_observation_report_bounds_the_journey_output_it_quotes(self):
+        """Journey output is unbounded and lands in a receipt, so quote a bounded
+        tail rather than the whole stream."""
+        output = b"x" * (skew.JOURNEY_OUTPUT_REPORT_BYTES * 4)
+        with self.assertRaises(rd.ReceiptError) as raised:
+            skew.parse_observation(
+                output, "channel", "a-to-b", skew.CANDIDATE_PROVENANCE, "1.26.34")
+        message = str(raised.exception)
+        self.assertLess(len(message), skew.JOURNEY_OUTPUT_REPORT_BYTES * 2)
+        self.assertIn("x" * 64, message)
 
     def test_channel_and_pi_factories_isolate_matrix_evidence_roots(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1178,7 +1249,7 @@ def canonical_bytes(document):
     return json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
 
 
-class MeasureSupportTests(unittest.TestCase):
+class MeasureSupportTests(FixtureServerLock, unittest.TestCase):
     """aweb-abbe.14: the Channel and Pi measurement entrypoints.
 
     Orchestration is freeze -> exact cells -> finish. The mark-read mutation
@@ -1431,7 +1502,7 @@ class MeasureSupportTests(unittest.TestCase):
 
 
 
-class MeasureSupportBoundaryTests(unittest.TestCase):
+class MeasureSupportBoundaryTests(FixtureServerLock, unittest.TestCase):
     """The reviewer's three killing substitutions against `.14`.
 
     Each one keeps every positive orchestration semantic intact and swaps a
@@ -1676,7 +1747,7 @@ class MeasureSupportBoundaryTests(unittest.TestCase):
 
 
 
-class CliMeasurementInputTests(unittest.TestCase):
+class CliMeasurementInputTests(FixtureServerLock, unittest.TestCase):
     """The CLI must validate the whole measurement input before any effect and
     must never accept a release staged manifest."""
 
@@ -2493,6 +2564,101 @@ class PypiLaneValidatorTests(unittest.TestCase):
                 body, expected_source_sha="c" * 40,
                 expected_version="1.26.34", package="server",
                 pypi_name="aweb")
+
+
+
+class ProvenanceTests(unittest.TestCase):
+    """Constraints are a property of the ARTIFACT under measurement, not of the
+    tree the harness happens to be running in.
+
+    A plain TestCase: it does NOT mix in FixtureServerLock, so it runs against
+    the real reader and this repository's real tags. That is the point - the
+    behaviour the fixture lock stands in for has to be covered by something the
+    fixture lock does not touch."""
+
+    def test_a_published_server_is_constrained_by_the_lock_at_its_tag(self):
+        resolved = skew.server_runtime_constraints(
+            skew.PUBLISHED_PROVENANCE, "1.27.0")
+        head = subprocess.run(
+            ["git", "-C", str(SCRIPTS.parent), "rev-parse",
+             "server-v1.27.0^{commit}"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(resolved.lock_ref, head)
+        self.assertEqual(resolved.provenance, skew.PUBLISHED_PROVENANCE)
+        self.assertEqual(resolved.version, "1.27.0")
+
+    def test_a_candidate_is_constrained_by_the_working_tree(self):
+        resolved = skew.server_runtime_constraints(
+            skew.CANDIDATE_PROVENANCE, "9.9.9")
+        tree = (SCRIPTS.parent / "server" / "uv.lock").read_bytes()
+        self.assertEqual(resolved.lock_ref, skew.WORKING_TREE_LOCK_REF)
+        self.assertEqual(
+            resolved.constraints,
+            skew.server_runtime_constraints(
+                skew.CANDIDATE_PROVENANCE, "0.0.0").constraints,
+        )
+        self.assertIn(b"[[package]]", tree)
+
+    def test_a_published_version_without_a_tag_refuses(self):
+        """The fallback that must not exist. Substituting the working tree here
+        is how the defect returns, and it returns quietly: a tree carrying the
+        same version string is not a tree carrying the same lock."""
+        with self.assertRaisesRegex(rd.ReceiptError, "no server-v9.9.9 tag"):
+            skew.server_runtime_constraints(
+                skew.PUBLISHED_PROVENANCE, "9.9.9")
+
+    def test_an_unknown_provenance_refuses_rather_than_choosing(self):
+        with self.assertRaisesRegex(
+            rd.ReceiptError,
+            "names no constraints|unknown server artifact provenance",
+        ):
+            skew.server_runtime_constraints("whatever", "1.27.0")
+
+    def test_the_two_provenances_of_one_release_disagree_and_say_why(self):
+        """The whole point, and the reason a digest constant across subjects was
+        the bug rather than the safety. Published 1.27.0 and the candidate that
+        follows it resolve DIFFERENT dependency sets, because the candidate's
+        lock names a version that is not published yet."""
+        published = skew.server_runtime_constraints(
+            skew.PUBLISHED_PROVENANCE, "1.27.0")
+        candidate = skew.server_runtime_constraints(
+            skew.CANDIDATE_PROVENANCE, "1.27.1")
+        self.assertNotEqual(published.digest, candidate.digest)
+        self.assertNotEqual(published.lock_ref, candidate.lock_ref)
+        # A reader of two evidence records must be able to see WHY they differ
+        # without reconstructing the harness.
+        self.assertEqual(
+            set(published.evidence()),
+            {"provenance", "version", "lock_ref", "digest"},
+        )
+        self.assertEqual(published.evidence()["lock_ref"], published.lock_ref)
+
+    def test_artifact_provenance_reads_the_artifact_not_a_caller_label(self):
+        for kind, expected in (
+            ("published", skew.PUBLISHED_PROVENANCE),
+            ("published-latest", skew.PUBLISHED_PROVENANCE),
+            ("published-floor", skew.PUBLISHED_PROVENANCE),
+            ("candidate", skew.CANDIDATE_PROVENANCE),
+        ):
+            with self.subTest(kind=kind):
+                self.assertEqual(
+                    skew.artifact_provenance(
+                        skew.PackageArtifact(
+                            component="server", filename="w.whl",
+                            version="1.27.0", sha256="0" * 64, bytes=b"",
+                            source={"kind": kind},
+                        )
+                    ),
+                    expected,
+                )
+        with self.assertRaisesRegex(rd.ReceiptError, "names no constraints"):
+            skew.artifact_provenance(
+                skew.PackageArtifact(
+                    component="server", filename="w.whl", version="1.27.0",
+                    sha256="0" * 64, bytes=b"", source={"kind": "staged"},
+                )
+            )
 
 
 if __name__ == "__main__":

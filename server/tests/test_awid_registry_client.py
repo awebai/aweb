@@ -37,6 +37,7 @@ class _FakeRedis:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
         self.values: dict[str, str] = {}
+        self.expirations: dict[str, int | None] = {}
 
     async def get(self, key: str):
         if self.fail:
@@ -47,6 +48,7 @@ class _FakeRedis:
         if self.fail:
             raise RedisError("redis unavailable")
         self.values[key] = value
+        self.expirations[key] = ex
         return True
 
     async def delete(self, *keys: str):
@@ -56,6 +58,7 @@ class _FakeRedis:
         for key in keys:
             deleted += int(key in self.values)
             self.values.pop(key, None)
+            self.expirations.pop(key, None)
         return deleted
 
     async def scan_iter(self, *, match: str):
@@ -1099,6 +1102,157 @@ async def test_cached_registry_client_reuses_cached_resolve_key():
     assert first.current_did_key == did_key
     assert second.current_did_key == did_key
     assert request_count["value"] == 1
+
+
+@pytest.mark.asyncio
+async def test_service_token_is_sent_only_to_the_configured_registry():
+    token = "trusted-service-token-with-at-least-32-bytes"
+    seen: list[tuple[str, str | None]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.host, request.headers.get("X-AWID-Service-Token")))
+        if request.url.path == "/v1/did/did:aw:home/key":
+            return httpx.Response(
+                200,
+                json={
+                    "did_aw": "did:aw:home",
+                    "current_did_key": "did:key:home",
+                    "log_head": None,
+                },
+            )
+        if request.url.path == "/v1/namespaces/external.example/addresses/alice":
+            return httpx.Response(404, json={"detail": "not found"})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    async def registry_for_domain(_domain: str) -> str:
+        return "https://external-registry.example"
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        service_token=token,
+        transport=httpx.MockTransport(handler),
+        domain_registry_resolver=registry_for_domain,
+    )
+
+    assert token not in repr(client)
+    await client.resolve_key("did:aw:home")
+    assert await client.resolve_address("external.example", "alice") is None
+
+    assert seen == [
+        ("api.awid.ai", token),
+        ("external-registry.example", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_service_token_never_follows_a_cross_origin_redirect():
+    token = "trusted-service-token-with-at-least-32-bytes"
+    seen: list[tuple[str, str | None]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.host, request.headers.get("X-AWID-Service-Token")))
+        if request.url.host == "api.awid.ai":
+            return httpx.Response(
+                302,
+                headers={"Location": "https://untrusted.example/v1/did/did:aw:home/key"},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "did_aw": "did:aw:home",
+                "current_did_key": "did:key:home",
+                "log_head": None,
+            },
+        )
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        service_token=token,
+        transport=httpx.MockTransport(handler),
+    )
+
+    try:
+        with pytest.raises(RegistryError) as raised:
+            await client.resolve_key("did:aw:home")
+    finally:
+        await client.aclose()
+
+    assert raised.value.status_code == 302
+    assert seen == [("api.awid.ai", token)]
+
+
+@pytest.mark.asyncio
+async def test_key_and_address_cache_429_stale_is_bounded(monkeypatch):
+    did_aw = "did:aw:alice"
+    did_key = "did:key:alice"
+    now = {"value": 0}
+    upstream_available = {"value": True}
+    request_counts = {"key": 0, "addresses": 0}
+
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now["value"])
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/v1/did/{did_aw}/key":
+            request_counts["key"] += 1
+            if not upstream_available["value"]:
+                return httpx.Response(429, json={"detail": "rate limit exceeded"})
+            return httpx.Response(
+                200,
+                json={"did_aw": did_aw, "current_did_key": did_key, "log_head": None},
+            )
+        if request.url.path == f"/v1/did/{did_aw}/addresses":
+            request_counts["addresses"] += 1
+            if not upstream_available["value"]:
+                return httpx.Response(429, json={"detail": "rate limit exceeded"})
+            return httpx.Response(
+                200,
+                json={
+                    "addresses": [{
+                        "address_id": "addr-1",
+                        "domain": "acme.com",
+                        "name": "alice",
+                        "did_aw": did_aw,
+                        "current_did_key": did_key,
+                        "created_at": "2026-08-10T00:00:00Z",
+                    }],
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    redis = _FakeRedis()
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=redis,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert (await client.resolve_key(did_aw)).current_did_key == did_key
+    assert len(await client.list_did_addresses(did_aw)) == 1
+    warmed_counts = dict(request_counts)
+
+    assert (await client.resolve_key(did_aw)).current_did_key == did_key
+    assert len(await client.list_did_addresses(did_aw)) == 1
+    assert request_counts == warmed_counts
+    assert set(redis.expirations.values()) == {600}
+
+    upstream_available["value"] = False
+    now["value"] = 301
+    assert (await client.resolve_key(did_aw)).current_did_key == did_key
+    assert len(await client.list_did_addresses(did_aw)) == 1
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    # Redis expires these entries at 600 seconds. Once that bounded stale
+    # window is gone, a 429 is not converted into acceptance.
+    redis.values.clear()
+    redis.expirations.clear()
+    now["value"] = 601
+    with pytest.raises(RegistryError) as key_error:
+        await client.resolve_key(did_aw)
+    with pytest.raises(RegistryError) as address_error:
+        await client.list_did_addresses(did_aw)
+    assert key_error.value.status_code == 429
+    assert address_error.value.status_code == 429
 
 
 @pytest.mark.asyncio

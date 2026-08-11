@@ -4,6 +4,7 @@ import {
   formatEventStreamState,
   streamAgentEvents,
   streamErrorCause,
+  type AgentEvent,
   type EventStreamState,
 } from "../src/index.js";
 import {
@@ -53,6 +54,54 @@ describe("parseAgentEvent", () => {
 
     expect(formatEventStreamState(state)).toBe("aweb: event stream disconnected (connection refused) — retrying in 5s");
     expect(formatEventStreamState(state)).not.toContain("TypeError");
+  });
+
+  test("observes each parsed frame without changing stream consumption", async () => {
+    const abort = new AbortController();
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const received: string[] = [];
+    const observed: AgentEvent[] = [];
+    const client = {
+      openSSE: vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          streamController = controller;
+          controller.enqueue(sseFrame("connected", {}));
+        },
+      }))),
+    };
+    const streamWithObserver = streamAgentEvents as unknown as (
+      client: never,
+      signal: AbortSignal,
+      onState: (state: EventStreamState) => void,
+      onEvent: (event: AgentEvent) => void,
+    ) => AsyncGenerator<AgentEvent>;
+    const consuming = (async () => {
+      for await (const event of streamWithObserver(
+        client as never,
+        abort.signal,
+        () => {},
+        (event) => observed.push(event),
+      )) {
+        received.push(event.type);
+        if (event.type === "mail_message") {
+          abort.abort();
+          break;
+        }
+      }
+    })();
+
+    await vi.waitFor(() => expect(received).toEqual(["connected"]));
+    streamController!.enqueue(sseFrame("actionable_mail", {
+      message_id: "late-frame",
+      conversation_id: "late-conversation",
+    }));
+    await consuming;
+
+    expect(received).toEqual(["connected", "mail_message"]);
+    expect(observed).toEqual([
+      expect.objectContaining({ type: "connected" }),
+      expect.objectContaining({ type: "mail_message", message_id: "late-frame" }),
+    ]);
   });
 
   test("reports one disconnect state and a recovery after steady failed retries", async () => {

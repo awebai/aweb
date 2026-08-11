@@ -358,6 +358,19 @@ class FederationHarnessTests(unittest.TestCase):
             b={"component": "server", "version": "1.26.35", "kind": "published"},
         )
 
+    def same_version_cell(self, direction="a-to-b"):
+        """candidate x candidate: both sides are the SAME server version.
+
+        The matrix produces this whenever a self-edge's component moves, and it
+        is the only shape in which the two runtimes are required to have
+        installed identical dependencies."""
+        value = self.cell(direction=direction)
+        return SimpleNamespace(**{
+            **value.__dict__,
+            "b_kind": "candidate",
+            "b": dict(value.a),
+        })
+
     def wheels(self):
         return {
             "1.26.36": wheel_artifact("1.26.36", b"candidate"),
@@ -493,7 +506,14 @@ class FederationHarnessTests(unittest.TestCase):
                     harness.run(value)
                 self.assertFalse((Path(tmp) / "cells").exists())
 
-    def test_dependency_only_inventory_mismatch_is_red(self):
+    def test_dependency_only_inventory_mismatch_is_red_at_one_version(self):
+        """The guard, kept. Two runtimes of the SAME server version must have
+        installed the same dependencies; a divergence there is drift in the
+        harness or the environment and is still red.
+
+        Previously this ran on a MIXED-version cell and passed for the wrong
+        reason - see the sibling test below, which is the case that reading
+        proved wrong."""
         with tempfile.TemporaryDirectory() as tmp:
             def journey(env):
                 return SimpleNamespace(
@@ -505,11 +525,44 @@ class FederationHarnessTests(unittest.TestCase):
                     stderr="",
                 )
 
-            value = self.cell()
+            value = self.same_version_cell()
             harness = self.prime(self.harness(tmp, journey), [value])
             with self.assertRaisesRegex(rd.ReceiptError, "dependency"):
                 harness.run(value)
             self.assertFalse((Path(tmp) / "cells").exists())
+
+    def test_two_versions_may_declare_different_dependencies(self):
+        """A skew cell exists to run two DIFFERENT server versions against each
+        other, and different versions declare different dependency sets - that
+        is what a release bumping a dependency floor produces. Requiring the two
+        inventories to be equal refused the measurement for having the property
+        it was constructed to have.
+
+        Measured in production before this test existed: the candidate x
+        published-latest federation cell reported every required outcome green -
+        encrypted mail and chat, fail-closed, replay idempotence, route
+        validation - and was then refused with "dependency-only inventories
+        differ between runtimes". The subject was fine; the invariant was
+        wrong."""
+        with tempfile.TemporaryDirectory() as tmp:
+            def journey(env):
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=self.observation(
+                        env,
+                        beta=self.runtime(env, "BETA", dependency="0.37.3"),
+                    ),
+                    stderr="",
+                )
+
+            value = self.cell()
+            self.assertNotEqual(
+                value.a["version"], value.b["version"],
+                "control: this cell must be mixed-version or it tests nothing",
+            )
+            harness = self.prime(self.harness(tmp, journey), [value])
+            harness.run(value)
+            self.assertTrue((Path(tmp) / "cells").exists())
 
     def test_child_forces_keep_off_despite_ambient_debug_setting(self):
         completed = SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -621,6 +674,74 @@ class FederationHarnessTests(unittest.TestCase):
                 rewritten, sort_keys=True, separators=(",", ":")
             ) + "\n")
             with self.assertRaisesRegex(rd.ReceiptError, "aggregate"):
+                federation.load_aggregate(cells, Path(tmp))
+
+    def test_the_reload_and_aggregate_layers_also_allow_two_versions_to_differ(self):
+        """The twin, and the class. Conditioning only the live cell check left
+        the SAME comparison unconditioned at the reload layer and again at the
+        aggregate layer, so a mixed cell passed live and was then refused on
+        re-read - and would have been refused again across cells.
+
+        The aggregate layer is the widest instance: it required every runtime of
+        every cell to share one dependency digest, and a matrix by construction
+        spans a candidate version and a published one."""
+        def journey(env):
+            side = "BETA" if env["AWEB_BETA_VERSION"] == "1.26.35" else "ALPHA"
+            other = "ALPHA" if side == "BETA" else "BETA"
+            return SimpleNamespace(
+                returncode=0,
+                stdout=self.observation(env, **{
+                    side.lower(): self.runtime(env, side, dependency="0.37.3"),
+                    other.lower(): self.runtime(env, other),
+                }),
+                stderr="",
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cells = [self.cell("a-to-b"), self.cell("b-to-a")]
+            for cell in cells:
+                self.assertNotEqual(
+                    cell.a["version"], cell.b["version"],
+                    "control: these cells must be mixed-version",
+                )
+            harness = self.prime(self.harness(tmp, journey), cells)
+            for cell in cells:
+                harness.run(cell)
+            aggregate = federation.aggregate_cell_reports(cells, Path(tmp))
+            self.assertEqual(len(aggregate["reports"]), 2)
+            self.assertEqual(
+                federation.load_aggregate(cells, Path(tmp)), aggregate
+            )
+
+    def test_the_reload_layer_still_refuses_divergence_at_one_version(self):
+        """The guard the reload layer keeps: two runtimes recorded at the SAME
+        version must still agree on dependencies."""
+        def journey(env):
+            return SimpleNamespace(returncode=0, stdout=self.observation(env), stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cells = [self.same_version_cell("a-to-b")]
+            harness = self.prime(self.harness(tmp, journey), cells)
+            harness.run(cells[0])
+            federation.aggregate_cell_reports(cells, Path(tmp))
+            report_path = (
+                Path(tmp) / "cells" / f"{federation.cell_identity(cells[0])}.json"
+            )
+            report = json.loads(report_path.read_text())
+            report["observation"]["beta"]["installed_distributions"]["starlette"] = "9.9.9"
+            report["observation"]["beta"]["installed_distributions_sha256"] = sha256(
+                json.dumps(
+                    report["observation"]["beta"]["installed_distributions"],
+                    sort_keys=True, separators=(",", ":"),
+                ).encode()
+            )
+            report["observation_sha256"] = sha256(json.dumps(
+                report["observation"], sort_keys=True, separators=(",", ":")
+            ).encode())
+            report_path.write_text(json.dumps(
+                report, sort_keys=True, separators=(",", ":")
+            ) + "\n")
+            with self.assertRaisesRegex(rd.ReceiptError, "dependency"):
                 federation.load_aggregate(cells, Path(tmp))
 
     def test_reload_revalidates_cell_report_instead_of_trusting_write_time(self):
@@ -846,6 +967,99 @@ class RegistrationAndTargetTests(unittest.TestCase):
         makefile = (REPO_ROOT / "Makefile").read_text()
         self.assertIn("test-release-federation-skew:", makefile)
         self.assertIn("test_release_federation_skew.py", makefile)
+
+
+
+def _second_driver_module():
+    """A SECOND module object for release_driver, as the real invocation makes.
+
+    `python3 scripts/release_driver.py` loads the driver as `__main__`, so every
+    child that does `import release_driver` gets a separate copy - separate
+    SkewCell class, separate ReceiptError. This helper reproduces that split
+    inside one process without depending on how the test itself was started.
+    """
+    import importlib.util
+
+    name = "release_driver__as_main_probe"
+    spec = importlib.util.spec_from_file_location(
+        name, REPO_ROOT / "scripts" / "release_driver.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    # Registered before exec: dataclasses resolves a field's annotations through
+    # sys.modules[cls.__module__], and a module absent from there raises inside
+    # @dataclass rather than at the point of use.
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+class CrossModuleCellIdentityTests(unittest.TestCase):
+    """A cell built by the driver must be accepted by a harness that imported
+    the driver separately. The release path guarantees exactly that split."""
+
+    def _cell(self, cell_class, journey):
+        return cell_class(
+            edge_id="e" * 64, edge_a="server", edge_b="server", journey=journey,
+            artifacts={"a": "pypi:aweb", "b": "pypi:aweb"},
+            declared_direction="both", direction="a-to-b",
+            a_kind="candidate", b_kind="candidate",
+            a={"component": "server", "version": "1.27.1"},
+            b={"component": "server", "version": "1.27.1"},
+        )
+
+    def test_the_split_this_test_depends_on_is_real(self):
+        """The control. Without it a passing membership test below cannot
+        distinguish a fixed check from a helper that handed back the same
+        class."""
+        other = _second_driver_module()
+        self.assertIsNot(other.SkewCell, rd.SkewCell)
+        self.assertIsNot(other.ReceiptError, rd.ReceiptError)
+        same_values = self._cell(other.SkewCell, federation.JOURNEY)
+        self.assertNotEqual(
+            same_values, self._cell(rd.SkewCell, federation.JOURNEY),
+            "dataclass equality is class-scoped, which is the whole hazard",
+        )
+        self.assertEqual(
+            rd.skew_cell_identity(same_values),
+            rd.skew_cell_identity(self._cell(rd.SkewCell, federation.JOURNEY)),
+            "the canonical identity covers every field, so it survives the split",
+        )
+
+    def test_a_cell_from_the_other_module_is_an_exact_member(self):
+        """The defect: comparing cell OBJECTS made membership depend on which
+        module object built them, so a genuine member was refused as foreign."""
+        other = _second_driver_module()
+        harness = federation.FederationSkewHarness(report_dir=Path(self.tmp))
+        harness._matrix = {"matrix_id": "x"}
+        mine = self._cell(rd.SkewCell, federation.JOURNEY)
+        harness._cells = {rd.skew_cell_identity(mine): mine}
+
+        theirs = self._cell(other.SkewCell, federation.JOURNEY)
+        self.assertEqual(
+            harness._frozen_cell_id(theirs), rd.skew_cell_identity(mine),
+        )
+
+    def test_a_genuinely_foreign_cell_is_still_refused(self):
+        """Relaxing the comparison must not accept a cell the matrix never
+        froze."""
+        harness = federation.FederationSkewHarness(report_dir=Path(self.tmp))
+        harness._matrix = {"matrix_id": "x"}
+        mine = self._cell(rd.SkewCell, federation.JOURNEY)
+        harness._cells = {rd.skew_cell_identity(mine): mine}
+
+        foreign = self._cell(rd.SkewCell, federation.JOURNEY)
+        foreign = rd.SkewCell(**{**foreign.__dict__, "direction": "b-to-a"})
+        with self.assertRaisesRegex(rd.ReceiptError, "not an exact member"):
+            harness._frozen_cell_id(foreign)
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = self._tmp.name
+        self.addCleanup(self._tmp.cleanup)
 
 
 if __name__ == "__main__":

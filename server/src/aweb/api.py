@@ -206,8 +206,15 @@ async def _shutdown_awid_registry_client(app: FastAPI) -> None:
 def _build_awid_registry_client(app: FastAPI, redis: Redis | None) -> RegistryClient:
     settings = get_settings()
     registry_url = settings.awid_registry_url
+    service_token = settings.awid_service_token
+    if service_token is None:
+        logger.warning(
+            "event=awid_service_credential_missing "
+            "metric=awid_service_credential_missing value=1; "
+            "requests will use public IP rate limits"
+        )
     client_class = CachedRegistryClient if redis is not None else RegistryClient
-    client_kwargs = {"registry_url": registry_url}
+    client_kwargs = {"registry_url": registry_url, "service_token": service_token}
     if redis is not None:
         return client_class(redis_client=redis, **client_kwargs)
     return client_class(**client_kwargs)

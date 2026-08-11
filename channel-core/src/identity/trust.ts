@@ -3,7 +3,12 @@ import { sha512 } from "@noble/hashes/sha2.js";
 import type { APIClient } from "../api/client.js";
 import type { VerificationStatus } from "./signing.js";
 import { extractPublicKey } from "./did.js";
-import { RegistryResolver, isValidDidLogSequence, type VerifiedLogHead } from "./registry.js";
+import {
+  RegistryResolver,
+  isValidDidLogSequence,
+  type StableIdentityVerification,
+  type VerifiedLogHead,
+} from "./registry.js";
 import { PinStore, type IdentityScope } from "./pinstore.js";
 import { decodeRawStdBase64 } from "./base64.js";
 
@@ -11,6 +16,11 @@ ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
 const ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENT_META_CACHE_TTL_MS = 60 * 60 * 1000;
+const AGENT_META_FAILURE_CACHE_MIN_MS = 30_000;
+const AGENT_META_FAILURE_CACHE_JITTER_MS = 30_000;
+const TEAM_ROSTER_CACHE_TTL_MS = 60_000;
+const TEAM_ROSTER_FAILURE_BACKOFF_MIN_MS = 10_000;
+const TEAM_ROSTER_FAILURE_BACKOFF_JITTER_MS = 20_000;
 
 export interface RotationAnnouncement {
   old_did: string;
@@ -60,10 +70,36 @@ interface AgentMeta {
   resolutionError?: "not_found" | "unavailable";
 }
 
+interface PinCheckpoint {
+  seq: number;
+  entryHash: string;
+}
+
+interface PreparedStableIdentityCheck {
+  checkpoint: PinCheckpoint | undefined;
+  result: StableIdentityVerification;
+}
+
+interface ResolvedTrustMetadata {
+  trustAddress: string;
+  meta: AgentMeta;
+  stableIdentityCheck?: PreparedStableIdentityCheck;
+}
+
+interface ResolveTrustContext {
+  pinStore: PinStore;
+  fromDID: string | undefined;
+  verificationAddress: string;
+}
+
 interface AgentMetaCacheEntry {
   meta: AgentMeta;
   expiresAt: number;
 }
+
+type TeamRosterCacheEntry =
+  | { roster: LocalAgentsResponse; expiresAt: number }
+  | { error: unknown; expiresAt: number };
 
 export interface TrustResult {
   status: VerificationStatus | undefined;
@@ -87,6 +123,9 @@ export function normalizeIdentityScope(
 
 export class SenderTrustManager {
   private readonly metaCache = new Map<string, AgentMetaCacheEntry>();
+  private readonly preparedMetadata = new WeakSet<ResolvedTrustMetadata>();
+  private teamRosterCache: TeamRosterCacheEntry | undefined;
+  private teamRosterRequest: Promise<LocalAgentsResponse> | undefined;
 
   constructor(
     private readonly client: APIClient,
@@ -95,7 +134,52 @@ export class SenderTrustManager {
     private readonly selfDid: string,
     private readonly selfStableID: string = "",
     private readonly now: () => number = () => Date.now(),
+    private readonly random: () => number = () => Math.random(),
   ) {}
+
+  async resolveTrustMetadata(
+    verificationStatus: VerificationStatus | undefined,
+    rawAddress: string,
+    fromStableID: string | undefined,
+    toDID: string | undefined,
+    toStableID: string | undefined,
+    context?: ResolveTrustContext,
+  ): Promise<ResolvedTrustMetadata | undefined> {
+    const status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
+    const trimmedAddress = rawAddress.trim();
+    if (!status || !trimmedAddress) return undefined;
+    if (
+      context
+      && !context.fromDID
+      && (status === "verified" || status === "verified_legacy" || status === "verified_custodial")
+    ) {
+      return undefined;
+    }
+    const rosterAlias = this.teamRosterAliasReference(trimmedAddress);
+    if (
+      status !== "verified"
+      && status !== "verified_legacy"
+      && status !== "verified_custodial"
+      && rosterAlias !== undefined
+      && !fromStableID
+    ) {
+      return undefined;
+    }
+    const trustAddress = this.canonicalTrustAddress(trimmedAddress);
+    const meta = await this.resolveAgentMeta(trimmedAddress);
+    const stableIdentityCheck = context && meta.resolved && meta.identityScope !== "local"
+      ? await this.prepareStableIdentityRegistry(
+        context.pinStore,
+        status,
+        context.verificationAddress,
+        context.fromDID,
+        fromStableID,
+      )
+      : undefined;
+    const resolved = { trustAddress, meta, stableIdentityCheck };
+    this.preparedMetadata.add(resolved);
+    return resolved;
+  }
 
   async normalizeTrust(
     store: PinStore,
@@ -108,56 +192,126 @@ export class SenderTrustManager {
     rotationAnnouncement?: RotationAnnouncement,
     replacementAnnouncement?: ReplacementAnnouncement,
     verificationAddress?: string,
+    resolvedMetadata?: ResolvedTrustMetadata,
   ): Promise<TrustResult> {
+    let resolved = this.consumeResolvedMetadata(rawAddress, resolvedMetadata);
+    if (
+      resolved
+      && this.requiresStableIdentityCheck(
+        this.checkRecipientBinding(verificationStatus, toDID, toStableID),
+        fromDID,
+        fromStableID,
+      )
+      && resolved.meta.identityScope !== "local"
+      && !resolved.stableIdentityCheck
+    ) {
+      resolved = undefined;
+    }
+    if (!resolved) {
+      const prepared = await this.resolveTrustMetadata(
+        verificationStatus,
+        rawAddress,
+        fromStableID,
+        toDID,
+        toStableID,
+        {
+          pinStore: store,
+          fromDID,
+          verificationAddress: (verificationAddress || rawAddress).trim(),
+        },
+      );
+      resolved = this.consumeResolvedMetadata(rawAddress, prepared);
+    }
+    return this.normalizeTrustDecision(
+      store,
+      verificationStatus,
+      rawAddress,
+      fromDID,
+      fromStableID,
+      toDID,
+      toStableID,
+      rotationAnnouncement,
+      replacementAnnouncement,
+      resolved,
+    );
+  }
+
+  async normalizeResolvedTrust(
+    store: PinStore,
+    verificationStatus: VerificationStatus | undefined,
+    rawAddress: string,
+    fromDID: string | undefined,
+    fromStableID: string | undefined,
+    toDID: string | undefined,
+    toStableID: string | undefined,
+    rotationAnnouncement?: RotationAnnouncement,
+    replacementAnnouncement?: ReplacementAnnouncement,
+    _verificationAddress?: string,
+    resolvedMetadata?: ResolvedTrustMetadata,
+  ): Promise<TrustResult> {
+    return this.normalizeTrustDecision(
+      store,
+      verificationStatus,
+      rawAddress,
+      fromDID,
+      fromStableID,
+      toDID,
+      toStableID,
+      rotationAnnouncement,
+      replacementAnnouncement,
+      this.consumeResolvedMetadata(rawAddress, resolvedMetadata),
+    );
+  }
+
+  private consumeResolvedMetadata(
+    rawAddress: string,
+    resolvedMetadata: ResolvedTrustMetadata | undefined,
+  ): ResolvedTrustMetadata | undefined {
+    if (!resolvedMetadata || !this.preparedMetadata.delete(resolvedMetadata)) return undefined;
+    return resolvedMetadata.trustAddress === this.canonicalTrustAddress(rawAddress)
+      ? resolvedMetadata
+      : undefined;
+  }
+
+  private normalizeTrustDecision(
+    store: PinStore,
+    verificationStatus: VerificationStatus | undefined,
+    rawAddress: string,
+    fromDID: string | undefined,
+    fromStableID: string | undefined,
+    toDID: string | undefined,
+    toStableID: string | undefined,
+    rotationAnnouncement: RotationAnnouncement | undefined,
+    replacementAnnouncement: ReplacementAnnouncement | undefined,
+    resolved: ResolvedTrustMetadata | undefined,
+  ): TrustResult {
     let status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     const acceptedInput = verificationStatus === "verified"
       || verificationStatus === "verified_legacy"
       || verificationStatus === "verified_custodial";
     const recipientBindingMismatch = acceptedInput && status === "identity_mismatch";
-    if (!status || !rawAddress.trim()) {
-      return { status, stored: false };
-    }
+    if (!status || !rawAddress.trim()) return { status, stored: false };
+
+    const acceptedSignature = status === "verified" || status === "verified_legacy" || status === "verified_custodial";
+    if (!acceptedSignature || recipientBindingMismatch || !fromDID) return { status, stored: false };
 
     const trustAddress = this.canonicalTrustAddress(rawAddress);
-    if (
-      status !== "verified"
-      && status !== "verified_legacy"
-      && status !== "verified_custodial"
-      && this.teamRosterAliasReference(rawAddress.trim()) !== undefined
-      && !fromStableID
-    ) {
-      return { status, stored: false };
+    const meta = resolved?.meta || this.unavailableAgentMeta();
+    if (!meta.resolved) return this.unresolvedMetadataResult(meta);
+
+    if (this.teamRosterAliasReference(rawAddress.trim()) !== undefined && fromDID) {
+      if (meta.identityScope === "local") {
+        return this.verifyResolvedLocalSender(store, rawAddress.trim(), trustAddress, fromDID, meta, status);
+      }
+      if (!fromStableID) return { status: "identity_mismatch", stored: false };
     }
-    let meta: AgentMeta | undefined;
-    const acceptedSignature = status === "verified" || status === "verified_legacy" || status === "verified_custodial";
-    if (
-      acceptedSignature
-      && !recipientBindingMismatch
-      && this.teamRosterAliasReference(rawAddress.trim()) !== undefined
-      && fromDID
-    ) {
-      const fresh = await this.resolveAgentMeta(rawAddress);
-      if (!fresh.resolved) {
-        return {
-          status: fresh.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
-          stored: false,
-        };
-      }
-      if (fresh.identityScope === "local") {
-        return this.verifyResolvedLocalSender(store, rawAddress.trim(), trustAddress, fromDID, fresh, status);
-      }
-      if (!fromStableID) {
-        return { status: "identity_mismatch", stored: false };
-      }
-      meta = fresh;
-    }
-    meta ??= await this.resolveAgentMeta(rawAddress);
-    const registryCheck = await this.checkStableIdentityRegistry(
+
+    const registryCheck = this.applyPreparedStableIdentityRegistry(
       store,
       status,
-      (verificationAddress || rawAddress).trim(),
       fromDID,
       fromStableID,
+      resolved?.stableIdentityCheck,
     );
     status = registryCheck.status;
     const pinResult = this.checkTOFUPinWithMeta(
@@ -182,12 +336,18 @@ export class SenderTrustManager {
     );
     if (
       pinResult.status === "identity_mismatch"
-      && !recipientBindingMismatch
       && fromDID
       && this.teamRosterAliasReference(rawAddress.trim()) !== undefined
       && !fromStableID?.startsWith("did:aw:")
     ) {
-      return this.verifyLocalSenderAgainstCachedRoster(store, rawAddress.trim(), trustAddress, fromDID);
+      const localResult = this.verifyLocalSenderAgainstResolvedMetadata(
+        store,
+        rawAddress.trim(),
+        trustAddress,
+        fromDID,
+        meta,
+      );
+      return checkpointAdvanced ? { ...localResult, stored: true } : localResult;
     }
     return checkpointAdvanced ? { ...pinResult, stored: true } : pinResult;
   }
@@ -224,28 +384,75 @@ export class SenderTrustManager {
     return recipientDID === selfDID ? status : "identity_mismatch";
   }
 
-  private async checkStableIdentityRegistry(
+  private requiresStableIdentityCheck(
+    status: VerificationStatus | undefined,
+    fromDID: string | undefined,
+    fromStableID: string | undefined,
+  ): boolean {
+    return status === "verified" && Boolean(fromDID) && Boolean(fromStableID?.startsWith("did:aw:"));
+  }
+
+  private unavailableAgentMeta(): AgentMeta {
+    return {
+      identityScope: "global",
+      custody: "self",
+      resolved: false,
+      resolutionError: "unavailable",
+    };
+  }
+
+  private unresolvedMetadataResult(meta: AgentMeta): TrustResult {
+    return {
+      status: meta.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
+      stored: false,
+    };
+  }
+
+  private async prepareStableIdentityRegistry(
     store: PinStore,
     status: VerificationStatus | undefined,
     trustAddress: string,
     fromDID: string | undefined,
     fromStableID: string | undefined,
-  ): Promise<{
+  ): Promise<PreparedStableIdentityCheck | undefined> {
+    if (!this.requiresStableIdentityCheck(status, fromDID, fromStableID)) return undefined;
+
+    // Registry verification can await DNS and HTTP. Seed it from one synchronous
+    // checkpoint snapshot before that work, then revalidate the same values in
+    // the trust critical section before applying the result.
+    const checkpoint = this.pinCheckpoint(store, fromStableID!);
+    this.seedVerifiedHeadFromPin(store, fromStableID!);
+    return {
+      checkpoint,
+      result: await this.registry.verifyStableIdentity(trustAddress, fromStableID!, fromDID),
+    };
+  }
+
+  private applyPreparedStableIdentityRegistry(
+    store: PinStore,
+    status: VerificationStatus | undefined,
+    fromDID: string | undefined,
+    fromStableID: string | undefined,
+    prepared: PreparedStableIdentityCheck | undefined,
+  ): {
     status: VerificationStatus | undefined;
     confirmedCurrentKey: boolean;
     verifiedHead?: VerifiedLogHead;
-  }> {
-    if (status !== "verified" || !fromDID || !fromStableID?.startsWith("did:aw:")) {
+  } {
+    if (!this.requiresStableIdentityCheck(status, fromDID, fromStableID)) {
       return { status, confirmedCurrentKey: false };
     }
+    if (!prepared) return { status: "verification_stale", confirmedCurrentKey: false };
 
-    // Restore the anti-rollback anchor from the checkpoint persisted with the
-    // pin. The registry's in-memory head cache is what refuses a sequence
-    // regression or a split view, but it is forgotten on restart — so without
-    // this a registry can serve a valid truncated prefix and roll a rotated
-    // identity back to a retired key (default-aajc.8).
-    this.seedVerifiedHeadFromPin(store, fromStableID);
-    const registryResult = await this.registry.verifyStableIdentity(trustAddress, fromStableID, fromDID);
+    // Evidence verified against an older anti-rollback anchor cannot be applied
+    // after another decision advances or replaces that anchor. Degrade this
+    // message rather than resolving again while holding the pin lock.
+    const currentCheckpoint = this.pinCheckpoint(store, fromStableID!);
+    if (!this.sameCheckpoint(currentCheckpoint, prepared.checkpoint)) {
+      return { status: "verification_stale", confirmedCurrentKey: false };
+    }
+
+    const registryResult = prepared.result;
     if (registryResult.outcome === "STALE_CACHE") {
       return { status: "verification_stale", confirmedCurrentKey: false };
     }
@@ -266,15 +473,30 @@ export class SenderTrustManager {
     };
   }
 
+  private pinCheckpoint(store: PinStore, stableID: string): PinCheckpoint | undefined {
+    const pin = store.pins.get(stableID);
+    if (!pin?.log_seq || !pin.log_entry_hash) return undefined;
+    return { seq: pin.log_seq, entryHash: pin.log_entry_hash };
+  }
+
+  private sameCheckpoint(
+    left: PinCheckpoint | undefined,
+    right: PinCheckpoint | undefined,
+  ): boolean {
+    if (!left || !right) return left === right;
+    return left.seq === right.seq && left.entryHash === right.entryHash;
+  }
+
   private seedVerifiedHeadFromPin(store: PinStore, stableID: string): void {
     const seed = (this.registry as { seedVerifiedHead?: (id: string, head: VerifiedLogHead) => void })
       .seedVerifiedHead;
     if (typeof seed !== "function") return;
-    const pin = store.pins.get(stableID);
-    if (!pin?.log_seq || !pin.log_entry_hash) return;
+    const checkpoint = this.pinCheckpoint(store, stableID);
+    if (!checkpoint) return;
+    const pin = store.pins.get(stableID)!;
     seed.call(this.registry, stableID, {
-      seq: pin.log_seq,
-      entryHash: pin.log_entry_hash,
+      seq: checkpoint.seq,
+      entryHash: checkpoint.entryHash,
       stateHash: "",
       currentDidKey: pin.did_key ?? "",
       fetchedAt: 0,
@@ -376,8 +598,14 @@ export class SenderTrustManager {
             }
           }
         }
-        store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID);
-        return { status, stored: true };
+        // The steady state: an already-pinned sender presenting the key it is
+        // pinned to. Nothing here is a continuity claim, so it commits only when
+        // the store actually changed - otherwise every accepted message forces a
+        // commit and the resident processes sharing this file spend their time
+        // losing CAS races instead of delivering wakes (aweb-abdk). A store left
+        // undurable by an earlier failure is still persisted: that is decided by
+        // the caller, which commits on `stored || hasUndurableChanges()`.
+        return { status, stored: store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID) };
       }
       case "mismatch": {
         const pinnedKey = store.addresses.get(trustAddress) || "";
@@ -506,23 +734,18 @@ export class SenderTrustManager {
     return this.teamID ? `${this.teamID}/${trimmed}` : trimmed;
   }
 
-  private async verifyLocalSenderAgainstCachedRoster(
+  private verifyLocalSenderAgainstResolvedMetadata(
     store: PinStore,
     rawAddress: string,
     trustAddress: string,
     fromDID: string,
-  ): Promise<TrustResult> {
-    const fresh = await this.resolveAgentMeta(rawAddress);
-    if (!fresh.resolved) {
-      return {
-        status: fresh.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
-        stored: false,
-      };
-    }
-    if (fresh.identityScope !== "local") {
+    resolved: AgentMeta,
+  ): TrustResult {
+    if (!resolved.resolved) return this.unresolvedMetadataResult(resolved);
+    if (resolved.identityScope !== "local") {
       return { status: "identity_mismatch", stored: false };
     }
-    return this.verifyResolvedLocalSender(store, rawAddress, trustAddress, fromDID, fresh, "verified");
+    return this.verifyResolvedLocalSender(store, rawAddress, trustAddress, fromDID, resolved, "verified");
   }
 
   private verifyResolvedLocalSender(
@@ -571,13 +794,26 @@ export class SenderTrustManager {
       return meta;
     } catch (error) {
       const statusCode = (error as { statusCode?: unknown } | undefined)?.statusCode;
-      return {
+      const meta: AgentMeta = {
         identityScope: "global",
         custody: "self",
         resolved: false,
         resolutionError: statusCode === 404 ? "not_found" : "unavailable",
       };
+      this.metaCache.set(trustAddress, {
+        meta,
+        expiresAt: this.now() + this.jitteredTTL(
+          AGENT_META_FAILURE_CACHE_MIN_MS,
+          AGENT_META_FAILURE_CACHE_JITTER_MS,
+        ),
+      });
+      return meta;
     }
+  }
+
+  private jitteredTTL(minimum: number, jitter: number): number {
+    const random = Math.max(0, Math.min(0.999999999, this.random()));
+    return minimum + Math.floor(random * jitter);
   }
 
   private teamRosterAliasReference(address: string): string | undefined {
@@ -605,11 +841,7 @@ export class SenderTrustManager {
       throw new Error("team roster resolution requires team-certificate authentication");
     }
 
-    const path = "/v1/agents";
-    const roster = await this.client.get<LocalAgentsResponse>(path);
-    if ((roster.team_id || "").trim() !== this.teamID) {
-      throw new Error("team roster response does not match the authenticated team");
-    }
+    const roster = await this.resolveAuthenticatedTeamRoster();
     const response = (roster.agents || []).find((agent) => (agent.alias || "").trim() === localAlias);
     if (!response) {
       const qualifiedTeamPrefix = `${this.teamID.toLowerCase()}/`;
@@ -631,6 +863,44 @@ export class SenderTrustManager {
       custody: "self",
       identityScope: normalizeIdentityScope(response.identity_scope, response.lifetime, "local"),
     };
+  }
+
+  private async resolveAuthenticatedTeamRoster(): Promise<LocalAgentsResponse> {
+    const cached = this.teamRosterCache;
+    if (cached && this.now() <= cached.expiresAt) {
+      if ("roster" in cached) return cached.roster;
+      throw cached.error;
+    }
+    if (this.teamRosterRequest) return this.teamRosterRequest;
+
+    const request = this.client.get<LocalAgentsResponse>("/v1/agents").then((roster) => {
+      if ((roster.team_id || "").trim() !== this.teamID) {
+        throw new Error("team roster response does not match the authenticated team");
+      }
+      return roster;
+    });
+    this.teamRosterRequest = request;
+    try {
+      const roster = await request;
+      this.teamRosterCache = {
+        roster,
+        expiresAt: this.now() + TEAM_ROSTER_CACHE_TTL_MS,
+      };
+      return roster;
+    } catch (error) {
+      // A shared failure needs a short quiet interval too. Starting it when the
+      // request settles ensures a full client timeout cannot consume the backoff.
+      this.teamRosterCache = {
+        error,
+        expiresAt: this.now() + this.jitteredTTL(
+          TEAM_ROSTER_FAILURE_BACKOFF_MIN_MS,
+          TEAM_ROSTER_FAILURE_BACKOFF_JITTER_MS,
+        ),
+      };
+      throw error;
+    } finally {
+      if (this.teamRosterRequest === request) this.teamRosterRequest = undefined;
+    }
   }
 }
 

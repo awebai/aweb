@@ -238,7 +238,10 @@ b = "server"
 journey = "make test-federation-e2e (both request directions)"
 artifacts = { a = "pypi:aweb", b = "pypi:aweb" }
 direction = "both"
-supported = { policy = "additive-only", set = "measured:93675cc26aa05661daa86bcc7f9c80503b8421f6290edd25cd0237105c060f5e", record = { authority = "repository", artifact_id = "support:server-federation:1.26.35", path = "release/measurements/server-federation-1.26.35.json", digest = "6e65e483e83552f4524758437bcec72cb9c2931b6cda2b1a4b2e0f4c59944825" } }
+# Measured against the published 1.27.0 wheel, both directions, after the
+# release. The 1.26.35 measurement it replaces is kept at
+# release/measurements/server-federation-1.26.35.json for history.
+supported = { policy = "additive-only", set = "measured:34498f34e2c007ac1771388c4fc45394293cac49bbe1381504d49b3885fe9e96", record = { authority = "repository", artifact_id = "support:server-federation:1.27.0", path = "release/measurements/server-federation-1.27.0.json", digest = "b68ef0c4af40c28f1c0a07df1b0ec97936602868834114094c10cc1d4083ebb7" } }
 
 [[edge]]
 type = "runtime-contract"
