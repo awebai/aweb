@@ -52,7 +52,7 @@ suite_projects=(
   "$gate_run_id-channel"
   "$gate_run_id-user"
   "$gate_run_id-fed-auth"
-  "$gate_run_id-federation"
+  "aweb-fed-e2e-${SOURCE_SHA:0:12}$$"
   "$gate_run_id-library"
 )
 cleanup() {

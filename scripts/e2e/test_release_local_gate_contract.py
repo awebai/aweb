@@ -473,6 +473,15 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
         for name, harness in project_inputs.items():
             self.assertIn(f'-e {name}=', entrypoint)
             self.assertIn(name, harness.read_text())
+        match = re.search(r'^  "(aweb-fed-e2e-[^"]+)"$', entrypoint, re.MULTILINE)
+        self.assertIsNotNone(match)
+        identities = [
+            match.group(1).replace("${SOURCE_SHA:0:12}", "93b4112f69d5").replace("$$", pid)
+            for pid in ("101", "202")
+        ]
+        self.assertEqual(len(set(identities)), 2)
+        for identity in identities:
+            self.assertRegex(identity, r"^aweb-fed-e2e-[a-z0-9]+$")
         runner_text = (SCRIPTS / "release_gate_runner.py").read_text()
         self.assertEqual(runner_text.count("START_REQUIRED_KIB ="), 1)
         self.assertNotIn("START_REQUIRED_KIB", entrypoint)
