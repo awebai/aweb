@@ -1,368 +1,485 @@
-"""The three unrecoverable publishes refuse unless their suite passed here.
+"""Thin release-branch publication contracts and fixture-only rehearsal.
 
-PyPI never lets a version be re-uploaded and a container tag that consumers
-have already pulled cannot be recalled, so aweb on PyPI, awid-service on PyPI
-and the awid image on GHCR each have to establish that the artifact's own
-suite passed on the commit being published - not on main, not on a recent run.
-
-In the dispatch-only three-mode lanes that property has two halves. The STAGE
-job checks out the exact declared source, runs the gate suite inside that
-checkout unconditionally, and only then seals and uploads digests of the built
-artifacts; GitHub's fail-fast step semantics mean nothing is sealed when the
-gate fails. The PUBLISH job never builds: it may only run in
-publish-continuation mode, and before any outward step it proves the staged
-artifact's provenance (this repository, this exact workflow file, a
-successful run) and digest identity, then re-inspects the bytes. So the only
-bytes that can publish are bytes the gate passed beside. This asserts that
-wiring, and mutates it to show the assertions can fail.
+The complete suite runs before the release branch moves. These workflows may
+only rebuild the accepted commit, inspect it, publish/adopt exact registry
+state, and cheaply verify what the public registry serves. The tests below are
+static where GitHub wiring is the behavior and use local fixtures for registry
+and git-output decisions; they never dispatch a workflow or contact a public
+registry.
 """
 
 from __future__ import annotations
 
+import hashlib
+import io
+import json
 import os
 import re
 import subprocess
+import tarfile
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
-
-STEP_CONDITION = re.compile(r"(?m)^        if:")
-STEP_CONTINUE_ON_ERROR = re.compile(r"(?m)^        continue-on-error:")
-
-
-class Surface:
-    """One unrecoverable publishing workflow: its gates and publish markers."""
-
-    def __init__(
-        self,
-        name: str,
-        workflow: str,
-        gate_step_marker: str,
-        gate_targets: tuple[str, ...],
-        publish_markers: tuple[str, ...],
-        gate_must_run: tuple[str, ...],
-        gate_must_not_run: tuple[str, ...] = (),
-    ) -> None:
-        self.name = name
-        self.workflow = workflow
-        self.gate_step_marker = gate_step_marker
-        self.gate_targets = gate_targets
-        self.publish_markers = publish_markers
-        self.gate_must_run = gate_must_run
-        self.gate_must_not_run = gate_must_not_run
-
-    def read(self) -> str:
-        return (WORKFLOWS / self.workflow).read_text(encoding="utf-8")
+PYPI_PRIMITIVE = REPO_ROOT / "scripts" / "pypi-exact-publish.sh"
+OCI_PRIMITIVE = REPO_ROOT / "scripts" / "oci-exact-publish.sh"
+PYPI = (WORKFLOWS / "pypi-release.yml").read_text(encoding="utf-8")
+AWID_IMAGE = (WORKFLOWS / "awid-image-release.yml").read_text(encoding="utf-8")
 
 
-SURFACES = (
-    Surface(
-        name="aweb server and awid-service on PyPI",
-        workflow="pypi-release.yml",
-        gate_step_marker='run: make "$GATE"',
-        gate_targets=("release-server-gate", "release-awid-pypi-gate"),
-        publish_markers=("uv publish",),
-        gate_must_run=("uv lock --check", "pytest", "uv build"),
-    ),
-    Surface(
-        name="awid image on GHCR",
-        workflow="awid-image-release.yml",
-        gate_step_marker="run: make release-awid-image-gate",
-        gate_targets=("release-awid-image-gate",),
-        publish_markers=("skopeo copy",),
-        gate_must_run=("uv lock --check", "pytest"),
-        gate_must_not_run=("docker build\n",),
-    ),
-)
+def run(
+    *args: str,
+    cwd: Path | None = None,
+    check: bool = True,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        args, cwd=cwd, text=True, capture_output=True, check=check, env=env
+    )
 
 
-def split_jobs(workflow: str) -> tuple[str, str]:
-    """(stage job block, publish job block) of a two-job lane workflow."""
+def job_block(workflow: str, job: str) -> str:
     jobs = workflow[workflow.index("\njobs:\n") :]
-    stage_at = jobs.index("\n  stage:\n")
-    publish_at = jobs.index("\n  publish:\n")
-    assert stage_at < publish_at, "stage must precede publish"
-    return jobs[stage_at:publish_at], jobs[publish_at:]
+    header = f"\n  {job}:\n"
+    start = jobs.index(header)
+    body_start = start + len(header)
+    match = re.search(r"(?m)^  [a-zA-Z0-9_-]+:\n", jobs[body_start:])
+    end = len(jobs) if match is None else body_start + match.start()
+    return jobs[start:end]
 
 
-def step_block(job: str, marker: str) -> str:
-    """The full step block containing the marker line."""
-    at = job.index(marker)
-    start = job.rindex("\n      - ", 0, at)
-    try:
-        end = job.index("\n      - ", at)
-    except ValueError:
-        end = len(job)
-    return job[start:end]
+def shell_function(workflow: str, name: str) -> str:
+    lines = workflow.splitlines()
+    start = lines.index(f"          {name}() {{")
+    for end in range(start + 1, len(lines)):
+        if lines[end] == "          }":
+            return "\n".join(line[10:] for line in lines[start : end + 1]) + "\n"
+    raise ValueError(f"unterminated shell function {name}")
 
 
-class ReleaseGateContractTests(unittest.TestCase):
-    def assert_publish_is_gated(self, surface: Surface, workflow: str) -> None:
-        stage, publish = split_jobs(workflow)
-
-        # The gate runs in the stage job: exactly once, unconditionally, with
-        # failure fatal, inside the exact-source checkout, before anything is
-        # sealed or uploaded.
-        self.assertEqual(
-            stage.count(surface.gate_step_marker),
-            1,
-            f"{surface.workflow} stage must run '{surface.gate_step_marker}' exactly once",
-        )
-        gate = step_block(stage, surface.gate_step_marker)
-        self.assertIsNone(
-            STEP_CONDITION.search(gate),
-            "a conditional gate is a gate that can be skipped",
-        )
-        self.assertIsNone(
-            STEP_CONTINUE_ON_ERROR.search(gate),
-            "continue-on-error would let staging seal after the gate failed",
-        )
-        self.assertIn(
-            "working-directory: source",
-            gate,
-            "the gate must run inside the exact source checkout",
-        )
-        self.assertLess(
-            stage.index("path: source"),
-            stage.index(surface.gate_step_marker),
-            "the exact source checkout must precede the gate",
-        )
-        self.assertLess(
-            stage.index(surface.gate_step_marker),
-            stage.index("upload-artifact"),
-            "nothing may be sealed or uploaded before the gate passed",
-        )
-        for marker in surface.publish_markers:
-            self.assertNotIn(
-                marker, stage, "the stage job must never publish anything"
-            )
-
-        # The publish job never builds and is triple-locked: mode-gated,
-        # provenance-proven against this exact workflow file, and digest-bound
-        # before any outward step.
-        self.assertIn(
-            "if: inputs.mode == 'publish-continuation'",
-            publish,
-            "the publish job must be mode-gated",
-        )
-        self.assertIn(
-            f'".github/workflows/{surface.workflow}"',
-            publish,
-            "continuation must prove the staging run used this exact workflow",
-        )
-        publish_positions = [
-            publish.index(marker)
-            for marker in surface.publish_markers
-            if marker in publish
-        ]
-        self.assertTrue(
-            publish_positions,
-            f"{surface.workflow} publish job must contain a publishing step",
-        )
-        for guard in (
-            "does not equal declared $STAGE_ZIP_DIGEST",
-            "require-publishable",
-        ):
-            self.assertIn(guard, publish)
-            self.assertLess(
-                publish.index(guard),
-                min(publish_positions),
-                f"'{guard}' must precede every publishing step",
-            )
-        self.assertNotIn(
-            surface.gate_step_marker,
-            publish,
-            "the publish job must not rebuild; the gate ran beside the staged bytes",
+def make_dist(dist: Path, package: str, version: str) -> None:
+    normalized = package.replace("-", "_")
+    dist.mkdir(parents=True)
+    sdist = dist / f"{normalized}-{version}.tar.gz"
+    body = f"Metadata-Version: 2.1\nName: {package}\nVersion: {version}\n".encode()
+    with tarfile.open(sdist, "w:gz") as archive:
+        info = tarfile.TarInfo(f"{normalized}-{version}/PKG-INFO")
+        info.size = len(body)
+        archive.addfile(info, io.BytesIO(body))
+    wheel = dist / f"{normalized}-{version}-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(
+            f"{normalized}-{version}.dist-info/METADATA", body
         )
 
-    def test_each_surface_gates_its_publish_on_its_own_suite(self) -> None:
-        for surface in SURFACES:
-            with self.subTest(surface=surface.name):
-                self.assert_publish_is_gated(surface, surface.read())
 
-    def test_the_gate_assertions_fail_when_the_wiring_is_broken(self) -> None:
-        """Without this, a passing contract proves only that it was never asked."""
-
-        for surface in SURFACES:
-            workflow = surface.read()
-            stage, _ = split_jobs(workflow)
-            gate_step = step_block(stage, surface.gate_step_marker)
-
-            mutations = {
-                "gate removed": workflow.replace(gate_step, "\n", 1),
-                "gate skipped by a condition": workflow.replace(
-                    gate_step,
-                    gate_step.replace(
-                        "\n        run:", "\n        if: false\n        run:", 1
-                    ),
-                    1,
-                ),
-                "gate failure tolerated": workflow.replace(
-                    gate_step,
-                    gate_step.replace(
-                        "\n        run:",
-                        "\n        continue-on-error: true\n        run:",
-                        1,
-                    ),
-                    1,
-                ),
-                "publish smuggled into the stage job": workflow.replace(
-                    gate_step,
-                    gate_step
-                    + f"\n      - name: smuggle\n        run: {surface.publish_markers[0]} x\n",
-                    1,
-                ),
-                "gate moved after the upload": workflow.replace(
-                    gate_step, "\n", 1
-                ).replace(
-                    "\n      - name: Staged identity",
-                    gate_step + "\n      - name: Staged identity",
-                    1,
-                ),
+def pypi_observation(dist: Path) -> dict[str, object]:
+    return {
+        "urls": [
+            {
+                "filename": path.name,
+                "digests": {"sha256": hashlib.sha256(path.read_bytes()).hexdigest()},
             }
-            for name, mutation in mutations.items():
-                with self.subTest(surface=surface.name, mutation=name):
-                    with self.assertRaises((AssertionError, ValueError)):
-                        self.assert_publish_is_gated(surface, mutation)
+            for path in sorted(dist.iterdir())
+        ]
+    }
 
-    def test_the_suites_have_the_services_they_need_to_run(self) -> None:
-        """A gate that cannot reach Postgres errors instead of gating."""
 
-        for surface in SURFACES:
-            with self.subTest(surface=surface.name):
-                stage, _ = split_jobs(surface.read())
-                self.assertIn("image: postgres:16", stage)
-                for setting in (
-                    "PGHOST: localhost",
-                    "PGPORT:",
-                    "PGUSER: postgres",
-                    "PGPASSWORD: postgres",
-                    "PGDATABASE: postgres",
-                ):
-                    self.assertIn(setting, stage)
+class ThinReleaseWorkflowContractTests(unittest.TestCase):
+    def assert_release_trigger_only(self, workflow: str) -> None:
+        triggers = workflow[workflow.index("\non:\n") : workflow.index("\njobs:\n")]
+        self.assertIn("push:", triggers)
+        self.assertRegex(triggers, r"branches:\s*\[release\]")
+        for forbidden in ("workflow_dispatch", "tags:", "main", "pull_request", "schedule"):
+            self.assertNotIn(forbidden, triggers)
 
-    def test_dispatch_is_the_only_way_in(self) -> None:
-        """A tag or branch trigger would be a publish path the mode gate and
-        provenance checks were never asked about."""
+    def assert_exact_release_identity(self, workflow: str) -> None:
+        self.assertIn("SOURCE_SHA: ${{ github.sha }}", workflow)
+        self.assertIn('git ls-remote origin refs/heads/release', workflow)
+        self.assertIn("+refs/heads/main:refs/remotes/origin/main", workflow)
+        self.assertIn("+refs/heads/release:refs/remotes/origin/release", workflow)
+        self.assertIn('[[ "$release_tip" == "$SOURCE_SHA" ]]', workflow)
+        self.assertIn('git merge-base --is-ancestor "$SOURCE_SHA" origin/main', workflow)
+        self.assertIn("ref: ${{ github.sha }}", workflow)
+        for forbidden in ("inputs.version", "inputs.source_sha", "SOURCE_SHA: ${{ inputs"):
+            self.assertNotIn(forbidden, workflow)
 
-        for surface in SURFACES:
-            with self.subTest(surface=surface.name):
-                workflow = surface.read()
-                start = re.search(r"(?m)^on:$", workflow)
-                if start is None:
-                    self.fail(f"{surface.workflow} must declare triggers")
-                triggers = workflow[start.start() : workflow.index("jobs:\n")]
-                self.assertIn("workflow_dispatch:", triggers)
-                for other in ("push:", "pull_request", "schedule", "tags:", "branches:"):
-                    self.assertNotIn(other, triggers)
+    def assert_thin(self, workflow: str) -> None:
+        for forbidden in (
+            "pytest",
+            "postgres:16",
+            "make release-",
+            "make test",
+            "upload-artifact",
+            "download-artifact",
+            "stage-only",
+            "publish-continuation",
+            "stage_run_id",
+            "provenance inputs",
+        ):
+            self.assertNotIn(forbidden, workflow)
 
-    def test_the_dry_run_targets_carry_no_recursive_make(self) -> None:
-        """The `make --dry-run` above is only a dry run while these targets stay free of $(MAKE).
+    def assert_pypi_contract(self, workflow: str) -> None:
+        awid = job_block(workflow, "awid_service")
+        server = job_block(workflow, "aweb")
+        self.assertIn("needs: awid_service", server)
+        self.assertLess(workflow.index("  awid_service:\n"), workflow.index("  aweb:\n"))
+        self.assertIn("awid/pyproject.toml", awid)
+        self.assertIn("server/pyproject.toml", server)
+        self.assertIn("tomllib", workflow)
+        self.assertIn("awid-service>=", server)
+        self.assertIn("Public AWID floor", server)
+        self.assertIn("https://pypi.org/pypi/", workflow)
+        self.assertIn("--index-url https://pypi.org/simple", workflow)
+        for job, package, tag, import_name in (
+            (awid, "awid-service", "awid-service-v", "import awid"),
+            (server, "aweb", "server-v", "import aweb"),
+        ):
+            with self.subTest(package=package):
+                self.assertEqual(job.count("uv build --sdist --wheel"), 1)
+                self.assertIn("npm-exact-publish.sh validate-inputs", job)
+                self.assertIn("pypi-exact-publish.sh inspect-staged", job)
+                self.assertIn("pypi-exact-publish.sh plan-publish", job)
+                self.assertIn("pypi-exact-publish.sh verify-published", job)
+                self.assertIn("--only-binary=:all:", job)
+                self.assertIn("--no-cache", job)
+                self.assertIn(import_name, job)
+                self.assertIn(tag, job)
+                self.assertIn("require_tag_compatible", job)
+                self.assertIn("publish_tag", job)
+                verification = job.index("verify-published")
+                tag_output = job.index('publish_tag "$tag"')
+                self.assertLess(verification, tag_output)
+                self.assertLess(verification, job.rindex("require_release_sha"))
+                self.assertLess(job.rindex("require_release_sha"), tag_output)
+                self.assertGreaterEqual(job.count("require_release_sha"), 3)
+        self.assertIn("UV_PUBLISH_TOKEN", workflow)
 
-        make exempts any recipe LINE containing $(MAKE) from -n and executes it in full,
-        and a backslash-continued block is one line. So a recursive make added to a gate
-        target would turn the test above into a real release build - uv build, rm -rf
-        dist/, a full pytest - inside a unit test, against whatever checkout it runs in.
+    def assert_oci_contract(self, workflow: str) -> None:
+        job = job_block(workflow, "publish_image")
+        self.assertIn("awid/pyproject.toml", job)
+        self.assertEqual(job.count("docker buildx build"), 1)
+        self.assertIn("--platform linux/amd64,linux/arm64", job)
+        self.assertIn("--file awid/Dockerfile.release", job)
+        dockerfile = (REPO_ROOT / "awid" / "Dockerfile.release").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("COPY server/src ./server/src", dockerfile)
+        self.assertIn('org.opencontainers.image.version=${VERSION}', job)
+        self.assertIn('org.opencontainers.image.revision=${SOURCE_SHA}', job)
+        self.assertIn('type=oci,dest=', job)
+        self.assertIn("npm-exact-publish.sh validate-inputs", job)
+        self.assertIn("oci-exact-publish.sh inspect-staged", job)
+        self.assertIn("oci-exact-publish.sh decide-tag", job)
+        self.assertIn("oci-exact-publish.sh verify-published", job)
+        self.assertIn('for image_tag in "$VERSION" latest', job)
+        self.assertIn("skopeo copy --all", job)
+        self.assertIn("docker://ghcr.io/awebai/awid", job)
+        self.assertIn("STAGED INDEX DIGEST", job)
+        self.assertIn("awid-v", job)
+        self.assertIn("require_tag_compatible", job)
+        self.assertIn("publish_tag", job)
+        verification = job.index("verify-published")
+        tag_output = job.index('publish_tag "$tag"')
+        self.assertLess(verification, tag_output)
+        self.assertLess(verification, job.rindex("require_release_sha"))
+        self.assertLess(job.rindex("require_release_sha"), tag_output)
+        self.assertGreaterEqual(job.count("require_release_sha"), 3)
 
-        30aadbec recorded that condition as a comment. This asserts it, because a
-        constraint that depends on being read fails silently and only for the person who
-        did not read it.
-        """
+    def test_workflows_are_release_branch_only_and_exact_sha_bound(self) -> None:
+        for workflow in (PYPI, AWID_IMAGE):
+            self.assert_release_trigger_only(workflow)
+            self.assert_exact_release_identity(workflow)
+            self.assert_thin(workflow)
+
+    def test_pypi_is_awid_before_aweb_with_exact_public_verification(self) -> None:
+        self.assert_pypi_contract(PYPI)
+
+    def test_awid_image_is_two_platform_same_commit_and_digest_verified(self) -> None:
+        self.assert_oci_contract(AWID_IMAGE)
+
+    def test_contract_mutations_fail_for_each_requested_wiring_boundary(self) -> None:
+        mutations = (
+            (
+                "wrong branch",
+                PYPI,
+                self.assert_release_trigger_only,
+                PYPI.replace("branches: [release]", "branches: [main]", 1),
+            ),
+            (
+                "tag trigger",
+                PYPI,
+                self.assert_release_trigger_only,
+                PYPI.replace(
+                    "branches: [release]",
+                    "branches: [release]\n    tags: ['v*']",
+                    1,
+                ),
+            ),
+            (
+                "wrong SHA comparison",
+                PYPI,
+                self.assert_exact_release_identity,
+                PYPI.replace(
+                    '[[ "$release_tip" == "$SOURCE_SHA" ]]',
+                    '[[ "$release_tip" != "$SOURCE_SHA" ]]',
+                ),
+            ),
+            (
+                "caller-supplied version",
+                PYPI,
+                self.assert_exact_release_identity,
+                PYPI + "\n# inputs.version\n",
+            ),
+            (
+                "suite reintroduction",
+                PYPI,
+                self.assert_thin,
+                PYPI + "\n# pytest\n",
+            ),
+            (
+                "aweb races AWID",
+                PYPI,
+                self.assert_pypi_contract,
+                PYPI.replace("needs: awid_service", "", 1),
+            ),
+            (
+                "single-platform image",
+                AWID_IMAGE,
+                self.assert_oci_contract,
+                AWID_IMAGE.replace("linux/amd64,linux/arm64", "linux/amd64", 1),
+            ),
+            (
+                "wrong image version label",
+                AWID_IMAGE,
+                self.assert_oci_contract,
+                AWID_IMAGE.replace(
+                    "org.opencontainers.image.version=${VERSION}",
+                    "org.opencontainers.image.version=unknown",
+                    1,
+                ),
+            ),
+            (
+                "wrong image revision label",
+                AWID_IMAGE,
+                self.assert_oci_contract,
+                AWID_IMAGE.replace(
+                    "org.opencontainers.image.revision=${SOURCE_SHA}",
+                    "org.opencontainers.image.revision=unknown",
+                    1,
+                ),
+            ),
+            (
+                "digest verification removed",
+                AWID_IMAGE,
+                self.assert_oci_contract,
+                AWID_IMAGE.replace(
+                    "oci-exact-publish.sh verify-published", "echo unverified", 1
+                ),
+            ),
+        )
+        for name, original, assertion, mutation in mutations:
+            with self.subTest(mutation=name):
+                self.assertNotEqual(original, mutation, f"{name} mutation was a no-op")
+                with self.assertRaises((AssertionError, ValueError)) as caught:
+                    assertion(mutation)
+                actual_reason = str(caught.exception)
+                self.assertTrue(actual_reason, f"{name} failed without an assertion reason")
+                if os.environ.get("RELEASE_CONTRACT_MUTATION_REPORT") == "1":
+                    concise_reason = actual_reason.split(" in ", 1)[0].replace("\n", " ")
+                    print(f"MUTATION RED: {name}: {concise_reason}")
+
+    def test_fixture_registry_and_temp_remote_rehearse_order_retry_and_conflict(self) -> None:
+        """No public writes: real exact-state primitives plus a temporary bare git remote."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            fakebin = root / "network-must-not-run"
+            fakebin.mkdir()
+            network_attempt = root / "network-attempted"
+            for command in ("curl", "skopeo", "gh", "aws", "docker"):
+                path = fakebin / command
+                path.write_text(
+                    "#!/usr/bin/env bash\n"
+                    f"printf '%s\\n' {command} >> {network_attempt}\n"
+                    "exit 97\n",
+                    encoding="utf-8",
+                )
+                path.chmod(0o755)
+            fixture_env = os.environ.copy()
+            fixture_env["PATH"] = f"{fakebin}:{fixture_env['PATH']}"
+            control = run("curl", "https://pypi.org", check=False, env=fixture_env)
+            self.assertEqual(control.returncode, 97)
+            self.assertEqual(network_attempt.read_text(encoding="utf-8"), "curl\n")
+            network_attempt.unlink()
+
+            events: list[str] = []
+            observations: dict[str, Path] = {}
+            for package in ("awid-service", "aweb"):
+                dist = root / package / "dist"
+                make_dist(dist, package, "1.2.3")
+                inspected = run(
+                    "bash", str(PYPI_PRIMITIVE), "inspect-staged",
+                    "--dist", str(dist), "--package", package, "--version", "1.2.3",
+                    env=fixture_env,
+                )
+                self.assertEqual(inspected.stdout.count("STAGED:"), 2)
+                planned = run(
+                    "bash", str(PYPI_PRIMITIVE), "plan-publish",
+                    "--dist", str(dist), "--package", package, "--version", "1.2.3",
+                    "--observed-status", "404", env=fixture_env,
+                )
+                self.assertEqual(len(planned.stdout.splitlines()), 2)
+                events.append(f"publish:{package}")
+                observed = root / package / "observed.json"
+                observed.write_text(json.dumps(pypi_observation(dist)), encoding="utf-8")
+                observations[package] = observed
+                run(
+                    "bash", str(PYPI_PRIMITIVE), "verify-published",
+                    "--dist", str(dist), "--package", package, "--version", "1.2.3",
+                    "--observed-json", str(observed), env=fixture_env,
+                )
+            self.assertEqual(events, ["publish:awid-service", "publish:aweb"])
+
+            # Retry adopts both exact two-file sets and plans no upload.
+            for package in ("awid-service", "aweb"):
+                adopted = run(
+                    "bash", str(PYPI_PRIMITIVE), "plan-publish",
+                    "--dist", str(root / package / "dist"), "--package", package,
+                    "--version", "1.2.3", "--observed-status", "200",
+                    "--observed-json", str(observations[package]), env=fixture_env,
+                )
+                self.assertEqual(adopted.stdout, "")
+
+            outage = run(
+                "bash", str(PYPI_PRIMITIVE), "plan-publish",
+                "--dist", str(root / "aweb" / "dist"), "--package", "aweb",
+                "--version", "1.2.3", "--observed-status", "503", check=False,
+                env=fixture_env,
+            )
+            self.assertNotEqual(outage.returncode, 0)
+            self.assertIn("unavailability", outage.stderr)
+
+            conflict_doc = json.loads(observations["aweb"].read_text())
+            conflict_doc["urls"][0]["digests"]["sha256"] = "0" * 64
+            conflict = root / "conflict.json"
+            conflict.write_text(json.dumps(conflict_doc), encoding="utf-8")
+            mismatch = run(
+                "bash", str(PYPI_PRIMITIVE), "plan-publish",
+                "--dist", str(root / "aweb" / "dist"), "--package", "aweb",
+                "--version", "1.2.3", "--observed-status", "200",
+                "--observed-json", str(conflict), check=False, env=fixture_env,
+            )
+            self.assertNotEqual(mismatch.returncode, 0)
+            self.assertIn("permanent", mismatch.stderr)
+
+            staged = "sha256:" + "1" * 64
+            adopted = run(
+                "bash", str(OCI_PRIMITIVE), "decide-tag", "--tag-kind", "version",
+                "--staged", staged, "--listing-status", "ok", "--present", "yes",
+                "--remote-digest", staged, env=fixture_env,
+            )
+            self.assertEqual(adopted.stdout.strip(), "ADOPT")
+            image_conflict = run(
+                "bash", str(OCI_PRIMITIVE), "decide-tag", "--tag-kind", "version",
+                "--staged", staged, "--listing-status", "ok", "--present", "yes",
+                "--remote-digest", "sha256:" + "2" * 64, check=False,
+                env=fixture_env,
+            )
+            self.assertNotEqual(image_conflict.returncode, 0)
+
+            remote = root / "remote.git"
+            checkout = root / "checkout"
+            run("git", "init", "--bare", str(remote))
+            run("git", "init", str(checkout))
+            run("git", "config", "user.email", "fixture@example.invalid", cwd=checkout)
+            run("git", "config", "user.name", "fixture", cwd=checkout)
+            (checkout / "source").write_text("accepted\n", encoding="utf-8")
+            run("git", "add", "source", cwd=checkout)
+            run("git", "commit", "-m", "accepted", cwd=checkout)
+            source_sha = run("git", "rev-parse", "HEAD", cwd=checkout).stdout.strip()
+            run("git", "remote", "add", "origin", str(remote), cwd=checkout)
+            run("git", "push", "origin", "HEAD:main", "HEAD:release", cwd=checkout)
+
+            # Execute the workflow's actual tag functions against the bare
+            # remote, rather than rehearsing a test-side rendering of them.
+            pypi_job = job_block(PYPI, "awid_service")
+            image_job = job_block(AWID_IMAGE, "publish_image")
+            names = ("remote_tag_sha", "require_tag_compatible", "publish_tag")
+            pypi_functions = "".join(shell_function(pypi_job, name) for name in names)
+            image_functions = "".join(shell_function(image_job, name) for name in names)
+            self.assertEqual(pypi_functions, image_functions)
+            functions = root / "publication-tag-functions.sh"
+            functions.write_text(
+                "fail() { printf 'REFUSE: %s\\n' \"$1\" >&2; exit 1; }\n"
+                + pypi_functions,
+                encoding="utf-8",
+            )
+            tag_env = fixture_env | {"SOURCE_SHA": source_sha}
+            first = run(
+                "bash", "-c",
+                'source "$1"; require_tag_compatible awid-service-v1.2.3; '
+                "publish_tag awid-service-v1.2.3",
+                "fixture", str(functions), cwd=checkout, env=tag_env,
+            )
+            self.assertIn("created tag", first.stdout)
+            retry = run(
+                "bash", "-c", 'source "$1"; publish_tag awid-service-v1.2.3',
+                "fixture", str(functions), cwd=checkout, env=tag_env,
+            )
+            self.assertIn("adopted existing tag", retry.stdout)
+            observed_tag = run(
+                "git", "ls-remote", "origin", "refs/tags/awid-service-v1.2.3", cwd=checkout
+            ).stdout.split()[0]
+            self.assertEqual(observed_tag, source_sha)
+
+            (checkout / "source").write_text("other\n", encoding="utf-8")
+            run("git", "commit", "-am", "other", cwd=checkout)
+            other_sha = run("git", "rev-parse", "HEAD", cwd=checkout).stdout.strip()
+            run("git", "tag", "server-v1.2.3", other_sha, cwd=checkout)
+            run("git", "push", "origin", "refs/tags/server-v1.2.3", cwd=checkout)
+            conflicting_tag = run(
+                "git", "ls-remote", "origin", "refs/tags/server-v1.2.3", cwd=checkout
+            ).stdout.split()[0]
+            self.assertNotEqual(conflicting_tag, source_sha)
+            refused = run(
+                "bash", "-c", 'source "$1"; require_tag_compatible server-v1.2.3',
+                "fixture", str(functions), cwd=checkout, env=tag_env, check=False,
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("not", refused.stderr)
+            self.assertIn(source_sha, refused.stderr)
+            self.assertFalse(
+                network_attempt.exists(),
+                "fixture rehearsal invoked a real registry/GitHub/provider command",
+            )
+
+    def test_dead_hosted_gate_and_component_paths_are_deleted(self) -> None:
         makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+        for dead in (
+            "release-server-gate", "release-awid-pypi-gate", "release-awid-image-gate",
+            "release-server-check", "release-server-tag", "release-server-push",
+            "release-awid-check", "release-awid-tag", "release-awid-push",
+            "release-awid-pypi-tag", "release-awid-pypi-push", "awid-release.yml",
+        ):
+            self.assertNotIn(dead, makefile)
 
-        def recipe_of(target: str) -> str:
-            lines, collecting = [], False
-            for line in makefile.splitlines():
-                if line.startswith(f"{target}:"):
-                    collecting = True
-                    continue
-                if collecting:
-                    if line and not line[0].isspace():
-                        break
-                    lines.append(line)
-            return "\n".join(lines)
-
-        def prerequisites_of(target: str) -> list[str]:
-            for line in makefile.splitlines():
-                if line.startswith(f"{target}:"):
-                    return line.split(":", 1)[1].split()
-            return []
-
-        targets = [t for surface in SURFACES for t in surface.gate_targets]
-        # A wrong extraction yields an empty list, and every assertion below then passes
-        # vacuously. The list is the detector; assert it counted before trusting a zero.
-        self.assertTrue(targets, "no dry-run targets extracted - the surface table is broken")
-
-        for target in targets:
-            with self.subTest(target=target):
-                # The named target, AND its prerequisite chain: -n expands the whole
-                # chain, so a recursive make one level up executes just as surely. This
-                # second half is the part that reads as redundant and is not.
-                for name in [target, *prerequisites_of(target)]:
-                    self.assertNotIn(
-                        "$(MAKE)",
-                        recipe_of(name),
-                        f"{name} contains $(MAKE), so `make --dry-run {target}` would EXECUTE it "
-                        "rather than print it. Either drop the recursive make, or stop using "
-                        "--dry-run to inspect this target.",
-                    )
-
-    def test_the_gate_target_runs_the_artifact_suite_against_the_committed_lock(
-        self,
-    ) -> None:
-        """Resolved through make itself, so prerequisites count as coverage."""
-
-        for surface in SURFACES:
-            for target in surface.gate_targets:
-                with self.subTest(surface=surface.name, target=target):
-                    # Run the child make free of the parent's MAKEFLAGS, so the plan
-                    # asserted below is the committed Makefile's rather than one
-                    # bent by how the caller happened to invoke `make test` -
-                    # command-line variable overrides propagate through MAKEFLAGS.
-                    #
-                    # --dry-run DOES NOT MEAN NOTHING RUNS. make executes two things
-                    # regardless of -n: a recipe line containing $(MAKE), and every
-                    # $(shell ...) in a := assignment, which is evaluated when the
-                    # Makefile is PARSED. This test is safe today because the gate
-                    # targets' recipes contain no $(MAKE) - they are rm -rf, uv build
-                    # and test -f, which -n prints - and because the four := $(shell)
-                    # assignments only read files (two sed, two node -p). CLI_VERSION
-                    # calls a script but is recursive (=), so it expands only where it
-                    # is used.
-                    #
-                    # ADDING A $(MAKE) LINE TO A GATE TARGET WOULD MAKE THIS TEST RUN
-                    # IT. That is the condition to preserve; the flag's name will not
-                    # warn you. aweb-aaxk.
-                    env = {
-                        key: value
-                        for key, value in os.environ.items()
-                        if key not in ("MAKEFLAGS", "MFLAGS", "MAKELEVEL")
-                    }
-                    plan = subprocess.run(
-                        ["make", "--dry-run", target],
-                        cwd=REPO_ROOT,
-                        capture_output=True,
-                        text=True,
-                        check=True,
-                        env=env,
-                    ).stdout
-                    for command in surface.gate_must_run:
-                        self.assertIn(command, plan, f"{target} must run {command}")
-                    for command in surface.gate_must_not_run:
-                        self.assertNotIn(command, plan, f"{target} must not run {command}")
-                    self.assertNotIn(
-                        "uv lock\n",
-                        plan,
-                        f"{target} must verify the committed lock, never repair it",
-                    )
-                    self.assertNotIn(
-                        "uv publish",
-                        plan,
-                        f"{target} is a gate and must not publish anything",
-                    )
+        suite_map = (REPO_ROOT / "release-gate" / "suite-map.tsv").read_text(
+            encoding="utf-8"
+        )
+        for mapped_row in (
+            "python-locks\tcontract\ttest-python-locks\trun\t",
+            "server-unit\tunit\ttest-server\trun\t",
+            "awid-unit\tunit\ttest-awid\trun\t",
+            "server-package\tartifact\t_release-artifact-server\trun\t",
+            "awid-package\tartifact\t_release-artifact-awid-package\trun\t",
+            "awid-image\tartifact\t_release-artifact-awid-image\trun\t",
+        ):
+            self.assertIn(mapped_row, suite_map)
 
 
 if __name__ == "__main__":

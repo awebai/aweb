@@ -3,11 +3,8 @@
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
-	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps check-server-locked-suite release-server-gate \
-	check-awid-locked-suite release-awid-pypi-gate release-awid-image-gate \
-	release-server-check release-server-tag release-server-push \
-	release-awid-check release-awid-tag release-awid-push \
-	release-awid-pypi-tag release-awid-pypi-push \
+	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps check-server-locked-suite \
+	check-awid-locked-suite \
 	release-a2a-gateway-check release-a2a-gateway-tag release-a2a-gateway-push \
 	release-channel-check release-channel-tag release-channel-push \
 	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
@@ -103,16 +100,8 @@ help:
 	@echo "    See the 'release' skill for exact argument forms and hazards:"
 	@echo "    publication is not delivery, publication is immutable."
 	@echo ""
-	@echo "  Per-artifact CHECK gates (still current):"
-	@echo "    release-server-check, release-channel-check, release-awid-check,"
-	@echo "    release-a2a-gateway-check, release-cli-version-check"
-	@echo ""
-	@echo "  RETIRED for driver-owned components - these pairs only move refs:"
-	@echo "    release-server-tag/-push, release-channel-tag/-push,"
-	@echo "    release-awid-tag/-push, release-awid-pypi-tag/-push,"
-	@echo "    release-cli-tag/-push"
-	@echo "  Use release-run instead. The aw sync and A2A gateway still have"
-	@echo "  legacy tag paths outside this graph; do not generalize them."
+	@echo "  Legacy per-artifact checks not yet cut over:"
+	@echo "    release-channel-check, release-a2a-gateway-check, release-cli-version-check"
 	@echo ""
 	@echo "  release-awid-site                     deploy awid landing page"
 	@echo "  clean        Remove all build artifacts and caches"
@@ -441,25 +430,10 @@ awid-prod-restore:
 awid-prod-migrate:
 	cd awid && uv run python scripts/prod_db_reset.py migrate --env-file $(AWID_PROD_ENV_FILE)
 
-# ── Publish gates ───────────────────────────────────────────────────
-# PyPI refuses a re-upload and a pulled image tag cannot be recalled, so these
-# three publishes each run their artifact's own suite first, from the tag
-# workflow, against the commit being published.
-#
-# They are separate from the release-*-check targets below on purpose. A check
-# prepares a release and may repair what it finds - release-awid-check runs
-# `uv lock` because a stale lock broke the awid 0.2.5 image build. A gate runs
-# after the human committed that repair, where repairing is the wrong answer:
-# the lock committed at this commit is the lock the suite must run against and
-# the lock the published artifact is built from, so `uv lock --check` fails on
-# a stale one instead of quietly resolving a different set of dependencies
-# under the artifact.
-#
-# Every step in a gate has to answer two questions - can it fail, and is the
-# thing it exercises the thing being published. That is why the version-bump
-# guard is absent: on the commit a server-v* tag points at it compares that tag
-# against itself and always passes. It stays in server-ci.yml, where the
-# change-time question it asks is the one being asked.
+# ── Release-shaped local-gate checks ────────────────────────────────
+# PyPI and image publication are thin release-branch workflows. Their expensive
+# suites and release-shaped builds are part of scripts/release-local-gate.sh;
+# these lock checks remain named inputs to that complete local proof.
 
 # Deterministic, no network, no toolchain: it reads two checked-in files and compares
 # them. Safe to run anywhere, which is why it is a target rather than only a release step.
@@ -488,76 +462,9 @@ check-server-locked-suite:
 	cd server && uv lock --check
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
 
-release-server-gate: check-server-locked-suite
-	rm -rf server/dist/
-	cd server && uv build
-	test -f server/dist/aweb-$(SERVER_VERSION).tar.gz
-	test -f server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
-
 check-awid-locked-suite:
 	cd awid && uv lock --check
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
-
-release-awid-pypi-gate: check-awid-locked-suite
-	rm -rf awid/dist/
-	cd awid && uv build
-	test -f awid/dist/awid_service-$(AWID_VERSION).tar.gz
-	test -f awid/dist/awid_service-$(AWID_VERSION)-py3-none-any.whl
-
-# No image build here. The publishing build already gates - it cannot push an
-# image that fails - and it is the only one covering both published platforms,
-# so a second local one would verify amd64 while arm64 ships unverified.
-release-awid-image-gate: check-awid-locked-suite
-	@echo "awid image gate: committed lock verified, awid suite green at this commit."
-
-release-server-check:
-	./scripts/check-server-version-bump.sh
-	rm -rf /tmp/uv-cache /tmp/pycache
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
-	rm -rf server/dist/
-	cd server && uv build
-	test -f server/dist/aweb-$(SERVER_VERSION).tar.gz
-	test -f server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
-	@ls -lh server/dist/aweb-$(SERVER_VERSION).tar.gz server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
-
-release-server-tag:
-	@git rev-parse --verify "server-v$(SERVER_VERSION)" >/dev/null 2>&1 && (echo "Tag server-v$(SERVER_VERSION) already exists."; exit 1) || true
-	git add server/pyproject.toml server/uv.lock Makefile server/README.md
-	git diff --cached --quiet || git commit -m "release: aweb server $(SERVER_VERSION)"
-	git tag "server-v$(SERVER_VERSION)"
-	@echo "Created tag server-v$(SERVER_VERSION)."
-
-release-server-push:
-	git push origin main
-	git push origin server-v$(SERVER_VERSION)
-
-release-awid-check:
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv lock
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
-	cd awid && uv build
-	POSTGRES_PASSWORD=testpass docker compose -f awid/docker-compose.yml config >/dev/null
-	docker build -f awid/Dockerfile.release -t awid:release-test .
-
-release-awid-tag:
-	@git rev-parse --verify "awid-v$(AWID_VERSION)" >/dev/null 2>&1 && (echo "Tag awid-v$(AWID_VERSION) already exists."; exit 1) || true
-	git add awid/pyproject.toml awid/uv.lock awid/README.md awid/Dockerfile.release .github/workflows/awid-release.yml Makefile README.md
-	git commit -m "release: awid $(AWID_VERSION)"
-	git tag "awid-v$(AWID_VERSION)"
-	@echo "Created tag awid-v$(AWID_VERSION)."
-
-release-awid-push:
-	git push origin main
-	git push origin awid-v$(AWID_VERSION)
-
-# ── Awid PyPI release ───────────────────────────────────────────────
-
-release-awid-pypi-tag:
-	@git rev-parse --verify "awid-service-v$(AWID_VERSION)" >/dev/null 2>&1 && (echo "Tag awid-service-v$(AWID_VERSION) already exists."; exit 1) || true
-	git tag "awid-service-v$(AWID_VERSION)"
-	@echo "Created tag awid-service-v$(AWID_VERSION)."
-
-release-awid-pypi-push:
-	git push origin awid-service-v$(AWID_VERSION)
 
 # ── A2A gateway release ─────────────────────────────────────────────
 
