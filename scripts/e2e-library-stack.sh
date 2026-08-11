@@ -121,19 +121,20 @@ wait_health() {
 }
 
 assert_project_absent() {
-  local containers networks volumes
+  local containers networks volumes images
   containers="$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")"
   networks="$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT")"
   volumes="$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")"
-  if [[ -n "$containers$networks$volumes" ]]; then
-    echo "FATAL: Compose project $PROJECT left container/network/volume residue" >&2
-    echo "  containers=${containers:-none} networks=${networks:-none} volumes=${volumes:-none}" >&2
+  images="$(docker images -q --filter "label=com.docker.compose.project=$PROJECT")"
+  if [[ -n "$containers$networks$volumes$images" ]]; then
+    echo "FATAL: Compose project $PROJECT left container/network/volume/image residue" >&2
+    echo "  containers=${containers:-none} networks=${networks:-none} volumes=${volumes:-none} images=${images:-none}" >&2
     return 1
   fi
 }
 
 remove_stack() {
-  "${COMPOSE[@]}" down -v --remove-orphans
+  "${COMPOSE[@]}" down -v --rmi local --remove-orphans
   assert_project_absent
 }
 

@@ -37,13 +37,47 @@ canonicalize_dir() {
 }
 
 make_temp_dir() {
-  local prefix="$1"
-  local dir
-  dir="$(mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX")"
-  canonicalize_dir "$dir"
+  local prefix="$1" dir canonical
+  if ! dir="$(mktemp -d "$TEMP_ROOT/${prefix}.XXXXXX")"; then
+    echo "FATAL: could not allocate $prefix under $TEMP_ROOT" >&2
+    return 1
+  fi
+  canonical="$(canonicalize_dir "$dir")" || return 1
+  [[ "$(dirname "$canonical")" == "$TEMP_ROOT" && "$(basename "$canonical")" == "$prefix".* ]] \
+    || { echo "FATAL: unexpected temp allocation: $canonical" >&2; return 1; }
+  printf '%s\n' "$canonical"
 }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+TEMP_ROOT="$(canonicalize_dir "${TMPDIR:-/tmp}")"
+case "$TEMP_ROOT" in
+  /|"$REPO_ROOT"|"$REPO_ROOT"/*) echo "FATAL: unsafe journey temp root: $TEMP_ROOT" >&2; exit 2 ;;
+esac
+OWNED_TEMPS=()
+remove_expected_temp() {
+  local path="$1" prefix="$2" canonical
+  [[ -n "$path" && -e "$path" ]] || return 0
+  canonical="$(canonicalize_dir "$path")" || return 1
+  if [[ "$(dirname "$canonical")" != "$TEMP_ROOT" \
+    || "$(basename "$canonical")" != "$prefix".* \
+    || "$canonical" == / \
+    || "$canonical" == "$REPO_ROOT" \
+    || "$canonical" == "$REPO_ROOT"/* ]]; then
+    echo "REFUSED unsafe journey cleanup: $canonical" >&2
+    return 1
+  fi
+  rm -rf -- "$canonical"
+}
+cleanup_allocations() {
+  local item path prefix status=0
+  for item in "${OWNED_TEMPS[@]}"; do
+    path="${item%%|*}"
+    prefix="${item#*|}"
+    remove_expected_temp "$path" "$prefix" || status=1
+  done
+  return "$status"
+}
+trap cleanup_allocations EXIT
 SERVER_DIR="$REPO_ROOT/server"
 CLI_DIR="$REPO_ROOT/cli/go"
 
@@ -58,10 +92,16 @@ case "$DOCKER_PUBLISHED_HOST" in
 esac
 AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
 AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
+PROJECT="${AWEB_E2E_PROJECT:-aweb-user-e2e-$RANDOM-$$}"
+compose() {
+  docker compose -p "$PROJECT" --env-file .env.e2e "$@"
+}
 
 # Isolated temp dirs
 E2E_HOME="$(make_temp_dir aw-e2e-home)"
+OWNED_TEMPS+=("$E2E_HOME|aw-e2e-home")
 E2E_CWD="$(make_temp_dir aw-e2e-cwd)"
+OWNED_TEMPS+=("$E2E_CWD|aw-e2e-cwd")
 ALICE_DIR="$E2E_CWD/alice"
 BOB_DIR="$E2E_CWD/bob"
 NO_KEY_DIR="$E2E_CWD/nokey"
@@ -83,8 +123,11 @@ BOOTSTRAP_TEMPLATE_DIR="$E2E_CWD/bootstrap-template"
 BOOTSTRAP_LEGACY_TEMPLATE_DIR="$E2E_CWD/bootstrap-legacy-template"
 BOOTSTRAP_LEGACY_WORK_DIR="$E2E_CWD/bootstrap-legacy-work"
 REMOTE_ERIN_HOME="$(make_temp_dir aw-e2e-remote-erin-home)"
+OWNED_TEMPS+=("$REMOTE_ERIN_HOME|aw-e2e-remote-erin-home")
 WRONG_DID_HOME="$(make_temp_dir aw-e2e-wrong-did-home)"
+OWNED_TEMPS+=("$WRONG_DID_HOME|aw-e2e-wrong-did-home")
 CAROL_NO_PIN_HOME="$(make_temp_dir aw-e2e-carol-no-pin-home)"
+OWNED_TEMPS+=("$CAROL_NO_PIN_HOME|aw-e2e-carol-no-pin-home")
 mkdir -p "$ALICE_DIR" "$BOB_DIR" "$NO_KEY_DIR" "$EVE_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR" "$SERVICE_CONTROLLER_DIR" "$SERVICE_ALPHA_DIR" "$SERVICE_BETA_DIR" "$BOOTSTRAP_PROJECT_DIR" "$BOOTSTRAP_TEMPLATE_DIR" "$BOOTSTRAP_LEGACY_TEMPLATE_DIR" "$BOOTSTRAP_LEGACY_WORK_DIR"
 mkdir -p "$CAROL_NO_PIN_HOME/.config/aw"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
@@ -106,6 +149,21 @@ BOOTSTRAP_PROJECT_DIR="$(canonicalize_dir "$BOOTSTRAP_PROJECT_DIR")"
 BOOTSTRAP_TEMPLATE_DIR="$(canonicalize_dir "$BOOTSTRAP_TEMPLATE_DIR")"
 BOOTSTRAP_LEGACY_TEMPLATE_DIR="$(canonicalize_dir "$BOOTSTRAP_LEGACY_TEMPLATE_DIR")"
 BOOTSTRAP_LEGACY_WORK_DIR="$(canonicalize_dir "$BOOTSTRAP_LEGACY_WORK_DIR")"
+
+reset_expected_subdir() {
+  local path="$1" expected_name="$2"
+  if [[ -z "$path" \
+    || "$(dirname "$path")" != "$E2E_CWD" \
+    || "$(basename "$path")" != "$expected_name" \
+    || "$path" == / \
+    || "$path" == "$REPO_ROOT" \
+    || "$path" == "$REPO_ROOT"/* ]]; then
+    echo "REFUSED unsafe journey subdir reset: ${path:-<empty>}" >&2
+    return 1
+  fi
+  rm -rf -- "$path"
+  mkdir -p -- "$path"
+}
 
 pass=0
 fail=0
@@ -130,10 +188,22 @@ cleanup() {
   echo "--- Cleanup ---"
   stop_quickstart_bridges
   if [[ -f "$SERVER_DIR/.env.e2e" ]]; then
-    cd "$SERVER_DIR" && docker compose --env-file .env.e2e down -v 2>/dev/null || true
+    cd "$SERVER_DIR"
+    compose down -v --rmi local --remove-orphans >/dev/null 2>&1 || status=1
     rm -f "$SERVER_DIR/.env.e2e"
+    for kind in container network volume image; do
+      if [[ "$kind" == container ]]; then
+        ids="$(docker container ls -aq --filter label=com.docker.compose.project="$PROJECT")"
+      else
+        ids="$(docker "$kind" ls -q --filter label=com.docker.compose.project="$PROJECT")"
+      fi
+      if [[ -n "$ids" ]]; then
+        echo "cleanup left $kind residue for $PROJECT: $ids" >&2
+        status=1
+      fi
+    done
   fi
-  rm -rf "$E2E_HOME" "$REMOTE_ERIN_HOME" "$WRONG_DID_HOME" "$CAROL_NO_PIN_HOME" "$E2E_CWD"
+  cleanup_allocations || status=1
   echo ""
   if [[ $fail -gt 0 ]]; then
     echo "FAILED: $fail failures, $pass passed"
@@ -395,7 +465,7 @@ set_inbound_mode() {
   local did_aw="$1" mode="$2"
   (
     cd "$SERVER_DIR"
-    docker compose --env-file .env.e2e exec -T postgres \
+    compose exec -T postgres \
       psql -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" \
       -c "UPDATE aweb.agents SET inbound_mode = '${mode}' WHERE did_aw = '${did_aw}';" >/dev/null
   )
@@ -405,7 +475,7 @@ psql_scalar() {
   local sql="$1"
   (
     cd "$SERVER_DIR"
-    docker compose --env-file .env.e2e exec -T postgres \
+    compose exec -T postgres \
       psql -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" \
       -Atq -v ON_ERROR_STOP=1 -c "$sql" 2>/dev/null | tr -d '\r' | tail -n 1
   )
@@ -415,7 +485,7 @@ psql_exec() {
   local sql="$1"
   (
     cd "$SERVER_DIR"
-    docker compose --env-file .env.e2e exec -T postgres \
+    compose exec -T postgres \
       psql -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" \
       -v ON_ERROR_STOP=1 -c "$sql" >/dev/null
   )
@@ -544,9 +614,9 @@ AWID_SKIP_DNS_VERIFY=1
 EOF
 
 cd "$SERVER_DIR"
-docker compose --env-file .env.e2e down -v 2>/dev/null || true
-docker compose --env-file .env.e2e build --no-cache
-docker compose --env-file .env.e2e up -d
+compose down -v --rmi local --remove-orphans 2>/dev/null || true
+compose build --no-cache
+compose up -d
 
 echo "Waiting for awid health..."
 for i in $(seq 1 60); do
@@ -573,7 +643,7 @@ assert_eq "aweb health" "ok" "$aweb_status"
 if [[ "$awid_status" != "ok" || "$aweb_status" != "ok" ]]; then
   echo "  Services not healthy, aborting."
   echo "  Docker logs:"
-  cd "$SERVER_DIR" && docker compose --env-file .env.e2e logs 2>&1 | tail -30
+  cd "$SERVER_DIR" && compose logs 2>&1 | tail -30
   exit 1
 fi
 echo ""
@@ -879,9 +949,9 @@ chat_plaintext_count="$(psql_scalar "SELECT COUNT(*) FROM aweb.chat_messages WHE
 assert_eq "e2ee mail plaintext absent from chat storage" "0" "$chat_plaintext_count"
 assert_file_not_contains "e2ee plaintext absent from SSE capture subject" "$e2ee_sse_capture_file" "$E2EE_LOCAL_SUBJECT"
 assert_file_not_contains "e2ee plaintext absent from SSE capture body" "$e2ee_sse_capture_file" "$E2EE_LOCAL_BODY"
-assert_file_not_contains "e2ee plaintext absent from docker aweb logs" <(cd "$SERVER_DIR" && docker compose --env-file .env.e2e logs --no-color aweb 2>/dev/null || true) "$E2EE_LOCAL_BODY"
+assert_file_not_contains "e2ee plaintext absent from docker aweb logs" <(cd "$SERVER_DIR" && compose logs --no-color aweb 2>/dev/null || true) "$E2EE_LOCAL_BODY"
 e2ee_dump_file="$(mktemp "${TMPDIR:-/tmp}/aw-e2ee-db-dump.XXXXXX")"
-(cd "$SERVER_DIR" && docker compose --env-file .env.e2e exec -T postgres pg_dump -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" -n aweb -n server >"$e2ee_dump_file" 2>/dev/null || true)
+(cd "$SERVER_DIR" && compose exec -T postgres pg_dump -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" -n aweb -n server >"$e2ee_dump_file" 2>/dev/null || true)
 assert_file_not_contains "e2ee plaintext absent from db dump subject" "$e2ee_dump_file" "$E2EE_LOCAL_SUBJECT"
 assert_file_not_contains "e2ee plaintext absent from db dump body" "$e2ee_dump_file" "$E2EE_LOCAL_BODY"
 e2ee_sse_mode="$(grep -m1 'encrypted_v2' "$e2ee_sse_capture_file" 2>/dev/null || true)"
@@ -942,9 +1012,9 @@ assert_eq "e2ee chat encrypted row exists" "1" "$e2ee_chat_encrypted_rows"
 e2ee_chat_plaintext_count="$(psql_scalar "SELECT COUNT(*) FROM aweb.chat_messages WHERE COALESCE(body, '') LIKE '%$E2EE_CHAT_BODY%' OR COALESCE(signature, '') LIKE '%$E2EE_CHAT_BODY%' OR COALESCE(signed_payload, '') LIKE '%$E2EE_CHAT_BODY%' OR COALESCE(encrypted_envelope::text, '') LIKE '%$E2EE_CHAT_BODY%' OR COALESCE(encrypted_ciphertext, '') LIKE '%$E2EE_CHAT_BODY%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%$E2EE_CHAT_BODY%';")"
 assert_eq "e2ee chat plaintext absent from chat storage" "0" "$e2ee_chat_plaintext_count"
 assert_file_not_contains "e2ee chat plaintext absent from SSE capture" "$e2ee_chat_sse_capture_file" "$E2EE_CHAT_BODY"
-assert_file_not_contains "e2ee chat plaintext absent from docker aweb logs" <(cd "$SERVER_DIR" && docker compose --env-file .env.e2e logs --no-color aweb 2>/dev/null || true) "$E2EE_CHAT_BODY"
+assert_file_not_contains "e2ee chat plaintext absent from docker aweb logs" <(cd "$SERVER_DIR" && compose logs --no-color aweb 2>/dev/null || true) "$E2EE_CHAT_BODY"
 e2ee_chat_dump_file="$(mktemp "${TMPDIR:-/tmp}/aw-e2ee-chat-db-dump.XXXXXX")"
-(cd "$SERVER_DIR" && docker compose --env-file .env.e2e exec -T postgres pg_dump -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" -n aweb -n server >"$e2ee_chat_dump_file" 2>/dev/null || true)
+(cd "$SERVER_DIR" && compose exec -T postgres pg_dump -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" -n aweb -n server >"$e2ee_chat_dump_file" 2>/dev/null || true)
 assert_file_not_contains "e2ee chat plaintext absent from db dump" "$e2ee_chat_dump_file" "$E2EE_CHAT_BODY"
 echo ""
 
@@ -2391,7 +2461,7 @@ echo "=== Phase 20: Bob's requests fail after revocation ==="
 
 echo "  Flushing cached team revocations from Redis..."
 revocation_flush_out="$(
-  cd "$SERVER_DIR" && docker compose --env-file .env.e2e exec -T redis sh -lc "
+  cd "$SERVER_DIR" && compose exec -T redis sh -lc "
     keys=\$(redis-cli --scan --pattern 'awid:registry_cache:v1:team_revocations:*')
     if [ -n \"\$keys\" ]; then
       printf '%s\n' \"\$keys\" | xargs redis-cli DEL
@@ -2422,7 +2492,7 @@ echo ""
 phase_aw_init_reconnect() {
   echo "=== Phase 21: aw init reconnect (Case A) ==="
 
-  rm -rf "$RECONNECT_DIR"
+  reset_expected_subdir "$RECONNECT_DIR" reconnect-alice
   mkdir -p "$RECONNECT_DIR/.aw"
   cp "$ALICE_DIR/.aw/identity.yaml" "$RECONNECT_DIR/.aw/identity.yaml"
   cp "$ALICE_DIR/.aw/signing.key" "$RECONNECT_DIR/.aw/signing.key"
@@ -2467,8 +2537,7 @@ phase_aw_init_reconnect() {
 phase_aw_init_local_quickstart() {
   echo "=== Phase 22: aw init implicit local quickstart ==="
 
-  rm -rf "$WIZARD_BYOD_DIR"
-  mkdir -p "$WIZARD_BYOD_DIR"
+  reset_expected_subdir "$WIZARD_BYOD_DIR" wizard-byod
   WIZARD_BYOD_DIR="$(canonicalize_dir "$WIZARD_BYOD_DIR")"
 
   local local_alias="local-alice"

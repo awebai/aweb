@@ -20,6 +20,7 @@ SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import check_release_gate_residue as residue
+import release_gate_capacity as capacity
 import release_gate_runner as runner
 
 MAKEFILE = ROOT / "Makefile"
@@ -158,6 +159,7 @@ def boundary_contract_errors(
         "non-root user": '--user "$(id -u):$(id -g)"',
         "Docker socket group": '--group-add "$socket_gid"',
         "container buildx builder": "--driver docker-container",
+        "external buildx config": 'buildx_config="$work/buildx-config"',
         "shared buildx config": 'BUILDX_CONFIG="$buildx_config" docker buildx create',
         "shared builder cleanup": 'BUILDX_CONFIG="$buildx_config" docker buildx rm',
         "container buildx config": '-e BUILDX_CONFIG="$buildx_config"',
@@ -167,6 +169,12 @@ def boundary_contract_errors(
         "canonical Library input": 'canonical_git_input library',
         "canonical blueprint input": 'canonical_git_input blueprints',
         "requested blueprint subdirectory": 'blueprints/team}',
+        "Docker capacity preflight": "release_gate_capacity.py start",
+        "checkout identity passed to runner": 'RELEASE_GATE_SOURCE_SHA="$SOURCE_SHA"',
+        "checkout root passed to runner": 'RELEASE_GATE_CHECKOUT_ROOT="$checkout"',
+        "exact builder state volume cleanup": 'builder_volume="${builder_container}_state"',
+        "exact gate image cleanup": 'docker image rm "$IMAGE"',
+        "suite project cleanup": 'cleanup_project "$project"',
         "fixed Docker host mapping": "--add-host aweb-docker.test:host-gateway",
         "fixed Docker host input": "-e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test",
     }
@@ -175,6 +183,10 @@ def boundary_contract_errors(
             errors.append(label)
     if "--privileged" in entrypoint or "dockerd" in entrypoint:
         errors.append("no privileged nested daemon")
+    if 'buildx_config="$checkout/' in entrypoint:
+        errors.append("buildx config outside disposable checkout")
+    if "docker system prune" in entrypoint:
+        errors.append("no general Docker janitor")
     if "-v /tmp:/tmp" in entrypoint:
         errors.append("container-native /tmp")
     for name, body in harnesses.items():
@@ -194,7 +206,7 @@ def boundary_contract_errors(
         errors.append("channel process-local loopback fixture")
     federation = harnesses[BOUNDARY_HARNESSES[2].as_posix()]
     for label, literal in (
-        ("native federation client root", 'mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX"'),
+        ("native federation client root", 'mktemp -d "$TEMP_ROOT/${prefix}.XXXXXX"'),
         ("federation compose bind root", 'COMPOSE_FILE="$DOCKER_RUNTIME/docker-compose.yml"'),
         ("federation DNS bind root", 'DNS_DIR="$DOCKER_RUNTIME/dns"'),
         ("native alpha wheel build context", 'ALPHA_SERVER_CONTEXT="$E2E_ROOT/'),
@@ -450,6 +462,16 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
         harnesses = {path.as_posix(): path.read_text() for path in BOUNDARY_HARNESSES}
         self.assertEqual(boundary_contract_errors(entrypoint, harnesses), ())
         self.assertNotIn("AWEB_DOCKER_PUBLISHED_HOST:-", entrypoint)
+        self.assertNotIn("RELEASE_GATE_LOG_DIR:-", entrypoint)
+        for path in (
+            BOUNDARY_HARNESSES[0],
+            BOUNDARY_HARNESSES[2],
+            BOUNDARY_HARNESSES[3],
+            BOUNDARY_HARNESSES[5],
+        ):
+            self.assertIn("--rmi", path.read_text())
+            self.assertIn("local", path.read_text())
+        self.assertIn("--rmi local", (SCRIPTS / "e2e-oss-user-journey.sh").read_text())
         library_stack = harnesses[BOUNDARY_HARNESSES[5].as_posix()]
         for assignment in (
             'LIBRARY_E2E_AWEB_PUBLIC_ORIGIN="${LIBRARY_E2E_AWEB_PUBLIC_ORIGIN:-$AWEB_URL}"',
@@ -465,7 +487,7 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
         self.assertIn("AWEB_PUBLIC_ORIGIN=$AWEB_URL", user_journey)
         self.assertIn("AWID_PUBLIC_REGISTRY_URL=$AWID_URL", user_journey)
         federation = harnesses[BOUNDARY_HARNESSES[2].as_posix()]
-        self.assertIn('mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX"', federation)
+        self.assertIn('mktemp -d "$TEMP_ROOT/${prefix}.XXXXXX"', federation)
         self.assertIn('DOCKER_RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/', federation)
         self.assertIn('COMPOSE_FILE="$DOCKER_RUNTIME/docker-compose.yml"', federation)
         self.assertIn('DNS_DIR="$DOCKER_RUNTIME/dns"', federation)
@@ -474,7 +496,7 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
         authority = harnesses[BOUNDARY_HARNESSES[3].as_posix()]
         self.assertIn('RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/', authority)
         channel = harnesses[BOUNDARY_HARNESSES[0].as_posix()]
-        self.assertIn('mkdtemp(join(bindRoot, "channel-e2e-"))', channel)
+        self.assertIn('mkdtemp(join(tempParent, "channel-e2e-"))', channel)
 
     def test_boundary_mutations_are_each_rejected(self) -> None:
         entrypoint = ENTRYPOINT.read_text()
@@ -545,7 +567,7 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
                     BOUNDARY_HARNESSES[2].as_posix(): harnesses[
                         BOUNDARY_HARNESSES[2].as_posix()
                     ].replace(
-                        'mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX"',
+                        'mktemp -d "$TEMP_ROOT/${prefix}.XXXXXX"',
                         'mktemp -d "$DOCKER_BIND_ROOT/${prefix}.XXXXXX"',
                         1,
                     ),
@@ -589,6 +611,39 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
         self.assertNotIn('--alias "$local_alias"', journey)
         self.assertNotIn("start_quickstart_socat", journey)
         self.assertIn("AWEB_URL=\"http://$DOCKER_PUBLISHED_HOST", journey)
+
+    def test_oss_temp_allocation_failure_preserves_sentinel_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            scripts = repo / "scripts"
+            fake_bin = root / "bin"
+            scratch = root / "scratch"
+            scripts.mkdir(parents=True)
+            fake_bin.mkdir()
+            scratch.mkdir()
+            harness = scripts / "e2e-oss-user-journey.sh"
+            shutil.copy2(SCRIPTS / "e2e-oss-user-journey.sh", harness)
+            sentinel = repo / "SENTINEL"
+            sentinel.write_text("preserve\n")
+            mktemp = fake_bin / "mktemp"
+            mktemp.write_text("#!/usr/bin/env bash\necho forced-mktemp-failure >&2\nexit 1\n")
+            mktemp.chmod(0o755)
+            result = subprocess.run(
+                ["bash", str(harness)],
+                cwd=repo,
+                env={
+                    **os.environ,
+                    "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                    "TMPDIR": str(scratch),
+                },
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("could not allocate aw-e2e-home", result.stderr)
+            self.assertEqual(sentinel.read_text(), "preserve\n")
+            self.assertTrue(harness.exists())
 
     def test_entrypoint_refuses_a_real_dirty_checkout_before_docker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -656,6 +711,108 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             self.assertIn(required, text)
         for forbidden in ("GITHUB_TOKEN", "NPM_TOKEN", "PYPI", "RENDER", "AWS_"):
             self.assertNotIn(forbidden, text)
+
+    def test_capacity_refusal_and_between_row_stop_are_observable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make = root / "make"
+            calls = root / "calls"
+            make.write_text(
+                "#!/usr/bin/env bash\n"
+                f"echo \"$1\" >> {calls}\n"
+                "exit 0\n"
+            )
+            make.chmod(0o755)
+            suite_map = root / "map.tsv"
+            suite_map.write_text(
+                "one\tunit\tone\trun\told-one\n"
+                "two\tunit\ttwo\trun\told-two\n"
+                "three\tunit\tthree\trun\told-three\n"
+            )
+
+            low_start = lambda phase: capacity.Capacity(phase, 100, 7)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = runner.run(suite_map, root / "start-logs", [str(make)], low_start)
+            self.assertEqual(status, 1)
+            self.assertFalse(calls.exists())
+            self.assertIn("required_kib=100 available_kib=7", output.getvalue())
+            start_states = [line.split("\t")[1] for line in (root / "start-logs/summary.tsv").read_text().splitlines()]
+            self.assertEqual(start_states, ["NOT RUN", "NOT RUN", "NOT RUN"])
+
+            probes = iter(
+                (
+                    capacity.Capacity("start", 100, 200),
+                    capacity.Capacity("between", 50, 3),
+                )
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = runner.run(
+                    suite_map,
+                    root / "between-logs",
+                    [str(make)],
+                    lambda _phase: next(probes),
+                )
+            self.assertEqual(status, 1)
+            self.assertEqual(calls.read_text().splitlines(), ["one"])
+            self.assertIn("required_kib=50 available_kib=3", output.getvalue())
+            between_states = [line.split("\t")[1] for line in (root / "between-logs/summary.tsv").read_text().splitlines()]
+            self.assertEqual(between_states, ["PASSED", "NOT RUN", "NOT RUN"])
+
+    def test_runner_stops_after_checkout_deletion_without_running_later_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkout = root / "checkout"
+            checkout.mkdir()
+            subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+            (checkout / "tracked").write_text("sentinel\n")
+            subprocess.run(["git", "-C", str(checkout), "add", "tracked"], check=True)
+            subprocess.run(
+                [
+                    "git", "-C", str(checkout),
+                    "-c", "user.name=gate-test", "-c", "user.email=gate@test.invalid",
+                    "commit", "-qm", "fixture",
+                ],
+                check=True,
+            )
+            sha = subprocess.check_output(
+                ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True
+            ).strip()
+            make = root / "make"
+            calls = root / "calls"
+            make.write_text(
+                "#!/usr/bin/env bash\n"
+                f"echo \"$1\" >> {calls}\n"
+                f"rm -rf -- {checkout}\n"
+            )
+            make.chmod(0o755)
+            suite_map = root / "map.tsv"
+            suite_map.write_text(
+                "one\tunit\tone\trun\told-one\n"
+                "two\tunit\ttwo\trun\told-two\n"
+            )
+            enough = lambda phase: capacity.Capacity(phase, 1, 2)
+            previous = Path.cwd()
+            output = io.StringIO()
+            try:
+                os.chdir(checkout)
+                with contextlib.redirect_stdout(output):
+                    status = runner.run(
+                        suite_map,
+                        root / "logs",
+                        [str(make)],
+                        enough,
+                        lambda: runner.verify_checkout(checkout, sha),
+                    )
+            finally:
+                os.chdir(previous)
+            self.assertEqual(status, 1)
+            self.assertEqual(calls.read_text().splitlines(), ["one"])
+            self.assertIn("checkout is unavailable", output.getvalue())
+            states = [line.split("\t")[1] for line in (root / "logs/summary.tsv").read_text().splitlines()]
+            self.assertEqual(states, ["PASSED", "NOT RUN"])
+            self.assertTrue((root / "logs/summary.tsv").exists())
 
     def test_runner_continues_after_failure_and_summary_is_complete(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -114,6 +114,52 @@ class DockerBoundaryTests(unittest.TestCase):
             )
             self.assertEqual(result.stdout.strip(), "visible")
 
+    def project_resources(self, project: str) -> tuple[str, ...]:
+        resources = []
+        for command in (
+            ("container", "ls", "-aq"),
+            ("network", "ls", "-q"),
+            ("volume", "ls", "-q"),
+            ("image", "ls", "-q"),
+        ):
+            result = run(
+                "docker", *command,
+                "--filter", f"label=com.docker.compose.project={project}",
+            )
+            resources.extend(result.stdout.split())
+        return tuple(resources)
+
+    def test_sequential_success_and_failure_projects_leave_same_empty_set(self) -> None:
+        project = f"aweb-release-bounded-{uuid.uuid4().hex[:12]}"
+        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+            root = Path(tmp)
+            (root / "Dockerfile").write_text(
+                "FROM alpine:3.20\nARG EXIT_CODE=0\nENV EXIT_CODE=$EXIT_CODE\nCMD [\"sh\", \"-c\", \"exit $EXIT_CODE\"]\n"
+            )
+            compose = root / "compose.yml"
+            self.assertEqual(self.project_resources(project), ())
+            for exit_code, should_pass in ((0, True), (7, False)):
+                compose.write_text(
+                    "services:\n"
+                    "  probe:\n"
+                    "    build:\n"
+                    f"      context: {root}\n"
+                    "      args:\n"
+                    f"        EXIT_CODE: \"{exit_code}\"\n"
+                )
+                result = run(
+                    "docker", "compose", "-p", project, "-f", str(compose),
+                    "up", "--build", "--abort-on-container-exit",
+                    "--exit-code-from", "probe",
+                    check=False,
+                )
+                self.assertEqual(result.returncode == 0, should_pass)
+                run(
+                    "docker", "compose", "-p", project, "-f", str(compose),
+                    "down", "-v", "--rmi", "local", "--remove-orphans",
+                )
+                self.assertEqual(self.project_resources(project), ())
+
     def test_fixed_docker_host_reaches_published_port_but_loopback_does_not(self) -> None:
         container = run(
             "docker", "run", "--detach", "--publish", "127.0.0.1::80",

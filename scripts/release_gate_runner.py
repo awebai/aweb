@@ -10,11 +10,51 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
+
+import release_gate_capacity as capacity
 
 
 class MapError(RuntimeError):
     pass
+
+
+class InfrastructureError(RuntimeError):
+    pass
+
+
+def verify_checkout(
+    expected_root: Path | None = None,
+    expected_sha: str | None = None,
+) -> None:
+    if expected_root is None:
+        root_value = os.environ.get("RELEASE_GATE_CHECKOUT_ROOT")
+        expected_root = Path(root_value) if root_value else Path.cwd()
+    if expected_sha is None:
+        expected_sha = os.environ.get("RELEASE_GATE_SOURCE_SHA")
+    try:
+        expected = expected_root.resolve(strict=True)
+        actual = Path.cwd().resolve(strict=True)
+        completed = subprocess.run(
+            ["git", "-C", str(expected), "rev-parse", "--show-toplevel", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, RuntimeError) as error:
+        raise InfrastructureError(f"checkout is unavailable: {error}") from error
+    lines = completed.stdout.splitlines()
+    if completed.returncode != 0 or len(lines) != 2:
+        raise InfrastructureError("checkout git identity is unavailable")
+    git_root = Path(lines[0]).resolve(strict=True)
+    if actual != expected or git_root != expected:
+        raise InfrastructureError(
+            f"checkout root changed: expected={expected} cwd={actual} git_root={git_root}"
+        )
+    if expected_sha and lines[1] != expected_sha:
+        raise InfrastructureError(
+            f"checkout HEAD changed: expected={expected_sha} actual={lines[1]}"
+        )
 
 
 @dataclass(frozen=True)
@@ -84,7 +124,13 @@ def write_summary(path: Path, steps: Sequence[Step], states: dict[str, str]) -> 
     os.replace(temporary, path)
 
 
-def run(map_path: Path, log_dir: Path, command_prefix: Sequence[str]) -> int:
+def run(
+    map_path: Path,
+    log_dir: Path,
+    command_prefix: Sequence[str],
+    capacity_probe: Callable[[str], capacity.Capacity] = capacity.measure,
+    checkout_probe: Callable[[], None] = verify_checkout,
+) -> int:
     if not command_prefix or any(not item for item in command_prefix):
         raise MapError("make command prefix is empty")
     all_steps = load_map(map_path)
@@ -95,7 +141,28 @@ def run(map_path: Path, log_dir: Path, command_prefix: Sequence[str]) -> int:
     write_summary(summary, steps, states)
     failed = False
     try:
+        try:
+            checkout_probe()
+        except InfrastructureError as error:
+            print(f"release gate infrastructure refusal: {error}", flush=True)
+            return 1
+        start_capacity = capacity_probe("start")
+        print(start_capacity.message(), flush=True)
+        if not start_capacity.sufficient:
+            return 1
         for index, step in enumerate(steps, 1):
+            if index > 1:
+                try:
+                    checkout_probe()
+                except InfrastructureError as error:
+                    print(f"release gate infrastructure refusal: {error}", flush=True)
+                    failed = True
+                    break
+                between_capacity = capacity_probe("between")
+                print(between_capacity.message(), flush=True)
+                if not between_capacity.sufficient:
+                    failed = True
+                    break
             print(f"\n=== release gate {index}/{len(steps)}: {step.name} ({step.target}) ===", flush=True)
             log_path = log_dir / f"{index:02d}-{step.name}.log"
             with log_path.open("wb") as log:

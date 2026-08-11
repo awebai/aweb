@@ -23,7 +23,7 @@ canonical_git_input() {
 }
 LIBRARY_E2E_LIBRARY_CONTEXT="$(canonical_git_input library "$LIBRARY_E2E_LIBRARY_CONTEXT")"
 LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC")"
-LOG_DIR="${RELEASE_GATE_LOG_DIR:-/tmp/aweb-release-gate-$SOURCE_SHA}"
+LOG_DIR="/tmp/aweb-release-gate-$SOURCE_SHA"
 IMAGE="aweb-release-gate:${SOURCE_SHA:0:12}"
 
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "RELEASE_SOURCE_SHA must be a full lowercase SHA"
@@ -38,21 +38,106 @@ git -C "$ROOT" merge-base --is-ancestor "$RELEASE_BASE_SHA" "$SOURCE_SHA" \
 command -v docker >/dev/null || refuse "docker is unavailable"
 docker info >/dev/null || refuse "docker daemon is unavailable"
 
-work="$(mktemp -d)"
+if ! work="$(mktemp -d "${TMPDIR:-/tmp}/aweb-release-work.XXXXXX")"; then
+  refuse "could not allocate the release work directory"
+fi
+work="$(cd "$work" && pwd -P)"
+case "$work" in
+  /|"$ROOT"|"$ROOT"/*) refuse "unsafe release work directory: $work" ;;
+  */aweb-release-work.*) ;;
+  *) refuse "unexpected release work directory: $work" ;;
+esac
 owned_containers=()
 owned_network=""
 owned_builder=""
+buildx_config="$work/buildx-config"
+docker_bind_root=""
+gate_run_id="aweb-release-suite-${SOURCE_SHA:0:12}-$$"
+suite_projects=(
+  "$gate_run_id-channel"
+  "$gate_run_id-user"
+  "$gate_run_id-fed-auth"
+  "$gate_run_id-federation"
+  "$gate_run_id-library"
+)
+cleanup_project() {
+  local project="$1" ids
+  ids="$(docker ps -aq --filter "label=com.docker.compose.project=$project")"
+  [[ -z "$ids" ]] || docker rm -f $ids >/dev/null 2>&1 || return 1
+  ids="$(docker network ls -q --filter "label=com.docker.compose.project=$project")"
+  [[ -z "$ids" ]] || docker network rm $ids >/dev/null 2>&1 || return 1
+  ids="$(docker volume ls -q --filter "label=com.docker.compose.project=$project")"
+  [[ -z "$ids" ]] || docker volume rm -f $ids >/dev/null 2>&1 || return 1
+  ids="$(docker images -q --filter "label=com.docker.compose.project=$project" | sort -u)"
+  [[ -z "$ids" ]] || docker image rm -f $ids >/dev/null 2>&1 || return 1
+}
+project_has_residue() {
+  local project="$1"
+  [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$project")" \
+    || -n "$(docker network ls -q --filter "label=com.docker.compose.project=$project")" \
+    || -n "$(docker volume ls -q --filter "label=com.docker.compose.project=$project")" \
+    || -n "$(docker images -q --filter "label=com.docker.compose.project=$project")" ]]
+}
 cleanup() {
+  local original_status=$? cleanup_status=0 project builder_container builder_volume
+  trap - EXIT
+  set +e
+  for project in "${suite_projects[@]}"; do
+    cleanup_project "$project" || cleanup_status=1
+  done
   if [[ "${#owned_containers[@]}" -gt 0 ]]; then
-    docker rm -f "${owned_containers[@]}" >/dev/null 2>&1 || true
+    docker rm -f "${owned_containers[@]}" >/dev/null 2>&1 || cleanup_status=1
   fi
   if [[ -n "$owned_builder" ]]; then
     BUILDX_CONFIG="$buildx_config" docker buildx rm "$owned_builder" >/dev/null 2>&1 || true
+    builder_container="buildx_buildkit_${owned_builder}0"
+    builder_volume="${builder_container}_state"
+    docker rm -f "$builder_container" >/dev/null 2>&1 || true
+    docker volume rm -f "$builder_volume" >/dev/null 2>&1 || true
   fi
   if [[ -n "$owned_network" ]]; then
-    docker network rm "$owned_network" >/dev/null 2>&1 || true
+    docker network rm "$owned_network" >/dev/null 2>&1 || cleanup_status=1
   fi
-  rm -rf "$work"
+  docker image rm "$IMAGE" >/dev/null 2>&1 || true
+  for project in "${suite_projects[@]}"; do
+    if project_has_residue "$project"; then
+      printf 'release gate cleanup residue: compose project %s\n' "$project" >&2
+      cleanup_status=1
+    fi
+  done
+  if [[ -n "$owned_builder" ]] && {
+    docker container inspect "buildx_buildkit_${owned_builder}0" >/dev/null 2>&1 \
+      || docker volume inspect "buildx_buildkit_${owned_builder}0_state" >/dev/null 2>&1;
+  }; then
+    printf 'release gate cleanup residue: builder %s\n' "$owned_builder" >&2
+    cleanup_status=1
+  fi
+  [[ -z "$owned_network" ]] || ! docker network inspect "$owned_network" >/dev/null 2>&1 \
+    || cleanup_status=1
+  for container in "${owned_containers[@]}"; do
+    if docker container inspect "$container" >/dev/null 2>&1; then
+      printf 'release gate cleanup residue: container %s\n' "$container" >&2
+      cleanup_status=1
+    fi
+  done
+  if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    printf 'release gate cleanup residue: image %s\n' "$IMAGE" >&2
+    cleanup_status=1
+  fi
+  case "$work" in
+    /|"$ROOT"|"$ROOT"/*) cleanup_status=1 ;;
+    */aweb-release-work.*) rm -rf -- "$work" || cleanup_status=1 ;;
+    *) cleanup_status=1 ;;
+  esac
+  [[ ! -e "$buildx_config" && -z "$docker_bind_root" || ! -e "$docker_bind_root" ]] \
+    || cleanup_status=1
+  if [[ "$cleanup_status" -ne 0 ]]; then
+    printf 'release gate cleanup FAILED\n' >&2
+  else
+    printf 'release gate cleanup PASSED\n'
+  fi
+  [[ "$original_status" -ne 0 ]] && exit "$original_status"
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
 checkout="$work/aweb"
@@ -65,7 +150,9 @@ git -C "$checkout" diff --quiet && git -C "$checkout" diff --cached --quiet \
 [[ -z "$(git -C "$checkout" status --porcelain --untracked-files=all)" ]] \
   || refuse "cloned checkout contains untracked input"
 
-rm -rf "$LOG_DIR"
+[[ "$LOG_DIR" == "/tmp/aweb-release-gate-$SOURCE_SHA" && "$LOG_DIR" != / && "$LOG_DIR" != "$ROOT" ]] \
+  || refuse "unsafe release log directory: $LOG_DIR"
+rm -rf -- "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 record_input() {
   local name="$1" path="$2" repo sha
@@ -86,6 +173,10 @@ printf 'NOT RELEVANT: this slice changes only the release gate mechanism, not a 
 
 docker build --pull -f "$checkout/release-gate/Dockerfile" -t "$IMAGE" "$checkout/release-gate" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
+docker run --rm \
+  -v "$checkout/scripts/release_gate_capacity.py:/release_gate_capacity.py:ro" \
+  "$IMAGE" python3 /release_gate_capacity.py start \
+  2>&1 | tee "$LOG_DIR/docker-capacity-preflight.log"
 python3 "$checkout/scripts/e2e/test_release_gate_docker_boundaries.py" --image "$IMAGE" \
   2>&1 | tee "$LOG_DIR/docker-boundaries.log"
 
@@ -110,7 +201,6 @@ for container in "$pg_id" "$redis_id"; do
     || refuse "gate service failed health: $container"
 done
 owned_builder="aweb-release-gate-${SOURCE_SHA:0:12}-$$"
-buildx_config="$checkout/.release-buildx-config"
 docker_bind_root="$checkout/.release-docker-bind"
 mkdir -p "$buildx_config" "$docker_bind_root" "$checkout/.release-home"
 BUILDX_CONFIG="$buildx_config" docker buildx create \
@@ -127,6 +217,8 @@ docker run --rm --init \
   --add-host aweb-docker.test:host-gateway \
   -e HOME="$checkout/.release-home" \
   -e RELEASE_BASE_SHA="$RELEASE_BASE_SHA" \
+  -e RELEASE_GATE_SOURCE_SHA="$SOURCE_SHA" \
+  -e RELEASE_GATE_CHECKOUT_ROOT="$checkout" \
   -e LIBRARY_E2E_LIBRARY_CONTEXT="$LIBRARY_E2E_LIBRARY_CONTEXT" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e RELEASE_GATE_LOG_DIR="$LOG_DIR" \
@@ -134,6 +226,11 @@ docker run --rm --init \
   -e BUILDX_BUILDER="$owned_builder" \
   -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
   -e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test \
+  -e AWEB_SKEW_PROJECT_TOKEN="${suite_projects[0]}" \
+  -e AWEB_E2E_PROJECT="${suite_projects[1]}" \
+  -e AWEB_FED_AUTH_PROJECT="${suite_projects[2]}" \
+  -e AWEB_FED_E2E_PROJECT="${suite_projects[3]}" \
+  -e LIBRARY_E2E_PROJECT="${suite_projects[4]}" \
   -e TEST_DB_HOST="$pg_name" \
   -e TEST_DB_PORT=5432 \
   -e TEST_DB_USER=postgres \
@@ -145,6 +242,7 @@ docker run --rm --init \
   -e PGDATABASE=postgres \
   -e REDIS_URL="redis://$redis_name:6379/0" \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$buildx_config:$buildx_config" \
   -v "$checkout:$checkout" \
   -v "$LOG_DIR:$LOG_DIR" \
   -v "$LIBRARY_E2E_LIBRARY_CONTEXT:$LIBRARY_E2E_LIBRARY_CONTEXT:ro" \

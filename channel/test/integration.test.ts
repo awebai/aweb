@@ -160,6 +160,7 @@ class NotificationQueue {
 
 describe.sequential("channel integration", () => {
   let tempRoot = "";
+  let tempParent = "";
   let homeDir = "";
   let aliceDir = "";
   let bobDir = "";
@@ -176,14 +177,16 @@ describe.sequential("channel integration", () => {
     const supervisedRoot = process.env.AWEB_CHANNEL_LIVE_INTEGRATION_ROOT;
     if (supervisedRoot) {
       tempRoot = resolve(supervisedRoot);
-      if (dirname(tempRoot) !== resolve(tmpdir())) {
+      tempParent = resolve(tmpdir());
+      if (dirname(tempRoot) !== tempParent) {
         throw new Error(`supervised integration root must be directly under TMPDIR: ${tempRoot}`);
       }
       await mkdir(tempRoot);
     } else {
       const bindRoot = dockerBindRoot();
       await mkdir(bindRoot, { recursive: true });
-      tempRoot = await mkdtemp(join(bindRoot, "channel-e2e-"));
+      tempParent = resolve(bindRoot);
+      tempRoot = await mkdtemp(join(tempParent, "channel-e2e-"));
     }
     homeDir = join(tempRoot, "home");
     aliceDir = join(tempRoot, "alice");
@@ -216,7 +219,6 @@ describe.sequential("channel integration", () => {
 
   afterAll(async () => {
     let cleanupFailure: unknown;
-    let serverCleanupFailed = false;
     try {
       if (transport) await transport.close();
     } catch (error) {
@@ -226,11 +228,19 @@ describe.sequential("channel integration", () => {
       await stopServer(server);
     } catch (error) {
       cleanupFailure ||= error;
-      serverCleanupFailed = true;
     }
-    if (tempRoot && !serverCleanupFailed) {
+    if (tempRoot) {
       try {
-        await rm(tempRoot, { recursive: true, force: true });
+        const resolvedRoot = resolve(tempRoot);
+        if (
+          dirname(resolvedRoot) !== tempParent ||
+          resolvedRoot === repoRoot ||
+          resolvedRoot === resolve("/") ||
+          basename(resolvedRoot) === ""
+        ) {
+          throw new Error(`refusing unsafe channel temp cleanup: ${resolvedRoot}`);
+        }
+        await rm(resolvedRoot, { recursive: true, force: true });
       } catch (error) {
         cleanupFailure ||= error;
       }
@@ -753,6 +763,7 @@ async function stopServer(server: ServerHandle | undefined): Promise<void> {
       "--env-file", server.envFilePath,
       "down",
       "-v",
+      "--rmi", "local",
       "--remove-orphans",
     ];
     let cleanupFailure: unknown;
@@ -762,7 +773,7 @@ async function stopServer(server: ServerHandle | undefined): Promise<void> {
       cleanupFailure = error;
     }
     const leftovers: string[] = [];
-    for (const resource of ["container", "volume", "network"]) {
+    for (const resource of ["container", "volume", "network", "image"]) {
       const listArgs = resource === "container"
         ? [resource, "ls", "-aq"] : [resource, "ls", "-q"];
       try {
