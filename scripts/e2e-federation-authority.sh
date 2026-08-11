@@ -7,7 +7,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PROJECT="aweb-fed-auth-$RANDOM-$$"
-RUNTIME="$(mktemp -d "${TMPDIR:-/tmp}/aweb-fed-auth.XXXXXX")"
+DOCKER_BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
+[[ "$DOCKER_BIND_ROOT" = /* && -d "$DOCKER_BIND_ROOT" ]] \
+  || { echo "AWEB_DOCKER_BIND_ROOT must be an existing absolute directory" >&2; exit 2; }
+RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/aweb-fed-auth.XXXXXX")"
 COMPOSE_FILE="$RUNTIME/docker-compose.yml"
 TLS_DIR="$RUNTIME/tls"
 ARTIFACT_DIR="${AWEB_FED_AUTH_ARTIFACT_DIR:-$ROOT/.cache/federation-authority}"
@@ -21,7 +24,7 @@ POSTGRES_A_PORT="${AWEB_FED_AUTH_POSTGRES_A_PORT:-58431}"
 POSTGRES_B_PORT="${AWEB_FED_AUTH_POSTGRES_B_PORT:-58432}"
 DOCKER_PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
 case "$DOCKER_PUBLISHED_HOST" in
-  127.0.0.1|host.docker.internal) ;;
+  127.0.0.1|aweb-docker.test) ;;
   *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
 esac
 mkdir -p "$TLS_DIR" "$ARTIFACT_DIR"

@@ -54,9 +54,28 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
-	// create + public materialize, then adopt the first agent's public pin onto
+	// Create under a unique self-hosted namespace: this real-stack scenario
+	// exercises Library refresh, not hosted account onboarding.
+	namespace := "refresh-" + randSuffix(t) + ".test"
+	bootstrap := filepath.Join(root, "bootstrap")
+	if err := os.MkdirAll(bootstrap, 0o755); err != nil {
+		t.Fatalf("mkdir bootstrap: %v", err)
+	}
+	idCreate := exec.Command(
+		bin, "id", "create", "--domain", namespace, "--name", "owner",
+		"--registry", awidURL(), "--skip-dns-verify",
+	)
+	idCreate.Dir = bootstrap
+	idCreate.Env = env
+	if out, err := idCreate.CombinedOutput(); err != nil {
+		t.Fatalf("bootstrap BYOT namespace controller failed: %v\n%s", err, out)
+	}
+
+	// Create + public materialize, then adopt the first agent's public pin onto
 	// the private shelf so proposed/approved shelf mints compose with refresh.
-	if out, err := awInRepo("team", "create", "eng",
+	if out, err := awInRepo(
+		"team", "create", "eng", "--byot", "--namespace", namespace,
+		"--registry", awidURL(),
 		"--agent", "coordinator@"+seededBlueprintRef+"/coordinator=claude-code",
 		"--agent", "reviewer@"+seededBlueprintRef+"/reviewer=pi"); err != nil {
 		t.Fatalf("aw team create --agent failed: %v\n%s", err, out)

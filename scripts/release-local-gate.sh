@@ -6,12 +6,26 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMMON_REPO="$(cd "$(dirname "$(git -C "$ROOT" rev-parse --git-common-dir)")" && pwd)"
 SOURCE_SHA="${RELEASE_SOURCE_SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
 RELEASE_BASE_SHA="${RELEASE_BASE_SHA:-$(git -C "$ROOT" merge-base "$SOURCE_SHA" origin/main)}"
+refuse() { printf 'release gate refused: %s\n' "$*" >&2; exit 2; }
 LIBRARY_E2E_LIBRARY_CONTEXT="${LIBRARY_E2E_LIBRARY_CONTEXT:-$COMMON_REPO/../library}"
 LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$COMMON_REPO/../blueprints/team}"
+canonical_git_input() {
+  local name="$1" path="$2" top canonical
+  top="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" \
+    || refuse "$name input is not a git checkout"
+  top="$(cd "$top" && pwd -P)"
+  canonical="$(cd "$path" && pwd -P)"
+  case "$canonical" in
+    "$top"|"$top"/*) ;;
+    *) refuse "$name input escapes its git checkout" ;;
+  esac
+  printf '%s\n' "$canonical"
+}
+LIBRARY_E2E_LIBRARY_CONTEXT="$(canonical_git_input library "$LIBRARY_E2E_LIBRARY_CONTEXT")"
+LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC")"
 LOG_DIR="${RELEASE_GATE_LOG_DIR:-/tmp/aweb-release-gate-$SOURCE_SHA}"
 IMAGE="aweb-release-gate:${SOURCE_SHA:0:12}"
 
-refuse() { printf 'release gate refused: %s\n' "$*" >&2; exit 2; }
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "RELEASE_SOURCE_SHA must be a full lowercase SHA"
 [[ "$RELEASE_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "RELEASE_BASE_SHA must be a full lowercase SHA"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
@@ -33,7 +47,7 @@ cleanup() {
     docker rm -f "${owned_containers[@]}" >/dev/null 2>&1 || true
   fi
   if [[ -n "$owned_builder" ]]; then
-    docker buildx rm "$owned_builder" >/dev/null 2>&1 || true
+    BUILDX_CONFIG="$buildx_config" docker buildx rm "$owned_builder" >/dev/null 2>&1 || true
   fi
   if [[ -n "$owned_network" ]]; then
     docker network rm "$owned_network" >/dev/null 2>&1 || true
@@ -96,8 +110,12 @@ for container in "$pg_id" "$redis_id"; do
     || refuse "gate service failed health: $container"
 done
 owned_builder="aweb-release-gate-${SOURCE_SHA:0:12}-$$"
-docker buildx create --name "$owned_builder" --driver docker-container --bootstrap >/dev/null
-mkdir -p "$checkout/.release-home"
+buildx_config="$checkout/.release-buildx-config"
+docker_bind_root="$checkout/.release-docker-bind"
+mkdir -p "$buildx_config" "$docker_bind_root" "$checkout/.release-home"
+BUILDX_CONFIG="$buildx_config" docker buildx create \
+  --name "$owned_builder" --driver docker-container \
+  "unix:///var/run/docker.sock" --bootstrap >/dev/null
 socket_gid="$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   "$IMAGE" stat -c '%g' /var/run/docker.sock)"
 
@@ -106,14 +124,16 @@ docker run --rm --init \
   --network "$owned_network" \
   --user "$(id -u):$(id -g)" \
   --group-add "$socket_gid" \
-  --add-host host.docker.internal:host-gateway \
+  --add-host aweb-docker.test:host-gateway \
   -e HOME="$checkout/.release-home" \
   -e RELEASE_BASE_SHA="$RELEASE_BASE_SHA" \
   -e LIBRARY_E2E_LIBRARY_CONTEXT="$LIBRARY_E2E_LIBRARY_CONTEXT" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e RELEASE_GATE_LOG_DIR="$LOG_DIR" \
+  -e BUILDX_CONFIG="$buildx_config" \
   -e BUILDX_BUILDER="$owned_builder" \
-  -e AWEB_DOCKER_PUBLISHED_HOST=host.docker.internal \
+  -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
+  -e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test \
   -e TEST_DB_HOST="$pg_name" \
   -e TEST_DB_PORT=5432 \
   -e TEST_DB_USER=postgres \
@@ -125,7 +145,6 @@ docker run --rm --init \
   -e PGDATABASE=postgres \
   -e REDIS_URL="redis://$redis_name:6379/0" \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /tmp:/tmp \
   -v "$checkout:$checkout" \
   -v "$LOG_DIR:$LOG_DIR" \
   -v "$LIBRARY_E2E_LIBRARY_CONTEXT:$LIBRARY_E2E_LIBRARY_CONTEXT:ro" \

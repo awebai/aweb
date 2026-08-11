@@ -5,7 +5,7 @@ ARG GO_VERSION=1.24.13
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        bash build-essential ca-certificates curl git gnupg jq make \
-       postgresql-client redis-tools tmux unzip xz-utils zip \
+       postgresql-client redis-tools socat tmux unzip xz-utils zip \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
        | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \

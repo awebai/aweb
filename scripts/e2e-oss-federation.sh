@@ -48,9 +48,12 @@ CLI_DIR="$REPO_ROOT/cli/go"
 AWID_PORT="${AWID_FED_E2E_PORT:-8310}"
 ALPHA_PORT="${AWEB_ALPHA_E2E_PORT:-8320}"
 BETA_PORT="${AWEB_BETA_E2E_PORT:-8330}"
+DOCKER_BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
+[[ "$DOCKER_BIND_ROOT" = /* && -d "$DOCKER_BIND_ROOT" ]] \
+  || { echo "AWEB_DOCKER_BIND_ROOT must be an existing absolute directory" >&2; exit 2; }
 DOCKER_PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
 case "$DOCKER_PUBLISHED_HOST" in
-  127.0.0.1|host.docker.internal) ;;
+  127.0.0.1|aweb-docker.test) ;;
   *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
 esac
 AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
@@ -65,9 +68,11 @@ CELL_ID="${AWEB_FED_E2E_CELL_ID:-source-journey}"
 ROUTE_PROBE_ONLY="${AWEB_FED_E2E_ROUTE_PROBE_ONLY:-0}"
 
 E2E_ROOT="$(make_temp_dir aw-fed-e2e)"
+DOCKER_RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/aw-fed-docker.XXXXXX")"
+DOCKER_RUNTIME="$(canonicalize_dir "$DOCKER_RUNTIME")"
 E2E_HOME="$E2E_ROOT/home"
-COMPOSE_FILE="$E2E_ROOT/docker-compose.yml"
-DNS_DIR="$E2E_ROOT/dns"
+COMPOSE_FILE="$DOCKER_RUNTIME/docker-compose.yml"
+DNS_DIR="$DOCKER_RUNTIME/dns"
 DNS_COREFILE="$DNS_DIR/Corefile"
 DNS_ZONE="$DNS_DIR/test.local.zone"
 ALICE_DIR="$E2E_ROOT/alice"
@@ -89,6 +94,7 @@ cleanup() {
     echo "Keeping federation e2e artifacts for debugging:"
     echo "  project: $PROJECT"
     echo "  root:    $E2E_ROOT"
+    echo "  docker:  $DOCKER_RUNTIME"
   elif [[ -f "$COMPOSE_FILE" ]]; then
     if [[ $status -ne 0 || $fail -gt 0 ]]; then
       echo "  --- failed federation service logs ---"
@@ -111,10 +117,10 @@ cleanup() {
       echo "Targeted teardown left networks for $PROJECT" >&2
       status=1
     fi
-    rm -rf "$E2E_ROOT"
+    rm -rf "$E2E_ROOT" "$DOCKER_RUNTIME"
   else
-    # Pre-compose validation failures still own only this mktemp directory.
-    rm -rf "$E2E_ROOT"
+    # Pre-compose validation failures still own only these mktemp directories.
+    rm -rf "$E2E_ROOT" "$DOCKER_RUNTIME"
   fi
   echo ""
   if [[ $fail -gt 0 ]]; then

@@ -181,7 +181,9 @@ describe.sequential("channel integration", () => {
       }
       await mkdir(tempRoot);
     } else {
-      tempRoot = await mkdtemp(join(tmpdir(), "channel-e2e-"));
+      const bindRoot = dockerBindRoot();
+      await mkdir(bindRoot, { recursive: true });
+      tempRoot = await mkdtemp(join(bindRoot, "channel-e2e-"));
     }
     homeDir = join(tempRoot, "home");
     aliceDir = join(tempRoot, "alice");
@@ -498,9 +500,17 @@ describe.sequential("channel integration", () => {
   }
 });
 
+function dockerBindRoot(): string {
+  const rawRoot = process.env.AWEB_DOCKER_BIND_ROOT || tmpdir();
+  if (!rawRoot.startsWith("/")) {
+    throw new Error(`AWEB_DOCKER_BIND_ROOT must be absolute: ${rawRoot}`);
+  }
+  return resolve(rawRoot);
+}
+
 function dockerPublishedHost(): string {
   const host = process.env.AWEB_DOCKER_PUBLISHED_HOST || "127.0.0.1";
-  if (host !== "127.0.0.1" && host !== "host.docker.internal") {
+  if (host !== "127.0.0.1" && host !== "aweb-docker.test") {
     throw new Error(`AWEB_DOCKER_PUBLISHED_HOST has unsupported fixed value ${host}`);
   }
   return host;

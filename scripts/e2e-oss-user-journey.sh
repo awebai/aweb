@@ -53,7 +53,7 @@ REDIS_PORT="${AWEB_E2E_REDIS:-6399}"
 PG_PORT="${AWEB_E2E_PG:-5452}"
 DOCKER_PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
 case "$DOCKER_PUBLISHED_HOST" in
-  127.0.0.1|host.docker.internal) ;;
+  127.0.0.1|aweb-docker.test) ;;
   *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
 esac
 AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
@@ -109,11 +109,26 @@ BOOTSTRAP_LEGACY_WORK_DIR="$(canonicalize_dir "$BOOTSTRAP_LEGACY_WORK_DIR")"
 
 pass=0
 fail=0
+QUICKSTART_AWID_SOCAT_PID=""
+QUICKSTART_AWEB_SOCAT_PID=""
+
+stop_quickstart_bridges() {
+  local pids=() pid
+  [[ -z "$QUICKSTART_AWID_SOCAT_PID" ]] || pids+=("$QUICKSTART_AWID_SOCAT_PID")
+  [[ -z "$QUICKSTART_AWEB_SOCAT_PID" ]] || pids+=("$QUICKSTART_AWEB_SOCAT_PID")
+  [[ "${#pids[@]}" -eq 0 ]] || kill "${pids[@]}" 2>/dev/null || true
+  for pid in "${pids[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+  QUICKSTART_AWID_SOCAT_PID=""
+  QUICKSTART_AWEB_SOCAT_PID=""
+}
 
 cleanup() {
   local status=$?
   echo ""
   echo "--- Cleanup ---"
+  stop_quickstart_bridges
   if [[ -f "$SERVER_DIR/.env.e2e" ]]; then
     cd "$SERVER_DIR" && docker compose --env-file .env.e2e down -v 2>/dev/null || true
     rm -f "$SERVER_DIR/.env.e2e"
@@ -2458,11 +2473,37 @@ phase_aw_init_local_quickstart() {
 
   local local_alias="local-alice"
   local local_team="default:local"
+  local local_awid_url="http://127.0.0.1:$AWID_PORT"
+  local local_aweb_url="http://127.0.0.1:$AWEB_PORT"
+  socat "TCP4-LISTEN:$AWID_PORT,bind=127.0.0.1,reuseaddr,fork" \
+    "TCP4:aweb-docker.test:$AWID_PORT" &
+  QUICKSTART_AWID_SOCAT_PID=$!
+  socat "TCP4-LISTEN:$AWEB_PORT,bind=127.0.0.1,reuseaddr,fork" \
+    "TCP4:aweb-docker.test:$AWEB_PORT" &
+  QUICKSTART_AWEB_SOCAT_PID=$!
+  local bridges_ready=0
+  for _ in $(seq 1 50); do
+    if curl -fsS "$local_awid_url/health" >/dev/null 2>&1 \
+      && curl -fsS "$local_aweb_url/health" >/dev/null 2>&1; then
+      bridges_ready=1
+      break
+    fi
+    kill -0 "$QUICKSTART_AWID_SOCAT_PID" 2>/dev/null \
+      && kill -0 "$QUICKSTART_AWEB_SOCAT_PID" 2>/dev/null \
+      || break
+    sleep 0.1
+  done
+  if [[ "$bridges_ready" != "1" ]]; then
+    echo "  FAIL: phase-only quickstart socat listeners never became ready"
+    fail=$((fail + 1))
+    stop_quickstart_bridges
+    return
+  fi
 
   if wizard_out="$(run_aw_in "$WIZARD_BYOD_DIR" init \
-    --awid-registry "$AWID_URL" \
-    --aweb-url "$AWEB_URL" \
-    --alias "$local_alias" 2>&1)"; then
+    --awid-registry "$local_awid_url" \
+    --aweb-url "$local_aweb_url" \
+    --name "$local_alias" 2>&1)"; then
     wizard_exit=0
   else
     wizard_exit=$?
@@ -2496,15 +2537,15 @@ phase_aw_init_local_quickstart() {
   assert_eq "wizard cert team" "$local_team" "$wizard_cert_team"
   assert_eq "wizard cert alias" "$local_alias" "$wizard_cert_alias"
 
-  wizard_namespace="$(curl -sf "$AWID_URL/v1/namespaces/local" 2>/dev/null || echo '{}')"
+  wizard_namespace="$(curl -sf "$local_awid_url/v1/namespaces/local" 2>/dev/null || echo '{}')"
   wizard_namespace_domain="$(echo "$wizard_namespace" | jq_field domain)"
   assert_eq "local namespace registered" "local" "$wizard_namespace_domain"
 
-  wizard_team_get="$(curl -sf "$AWID_URL/v1/namespaces/local/teams/default" 2>/dev/null || echo '{}')"
+  wizard_team_get="$(curl -sf "$local_awid_url/v1/namespaces/local/teams/default" 2>/dev/null || echo '{}')"
   wizard_team_name="$(echo "$wizard_team_get" | jq_field name)"
   assert_eq "local team registered" "default" "$wizard_team_name"
 
-  wizard_certs="$(curl -sf "$AWID_URL/v1/namespaces/local/teams/default/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
+  wizard_certs="$(curl -sf "$local_awid_url/v1/namespaces/local/teams/default/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
   wizard_cert_count="$(echo "$wizard_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
   assert_eq "wizard active certificate count" "1" "$wizard_cert_count"
 
@@ -2518,6 +2559,21 @@ phase_aw_init_local_quickstart() {
     echo "  wizard mail output: ${wizard_mail_out:0:480}"
   fi
   assert_contains "wizard output shows local team" "$wizard_out" "default:local"
+  stop_quickstart_bridges
+  if curl -fsS --connect-timeout 1 "$local_awid_url/health" >/dev/null 2>&1; then
+    echo "  FAIL: phase-only AWID loopback endpoint remained reachable"
+    fail=$((fail + 1))
+  else
+    echo "  PASS: phase-only AWID loopback endpoint removed"
+    pass=$((pass + 1))
+  fi
+  if curl -fsS --connect-timeout 1 "$local_aweb_url/health" >/dev/null 2>&1; then
+    echo "  FAIL: phase-only aweb loopback endpoint remained reachable"
+    fail=$((fail + 1))
+  else
+    echo "  PASS: phase-only aweb loopback endpoint removed"
+    pass=$((pass + 1))
+  fi
   echo ""
 }
 

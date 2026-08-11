@@ -12,8 +12,12 @@ import uuid
 from pathlib import Path
 
 
-def run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, check=check, capture_output=True, text=True)
+def run(
+    *args: str,
+    check: bool = True,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, check=check, capture_output=True, text=True, env=env)
 
 
 class DockerBoundaryTests(unittest.TestCase):
@@ -48,28 +52,51 @@ class DockerBoundaryTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_disposable_container_builder_exports_two_platform_oci(self) -> None:
+    def test_shared_config_selects_disposable_builder_inside_container(self) -> None:
         builder = f"aweb-gate-proof-{uuid.uuid4().hex[:12]}"
-        try:
-            run("docker", "buildx", "create", "--name", builder,
-                "--driver", "docker-container", "--bootstrap")
-            with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
-                root = Path(tmp)
-                (root / "Dockerfile").write_text("FROM scratch\nCOPY marker /marker\n")
-                (root / "marker").write_text("proof\n")
-                output = root / "proof.oci.tar"
+        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+            root = Path(tmp)
+            config = root / "buildx-config"
+            context = root / "context"
+            config.mkdir()
+            context.mkdir()
+            (context / "Dockerfile").write_text("FROM scratch\nCOPY marker /marker\n")
+            (context / "marker").write_text("proof\n")
+            output = root / "proof.oci.tar"
+            buildx_env = {**os.environ, "BUILDX_CONFIG": str(config)}
+            try:
                 run(
-                    "docker", "buildx", "build", "--builder", builder,
-                    "--platform", "linux/amd64,linux/arm64",
-                    "--output", f"type=oci,dest={output}", str(root),
+                    "docker", "buildx", "create", "--name", builder,
+                    "--driver", "docker-container", "unix:///var/run/docker.sock",
+                    "--bootstrap", env=buildx_env,
                 )
+                command = (
+                    f"docker buildx inspect {builder} >/dev/null; "
+                    f"docker buildx build --builder {builder} "
+                    "--platform linux/amd64,linux/arm64 "
+                    f"--output type=oci,dest={output} {context}"
+                )
+                result = run(
+                    "docker", "run", "--rm", "--init",
+                    "--user", f"{os.getuid()}:{os.getgid()}",
+                    "--group-add", self.socket_gid(),
+                    "-e", f"BUILDX_CONFIG={config}",
+                    "-v", "/var/run/docker.sock:/var/run/docker.sock",
+                    "-v", f"{root}:{root}",
+                    self.image, "bash", "-ceu", command,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertGreater(output.stat().st_size, 0)
-        finally:
-            run("docker", "buildx", "rm", builder, check=False)
-        listed = run("docker", "buildx", "ls").stdout
-        self.assertNotIn(builder, listed)
+            finally:
+                run(
+                    "docker", "buildx", "rm", builder,
+                    check=False, env=buildx_env,
+                )
+            listed = run("docker", "buildx", "ls", env=buildx_env).stdout
+            self.assertNotIn(builder, listed)
 
-    def test_identical_tmp_mount_is_visible_to_inner_bind(self) -> None:
+    def test_dedicated_bind_root_is_visible_to_inner_bind(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
             probe = Path(tmp) / "host-visible"
             probe.write_text("visible\n")
@@ -82,7 +109,7 @@ class DockerBoundaryTests(unittest.TestCase):
                 "--user", f"{os.getuid()}:{os.getgid()}",
                 "--group-add", self.socket_gid(),
                 "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                "-v", "/tmp:/tmp",
+                "-v", f"{tmp}:{tmp}",
                 self.image, "bash", "-ceu", command,
             )
             self.assertEqual(result.stdout.strip(), "visible")
@@ -96,10 +123,10 @@ class DockerBoundaryTests(unittest.TestCase):
             port = run("docker", "port", container, "80/tcp").stdout.strip().rsplit(":", 1)[1]
             result = run(
                 "docker", "run", "--rm",
-                "--add-host", "host.docker.internal:host-gateway",
+                "--add-host", "aweb-docker.test:host-gateway",
                 self.image, "bash", "-ceu",
                 f"ready=; for _ in $(seq 1 30); do "
-                f"curl -fsS http://host.docker.internal:{port} >/dev/null && {{ ready=1; break; }}; "
+                f"curl -fsS http://aweb-docker.test:{port} >/dev/null && {{ ready=1; break; }}; "
                 f"sleep 0.2; done; test -n \"$ready\"; "
                 f"! curl -fsS --connect-timeout 1 http://127.0.0.1:{port} >/dev/null 2>&1",
                 check=False,

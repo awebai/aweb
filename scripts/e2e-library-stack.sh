@@ -55,7 +55,7 @@ AWEB_PORT="${LIBRARY_E2E_AWEB_PORT:-18000}"
 LIBRARY_PORT="${LIBRARY_E2E_LIBRARY_PORT:-18765}"
 DOCKER_PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
 case "$DOCKER_PUBLISHED_HOST" in
-  127.0.0.1|host.docker.internal) ;;
+  127.0.0.1|aweb-docker.test) ;;
   *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
 esac
 
@@ -94,7 +94,9 @@ resolve_sibling() {
 # seed script pick them up.
 export LIBRARY_E2E_LIBRARY_CONTEXT="$(resolve_sibling library "${LIBRARY_E2E_LIBRARY_CONTEXT:-}")"
 export LIBRARY_E2E_BLUEPRINT_SRC="$(resolve_sibling blueprints/team "${LIBRARY_E2E_BLUEPRINT_SRC:-}")"
-# Keep the team-auth audience the seed signs in lockstep with the port mapping.
+# Keep every advertised public endpoint in lockstep with the published-host probes.
+export LIBRARY_E2E_AWEB_PUBLIC_ORIGIN="${LIBRARY_E2E_AWEB_PUBLIC_ORIGIN:-$AWEB_URL}"
+export LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL="${LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL:-$AWID_URL}"
 export LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN="${LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN:-$LIBRARY_URL}"
 # Pin the published ports compose binds so they match the health-check URLs.
 export LIBRARY_E2E_AWID_PORT="$AWID_PORT"

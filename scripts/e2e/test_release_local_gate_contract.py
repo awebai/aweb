@@ -34,6 +34,13 @@ BOUNDARY_HARNESSES = (
     ROOT / "cli" / "scripts" / "e2e.sh",
     SCRIPTS / "e2e-library-stack.sh",
 )
+BIND_ROOT_HARNESSES = frozenset(
+    {
+        BOUNDARY_HARNESSES[0].as_posix(),
+        BOUNDARY_HARNESSES[2].as_posix(),
+        BOUNDARY_HARNESSES[3].as_posix(),
+    }
+)
 OLD_FILES = (
     ROOT / ".github" / "workflows" / "ship.yml",
     SCRIPTS / "run-ship-suites.sh",
@@ -151,29 +158,77 @@ def boundary_contract_errors(
         "non-root user": '--user "$(id -u):$(id -g)"',
         "Docker socket group": '--group-add "$socket_gid"',
         "container buildx builder": "--driver docker-container",
-        "builder cleanup": 'docker buildx rm "$owned_builder"',
-        "host-visible tmp": "-v /tmp:/tmp",
+        "shared buildx config": 'BUILDX_CONFIG="$buildx_config" docker buildx create',
+        "shared builder cleanup": 'BUILDX_CONFIG="$buildx_config" docker buildx rm',
+        "container buildx config": '-e BUILDX_CONFIG="$buildx_config"',
+        "dedicated bind root": 'docker_bind_root="$checkout/.release-docker-bind"',
+        "fixed bind-root input": '-e AWEB_DOCKER_BIND_ROOT="$docker_bind_root"',
         "host-visible checkout": '-v "$checkout:$checkout"',
-        "fixed Docker host mapping": "--add-host host.docker.internal:host-gateway",
-        "fixed Docker host input": "-e AWEB_DOCKER_PUBLISHED_HOST=host.docker.internal",
+        "canonical Library input": 'canonical_git_input library',
+        "canonical blueprint input": 'canonical_git_input blueprints',
+        "requested blueprint subdirectory": 'blueprints/team}',
+        "fixed Docker host mapping": "--add-host aweb-docker.test:host-gateway",
+        "fixed Docker host input": "-e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test",
     }
     for label, literal in required_entrypoint.items():
         if literal not in entrypoint:
             errors.append(label)
     if "--privileged" in entrypoint or "dockerd" in entrypoint:
         errors.append("no privileged nested daemon")
+    if "-v /tmp:/tmp" in entrypoint:
+        errors.append("container-native /tmp")
     for name, body in harnesses.items():
         for label, literal in (
             ("fixed input", "AWEB_DOCKER_PUBLISHED_HOST"),
-            ("fixed Docker hostname", "host.docker.internal"),
+            ("fixed Docker hostname", "aweb-docker.test"),
             ("local default/fixture", "127.0.0.1"),
             ("unsupported-value refusal", "unsupported"),
         ):
             if literal not in body:
                 errors.append(f"{name}: {label}")
+        has_bind_root = "AWEB_DOCKER_BIND_ROOT" in body
+        if has_bind_root != (name in BIND_ROOT_HARNESSES):
+            errors.append(f"{name}: exact bind-root scope")
     channel = harnesses[BOUNDARY_HARNESSES[0].as_posix()]
     if 'server.listen(0, "127.0.0.1"' not in channel:
         errors.append("channel process-local loopback fixture")
+    federation = harnesses[BOUNDARY_HARNESSES[2].as_posix()]
+    for label, literal in (
+        ("native federation client root", 'mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX"'),
+        ("federation compose bind root", 'COMPOSE_FILE="$DOCKER_RUNTIME/docker-compose.yml"'),
+        ("federation DNS bind root", 'DNS_DIR="$DOCKER_RUNTIME/dns"'),
+        ("native alpha wheel build context", 'ALPHA_SERVER_CONTEXT="$E2E_ROOT/'),
+        ("native beta wheel build context", 'BETA_SERVER_CONTEXT="$E2E_ROOT/'),
+    ):
+        if literal not in federation:
+            errors.append(label)
+    return tuple(errors)
+
+
+def local_bridge_contract_errors(journey: str, dockerfile: str) -> tuple[str, ...]:
+    errors = []
+    for label, literal in (
+        ("AWID same-port socat listener", "TCP4-LISTEN:$AWID_PORT,bind=127.0.0.1,reuseaddr,fork"),
+        ("aweb same-port socat listener", "TCP4-LISTEN:$AWEB_PORT,bind=127.0.0.1,reuseaddr,fork"),
+        ("fixed AWID target", '"TCP4:aweb-docker.test:$AWID_PORT"'),
+        ("fixed aweb target", '"TCP4:aweb-docker.test:$AWEB_PORT"'),
+        ("phase-local AWID URL", '--awid-registry "$local_awid_url"'),
+        ("phase-local aweb URL", '--aweb-url "$local_aweb_url"'),
+        ("current init name flag", '--name "$local_alias"'),
+        ("exact AWID PID", "QUICKSTART_AWID_SOCAT_PID=$!"),
+        ("exact aweb PID", "QUICKSTART_AWEB_SOCAT_PID=$!"),
+        ("kill both before waits", 'kill "${pids[@]}"'),
+        ("wait both after kill", 'for pid in "${pids[@]}"; do'),
+        ("post-phase AWID removal", "phase-only AWID loopback endpoint removed"),
+        ("post-phase aweb removal", "phase-only aweb loopback endpoint removed"),
+    ):
+        if literal not in journey:
+            errors.append(label)
+    cleanup = re.search(r"(?ms)^cleanup\(\) \{.*?^\}", journey)
+    if cleanup is None or "stop_quickstart_bridges" not in cleanup.group(0):
+        errors.append("EXIT listener cleanup")
+    if "socat" not in dockerfile:
+        errors.append("gate image socat")
     return tuple(errors)
 
 
@@ -375,11 +430,10 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             "/var/run/docker.sock",
             "--user \"$(id -u):$(id -g)\"",
             "--group-add \"$socket_gid\"",
-            "docker buildx create --name",
+            "docker buildx create",
             "docker buildx rm",
-            "-v /tmp:/tmp",
-            "--add-host host.docker.internal:host-gateway",
-            "-e AWEB_DOCKER_PUBLISHED_HOST=host.docker.internal",
+            "--add-host aweb-docker.test:host-gateway",
+            "-e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test",
             "test_release_gate_docker_boundaries.py",
             "RELEASE_BASE_SHA",
             "LIBRARY_E2E_LIBRARY_CONTEXT",
@@ -396,6 +450,31 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
         harnesses = {path.as_posix(): path.read_text() for path in BOUNDARY_HARNESSES}
         self.assertEqual(boundary_contract_errors(entrypoint, harnesses), ())
         self.assertNotIn("AWEB_DOCKER_PUBLISHED_HOST:-", entrypoint)
+        library_stack = harnesses[BOUNDARY_HARNESSES[5].as_posix()]
+        for assignment in (
+            'LIBRARY_E2E_AWEB_PUBLIC_ORIGIN="${LIBRARY_E2E_AWEB_PUBLIC_ORIGIN:-$AWEB_URL}"',
+            'LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL="${LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL:-$AWID_URL}"',
+            'LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN="${LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN:-$LIBRARY_URL}"',
+        ):
+            self.assertIn(assignment, library_stack)
+        compose = (ROOT / "docker-compose.e2e.yml").read_text()
+        self.assertIn('"http://localhost:8000/health"', compose)
+        self.assertIn('"http://localhost:8010/health"', compose)
+        self.assertIn("http://localhost:8765/health", compose)
+        user_journey = harnesses[BOUNDARY_HARNESSES[1].as_posix()]
+        self.assertIn("AWEB_PUBLIC_ORIGIN=$AWEB_URL", user_journey)
+        self.assertIn("AWID_PUBLIC_REGISTRY_URL=$AWID_URL", user_journey)
+        federation = harnesses[BOUNDARY_HARNESSES[2].as_posix()]
+        self.assertIn('mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX"', federation)
+        self.assertIn('DOCKER_RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/', federation)
+        self.assertIn('COMPOSE_FILE="$DOCKER_RUNTIME/docker-compose.yml"', federation)
+        self.assertIn('DNS_DIR="$DOCKER_RUNTIME/dns"', federation)
+        self.assertIn('ALPHA_SERVER_CONTEXT="$E2E_ROOT/', federation)
+        self.assertIn('BETA_SERVER_CONTEXT="$E2E_ROOT/', federation)
+        authority = harnesses[BOUNDARY_HARNESSES[3].as_posix()]
+        self.assertIn('RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/', authority)
+        channel = harnesses[BOUNDARY_HARNESSES[0].as_posix()]
+        self.assertIn('mkdtemp(join(bindRoot, "channel-e2e-"))', channel)
 
     def test_boundary_mutations_are_each_rejected(self) -> None:
         entrypoint = ENTRYPOINT.read_text()
@@ -411,18 +490,81 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
                 harnesses,
                 "container buildx builder",
             ),
-            "host-visible paths": (
-                entrypoint.replace("-v /tmp:/tmp", "", 1),
+            "shared buildx config": (
+                entrypoint.replace('-e BUILDX_CONFIG="$buildx_config"', "", 1),
                 harnesses,
-                "host-visible tmp",
+                "container buildx config",
+            ),
+            "dedicated host-visible path": (
+                entrypoint.replace('-e AWEB_DOCKER_BIND_ROOT="$docker_bind_root"', "", 1),
+                harnesses,
+                "fixed bind-root input",
+            ),
+            "host tmp replaces native tmp": (
+                entrypoint + "\n-v /tmp:/tmp\n",
+                harnesses,
+                "container-native /tmp",
             ),
             "all loopback rewritten": (
                 entrypoint,
                 {
-                    name: body.replace("127.0.0.1", "host.docker.internal")
+                    name: body.replace("127.0.0.1", "aweb-docker.test")
                     for name, body in harnesses.items()
                 },
                 "local default/fixture",
+            ),
+            "uncanonical Library input": (
+                entrypoint.replace(
+                    'LIBRARY_E2E_LIBRARY_CONTEXT="$(canonical_git_input library "$LIBRARY_E2E_LIBRARY_CONTEXT")"',
+                    'LIBRARY_E2E_LIBRARY_CONTEXT="$LIBRARY_E2E_LIBRARY_CONTEXT"',
+                    1,
+                ),
+                harnesses,
+                "canonical Library input",
+            ),
+            "blueprint widened to repo root": (
+                entrypoint.replace("blueprints/team}", "blueprints}", 1),
+                harnesses,
+                "requested blueprint subdirectory",
+            ),
+            "bind root leaks to user journey": (
+                entrypoint,
+                {
+                    **harnesses,
+                    BOUNDARY_HARNESSES[1].as_posix(): (
+                        harnesses[BOUNDARY_HARNESSES[1].as_posix()]
+                        + "\nAWEB_DOCKER_BIND_ROOT\n"
+                    ),
+                },
+                "exact bind-root scope",
+            ),
+            "federation client root moves to host bind": (
+                entrypoint,
+                {
+                    **harnesses,
+                    BOUNDARY_HARNESSES[2].as_posix(): harnesses[
+                        BOUNDARY_HARNESSES[2].as_posix()
+                    ].replace(
+                        'mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX"',
+                        'mktemp -d "$DOCKER_BIND_ROOT/${prefix}.XXXXXX"',
+                        1,
+                    ),
+                },
+                "native federation client root",
+            ),
+            "wheel context moves onto Docker bind root": (
+                entrypoint,
+                {
+                    **harnesses,
+                    BOUNDARY_HARNESSES[2].as_posix(): harnesses[
+                        BOUNDARY_HARNESSES[2].as_posix()
+                    ].replace(
+                        'ALPHA_SERVER_CONTEXT="$E2E_ROOT/',
+                        'ALPHA_SERVER_CONTEXT="$DOCKER_RUNTIME/',
+                        1,
+                    ),
+                },
+                "native alpha wheel build context",
             ),
         }
         for name, (mutated_entrypoint, mutated_harnesses, expected) in mutations.items():
@@ -433,6 +575,20 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
                     any(expected in error for error in errors),
                     f"{name} mutation failed for the wrong reason: {errors}",
                 )
+
+    def test_local_quickstart_socats_are_phase_scoped_and_mutation_protected(self) -> None:
+        journey = (SCRIPTS / "e2e-oss-user-journey.sh").read_text()
+        dockerfile = DOCKERFILE.read_text()
+        self.assertEqual(local_bridge_contract_errors(journey, dockerfile), ())
+        mutated = journey.replace("TCP4-LISTEN:$AWID_PORT", "listener-removed", 1)
+        errors = local_bridge_contract_errors(mutated, dockerfile)
+        self.assertIn("AWID same-port socat listener", errors)
+        cleanup_mutated = journey.replace("  stop_quickstart_bridges\n", "", 1)
+        cleanup_errors = local_bridge_contract_errors(cleanup_mutated, dockerfile)
+        self.assertIn("EXIT listener cleanup", cleanup_errors)
+        self.assertNotIn('--alias "$local_alias"', journey)
+        self.assertNotIn("start_quickstart_socat", journey)
+        self.assertIn("AWEB_URL=\"http://$DOCKER_PUBLISHED_HOST", journey)
 
     def test_entrypoint_refuses_a_real_dirty_checkout_before_docker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -451,7 +607,13 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             result = subprocess.run(
                 [str(script)],
                 cwd=repo,
-                env={**os.environ, "RELEASE_SOURCE_SHA": sha, "RELEASE_BASE_SHA": sha},
+                env={
+                    **os.environ,
+                    "RELEASE_SOURCE_SHA": sha,
+                    "RELEASE_BASE_SHA": sha,
+                    "LIBRARY_E2E_LIBRARY_CONTEXT": str(repo),
+                    "LIBRARY_E2E_BLUEPRINT_SRC": str(repo),
+                },
                 capture_output=True,
                 text=True,
             )
@@ -486,11 +648,11 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
                 text=True,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("Library input is missing", result.stderr)
+            self.assertIn("library input is not a git checkout", result.stderr)
 
     def test_gate_image_pins_required_toolchain_and_no_publisher_credentials(self) -> None:
         text = DOCKERFILE.read_text()
-        for required in ("python:3.12", "node_22.x", "go1.24.13", "docker-ce-cli", "tmux", "uv"):
+        for required in ("python:3.12", "node_22.x", "go1.24.13", "docker-ce-cli", "socat", "tmux", "uv"):
             self.assertIn(required, text)
         for forbidden in ("GITHUB_TOKEN", "NPM_TOKEN", "PYPI", "RENDER", "AWS_"):
             self.assertNotIn(forbidden, text)
