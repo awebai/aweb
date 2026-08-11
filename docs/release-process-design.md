@@ -38,9 +38,11 @@ orchestration program (§16.6).
 - **Test once, ship those bytes.** Each candidate is built once and each
   required test runs once against it; publication promotes the tested bytes,
   never a rebuild.
-- **Runner independence.** The process keeps a first-class runnerless lane. No
-  release capability may permanently depend on GitHub or GitHub Actions
-  (§8.5).
+- **One maintained lane.** Hosted CI is the sole maintained release lane and
+  the normal source of candidate evidence and execution. During a hosted-CI
+  outage the default is to wait; a rare manual break-glass procedure exists
+  for the case where the human explicitly chooses not to (§8.5), and it is a
+  procedure, not a second system.
 - **Small mechanical parts.** Per-artifact workflows own mechanical jobs; a
   thin cross-repository coordinator composes them. No mechanical job may
   create a human approval point.
@@ -226,8 +228,10 @@ The manifest MUST contain:
 - **Deployment intent**: `none`, or the deployment target(s) with exact image
   digest, the ordered migration set to be applied, and the irreversibility
   statement (§13, §15).
-- **Authority**: `hosted` or `local-runnerless` (§8.5), stating where
-  candidate evidence and publication execution live.
+- **Break-glass marker**: normally absent. Present only when the attempt
+  uses the break-glass procedure (§8.5), stating which evidence or execution
+  steps were performed outside hosted CI and how each was bound to the same
+  digests.
 
 The manifest SHOULD contain the delivery obligations of the selected artifacts
 (plugin restart, Pi cache refresh — the `delivery_restart` facts from
@@ -289,7 +293,7 @@ a go at all.
 
 The go record MUST contain: who granted it, when (UTC), the `release_id`, the
 `manifest_digest`, and any deliberately accepted risks in prose (a named
-breaking interval per §10.3; runnerless-lane risk per §8.5; irreversible
+breaking interval per §10.3; break-glass use per §8.5; irreversible
 deployment steps per §15.4). The record MUST be stored in the audit record
 (§20) before any outward effect.
 
@@ -357,24 +361,36 @@ machine-readable result document binding (source SHA, run ID, attempt,
 per-suite pass/fail, per-artifact digest sets). These outputs are what the
 manifest references; nothing else counts as candidate evidence.
 
-### 8.5 The runnerless lane
+### 8.5 Outage posture and break-glass
 
-A first-class local lane MUST exist and MUST be able to complete build-once,
-stage, publish, and read-back with GitHub and GitHub Actions entirely
-unavailable; tags and hosted release assets MUST be resumable later as
-mechanical follow-ups that need no new go. The lane reuses the exact-publish
-scripts (`scripts/npm-exact-publish.sh`, `scripts/pypi-exact-publish.sh`,
-`scripts/oci-exact-publish.sh`) and the local stage/publish/observe adapter
-protocol of `docs/runnerless-release.md`, which this design retains in
-simplified form.
+Hosted CI is the sole maintained release lane. When it is unavailable, the
+default is to wait; an outage is not an emergency by itself.
 
-Under the runnerless lane the manifest's `authority` is `local-runnerless`,
-candidate evidence comes from locally executed suites recorded with the same
-digest bindings, and the go's accepted-risks prose MUST state that hosted
-evidence was unavailable and what was accepted instead. This is the explicit,
-cheap human risk override for an urgent release or runner outage: it is the
-same single go, with the risk stated — not an additional approval, and not a
-mechanically impossible path.
+A rare manual **break-glass** procedure MAY be used instead, only by explicit
+human choice for a release that cannot wait. It is a short documented
+recovery procedure built from ordinary registry and provider tools — not a
+second productized release system. It has no maintained automation, no local
+adapter framework, no dedicated authority machinery, and no promise of parity
+with the hosted lane; this specification deliberately does not require it to
+be rehearsed or feature-complete.
+
+Break-glass changes nothing about the decision model:
+
+- The risk of operating outside hosted CI MUST be stated in the accepted-risks
+  prose of the same one global go. There is no separate local-risk approval,
+  per-repository approval, or deployment approval.
+- The four substantive inputs (§7.2) still bind. If the required correctness
+  and end-to-end results or the compatibility states cannot be established
+  for the exact candidate, the release cannot happen — break-glass is not a
+  license to ship unmeasured or untested bytes.
+- Exact-artifact digests, read-back, non-reusable authorization, and the audit
+  record (§11, §20) still apply in full; the manifest carries the break-glass
+  marker (§6.2) so the audit record shows exactly what ran outside hosted CI.
+
+Tags or hosted release assets that could not be created during the outage are
+recorded as outstanding mechanical follow-ups and completed later without a
+new go, since the registry artifacts consumers resolve are already published
+and read back.
 
 ## 9. Test-once semantics
 
@@ -619,8 +635,6 @@ that the schema permits it.
   `scripts/pointer-adapter-ac-pin.py`) — the `ac-pin` adapter's execution
   moves into a hosted AC-owned job, deleting the `EXTERNAL_CONTEXT`
   sibling-checkout requirement.
-- The exact-publish scripts and the local stage/publish/observe adapter
-  protocol (`docs/runnerless-release.md`) — as the runnerless lane (§8.5).
 - The skew harnesses (§10.2) — re-aimed to emit the three-state result.
 - The version monotonicity guard and independent per-artifact semver.
 - Registry observation code (the driver's per-registry observers) — extracted
@@ -646,10 +660,6 @@ that the schema permits it.
   shipping an unmeasured contract silently — survives as `could_not_measure`
   blocking; what it cost — standing measurement documents, edge-hash
   authorizations, deferral ceremony — is deleted.
-- **The runnerless lane**: retained first-class (§8.5); simplified from a
-  separate authority type with its own risk-record syntax to the same
-  manifest/go semantics with `authority: local-runnerless` and prose risk
-  acceptance inside the one go.
 - **G2/G3**: no referent exists in the tree; the four-phase barrier protocol
   inside `run_plan` is the actual machinery, and it simplifies to: candidate
   pipeline (build+test once) → manifest → go → publish/deploy with
@@ -674,8 +684,15 @@ that the schema permits it.
   or a dispatch job.
 - Standing measurement documents under `release/measurements/` as release
   inputs (§16.4).
-- The `docs/runnerless-release.md` sections describing
-  `LOCAL_RISK_AUTHORIZATION` / `DEFER_G5` interplay — rewritten for §8.5.
+- The entire runnerless lane as a maintained system: `docs/runnerless-release.md`,
+  the local stage/publish/observe adapter protocol, the driver's
+  `LocalRunnerlessLane` and subprocess adapters, the `local-runnerless`
+  authority registration, and `LOCAL_RISK_AUTHORIZATION`. Replaced by the
+  break-glass posture of §8.5 and at most a short exceptional recovery
+  runbook built from ordinary registry/provider tools. The exact-publish
+  scripts (`scripts/npm-exact-publish.sh`, `scripts/pypi-exact-publish.sh`,
+  `scripts/oci-exact-publish.sh`) MAY be retained only as ordinary tools that
+  runbook cites, or deleted with the lane.
 
 ### 16.4 Standing measurements become per-release results
 
@@ -756,8 +773,10 @@ lane alongside the old, and deletion comes last.
 9. **First real release** — one production release through the new lane,
    with the old driver untouched as fallback.
 10. **Deletion** — after the first real release is sealed and reviewed:
-    delete the superseded driver machinery (§16.3), rewrite
-    `docs/runnerless-release.md` and the release skill, update
+    delete the superseded driver machinery (§16.3), retire
+    `docs/runnerless-release.md` and the runnerless-specific
+    driver/adapter/authority machinery — leaving at most the short
+    exceptional recovery runbook of §8.5 — rewrite the release skill, update
     `release/components.toml` to its reduced schema, and record the
     completion in the docs index.
 
@@ -785,8 +804,10 @@ Normative acceptance for the implemented process:
 - A spent or invalidated go cannot cause a second publication: publish jobs
   refuse a duplicate (`release_id`, artifact) and any manifest-digest
   mismatch (§11.2).
-- The runnerless lane completes a real publication with hosted CI unreachable,
-  under one go (§8.5).
+- During a hosted-CI outage the process defaults to waiting. If break-glass
+  is ever actually used, its audit record shows the same single go, the same
+  four inputs established, and complete read-backs (§8.5); no acceptance
+  test requires performing a break-glass publication.
 
 Operational targets (SHOULD; measured and recorded per release in the audit
 record):
@@ -814,8 +835,8 @@ record):
   live only in AC-owned jobs and are never readable by aweb-repository
   workflows or the coordinator.
 - Pointer-repository write access lives only in the pointer jobs.
-- The runnerless lane uses operator-local credentials; the manifest's
-  `authority` field makes that visible in the audit record.
+- A break-glass attempt uses operator-local credentials by definition; the
+  manifest's break-glass marker makes that visible in the audit record.
 - Workflow environments MUST NOT carry manual-approval protection rules on
   the release path (§7.1); authorization is the go, enforced at the job level
   by §11.2, not by a second human click.
