@@ -6,10 +6,15 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import release_gate_runner as runner
 
 
 def run(
@@ -52,23 +57,42 @@ class DockerBoundaryTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_shared_config_selects_disposable_builder_inside_container(self) -> None:
+    def test_transient_builder_cache_reclaim_is_scoped_and_builder_remains_usable(self) -> None:
+        with patch.dict(os.environ, {"BUILDX_BUILDER": "", "BUILDX_CONFIG": "/tmp"}):
+            with self.assertRaisesRegex(RuntimeError, "BUILDX_BUILDER is empty"):
+                runner.reclaim_transient_builder_cache(Path("/tmp/unused-cache-log"))
+        with patch.dict(os.environ, {"BUILDX_BUILDER": "unused", "BUILDX_CONFIG": ""}):
+            with self.assertRaisesRegex(RuntimeError, "BUILDX_CONFIG is empty"):
+                runner.reclaim_transient_builder_cache(Path("/tmp/unused-cache-log"))
+        source = Path(runner.__file__).read_text()
+        self.assertIn('if step.name == "a2a-image":', source)
+        self.assertIn('reclaim_transient_builder_cache(log_dir / "a2a-image-cache-reclaim.log")', source)
+
         builder = f"aweb-gate-proof-{uuid.uuid4().hex[:12]}"
+        unrelated = f"aweb-unrelated-proof-{uuid.uuid4().hex[:12]}"
         with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
             root = Path(tmp)
             config = root / "buildx-config"
+            unrelated_config = root / "unrelated-buildx-config"
             context = root / "context"
             config.mkdir()
+            unrelated_config.mkdir()
             context.mkdir()
             (context / "Dockerfile").write_text("FROM scratch\nCOPY marker /marker\n")
             (context / "marker").write_text("proof\n")
             output = root / "proof.oci.tar"
             buildx_env = {**os.environ, "BUILDX_CONFIG": str(config)}
+            unrelated_env = {**os.environ, "BUILDX_CONFIG": str(unrelated_config)}
             try:
                 run(
                     "docker", "buildx", "create", "--name", builder,
                     "--driver", "docker-container", "unix:///var/run/docker.sock",
                     "--bootstrap", env=buildx_env,
+                )
+                run(
+                    "docker", "buildx", "create", "--name", unrelated,
+                    "--driver", "docker-container", "unix:///var/run/docker.sock",
+                    "--bootstrap", env=unrelated_env,
                 )
                 command = (
                     f"docker buildx inspect {builder} >/dev/null; "
@@ -88,13 +112,56 @@ class DockerBoundaryTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertGreater(output.stat().st_size, 0)
-            finally:
+                unrelated_output = root / "unrelated.oci.tar"
                 run(
-                    "docker", "buildx", "rm", builder,
-                    check=False, env=buildx_env,
+                    "docker", "buildx", "build", "--builder", unrelated,
+                    "--platform", "linux/amd64,linux/arm64",
+                    "--output", f"type=oci,dest={unrelated_output}", str(context),
+                    env=unrelated_env,
                 )
-            listed = run("docker", "buildx", "ls", env=buildx_env).stdout
-            self.assertNotIn(builder, listed)
+                du_format = "{{json .}}"
+                owned_before = run(
+                    "docker", "buildx", "du", "--builder", builder,
+                    "--format", du_format, env=buildx_env,
+                ).stdout
+                unrelated_before = run(
+                    "docker", "buildx", "du", "--builder", unrelated,
+                    "--format", du_format, env=unrelated_env,
+                ).stdout
+                self.assertTrue(owned_before.strip())
+                with patch.dict(
+                    os.environ,
+                    {"BUILDX_BUILDER": builder, "BUILDX_CONFIG": str(config)},
+                ):
+                    runner.reclaim_transient_builder_cache(root / "cache-reclaim.log")
+                self.assertGreater((root / "cache-reclaim.log").stat().st_size, 0)
+                owned_after = run(
+                    "docker", "buildx", "du", "--builder", builder,
+                    "--format", du_format, env=buildx_env,
+                ).stdout
+                unrelated_after = run(
+                    "docker", "buildx", "du", "--builder", unrelated,
+                    "--format", du_format, env=unrelated_env,
+                ).stdout
+                self.assertLess(len(owned_after.splitlines()), len(owned_before.splitlines()))
+                self.assertEqual(unrelated_after, unrelated_before)
+                reusable_output = root / "reusable.oci.tar"
+                run(
+                    "docker", "buildx", "build", "--builder", builder,
+                    "--output", f"type=oci,dest={reusable_output}", str(context),
+                    env=buildx_env,
+                )
+                self.assertGreater(reusable_output.stat().st_size, 0)
+            finally:
+                for name, env in ((builder, buildx_env), (unrelated, unrelated_env)):
+                    run("docker", "buildx", "rm", name, check=False, env=env)
+                    run("docker", "rm", "-f", f"buildx_buildkit_{name}0", check=False)
+                    run("docker", "volume", "rm", "-f", f"buildx_buildkit_{name}0_state", check=False)
+                    self.assertNotIn(name, run("docker", "buildx", "ls", env=env).stdout)
+                    self.assertNotEqual(
+                        run("docker", "volume", "inspect", f"buildx_buildkit_{name}0_state", check=False).returncode,
+                        0,
+                    )
 
     def test_dedicated_bind_root_is_visible_to_inner_bind(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as tmp:

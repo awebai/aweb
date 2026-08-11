@@ -17,8 +17,28 @@ class MapError(RuntimeError):
     pass
 
 
-START_REQUIRED_KIB = 12 * 1024 * 1024
+# Conservative policy floors, not measurements of historical gate consumption.
+START_REQUIRED_KIB = 6 * 1024 * 1024
 BETWEEN_REQUIRED_KIB = 2 * 1024 * 1024
+
+
+def reclaim_transient_builder_cache(log_path: Path) -> None:
+    builder = os.environ.get("BUILDX_BUILDER", "").strip()
+    config = os.environ.get("BUILDX_CONFIG", "").strip()
+    if not builder:
+        raise RuntimeError("cache reclaim refused: BUILDX_BUILDER is empty")
+    if not config:
+        raise RuntimeError("cache reclaim refused: BUILDX_CONFIG is empty")
+    with log_path.open("wb") as log:
+        completed = subprocess.run(
+            ["docker", "buildx", "prune", "--all", "--force", "--builder", builder],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            env={**os.environ, "BUILDX_CONFIG": config},
+            check=False,
+        )
+    if completed.returncode:
+        raise RuntimeError(f"cache reclaim failed; log: {log_path}")
 
 
 def infrastructure_refusal(phase: str) -> str | None:
@@ -158,6 +178,13 @@ def run(
             failed = failed or completed.returncode != 0
             write_summary(summary, steps, states)
             print(f"=== {step.name}: {states[step.name]} (log {log_path}) ===", flush=True)
+            if step.name == "a2a-image":
+                try:
+                    reclaim_transient_builder_cache(log_dir / "a2a-image-cache-reclaim.log")
+                except RuntimeError as error:
+                    print(f"release gate infrastructure refusal: {error}", flush=True)
+                    failed = True
+                    break
     finally:
         write_summary(summary, steps, states)
         print("\n=== release gate summary ===")
