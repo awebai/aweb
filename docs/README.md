@@ -21,9 +21,9 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 93 tracked Markdown documents. This front door does not
+The baseline contains 94 tracked Markdown documents. This front door does not
 self-link, and two private-purpose transition artifacts are deliberately not
-exposed by public path or title. The remaining 90 public Markdown paths appear
+exposed by public path or title. The remaining 91 public Markdown paths appear
 below exactly once.
 
 ## Start here
@@ -214,6 +214,8 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   extension workflow.
 - [Open-source repository boundary](oss-boundary.md) — canonical framework versus
   application ownership and `.aw/` state policy.
+- [Release process](release.md) — the two-repository release specification:
+  local Docker gates once, thin GitHub publication, one global go.
 - [Runnerless release lane](runnerless-release.md) — first-class local
   build-once/stage/publish lane for GitHub Actions outages.
 - [A2A gateway release runbook](a2a-release-runbook.md) — public OSS gateway,
