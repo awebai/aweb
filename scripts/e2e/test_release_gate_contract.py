@@ -209,6 +209,7 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
                 PYPI,
                 self.assert_release_trigger_only,
                 PYPI.replace("branches: [release]", "branches: [main]", 1),
+                "Regex didn't match",
             ),
             (
                 "tag trigger",
@@ -219,6 +220,7 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
                     "branches: [release]\n    tags: ['v*']",
                     1,
                 ),
+                "tags:",
             ),
             (
                 "wrong SHA comparison",
@@ -228,30 +230,35 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
                     '[[ "$release_tip" == "$SOURCE_SHA" ]]',
                     '[[ "$release_tip" != "$SOURCE_SHA" ]]',
                 ),
+                '[[ "$release_tip" == "$SOURCE_SHA" ]]',
             ),
             (
                 "caller-supplied version",
                 PYPI,
                 self.assert_exact_release_identity,
                 PYPI + "\n# inputs.version\n",
+                "inputs.version",
             ),
             (
                 "suite reintroduction",
                 PYPI,
                 self.assert_thin,
                 PYPI + "\n# pytest\n",
+                "pytest",
             ),
             (
                 "aweb races AWID",
                 PYPI,
                 self.assert_pypi_contract,
                 PYPI.replace("needs: awid_service", "", 1),
+                "needs: awid_service",
             ),
             (
                 "single-platform image",
                 AWID_IMAGE,
                 self.assert_oci_contract,
                 AWID_IMAGE.replace("linux/amd64,linux/arm64", "linux/amd64", 1),
+                "--platform linux/amd64,linux/arm64",
             ),
             (
                 "wrong image version label",
@@ -262,6 +269,7 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
                     "org.opencontainers.image.version=unknown",
                     1,
                 ),
+                "org.opencontainers.image.version=${VERSION}",
             ),
             (
                 "wrong image revision label",
@@ -272,6 +280,7 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
                     "org.opencontainers.image.revision=unknown",
                     1,
                 ),
+                "org.opencontainers.image.revision=${SOURCE_SHA}",
             ),
             (
                 "digest verification removed",
@@ -280,18 +289,23 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
                 AWID_IMAGE.replace(
                     "oci-exact-publish.sh verify-published", "echo unverified", 1
                 ),
+                "oci-exact-publish.sh verify-published",
             ),
         )
-        for name, original, assertion, mutation in mutations:
+        for name, original, assertion, mutation, expected_reason in mutations:
             with self.subTest(mutation=name):
                 self.assertNotEqual(original, mutation, f"{name} mutation was a no-op")
                 with self.assertRaises((AssertionError, ValueError)) as caught:
                     assertion(mutation)
                 actual_reason = str(caught.exception)
-                self.assertTrue(actual_reason, f"{name} failed without an assertion reason")
+                self.assertIn(
+                    expected_reason,
+                    actual_reason,
+                    f"{name} failed for an unrelated assertion: {actual_reason}",
+                )
                 if os.environ.get("RELEASE_CONTRACT_MUTATION_REPORT") == "1":
                     concise_reason = actual_reason.split(" in ", 1)[0].replace("\n", " ")
-                    print(f"MUTATION RED: {name}: {concise_reason}")
+                    print(f"MUTATION RED: {name}: {concise_reason[:240]}")
 
     def test_fixture_registry_and_temp_remote_rehearse_order_retry_and_conflict(self) -> None:
         """No public writes: real exact-state primitives plus a temporary bare git remote."""
