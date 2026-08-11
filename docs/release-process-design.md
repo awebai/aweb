@@ -228,11 +228,13 @@ The manifest MUST contain:
 - **Deployment intent**: `none`, or the deployment target(s) with exact image
   digest, the ordered migration set to be applied, and the irreversibility
   statement (§13, §15).
-- **Deploy-target configuration**: for every known deployment target that
-  consumes any image in the set — whatever the deployment intent — the
-  target's standing image reference as read from the provider at assembly.
-  Each MUST be an immutable digest reference with tag-following and
-  registry-push auto-deploy absent (§15.1).
+- **Deploy-target configuration**: for every deployment target in the
+  enumerated population (§15.1) that consumes any image in the set —
+  whatever the deployment intent — the target's standing image reference as
+  read from the provider at assembly, plus the enumeration itself (which
+  provider accounts were listed and what they returned). Each target MUST be
+  an immutable digest reference with tag-following and registry-push
+  auto-deploy absent (§15.1).
 - **Break-glass marker**: normally absent. Present only when the attempt
   uses the break-glass procedure (§8.5), stating which evidence or execution
   steps were performed outside hosted CI and how each was bound to the same
@@ -247,9 +249,11 @@ NOT block sealing (§13.3).
 ### 6.3 Graph source
 
 The dependency and skew edges MUST come from one declared, versioned graph
-file (today `release/components.toml`, retained — §16.1). Set selection MUST
-refuse an artifact whose required edges are absent from the graph. The graph
-file is reviewed code; nothing may inject edges or artifacts at run time.
+file (today `release/components.toml`, retained — §16.1), which also declares
+the deployment provider accounts of §15.1. Set selection MUST refuse an
+artifact whose required edges are absent from the graph. The graph file is
+reviewed code; nothing may inject edges, artifacts, or provider accounts at
+run time.
 
 ## 7. The single human go
 
@@ -289,7 +293,8 @@ from the manifest:
 
 Exact tested artifacts, immutable identifiers, trusted publication,
 authoritative read-back, non-reusable authorization, and digest-pinned
-standing configuration on every known deployment target (§15.1) are mandatory
+standing configuration on every deployment target in the enumerated
+population (§15.1) are mandatory
 properties the tooling enforces (§8, §11, §15, §20). They MUST be enforced
 mechanically and MUST NOT be presented to the human as questions. If a
 mechanical property cannot be established, the attempt is not presentable for
@@ -624,16 +629,28 @@ on production. A service configured to follow a mutable tag (for example
 deployment intent is declared, and the go's boundary (§13) becomes false by
 configuration. Therefore:
 
-- Every known deployment target MUST be pinned, as standing configuration,
-  to an immutable digest reference (`ghcr.io/awebai/ac@sha256:…`), with
-  tag-following and registry-push auto-deploy absent.
-- Manifest assembly MUST read each such target's standing configuration from
-  the provider API and record it in the manifest (§6.2). If any target that
-  consumes an image in the set follows a mutable tag or auto-deploys on
-  registry push, the attempt is not presentable for a go at all — regardless
-  of deployment intent, including `none`.
-- Pre-effect verification (§7.4) MUST re-read the standing configuration and
-  refuse to publish if it drifted from what assembly recorded.
+- **The target population is enumerated, not maintained.** The provider
+  accounts to inspect are declared in the versioned graph file (§6.3) —
+  reviewed code, like the artifacts. Manifest assembly MUST enumerate all
+  services in each declared provider account via the provider API and select
+  every service whose standing configuration references any image repository
+  in the set. Throughout this document, "known deployment target" means a
+  member of this enumerated population. A service nobody registered cannot
+  escape the check by being unregistered: it is found by enumeration, or it
+  runs under a provider account the graph does not declare — and adding a
+  provider account is a reviewed graph change, not a runtime discovery.
+- Every deployment target in that population MUST be pinned, as standing
+  configuration, to an immutable digest reference
+  (`ghcr.io/awebai/ac@sha256:…`), with tag-following and registry-push
+  auto-deploy absent.
+- Manifest assembly MUST record each enumerated target's standing
+  configuration in the manifest (§6.2). If any target that consumes an image
+  in the set follows a mutable tag or auto-deploys on registry push, the
+  attempt is not presentable for a go at all — regardless of deployment
+  intent, including `none`.
+- Pre-effect verification (§7.4) MUST re-run the enumeration and re-read the
+  standing configurations, and refuse to publish if either drifted from what
+  assembly recorded.
 
 Deployment itself MUST target the image by immutable digest, the digest from
 the manifest — never a mutable tag. Repointing the service and triggering the
@@ -862,10 +879,15 @@ Normative acceptance for the implemented process:
   entry (§11.3); every deployment's read-back proves identity from the
   provider-reported running image digest, with label equality as
   corroboration only (§15.3).
-- A known deployment target whose standing configuration follows a mutable
-  tag or auto-deploys on registry push mechanically prevents go presentation
-  for any set containing an image it consumes, including sets with
-  deployment intent `none` (§15.1).
+- A deployment target whose standing configuration follows a mutable tag or
+  auto-deploys on registry push mechanically prevents go presentation for
+  any set containing an image it consumes, including sets with deployment
+  intent `none` (§15.1).
+- The deploy-target population is derived by provider-API enumeration over
+  the graph-declared provider accounts, never from a hand-maintained target
+  list (§15.1). Demonstrated by the shadow exercise (§18.8): a service
+  created without registration, consuming a set image and following a
+  mutable tag, is discovered by enumeration and blocks go presentation.
 - Concurrent duplicate dispatch of the same manifest entry cannot publish
   twice: the second dispatch fails to acquire the atomic claim and refuses
   (§11.2).
