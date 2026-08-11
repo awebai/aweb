@@ -18,6 +18,7 @@
 #   AWEB_ALPHA_E2E_PORT   alpha aweb host port (default: 8320)
 #   AWEB_BETA_E2E_PORT    beta aweb host port (default: 8330)
 #   AWEB_FED_E2E_BUILD    set to 0 to skip docker compose build
+#   AWEB_FED_E2E_KEEP     set to 1 to leave containers/temp dir for debugging
 #   AWEB_FED_E2E_SERVER_MODE source (default) or wheel; wheel requires exact
 #                            alpha/beta wheel path, version, and sha256 inputs
 #   AWEB_FED_E2E_DIRECTION a-to-b (default) or b-to-a for the cell proof
@@ -34,21 +35,13 @@ canonicalize_dir() {
 }
 
 make_temp_dir() {
-  local prefix="$1" dir canonical
-  if ! dir="$(mktemp -d "$TEMP_ROOT/${prefix}.XXXXXX")"; then
-    echo "could not allocate federation temp directory" >&2
-    return 1
-  fi
-  canonical="$(canonicalize_dir "$dir")" || return 1
-  [[ "$(dirname "$canonical")" == "$TEMP_ROOT" && "$(basename "$canonical")" == "$prefix".* ]] \
-    || { echo "unexpected federation temp directory: $canonical" >&2; return 1; }
-  printf '%s\n' "$canonical"
+  local prefix="$1"
+  local dir
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX")"
+  canonicalize_dir "$dir"
 }
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-TEMP_ROOT="$(canonicalize_dir "${TMPDIR:-/tmp}")"
-[[ "$TEMP_ROOT" != / && "$TEMP_ROOT" != "$REPO_ROOT" && "$TEMP_ROOT" != "$REPO_ROOT"/* ]] \
-  || { echo "refusing unsafe federation temp root: $TEMP_ROOT" >&2; exit 2; }
 SERVER_DIR="$REPO_ROOT/server"
 CLI_DIR="$REPO_ROOT/cli/go"
 
@@ -58,9 +51,6 @@ BETA_PORT="${AWEB_BETA_E2E_PORT:-8330}"
 DOCKER_BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
 [[ "$DOCKER_BIND_ROOT" = /* && -d "$DOCKER_BIND_ROOT" ]] \
   || { echo "AWEB_DOCKER_BIND_ROOT must be an existing absolute directory" >&2; exit 2; }
-DOCKER_BIND_ROOT="$(canonicalize_dir "$DOCKER_BIND_ROOT")"
-[[ "$DOCKER_BIND_ROOT" != / && "$DOCKER_BIND_ROOT" != "$REPO_ROOT" ]] \
-  || { echo "refusing unsafe AWEB_DOCKER_BIND_ROOT: $DOCKER_BIND_ROOT" >&2; exit 2; }
 DOCKER_PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
 case "$DOCKER_PUBLISHED_HOST" in
   127.0.0.1|aweb-docker.test) ;;
@@ -78,14 +68,8 @@ CELL_ID="${AWEB_FED_E2E_CELL_ID:-source-journey}"
 ROUTE_PROBE_ONLY="${AWEB_FED_E2E_ROUTE_PROBE_ONLY:-0}"
 
 E2E_ROOT="$(make_temp_dir aw-fed-e2e)"
-if ! DOCKER_RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/aw-fed-docker.XXXXXX")"; then
-  echo "could not allocate federation Docker runtime" >&2
-  exit 2
-fi
+DOCKER_RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/aw-fed-docker.XXXXXX")"
 DOCKER_RUNTIME="$(canonicalize_dir "$DOCKER_RUNTIME")"
-[[ "$(dirname "$DOCKER_RUNTIME")" == "$DOCKER_BIND_ROOT" \
-  && "$(basename "$DOCKER_RUNTIME")" == aw-fed-docker.* ]] \
-  || { echo "unexpected federation Docker runtime: $DOCKER_RUNTIME" >&2; exit 2; }
 E2E_HOME="$E2E_ROOT/home"
 COMPOSE_FILE="$DOCKER_RUNTIME/docker-compose.yml"
 DNS_DIR="$DOCKER_RUNTIME/dns"
@@ -102,24 +86,16 @@ mkdir -p "$E2E_HOME" "$DNS_DIR" "$ALICE_DIR" "$ANN_DIR" "$NED_DIR" "$BOB_DIR" "$
 pass=0
 fail=0
 
-remove_runtime() {
-  local path="$1" parent="$2" prefix="$3"
-  if [[ -z "$path" \
-    || "$(dirname "$path")" != "$parent" \
-    || "$(basename "$path")" != "$prefix".* \
-    || "$path" == / \
-    || "$path" == "$REPO_ROOT" ]]; then
-    echo "refusing unsafe federation cleanup: ${path:-<empty>}" >&2
-    return 1
-  fi
-  rm -rf -- "$path"
-}
-
 cleanup() {
   local status=$?
   echo ""
   echo "--- Cleanup ---"
-  if [[ -f "$COMPOSE_FILE" ]]; then
+  if [[ "${AWEB_FED_E2E_KEEP:-0}" == "1" ]]; then
+    echo "Keeping federation e2e artifacts for debugging:"
+    echo "  project: $PROJECT"
+    echo "  root:    $E2E_ROOT"
+    echo "  docker:  $DOCKER_RUNTIME"
+  elif [[ -f "$COMPOSE_FILE" ]]; then
     if [[ $status -ne 0 || $fail -gt 0 ]]; then
       echo "  --- failed federation service logs ---"
       compose logs --tail 200 --no-color awid federation-dns aweb-alpha aweb-beta 2>&1 || true
@@ -145,9 +121,11 @@ cleanup() {
       echo "Targeted teardown left images for $PROJECT" >&2
       status=1
     fi
+    rm -rf "$E2E_ROOT" "$DOCKER_RUNTIME"
+  else
+    # Pre-compose validation failures still own only these mktemp directories.
+    rm -rf "$E2E_ROOT" "$DOCKER_RUNTIME"
   fi
-  remove_runtime "$E2E_ROOT" "$TEMP_ROOT" aw-fed-e2e || status=1
-  remove_runtime "$DOCKER_RUNTIME" "$DOCKER_BIND_ROOT" aw-fed-docker || status=1
   echo ""
   if [[ $fail -gt 0 ]]; then
     echo "FAILED: $fail failures, $pass passed"

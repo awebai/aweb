@@ -10,16 +10,7 @@ PROJECT="${AWEB_FED_AUTH_PROJECT:-aweb-fed-auth-$RANDOM-$$}"
 DOCKER_BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
 [[ "$DOCKER_BIND_ROOT" = /* && -d "$DOCKER_BIND_ROOT" ]] \
   || { echo "AWEB_DOCKER_BIND_ROOT must be an existing absolute directory" >&2; exit 2; }
-DOCKER_BIND_ROOT="$(cd "$DOCKER_BIND_ROOT" && pwd -P)"
-[[ "$DOCKER_BIND_ROOT" != / && "$DOCKER_BIND_ROOT" != "$ROOT" ]] \
-  || { echo "refusing unsafe AWEB_DOCKER_BIND_ROOT: $DOCKER_BIND_ROOT" >&2; exit 2; }
-if ! RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/aweb-fed-auth.XXXXXX")"; then
-  echo "could not allocate federation authority runtime" >&2
-  exit 2
-fi
-RUNTIME="$(cd "$RUNTIME" && pwd -P)"
-[[ "$(dirname "$RUNTIME")" == "$DOCKER_BIND_ROOT" && "$(basename "$RUNTIME")" == aweb-fed-auth.* ]] \
-  || { echo "unexpected federation authority runtime: $RUNTIME" >&2; exit 2; }
+RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/aweb-fed-auth.XXXXXX")"
 COMPOSE_FILE="$RUNTIME/docker-compose.yml"
 TLS_DIR="$RUNTIME/tls"
 ARTIFACT_DIR="${AWEB_FED_AUTH_ARTIFACT_DIR:-$ROOT/.cache/federation-authority}"
@@ -47,6 +38,10 @@ cleanup() {
   if [[ $status -ne 0 && -f "$COMPOSE_FILE" ]]; then
     compose logs --tail 120 --no-color awid-a awid-b aweb-a-1 aweb-a-2 aweb-b-1 aweb-b-2 >&2 || true
   fi
+  if [[ "${AWEB_FED_AUTH_KEEP:-0}" == "1" ]]; then
+    echo "Keeping disposable harness project $PROJECT at $RUNTIME" >&2
+    return "$status"
+  fi
   if [[ -f "$COMPOSE_FILE" ]]; then
     compose down -v --rmi local --remove-orphans >/dev/null 2>&1 || status=1
     if docker ps -aq --filter label=com.docker.compose.project="$PROJECT" | grep -q .; then
@@ -66,15 +61,7 @@ cleanup() {
       status=1
     fi
   fi
-  if [[ "$(dirname "$RUNTIME")" == "$DOCKER_BIND_ROOT" \
-    && "$(basename "$RUNTIME")" == aweb-fed-auth.* \
-    && "$RUNTIME" != / \
-    && "$RUNTIME" != "$ROOT" ]]; then
-    rm -rf -- "$RUNTIME" || status=1
-  else
-    echo "refusing unsafe federation authority cleanup: $RUNTIME" >&2
-    status=1
-  fi
+  rm -rf "$RUNTIME"
   exit "$status"
 }
 trap cleanup EXIT

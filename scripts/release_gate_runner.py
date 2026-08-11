@@ -12,28 +12,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
-import release_gate_capacity as capacity
-
 
 class MapError(RuntimeError):
     pass
 
 
-class InfrastructureError(RuntimeError):
-    pass
+START_REQUIRED_KIB = 12 * 1024 * 1024
+BETWEEN_REQUIRED_KIB = 2 * 1024 * 1024
 
 
-def verify_checkout(
-    expected_root: Path | None = None,
-    expected_sha: str | None = None,
-) -> None:
-    if expected_root is None:
-        root_value = os.environ.get("RELEASE_GATE_CHECKOUT_ROOT")
-        expected_root = Path(root_value) if root_value else Path.cwd()
-    if expected_sha is None:
-        expected_sha = os.environ.get("RELEASE_GATE_SOURCE_SHA")
+def infrastructure_refusal(phase: str) -> str | None:
     try:
-        expected = expected_root.resolve(strict=True)
+        expected = Path(os.environ.get("RELEASE_GATE_CHECKOUT_ROOT", Path.cwd())).resolve(strict=True)
         actual = Path.cwd().resolve(strict=True)
         completed = subprocess.run(
             ["git", "-C", str(expected), "rev-parse", "--show-toplevel", "HEAD"],
@@ -41,20 +31,24 @@ def verify_checkout(
             text=True,
             check=False,
         )
+        lines = completed.stdout.splitlines()
+        git_root = Path(lines[0]).resolve(strict=True) if len(lines) == 2 else None
     except (OSError, RuntimeError) as error:
-        raise InfrastructureError(f"checkout is unavailable: {error}") from error
-    lines = completed.stdout.splitlines()
-    if completed.returncode != 0 or len(lines) != 2:
-        raise InfrastructureError("checkout git identity is unavailable")
-    git_root = Path(lines[0]).resolve(strict=True)
-    if actual != expected or git_root != expected:
-        raise InfrastructureError(
-            f"checkout root changed: expected={expected} cwd={actual} git_root={git_root}"
-        )
+        return f"checkout is unavailable: {error}"
+    expected_sha = os.environ.get("RELEASE_GATE_SOURCE_SHA")
+    if completed.returncode or actual != expected or git_root != expected:
+        return f"checkout root changed: expected={expected} cwd={actual} git_root={git_root}"
     if expected_sha and lines[1] != expected_sha:
-        raise InfrastructureError(
-            f"checkout HEAD changed: expected={expected_sha} actual={lines[1]}"
+        return f"checkout HEAD changed: expected={expected_sha} actual={lines[1]}"
+    required = START_REQUIRED_KIB if phase == "start" else BETWEEN_REQUIRED_KIB
+    stats = os.statvfs("/")
+    available = stats.f_bavail * stats.f_frsize // 1024
+    if available < required:
+        return (
+            f"Docker daemon filesystem capacity insufficient ({phase}): "
+            f"required_kib={required} available_kib={available}"
         )
+    return None
 
 
 @dataclass(frozen=True)
@@ -128,8 +122,7 @@ def run(
     map_path: Path,
     log_dir: Path,
     command_prefix: Sequence[str],
-    capacity_probe: Callable[[str], capacity.Capacity] = capacity.measure,
-    checkout_probe: Callable[[], None] = verify_checkout,
+    probe: Callable[[str], str | None] = infrastructure_refusal,
 ) -> int:
     if not command_prefix or any(not item for item in command_prefix):
         raise MapError("make command prefix is empty")
@@ -141,26 +134,15 @@ def run(
     write_summary(summary, steps, states)
     failed = False
     try:
-        try:
-            checkout_probe()
-        except InfrastructureError as error:
-            print(f"release gate infrastructure refusal: {error}", flush=True)
-            return 1
-        start_capacity = capacity_probe("start")
-        print(start_capacity.message(), flush=True)
-        if not start_capacity.sufficient:
+        refusal = probe("start")
+        if refusal:
+            print(f"release gate infrastructure refusal: {refusal}", flush=True)
             return 1
         for index, step in enumerate(steps, 1):
             if index > 1:
-                try:
-                    checkout_probe()
-                except InfrastructureError as error:
-                    print(f"release gate infrastructure refusal: {error}", flush=True)
-                    failed = True
-                    break
-                between_capacity = capacity_probe("between")
-                print(between_capacity.message(), flush=True)
-                if not between_capacity.sufficient:
+                refusal = probe("between")
+                if refusal:
+                    print(f"release gate infrastructure refusal: {refusal}", flush=True)
                     failed = True
                     break
             print(f"\n=== release gate {index}/{len(steps)}: {step.name} ({step.target}) ===", flush=True)

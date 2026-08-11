@@ -36,48 +36,35 @@ canonicalize_dir() {
   bash -c 'cd "$1" && pwd -P' _ "$dir"
 }
 
-make_temp_dir() {
-  local prefix="$1" dir canonical
-  if ! dir="$(mktemp -d "$TEMP_ROOT/${prefix}.XXXXXX")"; then
-    echo "FATAL: could not allocate $prefix under $TEMP_ROOT" >&2
-    return 1
-  fi
-  canonical="$(canonicalize_dir "$dir")" || return 1
-  [[ "$(dirname "$canonical")" == "$TEMP_ROOT" && "$(basename "$canonical")" == "$prefix".* ]] \
-    || { echo "FATAL: unexpected temp allocation: $canonical" >&2; return 1; }
-  printf '%s\n' "$canonical"
-}
-
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TEMP_ROOT="$(canonicalize_dir "${TMPDIR:-/tmp}")"
 case "$TEMP_ROOT" in
   /|"$REPO_ROOT"|"$REPO_ROOT"/*) echo "FATAL: unsafe journey temp root: $TEMP_ROOT" >&2; exit 2 ;;
 esac
-OWNED_TEMPS=()
-remove_expected_temp() {
-  local path="$1" prefix="$2" canonical
-  [[ -n "$path" && -e "$path" ]] || return 0
-  canonical="$(canonicalize_dir "$path")" || return 1
-  if [[ "$(dirname "$canonical")" != "$TEMP_ROOT" \
-    || "$(basename "$canonical")" != "$prefix".* \
-    || "$canonical" == / \
-    || "$canonical" == "$REPO_ROOT" \
-    || "$canonical" == "$REPO_ROOT"/* ]]; then
-    echo "REFUSED unsafe journey cleanup: $canonical" >&2
+if ! E2E_ROOT_RAW="$(mktemp -d "$TEMP_ROOT/aw-e2e.XXXXXX")"; then
+  echo "FATAL: could not allocate aw-e2e under $TEMP_ROOT" >&2
+  exit 2
+fi
+remove_e2e_root() {
+  [[ -z "${E2E_ROOT_RAW:-}" || ! -e "$E2E_ROOT_RAW" ]] && return 0
+  if [[ "$(dirname "$E2E_ROOT_RAW")" != "$TEMP_ROOT" \
+    || "$(basename "$E2E_ROOT_RAW")" != aw-e2e.* \
+    || "$E2E_ROOT_RAW" == / \
+    || "$E2E_ROOT_RAW" == "$REPO_ROOT" \
+    || "$E2E_ROOT_RAW" == "$REPO_ROOT"/* ]]; then
+    echo "REFUSED unsafe journey cleanup: $E2E_ROOT_RAW" >&2
     return 1
   fi
-  rm -rf -- "$canonical"
+  rm -rf -- "$E2E_ROOT_RAW"
 }
-cleanup_allocations() {
-  local item path prefix status=0
-  for item in "${OWNED_TEMPS[@]}"; do
-    path="${item%%|*}"
-    prefix="${item#*|}"
-    remove_expected_temp "$path" "$prefix" || status=1
-  done
-  return "$status"
-}
-trap cleanup_allocations EXIT
+trap remove_e2e_root EXIT
+if ! E2E_ROOT="$(canonicalize_dir "$E2E_ROOT_RAW")" \
+  || [[ "$(dirname "$E2E_ROOT")" != "$TEMP_ROOT" \
+    || "$(basename "$E2E_ROOT")" != aw-e2e.* ]]; then
+  echo "FATAL: unexpected temp allocation: ${E2E_ROOT:-$E2E_ROOT_RAW}" >&2
+  exit 2
+fi
+E2E_ROOT_RAW="$E2E_ROOT"
 SERVER_DIR="$REPO_ROOT/server"
 CLI_DIR="$REPO_ROOT/cli/go"
 
@@ -98,10 +85,8 @@ compose() {
 }
 
 # Isolated temp dirs
-E2E_HOME="$(make_temp_dir aw-e2e-home)"
-OWNED_TEMPS+=("$E2E_HOME|aw-e2e-home")
-E2E_CWD="$(make_temp_dir aw-e2e-cwd)"
-OWNED_TEMPS+=("$E2E_CWD|aw-e2e-cwd")
+E2E_HOME="$E2E_ROOT/home"
+E2E_CWD="$E2E_ROOT/cwd"
 ALICE_DIR="$E2E_CWD/alice"
 BOB_DIR="$E2E_CWD/bob"
 NO_KEY_DIR="$E2E_CWD/nokey"
@@ -122,13 +107,10 @@ BOOTSTRAP_PROJECT_DIR="$E2E_CWD/bootstrap-project"
 BOOTSTRAP_TEMPLATE_DIR="$E2E_CWD/bootstrap-template"
 BOOTSTRAP_LEGACY_TEMPLATE_DIR="$E2E_CWD/bootstrap-legacy-template"
 BOOTSTRAP_LEGACY_WORK_DIR="$E2E_CWD/bootstrap-legacy-work"
-REMOTE_ERIN_HOME="$(make_temp_dir aw-e2e-remote-erin-home)"
-OWNED_TEMPS+=("$REMOTE_ERIN_HOME|aw-e2e-remote-erin-home")
-WRONG_DID_HOME="$(make_temp_dir aw-e2e-wrong-did-home)"
-OWNED_TEMPS+=("$WRONG_DID_HOME|aw-e2e-wrong-did-home")
-CAROL_NO_PIN_HOME="$(make_temp_dir aw-e2e-carol-no-pin-home)"
-OWNED_TEMPS+=("$CAROL_NO_PIN_HOME|aw-e2e-carol-no-pin-home")
-mkdir -p "$ALICE_DIR" "$BOB_DIR" "$NO_KEY_DIR" "$EVE_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR" "$SERVICE_CONTROLLER_DIR" "$SERVICE_ALPHA_DIR" "$SERVICE_BETA_DIR" "$BOOTSTRAP_PROJECT_DIR" "$BOOTSTRAP_TEMPLATE_DIR" "$BOOTSTRAP_LEGACY_TEMPLATE_DIR" "$BOOTSTRAP_LEGACY_WORK_DIR"
+REMOTE_ERIN_HOME="$E2E_ROOT/remote-erin-home"
+WRONG_DID_HOME="$E2E_ROOT/wrong-did-home"
+CAROL_NO_PIN_HOME="$E2E_ROOT/carol-no-pin-home"
+mkdir -p "$E2E_HOME" "$ALICE_DIR" "$BOB_DIR" "$NO_KEY_DIR" "$EVE_DIR" "$CAROL_DIR" "$DAVE_DIR" "$GSK_DIR" "$REMOTE_ERIN_DIR" "$WRONG_DID_DIR" "$PARTNER_CONTROLLER_DIR" "$PARTNER_BOB_DIR" "$RECONNECT_DIR" "$WIZARD_BYOD_DIR" "$SERVICE_CONTROLLER_DIR" "$SERVICE_ALPHA_DIR" "$SERVICE_BETA_DIR" "$BOOTSTRAP_PROJECT_DIR" "$BOOTSTRAP_TEMPLATE_DIR" "$BOOTSTRAP_LEGACY_TEMPLATE_DIR" "$BOOTSTRAP_LEGACY_WORK_DIR"
 mkdir -p "$CAROL_NO_PIN_HOME/.config/aw"
 ALICE_DIR="$(canonicalize_dir "$ALICE_DIR")"
 BOB_DIR="$(canonicalize_dir "$BOB_DIR")"
@@ -203,7 +185,7 @@ cleanup() {
       fi
     done
   fi
-  cleanup_allocations || status=1
+  remove_e2e_root || status=1
   echo ""
   if [[ $fail -gt 0 ]]; then
     echo "FAILED: $fail failures, $pass passed"
@@ -909,7 +891,7 @@ echo "=== Phase 9b: E2E mail ciphertext-at-rest ==="
 
 E2EE_LOCAL_SUBJECT="E2EE_LOCAL_SUBJECT_SENTINEL_260526"
 E2EE_LOCAL_BODY="E2EE_LOCAL_BODY_SENTINEL_260526"
-e2ee_sse_capture_file="$(mktemp "${TMPDIR:-/tmp}/aw-e2ee-sse.XXXXXX")"
+e2ee_sse_capture_file="$(mktemp "$E2E_ROOT/aw-e2ee-sse.XXXXXX")"
 run_aw_in "$BOB_DIR" events stream --json --timeout 8 >"$e2ee_sse_capture_file" 2>/dev/null &
 e2ee_sse_pid=$!
 sleep 2
@@ -950,7 +932,7 @@ assert_eq "e2ee mail plaintext absent from chat storage" "0" "$chat_plaintext_co
 assert_file_not_contains "e2ee plaintext absent from SSE capture subject" "$e2ee_sse_capture_file" "$E2EE_LOCAL_SUBJECT"
 assert_file_not_contains "e2ee plaintext absent from SSE capture body" "$e2ee_sse_capture_file" "$E2EE_LOCAL_BODY"
 assert_file_not_contains "e2ee plaintext absent from docker aweb logs" <(cd "$SERVER_DIR" && compose logs --no-color aweb 2>/dev/null || true) "$E2EE_LOCAL_BODY"
-e2ee_dump_file="$(mktemp "${TMPDIR:-/tmp}/aw-e2ee-db-dump.XXXXXX")"
+e2ee_dump_file="$(mktemp "$E2E_ROOT/aw-e2ee-db-dump.XXXXXX")"
 (cd "$SERVER_DIR" && compose exec -T postgres pg_dump -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" -n aweb -n server >"$e2ee_dump_file" 2>/dev/null || true)
 assert_file_not_contains "e2ee plaintext absent from db dump subject" "$e2ee_dump_file" "$E2EE_LOCAL_SUBJECT"
 assert_file_not_contains "e2ee plaintext absent from db dump body" "$e2ee_dump_file" "$E2EE_LOCAL_BODY"
@@ -964,7 +946,7 @@ echo ""
 echo "=== Phase 9c: E2E chat ciphertext-at-rest ==="
 
 E2EE_CHAT_BODY="E2EE_CHAT_BODY_SENTINEL_260526"
-e2ee_chat_sse_capture_file="$(mktemp "${TMPDIR:-/tmp}/aw-e2ee-chat-sse.XXXXXX")"
+e2ee_chat_sse_capture_file="$(mktemp "$E2E_ROOT/aw-e2ee-chat-sse.XXXXXX")"
 run_aw_in "$BOB_DIR" events stream --json --timeout 8 >"$e2ee_chat_sse_capture_file" 2>/dev/null &
 e2ee_chat_sse_pid=$!
 sleep 2
@@ -1013,7 +995,7 @@ e2ee_chat_plaintext_count="$(psql_scalar "SELECT COUNT(*) FROM aweb.chat_message
 assert_eq "e2ee chat plaintext absent from chat storage" "0" "$e2ee_chat_plaintext_count"
 assert_file_not_contains "e2ee chat plaintext absent from SSE capture" "$e2ee_chat_sse_capture_file" "$E2EE_CHAT_BODY"
 assert_file_not_contains "e2ee chat plaintext absent from docker aweb logs" <(cd "$SERVER_DIR" && compose logs --no-color aweb 2>/dev/null || true) "$E2EE_CHAT_BODY"
-e2ee_chat_dump_file="$(mktemp "${TMPDIR:-/tmp}/aw-e2ee-chat-db-dump.XXXXXX")"
+e2ee_chat_dump_file="$(mktemp "$E2E_ROOT/aw-e2ee-chat-db-dump.XXXXXX")"
 (cd "$SERVER_DIR" && compose exec -T postgres pg_dump -U "${POSTGRES_USER:-aweb}" -d "${POSTGRES_DB:-aweb}" -n aweb -n server >"$e2ee_chat_dump_file" 2>/dev/null || true)
 assert_file_not_contains "e2ee chat plaintext absent from db dump" "$e2ee_chat_dump_file" "$E2EE_CHAT_BODY"
 echo ""
@@ -1891,7 +1873,7 @@ fi
 assert_eq "sse continuation initial mail exit" "0" "$sse_initial_exit"
 sse_conversation_id="$(echo "$sse_initial_out" | jq_field conversation_id)"
 assert_not_empty "sse continuation initial returns conversation_id" "$sse_conversation_id"
-sse_capture_file="$(mktemp "${TMPDIR:-/tmp}/aw-sse-conversation.XXXXXX")"
+sse_capture_file="$(mktemp "$E2E_ROOT/aw-sse-conversation.XXXXXX")"
 run_aw_in "$BOB_DIR" events stream --json --timeout 8 >"$sse_capture_file" 2>/dev/null &
 sse_capture_pid=$!
 sleep 2
@@ -2749,9 +2731,9 @@ phase_amy_symptom_reproducer() {
   # suffix). Use plain temp files; consumers (python parse) don't care about
   # the file extension.
   local capture_file
-  capture_file="$(mktemp "${TMPDIR:-/tmp}/amy-channel-capture-jsonl.XXXXXX")"
+  capture_file="$(mktemp "$E2E_ROOT/amy-channel-capture-jsonl.XXXXXX")"
   local capture_log
-  capture_log="$(mktemp "${TMPDIR:-/tmp}/amy-channel-capture-log.XXXXXX")"
+  capture_log="$(mktemp "$E2E_ROOT/amy-channel-capture-log.XXXXXX")"
   HOME="$E2E_HOME" \
   AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
   AWID_REGISTRY_URL="$AWID_URL" \

@@ -38,15 +38,10 @@ git -C "$ROOT" merge-base --is-ancestor "$RELEASE_BASE_SHA" "$SOURCE_SHA" \
 command -v docker >/dev/null || refuse "docker is unavailable"
 docker info >/dev/null || refuse "docker daemon is unavailable"
 
-if ! work="$(mktemp -d "${TMPDIR:-/tmp}/aweb-release-work.XXXXXX")"; then
+if ! work="$(mktemp -d "/tmp/aweb-release-work.XXXXXX")"; then
   refuse "could not allocate the release work directory"
 fi
 work="$(cd "$work" && pwd -P)"
-case "$work" in
-  /|"$ROOT"|"$ROOT"/*) refuse "unsafe release work directory: $work" ;;
-  */aweb-release-work.*) ;;
-  *) refuse "unexpected release work directory: $work" ;;
-esac
 owned_containers=()
 owned_network=""
 owned_builder=""
@@ -60,77 +55,56 @@ suite_projects=(
   "$gate_run_id-federation"
   "$gate_run_id-library"
 )
-cleanup_project() {
-  local project="$1" ids
-  ids="$(docker ps -aq --filter "label=com.docker.compose.project=$project")"
-  [[ -z "$ids" ]] || docker rm -f $ids >/dev/null 2>&1 || return 1
-  ids="$(docker network ls -q --filter "label=com.docker.compose.project=$project")"
-  [[ -z "$ids" ]] || docker network rm $ids >/dev/null 2>&1 || return 1
-  ids="$(docker volume ls -q --filter "label=com.docker.compose.project=$project")"
-  [[ -z "$ids" ]] || docker volume rm -f $ids >/dev/null 2>&1 || return 1
-  ids="$(docker images -q --filter "label=com.docker.compose.project=$project" | sort -u)"
-  [[ -z "$ids" ]] || docker image rm -f $ids >/dev/null 2>&1 || return 1
-}
-project_has_residue() {
-  local project="$1"
-  [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$project")" \
-    || -n "$(docker network ls -q --filter "label=com.docker.compose.project=$project")" \
-    || -n "$(docker volume ls -q --filter "label=com.docker.compose.project=$project")" \
-    || -n "$(docker images -q --filter "label=com.docker.compose.project=$project")" ]]
-}
 cleanup() {
-  local original_status=$? cleanup_status=0 project builder_container builder_volume
+  local original_status=$? cleanup_status=0 project resource ids
+  local -a list remove
   trap - EXIT
   set +e
   for project in "${suite_projects[@]}"; do
-    cleanup_project "$project" || cleanup_status=1
+    for resource in container network volume image; do
+      case "$resource" in
+        container) list=(docker ps -aq); remove=(docker rm -f) ;;
+        network) list=(docker network ls -q); remove=(docker network rm) ;;
+        volume) list=(docker volume ls -q); remove=(docker volume rm -f) ;;
+        image) list=(docker images -q); remove=(docker image rm -f) ;;
+      esac
+      ids="$("${list[@]}" --filter "label=com.docker.compose.project=$project" | sort -u)" \
+        || cleanup_status=1
+      [[ -z "$ids" ]] || "${remove[@]}" $ids >/dev/null 2>&1 || cleanup_status=1
+      ids="$("${list[@]}" --filter "label=com.docker.compose.project=$project")" \
+        || cleanup_status=1
+      if [[ -n "$ids" ]]; then
+        printf 'release gate cleanup residue: %s %s\n' "$project" "$resource" >&2
+        cleanup_status=1
+      fi
+    done
   done
-  if [[ "${#owned_containers[@]}" -gt 0 ]]; then
-    docker rm -f "${owned_containers[@]}" >/dev/null 2>&1 || cleanup_status=1
-  fi
+  [[ "${#owned_containers[@]}" -eq 0 ]] \
+    || docker rm -f "${owned_containers[@]}" >/dev/null 2>&1 \
+    || cleanup_status=1
   if [[ -n "$owned_builder" ]]; then
     BUILDX_CONFIG="$buildx_config" docker buildx rm "$owned_builder" >/dev/null 2>&1 || true
-    builder_container="buildx_buildkit_${owned_builder}0"
-    builder_volume="${builder_container}_state"
-    docker rm -f "$builder_container" >/dev/null 2>&1 || true
-    docker volume rm -f "$builder_volume" >/dev/null 2>&1 || true
+    docker rm -f "buildx_buildkit_${owned_builder}0" >/dev/null 2>&1 || true
+    docker volume rm -f "buildx_buildkit_${owned_builder}0_state" >/dev/null 2>&1 || true
   fi
-  if [[ -n "$owned_network" ]]; then
-    docker network rm "$owned_network" >/dev/null 2>&1 || cleanup_status=1
-  fi
+  [[ -z "$owned_network" ]] || docker network rm "$owned_network" >/dev/null 2>&1 \
+    || cleanup_status=1
   docker image rm "$IMAGE" >/dev/null 2>&1 || true
-  for project in "${suite_projects[@]}"; do
-    if project_has_residue "$project"; then
-      printf 'release gate cleanup residue: compose project %s\n' "$project" >&2
-      cleanup_status=1
-    fi
+  for ids in "${owned_containers[@]}"; do
+    ! docker container inspect "$ids" >/dev/null 2>&1 || cleanup_status=1
   done
-  if [[ -n "$owned_builder" ]] && {
-    docker container inspect "buildx_buildkit_${owned_builder}0" >/dev/null 2>&1 \
-      || docker volume inspect "buildx_buildkit_${owned_builder}0_state" >/dev/null 2>&1;
-  }; then
-    printf 'release gate cleanup residue: builder %s\n' "$owned_builder" >&2
-    cleanup_status=1
-  fi
+  [[ -z "$owned_builder" ]] \
+    || { ! docker container inspect "buildx_buildkit_${owned_builder}0" >/dev/null 2>&1 \
+      && ! docker volume inspect "buildx_buildkit_${owned_builder}0_state" >/dev/null 2>&1; } \
+    || cleanup_status=1
   [[ -z "$owned_network" ]] || ! docker network inspect "$owned_network" >/dev/null 2>&1 \
     || cleanup_status=1
-  for container in "${owned_containers[@]}"; do
-    if docker container inspect "$container" >/dev/null 2>&1; then
-      printf 'release gate cleanup residue: container %s\n' "$container" >&2
-      cleanup_status=1
-    fi
-  done
-  if docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    printf 'release gate cleanup residue: image %s\n' "$IMAGE" >&2
-    cleanup_status=1
-  fi
+  ! docker image inspect "$IMAGE" >/dev/null 2>&1 || cleanup_status=1
   case "$work" in
     /|"$ROOT"|"$ROOT"/*) cleanup_status=1 ;;
     */aweb-release-work.*) rm -rf -- "$work" || cleanup_status=1 ;;
     *) cleanup_status=1 ;;
   esac
-  [[ ! -e "$buildx_config" && -z "$docker_bind_root" || ! -e "$docker_bind_root" ]] \
-    || cleanup_status=1
   if [[ "$cleanup_status" -ne 0 ]]; then
     printf 'release gate cleanup FAILED\n' >&2
   else
@@ -173,10 +147,6 @@ printf 'NOT RELEVANT: this slice changes only the release gate mechanism, not a 
 
 docker build --pull -f "$checkout/release-gate/Dockerfile" -t "$IMAGE" "$checkout/release-gate" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
-docker run --rm \
-  -v "$checkout/scripts/release_gate_capacity.py:/release_gate_capacity.py:ro" \
-  "$IMAGE" python3 /release_gate_capacity.py start \
-  2>&1 | tee "$LOG_DIR/docker-capacity-preflight.log"
 python3 "$checkout/scripts/e2e/test_release_gate_docker_boundaries.py" --image "$IMAGE" \
   2>&1 | tee "$LOG_DIR/docker-boundaries.log"
 
