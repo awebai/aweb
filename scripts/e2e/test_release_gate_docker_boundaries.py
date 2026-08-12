@@ -4,6 +4,11 @@
 from __future__ import annotations
 
 import argparse
+
+# Reviewed digest-pinned probe service image; a constant, not a discovery.
+PROBE_SERVICE_IMAGE = (
+    "nginx:alpine@sha256:1d40e3eb3bf4f138de1d67193f2aa5309fcaf343eb5ffadbf5e9439de1eb1ebb"
+)
 import os
 import subprocess
 import sys
@@ -184,7 +189,7 @@ class DockerBoundaryTests(unittest.TestCase):
     def test_fixed_docker_host_reaches_published_port_but_loopback_does_not(self) -> None:
         container = run(
             "docker", "run", "--detach", "--publish", "127.0.0.1::80",
-            "nginx:alpine",
+            PROBE_SERVICE_IMAGE,
         ).stdout.strip()
         try:
             port = run("docker", "port", container, "80/tcp").stdout.strip().rsplit(":", 1)[1]
@@ -200,7 +205,10 @@ class DockerBoundaryTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         finally:
-            run("docker", "rm", "-f", container, check=False)
+            removed = run("docker", "rm", "-f", container, check=False)
+            self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+            remains = run("docker", "container", "inspect", container, check=False)
+            self.assertNotEqual(remains.returncode, 0, "probe container survived cleanup")
 
 
 def main() -> int:

@@ -1476,9 +1476,59 @@ def continue_train(
     return summary
 
 
+_CONTINUE_COMMAND_ENVS = (
+    "AWEB_RELEASE_WORKFLOW_COMMAND",
+    "AWEB_RELEASE_DERIVE_COMMAND",
+    "AWEB_RELEASE_AC_GATE_COMMAND",
+    "AWEB_RELEASE_MIGRATE_COMMAND",
+    "AWEB_RELEASE_DEPLOY_COMMAND",
+    "AWEB_RELEASE_VERIFY_COMMAND",
+    "AWEB_RELEASE_DIGEST_COMMAND",
+)
+
+
+def _continue_main() -> int:
+    missing = [name for name in _CONTINUE_COMMAND_ENVS if not os.environ.get(name, "").strip()]
+    if missing:
+        print(
+            "release-continue refused: the boundary commands are not named: "
+            + ", ".join(missing)
+            + ". The epic ends at non-production readiness; nothing here "
+            "guesses real workflow, provider, or migration entry points.",
+            file=sys.stderr,
+        )
+        return 2
+    commands = {
+        name: tuple(shlex.split(os.environ[name]))
+        for name in _CONTINUE_COMMAND_ENVS
+    }
+    marketplace_raw = os.environ.get("AWEB_RELEASE_MARKETPLACE_COMMAND", "").strip()
+    try:
+        summary = continue_train(
+            Path.cwd(),
+            workflow_command=commands["AWEB_RELEASE_WORKFLOW_COMMAND"],
+            derive_command=commands["AWEB_RELEASE_DERIVE_COMMAND"],
+            ac_gate_command=commands["AWEB_RELEASE_AC_GATE_COMMAND"],
+            migrate_command=commands["AWEB_RELEASE_MIGRATE_COMMAND"],
+            deploy_command=commands["AWEB_RELEASE_DEPLOY_COMMAND"],
+            verify_command=commands["AWEB_RELEASE_VERIFY_COMMAND"],
+            digest_command=commands["AWEB_RELEASE_DIGEST_COMMAND"],
+            marketplace_command=(
+                tuple(shlex.split(marketplace_raw)) if marketplace_raw else None
+            ),
+        )
+    except ReleaseTrainError as error:
+        print(f"release-continue stopped: {error}", file=sys.stderr)
+        return 1
+    del summary
+    return 0
+
+
 def _main(argv: Sequence[str]) -> int:
+    if list(argv) == ["continue"]:
+        return _continue_main()
     if list(argv) != ["prepare"]:
-        print("usage: release_train.py prepare", file=sys.stderr)
+        print("usage: release_train.py prepare|continue", file=sys.stderr)
         return 2
     registry_base = os.environ.get("AWEB_RELEASE_REGISTRY_BASE", "").strip()
     gate_raw = os.environ.get("AWEB_RELEASE_GATE_COMMAND", "").strip()

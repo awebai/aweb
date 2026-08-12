@@ -287,8 +287,6 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             frozenset(
                 {
                     "docs/release.md",
-                    "docs/runnerless-release.md",
-                    "release-gate/suite-map.tsv",
                     "scripts/e2e/test_release_local_gate_contract.py",
                 }
             ),
@@ -330,63 +328,35 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
 
     def test_exact_suite_map_is_unique_and_every_target_exists(self) -> None:
         rows = self.read_map()
-        run_rows = [row for row in rows if row[3] == "run"]
         self.assertEqual(len(EXPECTED_STEPS), 53)
-        self.assertEqual([row[:4] for row in run_rows], [(*row, "run") for row in EXPECTED_STEPS])
+        self.assertEqual(
+            rows,
+            [
+                ("docker-boundaries", "contract", "_release-gate-docker-boundaries"),
+                *[tuple(row) for row in EXPECTED_STEPS],
+            ],
+        )
+        self.assertEqual(len(rows), 54)
         self.assertEqual(len({row[0] for row in rows}), len(rows))
         self.assertEqual(len({row[2] for row in rows}), len(rows))
         makefile = MAKEFILE.read_text()
-        for _name, _category, target, _disposition, _old_targets in run_rows:
+        for _name, _category, target in rows:
             with self.subTest(target=target):
                 self.assertRegex(makefile, rf"(?m)^{re.escape(target)}:")
 
-    def test_one_table_accounts_for_run_and_later_dispositions(self) -> None:
+    def test_map_carries_membership_only(self) -> None:
         rows = self.read_map()
         self.assertFalse((ROOT / "release-gate" / "migration-map.tsv").exists())
-        self.assertEqual(
-            {row[3] for row in rows},
-            {"run", "task-10-delete", "replaced-wrapper"},
+        self.assertTrue(all(len(row) == 3 for row in rows))
+        self.assertNotIn("test-a2a", {row[2] for row in rows})
+        self.assertIn(
+            ("ac-pointer-primary-moves", "contract", "test-pointer-adapter-ac-pin"),
+            rows,
         )
-        run_targets = {row[2] for row in rows if row[3] == "run"}
-        self.assertEqual(run_targets, {row[2] for row in EXPECTED_STEPS})
-        deleted = {row[2] for row in rows if row[3] == "task-10-delete"}
-        self.assertEqual(
-            [row[:4] for row in rows if row[2] == "test-pointer-adapter-ac-pin"],
-            [("ac-pointer-primary-moves", "contract", "test-pointer-adapter-ac-pin", "run")],
+        self.assertIn(
+            ("local-gate-contract", "contract", "test-release-local-gate-contract"),
+            rows,
         )
-        self.assertEqual(NEW_RELEASE_COVERAGE, {"release-a2a-gateway-check"})
-        newly_mapped = next(iter(NEW_RELEASE_COVERAGE))
-        self.assertEqual(
-            [row[0] for row in rows if newly_mapped in row[4].split(",")],
-            ["cli-unit", "a2a-copy-contract", "a2a-image", "a2a-gateway-e2e"],
-        )
-        mapped_targets = [row[2] for row in rows if newly_mapped in row[4].split(",")]
-        self.assertEqual(len(mapped_targets), len(set(mapped_targets)))
-        self.assertNotIn("test-a2a", {row[2] for row in rows if row[3] == "run"})
-        old_targets = [
-            target
-            for row in rows
-            for target in row[4].split(",")
-            if target not in {"-", newly_mapped}
-        ]
-        self.assertEqual(len(old_targets), 64)
-        self.assertEqual(set(old_targets), OLD_SHIP_CLOSURE)
-        ship_contract = next(row for row in rows if row[4] == "test-ship-ci-contract")
-        self.assertEqual(
-            ship_contract[:4],
-            ("local-gate-contract", "contract", "test-release-local-gate-contract", "run"),
-        )
-        wrappers = {row[4] for row in rows if row[3] == "replaced-wrapper"}
-        self.assertEqual(
-            wrappers,
-            {
-                "ship", "ship-gate", "ship-suites", "check-ship-invocation",
-                "check-ship-owner", "release-all-check", "test",
-            },
-        )
-        self.assertIn("test-release-driver", deleted)
-        self.assertIn("test-release-skew-cli-server", deleted)
-        self.assertIn("test-release-runnerless", deleted)
 
     def test_version_guard_is_explicit_and_precedes_artifact_builds(self) -> None:
         makefile = MAKEFILE.read_text()
@@ -461,13 +431,18 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             "docker buildx rm",
             "--add-host aweb-docker.test:host-gateway",
             "-e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test",
-            "test_release_gate_docker_boundaries.py",
             "RELEASE_BASE_SHA",
             "LIBRARY_E2E_LIBRARY_CONTEXT",
             "LIBRARY_E2E_BLUEPRINT_SRC",
         ):
             self.assertIn(required, text)
         self.assertNotIn("--privileged", text)
+        self.assertNotIn(
+            "test_release_gate_docker_boundaries.py",
+            text,
+        )
+        self.assertIn('RELEASE_GATE_IMAGE="$IMAGE"', text)
+        self.assertIn("wrapper-verdict.log", text)
         self.assertNotIn("dockerd", text)
         self.assertNotIn("git push", text)
         self.assertNotIn("gh ", text)
@@ -798,9 +773,9 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             make.chmod(0o755)
             suite_map = root / "map.tsv"
             suite_map.write_text(
-                "one\tunit\tone\trun\told-one\n"
-                "two\tunit\ttwo\trun\told-two\n"
-                "three\tunit\tthree\trun\told-three\n"
+                "one\tunit\tone\n"
+                "two\tunit\ttwo\n"
+                "three\tunit\tthree\n"
             )
 
             low_start = lambda _phase: "required_kib=100 available_kib=7"
@@ -854,9 +829,9 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             make.chmod(0o755)
             suite_map = root / "map.tsv"
             suite_map.write_text(
-                "one\tunit\tone\trun\told-one\n"
-                "two\tunit\ttwo\trun\told-two\n"
-                "three\tunit\tthree\trun\told-three\n"
+                "one\tunit\tone\n"
+                "two\tunit\ttwo\n"
+                "three\tunit\tthree\n"
             )
             logs = root / "logs"
             with contextlib.redirect_stdout(io.StringIO()):
@@ -874,46 +849,37 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             root = Path(tmp)
             logs = root / "logs"
             for label, body in (
-                ("duplicate", "one\tunit\tt\trun\told-one\none\tunit\tu\trun\told-two\n"),
-                ("target", "one\tunit\tt\trun\told-one\ntwo\tunit\tt\trun\told-two\n"),
+                ("duplicate", "one\tunit\tt\none\tunit\tu\n"),
+                ("target", "one\tunit\tt\ntwo\tunit\tt\n"),
                 ("empty", "# none\n"),
-                ("hidden skip", "one\tskip\tt\trun\told-one\n"),
+                ("hidden skip", "one\tskip\tt\n"),
             ):
                 with self.subTest(label=label):
                     path = root / f"{label}.tsv"
                     path.write_text(body)
                     with self.assertRaises(runner.MapError):
                         runner.run(path, logs / label, ["true"])
-            historical = root / "historical-duplicate.tsv"
-            historical.write_text("one\tunit\tone\trun\told-one\ntwo\tunit\ttwo\trun\told-one\n")
-            with self.assertRaises(runner.MapError):
-                runner.run(historical, logs / "historical", ["true"])
-            for count in (3, 5):
-                path = root / f"a2a-{count}.tsv"
-                path.write_text("".join(
-                    f"row-{index}\tunit\ttarget-{index}\trun\trelease-a2a-gateway-check\n"
-                    for index in range(count)
-                ))
-                with self.assertRaises(runner.MapError):
-                    runner.run(path, logs / f"a2a-{count}", ["true"])
-            accepted = root / "a2a-four.tsv"
+            accepted = root / "membership.tsv"
             accepted.write_text("".join(
-                f"row-{index}\tunit\ttarget-{index}\trun\trelease-a2a-gateway-check\n"
+                f"row-{index}\tunit\ttarget-{index}\n"
                 for index in range(4)
             ))
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(
-                    runner.run(accepted, logs / "a2a-four", ["true"], probe=lambda _phase: None),
+                    runner.run(accepted, logs / "membership", ["true"], probe=lambda _phase: None),
                     0,
                 )
 
-    def test_make_help_exposes_no_release_operator_command(self) -> None:
+    def test_make_help_exposes_exactly_the_two_release_commands(self) -> None:
         result = subprocess.run(
             ["make", "help"], cwd=ROOT, capture_output=True, text=True, check=True
         )
         self.assertNotIn("ship", result.stdout.lower())
-        self.assertNotIn("release-prepare", result.stdout)
-        self.assertNotIn("release-continue", result.stdout)
+        self.assertIn("make release-prepare", result.stdout)
+        self.assertIn("release-continue", result.stdout)
+        self.assertNotIn("release-plan", result.stdout)
+        self.assertNotIn("release-run", result.stdout)
+        self.assertNotIn("release-receipt", result.stdout)
         self.assertNotIn("release-local-gate", result.stdout)
 
 

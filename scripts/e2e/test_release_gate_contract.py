@@ -486,12 +486,12 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         for mapped_row in (
-            "python-locks\tcontract\ttest-python-locks\trun\t",
-            "server-unit\tunit\ttest-server\trun\t",
-            "awid-unit\tunit\ttest-awid\trun\t",
-            "server-package\tartifact\t_release-artifact-server\trun\t",
-            "awid-package\tartifact\t_release-artifact-awid-package\trun\t",
-            "awid-image\tartifact\t_release-artifact-awid-image\trun\t",
+            "python-locks\tcontract\ttest-python-locks\n",
+            "server-unit\tunit\ttest-server\n",
+            "awid-unit\tunit\ttest-awid\n",
+            "server-package\tartifact\t_release-artifact-server\n",
+            "awid-package\tartifact\t_release-artifact-awid-package\n",
+            "awid-image\tartifact\t_release-artifact-awid-image\n",
         ):
             self.assertIn(mapped_row, suite_map)
 

@@ -106,9 +106,9 @@ cleanup() {
     *) cleanup_status=1 ;;
   esac
   if [[ "$cleanup_status" -ne 0 ]]; then
-    printf 'release gate cleanup FAILED\n' >&2
+    printf 'release gate cleanup FAILED\n' | tee -a "$LOG_DIR/wrapper-verdict.log" >&2
   else
-    printf 'release gate cleanup PASSED\n'
+    printf 'release gate cleanup PASSED\n' | tee -a "$LOG_DIR/wrapper-verdict.log"
   fi
   [[ "$original_status" -ne 0 ]] && exit "$original_status"
   exit "$cleanup_status"
@@ -147,9 +147,6 @@ printf 'NOT RELEVANT: this slice changes only the release gate mechanism, not a 
 
 docker build --pull -f "$checkout/release-gate/Dockerfile" -t "$IMAGE" "$checkout/release-gate" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
-python3 "$checkout/scripts/e2e/test_release_gate_docker_boundaries.py" --image "$IMAGE" \
-  2>&1 | tee "$LOG_DIR/docker-boundaries.log"
-
 owned_network="aweb-release-gate-${SOURCE_SHA:0:12}-$$"
 docker network create "$owned_network" >/dev/null
 pg_name="${owned_network}-postgres"
@@ -231,6 +228,7 @@ docker run --rm --init \
   -e PGPASSWORD=postgres \
   -e PGDATABASE=postgres \
   -e REDIS_URL="redis://$redis_name:6379/0" \
+  -e RELEASE_GATE_IMAGE="$IMAGE" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$buildx_config:$buildx_config" \
   -v "$checkout:$checkout" \
@@ -249,7 +247,7 @@ set -e
 if grep -q $'\tNOT RUN\t' "$LOG_DIR/summary.tsv"; then status=1; fi
 if grep -q $'\tFAILED\t' "$LOG_DIR/summary.tsv"; then status=1; fi
 if [[ "$status" -ne 0 ]]; then
-  printf 'release gate FAILED; logs: %s\n' "$LOG_DIR" >&2
+  printf 'release gate FAILED; logs: %s\n' "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log" >&2
   exit "$status"
 fi
-printf 'release gate PASSED at %s; logs: %s\n' "$SOURCE_SHA" "$LOG_DIR"
+printf 'release gate PASSED at %s; logs: %s\n' "$SOURCE_SHA" "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log"

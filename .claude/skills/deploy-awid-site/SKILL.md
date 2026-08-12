@@ -9,7 +9,7 @@ The deployed artifact is `awid/site/`, including the repository-owned mirrors
 of `docs/identity-guide.md` and `docs/trust-model.md`. The release graph owns
 both synchronization and the `deploy-awid-landing` delivery lane.
 
-Use the normal or runnerless commands in the `release` skill. Do not invoke the
+Use the two-command release train in the `release` skill. Do not invoke the
 underlying branch target as a separate hand-maintained procedure; the driver
 plans the site node, runs its lane in graph order, and records the result.
 

@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release-local-gate-contract test-release-train test-release-gate-contract check-release-gate-residue release-prepare test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract check-oas-pi-launch-order test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release-local-gate-contract test-release-train test-release-gate-contract check-release-gate-residue release-prepare release-continue test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract check-oas-pi-launch-order test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -8,7 +8,7 @@
 	test-release-cli-version \
 	test-channel-integration \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-plan release-run release-receipt test-release-driver test-release-runnerless test-release-receipt-process test-pointer-adapter test-pointer-adapter-ac-pin test-release-repository-measurement test-release-adopted-preplan test-release-federation-skew measure-release-federation-skew-control test-release-channel-pi-skew test-release-persisted-state-skew test-release-receipt-archive test-release-skew-cli-server measure-release-skew-cli-server cli-server-skew-cell test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	test-pointer-adapter test-pointer-adapter-ac-pin test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	cli-e2e _release-gate-version-authority _release-gate-channel-version _release-node-deps \
 	_release-unit-channel _release-unit-channel-core _release-unit-pi _release-oas _release-marketplace-pointer \
 	_release-artifact-server _release-artifact-awid-package _release-artifact-awid-image \
@@ -87,19 +87,14 @@ help:
 	@echo "  awid-prod-restore   Restore a dump into awid prod (DUMP=path)"
 	@echo "  awid-prod-migrate   Apply pending migrations to awid prod"
 	@echo ""
-	@echo "  RELEASING - one driver owns every artifact:"
-	@echo "    Hosted:"
-	@echo "      release-plan AUTHORITY=github-workflow-artifacts"
-	@echo "      release-run AUTHORITY=github-workflow-artifacts PLAN_ID=.. PLAN_ARTIFACT_ID=.. STAGE_ARTIFACT=.."
-	@echo "    Runnerless (explicit human risk acceptance):"
-	@echo "      release-plan AUTHORITY=local-runnerless STORE_ROOT=.."
-	@echo "      release-run AUTHORITY=local-runnerless STORE_ROOT=.. PLAN_ID=.. PLAN_ARTIFACT_ID=.. LOCAL_ADAPTER='component@sha=/abs/adapter' LOCAL_RISK_AUTHORIZATION=.."
-	@echo "    release-receipt                     read a sealed receipt"
-	@echo "    See the 'release' skill for exact argument forms and hazards:"
-	@echo "    publication is not delivery, publication is immutable."
+	@echo "  RELEASING - exactly two operator commands, run from this root:"
+	@echo '    PURPOSE="..." COMPAT_BREAK=none make release-prepare'
+	@echo "    make release-continue          (after the one human go)"
+	@echo "    docs/release.md is the authoritative specification."
 	@echo ""
 	@echo "  release-awid-site                     deploy awid landing page"
 	@echo '  PURPOSE="..." COMPAT_BREAK=none make release-prepare   run all pre-go selection, gates, and card generation'
+	@echo "  release-continue                      execute the go: the idempotent ten-edge train from the fixed card"
 	@echo "  clean        Remove all build artifacts and caches"
 
 build:
@@ -109,7 +104,7 @@ build:
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: check-aw-commit-repo-stamp test-release-local-gate-contract test-release-train test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-release-driver test-release-runnerless test-release-receipt-process test-pointer-adapter test-release-repository-measurement test-release-skew-cli-server test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp test-release-local-gate-contract test-release-train test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 # Editable AWID metadata is repeated in both committed Python locks. Check both
 # without repair, then prove a missing dependent-lock dependency is rejected.
@@ -470,6 +465,9 @@ release-prepare:
 	@test -n "$(COMPAT_BREAK)" || { echo 'COMPAT_BREAK is required: none, or one explicit intentional break line'; exit 2; }
 	python3 scripts/release_train.py prepare
 
+release-continue:
+	python3 scripts/release_train.py continue
+
 release-awid-site:
 	@echo "Syncing docs into awid site..."
 	$(MAKE) sync-awid-site-docs
@@ -483,153 +481,12 @@ release-awid-site:
 	git checkout main
 	@echo "Awid site deployed via deploy-awid-landing."
 
-# ── CLI release ──────────────────────────────────────────────────────
-
-# What must ship, in what order, from the declared component graph and
-# authoritative remote state. Exit 1 when a declared input is unsatisfied.
-# AUTHORITY selects an allowlisted digest-authority kind; STORE_ROOT the
-# durable artifact store; EXTERNAL_CONTEXT repeatable repository=checkout
-# mappings for external pin contexts.
-release-plan:
-	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") plan $(foreach o,$(ONLY),--only "$(o)")
-
-# Executes an anchored frozen plan over available publish lanes; fails closed
-# naming every gap. PLAN_ID and PLAN_ARTIFACT_ID are required.
-# STAGE_ARTIFACT (repeatable, space-separated) binds hosted lane references.
-# DELIVERY_PROOF (repeatable) carries restart evidence for a component whose
-# users keep running old code until a restart. It is NOT required to publish:
-# restart evidence cannot exist before the version does, so publication records
-# the obligation as OUTSTANDING and this discharges it afterwards. Supply it
-# only when the evidence is real and recorded with the authority:
-#   DELIVERY_PROOF='component=channel,obligation=delivery-restart-proof,evidence_id=<id>,digest=<sha256>'
-# POINTER_ADAPTER (repeatable) performs a forced pointer's effect - the
-# marketplace version bump, or the AC pin update - in the target repository:
-#   POINTER_ADAPTER='marketplace-pointer=/abs/scripts/pointer-adapter-marketplace-pointer.py'
-# Without it a channel or skills release stops at the pointer node, because
-# publishing to npm reaches nobody until the marketplace advertises the version.
-# G5_AUTHORIZATION records a human accepting unmeasured runtime support for
-# this exact release. Accepted on every authority - who may defer is a question
-# about the human, not about which runner built the artifact - and bound to the
-# source, the frozen plan and exactly the edges being deferred, so it cannot be
-# reused for another release:
-#   G5_AUTHORIZATION='who=<w>,when=<t>,source=<40hex>,plan=<64hex>,edges=<64hex>[+<64hex>],risk=<text>'
-# The edge ids are the canonical identities release-plan prints under
-# deferrable_runtime_contracts. They are content hashes, not display
-# strings: a<->b would alias the two server<->server edges.
-# Runnerless mode is first-class and needs no GitHub identity:
-#   AUTHORITY=local-runnerless STORE_ROOT=<durable-dir>
-#   LOCAL_ADAPTER='component@<reviewed-source-sha>=/absolute/direct-adapter'
-#   LOCAL_RISK_AUTHORIZATION='who,when,risk accepted'
-# DEFER_G5 is NOT a companion to that record and never travels with it in
-# shorthand: it needs its own G5_AUTHORIZATION below, on any authority.
-# See docs/runnerless-release.md.
-release-run:
-	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") $(foreach c,$(EXTERNAL_CONTEXT),--external-context "$(c)") release-run --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(if $(RESUME),--resume) $(if $(MANIFEST_ID),--manifest-id "$(MANIFEST_ID)") $(if $(ALLOW_LOCAL_AUTHORITY),--allow-local-authority) $(foreach a,$(APPROVAL),--approval "$(a)") $(foreach s,$(STAGE_ARTIFACT),--stage-artifact "$(s)") $(foreach d,$(DELIVERY_PROOF),--delivery-proof "$(d)") $(foreach p,$(POINTER_ADAPTER),--pointer-adapter "$(p)") $(foreach a,$(LOCAL_ADAPTER),--local-adapter "$(a)") $(if $(LOCAL_RISK_AUTHORIZATION),--local-risk-authorization "$(LOCAL_RISK_AUTHORIZATION)") $(if $(DEFER_G5),--defer-g5) $(if $(G5_AUTHORIZATION),--g5-authorization "$(G5_AUTHORIZATION)")
-
-# Verifies an anchored receipt against its anchored frozen plan. ARTIFACT_ID,
-# PLAN_ID and PLAN_ARTIFACT_ID are required; digests resolve through the
-# configured authority, never from caller-presented values.
-release-receipt:
-	@python3 scripts/release_driver.py $(if $(AUTHORITY),--authority "$(AUTHORITY)") $(if $(STORE_ROOT),--store-root "$(STORE_ROOT)") release-receipt --artifact-id "$(ARTIFACT_ID)" --plan-id "$(PLAN_ID)" --plan-artifact-id "$(PLAN_ARTIFACT_ID)" $(foreach s,$(STAGE_ARTIFACT),--stage-artifact "$(s)") $(foreach p,$(POINTER_ADAPTER),--pointer-adapter "$(p)") $(foreach d,$(DELIVERY_PROOF),--delivery-proof "$(d)") $(if $(OBSERVATION_FILE),--observation-file "$(OBSERVATION_FILE)")
-
-test-release-runnerless:
-	python3 scripts/e2e/test_release_runnerless.py
-
-# The official receipt reader across a REAL process boundary. In-process
-# rd.main() misses argument serialization, the production parser, and
-# process-boundary observer construction - the seam that repeatedly disagreed
-# with injected fixtures.
-test-release-receipt-process:
-	python3 scripts/e2e/test_release_receipt_process.py
-
-# The marketplace pointer adapter against a real local git remote: clone,
-# commit, push and read back. Publishing without moving this pointer reaches
-# nobody, so the round trip is the thing worth proving.
 test-pointer-adapter:
 	python3 scripts/e2e/test_pointer_adapter_marketplace.py
 	$(MAKE) test-pointer-adapter-ac-pin
 
 test-pointer-adapter-ac-pin:
 	python3 scripts/e2e/test_pointer_adapter_ac_pin.py
-	python3 -m unittest scripts.e2e.test_release_driver.GraphContractTests.test_a_pointer_advertises_what_its_pin_actually_holds
-
-test-release-repository-measurement:
-	python3 scripts/e2e/test_release_repository_measurement.py
-
-test-release-driver: test-release-adopted-preplan test-release-channel-pi-skew test-release-skew-cli-server test-release-receipt-archive test-release-persisted-state-skew test-release-federation-skew
-	python3 scripts/e2e/test_release_driver.py
-	python3 scripts/e2e/test_release_driver_cli.py
-	python3 scripts/e2e/test_release_adapter.py
-
-test-release-federation-skew:
-	python3 scripts/e2e/test_release_federation_skew.py
-
-measure-release-federation-skew-control:
-	PYTHONPATH=scripts python3 -c 'from release_federation_skew import WheelResolver, prove_route_controls; prove_route_controls(WheelResolver())'
-
-test-release-receipt-archive:
-	python3 scripts/e2e/test_release_receipt_archive.py
-
-test-release-adopted-preplan:
-	python3 scripts/e2e/test_release_adopted_preplan.py
-
-test-release-channel-pi-skew:
-	python3 scripts/e2e/test_release_channel_pi_skew.py
-
-# G5 CLI/server child: exact artifact resolution, registration, evidence, and
-# shell parameterization. This focused target never starts Docker or dispatches
-# a workflow.
-test-release-skew-cli-server:
-	python3 scripts/e2e/test_release_skew_cli_server.py
-	python3 scripts/e2e/test_cli_server_skew_shell.py
-	cd cli/go && go test -tags e2e ./e2e -count=1
-
-# Execute one already-computed SkewCell. The child harness supplies AW_BIN,
-# AWEB_E2E_SERVER_WHEEL, and AW_SKEW_DIRECTION; this target does not select a
-# matrix cell and never builds either release artifact.
-cli-server-skew-cell:
-	bash scripts/e2e/run_cli_server_skew_cell.sh
-
-# Measure candidate aw against the published server named by a canonical
-# aweb.measurement-input-manifest.v1. The input grants measurement only: it is
-# not a release staged manifest and never invents a staged server lane_ref. The
-# result still requires independent workflow-artifact anchoring before its
-# identity may be declared in release/components.toml.
-measure-release-skew-cli-server:
-	python3 scripts/release_skew_cli_server.py measure \
-		--measurement-input "$(MEASUREMENT_INPUT)" \
-		$(foreach v,$(SUPPORTED_SERVER),--supported-server "$(v)") \
-		--negative-server "$(or $(NEGATIVE_SERVER),1.26.31)" \
-		--output "$(OUTPUT)"
-
-# Channel and Pi measure separately: each edge keeps its own frozen matrix and
-# its own evidence root, so one component's reports can never satisfy the
-# other's completeness inventory. Neither declares a version floor - Channel/Pi
-# has no reviewed negative-only version, and the mark-read mutation control at
-# finish is its known-red evidence.
-#
-# MEASUREMENT_INPUT is an aweb.measurement-input-manifest.v1, NOT a release
-# staged manifest: it binds one already-staged candidate client and the
-# already-published server it is measured against, grants measurement-only
-# authority, and creates no release receipt. The output is
-# incomplete-unanchored and still requires independent anchoring before its
-# identity may be declared in release/components.toml.
-measure-release-channel-skew:
-	python3 scripts/release_channel_pi_skew.py measure-channel \
-		--measurement-input "$(MEASUREMENT_INPUT)" \
-		$(foreach v,$(SUPPORTED_SERVER),--supported-server "$(v)") \
-		$(if $(EVIDENCE_ROOT),--evidence-root "$(EVIDENCE_ROOT)") \
-		--output "$(OUTPUT)"
-
-measure-release-pi-skew:
-	python3 scripts/release_channel_pi_skew.py measure-pi \
-		--measurement-input "$(MEASUREMENT_INPUT)" \
-		$(foreach v,$(SUPPORTED_SERVER),--supported-server "$(v)") \
-		$(if $(EVIDENCE_ROOT),--evidence-root "$(EVIDENCE_ROOT)") \
-		--output "$(OUTPUT)"
-
-test-release-persisted-state-skew:
-	python3 scripts/e2e/test_release_persisted_state_skew.py
 
 test-npm-exact-publish:
 	bash scripts/e2e/test_npm_exact_publish.sh
@@ -647,6 +504,10 @@ test-release-cli-version:
 
 # Internal steps consumed only by scripts/release-local-gate.sh's fixed map.
 # They are intentionally absent from help; release-prepare will invoke the gate.
+_release-gate-docker-boundaries:
+	@test -n "$(RELEASE_GATE_IMAGE)" || (echo "RELEASE_GATE_IMAGE is required"; exit 2)
+	python3 scripts/e2e/test_release_gate_docker_boundaries.py --image "$(RELEASE_GATE_IMAGE)"
+
 _release-gate-version-authority:
 	@test -n "$(RELEASE_BASE_SHA)" || (echo "RELEASE_BASE_SHA is required"; exit 2)
 	./scripts/check-server-version-bump-test.sh

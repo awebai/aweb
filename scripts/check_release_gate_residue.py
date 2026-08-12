@@ -27,8 +27,6 @@ FORBIDDEN = (
 PRODUCTION_EXCLUSIONS = frozenset(
     {
         "docs/release.md",  # authoritative migration specification
-        "docs/runnerless-release.md",  # superseded history, deleted by task .10
-        "release-gate/suite-map.tsv",  # temporary old-to-new authority until task .10
         "scripts/e2e/test_release_local_gate_contract.py",  # protective literals
     }
 )
