@@ -184,7 +184,7 @@ def replace_floor(path: Path, package: str, version: str) -> None:
 
 
 def uv_binary() -> str:
-    executable = shutil.which("uv", path=command_env()["PATH"])
+    executable = shutil.which("uv") or shutil.which("uv", path=command_env()["PATH"])
     if executable is None:
         fail("uv is required to regenerate AC's exact lock")
     return executable

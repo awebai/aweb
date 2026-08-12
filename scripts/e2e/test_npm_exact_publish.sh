@@ -646,11 +646,11 @@ for dead in ("release-channel-check", "release-channel-tag", "release-channel-pu
     assert dead not in makefile, f"deleted Make path survives: {dead}"
 suite_map = (root / "release-gate/suite-map.tsv").read_text()
 for row in (
-    "channel-version-equality\tcontract\t_release-gate-channel-version\trun\t",
-    "node-dependencies\tcontract\t_release-node-deps\trun\t",
-    "channel-unit\tunit\t_release-unit-channel\trun\t",
-    "channel-core-unit\tunit\t_release-unit-channel-core\trun\t",
-    "channel-package\tartifact\t_release-artifact-channel\trun\t",
+    "channel-version-equality\tcontract\t_release-gate-channel-version\n",
+    "node-dependencies\tcontract\t_release-node-deps\n",
+    "channel-unit\tunit\t_release-unit-channel\n",
+    "channel-core-unit\tunit\t_release-unit-channel-core\n",
+    "channel-package\tartifact\t_release-artifact-channel\n",
 ):
     assert row in suite_map, f"missing local-gate mapping: {row}"
 
