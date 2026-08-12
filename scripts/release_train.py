@@ -1058,6 +1058,25 @@ def _site_moves(prepared: PreparedEnvironment, name: str) -> bool:
     return False
 
 
+COMPAT_PAIR = ("aw-cli", "aweb-server")
+
+
+def select_compat_pairing(
+    selections: Sequence[ArtifactSelection],
+) -> tuple[str, str] | None:
+    """The one deterministically relevant last/new pairing: the cli-server
+    pair, only when exactly one side moves this release."""
+
+    moves = {item.name: item.moves for item in selections}
+    cli, server = COMPAT_PAIR
+    if moves[cli] == moves[server]:
+        return None
+    return (
+        f"{cli}@{'new' if moves[cli] else 'last'}",
+        f"{server}@{'new' if moves[server] else 'last'}",
+    )
+
+
 def run_gate_once(
     prepared: PreparedEnvironment, gate_command: tuple[str, ...], *, timeout: float
 ) -> GateEvidence:
@@ -1094,6 +1113,33 @@ def prepare(
     )
     check_plugin_equality(prepared)
     gate = run_gate_once(prepared, gate_command, timeout=timeout)
+    gates = [gate]
+    pairing = select_compat_pairing(selections)
+    if pairing is not None:
+        compat_result = run_command(
+            [*gate_command, "compat-pairing", *pairing],
+            cwd=prepared.aweb_root,
+            timeout=timeout,
+        )
+        compat_document = _parse_json_bytes(
+            compat_result.stdout.encode(), "compat gate evidence"
+        )
+        if not isinstance(compat_document, dict) or not compat_document.get("suites"):
+            raise ObservationMalformed("compat gate evidence must name its suites")
+        gates.append(
+            GateEvidence(
+                name="compat-pairing",
+                sha=prepared.aweb_sha,
+                result="passed",
+                reference=validate_line(
+                    compat_document.get("reference"), "compat gate log reference"
+                ),
+                suites=tuple(
+                    validate_line(item, "compat gate suite")
+                    for item in compat_document["suites"]
+                ),
+            )
+        )
     moves = {item.name: item.moves for item in selections}
     deployments = DeploymentSet(
         production=moves["ac-image"],
@@ -1105,7 +1151,7 @@ def prepare(
         ac_base_sha=prepared.ac_sha,
         artifacts=selections,
         compatibility=prepared.compatibility,
-        gates=(gate,),
+        gates=tuple(gates),
         purpose=prepared.purpose,
         deployments=deployments,
         final_ac_sha=None,

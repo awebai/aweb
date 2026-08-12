@@ -1303,5 +1303,59 @@ class ContinueTrainTests(_PipelineFixture):
         self.assertEqual(summary["status"], "DONE")
 
 
+class CompatPairingTests(unittest.TestCase):
+    """At most one deterministically relevant last/new pairing adds a run:
+    the cli-server pair, only when exactly one side moves."""
+
+    def _selection(self, cli_moves: bool, server_moves: bool):
+        rows = []
+        for name in rt.CARD_ARTIFACT_ORDER:
+            moves = {"aw-cli": cli_moves, "aweb-server": server_moves}.get(name, True)
+            rows.append(rt.ArtifactSelection(name=name, version="1.2.3", moves=moves))
+        return tuple(rows)
+
+    def test_pairing_fires_only_when_exactly_one_side_moves(self) -> None:
+        self.assertEqual(
+            rt.select_compat_pairing(self._selection(True, False)),
+            ("aw-cli@new", "aweb-server@last"),
+        )
+        self.assertEqual(
+            rt.select_compat_pairing(self._selection(False, True)),
+            ("aw-cli@last", "aweb-server@new"),
+        )
+        self.assertIsNone(rt.select_compat_pairing(self._selection(True, True)))
+        self.assertIsNone(rt.select_compat_pairing(self._selection(False, False)))
+
+
+class PrepareCompatRunTests(_PipelineFixture):
+    def test_prepare_adds_exactly_one_compat_gate_run_when_relevant(self) -> None:
+        # Fixture: server moves (absent), aw-cli does not (its next version is
+        # already served) - the mixed pairing.
+        from urllib.parse import quote
+
+        gate_log = Path(self.tmp.name) / "gate-invocations.txt"
+        gate = Path(self.tmp.name) / "counting-gate.py"
+        gate.write_text(
+            "import json, sys\n"
+            f"open({str(gate_log)!r}, 'a').write(' '.join(sys.argv[1:]) + chr(10))\n"
+            'print(json.dumps({"suites": ["make-test"], "reference": "fixture.log"}))\n'
+        )
+        # aw-cli's next patch (1.34.4) is already served, so it does not move.
+        _PresenceHandler.present[
+            "/" + quote("github:awebai/aw:release", safe="") + "/1.34.4"
+        ] = {"state": "present", "version": "1.34.4", "digest": DIGEST}
+        card = rt.prepare(
+            self.aweb,
+            {"PURPOSE": "fixture", "COMPAT_BREAK": "none"},
+            registry_base=self.registry,
+            gate_command=(sys.executable, str(gate)),
+            timeout=30,
+        )
+        del card
+        invocations = gate_log.read_text().splitlines()
+        self.assertEqual(len(invocations), 2)
+        self.assertIn("compat-pairing", invocations[1])
+
+
 if __name__ == "__main__":
     unittest.main()
