@@ -423,12 +423,14 @@ def check(
 
     runbook = public_text.get("a2a-release-runbook.md", "")
     makefile = (root / "Makefile").read_text(encoding="utf-8") if (root / "Makefile").is_file() else ""
+    e2e_script_path = root / "scripts" / "e2e-a2a-gateway-docker.sh"
+    e2e_script = e2e_script_path.read_text(encoding="utf-8") if e2e_script_path.is_file() else ""
     generator = "go run ./tools/a2a-gateway-check-workspace -output"
-    if generator not in runbook or generator not in makefile:
+    if generator not in runbook:
         failures.append("A2A release image check does not generate a synthetic gateway workspace")
-    if '$(CURDIR):/workspace:ro' in makefile:
+    if '$(CURDIR):/workspace:ro' in makefile or '"$ROOT:/workspace' in e2e_script:
         failures.append("A2A release image check mounts the real repository workspace")
-    if '-v "$$workspace:/workspace:ro"' not in makefile:
+    if '-v "$GATEWAY_DIR:/workspace:ro"' not in e2e_script:
         failures.append("A2A release image check does not mount its throwaway workspace")
 
     vectors = sorted(path.name for path in (docs / "vectors").glob("*.json"))

@@ -21,9 +21,9 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 94 tracked Markdown documents. This front door does not
+The baseline contains 92 tracked Markdown documents. This front door does not
 self-link, and two private-purpose transition artifacts are deliberately not
-exposed by public path or title. The remaining 91 public Markdown paths appear
+exposed by public path or title. The remaining 89 public Markdown paths appear
 below exactly once.
 
 ## Start here
@@ -178,8 +178,6 @@ notice where one exists.
   map for current user, wake, routing, encryption, and conformance documents.
 - [Team create and membership model](restructuring/team-create-and-membership-model.md)
   — compatibility command facts pending consolidation.
-- [CLI setup surface release gates](setup-surface-release-gates.md) — compatibility
-  checks pending consolidation into maintainer guidance.
 - [Retired repo-local team bootstrap](team-bootstrap.md) — compatibility
   tombstone.
 - [`aw team extend` command SOT](team-extend-sot.md) — shipped compatibility
@@ -216,8 +214,6 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   application ownership and `.aw/` state policy.
 - [Release process](release.md) — the two-repository release specification:
   local Docker gates once, thin GitHub publication, one global go.
-- [Runnerless release lane](runnerless-release.md) — first-class local
-  build-once/stage/publish lane for GitHub Actions outages.
 - [A2A gateway release runbook](a2a-release-runbook.md) — public OSS gateway,
   AWID, self-hosted/BYOT release and rollback controls.
 - [E2E messaging rollout runbook](e2e-release-rollout-runbook.md) — generic OSS

@@ -1,6 +1,6 @@
 ---
 name: deploy-awid-site
-description: Deploy the awid.ai landing page through the release driver. Use after changing its mirrored docs or site files.
+description: Deploy the awid.ai landing page through the two-command release train. Use after changing its mirrored docs or site files.
 ---
 
 # Deploy the awid.ai landing page
@@ -10,8 +10,9 @@ of `docs/identity-guide.md` and `docs/trust-model.md`. The release graph owns
 both synchronization and the `deploy-awid-landing` delivery lane.
 
 Use the two-command release train in the `release` skill. Do not invoke the
-underlying branch target as a separate hand-maintained procedure; the driver
-plans the site node, runs its lane in graph order, and records the result.
+underlying branch target as a separate hand-maintained procedure; continue
+pushes the exact main commit to `deploy-awid-landing` when the site's source
+set moved, and records the result in its DONE output.
 
 Deployment is an outward production action and still requires the applicable
 human authorization. After delivery, verify that awid.ai serves the intended

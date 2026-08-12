@@ -1,6 +1,6 @@
 ---
 name: cross-repo-change
-description: Coordinate changes that touch both the aweb OSS repo and the hosted ac repo. OSS lands first, releases through the driver, then ac pins and deploys.
+description: Coordinate changes that touch both the aweb OSS repo and the hosted ac repo. OSS lands first, releases through the two-command train, and continue derives the AC pin and deploys.
 ---
 
 # Cross-repo change coordination
@@ -66,15 +66,20 @@ This is the ONLY boundary with that property. Do not generalise it.
 2. **OSS first** — land the OSS change on aweb main after the relevant focused
    tests pass.
 
-3. **Release** — use the repository's `release` skill and driver. The driver
-   stages once, publishes those exact bytes, verifies registry truth, and seals
-   the receipt; do not maintain a parallel tag/push/verification sequence here.
+3. **Release** — the two-command train (`release` skill; `docs/release.md` is
+   authoritative): `release-prepare` gates once in clean Docker and generates
+   the card, Juan gives one go, `release-continue` publishes and then derives
+   the AC dependency-only commit itself. Do not maintain a parallel
+   tag/push/verification sequence here.
 
-4. **Cloud pins** — update `backend/pyproject.toml` to `aweb>=<VERSION>`,
-   run `uv lock`, run tests.
+4. **Cloud pins** — continue derives `backend/pyproject.toml` floors and
+   `backend/uv.lock` mechanically at the recorded AC base and gates the
+   derived commit in clean Docker; do not hand-edit the pin as part of the
+   release.
 
-5. **Cloud change** — land the cloud-side change in the same commit
-   or immediately after the pin bump.
+5. **Cloud change** — land the cloud-side source change on AC main before
+   prepare records the base, or after the train completes; the derived commit
+   itself stays dependency-only.
 
 6. **Verify** — cloud tests pass against the real aweb package (not
    editable/sibling source).
