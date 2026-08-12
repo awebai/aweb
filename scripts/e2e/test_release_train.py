@@ -9,7 +9,9 @@ production service.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -48,6 +50,27 @@ def git(*args: str, cwd: Path) -> str:
 
 
 class FixedContractTests(unittest.TestCase):
+    def test_work_commands_get_a_multi_hour_bound_observations_keep_theirs(self) -> None:
+        # Gate suites, publishes and deploys run for hours; a registry read
+        # that takes that long is a hang, not work.
+        self.assertGreaterEqual(rt.WORK_TIMEOUT, 4 * 3600)
+        with self.assertRaises(rt.ValidationError):
+            rt.observe_registry_presence(
+                "http://127.0.0.1:9/never-dialed", "1.0.0", timeout=rt.WORK_TIMEOUT
+            )
+        for function in (rt.prepare, rt.continue_train):
+            parameters = inspect.signature(function).parameters
+            self.assertEqual(
+                parameters["work_timeout"].default,
+                rt.WORK_TIMEOUT,
+                function.__name__,
+            )
+        for function in (rt.prepare, rt.continue_train, rt.run_gate_once):
+            source = inspect.getsource(function)
+            bounds = re.findall(r"run_command\(.*?\btimeout=(\w+)", source, re.S)
+            self.assertTrue(bounds, function.__name__)
+            self.assertEqual(set(bounds), {"work_timeout"}, function.__name__)
+
     def test_literal_artifact_rows_and_outputs_are_exact(self) -> None:
         self.assertEqual(
             rt.AW_NPM_PACKAGES,
@@ -872,6 +895,38 @@ class PreparePipelineTests(_PipelineFixture):
         with self.assertRaises(rt.CardUnavailable):
             rt.read_card(self.aweb)
 
+    def test_gate_runs_under_the_work_timeout_not_the_observation_bound(self) -> None:
+        slow = Path(self.tmp.name) / "slow-gate.py"
+        slow.write_text(
+            "import json, time\n"
+            "time.sleep(3)\n"
+            'print(json.dumps({"suites": ["make-test"], "reference": "slow.log"}))\n'
+        )
+        environment = {"PURPOSE": "fixture release", "COMPAT_BREAK": "none"}
+        with self.assertRaises(rt.CommandUnavailable) as caught:
+            rt.prepare(
+                self.aweb,
+                environment,
+                registry_base=self.registry,
+                gate_command=(sys.executable, str(slow)),
+                timeout=30,
+                work_timeout=1,
+            )
+        self.assertIn("timed out", str(caught.exception))
+        with self.assertRaises(rt.CardUnavailable):
+            rt.read_card(self.aweb)
+        # A work bound above the 600s observation cap is accepted and reaches
+        # the gate; refusing it here is the defect this test pins.
+        card = rt.prepare(
+            self.aweb,
+            environment,
+            registry_base=self.registry,
+            gate_command=self.gate_command,
+            timeout=30,
+            work_timeout=700,
+        )
+        self.assertTrue(all(item.moves for item in card.artifacts))
+
     def test_retry_reuses_only_byte_identical_material(self) -> None:
         first = self._prepare()
         second = self._prepare()
@@ -1296,6 +1351,34 @@ class ContinueTrainTests(_PipelineFixture):
             )
         ac_release = git("ls-remote", "origin", "refs/heads/release", cwd=self.ac)
         self.assertEqual(ac_release, "")
+        self.assertFalse(self.provider_log.exists())
+        rt.read_card(self.aweb)
+
+    def test_ac_gate_runs_under_the_work_timeout(self) -> None:
+        self._prepare()
+        slow = Path(self.tmp.name) / "slow-ac-gate.py"
+        slow.write_text("import time\ntime.sleep(3)\n")
+        with self.assertRaises(rt.CommandUnavailable) as caught:
+            rt.continue_train(
+                self.aweb,
+                bases={
+                    "pypi": self.spool_base,
+                    "npm": self.spool_base,
+                    "ghcr": self.spool_base,
+                    "github": self.spool_base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=self.derive_command,
+                ac_gate_command=(sys.executable, str(slow)),
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=self.digest_command,
+                timeout=60,
+                work_timeout=1,
+            )
+        self.assertIn("timed out", str(caught.exception))
+        # The stop keeps the card and touches nothing past the gate edge.
         self.assertFalse(self.provider_log.exists())
         rt.read_card(self.aweb)
 

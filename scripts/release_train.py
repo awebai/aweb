@@ -598,14 +598,22 @@ class CommandResult:
     stderr: str
 
 
-def _bounded_timeout(timeout: object) -> float:
+# Work commands - gate suites, publish workflows, deploys - run for hours;
+# a registry or HTTP observation that takes that long is a hang, not work.
+# Observations keep the tight default bound.
+WORK_TIMEOUT = 6 * 3600.0
+
+
+def _bounded_timeout(timeout: object, *, limit: float = 600.0) -> float:
     if (
         isinstance(timeout, bool)
         or not isinstance(timeout, (int, float))
         or timeout <= 0
-        or timeout > 600
+        or timeout > limit
     ):
-        raise ValidationError("timeout must be greater than zero and at most 600 seconds")
+        raise ValidationError(
+            f"timeout must be greater than zero and at most {limit:g} seconds"
+        )
     return float(timeout)
 
 
@@ -616,7 +624,7 @@ def run_command(
 
     if not args or any(not isinstance(arg, str) or not arg for arg in args):
         raise ValidationError("command argv must contain nonempty strings")
-    bounded = _bounded_timeout(timeout)
+    bounded = _bounded_timeout(timeout, limit=86400.0)
     try:
         completed = subprocess.run(
             list(args),
@@ -1094,11 +1102,11 @@ def select_compat_pairing(
 
 
 def run_gate_once(
-    prepared: PreparedEnvironment, gate_command: tuple[str, ...], *, timeout: float
+    prepared: PreparedEnvironment, gate_command: tuple[str, ...], *, work_timeout: float
 ) -> GateEvidence:
     if not gate_command or not all(isinstance(item, str) and item for item in gate_command):
         raise ValidationError("gate command must be a nonempty tuple of arguments")
-    result = run_command(list(gate_command), cwd=prepared.aweb_root, timeout=timeout)
+    result = run_command(list(gate_command), cwd=prepared.aweb_root, timeout=work_timeout)
     document = _parse_json_bytes(result.stdout.encode(), "gate evidence")
     if not isinstance(document, dict):
         raise ObservationMalformed("gate evidence must be a JSON object")
@@ -1123,20 +1131,21 @@ def prepare(
     bases: Mapping[str, str] | None = None,
     gate_command: tuple[str, ...],
     timeout: float = 600,
+    work_timeout: float = WORK_TIMEOUT,
 ) -> ReleaseCard:
     prepared = prepare_environment(repo_root, environment)
     selections = select_artifacts(
         prepared, registry_base=registry_base, bases=bases, timeout=timeout
     )
     check_plugin_equality(prepared)
-    gate = run_gate_once(prepared, gate_command, timeout=timeout)
+    gate = run_gate_once(prepared, gate_command, work_timeout=work_timeout)
     gates = [gate]
     pairing = select_compat_pairing(selections)
     if pairing is not None:
         compat_result = run_command(
             [*gate_command, "compat-pairing", *pairing],
             cwd=prepared.aweb_root,
-            timeout=timeout,
+            timeout=work_timeout,
         )
         compat_document = _parse_json_bytes(
             compat_result.stdout.encode(), "compat gate evidence"
@@ -1444,6 +1453,7 @@ def continue_train(
     digest_command: tuple[str, ...],
     marketplace_command: tuple[str, ...] | None = None,
     timeout: float = 600,
+    work_timeout: float = WORK_TIMEOUT,
 ) -> dict[str, str]:
     """Execute the ten edges literally, idempotently, stopping named."""
 
@@ -1467,16 +1477,16 @@ def continue_train(
             run_command(
                 [*workflow_command, selection.name, selection.version],
                 cwd=environment.aweb_root,
-                timeout=timeout,
+                timeout=work_timeout,
             )
         _poll_public_target(primary, selection.version, bases=bases, timeout=timeout)
     if marketplace_command is not None:
         run_command(
-            list(marketplace_command), cwd=environment.aweb_root, timeout=timeout
+            list(marketplace_command), cwd=environment.aweb_root, timeout=work_timeout
         )
     ac_derived = environment.ac_derived_sha
     if ac_derived is None:
-        run_command(list(derive_command), cwd=environment.ac_root, timeout=timeout)
+        run_command(list(derive_command), cwd=environment.ac_root, timeout=work_timeout)
         changed = _git(environment.ac_root, "status", "--porcelain").stdout.split()
         names = {line for line in changed if not line.startswith(("M", "A", "?"))} or {
             item.split()[-1] for item in _git(
@@ -1509,10 +1519,10 @@ def continue_train(
             f"HEAD:refs/heads/main",
             f"--force-with-lease=refs/heads/main:{card.ac_base_sha}",
         )
-    run_command(list(ac_gate_command), cwd=environment.ac_root, timeout=timeout)
+    run_command(list(ac_gate_command), cwd=environment.ac_root, timeout=work_timeout)
     fast_forward_release(environment.ac_root, "release", ac_derived)
     digest_result = run_command(
-        list(digest_command), cwd=environment.ac_root, timeout=timeout
+        list(digest_command), cwd=environment.ac_root, timeout=work_timeout
     )
     digest = digest_result.stdout.strip()
     if not _DIGEST_RE.fullmatch(digest):
@@ -1520,12 +1530,12 @@ def continue_train(
             f"AC image digest observation is not an exact digest: {digest!r}"
         )
     if card.deployments.production:
-        run_command(list(migrate_command), cwd=environment.ac_root, timeout=timeout)
+        run_command(list(migrate_command), cwd=environment.ac_root, timeout=work_timeout)
         run_command(
-            [*deploy_command, digest], cwd=environment.ac_root, timeout=timeout
+            [*deploy_command, digest], cwd=environment.ac_root, timeout=work_timeout
         )
         run_command(
-            [*verify_command, digest], cwd=environment.ac_root, timeout=timeout
+            [*verify_command, digest], cwd=environment.ac_root, timeout=work_timeout
         )
     if card.deployments.awid_site:
         fast_forward_release(
