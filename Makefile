@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release-local-gate-contract test-release-train test-release-gate-contract check-release-gate-residue test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract check-oas-pi-launch-order test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release-local-gate-contract test-release-train test-release-gate-contract check-release-gate-residue release-prepare test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract check-oas-pi-launch-order test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -99,6 +99,7 @@ help:
 	@echo "    publication is not delivery, publication is immutable."
 	@echo ""
 	@echo "  release-awid-site                     deploy awid landing page"
+	@echo '  PURPOSE="..." COMPAT_BREAK=none make release-prepare   run all pre-go selection, gates, and card generation'
 	@echo "  clean        Remove all build artifacts and caches"
 
 build:
@@ -463,6 +464,11 @@ check-awid-locked-suite:
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
 
 # ── Awid site deploy ────────────────────────────────────────────────
+
+release-prepare:
+	@test -n "$(PURPOSE)" || { echo 'PURPOSE is required: PURPOSE="..." COMPAT_BREAK=none make release-prepare'; exit 2; }
+	@test -n "$(COMPAT_BREAK)" || { echo 'COMPAT_BREAK is required: none, or one explicit intentional break line'; exit 2; }
+	python3 scripts/release_train.py prepare
 
 release-awid-site:
 	@echo "Syncing docs into awid site..."

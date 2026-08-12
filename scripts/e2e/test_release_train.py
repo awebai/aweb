@@ -699,5 +699,180 @@ class PrepareEnvironmentTests(unittest.TestCase):
             self._prepare(AWEB_SHA="abc123")
 
 
+class _PresenceHandler(BaseHTTPRequestHandler):
+    present: dict[str, dict] = {}
+
+    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        evidence = type(self).present.get(self.path)
+        if evidence is None:
+            self.send_error(404)
+            return
+        body = json.dumps(evidence).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, _format: str, *args: object) -> None:
+        pass
+
+
+class PreparePipelineTests(unittest.TestCase):
+    """prepare selects, checks, gates, and writes the card atomically."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), _PresenceHandler)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.registry = f"http://127.0.0.1:{cls.server.server_port}"
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+
+    def setUp(self) -> None:
+        _PresenceHandler.present = {}
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.aweb_remote = root / "origins/awebai/aweb.git"
+        self.ac_remote = root / "origins/awebai/ac.git"
+        for remote in (self.aweb_remote, self.ac_remote):
+            remote.parent.mkdir(parents=True, exist_ok=True)
+            git("init", "--bare", str(remote), cwd=root)
+        self.aweb = root / "work/aweb"
+        self.ac = root / "work/ac"
+        for repo, remote in ((self.aweb, self.aweb_remote), (self.ac, self.ac_remote)):
+            repo.mkdir(parents=True)
+            git("init", "-b", "main", cwd=repo)
+            git("config", "user.email", "test@example.com", cwd=repo)
+            git("config", "user.name", "Test", cwd=repo)
+            git("remote", "add", "origin", str(remote), cwd=repo)
+        def manifest(repo: Path, path: str, body: str) -> None:
+            target = repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body)
+        for path, version in (
+            ("server/pyproject.toml", "1.27.2"),
+            ("awid/pyproject.toml", "0.5.16"),
+        ):
+            manifest(self.aweb, path, f'[project]\nversion = "{version}"\n')
+        for path, version in (
+            ("channel/package.json", "1.7.7"),
+            ("channel/.claude-plugin/plugin.json", "1.7.7"),
+            ("pi-extension/package.json", "0.3.7"),
+            ("packages/claude-skills/package.json", "0.2.13"),
+            ("packages/claude-skills/.claude-plugin/plugin.json", "0.2.13"),
+        ):
+            manifest(self.aweb, path, json.dumps({"version": version}))
+        manifest(self.aweb, "awid/site/index.html", "<html>awid</html>")
+        manifest(self.ac, "backend/pyproject.toml", '[project]\nversion = "0.7.13"\n')
+        manifest(self.ac, "site/index.html", "<html>aweb</html>")
+        for repo in (self.aweb, self.ac):
+            git("add", ".", cwd=repo)
+            git("commit", "-m", "base", cwd=repo)
+            git("push", "-u", "origin", "main", cwd=repo)
+            git("fetch", "origin", cwd=repo)
+        git("tag", "aw-v1.34.3", cwd=self.aweb)
+        gate = Path(self.tmp.name) / "gate.py"
+        gate.write_text(
+            "import json\n"
+            'print(json.dumps({"suites": ["make-test", "cli-e2e"], '
+            '"reference": "fixture-gate.log"}))\n'
+        )
+        self.gate_command = (sys.executable, str(gate))
+
+    def _prepare(self, **overrides: str):
+        environment = {"PURPOSE": "fixture release", "COMPAT_BREAK": "none"}
+        environment.update(overrides)
+        return rt.prepare(
+            self.aweb,
+            environment,
+            registry_base=self.registry,
+            gate_command=self.gate_command,
+            timeout=30,
+        )
+
+    def test_prepare_generates_the_card_and_touches_nothing_outward(self) -> None:
+        before = {
+            remote: git("ls-remote", str(remote), cwd=self.aweb)
+            for remote in (self.aweb_remote, self.ac_remote)
+        }
+        card = self._prepare()
+        self.assertTrue(all(item.moves for item in card.artifacts))
+        self.assertEqual(card.deployments.production, True)
+        self.assertTrue(card.deployments.awid_site)
+        self.assertTrue(card.deployments.aweb_site)
+        self.assertEqual(
+            {item.name: item.version for item in card.artifacts}["aw-cli"], "1.34.4"
+        )
+        self.assertIsNone(card.final_ac_sha)
+        self.assertTrue(card.first_release_correction_pending)
+        stored = rt.read_card(self.aweb)
+        self.assertEqual(stored, card)
+        for remote, listing in before.items():
+            self.assertEqual(git("ls-remote", str(remote), cwd=self.aweb), listing)
+        for repo in (self.aweb, self.ac):
+            self.assertEqual(git("status", "--porcelain", cwd=repo), "")
+
+    def test_present_versions_are_excluded_from_the_move_set(self) -> None:
+        from urllib.parse import quote
+
+        _PresenceHandler.present[
+            "/" + quote("pypi:awid-service", safe="") + "/0.5.16"
+        ] = {"state": "present", "version": "0.5.16", "digest": DIGEST}
+        card = self._prepare()
+        moves = {item.name: item.moves for item in card.artifacts}
+        self.assertFalse(moves["awid-service"])
+        self.assertTrue(moves["aweb-server"])
+
+    def test_registry_version_conflict_stops_naming_it(self) -> None:
+        from urllib.parse import quote
+
+        _PresenceHandler.present[
+            "/" + quote("pypi:awid-service", safe="") + "/0.5.16"
+        ] = {"state": "present", "version": "0.5.99", "digest": DIGEST}
+        with self.assertRaises(rt.ObservationMalformed) as caught:
+            self._prepare()
+        self.assertIn("same-version conflict", str(caught.exception))
+        with self.assertRaises(rt.CardUnavailable):
+            rt.read_card(self.aweb)
+
+    def test_plugin_version_drift_refuses(self) -> None:
+        plugin = self.aweb / "channel/.claude-plugin/plugin.json"
+        plugin.write_text(json.dumps({"version": "9.9.9"}))
+        git("add", ".", cwd=self.aweb)
+        git("commit", "-m", "drift", cwd=self.aweb)
+        git("push", "origin", "main", cwd=self.aweb)
+        with self.assertRaises(rt.ValidationError) as caught:
+            self._prepare()
+        self.assertIn("plugin.json", str(caught.exception))
+
+    def test_gate_failure_leaves_no_card(self) -> None:
+        gate = Path(self.tmp.name) / "failing-gate.py"
+        gate.write_text("raise SystemExit(1)\n")
+        with self.assertRaises(rt.CommandFailed):
+            rt.prepare(
+                self.aweb,
+                {"PURPOSE": "fixture release", "COMPAT_BREAK": "none"},
+                registry_base=self.registry,
+                gate_command=(sys.executable, str(gate)),
+                timeout=30,
+            )
+        with self.assertRaises(rt.CardUnavailable):
+            rt.read_card(self.aweb)
+
+    def test_retry_reuses_only_byte_identical_material(self) -> None:
+        first = self._prepare()
+        second = self._prepare()
+        self.assertEqual(first, second)
+        with self.assertRaises(rt.MaterialMismatch):
+            self._prepare(PURPOSE="a different purpose")
+
+
 if __name__ == "__main__":
     unittest.main()

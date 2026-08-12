@@ -14,9 +14,13 @@ import enum
 import json
 import os
 import re
+import shlex
 import subprocess
+import sys
 import tempfile
+import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -896,6 +900,186 @@ def prepare_environment(
     )
 
 
+SITE_DEPLOYMENTS = {
+    "awid-site": ("aweb", "deploy-awid-landing", ("awid/site",)),
+    "aweb-site": ("ac", "deploy-landing", ("site",)),
+}
+
+
+def _artifact(key: str) -> Artifact:
+    for item in ARTIFACTS:
+        if item.key == key:
+            return item
+    raise ValidationError(f"unknown artifact: {key}")
+
+
+def _read_manifest_version(prepared: PreparedEnvironment, artifact: Artifact) -> str:
+    source = artifact.version_source
+    repository = prepared.aweb_root if artifact.repository == "aweb" else prepared.ac_root
+    sha = prepared.aweb_sha if artifact.repository == "aweb" else prepared.ac_sha
+    if source is None:
+        raise ValidationError(f"{artifact.key} has no manifest version source")
+    if source.startswith("equals:"):
+        return _read_manifest_version(prepared, _artifact("aweb-server"))
+    if source.startswith("tag-history:"):
+        pattern = source.split(":", 1)[1]
+        listed = _git(repository, "tag", "--list", pattern).stdout.split()
+        versions = []
+        for tag in listed:
+            candidate = tag.removeprefix("aw-v")
+            if _SEMVER_RE.fullmatch(candidate):
+                versions.append(tuple(int(part) for part in candidate.split("-")[0].split(".")))
+        if not versions:
+            raise ObservationUnavailable(
+                f"{artifact.key} has no {pattern} tag history to derive the next version"
+            )
+        newest = max(versions)
+        return f"{newest[0]}.{newest[1]}.{newest[2] + 1}"
+    body = _git(repository, "show", f"{sha}:{source}").stdout
+    if source.endswith("pyproject.toml"):
+        document = tomllib.loads(body)
+        return validate_version(
+            document.get("project", {}).get("version"), f"{artifact.key} version"
+        )
+    if source.endswith("package.json"):
+        document = _parse_json_bytes(body.encode(), f"{artifact.key} manifest")
+        if not isinstance(document, dict):
+            raise ObservationMalformed(f"{artifact.key} manifest must be an object")
+        return validate_version(document.get("version"), f"{artifact.key} version")
+    raise ValidationError(f"{artifact.key} version source is not recognized: {source}")
+
+
+def observe_registry_presence(url: str, expected_version: str, *, timeout: float) -> bool:
+    """True when the registry serves exactly this version; False on HTTP 404."""
+
+    validate_line(url, "registry URL")
+    validate_version(expected_version, "expected registry version")
+    bounded = _bounded_timeout(timeout)
+    request = urllib.request.Request(
+        url, headers={"Accept": "application/json"}, method="GET"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=bounded) as response:
+            if response.status != 200:
+                raise ObservationUnavailable(
+                    f"registry observation returned HTTP {response.status}"
+                )
+            body = response.read(1024 * 1024 + 1)
+    except urllib.error.HTTPError as error:
+        code = error.code
+        error.close()
+        if code == 404:
+            return False
+        raise ObservationUnavailable(
+            f"registry observation returned HTTP {code}"
+        ) from error
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        raise ObservationUnavailable(f"registry observation unavailable: {error}") from error
+    if len(body) > 1024 * 1024:
+        raise ObservationMalformed("registry evidence exceeds 1 MiB")
+    evidence = _require_registry_mapping(_parse_json_bytes(body, "registry evidence"))
+    if evidence.get("state") != "present":
+        raise ObservationMalformed(
+            "registry evidence state must be present; absence requires HTTP 404"
+        )
+    observed = validate_version(evidence.get("version"), "registry version")
+    if observed != expected_version:
+        raise ObservationMalformed(
+            f"registry serves version {observed} where {expected_version} was "
+            f"queried; same-version conflict"
+        )
+    return True
+
+
+def select_artifacts(
+    prepared: PreparedEnvironment, *, registry_base: str, timeout: float
+) -> tuple[ArtifactSelection, ...]:
+    validate_line(registry_base, "registry base")
+    selections = []
+    versions: dict[str, str] = {}
+    for name in CARD_ARTIFACT_ORDER:
+        artifact = _artifact(name)
+        version = _read_manifest_version(prepared, artifact)
+        versions[name] = version
+        reference = artifact.targets[0]
+        url = f"{registry_base}/{urllib.parse.quote(reference, safe='')}/{version}"
+        present = observe_registry_presence(url, version, timeout=timeout)
+        selections.append(ArtifactSelection(name=name, version=version, moves=not present))
+    if versions["a2a-gateway-image"] != versions["aweb-server"]:
+        raise ValidationError(
+            "a2a-gateway version must equal the server version at set computation"
+        )
+    return tuple(selections)
+
+
+def check_plugin_equality(prepared: PreparedEnvironment) -> None:
+    pairs = (
+        ("channel-plugin", "channel/.claude-plugin/plugin.json", "channel/package.json"),
+        ("skills", "packages/claude-skills/.claude-plugin/plugin.json", "packages/claude-skills/package.json"),
+    )
+    for name, plugin_path, package_path in pairs:
+        try:
+            plugin_body = _git(
+                prepared.aweb_root, "show", f"{prepared.aweb_sha}:{plugin_path}"
+            ).stdout
+        except CommandFailed:
+            continue
+        package_body = _git(
+            prepared.aweb_root, "show", f"{prepared.aweb_sha}:{package_path}"
+        ).stdout
+        plugin = _parse_json_bytes(plugin_body.encode(), f"{name} plugin manifest")
+        package = _parse_json_bytes(package_body.encode(), f"{name} package manifest")
+        if not isinstance(plugin, dict) or not isinstance(package, dict):
+            raise ObservationMalformed(f"{name} manifests must be objects")
+        if plugin.get("version") != package.get("version"):
+            raise ValidationError(
+                f"{name} committed plugin.json version {plugin.get('version')!r} "
+                f"must equal package.json version {package.get('version')!r}"
+            )
+
+
+def _site_moves(prepared: PreparedEnvironment, name: str) -> bool:
+    repository_name, branch, paths = SITE_DEPLOYMENTS[name]
+    repository = (
+        prepared.aweb_root if repository_name == "aweb" else prepared.ac_root
+    )
+    sha = prepared.aweb_sha if repository_name == "aweb" else prepared.ac_sha
+    listed = _git(repository, "ls-remote", "origin", f"refs/heads/{branch}").stdout.strip()
+    if not listed:
+        # U3: the deployment branch does not exist (live for aweb-site).
+        # The source set has never deployed, so the site moves; the deploy
+        # target stays pending until the branch shape is verified (U3).
+        return True
+    deployed = listed.split()[0]
+    try:
+        _git(repository, "diff", "--quiet", deployed, sha, "--", *paths)
+    except CommandFailed:
+        return True
+    return False
+
+
+def run_gate_once(
+    prepared: PreparedEnvironment, gate_command: tuple[str, ...], *, timeout: float
+) -> GateEvidence:
+    if not gate_command or not all(isinstance(item, str) and item for item in gate_command):
+        raise ValidationError("gate command must be a nonempty tuple of arguments")
+    result = run_command(list(gate_command), cwd=prepared.aweb_root, timeout=timeout)
+    document = _parse_json_bytes(result.stdout.encode(), "gate evidence")
+    if not isinstance(document, dict):
+        raise ObservationMalformed("gate evidence must be a JSON object")
+    suites = document.get("suites")
+    reference = document.get("reference")
+    if not isinstance(suites, list) or not suites:
+        raise ObservationMalformed("gate evidence must name its suites")
+    return GateEvidence(
+        name="aweb-clean-gate",
+        sha=prepared.aweb_sha,
+        result="passed",
+        reference=validate_line(reference, "gate log reference"),
+        suites=tuple(validate_line(item, "gate suite") for item in suites),
+    )
+
+
 def prepare(
     repo_root: Path,
     environment: Mapping[str, str],
@@ -905,8 +1089,67 @@ def prepare(
     timeout: float = 600,
 ) -> ReleaseCard:
     prepared = prepare_environment(repo_root, environment)
-    del prepared, registry_base, gate_command, timeout
-    raise ObservationUnavailable(
-        "release-prepare artifact selection is not yet wired; prepare fails "
-        "closed after environment validation and writes no card"
+    selections = select_artifacts(
+        prepared, registry_base=registry_base, timeout=timeout
     )
+    check_plugin_equality(prepared)
+    gate = run_gate_once(prepared, gate_command, timeout=timeout)
+    moves = {item.name: item.moves for item in selections}
+    deployments = DeploymentSet(
+        production=moves["ac-image"],
+        awid_site=_site_moves(prepared, "awid-site"),
+        aweb_site=_site_moves(prepared, "aweb-site"),
+    )
+    card = ReleaseCard(
+        aweb_sha=prepared.aweb_sha,
+        ac_base_sha=prepared.ac_sha,
+        artifacts=selections,
+        compatibility=prepared.compatibility,
+        gates=(gate,),
+        purpose=prepared.purpose,
+        deployments=deployments,
+        final_ac_sha=None,
+        first_release_correction_pending=True,
+    )
+    try:
+        existing = read_card(prepared.aweb_root)
+    except CardUnavailable:
+        existing = None
+    if existing is not None:
+        assert_material_matches(existing, card)
+    write_card(prepared.aweb_root, card)
+    return card
+
+
+def _main(argv: Sequence[str]) -> int:
+    if list(argv) != ["prepare"]:
+        print("usage: release_train.py prepare", file=sys.stderr)
+        return 2
+    registry_base = os.environ.get("AWEB_RELEASE_REGISTRY_BASE", "").strip()
+    gate_raw = os.environ.get("AWEB_RELEASE_GATE_COMMAND", "").strip()
+    if not registry_base or not gate_raw:
+        print(
+            "release-prepare refused: AWEB_RELEASE_REGISTRY_BASE and "
+            "AWEB_RELEASE_GATE_COMMAND must name the observation endpoint and "
+            "gate entry. The epic ends at non-production readiness; the "
+            "real-registry adapters are first-release work and nothing here "
+            "guesses them.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        card = prepare(
+            Path.cwd(),
+            os.environ,
+            registry_base=registry_base,
+            gate_command=tuple(shlex.split(gate_raw)),
+        )
+    except ReleaseTrainError as error:
+        print(f"release-prepare failed: {error}", file=sys.stderr)
+        return 1
+    print(json.dumps(dataclasses.asdict(card), indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main(sys.argv[1:]))
