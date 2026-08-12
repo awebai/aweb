@@ -934,6 +934,20 @@ class PreparePipelineTests(_PipelineFixture):
         with self.assertRaises(rt.MaterialMismatch):
             self._prepare(PURPOSE="a different purpose")
 
+    def test_prepare_replaces_a_card_whose_ac_main_moved_past_it(self) -> None:
+        stale = self._prepare()
+        (self.ac / "backend/app.py").write_text("not a dependency-only change\n")
+        git("add", ".", cwd=self.ac)
+        git("commit", "-m", "ac main moves past the card", cwd=self.ac)
+        git("push", "origin", "main", cwd=self.ac)
+        git("fetch", "origin", cwd=self.ac)
+        fresh = self._prepare()
+        self.assertNotEqual(fresh.ac_base_sha, stale.ac_base_sha)
+        self.assertEqual(
+            fresh.ac_base_sha, git("rev-parse", "origin/main", cwd=self.ac)
+        )
+        self.assertEqual(rt.read_card(self.aweb), fresh)
+
     def test_prepare_replaces_a_card_the_mains_have_moved_past(self) -> None:
         stale = self._prepare()
         (self.aweb / "server/README.md").write_text("moved\n")
@@ -1446,6 +1460,38 @@ class ContinueTrainTests(_PipelineFixture):
         # The stop keeps the card and touches nothing past the gate edge.
         self.assertFalse(self.provider_log.exists())
         rt.read_card(self.aweb)
+
+    def test_prepare_preserves_a_card_whose_derived_child_is_mid_continue(self) -> None:
+        card = self._prepare()
+        failing = Path(self.tmp.name) / "failing-ac-gate.py"
+        failing.write_text("raise SystemExit(1)\n")
+        with self.assertRaises(rt.CommandFailed):
+            rt.continue_train(
+                self.aweb,
+                bases={
+                    "pypi": self.spool_base,
+                    "npm": self.spool_base,
+                    "ghcr": self.spool_base,
+                    "github": self.spool_base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=self.derive_command,
+                ac_gate_command=(sys.executable, str(failing)),
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=self.digest_command,
+                timeout=60,
+            )
+        # AC main now sits at the derived dependency-only child, a state
+        # continue adopts on retry. The stored card is still executable, so
+        # prepare must refuse pointing at the resume, not destroy it.
+        with self.assertRaises(rt.MaterialMismatch) as caught:
+            self._prepare()
+        self.assertIn("release-continue", str(caught.exception))
+        self.assertEqual(rt.read_card(self.aweb), card)
+        summary = self._continue()
+        self.assertEqual(summary["status"], "DONE")
 
     def test_partial_prior_derivation_is_adopted_on_retry(self) -> None:
         self._prepare()

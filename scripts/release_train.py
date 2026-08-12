@@ -708,12 +708,23 @@ def write_card(repository: Path, card: ReleaseCard) -> Path:
         ):
             assert_material_matches(card, existing)
             return path
-        # The incoming card carries the freshly observed origin mains. When
-        # the stored card's recorded SHAs differ, no continue can ever
-        # execute it - continue itself refuses a card the mains moved past -
-        # so it is dead by the train's own rules and prepare replaces it
-        # rather than depending on an operator to delete a file.
-        path.unlink()
+        # The incoming card carries the freshly observed origin mains.
+        # Liveness of the stored card is continue's own predicate
+        # (_dependency_only_derived_child, shared with continue_environment):
+        # a card whose AC main sits at its derived child is mid-continue and
+        # must be finished, not destroyed.
+        if existing.aweb_sha == card.aweb_sha and _dependency_only_derived_child(
+            (Path(repository).resolve().parent / "ac").resolve(),
+            existing.ac_base_sha,
+            card.ac_base_sha,
+        ):
+            raise MaterialMismatch(
+                "the stored card is still executable: AC main is its derived "
+                "dependency-only child; rerun release-continue to finish it"
+            )
+        # Otherwise the mains have moved past the stored card, continue could
+        # never execute it, and prepare overwrites it atomically below rather
+        # than depending on an operator to delete a file.
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_name: str | None = None
     try:
@@ -1352,6 +1363,24 @@ class ContinueEnvironment:
     ac_derived_sha: str | None
 
 
+def _dependency_only_derived_child(
+    ac_root: Path, base_sha: str, observed_sha: str
+) -> bool:
+    """Continue's adoption predicate: observed AC main is a child of the
+    recorded base whose diff stays inside the derived-commit allowlist."""
+
+    try:
+        parent = _git(ac_root, "rev-parse", f"{observed_sha}^").stdout.strip()
+    except CommandFailed:
+        return False
+    if parent != base_sha:
+        return False
+    changed = _git(
+        ac_root, "diff", "--name-only", f"{base_sha}..{observed_sha}"
+    ).stdout.split()
+    return set(changed) <= set(AC_DERIVED_ALLOWLIST)
+
+
 def continue_environment(repo_root: Path) -> ContinueEnvironment:
     """Read the fixed unconsumed card and re-observe its material commits.
 
@@ -1383,16 +1412,7 @@ def continue_environment(repo_root: Path) -> ContinueEnvironment:
     ac_main = _git(ac_root, "rev-parse", "refs/remotes/origin/main").stdout.strip()
     ac_derived_sha: str | None = None
     if ac_main != card.ac_base_sha:
-        try:
-            parent = _git(ac_root, "rev-parse", f"{ac_main}^").stdout.strip()
-        except CommandFailed:
-            parent = ""
-        changed = _git(
-            ac_root, "diff", "--name-only", f"{card.ac_base_sha}..{ac_main}"
-        ).stdout.split() if parent == card.ac_base_sha else None
-        if parent == card.ac_base_sha and changed is not None and set(changed) <= set(
-            AC_DERIVED_ALLOWLIST
-        ):
+        if _dependency_only_derived_child(ac_root, card.ac_base_sha, ac_main):
             ac_derived_sha = ac_main
         else:
             raise MaterialMismatch(
