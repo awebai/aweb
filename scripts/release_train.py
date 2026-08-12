@@ -701,8 +701,19 @@ def assert_material_matches(expected: ReleaseCard, observed: ReleaseCard) -> Non
 def write_card(repository: Path, card: ReleaseCard) -> Path:
     path = card_path(repository)
     if path.exists():
-        assert_material_matches(card, read_card(repository))
-        return path
+        existing = read_card(repository)
+        if (
+            existing.aweb_sha == card.aweb_sha
+            and existing.ac_base_sha == card.ac_base_sha
+        ):
+            assert_material_matches(card, existing)
+            return path
+        # The incoming card carries the freshly observed origin mains. When
+        # the stored card's recorded SHAs differ, no continue can ever
+        # execute it - continue itself refuses a card the mains moved past -
+        # so it is dead by the train's own rules and prepare replaces it
+        # rather than depending on an operator to delete a file.
+        path.unlink()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_name: str | None = None
     try:
@@ -1188,12 +1199,6 @@ def prepare(
         final_ac_sha=None,
         first_release_correction_pending=True,
     )
-    try:
-        existing = read_card(prepared.aweb_root)
-    except CardUnavailable:
-        existing = None
-    if existing is not None:
-        assert_material_matches(existing, card)
     write_card(prepared.aweb_root, card)
     return card
 

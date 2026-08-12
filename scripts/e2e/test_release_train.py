@@ -934,6 +934,23 @@ class PreparePipelineTests(_PipelineFixture):
         with self.assertRaises(rt.MaterialMismatch):
             self._prepare(PURPOSE="a different purpose")
 
+    def test_prepare_replaces_a_card_the_mains_have_moved_past(self) -> None:
+        stale = self._prepare()
+        (self.aweb / "server/README.md").write_text("moved\n")
+        git("add", ".", cwd=self.aweb)
+        git("commit", "-m", "main moves past the card", cwd=self.aweb)
+        git("push", "origin", "main", cwd=self.aweb)
+        git("fetch", "origin", cwd=self.aweb)
+        # No continue can execute the stored card once main has moved past
+        # its recorded SHAs, so prepare must replace it itself rather than
+        # refuse until an operator remembers to delete a file.
+        fresh = self._prepare()
+        self.assertNotEqual(fresh.aweb_sha, stale.aweb_sha)
+        self.assertEqual(
+            fresh.aweb_sha, git("rev-parse", "origin/main", cwd=self.aweb)
+        )
+        self.assertEqual(rt.read_card(self.aweb), fresh)
+
 
 
 class ContinuePhaseTests(_PipelineFixture):
