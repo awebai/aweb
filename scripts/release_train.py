@@ -992,9 +992,19 @@ def observe_registry_presence(url: str, expected_version: str, *, timeout: float
 
 
 def select_artifacts(
-    prepared: PreparedEnvironment, *, registry_base: str, timeout: float
+    prepared: PreparedEnvironment,
+    *,
+    registry_base: str | None = None,
+    bases: Mapping[str, str] | None = None,
+    timeout: float,
 ) -> tuple[ArtifactSelection, ...]:
-    validate_line(registry_base, "registry base")
+    """Sweep the nine versioned artifacts.
+
+    With a fixture ``registry_base`` the presence evidence contract is used;
+    without one, the per-kind public read adapters speak each registry's real
+    API - the shape a real prepare runs.
+    """
+
     selections = []
     versions: dict[str, str] = {}
     for name in CARD_ARTIFACT_ORDER:
@@ -1002,8 +1012,14 @@ def select_artifacts(
         version = _read_manifest_version(prepared, artifact)
         versions[name] = version
         reference = artifact.targets[0]
-        url = f"{registry_base}/{urllib.parse.quote(reference, safe='')}/{version}"
-        present = observe_registry_presence(url, version, timeout=timeout)
+        if registry_base is not None:
+            validate_line(registry_base, "registry base")
+            url = f"{registry_base}/{urllib.parse.quote(reference, safe='')}/{version}"
+            present = observe_registry_presence(url, version, timeout=timeout)
+        else:
+            present = observe_public_target(
+                reference, version, bases=bases, timeout=timeout
+            )
         selections.append(ArtifactSelection(name=name, version=version, moves=not present))
     if versions["a2a-gateway-image"] != versions["aweb-server"]:
         raise ValidationError(
@@ -1103,13 +1119,14 @@ def prepare(
     repo_root: Path,
     environment: Mapping[str, str],
     *,
-    registry_base: str,
+    registry_base: str | None = None,
+    bases: Mapping[str, str] | None = None,
     gate_command: tuple[str, ...],
     timeout: float = 600,
 ) -> ReleaseCard:
     prepared = prepare_environment(repo_root, environment)
     selections = select_artifacts(
-        prepared, registry_base=registry_base, timeout=timeout
+        prepared, registry_base=registry_base, bases=bases, timeout=timeout
     )
     check_plugin_equality(prepared)
     gate = run_gate_once(prepared, gate_command, timeout=timeout)
@@ -1576,15 +1593,14 @@ def _main(argv: Sequence[str]) -> int:
     if list(argv) != ["prepare"]:
         print("usage: release_train.py prepare|continue", file=sys.stderr)
         return 2
-    registry_base = os.environ.get("AWEB_RELEASE_REGISTRY_BASE", "").strip()
+    registry_base = os.environ.get("AWEB_RELEASE_REGISTRY_BASE", "").strip() or None
     gate_raw = os.environ.get("AWEB_RELEASE_GATE_COMMAND", "").strip()
-    if not registry_base or not gate_raw:
+    if not gate_raw:
         print(
-            "release-prepare refused: AWEB_RELEASE_REGISTRY_BASE and "
-            "AWEB_RELEASE_GATE_COMMAND must name the observation endpoint and "
-            "gate entry. The epic ends at non-production readiness; the "
-            "real-registry adapters are first-release work and nothing here "
-            "guesses them.",
+            "release-prepare refused: AWEB_RELEASE_GATE_COMMAND must name the "
+            "gate entry (the Make target supplies the real wrapper). Without "
+            "AWEB_RELEASE_REGISTRY_BASE the sweep reads the real public "
+            "registries through the per-kind adapters, read-only.",
             file=sys.stderr,
         )
         return 2

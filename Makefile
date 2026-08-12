@@ -463,7 +463,8 @@ check-awid-locked-suite:
 release-prepare:
 	@test -n "$(PURPOSE)" || { echo 'PURPOSE is required: PURPOSE="..." COMPAT_BREAK=none make release-prepare'; exit 2; }
 	@test -n "$(COMPAT_BREAK)" || { echo 'COMPAT_BREAK is required: none, or one explicit intentional break line'; exit 2; }
-	python3 scripts/release_train.py prepare
+	AWEB_RELEASE_GATE_COMMAND="$${AWEB_RELEASE_GATE_COMMAND:-scripts/release-prepare-gate.sh}" \
+		python3 scripts/release_train.py prepare
 
 release-continue:
 	python3 scripts/release_train.py continue

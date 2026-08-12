@@ -1357,5 +1357,116 @@ class PrepareCompatRunTests(_PipelineFixture):
         self.assertIn("compat-pairing", invocations[1])
 
 
+class PrepareRealAdapterTests(_PipelineFixture):
+    """prepare's sweep speaks the real per-kind read APIs when no fixture
+    registry base is supplied - the shape the first real release runs."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.api_server = ThreadingHTTPServer(("127.0.0.1", 0), _PublicApiHandler)
+        cls.api_thread = threading.Thread(
+            target=cls.api_server.serve_forever, daemon=True
+        )
+        cls.api_thread.start()
+        base = f"http://127.0.0.1:{cls.api_server.server_port}"
+        cls.adapter_bases = {"pypi": base, "npm": base, "ghcr": base, "github": base}
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.api_server.shutdown()
+        cls.api_server.server_close()
+        cls.api_thread.join(timeout=2)
+        super().tearDownClass()
+
+    def test_prepare_sweeps_through_the_per_kind_adapters(self) -> None:
+        _PublicApiHandler.state = {
+            "/pypi/awid-service/0.5.16/json": (200, {"info": {"version": "0.5.16"}}),
+        }
+        for repo in ("awebai/awid", "awebai/a2a-gateway", "awebai/ac"):
+            _PublicApiHandler.state[
+                f"/token?scope=repository:{repo}:pull&service=ghcr.io"
+            ] = (200, {"token": "t"})
+        card = rt.prepare(
+            self.aweb,
+            {"PURPOSE": "real-adapter sweep", "COMPAT_BREAK": "none"},
+            bases=self.adapter_bases,
+            gate_command=self.gate_command,
+            timeout=30,
+        )
+        moves = {item.name: item.moves for item in card.artifacts}
+        self.assertFalse(moves["awid-service"])
+        self.assertTrue(moves["aweb-server"])
+        self.assertTrue(moves["ac-image"])
+
+
+class PrepareGateWrapperTests(unittest.TestCase):
+    """The prepare gate boundary emits only the JSON evidence on stdout and
+    fails without evidence when the gate does not pass."""
+
+    def _run(self, *args, gate_body: str, sha: str, env_extra=None):
+        import os, subprocess as sp
+
+        wrapper = REPO_ROOT / "scripts/release-prepare-gate.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            gate = Path(tmp) / "fake-gate.sh"
+            gate.write_text("#!/usr/bin/env bash\nset -eu\n" + gate_body)
+            gate.chmod(0o755)
+            env = {
+                **os.environ,
+                "AWEB_PREPARE_GATE_SCRIPT": str(gate),
+                "AWEB_SHA": sha,
+                **(env_extra or {}),
+            }
+            return sp.run(
+                [str(wrapper), *args], capture_output=True, text=True, env=env
+            )
+
+    def test_passing_gate_emits_the_row_names_and_reference(self) -> None:
+        sha = "e" * 40
+        log_dir = f"/tmp/aweb-release-gate-{sha}"
+        body = (
+            f"mkdir -p {log_dir}\n"
+            f"printf 'one\\tPASSED\\tcontract\\tt1\\ntwo\\tPASSED\\tunit\\tt2\\n' > {log_dir}/summary.tsv\n"
+            f"printf 'release gate PASSED at {sha}; logs: {log_dir}\\n' > {log_dir}/wrapper-verdict.log\n"
+            "echo gate-noise\n"
+        )
+        result = self._run(gate_body=body, sha=sha)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        evidence = json.loads(result.stdout)
+        self.assertEqual(evidence["suites"], ["one", "two"])
+        self.assertEqual(evidence["reference"], log_dir)
+        self.assertIn("gate-noise", result.stderr)
+
+    def test_failing_gate_emits_no_evidence(self) -> None:
+        result = self._run(gate_body="echo failing >&2\nexit 1\n", sha="f" * 40)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_missing_pass_verdict_refuses(self) -> None:
+        sha = "a" * 40
+        log_dir = f"/tmp/aweb-release-gate-{sha}"
+        body = (
+            f"mkdir -p {log_dir}\n"
+            f"printf 'one\\tPASSED\\tcontract\\tt1\\n' > {log_dir}/summary.tsv\n"
+            f"printf 'release gate FAILED; logs: {log_dir}\\n' > {log_dir}/wrapper-verdict.log\n"
+        )
+        result = self._run(gate_body=body, sha=sha)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_compat_mode_names_the_pairing_and_runs_the_cell(self) -> None:
+        result = self._run(
+            "compat-pairing", "aw-cli@new", "aweb-server@last",
+            gate_body="true\n",
+            sha="b" * 40,
+            env_extra={"AWEB_PREPARE_COMPAT_COMMAND": "echo compat-cell-ran"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        evidence = json.loads(result.stdout)
+        self.assertIn("aw-cli@new aweb-server@last", evidence["suites"][0])
+        self.assertTrue(Path(evidence["reference"]).exists())
+
+
 if __name__ == "__main__":
     unittest.main()
