@@ -377,12 +377,17 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
         # The authoritative Replace list must name exactly this five-file set;
         # a doc or constant that drops one file makes them disagree here.
         specification = (ROOT / "docs" / "release.md").read_text()
-        replace_sentence = specification.split("Replace (aweb):", 1)[1].split(
+        replace_sentence = specification.split("publication remains);", 1)[1].split(
             "lose their `push: main` triggers", 1
         )[0]
         for name in MAIN_TRIGGER_WORKFLOWS:
             self.assertIn(f"`{name}`", replace_sentence, name)
         self.assertEqual(len(MAIN_TRIGGER_WORKFLOWS), 5)
+        self.assertEqual(
+            sorted(re.findall(r"`([a-z0-9-]+\.yml)`", replace_sentence)),
+            sorted(MAIN_TRIGGER_WORKFLOWS),
+            "the doc sentence and the enforced constant must name the same set",
+        )
 
     def test_cli_pr_inputs_follow_current_public_defaults_without_stale_pins(self) -> None:
         text = (ROOT / ".github" / "workflows" / "cli-e2e.yml").read_text()
