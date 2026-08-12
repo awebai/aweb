@@ -61,35 +61,6 @@ FORBIDDEN_RESIDUE_LITERALS = (
     "make ship",
     "release-all-check",
 )
-NEW_RELEASE_COVERAGE = frozenset({"release-a2a-gateway-check"})
-OLD_SHIP_CLOSURE = frozenset(
-    {
-        "build", "check-aw-commit-repo-stamp", "check-cli-go-tidy",
-        "check-cli-release-vcs-stamps", "check-go-vulnerability-audit",
-        "check-node-audit", "check-oas-launch-environment-contract",
-        "check-oas-pi-launch-order", "check-ship-invocation", "check-ship-owner",
-        "cli-e2e", "freshness", "prepare-oas-test-root", "release-all-check",
-        "release-awid-check", "release-channel-check", "release-cli-version-check",
-        "release-server-check", "ship", "ship-gate", "ship-suites", "test",
-        "test-awid", "test-channel", "test-channel-core",
-        "test-channel-core-process-guard", "test-channel-integration",
-        "test-channel-name-live-contract", "test-cli", "test-cli-reference",
-        "test-e2e", "test-federation-authority-mutations", "test-federation-e2e",
-        "test-federation-error-reference", "test-federation-harness",
-        "test-go-vulnerability-audit", "test-mcp-tools-reference", "test-node-deps",
-        "test-npm-exact-publish", "test-oas", "test-oas-proof-helpers",
-        "test-oci-exact-publish", "test-pi-extension", "test-pointer-adapter",
-        "test-pointer-adapter-ac-pin", "test-pypi-exact-publish",
-        "test-python-locks", "test-release-adopted-preplan",
-        "test-release-channel-pi-skew", "test-release-cli-version",
-        "test-release-driver", "test-release-federation-skew",
-        "test-release-gate-contract", "test-release-persisted-state-skew",
-        "test-release-receipt-archive", "test-release-receipt-process",
-        "test-release-repository-measurement", "test-release-runnerless",
-        "test-release-skew-cli-server", "test-server", "test-ship-ci-contract",
-        "test-sot-source-inventories", "test-tmux-guard", "test-vector-provenance",
-    }
-)
 MAIN_TRIGGER_WORKFLOWS = (
     "library-ci.yml",
     "federation-e2e.yml",
