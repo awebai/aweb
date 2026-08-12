@@ -596,5 +596,108 @@ class BoundaryTests(unittest.TestCase):
                 )
 
 
+class PrepareEnvironmentTests(unittest.TestCase):
+    """release-prepare refuses every unfit environment naming the exact fix.
+
+    Real temporary repositories with bare remotes whose paths end in
+    awebai/aweb and awebai/ac, so the genuine origin check passes without any
+    test-only injection.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.aweb_remote = root / "origins/awebai/aweb.git"
+        self.ac_remote = root / "origins/awebai/ac.git"
+        for remote in (self.aweb_remote, self.ac_remote):
+            remote.parent.mkdir(parents=True, exist_ok=True)
+            git("init", "--bare", str(remote), cwd=root)
+        self.aweb = root / "work/aweb"
+        self.ac = root / "work/ac"
+        for repo, remote, seed in (
+            (self.aweb, self.aweb_remote, "server/pyproject.toml"),
+            (self.ac, self.ac_remote, "backend/pyproject.toml"),
+        ):
+            repo.mkdir(parents=True)
+            git("init", "-b", "main", cwd=repo)
+            git("config", "user.email", "test@example.com", cwd=repo)
+            git("config", "user.name", "Test", cwd=repo)
+            seed_path = repo / seed
+            seed_path.parent.mkdir(parents=True, exist_ok=True)
+            seed_path.write_text('[project]\nversion = "1.0.0"\n')
+            git("add", ".", cwd=repo)
+            git("commit", "-m", "base", cwd=repo)
+            git("remote", "add", "origin", str(remote), cwd=repo)
+            git("push", "-u", "origin", "main", cwd=repo)
+            git("fetch", "origin", cwd=repo)
+
+    def _environment(self, **overrides: str) -> dict[str, str]:
+        environment = {"PURPOSE": "test release", "COMPAT_BREAK": "none"}
+        environment.update(overrides)
+        return environment
+
+    def _prepare(self, repo_root: Path | None = None, **overrides: str):
+        return rt.prepare(
+            repo_root or self.aweb,
+            self._environment(**overrides),
+            registry_base="http://127.0.0.1:9",
+            gate_command=("true",),
+            timeout=30,
+        )
+
+    def test_refuses_a_non_root_working_directory_naming_the_fix(self) -> None:
+        subdir = self.aweb / "server"
+        with self.assertRaises(rt.ValidationError) as caught:
+            self._prepare(repo_root=subdir)
+        self.assertIn("canonical aweb repository root", str(caught.exception))
+        self.assertIn(str(self.aweb), str(caught.exception))
+
+    def test_refuses_a_foreign_origin_naming_the_expected_one(self) -> None:
+        git("remote", "set-url", "origin", str(self.tmp.name), cwd=self.aweb)
+        with self.assertRaises(rt.ValidationError) as caught:
+            self._prepare()
+        self.assertIn("awebai/aweb", str(caught.exception))
+
+    def test_refuses_a_missing_sibling_ac_checkout(self) -> None:
+        (self.ac / ".git").rename(self.ac / ".git-hidden")
+        with self.assertRaises(rt.ValidationError) as caught:
+            self._prepare()
+        self.assertIn("../ac", str(caught.exception))
+
+    def test_refuses_dirty_and_untracked_trees_naming_the_repository(self) -> None:
+        (self.aweb / "server/pyproject.toml").write_text("dirty\n")
+        with self.assertRaises(rt.ValidationError) as caught:
+            self._prepare()
+        self.assertIn("aweb", str(caught.exception))
+        git("checkout", "--", ".", cwd=self.aweb)
+        (self.ac / "untracked.txt").write_text("stray\n")
+        with self.assertRaises(rt.ValidationError) as caught:
+            self._prepare()
+        self.assertIn("ac", str(caught.exception))
+
+    def test_requires_purpose_and_compat_break_single_lines(self) -> None:
+        with self.assertRaises(rt.ValidationError):
+            self._prepare(PURPOSE="")
+        with self.assertRaises(rt.ValidationError):
+            self._prepare(PURPOSE="two\nlines")
+        with self.assertRaises(rt.ValidationError):
+            self._prepare(COMPAT_BREAK="")
+        with self.assertRaises(rt.ValidationError):
+            self._prepare(COMPAT_BREAK="breaks\neverything")
+
+    def test_refuses_an_unpushed_or_non_main_override_sha(self) -> None:
+        (self.aweb / "local.txt").write_text("local\n")
+        git("add", ".", cwd=self.aweb)
+        git("commit", "-m", "unpushed", cwd=self.aweb)
+        unpushed = git("rev-parse", "HEAD", cwd=self.aweb)
+        git("reset", "--hard", "HEAD~1", cwd=self.aweb)
+        with self.assertRaises(rt.ValidationError) as caught:
+            self._prepare(AWEB_SHA=unpushed)
+        self.assertIn("origin/main", str(caught.exception))
+        with self.assertRaises(rt.ValidationError):
+            self._prepare(AWEB_SHA="abc123")
+
+
 if __name__ == "__main__":
     unittest.main()

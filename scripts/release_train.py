@@ -805,3 +805,108 @@ def _require_registry_mapping(value: object) -> Mapping[str, Any]:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise ObservationMalformed("registry evidence must be a JSON object")
     return value
+
+
+# --- release-prepare -------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class PreparedEnvironment:
+    aweb_root: Path
+    ac_root: Path
+    aweb_sha: str
+    ac_sha: str
+    purpose: str
+    compatibility: str
+
+
+def _git(repository: Path, *args: str, timeout: float = 120) -> CommandResult:
+    return run_command(["git", *args], cwd=repository, timeout=timeout)
+
+
+def _require_origin(repository: Path, name: str) -> None:
+    url = _git(repository, "remote", "get-url", "origin").stdout.strip().rstrip("/")
+    if not (url.endswith(f"awebai/{name}") or url.endswith(f"awebai/{name}.git")):
+        raise ValidationError(
+            f"the {name} origin must be the canonical awebai/{name} remote; found "
+            f"{url or '<none>'}. Fix: run release-prepare from checkouts cloned "
+            f"from the canonical remotes"
+        )
+
+
+def _require_clean(repository: Path, label: str) -> None:
+    status = _git(repository, "status", "--porcelain").stdout
+    if status.strip():
+        raise ValidationError(
+            f"the {label} working tree is not clean:\n{status}"
+            f"Fix: commit and push, or remove the listed paths, then rerun "
+            f"release-prepare"
+        )
+
+
+def _select_tip(repository: Path, label: str, override: str | None) -> str:
+    _git(repository, "fetch", "origin")
+    remote_main = _git(repository, "rev-parse", "refs/remotes/origin/main").stdout.strip()
+    if override is None:
+        return validate_sha(remote_main, f"{label} origin/main tip")
+    sha = validate_sha(override, f"{label} override")
+    try:
+        _git(repository, "merge-base", "--is-ancestor", sha, remote_main)
+    except CommandFailed as error:
+        raise ValidationError(
+            f"the {label} override {sha} is not reachable from origin/main. "
+            f"Fix: land it on main and push before naming it"
+        ) from error
+    return sha
+
+
+def prepare_environment(
+    repo_root: Path, environment: Mapping[str, str]
+) -> PreparedEnvironment:
+    repo_root = Path(repo_root).resolve()
+    toplevel = Path(
+        _git(repo_root, "rev-parse", "--show-toplevel").stdout.strip()
+    ).resolve()
+    if toplevel != repo_root:
+        raise ValidationError(
+            f"release-prepare runs only from the canonical aweb repository root: "
+            f"{toplevel}. Fix: cd {toplevel} and rerun"
+        )
+    _require_origin(repo_root, "aweb")
+    ac_root = (repo_root.parent / "ac").resolve()
+    if not (ac_root / ".git").exists():
+        raise ValidationError(
+            f"the sibling ../ac checkout is missing at {ac_root}. Fix: clone "
+            f"the canonical awebai/ac remote next to this repository"
+        )
+    _require_origin(ac_root, "ac")
+    purpose = validate_line(environment.get("PURPOSE"), "PURPOSE")
+    compatibility = validate_compatibility(environment.get("COMPAT_BREAK"))
+    for repository, label in ((repo_root, "aweb"), (ac_root, "ac")):
+        _require_clean(repository, label)
+    aweb_sha = _select_tip(repo_root, "aweb", environment.get("AWEB_SHA"))
+    ac_sha = _select_tip(ac_root, "ac", environment.get("AC_SHA"))
+    return PreparedEnvironment(
+        aweb_root=repo_root,
+        ac_root=ac_root,
+        aweb_sha=aweb_sha,
+        ac_sha=ac_sha,
+        purpose=purpose,
+        compatibility=compatibility,
+    )
+
+
+def prepare(
+    repo_root: Path,
+    environment: Mapping[str, str],
+    *,
+    registry_base: str,
+    gate_command: tuple[str, ...],
+    timeout: float = 600,
+) -> ReleaseCard:
+    prepared = prepare_environment(repo_root, environment)
+    del prepared, registry_base, gate_command, timeout
+    raise ObservationUnavailable(
+        "release-prepare artifact selection is not yet wired; prepare fails "
+        "closed after environment validation and writes no card"
+    )
