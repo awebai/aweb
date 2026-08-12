@@ -60,21 +60,37 @@ class DockerBoundaryTests(unittest.TestCase):
         ).stdout.strip()
 
     def test_nonroot_user_has_only_socket_group_and_permission_semantics(self) -> None:
-        with _bind_tmp() as tmp:
-            probe = Path(tmp) / "unreadable"
-            probe.write_text("must stay unreadable\n")
-            probe.chmod(0)
+        # A named volume lives on the daemon's native filesystem, so mode
+        # bits are real on every platform; a bind-mounted file's chmod does
+        # not survive the macOS virtiofs round-trip, which made the previous
+        # probe's precondition silently unsatisfiable in-gate.
+        volume = f"aweb-gate-perm-probe-{uuid.uuid4().hex[:12]}"
+        run("docker", "volume", "create", volume)
+        try:
+            run(
+                "docker", "run", "--rm", "--user", "0:0",
+                "-v", f"{volume}:/probe",
+                self.image, "bash", "-ceu",
+                "echo 'must stay unreadable' > /probe/unreadable; "
+                "chmod 0 /probe/unreadable; "
+                "test \"$(stat -c %a /probe/unreadable)\" = 0",
+            )
             result = run(
                 "docker", "run", "--rm", "--init",
                 "--user", f"{os.getuid()}:{os.getgid()}",
                 "--group-add", self.socket_gid(),
                 "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                "-v", f"{tmp}:{tmp}",
+                "-v", f"{volume}:/probe",
                 self.image, "bash", "-ceu",
-                f"docker info >/dev/null; ! cat {probe} >/dev/null 2>&1",
+                "docker info >/dev/null; ! cat /probe/unreadable >/dev/null 2>&1",
                 check=False,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        finally:
+            removed = run("docker", "volume", "rm", volume, check=False)
+            self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
+            remains = run("docker", "volume", "inspect", volume, check=False)
+            self.assertNotEqual(remains.returncode, 0, "probe volume survived cleanup")
 
     def test_transient_builder_cache_reclaim_is_scoped_and_builder_remains_usable(self) -> None:
         with patch.dict(os.environ, {"BUILDX_BUILDER": "", "BUILDX_CONFIG": "/tmp"}):
