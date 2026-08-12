@@ -1029,5 +1029,279 @@ class PublicAdapterTests(unittest.TestCase):
             self._observe("render-static:deploy-awid-landing", "1.0.0")
 
 
+class _SpoolHandler(BaseHTTPRequestHandler):
+    """Registry read fixture backed by a spool directory, so the fake
+    workflow executable can publish across process boundaries."""
+
+    spool: Path | None = None
+
+    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        spool = type(self).spool
+        record = None
+        if spool is not None:
+            candidate = spool / urllib_quote(self.path)
+            if candidate.exists():
+                record = candidate.read_bytes()
+        if record is None:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(record)))
+        self.end_headers()
+        self.wfile.write(record)
+
+    def log_message(self, _format: str, *args: object) -> None:
+        pass
+
+
+def urllib_quote(path: str) -> str:
+    from urllib.parse import quote
+
+    return quote(path, safe="")
+
+
+_PUBLISH_SCRIPT = '''
+import json, sys
+from pathlib import Path
+from urllib.parse import quote
+spool = Path(sys.argv[1])
+artifact, version = sys.argv[2], sys.argv[3]
+log = Path(sys.argv[1]).with_name("workflow-log.txt")
+log.open("a").write(f"{artifact} {version}\\n")
+paths = {
+    "awid-service": [(f"/pypi/awid-service/{version}/json", {"info": {"version": version}})],
+    "aweb-server": [(f"/pypi/aweb/{version}/json", {"info": {"version": version}})],
+    "awid-image": [
+        ("/token?scope=repository:awebai/awid:pull&service=ghcr.io", {"token": "t"}),
+        (f"/v2/awebai/awid/manifests/{version}", {"manifests": []}),
+    ],
+    "aw-cli": [(f"/repos/awebai/aw/releases/tags/aw-v{version}", {"tag_name": version})],
+    "channel-plugin": [(f"/@awebai%2Fclaude-channel/{version}", {"version": version})],
+    "pi-extension": [(f"/@awebai%2Fpi/{version}", {"version": version})],
+    "skills": [
+        (f"/@awebai%2Fclaude-skills/{version}", {"version": version}),
+        (f"/repos/awebai/aweb/releases/tags/skills-v{version}", {"tag_name": version}),
+    ],
+    "a2a-gateway-image": [
+        ("/token?scope=repository:awebai/a2a-gateway:pull&service=ghcr.io", {"token": "t"}),
+        (f"/v2/awebai/a2a-gateway/manifests/{version}", {"manifests": []}),
+    ],
+    "ac-image": [
+        ("/token?scope=repository:awebai/ac:pull&service=ghcr.io", {"token": "t"}),
+        (f"/v2/awebai/ac/manifests/{version}", {"manifests": []}),
+    ],
+}
+for path, payload in paths[artifact]:
+    (spool / quote(path, safe="")).write_text(json.dumps(payload))
+'''
+
+
+class ContinueTrainTests(_PipelineFixture):
+    """A full fixture continue reaches DONE without touching anything real;
+    partial prior state adopts; consumption refuses replay."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        cls.spool_server = ThreadingHTTPServer(("127.0.0.1", 0), _SpoolHandler)
+        cls.spool_thread = threading.Thread(
+            target=cls.spool_server.serve_forever, daemon=True
+        )
+        cls.spool_thread.start()
+        cls.spool_base = f"http://127.0.0.1:{cls.spool_server.server_port}"
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.spool_server.shutdown()
+        cls.spool_server.server_close()
+        cls.spool_thread.join(timeout=2)
+        super().tearDownClass()
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.spool = Path(self.tmp.name) / "spool"
+        self.spool.mkdir()
+        _SpoolHandler.spool = self.spool
+        # Real GHCR answers token exchanges regardless of manifest presence.
+        for repository in ("awebai/awid", "awebai/a2a-gateway", "awebai/ac"):
+            token_path = f"/token?scope=repository:{repository}:pull&service=ghcr.io"
+            (self.spool / urllib_quote(token_path)).write_text(
+                json.dumps({"token": "t"})
+            )
+        publish = Path(self.tmp.name) / "publish.py"
+        publish.write_text(_PUBLISH_SCRIPT)
+        self.workflow_command = (sys.executable, str(publish), str(self.spool))
+        derive = Path(self.tmp.name) / "derive.py"
+        derive.write_text(
+            "import sys\nfrom pathlib import Path\n"
+            "root = Path(sys.argv[1])\n"
+            "(root / 'backend/pyproject.toml').write_text("
+            "'[project]\\nversion = \"0.7.13\"\\n# floors bumped\\n')\n"
+            "(root / 'backend/uv.lock').write_text('lock v2\\n')\n"
+        )
+        self.derive_command = (sys.executable, str(derive), str(self.ac))
+        ac_gate = Path(self.tmp.name) / "ac-gate.py"
+        ac_gate.write_text("print('AC gate 16/16 PASSED')\n")
+        self.ac_gate_command = (sys.executable, str(ac_gate))
+        provider_log = Path(self.tmp.name) / "provider-log.txt"
+        provider = Path(self.tmp.name) / "provider.py"
+        provider.write_text(
+            "import sys\nfrom pathlib import Path\n"
+            f"Path({str(provider_log)!r}).open('a').write(' '.join(sys.argv[1:]) + chr(10))\n"
+        )
+        self.provider_log = provider_log
+        self.migrate_command = (sys.executable, str(provider), "migrate")
+        self.deploy_command = (sys.executable, str(provider), "deploy")
+        self.verify_command = (sys.executable, str(provider), "verify")
+        digest = Path(self.tmp.name) / "digest.py"
+        digest.write_text(f"print('{DIGEST}')\n")
+        self.digest_command = (sys.executable, str(digest))
+        # The uv.lock must exist at the base so the derive diff stays inside
+        # the allowlist.
+        (self.ac / "backend/uv.lock").write_text("lock v1\n")
+        git("add", ".", cwd=self.ac)
+        git("commit", "-m", "lock", cwd=self.ac)
+        git("push", "origin", "main", cwd=self.ac)
+        git("fetch", "origin", cwd=self.ac)
+        # Site deploy branches exist at the served commits (the restored
+        # live state): create them at the current main tips, then land a
+        # site-source change on each main so both sites genuinely move.
+        for repo in (self.aweb, self.ac):
+            main_sha = git("rev-parse", "origin/main", cwd=repo)
+            branch = "deploy-awid-landing" if repo is self.aweb else "deploy-landing"
+            git("push", "origin", f"{main_sha}:refs/heads/{branch}", cwd=repo)
+        (self.aweb / "awid/site/index.html").write_text("<html>awid v2</html>")
+        (self.ac / "site/index.html").write_text("<html>aweb v2</html>")
+        for repo in (self.aweb, self.ac):
+            git("add", ".", cwd=repo)
+            git("commit", "-m", "site change", cwd=repo)
+            git("push", "origin", "main", cwd=repo)
+            git("fetch", "origin", cwd=repo)
+
+    def _continue(self):
+        return rt.continue_train(
+            self.aweb,
+            bases={
+                "pypi": self.spool_base,
+                "npm": self.spool_base,
+                "ghcr": self.spool_base,
+                "github": self.spool_base,
+            },
+            workflow_command=self.workflow_command,
+            derive_command=self.derive_command,
+            ac_gate_command=self.ac_gate_command,
+            migrate_command=self.migrate_command,
+            deploy_command=self.deploy_command,
+            verify_command=self.verify_command,
+            digest_command=self.digest_command,
+            timeout=60,
+        )
+
+    def test_full_fixture_continue_reaches_done_in_order(self) -> None:
+        card = self._prepare()
+        summary = self._continue()
+        self.assertEqual(summary["status"], "DONE")
+        # aweb release advanced to the card SHA.
+        release = git("ls-remote", "origin", "refs/heads/release", cwd=self.aweb)
+        self.assertEqual(release.split()[0], card.aweb_sha)
+        # The derived AC commit is on main, allowlisted, parented on the base.
+        ac_main = git("rev-parse", "origin/main", cwd=self.ac)
+        self.assertEqual(summary["final_ac_sha"], ac_main)
+        parent = git("rev-parse", f"{ac_main}^", cwd=self.ac)
+        self.assertEqual(parent, card.ac_base_sha)
+        changed = git(
+            "diff", "--name-only", f"{card.ac_base_sha}..{ac_main}", cwd=self.ac
+        ).splitlines()
+        self.assertEqual(
+            sorted(changed), ["backend/pyproject.toml", "backend/uv.lock"]
+        )
+        # AC release advanced to the derived commit.
+        ac_release = git("ls-remote", "origin", "refs/heads/release", cwd=self.ac)
+        self.assertEqual(ac_release.split()[0], ac_main)
+        # Provider order: migrate before deploy before verify.
+        provider = [
+            line.split() for line in self.provider_log.read_text().splitlines()
+        ]
+        self.assertEqual(
+            [line[0] for line in provider], ["migrate", "deploy", "verify"]
+        )
+        self.assertEqual(provider[1][1], DIGEST)
+        self.assertEqual(provider[2][1], DIGEST)
+        self.assertEqual(summary["ac_image_digest"], DIGEST)
+        # Publication order followed the DAG: AWID before aweb server.
+        workflow_log = (self.spool.with_name("workflow-log.txt")).read_text().splitlines()
+        published = [line.split()[0] for line in workflow_log]
+        self.assertLess(
+            published.index("awid-service"), published.index("aweb-server")
+        )
+        # Sites moved fast-forward to the exact main commits.
+        awid_site = git(
+            "ls-remote", "origin", "refs/heads/deploy-awid-landing", cwd=self.aweb
+        )
+        self.assertEqual(awid_site.split()[0], card.aweb_sha)
+        aweb_site = git(
+            "ls-remote", "origin", "refs/heads/deploy-landing", cwd=self.ac
+        )
+        self.assertEqual(aweb_site.split()[0], ac_main)
+        # The card is consumed; replay refuses.
+        with self.assertRaises(rt.CardUnavailable):
+            self._continue()
+
+    def test_gate_failure_stops_before_ac_release_and_keeps_the_card(self) -> None:
+        self._prepare()
+        failing = Path(self.tmp.name) / "failing-ac-gate.py"
+        failing.write_text("raise SystemExit(1)\n")
+        with self.assertRaises(rt.CommandFailed):
+            rt.continue_train(
+                self.aweb,
+                bases={
+                    "pypi": self.spool_base,
+                    "npm": self.spool_base,
+                    "ghcr": self.spool_base,
+                    "github": self.spool_base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=self.derive_command,
+                ac_gate_command=(sys.executable, str(failing)),
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=self.digest_command,
+                timeout=60,
+            )
+        ac_release = git("ls-remote", "origin", "refs/heads/release", cwd=self.ac)
+        self.assertEqual(ac_release, "")
+        self.assertFalse(self.provider_log.exists())
+        rt.read_card(self.aweb)
+
+    def test_partial_prior_derivation_is_adopted_on_retry(self) -> None:
+        self._prepare()
+        failing = Path(self.tmp.name) / "failing-ac-gate.py"
+        failing.write_text("raise SystemExit(1)\n")
+        with self.assertRaises(rt.CommandFailed):
+            rt.continue_train(
+                self.aweb,
+                bases={
+                    "pypi": self.spool_base,
+                    "npm": self.spool_base,
+                    "ghcr": self.spool_base,
+                    "github": self.spool_base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=self.derive_command,
+                ac_gate_command=(sys.executable, str(failing)),
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=self.digest_command,
+                timeout=60,
+            )
+        # AC main has already advanced to the derived commit; the retry must
+        # adopt that exact state and reach DONE.
+        summary = self._continue()
+        self.assertEqual(summary["status"], "DONE")
+
+
 if __name__ == "__main__":
     unittest.main()

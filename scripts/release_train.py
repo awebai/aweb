@@ -1250,18 +1250,24 @@ def observe_public_target(
 # --- release-continue ------------------------------------------------------
 
 
+AC_DERIVED_ALLOWLIST = ("backend/pyproject.toml", "backend/uv.lock")
+
+
 @dataclasses.dataclass(frozen=True)
 class ContinueEnvironment:
     aweb_root: Path
     ac_root: Path
     card: ReleaseCard
+    ac_derived_sha: str | None
 
 
 def continue_environment(repo_root: Path) -> ContinueEnvironment:
     """Read the fixed unconsumed card and re-observe its material commits.
 
     Continue takes no arguments; any material drift invalidates the card and
-    requires a fresh prepare and go.
+    requires a fresh prepare and go. One prior partial state is adoptable:
+    AC main already at a dependency-only child of the recorded base whose
+    diff stays inside the declared allowlist.
     """
 
     repo_root = Path(repo_root).resolve()
@@ -1274,21 +1280,42 @@ def continue_environment(repo_root: Path) -> ContinueEnvironment:
             f"the canonical awebai/ac remote next to this repository"
         )
     _require_origin(ac_root, "ac")
-    for repository, label, recorded in (
-        (repo_root, "aweb", card.aweb_sha),
-        (ac_root, "ac", card.ac_base_sha),
-    ):
-        _git(repository, "fetch", "origin")
-        remote_main = _git(
-            repository, "rev-parse", "refs/remotes/origin/main"
-        ).stdout.strip()
-        if remote_main != recorded:
+    _git(repo_root, "fetch", "origin")
+    aweb_main = _git(repo_root, "rev-parse", "refs/remotes/origin/main").stdout.strip()
+    if aweb_main != card.aweb_sha:
+        raise MaterialMismatch(
+            f"aweb origin/main moved from the card's {card.aweb_sha} to "
+            f"{aweb_main}; the card is invalid - run a fresh prepare and "
+            f"obtain a fresh go"
+        )
+    _git(ac_root, "fetch", "origin")
+    ac_main = _git(ac_root, "rev-parse", "refs/remotes/origin/main").stdout.strip()
+    ac_derived_sha: str | None = None
+    if ac_main != card.ac_base_sha:
+        try:
+            parent = _git(ac_root, "rev-parse", f"{ac_main}^").stdout.strip()
+        except CommandFailed:
+            parent = ""
+        changed = _git(
+            ac_root, "diff", "--name-only", f"{card.ac_base_sha}..{ac_main}"
+        ).stdout.split() if parent == card.ac_base_sha else None
+        if parent == card.ac_base_sha and changed is not None and set(changed) <= set(
+            AC_DERIVED_ALLOWLIST
+        ):
+            ac_derived_sha = ac_main
+        else:
             raise MaterialMismatch(
-                f"{label} origin/main moved from the card's {recorded} to "
-                f"{remote_main}; the card is invalid - run a fresh prepare "
-                f"and obtain a fresh go"
+                f"ac origin/main moved from the card's {card.ac_base_sha} to "
+                f"{ac_main} and is not the dependency-only derived commit; "
+                f"the card is invalid - run a fresh prepare and obtain a "
+                f"fresh go"
             )
-    return ContinueEnvironment(aweb_root=repo_root, ac_root=ac_root, card=card)
+    return ContinueEnvironment(
+        aweb_root=repo_root,
+        ac_root=ac_root,
+        card=card,
+        ac_derived_sha=ac_derived_sha,
+    )
 
 
 def fast_forward_release(
@@ -1313,6 +1340,140 @@ def fast_forward_release(
                 f"the pointer put"
             ) from error
     _git(repository, "push", "origin", f"{target_sha}:refs/heads/{branch}")
+
+
+def _poll_public_target(
+    target: str, version: str, *, bases: Mapping[str, str] | None, timeout: float
+) -> None:
+    import time as _time
+
+    attempts = 10
+    for attempt in range(attempts):
+        if observe_public_target(target, version, bases=bases, timeout=timeout):
+            return
+        if attempt + 1 < attempts:
+            _time.sleep(min(1.0, _bounded_timeout(timeout) / 60))
+    raise ObservationUnavailable(
+        f"still waiting: {target} does not yet serve {version}; rerun "
+        f"release-continue once the registry catches up"
+    )
+
+
+def continue_train(
+    repo_root: Path,
+    *,
+    bases: Mapping[str, str] | None = None,
+    workflow_command: tuple[str, ...],
+    derive_command: tuple[str, ...],
+    ac_gate_command: tuple[str, ...],
+    migrate_command: tuple[str, ...],
+    deploy_command: tuple[str, ...],
+    verify_command: tuple[str, ...],
+    digest_command: tuple[str, ...],
+    marketplace_command: tuple[str, ...] | None = None,
+    timeout: float = 600,
+) -> dict[str, str]:
+    """Execute the ten edges literally, idempotently, stopping named."""
+
+    environment = continue_environment(repo_root)
+    card = environment.card
+    fast_forward_release(environment.aweb_root, "release", card.aweb_sha)
+    versions = {item.name: item.version for item in card.artifacts}
+    for selection in card.artifacts:
+        artifact = _artifact(selection.name)
+        if artifact.repository != "aweb":
+            continue
+        primary = artifact.targets[0]
+        if not selection.moves:
+            _poll_public_target(
+                primary, selection.version, bases=bases, timeout=timeout
+            )
+            continue
+        if not observe_public_target(
+            primary, selection.version, bases=bases, timeout=timeout
+        ):
+            run_command(
+                [*workflow_command, selection.name, selection.version],
+                cwd=environment.aweb_root,
+                timeout=timeout,
+            )
+        _poll_public_target(primary, selection.version, bases=bases, timeout=timeout)
+    if marketplace_command is not None:
+        run_command(
+            list(marketplace_command), cwd=environment.aweb_root, timeout=timeout
+        )
+    ac_derived = environment.ac_derived_sha
+    if ac_derived is None:
+        run_command(list(derive_command), cwd=environment.ac_root, timeout=timeout)
+        changed = _git(environment.ac_root, "status", "--porcelain").stdout.split()
+        names = {line for line in changed if not line.startswith(("M", "A", "?"))} or {
+            item.split()[-1] for item in _git(
+                environment.ac_root, "status", "--porcelain"
+            ).stdout.splitlines()
+        }
+        if not names:
+            raise ValidationError(
+                "derivation changed nothing; the dependency floors were "
+                "expected to move"
+            )
+        if not names <= set(AC_DERIVED_ALLOWLIST):
+            raise ValidationError(
+                f"derivation touched files outside the declared allowlist "
+                f"{AC_DERIVED_ALLOWLIST}: {sorted(names)}; the train stops "
+                f"and the card is invalid"
+            )
+        _git(environment.ac_root, "add", *AC_DERIVED_ALLOWLIST)
+        _git(
+            environment.ac_root,
+            "commit",
+            "-m",
+            "release: derive public dependency floors and lock",
+        )
+        ac_derived = _git(environment.ac_root, "rev-parse", "HEAD").stdout.strip()
+        _git(
+            environment.ac_root,
+            "push",
+            "origin",
+            f"HEAD:refs/heads/main",
+            f"--force-with-lease=refs/heads/main:{card.ac_base_sha}",
+        )
+    run_command(list(ac_gate_command), cwd=environment.ac_root, timeout=timeout)
+    fast_forward_release(environment.ac_root, "release", ac_derived)
+    digest_result = run_command(
+        list(digest_command), cwd=environment.ac_root, timeout=timeout
+    )
+    digest = digest_result.stdout.strip()
+    if not _DIGEST_RE.fullmatch(digest):
+        raise ObservationMalformed(
+            f"AC image digest observation is not an exact digest: {digest!r}"
+        )
+    if card.deployments.production:
+        run_command(list(migrate_command), cwd=environment.ac_root, timeout=timeout)
+        run_command(
+            [*deploy_command, digest], cwd=environment.ac_root, timeout=timeout
+        )
+        run_command(
+            [*verify_command, digest], cwd=environment.ac_root, timeout=timeout
+        )
+    if card.deployments.awid_site:
+        fast_forward_release(
+            environment.aweb_root, "deploy-awid-landing", card.aweb_sha
+        )
+    if card.deployments.aweb_site:
+        fast_forward_release(environment.ac_root, "deploy-landing", ac_derived)
+    consume_card(environment.aweb_root, card)
+    summary = {
+        "status": "DONE",
+        "aweb_sha": card.aweb_sha,
+        "final_ac_sha": ac_derived,
+        "ac_image_digest": digest,
+        **{f"version:{name}": version for name, version in versions.items()},
+    }
+    print(
+        "release-continue DONE: "
+        + " ".join(f"{key}={value}" for key, value in sorted(summary.items()))
+    )
+    return summary
 
 
 def _main(argv: Sequence[str]) -> int:
