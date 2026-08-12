@@ -1121,6 +1121,132 @@ def prepare(
     return card
 
 
+# --- public registry read adapters ----------------------------------------
+
+PUBLIC_READ_BASES = {
+    "pypi": "https://pypi.org",
+    "npm": "https://registry.npmjs.org",
+    "ghcr": "https://ghcr.io",
+    "github": "https://api.github.com",
+}
+_GITHUB_RELEASE_TAGS = {
+    "github:awebai/aw:release": "aw-v{version}",
+    "github:awebai/aweb:skills-release-zips": "skills-v{version}",
+}
+
+
+def _bounded_get(
+    url: str, *, timeout: float, headers: Mapping[str, str] | None = None
+) -> object | None:
+    """GET one public read endpoint: 404 is the only absence (None), any
+    other non-200 is unavailable, and evidence beyond 1 MiB is malformed."""
+
+    bounded = _bounded_timeout(timeout)
+    request = urllib.request.Request(
+        url, headers={"Accept": "application/json", **(headers or {})}, method="GET"
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=bounded) as response:
+            if response.status != 200:
+                raise ObservationUnavailable(
+                    f"public read returned HTTP {response.status}: {url}"
+                )
+            body = response.read(1024 * 1024 + 1)
+    except urllib.error.HTTPError as error:
+        code = error.code
+        error.close()
+        if code == 404:
+            return None
+        raise ObservationUnavailable(
+            f"public read returned HTTP {code}: {url}"
+        ) from error
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        raise ObservationUnavailable(f"public read unavailable: {url}: {error}") from error
+    if len(body) > 1024 * 1024:
+        raise ObservationMalformed(f"public read evidence exceeds 1 MiB: {url}")
+    return _parse_json_bytes(body, "public read evidence")
+
+
+def observe_public_target(
+    target: str,
+    version: str,
+    *,
+    bases: Mapping[str, str] | None = None,
+    timeout: float,
+) -> bool:
+    """Read-only presence of one artifact target at exactly one version.
+
+    Speaks each registry's real read API behind the fixed semantics: HTTP 404
+    is the only absence, any other failure is unavailable rather than absence,
+    and served evidence must name exactly the queried version.
+    """
+
+    validate_line(target, "artifact target")
+    validate_version(version, "target version")
+    resolved = {**PUBLIC_READ_BASES, **(bases or {})}
+    if target.startswith("pypi:"):
+        name = target.split(":", 1)[1]
+        document = _bounded_get(
+            f"{resolved['pypi']}/pypi/{name}/{version}/json", timeout=timeout
+        )
+        if document is None:
+            return False
+        served = document.get("info", {}).get("version") if isinstance(document, dict) else None
+        if served != version:
+            raise ObservationMalformed(
+                f"PyPI serves version {served!r} where {version} was queried: {name}"
+            )
+        return True
+    if target.startswith("npm:"):
+        package = urllib.parse.quote(target.split(":", 1)[1], safe="@")
+        document = _bounded_get(
+            f"{resolved['npm']}/{package}/{version}", timeout=timeout
+        )
+        if document is None:
+            return False
+        served = document.get("version") if isinstance(document, dict) else None
+        if served != version:
+            raise ObservationMalformed(
+                f"npm serves version {served!r} where {version} was queried: {target}"
+            )
+        return True
+    if target.startswith("ghcr.io/"):
+        repository = target.removeprefix("ghcr.io/")
+        token_document = _bounded_get(
+            f"{resolved['ghcr']}/token?scope=repository:{repository}:pull&service=ghcr.io",
+            timeout=timeout,
+        )
+        token = token_document.get("token") if isinstance(token_document, dict) else None
+        if not token:
+            raise ObservationUnavailable(
+                f"GHCR token exchange returned no token for {repository}"
+            )
+        manifest = _bounded_get(
+            f"{resolved['ghcr']}/v2/{repository}/manifests/{version}",
+            timeout=timeout,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": (
+                    "application/vnd.oci.image.index.v1+json, "
+                    "application/vnd.docker.distribution.manifest.list.v2+json"
+                ),
+            },
+        )
+        return manifest is not None
+    if target in _GITHUB_RELEASE_TAGS:
+        repository = target.split(":")[1]
+        tag = _GITHUB_RELEASE_TAGS[target].format(version=version)
+        document = _bounded_get(
+            f"{resolved['github']}/repos/{repository}/releases/tags/{tag}",
+            timeout=timeout,
+        )
+        return document is not None
+    raise ValidationError(
+        f"target has no public read adapter (sites deploy by branch, not "
+        f"registry): {target}"
+    )
+
+
 # --- release-continue ------------------------------------------------------
 
 

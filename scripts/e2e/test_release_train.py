@@ -928,5 +928,106 @@ class ContinuePhaseTests(_PipelineFixture):
         del prepared
 
 
+class _PublicApiHandler(BaseHTTPRequestHandler):
+    """Serves the real public read-API shapes: PyPI JSON, npm version JSON,
+    GHCR token+manifest, GitHub release-by-tag."""
+
+    state: dict[str, tuple[int, dict]] = {}
+
+    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        status, payload = type(self).state.get(self.path, (404, {}))
+        body = json.dumps(payload).encode()
+        if status != 200:
+            self.send_error(status)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, _format: str, *args: object) -> None:
+        pass
+
+
+class PublicAdapterTests(unittest.TestCase):
+    """Per-kind read-only adapters behind the fixed observation semantics:
+    HTTP 404 is the only absence, non-200 is unavailable, and served
+    evidence must name exactly the queried version."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), _PublicApiHandler)
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        base = f"http://127.0.0.1:{cls.server.server_port}"
+        cls.bases = {"pypi": base, "npm": base, "ghcr": base, "github": base}
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join(timeout=2)
+
+    def setUp(self) -> None:
+        _PublicApiHandler.state = {}
+
+    def _observe(self, target: str, version: str) -> bool:
+        return rt.observe_public_target(
+            target, version, bases=self.bases, timeout=10
+        )
+
+    def test_pypi_present_absent_and_version_mismatch(self) -> None:
+        _PublicApiHandler.state["/pypi/aweb/1.27.2/json"] = (
+            200, {"info": {"version": "1.27.2"}}
+        )
+        self.assertTrue(self._observe("pypi:aweb", "1.27.2"))
+        self.assertFalse(self._observe("pypi:aweb", "1.27.3"))
+        _PublicApiHandler.state["/pypi/aweb/9.9.9/json"] = (
+            200, {"info": {"version": "1.0.0"}}
+        )
+        with self.assertRaises(rt.ObservationMalformed):
+            self._observe("pypi:aweb", "9.9.9")
+
+    def test_npm_scoped_package_paths_are_quoted(self) -> None:
+        _PublicApiHandler.state["/@awebai%2Fpi/0.3.7"] = (
+            200, {"version": "0.3.7"}
+        )
+        self.assertTrue(self._observe("npm:@awebai/pi", "0.3.7"))
+        self.assertFalse(self._observe("npm:@awebai/pi", "0.3.8"))
+
+    def test_ghcr_manifest_via_anonymous_token(self) -> None:
+        _PublicApiHandler.state[
+            "/token?scope=repository:awebai/awid:pull&service=ghcr.io"
+        ] = (200, {"token": "fixture-token"})
+        _PublicApiHandler.state["/v2/awebai/awid/manifests/0.5.16"] = (
+            200, {"manifests": []}
+        )
+        self.assertTrue(self._observe("ghcr.io/awebai/awid", "0.5.16"))
+        self.assertFalse(self._observe("ghcr.io/awebai/awid", "0.5.17"))
+
+    def test_github_release_tags_per_repository(self) -> None:
+        _PublicApiHandler.state["/repos/awebai/aw/releases/tags/aw-v1.34.4"] = (
+            200, {"tag_name": "aw-v1.34.4"}
+        )
+        self.assertTrue(self._observe("github:awebai/aw:release", "1.34.4"))
+        self.assertFalse(self._observe("github:awebai/aw:release", "1.34.5"))
+        _PublicApiHandler.state[
+            "/repos/awebai/aweb/releases/tags/skills-v0.2.13"
+        ] = (200, {"tag_name": "skills-v0.2.13"})
+        self.assertTrue(
+            self._observe("github:awebai/aweb:skills-release-zips", "0.2.13")
+        )
+
+    def test_unavailable_is_never_absence(self) -> None:
+        _PublicApiHandler.state["/pypi/aweb/1.27.2/json"] = (503, {})
+        with self.assertRaises(rt.ObservationUnavailable):
+            self._observe("pypi:aweb", "1.27.2")
+
+    def test_unknown_target_kind_is_refused(self) -> None:
+        with self.assertRaises(rt.ValidationError):
+            self._observe("render-static:deploy-awid-landing", "1.0.0")
+
+
 if __name__ == "__main__":
     unittest.main()
