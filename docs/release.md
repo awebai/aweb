@@ -269,7 +269,7 @@ Audit uncertainties as bounded verification criteria:
 |---|---|
 | U1 | before first aw release: read the `awebai/aw` workflow; confirm its trigger and that it publishes the Release + all 7 npm packages |
 | U2 | before the first release moving channel/skills: read the live `marketplace.json`; confirm the adapter's expected shape |
-| U3 | before the first site deploy: read both Render static-site services' branch/trigger configuration |
+| U3 | resolved 2026-08-12 by coordinator read-only Render reads: both static sites had been bound to `main`; the deploy branches were restored at the exact served commits and both services repointed (`deploy-landing`, `deploy-awid-landing`), so the site rows describe live state. First-release readiness re-verifies the branch trigger fires, since neither service has deployed from a push since the repoint |
 | U4 | query GHCR for `awebai/aweb-cloud`; delete or record-absent the stale namespace |
 | U5 | verify `ghcr.io/awebai/ac` tags/digests with one authenticated read; thereafter the workflow-emitted digest is authoritative |
 | U6 | ship.yml's library/blueprint pins die with it; confirm the cli-e2e PR workflow's checkouts remain current |
