@@ -1275,9 +1275,18 @@ def observe_public_target(
         return True
     if target.startswith("ghcr.io/"):
         repository = target.removeprefix("ghcr.io/")
+        exchange_headers: dict[str, str] = {}
+        read_token = os.environ.get("AWEB_GHCR_READ_TOKEN", "").strip()
+        if read_token:
+            import base64
+
+            exchange_headers["Authorization"] = "Basic " + base64.b64encode(
+                f"token:{read_token}".encode()
+            ).decode()
         token_document = _bounded_get(
             f"{resolved['ghcr']}/token?scope=repository:{repository}:pull&service=ghcr.io",
             timeout=timeout,
+            headers=exchange_headers,
         )
         token = token_document.get("token") if isinstance(token_document, dict) else None
         if not token:

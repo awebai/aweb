@@ -933,8 +933,11 @@ class _PublicApiHandler(BaseHTTPRequestHandler):
     GHCR token+manifest, GitHub release-by-tag."""
 
     state: dict[str, tuple[int, dict]] = {}
+    authorization: str | None = None
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if self.path.startswith("/token?"):
+            type(self).authorization = self.headers.get("Authorization")
         status, payload = type(self).state.get(self.path, (404, {}))
         body = json.dumps(payload).encode()
         if status != 200:
@@ -995,6 +998,27 @@ class PublicAdapterTests(unittest.TestCase):
         )
         self.assertTrue(self._observe("npm:@awebai/pi", "0.3.7"))
         self.assertFalse(self._observe("npm:@awebai/pi", "0.3.8"))
+
+    def test_ghcr_token_exchange_sends_credentials_when_supplied(self) -> None:
+        import os
+        from unittest.mock import patch
+
+        _PublicApiHandler.state[
+            "/token?scope=repository:awebai/ac:pull&service=ghcr.io"
+        ] = (200, {"token": "t"})
+        _PublicApiHandler.state["/v2/awebai/ac/manifests/0.7.13"] = (
+            200, {"manifests": []}
+        )
+        _PublicApiHandler.authorization = None
+        with patch.dict(os.environ, {"AWEB_GHCR_READ_TOKEN": "sekret"}):
+            self.assertTrue(self._observe("ghcr.io/awebai/ac", "0.7.13"))
+        recorded = _PublicApiHandler.authorization
+        self.assertIsNotNone(recorded)
+        self.assertTrue(recorded.startswith("Basic "), recorded)
+        import base64
+        self.assertEqual(
+            base64.b64decode(recorded.split()[1]).decode(), "token:sekret"
+        )
 
     def test_ghcr_manifest_via_anonymous_token(self) -> None:
         _PublicApiHandler.state[
