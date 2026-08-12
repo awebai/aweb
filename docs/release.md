@@ -189,8 +189,8 @@ exact-publish scripts + tests; `scripts/e2e/test_pointer_adapter_ac_pin.py` and
 Replace (aweb): `pypi-release.yml`, `npm-release.yml`, `awid-image-release.yml` (trigger from
 `release`; drop stage/continuation provenance; keep exact-match publish + cheap verify);
 `aw-release.yml`, `a2a-gateway-release.yml` (trigger from `release`; no tag-triggered
-publication remains); `library-ci.yml`, `federation-e2e.yml`, `server-ci.yml`, `a2a-copy-guardrails.yml`
-lose their `push: main` triggers, keeping PR checks; both pointer-adapter scripts (become
+publication remains); `library-ci.yml`, `federation-e2e.yml`, `server-ci.yml`, `a2a-copy-guardrails.yml`,
+and `cli-e2e.yml` lose their `push: main` triggers, keeping PR checks; both pointer-adapter scripts (become
 continue steps); `make release-awid-site` (invoked by continue); `.claude/skills/release`,
 `deploy-awid-site`, `cross-repo-change`, and `docs/contributing.md` release sections
 (rewritten).

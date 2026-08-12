@@ -374,6 +374,15 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
         hosted = "\n".join(path.read_text() for path in (ROOT / ".github" / "workflows").glob("*.yml"))
         self.assertNotIn("make release-local-gate", hosted)
         self.assertNotIn("scripts/release-local-gate.sh", hosted)
+        # The authoritative Replace list must name exactly this five-file set;
+        # a doc or constant that drops one file makes them disagree here.
+        specification = (ROOT / "docs" / "release.md").read_text()
+        replace_sentence = specification.split("Replace (aweb):", 1)[1].split(
+            "lose their `push: main` triggers", 1
+        )[0]
+        for name in MAIN_TRIGGER_WORKFLOWS:
+            self.assertIn(f"`{name}`", replace_sentence, name)
+        self.assertEqual(len(MAIN_TRIGGER_WORKFLOWS), 5)
 
     def test_cli_pr_inputs_follow_current_public_defaults_without_stale_pins(self) -> None:
         text = (ROOT / ".github" / "workflows" / "cli-e2e.yml").read_text()
