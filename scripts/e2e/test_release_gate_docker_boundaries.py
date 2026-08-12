@@ -6,6 +6,20 @@ from __future__ import annotations
 import argparse
 
 # Reviewed digest-pinned probe service image; a constant, not a discovery.
+def _bind_tmp() -> tempfile.TemporaryDirectory:
+    """A temp dir whose path resolves identically on the Docker host.
+
+    In-suite, this test runs inside the gate container while every `docker`
+    call it makes resolves bind paths on the host daemon. The wrapper mounts
+    the dedicated bind root at an identical path on both sides; a plain /tmp
+    allocation would bind an empty host directory instead.
+    """
+
+    return tempfile.TemporaryDirectory(
+        dir=os.environ.get("AWEB_DOCKER_BIND_ROOT") or "/tmp"
+    )
+
+
 PROBE_SERVICE_IMAGE = (
     "nginx:alpine@sha256:1d40e3eb3bf4f138de1d67193f2aa5309fcaf343eb5ffadbf5e9439de1eb1ebb"
 )
@@ -46,7 +60,7 @@ class DockerBoundaryTests(unittest.TestCase):
         ).stdout.strip()
 
     def test_nonroot_user_has_only_socket_group_and_permission_semantics(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+        with _bind_tmp() as tmp:
             probe = Path(tmp) / "unreadable"
             probe.write_text("must stay unreadable\n")
             probe.chmod(0)
@@ -75,7 +89,7 @@ class DockerBoundaryTests(unittest.TestCase):
 
         builder = f"aweb-gate-proof-{uuid.uuid4().hex[:12]}"
         unrelated = f"aweb-unrelated-proof-{uuid.uuid4().hex[:12]}"
-        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+        with _bind_tmp() as tmp:
             root = Path(tmp)
             config = root / "buildx-config"
             unrelated_config = root / "unrelated-buildx-config"
@@ -169,7 +183,7 @@ class DockerBoundaryTests(unittest.TestCase):
                     )
 
     def test_dedicated_bind_root_is_visible_to_inner_bind(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
+        with _bind_tmp() as tmp:
             probe = Path(tmp) / "host-visible"
             probe.write_text("visible\n")
             command = (
