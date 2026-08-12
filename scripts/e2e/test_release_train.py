@@ -1354,6 +1354,54 @@ class ContinueTrainTests(_PipelineFixture):
         self.assertFalse(self.provider_log.exists())
         rt.read_card(self.aweb)
 
+    def test_no_floor_moves_skips_derivation_and_releases_ac_at_the_base(self) -> None:
+        from urllib.parse import quote
+
+        for target, version in (("pypi:awid-service", "0.5.16"), ("pypi:aweb", "1.27.2")):
+            _PresenceHandler.present["/" + quote(target, safe="") + f"/{version}"] = {
+                "state": "present", "version": version, "digest": DIGEST,
+            }
+        card = self._prepare()
+        moves = {item.name: item.moves for item in card.artifacts}
+        self.assertFalse(moves["awid-service"])
+        self.assertFalse(moves["aweb-server"])
+        for path, version in (
+            ("/pypi/awid-service/0.5.16/json", "0.5.16"),
+            ("/pypi/aweb/1.27.2/json", "1.27.2"),
+        ):
+            (self.spool / urllib_quote(path)).write_text(
+                json.dumps({"info": {"version": version}})
+            )
+        marker = Path(self.tmp.name) / "derive-invoked"
+        tripwire = Path(self.tmp.name) / "derive-tripwire.py"
+        tripwire.write_text(
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('invoked')\n"
+            "raise SystemExit(1)\n"
+        )
+        summary = rt.continue_train(
+            self.aweb,
+            bases={
+                "pypi": self.spool_base,
+                "npm": self.spool_base,
+                "ghcr": self.spool_base,
+                "github": self.spool_base,
+            },
+            workflow_command=self.workflow_command,
+            derive_command=(sys.executable, str(tripwire)),
+            ac_gate_command=self.ac_gate_command,
+            migrate_command=self.migrate_command,
+            deploy_command=self.deploy_command,
+            verify_command=self.verify_command,
+            digest_command=self.digest_command,
+            timeout=60,
+        )
+        self.assertEqual(summary["status"], "DONE")
+        self.assertFalse(marker.exists(), "derivation ran despite no floor moves")
+        self.assertEqual(summary["final_ac_sha"], card.ac_base_sha)
+        ac_release = git("ls-remote", "origin", "refs/heads/release", cwd=self.ac)
+        self.assertEqual(ac_release.split()[0], card.ac_base_sha)
+
     def test_ac_gate_runs_under_the_work_timeout(self) -> None:
         self._prepare()
         slow = Path(self.tmp.name) / "slow-ac-gate.py"
@@ -1408,6 +1456,45 @@ class ContinueTrainTests(_PipelineFixture):
         # adopt that exact state and reach DONE.
         summary = self._continue()
         self.assertEqual(summary["status"], "DONE")
+
+
+class WorkflowMonitorTests(unittest.TestCase):
+    """The monitor maps each publishable artifact to its release-branch
+    workflow file and refuses unmapped names before touching gh."""
+
+    SCRIPT = REPO_ROOT / "scripts/release-workflow-monitor.sh"
+
+    def test_every_publishable_artifact_maps_to_an_existing_workflow(self) -> None:
+        expected = {
+            "aw-cli": "aw-release.yml",
+            "a2a-gateway-image": "a2a-gateway-release.yml",
+            "aweb-server": "pypi-release.yml",
+            "awid-service": "pypi-release.yml",
+            "awid-image": "awid-image-release.yml",
+            "channel-plugin": "npm-release.yml",
+            "pi-extension": "npm-release.yml",
+            "skills": "npm-release.yml",
+        }
+        for artifact, workflow in expected.items():
+            result = subprocess.run(
+                [str(self.SCRIPT), "--print-workflow", artifact],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), workflow, artifact)
+            self.assertTrue(
+                (REPO_ROOT / ".github/workflows" / workflow).exists(), workflow
+            )
+
+    def test_unmapped_artifact_refuses_naming_it(self) -> None:
+        result = subprocess.run(
+            [str(self.SCRIPT), "--print-workflow", "no-such-artifact"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("no-such-artifact", result.stderr)
 
 
 class CompatPairingTests(unittest.TestCase):

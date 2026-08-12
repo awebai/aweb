@@ -273,6 +273,11 @@ DAG_EDGES = (
     ),
 )
 
+# The AC dependency floors track exactly these PyPI artifacts; when neither
+# moves on a card, the derived dependency-only commit is empty by definition
+# and the final AC commit is the card's base.
+AC_FLOOR_ARTIFACTS = ("awid-service", "aweb-server")
+
 CARD_ARTIFACT_ORDER = (
     "awid-service",
     "aweb-server",
@@ -1485,6 +1490,12 @@ def continue_train(
             list(marketplace_command), cwd=environment.aweb_root, timeout=work_timeout
         )
     ac_derived = environment.ac_derived_sha
+    if ac_derived is None and not any(
+        selection.moves
+        for selection in card.artifacts
+        if selection.name in AC_FLOOR_ARTIFACTS
+    ):
+        ac_derived = card.ac_base_sha
     if ac_derived is None:
         run_command(list(derive_command), cwd=environment.ac_root, timeout=work_timeout)
         changed = _git(environment.ac_root, "status", "--porcelain").stdout.split()
