@@ -185,8 +185,8 @@ class OASPinnedCheckoutContractTests(unittest.TestCase):
     def test_clean_release_gate_runs_the_pinned_oas_contract(self) -> None:
         """The local release gate must execute the OAS seam from its fixed map."""
         suite_map = RELEASE_GATE_MAP.read_text(encoding="utf-8")
-        self.assertIn("oas\tjourney\t_release-oas\trun\t", suite_map)
-        self.assertIn("oas-proof-helpers\tjourney\t_release-oas-proof-helpers\trun\t", suite_map)
+        self.assertIn("oas\tjourney\t_release-oas\n", suite_map)
+        self.assertIn("oas-proof-helpers\tjourney\t_release-oas-proof-helpers\n", suite_map)
 
 
 if __name__ == "__main__":

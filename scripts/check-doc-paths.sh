@@ -49,6 +49,10 @@ is_allowed() {
     # named under an explicit AC heading in docs/release.md and are verified by
     # AC's own docs/model gates, not by pretending they live in aweb.
     docs/publication-sources.json|docs/sot.md|scripts/check_release_model.py|scripts/verify_docs_contract.py) return 0 ;;
+    # Named by docs/release.md's Delete list and Residue check as REMOVED
+    # machinery: the authority records their deletion, so their absence is
+    # the documented state, not a broken reference.
+    scripts/release_driver.py|scripts/release_receipt_archive.py|docs/runnerless-release.md|docs/setup-surface-release-gates.md|scripts/check-release-tag-monotonic.sh|scripts/release_skew_harnesses.py|scripts/release_skew_cli_server.py|scripts/release_channel_pi_skew.py|scripts/release_federation_skew.py|scripts/release_persisted_state_skew.py) return 0 ;;
   esac
   return 1
 }

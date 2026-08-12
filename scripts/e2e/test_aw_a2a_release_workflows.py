@@ -610,7 +610,7 @@ class AwA2AReleaseWorkflowTests(unittest.TestCase):
         for row in ("cli-vcs-release-matrix", "cli-unit", "aw-binary", "a2a-copy-contract", "a2a-image"):
             self.assertRegex(SUITES, rf"(?m)^{row}\t")
         self.assertIn(
-            "a2a-gateway-e2e\tjourney\ttest-a2a-gateway-e2e\trun\trelease-a2a-gateway-check",
+            "a2a-gateway-e2e\tjourney\ttest-a2a-gateway-e2e\n",
             SUITES,
         )
         self.assertNotRegex(SUITES, r"(?m)^a2a-unit\t|\ttest-a2a\trun\t")
