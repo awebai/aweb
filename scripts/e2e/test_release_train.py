@@ -1563,16 +1563,43 @@ class PrepareGateWrapperTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
 
     def test_compat_mode_names_the_pairing_and_runs_the_cell(self) -> None:
+        # The wrapper resolves the published aw CLI from PATH; the fixture
+        # supplies its own so the test means the same thing on hosts and in
+        # the gate container, where no aw is installed.
+        import os
+
+        with tempfile.TemporaryDirectory() as bin_dir:
+            fake_aw = Path(bin_dir) / "aw"
+            fake_aw.write_text("#!/usr/bin/env bash\necho 'aw 9.9.9-fixture'\n")
+            fake_aw.chmod(0o755)
+            result = self._run(
+                "compat-pairing", "aw-cli@new", "aweb-server@last",
+                gate_body="true\n",
+                sha="b" * 40,
+                env_extra={
+                    "AWEB_PREPARE_COMPAT_COMMAND": "echo compat-cell-ran",
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                },
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        evidence = json.loads(result.stdout)
+        self.assertIn("aw-cli@new aweb-server@last", evidence["suites"][0])
+        self.assertIn("9.9.9-fixture", evidence["suites"][0])
+        self.assertTrue(Path(evidence["reference"]).exists())
+
+    def test_compat_mode_refuses_without_an_installed_aw(self) -> None:
         result = self._run(
             "compat-pairing", "aw-cli@new", "aweb-server@last",
             gate_body="true\n",
             sha="b" * 40,
-            env_extra={"AWEB_PREPARE_COMPAT_COMMAND": "echo compat-cell-ran"},
+            env_extra={
+                "AWEB_PREPARE_COMPAT_COMMAND": "echo compat-cell-ran",
+                "PATH": "/usr/bin:/bin",
+            },
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        evidence = json.loads(result.stdout)
-        self.assertIn("aw-cli@new aweb-server@last", evidence["suites"][0])
-        self.assertTrue(Path(evidence["reference"]).exists())
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("not installed", result.stderr)
+        self.assertEqual(result.stdout, "")
 
 
 if __name__ == "__main__":
