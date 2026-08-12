@@ -1121,6 +1121,74 @@ def prepare(
     return card
 
 
+# --- release-continue ------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class ContinueEnvironment:
+    aweb_root: Path
+    ac_root: Path
+    card: ReleaseCard
+
+
+def continue_environment(repo_root: Path) -> ContinueEnvironment:
+    """Read the fixed unconsumed card and re-observe its material commits.
+
+    Continue takes no arguments; any material drift invalidates the card and
+    requires a fresh prepare and go.
+    """
+
+    repo_root = Path(repo_root).resolve()
+    card = read_card(repo_root)
+    _require_origin(repo_root, "aweb")
+    ac_root = (repo_root.parent / "ac").resolve()
+    if not (ac_root / ".git").exists():
+        raise ValidationError(
+            f"the sibling ../ac checkout is missing at {ac_root}. Fix: clone "
+            f"the canonical awebai/ac remote next to this repository"
+        )
+    _require_origin(ac_root, "ac")
+    for repository, label, recorded in (
+        (repo_root, "aweb", card.aweb_sha),
+        (ac_root, "ac", card.ac_base_sha),
+    ):
+        _git(repository, "fetch", "origin")
+        remote_main = _git(
+            repository, "rev-parse", "refs/remotes/origin/main"
+        ).stdout.strip()
+        if remote_main != recorded:
+            raise MaterialMismatch(
+                f"{label} origin/main moved from the card's {recorded} to "
+                f"{remote_main}; the card is invalid - run a fresh prepare "
+                f"and obtain a fresh go"
+            )
+    return ContinueEnvironment(aweb_root=repo_root, ac_root=ac_root, card=card)
+
+
+def fast_forward_release(
+    repository: Path, branch: str, target_sha: str
+) -> None:
+    """Advance a publication pointer fast-forward-only, adopting exact matches."""
+
+    validate_sha(target_sha, f"{branch} target")
+    listed = _git(
+        repository, "ls-remote", "origin", f"refs/heads/{branch}"
+    ).stdout.strip()
+    if listed:
+        current = listed.split()[0]
+        if current == target_sha:
+            return
+        try:
+            _git(repository, "merge-base", "--is-ancestor", current, target_sha)
+        except CommandFailed as error:
+            raise ValidationError(
+                f"refusing non-fast-forward move of {branch}: {current} is "
+                f"not an ancestor of {target_sha}; a failed candidate leaves "
+                f"the pointer put"
+            ) from error
+    _git(repository, "push", "origin", f"{target_sha}:refs/heads/{branch}")
+
+
 def _main(argv: Sequence[str]) -> int:
     if list(argv) != ["prepare"]:
         print("usage: release_train.py prepare", file=sys.stderr)

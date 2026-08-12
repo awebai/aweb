@@ -718,8 +718,9 @@ class _PresenceHandler(BaseHTTPRequestHandler):
         pass
 
 
-class PreparePipelineTests(unittest.TestCase):
-    """prepare selects, checks, gates, and writes the card atomically."""
+class _PipelineFixture(unittest.TestCase):
+    """Shared fixture: two repositories with bare remotes, a loopback
+    registry, and a fake gate command."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -797,6 +798,11 @@ class PreparePipelineTests(unittest.TestCase):
             timeout=30,
         )
 
+
+
+class PreparePipelineTests(_PipelineFixture):
+    """prepare selects, checks, gates, and writes the card atomically."""
+
     def test_prepare_generates_the_card_and_touches_nothing_outward(self) -> None:
         before = {
             remote: git("ls-remote", str(remote), cwd=self.aweb)
@@ -872,6 +878,54 @@ class PreparePipelineTests(unittest.TestCase):
         self.assertEqual(first, second)
         with self.assertRaises(rt.MaterialMismatch):
             self._prepare(PURPOSE="a different purpose")
+
+
+
+class ContinuePhaseTests(_PipelineFixture):
+    """continue reads the fixed card, re-observes material, and moves
+    fast-forward-only; every mismatch invalidates rather than improvises."""
+
+    def _card(self):
+        return self._prepare()
+
+    def test_continue_refuses_without_a_card(self) -> None:
+        with self.assertRaises(rt.CardUnavailable):
+            rt.continue_environment(self.aweb)
+
+    def test_continue_re_observes_material_and_accepts_the_card(self) -> None:
+        card = self._card()
+        observed = rt.continue_environment(self.aweb)
+        self.assertEqual(observed.card, card)
+
+    def test_moved_aweb_main_invalidates_the_card(self) -> None:
+        self._card()
+        (self.aweb / "moved.txt").write_text("moved\n")
+        git("add", ".", cwd=self.aweb)
+        git("commit", "-m", "moved", cwd=self.aweb)
+        git("push", "origin", "main", cwd=self.aweb)
+        with self.assertRaises(rt.MaterialMismatch) as caught:
+            rt.continue_environment(self.aweb)
+        self.assertIn("fresh prepare", str(caught.exception))
+
+    def test_fast_forward_release_creates_and_advances_only(self) -> None:
+        card = self._card()
+        prepared = rt.continue_environment(self.aweb)
+        rt.fast_forward_release(self.aweb, "release", card.aweb_sha)
+        listed = git("ls-remote", "origin", "refs/heads/release", cwd=self.aweb)
+        self.assertEqual(listed.split()[0], card.aweb_sha)
+        # Idempotent re-run adopts the exact match.
+        rt.fast_forward_release(self.aweb, "release", card.aweb_sha)
+        # A non-fast-forward target refuses without force.
+        git("update-ref", "refs/heads/divergent", card.aweb_sha, cwd=self.aweb)
+        (self.aweb / "diverge.txt").write_text("x\n")
+        git("add", ".", cwd=self.aweb)
+        git("commit", "-m", "diverge", cwd=self.aweb)
+        divergent = git("rev-parse", "HEAD", cwd=self.aweb)
+        git("push", "origin", f"{divergent}:refs/heads/release-divergent", cwd=self.aweb)
+        with self.assertRaises(rt.ValidationError) as caught:
+            rt.fast_forward_release(self.aweb, "release-divergent", card.aweb_sha)
+        self.assertIn("fast-forward", str(caught.exception))
+        del prepared
 
 
 if __name__ == "__main__":
