@@ -132,7 +132,9 @@ jobs:
           npm_steps=re.findall(r"(?m)^\s*run:\s*\.?/?npm/publish\.sh\s*$", workflow)
           if len(release_steps) != 1 or len(npm_steps) != 1:
               raise SystemExit("external aw workflow has missing or extra Release/npm publication steps")
-          build_ids=re.findall(r"(?m)^  - id: (\S+)$", goreleaser)
+          builds_block=re.search(r"(?ms)^builds:\n(.*?)(?=^[A-Za-z_][A-Za-z0-9_-]*:|\Z)", goreleaser)
+          if not builds_block: raise SystemExit("incoming goreleaser config has no builds section")
+          build_ids=re.findall(r"(?m)^  - id: (\S+)$", builds_block.group(1))
           if build_ids != ["aw", "aweb-a2a-gw"]: raise SystemExit(f"incoming aw workflow binary set is {build_ids!r}")
           platforms=["aw-linux-x64", "aw-linux-arm64", "aw-darwin-x64", "aw-darwin-arm64", "aw-windows-x64", "aw-windows-arm64"]
           package_loops=[value.split() for value in re.findall(r"for pkg_dir in ([^;]+); do", publisher)]
