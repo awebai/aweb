@@ -1007,8 +1007,8 @@ class PublicAdapterTests(unittest.TestCase):
         self.assertFalse(self._observe("ghcr.io/awebai/awid", "0.5.17"))
 
     def test_github_release_tags_per_repository(self) -> None:
-        _PublicApiHandler.state["/repos/awebai/aw/releases/tags/aw-v1.34.4"] = (
-            200, {"tag_name": "aw-v1.34.4"}
+        _PublicApiHandler.state["/repos/awebai/aw/releases/tags/v1.34.4"] = (
+            200, {"tag_name": "v1.34.4"}
         )
         self.assertTrue(self._observe("github:awebai/aw:release", "1.34.4"))
         self.assertFalse(self._observe("github:awebai/aw:release", "1.34.5"))
@@ -1076,7 +1076,7 @@ paths = {
         ("/token?scope=repository:awebai/awid:pull&service=ghcr.io", {"token": "t"}),
         (f"/v2/awebai/awid/manifests/{version}", {"manifests": []}),
     ],
-    "aw-cli": [(f"/repos/awebai/aw/releases/tags/aw-v{version}", {"tag_name": version})],
+    "aw-cli": [(f"/repos/awebai/aw/releases/tags/v{version}", {"tag_name": version})],
     "channel-plugin": [(f"/@awebai%2Fclaude-channel/{version}", {"version": version})],
     "pi-extension": [(f"/@awebai%2Fpi/{version}", {"version": version})],
     "skills": [

@@ -1176,7 +1176,7 @@ PUBLIC_READ_BASES = {
     "github": "https://api.github.com",
 }
 _GITHUB_RELEASE_TAGS = {
-    "github:awebai/aw:release": "aw-v{version}",
+    "github:awebai/aw:release": "v{version}",
     "github:awebai/aweb:skills-release-zips": "skills-v{version}",
 }
 
