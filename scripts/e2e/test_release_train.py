@@ -1879,33 +1879,55 @@ class PrepareGateWrapperTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
 
     def test_green_evidence_at_the_exact_sha_is_adopted_without_rerunning(self) -> None:
+        import shutil
+
         sha = "9" * 40
         log_dir = f"/tmp/aweb-release-gate-{sha}"
         marker = Path(tempfile.gettempdir()) / f"gate-invoked-{sha[:8]}"
         marker.unlink(missing_ok=True)
+        shutil.rmtree(log_dir, ignore_errors=True)
         os.makedirs(log_dir, exist_ok=True)
+        # Completeness is part of the predicate: the summary must carry
+        # exactly the real suite map's rows, all PASSED.
+        map_rows = [
+            line.split("\t")
+            for line in (REPO_ROOT / "release-gate/suite-map.tsv")
+            .read_text()
+            .splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
         Path(log_dir, "summary.tsv").write_text(
-            "one\tPASSED\tcontract\tt1\ntwo\tPASSED\tunit\tt2\n"
+            "".join(f"{row[0]}\tPASSED\tfixture\t{row[-1]}\n" for row in map_rows)
         )
         Path(log_dir, "wrapper-verdict.log").write_text(
             f"release gate PASSED at {sha}; logs: {log_dir}\n"
         )
+        # A green NEIGHBOUR at a different SHA must not satisfy anything.
+        neighbour = f"/tmp/aweb-release-gate-{'a1' * 20}"
+        shutil.rmtree(neighbour, ignore_errors=True)
+        os.makedirs(neighbour, exist_ok=True)
+        Path(neighbour, "wrapper-verdict.log").write_text(
+            f"release gate PASSED at {'a1' * 20}; logs: {neighbour}\n"
+        )
         try:
             result = self._run(
-                gate_body=f"touch {marker}\nexit 1\n", sha=sha
+                gate_body=f"touch {marker}\nexit 1\n",
+                sha=sha,
+                env_extra={"AWEB_PREPARE_INPUTS_CHECK": "true"},
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             evidence = json.loads(result.stdout)
-            self.assertEqual(evidence["suites"], ["one", "two"])
+            self.assertEqual(len(evidence["suites"]), len(map_rows))
+            self.assertEqual(evidence["suites"][0], map_rows[0][0])
             self.assertFalse(
                 marker.exists(), "gate was invoked despite green evidence"
             )
             self.assertIn("adopting prior green gate evidence", result.stderr)
+            self.assertIn("not compared: package-manager fetches", result.stderr)
         finally:
             marker.unlink(missing_ok=True)
-            import shutil
-
             shutil.rmtree(log_dir, ignore_errors=True)
+            shutil.rmtree(neighbour, ignore_errors=True)
 
     def test_adoption_fails_closed_on_red_mismatched_or_absent_evidence(self) -> None:
         import shutil
@@ -1913,24 +1935,60 @@ class PrepareGateWrapperTests(unittest.TestCase):
         sha = "8" * 40
         log_dir = f"/tmp/aweb-release-gate-{sha}"
         marker = Path(tempfile.gettempdir()) / f"gate-invoked-{sha[:8]}"
-        arms = ("red-verdict", "other-sha-verdict", "absent")
+        arms = (
+            "red-verdict",
+            "other-sha-verdict",
+            "absent",
+            "not-run-row",
+            "incomplete-summary",
+            "stale-evidence",
+            "inputs-mismatch",
+        )
         for arm in arms:
             marker.unlink(missing_ok=True)
             shutil.rmtree(log_dir, ignore_errors=True)
             if arm != "absent":
                 os.makedirs(log_dir, exist_ok=True)
-                Path(log_dir, "summary.tsv").write_text(
-                    "one\tPASSED\tcontract\tt1\n"
-                )
+                map_rows = [
+                    line.split("\t")
+                    for line in (REPO_ROOT / "release-gate/suite-map.tsv")
+                    .read_text()
+                    .splitlines()
+                    if line.strip() and not line.startswith("#")
+                ]
+                rows = [f"{row[0]}\tPASSED\tfixture\t{row[-1]}" for row in map_rows]
+                if arm == "not-run-row":
+                    rows[-1] = rows[-1].replace("PASSED", "NOT RUN")
+                if arm == "incomplete-summary":
+                    rows = rows[:-1]
+                Path(log_dir, "summary.tsv").write_text("\n".join(rows) + "\n")
                 verdict = (
                     f"release gate FAILED; logs: {log_dir}"
                     if arm == "red-verdict"
+                    else f"release gate PASSED at {sha}; logs: {log_dir}"
+                    if arm
+                    in (
+                        "not-run-row",
+                        "incomplete-summary",
+                        "stale-evidence",
+                        "inputs-mismatch",
+                    )
                     else f"release gate PASSED at {'7' * 40}; logs: {log_dir}"
                 )
                 Path(log_dir, "wrapper-verdict.log").write_text(verdict + "\n")
+                if arm == "stale-evidence":
+                    import subprocess as _sp
+
+                    _sp.run(
+                        ["touch", "-t", "202501010000", f"{log_dir}/summary.tsv"],
+                        check=True,
+                    )
             try:
+                check = "false" if arm == "inputs-mismatch" else "true"
                 result = self._run(
-                    gate_body=f"touch {marker}\nexit 1\n", sha=sha
+                    gate_body=f"touch {marker}\nexit 1\n",
+                    sha=sha,
+                    env_extra={"AWEB_PREPARE_INPUTS_CHECK": check},
                 )
                 self.assertNotEqual(result.returncode, 0, arm)
                 self.assertTrue(

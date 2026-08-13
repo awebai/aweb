@@ -39,13 +39,43 @@ fi
 
 log_dir="/tmp/aweb-release-gate-$SOURCE_SHA"
 verdict="$log_dir/wrapper-verdict.log"
-# Gate-result adoption (resume path only): a green verdict at the EXACT
-# source SHA with its summary present is the same evidence a fresh run would
-# produce, so re-executing it is waste. Fail-closed: absent, red, or
-# other-SHA evidence runs the gate; the verdict and summary checks below
-# apply to adopted evidence exactly as to fresh evidence.
-if grep -qs "release gate PASSED at $SOURCE_SHA" "$verdict" && [[ -s "$log_dir/summary.tsv" ]]; then
-  echo "adopting prior green gate evidence at $SOURCE_SHA: $log_dir" >&2
+# Gate-result adoption (resume path only). The verdict line alone is not a
+# green run - a killed run can leave a verdict above an incomplete summary -
+# so adoption re-applies every red condition: exact-SHA verdict, summary
+# present with zero FAILED/NOT RUN rows and exactly the suite map's row
+# count, and evidence younger than 24h (base-image tags are mutable; the SHA
+# does not pin them). Anything less runs the gate. Inputs not compared are
+# named in the skip line so the adoption is honest about its scope.
+inputs_match() {
+  # Test seam: an explicit override command replaces the comparison.
+  if [[ -n "${AWEB_PREPARE_INPUTS_CHECK:-}" ]]; then
+    "${AWEB_PREPARE_INPUTS_CHECK}"
+    return
+  fi
+  local rec="$log_dir/inputs.tsv" ref recorded current rec_locks cur_locks
+  [[ -f "$rec" ]] || return 1
+  ref="$(awk -F'\t' '$1=="base"{print $2; exit}' "$rec")"
+  recorded="$(awk -F'\t' '$1=="base"{print $3; exit}' "$rec")"
+  [[ -n "$ref" && -n "$recorded" && "$recorded" != "unresolved" ]] || return 1
+  docker pull -q "$ref" >/dev/null 2>&1 || return 1
+  current="$(docker image inspect "$ref" --format '{{join .RepoDigests ","}}' 2>/dev/null)"
+  [[ "$current" == "$recorded" ]] || return 1
+  rec_locks="$(awk -F'\t' '$1=="locks"{print $2; exit}' "$rec")"
+  cur_locks="$(git -C "$ROOT" ls-files -s -- '*uv.lock' | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest())')"
+  [[ "$rec_locks" == "$cur_locks" ]]
+}
+
+adoptable=0
+if grep -qs "release gate PASSED at $SOURCE_SHA" "$verdict" \
+   && [[ -s "$log_dir/summary.tsv" ]] \
+   && ! grep -qE $'\t(FAILED|NOT RUN)\t' "$log_dir/summary.tsv" \
+   && [[ "$(grep -c . "$log_dir/summary.tsv")" -eq "$(grep -vc '^#' "$ROOT/release-gate/suite-map.tsv")" ]] \
+   && [[ -n "$(find "$log_dir/summary.tsv" -mtime -1 2>/dev/null)" ]] \
+   && inputs_match; then
+  adoptable=1
+fi
+if [[ "$adoptable" -eq 1 ]]; then
+  echo "adopting prior green gate evidence at $SOURCE_SHA: $log_dir (age < 24h; inputs compared: base-image digest, lock set; not compared: package-manager fetches inside builds)" >&2
 else
   RELEASE_SOURCE_SHA="$SOURCE_SHA" "$GATE_SCRIPT" >&2
 fi

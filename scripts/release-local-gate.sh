@@ -147,6 +147,14 @@ printf 'NOT RELEVANT: this slice changes only the release gate mechanism, not a 
 
 docker build --pull -f "$checkout/release-gate/Dockerfile" -t "$IMAGE" "$checkout/release-gate" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
+
+# Record the run's mutable inputs in the evidence (adoption compares them):
+# the resolved base-image digest and the tracked lock-set hash. Package
+# manager fetches inside the build are not recorded and adoption names that.
+base_ref="$(awk '/^FROM /{print $2; exit}' "$checkout/release-gate/Dockerfile")"
+base_digest="$(docker image inspect "$base_ref" --format '{{join .RepoDigests ","}}' 2>/dev/null || echo unresolved)"
+locks_digest="$(git -C "$checkout" ls-files -s -- '*uv.lock' | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest())')"
+printf 'base\t%s\t%s\nlocks\t%s\n' "$base_ref" "$base_digest" "$locks_digest" > "$LOG_DIR/inputs.tsv"
 owned_network="aweb-release-gate-${SOURCE_SHA:0:12}-$$"
 docker network create "$owned_network" >/dev/null
 pg_name="${owned_network}-postgres"
