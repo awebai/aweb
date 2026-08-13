@@ -189,6 +189,21 @@ applied="$(docker exec "$pg_id" psql -At -U postgres -d postgres \
   -c "SELECT setting || '|' || source FROM pg_settings WHERE name = 'search_path'")"
 [[ "$applied" == "pg_catalog|user" ]] \
   || refuse "search_path role default not in effect for the connecting role: $applied"
+
+# Pre-provision pgcrypto in public in template1 and the default database:
+# per-test databases are created fresh and inherit template1, and migration
+# 001's unqualified CREATE EXTENSION IF NOT EXISTS then no-ops instead of
+# colliding with pg_catalog's built-in gen_random_uuid under the pinned
+# search_path - matching production, where the extension already exists.
+for db in postgres template1; do
+  docker exec "$pg_id" psql -v ON_ERROR_STOP=1 -U postgres -d "$db" \
+    -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public' >/dev/null \
+    || refuse "could not pre-provision pgcrypto in $db"
+  ext_schema="$(docker exec "$pg_id" psql -At -U postgres -d "$db" \
+    -c "SELECT extnamespace::regnamespace::text FROM pg_extension WHERE extname = 'pgcrypto'")"
+  [[ "$ext_schema" == "public" ]] \
+    || refuse "pgcrypto pre-provision did not land in public for $db: '$ext_schema'"
+done
 owned_builder="aweb-release-gate-${SOURCE_SHA:0:12}-$$"
 docker_bind_root="$checkout/.release-docker-bind"
 mkdir -p "$buildx_config" "$docker_bind_root" "$checkout/.release-home"
