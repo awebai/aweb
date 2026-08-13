@@ -347,7 +347,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "markdown", specifier = ">=3.8.2" },
     { name = "nh3", specifier = ">=0.3.2" },
-    { name = "pgdbm", specifier = ">=0.4.1" },
+    { name = "pgdbm", specifier = ">=0.5.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10.1" },
@@ -651,15 +651,15 @@ wheels = [
 
 [[package]]
 name = "pgdbm"
-version = "0.4.1"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asyncpg" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/37/b7/ad834cd4597ce740f606b42919f5be3dad8ec8b600598b0145b9b693d0b2/pgdbm-0.4.1.tar.gz", hash = "sha256:2b95d60406fb932364a3bdab4e12c902e8cdf1436e9e3bcbef313f17ae9359ad", size = 491556, upload-time = "2026-03-17T14:22:17.296Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ac/ca/0d6fc6ecb974cdd22376ef5d2e3ef5b3ac0c6e824a89ea6520c165c32156/pgdbm-0.5.0.tar.gz", hash = "sha256:f124dd7da563b5faffa63c2e1e35bff8986e91b455ba8d470d3d39b1ef77bdd6", size = 318648, upload-time = "2026-08-13T16:38:28.896Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/94/da2880a7e7399509138db1821ce51783d3d74e8be4a856bed08b89d35389/pgdbm-0.4.1-py3-none-any.whl", hash = "sha256:9f574e96fff6d632b69c39bb345ec20c6cba6e24ea39c62f433bf3a72b6bc06e", size = 60630, upload-time = "2026-03-17T14:22:15.506Z" },
+    { url = "https://files.pythonhosted.org/packages/20/b6/6ee83f03f6325230a2cf708dc85bbc1b6459c67e1852b5366a30350b90f1/pgdbm-0.5.0-py3-none-any.whl", hash = "sha256:d6adcfe76bea8f73a11d934305b5305508315349967a603225db46645ea677d7", size = 62887, upload-time = "2026-08-13T16:38:27.561Z" },
 ]
 
 [[package]]
