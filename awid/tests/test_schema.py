@@ -26,11 +26,12 @@ async def test_dns_namespaces_scope_id_has_no_foreign_key(awid_db_infra):
         JOIN pg_attribute a
           ON a.attrelid = t.oid
          AND a.attnum = ANY(c.conkey)
-        WHERE n.nspname = current_schema()
+        WHERE n.nspname = $1
           AND t.relname = 'dns_namespaces'
           AND a.attname = 'scope_id'
           AND c.contype = 'f'
-        """
+        """,
+        db.schema or "public",
     )
 
     assert row is not None
@@ -69,11 +70,12 @@ async def test_did_aw_mappings_has_no_address_fields(awid_db_infra):
         """
         SELECT column_name
         FROM information_schema.columns
-        WHERE table_schema = current_schema()
+        WHERE table_schema = $2
           AND table_name = 'did_aw_mappings'
           AND column_name = ANY($1::text[])
         """,
         ["server_url", "address", "handle"],
+        db.schema or "public",
     )
 
     assert [row["column_name"] for row in rows] == []
@@ -86,12 +88,13 @@ async def test_public_addresses_resolve_key_by_fk_only(awid_db_infra):
         """
         SELECT column_name
         FROM information_schema.columns
-        WHERE table_schema = current_schema()
+        WHERE table_schema = $2
           AND table_name = 'public_addresses'
           AND column_name = ANY($1::text[])
         ORDER BY column_name
         """,
         ["current_did_key", "reachability", "visible_to_team_id"],
+        db.schema or "public",
     )
     assert [row["column_name"] for row in rows] == []
 
