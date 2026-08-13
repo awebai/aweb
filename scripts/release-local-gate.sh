@@ -182,10 +182,13 @@ done
 docker exec "$pg_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
   -c 'ALTER ROLE postgres SET search_path = pg_catalog' >/dev/null \
   || refuse "could not apply the production search_path role default"
+# Verified BY CONNECTING: a fresh session must report the default with
+# source='user' - a statement applied to a role that exists but is not the
+# connecting one succeeds and changes nothing.
 applied="$(docker exec "$pg_id" psql -At -U postgres -d postgres \
-  -c "SELECT useconfig::text FROM pg_user WHERE usename = 'postgres'")"
-[[ "$applied" == *"search_path=pg_catalog"* ]] \
-  || refuse "search_path role default did not stick: $applied"
+  -c "SELECT setting || '|' || source FROM pg_settings WHERE name = 'search_path'")"
+[[ "$applied" == "pg_catalog|user" ]] \
+  || refuse "search_path role default not in effect for the connecting role: $applied"
 owned_builder="aweb-release-gate-${SOURCE_SHA:0:12}-$$"
 docker_bind_root="$checkout/.release-docker-bind"
 mkdir -p "$buildx_config" "$docker_bind_root" "$checkout/.release-home"
