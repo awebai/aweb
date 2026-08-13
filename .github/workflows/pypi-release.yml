@@ -34,6 +34,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      # uv is pinned here deliberately: publish must not break mid-release,
+      # while CI workflows float on latest so upstream drift is caught there
+      # first. Bump this pin on purpose, not as a side effect.
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.11.32"
@@ -168,6 +171,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      # uv is pinned here deliberately: publish must not break mid-release,
+      # while CI workflows float on latest so upstream drift is caught there
+      # first. Bump this pin on purpose, not as a side effect.
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.11.32"

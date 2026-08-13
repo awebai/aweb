@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Self-test for scripts/pypi-exact-publish.sh, no network.
+# Self-test for scripts/pypi-exact-publish.sh. No network, except the
+# real-builder case at the end: it uses the local uv and its cached build
+# backend, and may fetch that backend on a cold cache.
 #   green: a coherent one-sdist/one-wheel dist inspects and verifies
 #          against a matching observation
 #   reds:  extra file, missing wheel, version mismatch inside the sdist,
