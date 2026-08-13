@@ -1453,6 +1453,15 @@ def fast_forward_release(
     _git(repository, "push", "origin", f"{target_sha}:refs/heads/{branch}")
 
 
+# Long-wait polling: back off toward the cap so an hours-long digest wait
+# makes dozens of registry requests, not tens of thousands, and survive
+# transient unavailability (a 429 or 5xx inside the window must not stop the
+# train - that is the failure the wait exists to prevent). A served-version
+# mismatch (ObservationMalformed) stays fatal: it is a defect, not weather.
+POLL_INITIAL_INTERVAL_SECONDS = 1.0
+POLL_MAX_INTERVAL_SECONDS = 30.0
+
+
 def _poll_public_target(
     target: str,
     version: str,
@@ -1472,16 +1481,34 @@ def _poll_public_target(
 
     import time as _time
 
-    deadline = _time.monotonic() + wait_seconds
+    started = _time.monotonic()
+    deadline = started + wait_seconds
+    interval = POLL_INITIAL_INTERVAL_SECONDS
+    last_unavailable: ObservationUnavailable | None = None
+    attempt = 0
     while True:
-        if observe_public_target(target, version, bases=bases, timeout=timeout):
-            return
-        if _time.monotonic() >= deadline:
+        attempt += 1
+        try:
+            if observe_public_target(target, version, bases=bases, timeout=timeout):
+                return
+            last_unavailable = None
+        except ObservationUnavailable as error:
+            last_unavailable = error
+        now = _time.monotonic()
+        if now >= deadline:
             break
-        _time.sleep(min(1.0, _bounded_timeout(timeout) / 60))
+        if attempt == 1 or attempt % 10 == 0:
+            print(
+                f"still waiting: {target} does not yet serve {version} "
+                f"({int(now - started)}s elapsed)",
+                file=sys.stderr,
+            )
+        _time.sleep(min(interval, max(0.0, deadline - now)))
+        interval = min(interval * 1.5, POLL_MAX_INTERVAL_SECONDS)
+    suffix = f"; last observation error: {last_unavailable}" if last_unavailable else ""
     raise ObservationUnavailable(
         f"still waiting: {target} does not yet serve {version}; rerun "
-        f"release-continue once the registry catches up"
+        f"release-continue once the registry catches up{suffix}"
     )
 
 

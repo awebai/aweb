@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -1205,6 +1206,95 @@ paths = {
 for path, payload in paths[artifact]:
     (spool / quote(path, safe="")).write_text(json.dumps(payload))
 '''
+
+
+class _FlakyRegistryHandler(BaseHTTPRequestHandler):
+    """Serves the token, then 503s the manifest N times before serving it."""
+
+    unavailable_remaining = 0
+    request_times: list[float] = []
+
+    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        cls = type(self)
+        if self.path.startswith("/token"):
+            body = json.dumps({"token": "t"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        cls.request_times.append(time.monotonic())
+        if cls.unavailable_remaining > 0:
+            cls.unavailable_remaining -= 1
+            self.send_error(503)
+            return
+        body = json.dumps({"manifests": []}).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, _format: str, *args: object) -> None:
+        pass
+
+
+class PublicTargetPollTests(unittest.TestCase):
+    """The long wait tolerates transient unavailability and backs off; a
+    single 429/5xx inside an hours-long window must not stop the train."""
+
+    def setUp(self) -> None:
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), _FlakyRegistryHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.server.shutdown)
+        self.addCleanup(self.server.server_close)
+        self.bases = {"ghcr": f"http://127.0.0.1:{self.server.server_port}"}
+        _FlakyRegistryHandler.unavailable_remaining = 0
+        _FlakyRegistryHandler.request_times = []
+
+    def test_transient_unavailability_inside_the_window_is_survived(self) -> None:
+        _FlakyRegistryHandler.unavailable_remaining = 3
+        with unittest.mock.patch.multiple(
+            rt,
+            POLL_INITIAL_INTERVAL_SECONDS=0.02,
+            POLL_MAX_INTERVAL_SECONDS=0.05,
+        ):
+            rt._poll_public_target(
+                "ghcr.io/awebai/ac", "0.7.14", bases=self.bases,
+                timeout=5, wait_seconds=20.0,
+            )
+        self.assertGreaterEqual(len(_FlakyRegistryHandler.request_times), 4)
+
+    def test_exhausted_window_names_the_last_transient_error(self) -> None:
+        _FlakyRegistryHandler.unavailable_remaining = 10_000
+        with unittest.mock.patch.multiple(
+            rt,
+            POLL_INITIAL_INTERVAL_SECONDS=0.01,
+            POLL_MAX_INTERVAL_SECONDS=0.02,
+        ):
+            with self.assertRaises(rt.ObservationUnavailable) as caught:
+                rt._poll_public_target(
+                    "ghcr.io/awebai/ac", "0.7.14", bases=self.bases,
+                    timeout=5, wait_seconds=0.2,
+                )
+        self.assertIn("503", str(caught.exception))
+
+    def test_backoff_grows_toward_the_cap(self) -> None:
+        _FlakyRegistryHandler.unavailable_remaining = 6
+        with unittest.mock.patch.multiple(
+            rt,
+            POLL_INITIAL_INTERVAL_SECONDS=0.02,
+            POLL_MAX_INTERVAL_SECONDS=0.2,
+        ):
+            rt._poll_public_target(
+                "ghcr.io/awebai/ac", "0.7.14", bases=self.bases,
+                timeout=5, wait_seconds=30.0,
+            )
+        times = _FlakyRegistryHandler.request_times
+        self.assertGreaterEqual(len(times), 7)
+        first_gap = times[1] - times[0]
+        last_gap = times[-1] - times[-2]
+        self.assertGreater(last_gap, first_gap * 2)
 
 
 class ContinueTrainTests(_PipelineFixture):
