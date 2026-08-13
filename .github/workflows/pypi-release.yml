@@ -113,6 +113,9 @@ jobs:
           rm -rf "$dist"
           mkdir -p "$dist"
           uv build --sdist --wheel --out-dir "$dist" "$PACKAGE_DIR"
+          # uv build stamps a .gitignore into the out-dir it creates;
+          # inspect-staged rightly refuses any extra file, so drop the stamp.
+          rm -f "$dist/.gitignore"
           bash scripts/pypi-exact-publish.sh inspect-staged \
             --dist "$dist" --package "$PACKAGE" --version "$VERSION"
 
@@ -268,6 +271,9 @@ jobs:
           rm -rf "$dist"
           mkdir -p "$dist"
           uv build --sdist --wheel --out-dir "$dist" "$PACKAGE_DIR"
+          # uv build stamps a .gitignore into the out-dir it creates;
+          # inspect-staged rightly refuses any extra file, so drop the stamp.
+          rm -f "$dist/.gitignore"
           bash scripts/pypi-exact-publish.sh inspect-staged \
             --dist "$dist" --package "$PACKAGE" --version "$VERSION"
 

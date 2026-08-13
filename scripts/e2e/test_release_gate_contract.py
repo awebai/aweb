@@ -141,6 +141,18 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
         ):
             with self.subTest(package=package):
                 self.assertEqual(job.count("uv build --sdist --wheel"), 1)
+                # uv build stamps a .gitignore into the out-dir it creates;
+                # inspect-staged refuses any extra file, so the workflow must
+                # drop the stamp between build and inspection.
+                self.assertIn('rm -f "$dist/.gitignore"', job)
+                self.assertLess(
+                    job.index("uv build --sdist --wheel"),
+                    job.index('rm -f "$dist/.gitignore"'),
+                )
+                self.assertLess(
+                    job.index('rm -f "$dist/.gitignore"'),
+                    job.index("pypi-exact-publish.sh inspect-staged"),
+                )
                 self.assertIn("npm-exact-publish.sh validate-inputs", job)
                 self.assertIn("pypi-exact-publish.sh inspect-staged", job)
                 self.assertIn("pypi-exact-publish.sh plan-publish", job)
